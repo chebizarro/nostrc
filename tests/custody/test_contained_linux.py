@@ -14,7 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from test_selection_custody import ContainerOwner
+from test_selection_custody import ContainerOwner, file_hash
 
 
 class ActualContainedLinux(unittest.TestCase):
@@ -35,9 +35,10 @@ class ActualContainedLinux(unittest.TestCase):
     def invoke(self, owner, work, mode):
         return owner.run(self.image, ['python3', '/probe/workload.py', 'wrapped', mode],
             mounts=[(ROOT / 'tests/custody', '/probe', True), (work, '/work', False)], timeout=45,
-            binding={'adversary': mode, 'source_file': str(ROOT / 'tests/custody/workload.py')})
+            binding={'adversary': mode, 'source_file': str(ROOT / 'tests/custody/workload.py'),
+                     'source_sha256': file_hash(ROOT / 'tests/custody/workload.py')})
 
-    def assert_final(self, owner):
+    def assert_final(self, owner, *, streamed=True):
         receipt = owner.receipt
         self.assertTrue(receipt['cleanup_complete'], receipt)
         self.assertFalse(receipt['complete_gate_eligible'])
@@ -46,7 +47,10 @@ class ActualContainedLinux(unittest.TestCase):
         self.assertFalse(receipt['cleanup_inspect']['State']['Running'])
         self.assertEqual(receipt['container_id'], receipt['removed_container_id'])
         self.assertEqual(subprocess.check_output(['docker', 'ps', '-aq', '--no-trunc', '--filter', 'id=' + owner.cid]).strip(), b'')
-        self.assertIn(b'owned ready \xff\n', (owner.directory / 'attach.raw').read_bytes())
+        raw = owner.directory / 'attach.raw'
+        self.assertEqual(file_hash(raw), receipt['logs']['attach.raw'])
+        if streamed:
+            self.assertIn(b'owned ready \xff\n', raw.read_bytes())
 
     def test_real_wrapped_configure_build_ctest_success_and_detached_cleanup(self):
         owner, work = self.owner('success')
@@ -71,6 +75,18 @@ class ActualContainedLinux(unittest.TestCase):
         self.assert_final(owner)
 
     def test_real_cancellation_escaped_term_ignorer_and_unrelated_sibling(self):
+        self.cancel_at_boundary('hold', 'consumer')
+
+    def test_real_configure_cancellation_keeps_custody_and_sibling(self):
+        self.cancel_at_boundary('configure-hold', 'configure')
+
+    def test_real_build_cancellation_keeps_custody_and_sibling(self):
+        self.cancel_at_boundary('build-hold', 'build')
+
+    def test_real_fixture_cancellation_keeps_custody_and_sibling(self):
+        self.cancel_at_boundary('fixture-hold', 'fixture')
+
+    def cancel_at_boundary(self, mode, phase):
         sibling, sibling_work = self.owner('sibling')
         worker, work = self.owner('cancel')
         sibling_result, result, errors = [], [], []
@@ -81,19 +97,17 @@ class ActualContainedLinux(unittest.TestCase):
                 errors.append(exc)
         sibling_thread = threading.Thread(target=run, args=(sibling, sibling_result,
             lambda: sibling.run(self.image, ['python3', '-c', 'import signal; signal.pause()'], workdir='/tmp', timeout=90)))
-        thread = threading.Thread(target=run, args=(worker, result, lambda: self.invoke(worker, work, 'hold')))
+        thread = threading.Thread(target=run, args=(worker, result, lambda: self.invoke(worker, work, mode)))
         sibling_thread.start()
         thread.start()
-        reader = None
         try:
             self.assertTrue(sibling.running.wait(30))
             self.assertTrue(worker.running.wait(30))
-            reader = subprocess.Popen(['docker', 'logs', '--follow', worker.cid], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            for line in iter(reader.stdout.readline, b''):
-                if b'owned ready \xff\n' in line:
-                    break
-            else:
-                self.fail('actual consumer never became ready')
+            # Ninja buffers command stdout until completion; readiness is the
+            # actor's atomic socket publication and response, not log arrival.
+            observed = subprocess.run(['docker', 'exec', worker.cid, 'python3', '/probe/workload.py', 'observe'],
+                                      capture_output=True, timeout=35)
+            self.assertEqual(observed.returncode, 0, observed.stderr)
             worker.cancel.requested.set()
             worker.cancel.wakeup.set()
             thread.join(45)
@@ -101,7 +115,9 @@ class ActualContainedLinux(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(result, [130])
             self.assertEqual(worker.receipt['status'], 'cancelled')
-            self.assert_final(worker)
+            self.assertEqual((work / 'phase').read_text(), phase)
+            self.assertEqual((work / 'actor.raw').read_bytes(), b'owned ready \xff\n')
+            self.assert_final(worker, streamed=phase != 'build')
             self.assertEqual(subprocess.check_output(['docker', 'exec', sibling.cid, 'python3', '-c', "print('sibling alive')"]).strip(), b'sibling alive')
         finally:
             worker.cancel.requested.set()
@@ -110,10 +126,6 @@ class ActualContainedLinux(unittest.TestCase):
             sibling.cancel.wakeup.set()
             thread.join(45)
             sibling_thread.join(45)
-            if reader:
-                reader.terminate()
-                reader.wait(timeout=10)
-                reader.stdout.close()
         self.assertFalse(sibling_thread.is_alive())
         self.assertTrue(sibling.receipt['cleanup_complete'], sibling.receipt)
 
