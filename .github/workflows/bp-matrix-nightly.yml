@@ -32,12 +32,31 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
+            build-essential cmake ninja-build meson pkg-config \
             libssl-dev libglib2.0-dev libgirepository1.0-dev libcjson-dev libsodium-dev \
-            python3 python3-pip
+            libsecp256k1-dev libjansson-dev libnsync-dev libwebsockets-dev libgit2-dev libmicrohttpd-dev \
+            libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev libxml2-dev \
+            libgtk-4-dev libadwaita-1-dev libsecret-1-dev libpeas-2-dev libqrencode-dev libzbar-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gettext python3 python3-pip python3-gi curl ca-certificates xz-utils
+
+      - name: Install pinned Blueprint compiler
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          curl -fL --retry 3 https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o "$work/compiler.tar.xz"
+          printf '%s  %s\n' 231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07 "$work/compiler.tar.xz" | sha256sum -c
+          mkdir "$work/source"
+          tar -xJf "$work/compiler.tar.xz" --strip-components=1 -C "$work/source"
+          meson setup "$work/build" "$work/source" --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C "$work/build"
+          sudo meson install -C "$work/build"
+          blueprint-compiler --version | grep -x 0.22.2
 
       - name: Configure (CMake)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOSTR_ENABLE_METRICS=ON
 
       - name: Build
         run: cmake --build build -j2

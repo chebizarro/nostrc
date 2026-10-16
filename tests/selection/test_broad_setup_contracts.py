@@ -27,8 +27,11 @@ class BroadPrerequisiteTests(unittest.TestCase):
                                ("bp-matrix-nightly.yml", "nightly-matrix")):
             with self.subTest(workflow=workflow):
                 block = job(workflow, name)
-                self.assertRegex(step(block, "Install dependencies"), r"\blibsodium-dev\b")
-                self.assertIn("run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release\n", block)
+                install = step(block, "Install dependencies")
+                for package in ("libsodium-dev", "libnsync-dev", "libwebsockets-dev", "libgit2-dev",
+                                "libgtk-4-dev", "libpeas-2-dev", "libmicrohttpd-dev", "gettext"):
+                    self.assertIn(package, install)
+                self.assertIn("run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOSTR_ENABLE_METRICS=ON\n", block)
                 self.assertIn("run: cmake --build build -j2\n", block)
                 self.assertIn('--caps "1,2,4,8,16,32,64"', block)
                 self.assertIn("--modes try,block", block)
@@ -39,11 +42,44 @@ class BroadPrerequisiteTests(unittest.TestCase):
         for name in ("fuzz-test", "coverage-report"):
             with self.subTest(job=name):
                 block = job("grotto-fuzz.yml", name)
-                self.assertRegex(step(block, "Install dependencies"), r"\blibgit2-dev\b")
+                install = step(block, "Install dependencies")
+                for package in ("libgit2-dev", "libclang-rt-dev", "libgtk-4-dev", "libadwaita-1-dev", "libpeas-2-dev",
+                                "libqrencode-dev", "libzbar-dev", "libgstreamer-plugins-base1.0-dev"):
+                    self.assertIn(package, install)
                 self.assertIn("-DBUILD_FUZZ_TARGETS=ON", block)
                 self.assertIn("-DFUZZ_ENGINE=LIBFUZZER", block)
                 self.assertIn("-DENABLE_NIP49=ON", block)
                 self.assertIn("cmake --build build --target fuzz-", block)
+
+    def test_json_fuzz_uses_real_seed_directory_without_renaming_artifact(self):
+        block = job("grotto-fuzz.yml", "fuzz-test")
+        self.assertIn("FUZZ_CORPUS: ${{ matrix.target == 'json-event' && 'json_event' || matrix.target }}", block)
+        run = step(block, "Run fuzz-${{ matrix.target }}")
+        self.assertIn('CORPUS_DIR="build/apps/grotto/tests/fuzz/corpus/${FUZZ_CORPUS}"', run)
+        upload = step(block, "Upload updated corpus")
+        self.assertIn("fuzz-corpus-${{ matrix.target }}", upload)
+        self.assertIn("corpus/${{ env.FUZZ_CORPUS }}/", upload)
+        seeds = WORKFLOWS.parents[1] / "apps/grotto/tests/fuzz/corpus/json_event"
+        self.assertTrue(any(seeds.iterdir()))
+
+    def test_blueprint_setup_is_pinned_and_verified_in_each_build_job(self):
+        for workflow, name in (("bp-matrix.yml", "bp-matrix"),
+                               ("bp-matrix-nightly.yml", "nightly-matrix"),
+                               ("grotto-fuzz.yml", "fuzz-test"),
+                               ("grotto-fuzz.yml", "coverage-report")):
+            with self.subTest(workflow=workflow, job=name):
+                setup = step(job(workflow, name), "Install pinned Blueprint compiler")
+                self.assertIn("blueprint-compiler-0.22.2.tar.xz", setup)
+                self.assertIn("231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07", setup)
+                self.assertIn("sha256sum -c", setup)
+                self.assertIn("blueprint-compiler --version | grep -x 0.22.2", setup)
+
+    def test_bp_metrics_are_opted_in_without_changing_library_default(self):
+        cmake = (WORKFLOWS.parents[1] / "libnostr/CMakeLists.txt").read_text()
+        self.assertIn('option(NOSTR_ENABLE_METRICS "Enable internal metrics instrumentation" OFF)', cmake)
+        for workflow, name in (("bp-matrix.yml", "bp-matrix"),
+                               ("bp-matrix-nightly.yml", "nightly-matrix")):
+            self.assertIn("-DNOSTR_ENABLE_METRICS=ON", step(job(workflow, name), "Configure (CMake)"))
 
     def test_homed_trust_is_limited_to_container_checkout_read(self):
         block = job("nostr-homed-ci.yml", "build-and-test")
