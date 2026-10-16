@@ -49,6 +49,46 @@ class ContainedCustodyContract(unittest.TestCase):
         self.assertEqual((self.root / 'exact/docs/child/file').read_text(), 'child')
         self.assertEqual(subprocess.check_output(['git', '-C', str(self.root / 'exact/docs/child'), 'rev-parse', 'HEAD']).decode().strip(), child_sha)
 
+    def test_local_only_profile_is_accounted_unexecuted_in_ci_and_release(self):
+        import test_selection as selection
+        policy = selection.load_inventory(Path(__file__).resolve().parents[2] / 'tests/selection/inventory.json')
+        profile = 'groundhog.linux.arm64.prepared011'
+        for context in ('ci', 'release'):
+            plan = selection.make_plan(policy, [], head='a' * 40, context=context, mode='broad')
+            self.assertNotIn(profile, plan['expected_lane_ids'])
+            self.assertEqual(len(plan['expected_lane_ids']), 10)
+            self.assertEqual(plan['omitted_profiles'][0]['id'], profile)
+            self.assertEqual(plan['omitted_profiles'][0]['status'], 'not_executed')
+            selection.validate_plan(plan, policy)
+            with self.assertRaises(selection.ContractError):
+                selection.make_plan(policy, [], head='a' * 40, context=context, mode='broad', profiles=[profile])
+
+    def test_local_context_cannot_be_relabelled_to_ci(self):
+        import test_selection as selection
+        policy = selection.load_inventory(Path(__file__).resolve().parents[2] / 'tests/selection/inventory.json')
+        profile = 'groundhog.linux.arm64.prepared011'
+        plan = selection.make_plan(policy, [], head='a' * 40, context='local', mode='broad', profiles=[profile])
+        self.assertEqual(plan['expected_lane_ids'], [profile])
+        plan['context'] = 'ci'
+        plan['plan_id'] = selection.digest({k: v for k, v in plan.items() if k != 'plan_id'})
+        with self.assertRaises(selection.ContractError):
+            selection.validate_plan(plan, policy)
+
+    def test_runtime_json_and_artifact_paths_cannot_follow_host_symlinks(self):
+        spec = importlib.util.spec_from_file_location('contained_gate_paths',
+            Path(__file__).resolve().parents[2] / 'scripts/contained-gate.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        work = self.root / 'work'
+        work.mkdir()
+        outside = self.root / 'host.json'
+        outside.write_text('{"secret":"must not read"}')
+        (work / 'backend.json').symlink_to(outside)
+        with self.assertRaises(CustodyError):
+            gate.work_json(work, 'backend.json')
+        with self.assertRaises(CustodyError):
+            gate.work_json(work, '../host.json')
+
     def test_tag_and_partial_id_never_authorize_image(self):
         for value in ('latest', 'image:tag', 'sha256:123', 'a' * 64):
             with self.subTest(value=value), self.assertRaises(CustodyError):
@@ -108,6 +148,7 @@ class ContainedCustodyContract(unittest.TestCase):
         owner.receipt.update(image_id='sha256:' + 'a' * 64, network='none', mounts=[], argv=['python3', '-c', 'pass'])
         valid = {'Image': owner.receipt['image_id'], 'Mounts': [],
                  'Config': {'User': f'{os.getuid()}:{os.getgid()}', 'Entrypoint': ['python3'], 'Cmd': ['-c', 'pass']},
+                 'NetworkSettings': {'Networks': {'none': {}}},
                  'HostConfig': {'NetworkMode': 'none', 'PidMode': '', 'IpcMode': 'private', 'Privileged': False,
                    'ReadonlyRootfs': True, 'CapDrop': ['ALL'], 'CapAdd': None, 'SecurityOpt': ['no-new-privileges=true'],
                    'Init': True, 'Devices': [], 'PortBindings': {}}}

@@ -144,6 +144,10 @@ class PreparedContext:
         versions = profile.get("prepared_peers", [])
         if sorted(versions) != sorted(self.control["peers"]):
             raise CustodyError("runtime peer projection differs")
+        if 'docker' in resolved.get('required_capabilities', []):
+            raise CustodyError('prepared runtime has no Docker capability; native peers are external_peer, not Docker')
+        if {'external_peer', 'prepared_peer'} & set(resolved.get('required_capabilities', [])) and not versions:
+            raise CustodyError('selected peer capability has no actual prepared peer')
         image_tests = {'groundhog-mdk-interop-image', 'groundhog-mdk011-interop-image', 'groundhog-mdk011-interop-image-mdk09'}
         if image_tests & set(resolved.get('tests', [])):
             raise CustodyError('original Docker image fixture selected in prepared route')
@@ -281,7 +285,9 @@ class ContainerOwner:
         expected = sorted((m["Source"], m["Destination"], m["RW"]) for m in self.receipt["mounts"])
         checks = [value["Image"] == self.receipt["image_id"],
                   host["NetworkMode"] == self.receipt["network"], host["PidMode"] == "",
-                  host["IpcMode"] == "private", not host["Privileged"], host["ReadonlyRootfs"],
+                  host["IpcMode"] == "private", not host.get('GroupAdd'),
+                  set(value.get('NetworkSettings', {}).get('Networks', {})) == {self.receipt['network']},
+                  not host["Privileged"], host["ReadonlyRootfs"],
                   set(host["CapDrop"] or []) == {"ALL"}, not host["CapAdd"],
                   set(host["SecurityOpt"] or []) == {"no-new-privileges=true"},
                   config["User"] == f"{os.getuid()}:{os.getgid()}", host["Init"] is True,

@@ -220,6 +220,21 @@ def validate_peer(path, source, expected):
     return record, file_hash(path)
 
 
+def work_file(work, relative):
+    path = Path(work) / relative
+    if (path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode)
+            or not path.resolve().is_relative_to(Path(work).resolve())):
+        raise CustodyError('runtime evidence must be a regular file inside owned work')
+    return path
+
+
+def work_json(work, relative):
+    path = work_file(work, relative)
+    if path.stat().st_size > 128 * 1024 * 1024:
+        raise CustodyError('runtime evidence JSON exceeds bounded admission size')
+    return json.loads(path.read_text())
+
+
 def run_lane(args):
     import contextlib
     import test_selection as selection
@@ -302,7 +317,7 @@ def run_lane(args):
         def admitted(created):
             write_json(control / 'run.json', {'binding': binding, 'profile': profile, 'peers': selected,
                        'owner': created.receipt, 'container_id': created.cid, 'timeout': args.timeout})
-        environment = {'HOME': '/tmp/home', 'PYTHONDONTWRITEBYTECODE': '1', 'MDK_DRIVER_ARTIFACT_DIR': '/work/vectors/011'}
+        environment = {'HOME': '/tmp/home', 'PYTHONDONTWRITEBYTECODE': '1'}
         # Docker Desktop can present read-only Git objects with remapped owners.
         # Trust only this inspected source and exact nested gitlinks, per process.
         safe = ['/source'] + ['/source/' + name for name in sorted(links)]
@@ -316,16 +331,20 @@ def run_lane(args):
             workdir='/source', binding=binding, before_start=admitted,
             on_running=lambda current: print('contained-gate: running ' + current.cid, file=sys.stderr, flush=True))
         if (work / 'backend.json').is_file():
-            normalized = json.loads((work / 'backend.json').read_text())
+            normalized = work_json(work, 'backend.json')
         normalized['contained_lifecycle'] = {'receipt': owner.receipt,
             'receipt_sha256': file_hash(owner.directory / 'custody.json'),
-            'runtime_state': json.loads((work / 'phase-state.json').read_text()) if (work / 'phase-state.json').exists() else None}
+            'runtime_state': work_json(work, 'phase-state.json') if (work / 'phase-state.json').exists() else None}
         normalized['original_image_builds'] = [{'registration': name, 'status': 'not_executed',
             'reason': 'distinct prepared-native route; original Docker build not executed'} for name in
             ('groundhog-mdk-interop-image', 'groundhog-mdk011-interop-image', 'groundhog-mdk011-interop-image-mdk09')]
         try:
             validate_lifecycle(normalized['contained_lifecycle'], plan, args.profile, profile,
                                normalized.get('profile_fingerprint'))
+            for path, expected in normalized['contained_lifecycle']['runtime_state'].get('artifacts', {}).items():
+                relative = Path(path).relative_to('/work')
+                if '..' in relative.parts or file_hash(work_file(work, relative)) != expected:
+                    raise CustodyError('runtime artifact changed before final namespace exit')
             if code or normalized['contained_lifecycle']['runtime_state']['status'] != 'succeeded':
                 raise CustodyError('contained runtime did not succeed')
         except (CustodyError, KeyError, TypeError) as exc:

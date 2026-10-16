@@ -15,7 +15,7 @@ from test_selection_custody import PreparedContext, file_hash, write_json
 
 def provision(capabilities, state):
     """Read actual service readiness, never sleep and infer availability."""
-    unsupported = set(capabilities) - {'display', 'private_bus', 'docker', 'external_peer'}
+    unsupported = set(capabilities) - {'display', 'private_bus', 'external_peer', 'prepared_peer'}
     if unsupported:
         raise RuntimeError('unsupported contained capabilities: ' + repr(sorted(unsupported)))
     if 'private_bus' in capabilities:
@@ -73,7 +73,11 @@ def main():
         result, code = cli.realization_command(args, policy, backend, custody=context)
         write_json('/work/backend.json', result)
         realized = backend.load_realization('/work/build', plan['source_identity'])
-        state.update(realization_fingerprint=realized['profile_fingerprint'], phase_context=realized['phase_context'],
+        artifacts = {}
+        vectors = Path('/work/build/mdk011-interop-artifacts/vectors.jsonl')
+        if vectors.is_file():
+            artifacts[str(vectors)] = file_hash(vectors)
+        state.update(artifacts=artifacts, realization_fingerprint=realized['profile_fingerprint'], phase_context=realized['phase_context'],
                      phase_context_hash=realized['phase_context_hash'], configure_argv=realized['commands'][0] if realized['commands'] else None,
                      prepared_cache=context.cache_values, compiler_toolchains=realized.get('toolchains'),
                      effective_configure_args=realized['profile']['configure_args'],

@@ -48,7 +48,7 @@ sys.exit(19 if os.environ.get('FIXTURE_MODE') == 'fail' else 0)
         profile = dict(platform='linux', architecture='native', compiler='unavailable-unused-compiler',
             build_type='Debug', instrumentation='none', source_dir='.', configure_args=[], environment={},
             capabilities=['private_bus', 'display'], parallelism=1, timeout_seconds=30, setup='contained fixture',
-            local_availability='host_or_container', execution_domain='prepared_peer_linux_v1', prepared_peers=[])
+            local_availability='host_or_container', contexts=['local'], execution_domain='prepared_peer_linux_v1', prepared_peers=[])
         self.policy = dict(schema_version=1, nodes={'app': dict(owner_paths=['app'], depends_on=[], rationale='fixture')},
             path_rules=[dict(prefix='app/', nodes=['app'], effect='impact', reason='fixture')]
                 + [dict(prefix=p, nodes=[], effect='global', reason='contract') for p in ('scripts/', 'tests/', '.gitignore')],
