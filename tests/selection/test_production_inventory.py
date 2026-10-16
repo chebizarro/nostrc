@@ -1,9 +1,7 @@
 """Production source evidence regressions; no miniature or hosted-pass equivalence."""
 import copy
 import json
-import tempfile
 import unittest
-from pathlib import Path
 
 from selector_support import ROOT, s
 from profile_contract_support import source_job_blocks, validate_job_accounting
@@ -25,10 +23,16 @@ class ProductionInventory(unittest.TestCase):
 
     def test_all_observed_failed_hosted_source_edges_reach_their_checks(self):
         evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())
-        self.assertEqual(len(evidence["audits"]), 2)
+        self.assertEqual(len(evidence["audits"]), 3)
         for audit in evidence["audits"]:
-            self.assertEqual(audit["source_sha"], "8a031f443ac84850345a4cf0fb6ab5a8c3b32814")
-            self.assertEqual(audit["evidence_kind"], "configure_source_input_audit_failed")
+            if audit["profile"] == "groundhog.linux.sanitizers":
+                self.assertEqual(audit["source_sha"], "b8dd3583766893e3b97e017dc063da5ed1c47413")
+                self.assertEqual(audit["evidence_kind"], "native_production_configure_input_audit_failed")
+                self.assertEqual(audit["actual_architecture"], "aarch64")
+                self.assertEqual(audit["declared_architecture"], "x86_64")
+            else:
+                self.assertEqual(audit["source_sha"], "8a031f443ac84850345a4cf0fb6ab5a8c3b32814")
+                self.assertEqual(audit["evidence_kind"], "configure_source_input_audit_failed")
             self.assertGreater(audit["original_gap_count"], 1000)
             for edge in audit["edges"]:
                 check = self.policy["checks"][edge["check"]]

@@ -725,3 +725,5 @@ if(BUILD_TESTING)
 
   endif()
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")

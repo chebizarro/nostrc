@@ -166,10 +166,69 @@ endif()
 # All remaining registrations retain conservative component ownership, but still
 # declare their actual GSETTINGS runtime/producer inputs. Target identity comes
 # from CTest's command and File API, never from a synthesized test-name prefix.
+# Literal command/target pairs observed in the real 412-registration Linux
+# export. GUI aliases share the actual executable; no name-to-target synthesis.
+set(_gh_remaining_targets
+    "groundhog-account|test-groundhog-account"
+    "groundhog-account-backends|test-groundhog-account-backends"
+    "groundhog-account-relays|test-groundhog-account-relays"
+    "groundhog-account-remote-switch|test-groundhog-account-remote-switch"
+    "groundhog-account-store|test-groundhog-account-store"
+    "groundhog-account-store-gui|test-groundhog-account-store"
+    "groundhog-account-ui|test-groundhog-account-ui"
+    "groundhog-attachment-ui|test-groundhog-attachment-ui"
+    "groundhog-attachments|test-groundhog-attachments"
+    "groundhog-auth-policy|test-groundhog-auth-policy"
+    "groundhog-blossom|test-groundhog-blossom"
+    "groundhog-composer|test-groundhog-composer"
+    "groundhog-contact-directory|test-groundhog-contact-directory"
+    "groundhog-conversation-info|test-groundhog-conversation-info"
+    "groundhog-conversation-info-gui|test-groundhog-conversation-info"
+    "groundhog-conversation-list|test-groundhog-conversation-list"
+    "groundhog-conversation-menu|test-groundhog-conversation-menu"
+    "groundhog-conversation-menu-gui|test-groundhog-conversation-menu"
+    "groundhog-diagnostics|test-groundhog-diagnostics"
+    "groundhog-dm-inbox|test-groundhog-dm-inbox"
+    "groundhog-dm-send|test-groundhog-dm-send"
+    "groundhog-e2e-dm|test-groundhog-e2e-dm"
+    "groundhog-expiry|test-groundhog-expiry"
+    "groundhog-identity|test-groundhog-identity"
+    "groundhog-issue-uploader|test-groundhog-issue-uploader"
+    "groundhog-media-cache-binding|test-groundhog-media-cache-binding"
+    "groundhog-mls-kp-lifecycle|test-groundhog-mls-kp-lifecycle"
+    "groundhog-mls-kp-lifecycle-adopted|test-groundhog-mls-kp-lifecycle-adopted"
+    "groundhog-multi-send|test-groundhog-multi-send"
+    "groundhog-net|test-groundhog-net"
+    "groundhog-new-message|test-groundhog-new-message"
+    "groundhog-nip29-group-list|test-groundhog-nip29-group-list"
+    "groundhog-nip29-service|test-groundhog-nip29-service"
+    "groundhog-nip46-inbox-nak|test-groundhog-nip46-inbox-nak"
+    "groundhog-nip46-pair-dialog|test-groundhog-nip46-pair-dialog"
+    "groundhog-nip46-pair-nak|test-groundhog-nip46-pair-nak"
+    "groundhog-notifier|test-groundhog-notifier"
+    "groundhog-notifier-gui|test-groundhog-notifier"
+    "groundhog-onboarding|test-groundhog-onboarding"
+    "groundhog-outbox|test-groundhog-outbox"
+    "groundhog-preferences|test-groundhog-preferences"
+    "groundhog-privacy-e2e|test-groundhog-privacy-e2e"
+    "groundhog-relay-guard|test-groundhog-relay-guard"
+    "groundhog-remote-feature-matrix|test-groundhog-remote-feature-matrix"
+    "groundhog-requests|test-groundhog-requests"
+    "groundhog-requests-gui|test-groundhog-requests"
+    "groundhog-tls-resumption|test-groundhog-tls-resumption")
 get_property(_gh_tests DIRECTORY PROPERTY TESTS)
 foreach(_test IN LISTS _gh_tests)
   get_property(_described TEST "${_test}" PROPERTY NOSTRC_SELECTION_DESCRIBED)
   if(NOT _described)
-    _gh_describe("${_test}" "" groundhog.unclassified)
+    set(_target "")
+    foreach(_pair IN LISTS _gh_remaining_targets)
+      string(REPLACE "|" ";" _parts "${_pair}")
+      list(GET _parts 0 _name)
+      if(_test STREQUAL _name)
+        list(GET _parts 1 _target)
+        break()
+      endif()
+    endforeach()
+    _gh_describe("${_test}" "${_target}" groundhog.unclassified)
   endif()
 endforeach()
