@@ -21,14 +21,18 @@ scripts/install-hooks.sh
 
 This installs the fast pre-push hook (static checks, no build; CI builds and tests).
 
-**Staged testing migration (2026-10-15):**
+**Staged testing migration (updated 2026-10-16):**
 Explicit diagnostic commands are now implemented: `scripts/test-gate.sh --help`
 and `scripts/test-gate.sh --base <sha> --head <sha> --explain` (plan only).
 `--profile libgo.macos.asan` selects the current standalone macOS/arm64 libgo
 ASan/UBSan diagnostic profile, not native root or complete CI coverage.
 `NOSTRC_SELECTIVE_GATE=1` adds the diagnostic adapter to existing push gates;
-it does not replace them. Missing capabilities, unsupported checks and incomplete
-coverage must remain visible failures, not bypassed passes.
+it does not replace them. A successful bounded diagnostic and `aggregate --partial`
+may pass while remaining `complete_gate_eligible=false`; excluded registrations
+(including the native libgo stress case) stay visibly `not_executed`, never passed.
+Missing capabilities and unsupported execution fail visibly. The outer adapter
+still refuses non-CTest and phase-aware shared-sanitizer execution; standalone MDK
+smoke success does not establish selector custody/finalization or complete coverage.
 
 See `docs/TESTING.md` for current explicit commands and rollout limitations,
 `docs/plans/dependency-aware-testing-ci-2026-10-15.md` for the specification/progress,

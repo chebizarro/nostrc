@@ -1,6 +1,8 @@
 # Dependency-aware testing — staged implementation receipt
 
-**Integration snapshot:** `017039eea6620caea791162e1646982abf3d69f4`, fast-forwarded into the assigned `.5` worktree. **Tracker:** `nostrc-0cfsg.5`, remains open/in progress. **Status:** explicit tooling/workflow interfaces implemented; **rollout acceptance NOT MET**. Documentation-only version assessment: **no bump**. No settings change, default cutover, schedule removal, merge back or push by this task; parent owns landing/push/cleanup.
+**Historical integration snapshot:** `017039eea6620caea791162e1646982abf3d69f4`, fast-forwarded into the assigned `.5` worktree. **Tracker:** `nostrc-0cfsg.5`, remains open/in progress. **Status:** explicit tooling/workflow interfaces implemented; **rollout acceptance NOT MET**. Documentation-only version assessment: **no bump**. No settings change, default cutover, schedule removal, merge back or push by this task; parent owns landing/push/cleanup.
+
+The dated [2026-10-16 continuation](#2026-10-16-continuation--integration-9c03e7712) below records the newer state. All receipts and outcomes in the original sections retain their original SHA and meaning, including the failed diagnostic lane and its rejected partial aggregate.
 
 ## Evidence and review resolutions
 
@@ -66,3 +68,71 @@ The publisher variable does not disable the independent general PR shadow entryp
 | `.6` | Existing workflow ShellCheck cleanup remains separately tracked; passing Actions syntax is not a claim that unrelated legacy shell cleanup is complete. |
 
 No new broad source review/Oracle retry or implementation was performed. Final parent confirmation now supplies the merged 172-test outcome; **no single-line pending-count update is needed**. Future updates require actual external rollout receipts or new acceptance work, not changing the failed native lane into a pass. `.5` and the remaining scoped implementation beads stay open.
+
+## 2026-10-16 continuation — integration 9c03e7712
+
+**Current source snapshot:** `9c03e77126d8f2f092b22bafbd79280fbaf10950`, fast-forward merged into the assigned documentation worktree; clean before this docs-only pass. It includes the coherent A/B/D/C/E changes and the new native-root report. This continuation supersedes current-status claims above that non-CTest core execution is unimplemented, that every partial diagnostic aggregate must fail, or that `.6` remains open. It does **not** rewrite the earlier failed-lane receipts, native SHA identities or historical 172-test result. **No component bump:** internal testing/documentation only. No production/runtime/helper/metadata edit, new Oracle review, default/enforcement/schedule/protection change, merge back or push by this pass.
+
+### New evidence, with bounded provenance
+
+| Evidence / source | Actual result and limit |
+|---|---|
+| Combined parent regression at `9c03e7712` | Parent confirms **244/244 tests passed, 0 skips, 58.163s**, clean unchanged source; retained `/tmp/nostrc-completion-final-selection.log` was spot-checked. Full actionlint **including ShellCheck** passed. Parent's final shell/static verification is **PENDING** at this snapshot, not inferred from an earlier branch's success. |
+| B slice `3a7c685e02ba9ad537153cf69e83c5db40df1ef2` | Reported **244/244 tests**, six shell regression suites and static checks passed. This is B's bounded slice evidence, distinct from the parent final verification above. |
+| Native selected libgo at `a21d25f7fdba6b5cb13c44cc837f3763773eb211` | Actual **32/32 passed, 0 skips/failures**, one indexed CTest invocation, **8.7923s**, zero post-build audit gaps, CLI **exit 0**, `job_conclusion=success`, **`diagnostic_eligible=true`**, **`complete_gate_eligible=false`**. Partial aggregate exits **0**, `passed=true`, `complete=false`; complete aggregate exits **1**, `passed=false`. This is a **DIAGNOSTIC success**, never complete/stress acceptance. Receipt/aggregates were read and hashes verified, not rerun in this docs pass. |
+| Real core command/build contracts | Implemented and actually exercised in native miniature projects, including prerequisite builds, bound argv/cwd/source/input identity, capability denial, missing/nonzero/stale evidence, drift and cancellation/process cleanup. `/tmp/nostrc-0cfsg7-native-a21d25f7/miniatures/proof-index.json` records eight retained miniature probes; combined regression provides further tests. Production profile union and outer guarded adapters remain separate acceptance. |
+| Active-language compiler correction `8db718cb1` | Compiler identity now follows languages actually compiled, while missing/ambiguous/incorrect active identities fail closed. Root **configure + resolve** evidence only; it is not shared root ASan execution or full input/profile-union acceptance. |
+| Root CI / sanitizer metadata `e6a381156` + `d3cf449e1`, integrated with B | `core.linux.asan` / `core.macos.asan` retain faithful root CI configure/command/environment and configured registration membership. `groundhog.linux.sanitizers` retains configure/build/test phase environments (0/0/5 entries), exact configured membership and target metadata. These are **configured membership/phase parity only**, not executed shared sanitizer receipts. Existing CI exclusions remain visible unexecuted gaps; no `.11` exclusion was added. |
+| Standalone MDK 0.11 final helper | Actual Docker/private-bus/throwaway-Secret-Service configure/build/fixture/consumer/cleanup smoke: **5/5 CTests**, 0 skips/failures, about **12.91s**; before/after read-only keychain guards passed. Receipt has `status=command_succeeded`, `exit_code=0`, `cleanup_complete=true`, **`complete=false`**. This is not guarded selector admission, full MDK 0.8/0.9 matrix, shared sanitizer or full-gate attestation. |
+| [Fresh native root QA](dependency-aware-testing-ci-2026-10-16-native-root-qa.md) at `84ae0896b0abd835935c264b872e9b184d616364` | First configure/all-default-target build/full serial CTest passed: **437 exact unique cases, 432 passed / 5 skipped / 0 failed/errors/disabled**. Private HOME/XDG/Unix bus/throwaway Secret Service, loopback-only outbound IP and read-only keychain guards passed. Receipt/JUnit/outcomes hashes and accounting independently spot-checked. **Groundhog OFF**, no GUI/live/profile-union acceptance; not a new run at `9c03e7712`. |
+
+`GoChannelStressTest` remains **`not_executed`**; its target was built only for discovered-header audit. The successful newer diagnostic receipt does not turn the excluded registration into a pass and does not make partial/incomplete evidence complete. The older `b0a31b0ab` lane/aggregate failures above remain true at that SHA.
+
+### Unsupported execution and actual failed custody proposal
+
+- The **core** real `command`/`build_contract` implementation is no longer missing. The **outer** `scripts/test-gate.sh` adapter still explicitly refuses selected non-CTest checks and unsupported Docker/external-peer capability admission. That refusal must not be described as lack of a core backend.
+- Shared phase-aware sanitizer **execution remains unsupported**. The outer adapter refuses phase-environment profiles; `NOSTRC_SANITIZER_SHARED_PROFILE` on the Linux sanitizer route exits 2 before Docker/build rather than falling back to a legacy tree and calling it shared proof. Exact phase metadata/parity cannot substitute for phase-aware configure/build/test environment application, fingerprinting, input audits and executed acceptance. No shared ASan/UBSan/LSan pass is claimed.
+- MDK **selector custody/finalization remains unsupported**. The inherited-socket/FD proposal failed an **actual CMake/Ninja/CTest chain**: the consumer saw `EBADF` on the control FD; CTest exited 8 and its guard failed. The negative probe note is `/tmp/nostrc-0cfsg8-ctest-fd-blocker.txt`; unaccepted verifier/outer attachment prototypes were archived as `/tmp/nostrc-0cfsg8-unaccepted-*`, **not shipped**. Direct subprocess probes did not prove CTest traversal. The standalone helper's state/environment and `complete=false` receipt confer no selector authority. No config fallback, listener/token redesign or new transport was authorized.
+- `.11` remains **unresolved**: CI heartbeat 18 / missed 3 / max gap 60.3 ms failed the original guard. The fresh root sample's four latency cases passed (9 / 0 / 15.0 ms), but it was non-sanitized/serial and does not establish the hosted cause. Prior bounded ASan/probe evidence is preserved separately in the new QA report. No threshold relaxation, exclusion, retries-as-acceptance or runtime/test correction is authorized.
+
+### Limited current CLI/docs verification
+
+At clean `9c03e7712`, this docs task ran planner/gate top-level help plus all eight planner subcommand helps: **10/10 exit 0**. Planner `explain` and gate `--explain` for base `84ae0896b0abd835935c264b872e9b184d616364`, head `9c03e77126d8f2f092b22bafbd79280fbaf10950`, profile `libgo.macos.asan`, plus gate broad/profile explain all exited **0** (2 checks / 1 lane; plan only). Policy-only `validate --inventory tests/selection/inventory.json` exited **0** with `enforcement_ready=false`; `--strict` returned the expected **1**. No configure/build/test was rerun by this CLI check.
+
+Current help confirms `resolve`/`run` need `--plan` and `--build-dir`, raw `run --phase {configure,build,test,all}`, and `aggregate --plan <plan.json> --receipt <receipt.json> --partial` for diagnostic-only aggregation. Exact source identity/admission is still required; examples do not authorize reusing a raw realization from a different checkout. Full output/argv/exit receipt: `/private/tmp/nostrc-0cfsg5-docs-9c03.JgrA7U`. Current help/limitations are reflected in [TESTING](../TESTING.md#dependency-aware-commands--explicit-diagnostics).
+
+New bounded SHA-256 anchors below are scoped to their named directories, not substituted for the older block above:
+
+```text
+# /tmp/nostrc-0cfsg7-native-a21d25f7/
+c8b7e8cdea6ce7c08cacf245ee4cb610511f0d8fec82d0d53126c6a70d08c853  receipt.json
+dd8b52d23e66f460604b9d80651c9639110418abca486a488a3272e0aa2cf2ea  aggregate-partial.json
+b96a60ef43e84f39583398e96b0ad5f5a743da36b03f5246865597ef596236d5  aggregate-complete.json
+# /private/tmp/nostrc-0cfsg5-native-20261016.2LRxvZ/
+b377e6b016514e8a0666aceb90b79ffbf0d50af25baa01551c410afc69bcaf8d  receipt.json
+c8fb9263af73866766d6a8c48c301c623670e99b403534b558477bb0d1e8c050  ctest.xml
+4f559a4ceb6763199a6d8a73eb30a291c4d04bf4c819f3c9fc5f2830685eebbb  outcomes.json
+# /tmp/nostrc-0cfsg8-peer/evidence-final-phase/b414c3bb2e964b8b91b1e61407fad70a/
+e5e4ccb9d9952f5cde3223b86d53086e25a4346a946a91e31e1d63af8dabe0d8  receipt.json
+# Parent combined Python log
+9a6e2b88cb727e9f2a0fbe7709d70257c9cc3d5c492e4ebe2bf3f3dde9de3b77  /tmp/nostrc-completion-final-selection.log
+# /private/tmp/nostrc-0cfsg5-docs-9c03.JgrA7U/
+f92c42d93e4f91e0377b75f0f87a9af7f31ecad902ea003749ecc18c085c3f16  receipt.json
+395ab873deecc8e29c4cbe995aa747cfe86d1bb101c0564ff6a2ac0a7c70b247  gate-help.out
+7e12eac82849674bcec37deb5e2fb04f57f8af841db50e50b4f45a4031a6ec4b  run-help.out
+2ba6624e67907a5711c65cc239baa32f317a5264da96b185bebcf003181badc3  aggregate-help.out
+```
+
+### Status and exact remaining acceptance
+
+| Bead | Current status / remaining boundary |
+|---|---|
+| `.6` | **CLOSED**: workflow ShellCheck cleanup; parent full actionlint including ShellCheck passes. This does not authorize workflow/default changes. |
+| `.10` | **CLOSED**: inventory exporter compatibility with declared CMake 3.22 restored and tested across old/current versions; internal metadata/build-contract correction, no shipped API/runtime change. |
+| `.7` | **OPEN / in progress**: real command/build contracts and native diagnostic eligibility are implemented; complete ownership/runtime/header/semantic/profile union, stress-gap acceptance and guarded capability integration are not complete. Root active-language fix is configure/resolve evidence only. |
+| `.8` | **OPEN / in progress**: chain-safe MDK selector custody/finalization and phase-aware shared sanitizer execution/audit acceptance remain unsupported; standalone smoke/parity/cleanup proofs are not substitutes. Full 0.8/0.9, concurrency/cancellation and hosted integration evidence remain distinct obligations. |
+| `.9` | **OPEN / in progress**: configured root/sanitizer metadata and observed membership/consumer edges are integrated, not complete executed workflow/profile/runtime/header/optional-variant union. Native stress, root-ASan execution-contract and platform/hosted evidence gaps stay explicit. |
+| `.11` | **OPEN**: source-grounded cause and deterministic verification remain unresolved; retain original latency guard and failure evidence. |
+| `.1`–`.5` / epic | Existing original scopes stay open. W1 representative five-sample costs, W11 **20 representative PRs / 2 broad integration runs**, exact release replacement/dry-run, selected-skip/cancellation/merge-group and no-gap protection/operator cutover proof remain unmet. W12 cleanup remains NOT RUN. |
+
+No default/enforce/requirement/schedule/protection cutover is authorized before W11/operator approval. Separate independent source review is not repeated or claimed approved by this docs handoff. Parent owns final shell/static confirmation, integration/merge/push and remaining acceptance; this continuation is documentation, not a completion attestation.
