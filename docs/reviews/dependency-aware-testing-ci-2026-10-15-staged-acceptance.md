@@ -2,7 +2,7 @@
 
 **Historical integration snapshot:** `017039eea6620caea791162e1646982abf3d69f4`, fast-forwarded into the assigned `.5` worktree. **Tracker:** `nostrc-0cfsg.5`, remains open/in progress. **Status:** explicit tooling/workflow interfaces implemented; **rollout acceptance NOT MET**. Documentation-only version assessment: **no bump**. No settings change, default cutover, schedule removal, merge back or push by this task; parent owns landing/push/cleanup.
 
-The dated [9c03e7712 continuation](#2026-10-16-continuation--integration-9c03e7712) and latest [post-review ae36f5a26 reconciliation](#2026-10-16-post-review-continuation--ae36f5a26) below record subsequent states. All receipts and outcomes retain their original SHA and meaning, including the failed diagnostic lane and the historical MDK smoke whose cleanup claim is now superseded.
+The dated [9c03e7712 continuation](#2026-10-16-continuation--integration-9c03e7712), [post-review ae36f5a26 reconciliation](#2026-10-16-post-review-continuation--ae36f5a26) and latest [bounded phase acceptance](#2026-10-16-bounded-phase-acceptance--90a1b675f) below record subsequent states. All receipts and outcomes retain their original SHA and meaning, including the failed diagnostic lane and the historical MDK smoke whose cleanup claim is now superseded.
 
 ## Evidence and review resolutions
 
@@ -154,3 +154,58 @@ No default/enforce/requirement/schedule/protection cutover is authorized before 
 **Verification provenance:** A-branch core regressions passed **251/251** at `732346a87`, with four static/compile/whitespace checks; these are not the combined integration suite. Parent confirms the combined run at **`ae36f5a2639ff1c28d6657621b8afb0d81771b2b`: 255/255 passed, 0 skips, 66.169s** (`/tmp/nostrc-completion-reviewed-selection.log`); **all six shell suites, four static checkers, full actionlint including ShellCheck and whitespace passed**. Subsequent `4956fcf2` changes were docs only; this adds no broad rereview or rollout approval. Earlier 244-test/six-shell/static/actionlint/whitespace results remain receipts at `9c03e7712`, not new runs at this SHA. Native-root **432 passed / 5 skipped** at `84ae0896b` and 32-case libgo diagnostics remain their own source-specific evidence, not current MDK lifecycle or complete acceptance.
 
 **Version and rollout:** no component bump for internal testing-tool fixes/documentation. `.6`, `.10`, `.12`, `.13`, `.14` are closed for their bounded scopes; `.8` and the other original acceptance scopes remain open. Shared sanitizer execution remains explicitly unsupported/refused; `.11` remains unresolved with no threshold/exclusion change. W11/W12, default/enforce/schedule/protection cutover and full ownership/profile union remain unmet/unchanged. This task edits documentation only, verifies links/whitespace and preserves the review findings; parent owns remaining verification, integration/push and rollout decisions.
+
+## 2026-10-16 bounded phase acceptance — 90a1b675f
+
+**Integration:** `90a1b675ffcc5e1483cc0603c7f53b8fb770f7f9`, fast-forward merged for this docs-only handoff. The older dated sections retain their receipts/limits; their blanket command/shared-phase refusals describe those earlier sources, not current implementation. **No component bump:** internal testing/metadata/docs. No default, enforcement, schedule, protection, threshold/exclusion or requirement change; no merge back or push by this task.
+
+### Implemented scope, not complete acceptance
+
+| Source / scope | Current bounded fact |
+|---|---|
+| `7bd6dc4b4` / `.15` CLOSED | Actual separate configure/build/test environments, `{source_root}` substitution, effective fingerprints/cache validation, source/template/header audits and all compatibility application targets. Real miniature execution is not the complete production profile/input union. |
+| `0b1e8705e` / `.19` CLOSED | Core pipe-byte capture across actual SIGTERM; parent reports **24 Linux / 278 native tests passed**. Separate from the outer wrapper defect below. |
+| `c115cc711` / `.16` | Ordinary outer `ctest`/`command`/`build_contract` execution and explicit `NOSTRC_SANITIZER_SHARED_PROFILE` route through real configure/build/audit/test phases. Unsupported capabilities and shared quarantine/retry overrides fail materially; legacy default/behavior unchanged. |
+| `7e3745463` / `.17` CLOSED | **98 literal runtime inputs**, tracked/discoverable-new-helper detection and **87 workflow-job records**, including the three new independent worker records. `.18` private exclusion-fixture work is also CLOSED; retained exclusions remain unexecuted, never promoted to passes. |
+| `853603b00` / `.21` | All **ten authored profiles** route independent jobs/conclusions. Source-routing/combined proof is green; parent plans closure separately. **No hosted acceptance yet.** |
+
+### Source-specific execution and review evidence
+
+- **Production command, not a miniature:** at exact `7e37454633611f8c5bc4b24dccbd9a39c8cf3629`, unmodified `static.policy` / `selection.contract` ran once on Ubuntu 24.04 **Linux/x86_64 under emulation**: **306 passed, 0 skips, 405.309s**, exit 0. Python 3.12.3, GCC 13.3, CMake 3.28.3, Ninja 1.11.1; independent shallow source clone/fresh build. Same-SHA post-input CLI audit: **99 hashes, `gaps=[]`, exit 0**, matching inventory/profile identity and clean source. Receipt has `diagnostic_eligible=true`, **`complete_gate_eligible=false`**. Artifacts: `/tmp/nostrc-017-accepted-evidence-7e3745463`; handoff `/tmp/nostrc-017-final-handoff.txt`. Earlier failed attempts remain distinct, not upgraded to this result.
+- **Parent native combined suite:** at `90a1b675ffcc5e1483cc0603c7f53b8fb770f7f9`, **306/306 passed, 0 skips, 146.958s**, `/tmp/nostrc-phase-combined-tests.log`. Parent separately confirms all six shell suites (`test-sanitizer-gate.sh`, `test-full-gate.sh`, `test-linux-gate-lifecycle.sh`, `test-linux-gate-smoke.sh`, `test-pre-push.sh`, `test-test-gate.sh`), four static checkers, full actionlint including ShellCheck and range whitespace passed at `83dfea3bb`. These are parent-confirmed source-specific gates, not reruns by this docs task.
+- **Independent review is not clean:** [review `eee130177`](dependency-aware-testing-ci-2026-10-16-phase-review.md) examined `83dfea3bbb39f48dd9ab9e6bc17fe2148b2d013b` and confirmed **one P2 R1 / `.22`**, supported-wrapper cancellation losing raw logs/finalized receipts. Its real Linux/private-bus adversary remains valid despite the green 306-test runs. **B's fix is in progress; final fix evidence and full-slice acceptance are pending.** The review's **304 passed / 2 metadata errors, 305.293s** remains historical at that SHA; `.17` reconciles the identified inputs/job accounting, not the R1 runtime defect. No successful Oracle actual-source review or broad approval is inferred.
+- **Actual sanitized MINI, not production Groundhog:** the B handoff `/tmp/nostrc-0cfsg16-handoff.txt` records native Linux/arm64 Docker execution of fixture source `6e353904a75ffac82e34a879b1c8017f5f391960`, separately compiling application and test with ASan/UBSan, then **1/1 CTest in one invocation**, leak detection enabled, actual source-root LSan path and **62 audited hashes/no gaps**. Partial aggregate passed; outer complete false. Retained artifacts `/private/tmp/nostrc-0cfsg16-docker-cgfhuk57`; no owned container remained and keychain guards passed. The external zsh harness's bookkeeping exit 1 is separate from verified passing lifecycle/core receipts, not a test retry. **Not production x86_64 Groundhog/full ASan/LSan, root, GUI/live or W11 acceptance.**
+
+### Fresh native root build only — 7fdadd251
+
+Fresh external private root build at **`7fdadd251329233561b92da97fdaf59a89e3df54`**: configure **exit 0 / 10.657s**, all-default-target build **exit 0 / 42.754s**, native macOS arm64, CMake **4.3.2**, Ninja **1.13.2**, AppleClang **21.0.0.21000334**. Actual commands:
+
+```sh
+cmake -S "$SOURCE" -B /tmp/nostrc-phase-native-build-qi6rgzv1/build -G Ninja \
+  -DNIP55L_SECRET_BACKEND=libsecret \
+  -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service
+cmake --build /tmp/nostrc-phase-native-build-qi6rgzv1/build --parallel 8
+```
+
+`SOURCE` was the assigned checkout of that exact SHA. Required flags were supplied; **Groundhog OFF**, so its backend flag was unused. Logs retain nonfatal build warnings. Recorded nostrdb/nsync/nested secp256k1 submodules were initialized without gitlink edits; `docs/nips` was not needed. Before/after read-only keychain guards exited 0, default/search list unchanged; HOME unchanged, private build/cache paths, no runtime apps/public relays, no default `_build` or sibling build removal. Source remained clean. **No CTest run**: no C/C++/ObjC/header/CMake changes since the prior 437-case QA at `84ae0896b`; that **432 passed / 5 skipped** receipt is not re-dated. Parent independently verified log hashes. Evidence `/tmp/nostrc-phase-native-build-evidence.json`, logs `/tmp/nostrc-phase-native-build-qi6rgzv1/`.
+
+Verified SHA-256 anchors (production metadata/result and native build evidence are distinct):
+
+```text
+9edce451c9a9c91dff45f2add5d7d1bf7b8bf9049a28cf1307942b877dfb96ab  7e3745463 result.json
+6babc7a1918722b6ff58eae5f43d90536c907b2865a5e1ea30a0092c3d16f260  7e3745463 post-inputs.json
+60653d09fb015ee3cb309072258545b91ceced32b1601d03189990db01e4999f  7fdadd251 configure.log
+e0a560d7dc525d01b26f37553f523a51d9b7648e1bb0fd98816ff9943b0ceb81  7fdadd251 build.log
+```
+
+### Historical hosted observations — 33a101276, not current proof
+
+Observed 2026-10-16 04:16:59 UTC, exact `33a1012767c9db5a46057280178134a544b86af7`; local summary `/tmp/nostrc-hosted-33a101276-evidence.json`. [Legacy root ASan run](https://github.com/chebizarro/nostrc/actions/runs/38845886016): Linux **266 passed / 1 skipped**, macOS **267 passed / 1 skipped**, both TCP skips; six separate audit tests passed per platform. Configured apps/GTK OFF, main-suite leak detection OFF, and existing three root exclusions retained; not unfiltered root/full LSan acceptance. Heartbeat passed once per platform but emitted no successful-log callback metrics; **`.11` causal diagnosis remains OPEN**, no threshold/exclusion waiver. [Debian homed job](https://github.com/chebizarro/nostrc/actions/runs/38845886048/job/116796200034) built **515/515** but all three CTest invocations found **no tests**: not test acceptance.
+
+[Static checks](https://github.com/chebizarro/nostrc/actions/runs/38845885985) failed the actual-SIGTERM empty-log assertion, leading to `.19`; this was an assertion failure, not an Actions cancellation. [Shadow selection](https://github.com/chebizarro/nostrc/actions/runs/38845886339) failed `inventory profile lacks Actions worker`, skipping workers and failing the dependency gate, leading to `.21`. Later source/local proofs do not rewrite those hosted failures or establish current hosted success.
+
+### Remaining acceptance / no cutover
+
+`.22` correction/final regression evidence remains pending; no final full-slice acceptance. `.7`/`.8`/`.9`/original scopes remain open for complete ownership/runtime/header/semantic/profile/platform union, native stress, production sanitizer and hosted evidence. MDK helper **always** has `cleanup_complete=false`; otherwise successful command phases still return nonzero `cleanup_unverified` (explicit scoped failures remain separate). Historical MDK smoke never proves selector custody/finalization or arbitrary-tree cleanup. `.11` remains unresolved.
+
+**W11 NOT MET / W12 NOT RUN:** representative five-sample clean/incremental costs, **20 representative PRs / 2 broad integration runs**, exact release replacement/dry-run, selected-skip/cancellation/merge-group and no-gap protection/operator cutover proof remain unmet. Keep legacy defaults/gates/triggers/schedules and publisher `disabled`/`shadow`/`enforce` semantics unchanged; do not enable enforcement or remove requirements/protections before W11/operator approval. This is bounded evidence/documentation, not rollout approval.

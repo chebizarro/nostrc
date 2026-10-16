@@ -37,7 +37,9 @@ manufacture acceptance or point a raw realization at another checkout.
 The planner also implements `plan`, `validate`, `resolve`, `check-inputs`, `run`,
 `aggregate`, and `release-plan`. Use each subcommand's `--help` for the exact flags:
 backend `resolve`/`run` require `--plan <plan.json>` and `--build-dir <dir>`;
-`resolve --configure --profile <id>` creates a fresh realization. Input auditing
+`resolve --configure --profile <id>` creates a fresh realization. `run --phase
+{configure,build,test,all}` exposes actual phase execution; each phase applies its
+own declared environment, source-path substitution and fingerprint. Input auditing
 uses `check-inputs --build-dir <dir> --profile <id> --plan <plan.json>` (add
 `--after-build` for discovered headers). These raw commands require the matching
 admitted execution checkout/source identity and are not substitutes for legacy
@@ -77,7 +79,7 @@ change developer keychain defaults/search lists. `.11`'s hosted sanitizer heartb
 failure remains unresolved: the native root pass does not authorize a threshold
 change, exclusion, retry waiver or runtime correction.
 
-### Implemented core contracts and still-refused adapters
+### Implemented phase/command contracts and remaining limits
 
 - The core backend now executes declared real `command` and `build_contract`
   checks, including prerequisite builds, bound argv/cwd/source/input identity,
@@ -87,20 +89,35 @@ change, exclusion, retry waiver or runtime correction.
   the original failure separately from cleanup errors. Fix `83a38d879` rejects a
   negative diagnostic decision in either outer or nested receipt even when the
   outer duplicate is absent. Native miniature executions establish those
-  contracts, not the complete production
-  profile union. The outer `scripts/test-gate.sh` adapter **still refuses selected
-  non-CTest checks** and guarded capabilities it cannot safely provide. Do not
-  mistake that adapter refusal for absence of the core implementation.
-- Active compiled-language compiler identity validation is fixed, including the
-  root configure/resolve path. That evidence is **configure + resolve only**, not
-  shared root ASan execution, input-union acceptance or a complete lane.
+  contracts, not the complete production profile union. Signal-capture fix
+  `0b1e8705e` additionally retains bytes across actual SIGTERM; parent reports
+  **24 Linux / 278 native tests passed**, separately from pending combined gates.
+  The outer `scripts/test-gate.sh` adapter now admits ordinary `ctest`, `command`
+  and `build_contract` checks, including exact-tree/snapshot execution and evidence.
+  Capabilities beyond supported display/private-bus isolation remain refused.
+  **Wrapped cancellation evidence loss remains open as `.22`**; ordinary unwrapped
+  cancellation success is not proof that supported wrappers finalize evidence.
+- Phase engine `7bd6dc4b4` actually applies separate configure/build/test
+  environments, `{source_root}` paths, fingerprints/cache validation and input
+  audits, including compatibility application prerequisites/targets. Earlier root
+  active-language compiler evidence was **configure + resolve only**; the newer
+  real miniature phase executions do not establish the production profile union.
 - `core.linux.asan` / `core.macos.asan` model the actual root CI configure/command/
   environment and configured registration membership. `groundhog.linux.sanitizers`
-  retains separate configure/build/test environment metadata (not a flattened
-  environment). These are **configured membership/phase-parity evidence only**.
-  Shared phase-aware sanitizer execution is explicitly unsupported: both the
-  outer adapter and reserved Linux shared route refuse, with no legacy fallback
-  presented as shared proof. No shared ASan/UBSan/LSan acceptance follows.
+  retains separate configure/build/test environments (not a flattened map).
+  Adapter `c115cc711` adds an explicit actual phase route:
+
+  ```sh
+  NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers \
+    scripts/linux-gate.sh --sanitizers "$PWD"
+  ```
+
+  It checks exact workflow/profile parity and capabilities, then configures,
+  builds all declared compatibility/application targets, audits discovered inputs,
+  tests once and partially aggregates. Unsupported quarantine/retry overrides fail;
+  no legacy fallback is shared proof, and the **legacy default is unchanged**.
+  Real native Linux/arm64 Docker sanitized MINI **1/1** establishes bounded adapter
+  execution, **not production x86_64 Groundhog/full ASan/LSan acceptance**.
 - The prior MDK 0.11 Docker/private-bus/throwaway-Secret-Service smoke's **5/5
   CTests** and passing read-only keychain guards remain **historical command/CTest
   evidence only**. Review F1 proved the old successful-cleanup assertion false for
@@ -123,7 +140,10 @@ change, exclusion, retry waiver or runtime correction.
   workers, and the always-evaluated `Dependency gate`. It is **not an accepted
   required check**. `dependency-broad.yml` calls existing broad families, including
   MDK/fuzz/extended BP; `release-validation.yml` requests exact-SHA broad validation.
-  Their presence is not evidence of successful hosted runs or complete coverage.
+  Distinct worker routing `853603b00` now maps **all ten authored profiles** to
+  independent jobs/conclusions, including both root ASan profiles and shared
+  Groundhog sanitizers. Inventory accounts for **87 workflow jobs**. This is source
+  routing/local-contract evidence, **not hosted acceptance**.
 - `NOSTRC_SELECTIVE_GATE=1` adds explicit diagnostic execution to the existing
   pre-push/full-gate path. Static default checks and existing broad verification
   requirements remain unchanged; this is not a selective-default switch.
@@ -135,6 +155,46 @@ change, exclusion, retry waiver or runtime correction.
   successful exact-SHA broad/complete validation and every applicable package
   result/artifact. Do not enable it before W11/operator cutover. This variable
   controls publisher validation, not whether general shadow PR workflows exist.
+
+### Current bounded handoff — 90a1b675f, 2026-10-16
+
+Metadata `.17` records **98 exact `selection.contract` inputs**, detects new
+tracked/discoverable helpers and accounts for the independent shadow jobs. Actual
+production Ubuntu 24.04 Linux/x86_64 `static.policy` command execution at
+`7e3745463`: **306 passed / 0 skips, 405.309s**, same-SHA post-input audit
+**99 hashes / `gaps=[]`**, clean checkout, `diagnostic_eligible=true`,
+**`complete_gate_eligible=false`**. Parent native combined suite at `90a1b675f`:
+**306/306 passed / 0 skips, 146.958s**. Parent's six shell suites, four static
+checkers, full actionlint including ShellCheck and range whitespace passed at
+`83dfea3bb`; these are distinct-source receipts, not reruns by this docs task.
+
+Independent [review `eee130177`](reviews/dependency-aware-testing-ci-2026-10-16-phase-review.md)
+of `83dfea3bb` confirmed one P2 wrapped-cancellation evidence bug (`.22`); its fix
+is in progress, **not resolved/review-clean**. The passing combined suite does
+**not** invalidate that real adversary or grant final full-slice acceptance.
+The review's two known metadata errors remain historical at its source.
+
+Fresh native root configure/all-default-target **build only** at `7fdadd251`
+passed (CMake 4.3.2/Ninja 1.13.2/AppleClang 21, arm64). Logs/hashes and safety
+checks are in `/tmp/nostrc-phase-native-build-evidence.json`, independently
+parent-verified. No CTest rerun: no compiled sources/CMake changed since the prior
+437-case QA. Groundhog stayed OFF; both required backend flags were supplied,
+but its backend flag was unused. Read-only keychain guards passed unchanged;
+external private build/cache paths preserved default `_build` and developer HOME.
+This does not re-date the prior CTest receipt or establish GUI/live/W11 acceptance.
+
+The dated hosted `33a101276` observations remain separate: root ASan **Linux
+266 passed / 1 skipped**, **macOS 267 passed / 1 skipped**; Debian built but found
+no tests. Heartbeat passed in those samples but `.11` cause remains unresolved.
+Static cancellation and shadow routing failed, leading to `.19`/`.21`; these
+historical jobs do not prove current workers or a clean current integration.
+Full provenance/limits are in the [bounded phase acceptance section](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-bounded-phase-acceptance--90a1b675f).
+MDK custody/cleanup, complete ownership/runtime/header/semantic/profile union,
+production sanitizer/hosted proof and W11/W12 remain unmet. No default/enforcement,
+threshold, schedule, requirement or protection cutover before W11/operator approval.
+**No component bump:** internal testing/documentation only.
+
+### Historical post-review verification
 
 At integration `ae36f5a2639ff1c28d6657621b8afb0d81771b2b`, `.6` (workflow
 ShellCheck), `.10` (CMake 3.22 inventory compatibility), and review-fix beads `.12`
@@ -165,7 +225,7 @@ rereview is claimed**. A-branch core regressions passed **251 tests** at
 checkers, full actionlint including ShellCheck, and whitespace passed. Subsequent
 `4956fcf2` changes were docs only; this is not a new source review. The older 172-test result at `017039eea`
 remains a dated historical receipt.
-Current bounded evidence, source-specific hashes and remaining acceptance are in
+That dated bounded evidence and its source-specific hashes remain in
 the [2026-10-16 continuation](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712).
 Documentation/internal-testing changes require **no component bump**.
 
