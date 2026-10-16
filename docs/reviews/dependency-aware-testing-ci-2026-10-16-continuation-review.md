@@ -150,7 +150,7 @@ Parent should address **F1–F3** through the three open beads and add the targe
 
 **Superseded cleanup claim:** the prior standalone MDK 0.11 smoke's **5/5 CTests** remains historical command/CTest evidence only. Its old `cleanup_complete=true` / successful-cleanup claim is superseded by F1 and `85a2e2ab`; it proves neither detached-tree quiescence nor current successful full lifecycle. There is **no current successful full-lifecycle proof**, no new live smoke, and no selector custody/finalization acceptance. The inherited-FD proposal remains failed/archived/not shipped.
 
-Parent performed source spot-checks of the fixes, **not a broad rereview**. The parent combined suite at `ae36f5a26` is still running / result **PENDING** at this documentation snapshot; no expected or final count is asserted. The earlier 244-case independent review run and the newer A-branch 251-case result are distinct receipts, not the combined result.
+Parent performed source spot-checks of the fixes, **not a broad rereview**. Parent confirms the combined suite at **`ae36f5a2639ff1c28d6657621b8afb0d81771b2b`: 255/255 passed, 0 skips, 66.169s** (`/tmp/nostrc-completion-reviewed-selection.log`); **all six shell suites, four static checkers, full actionlint including ShellCheck and whitespace passed**. Subsequent `4956fcf2` changes were docs only; this is result accounting, not a broad rereview. The earlier 244-case independent review run and the newer A-branch 251-case result are distinct receipts, not the combined result.
 
 Local evidence anchors (temporary files, not durable hosted artifacts):
 

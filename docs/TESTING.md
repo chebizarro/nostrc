@@ -159,8 +159,11 @@ from B's earlier pass. The delivered [source review at `9c03e7712`](reviews/depe
 (`24b7bb987`) retains confirmed F1–F3; its appended resolution status records
 `85a2e2ab`, `83a38d879`, `732346a87`. Parent spot-checked the fixes; **no broad
 rereview is claimed**. A-branch core regressions passed **251 tests** at
-`732346a87`; the parent combined suite at `ae36f5a26` is **still running / result
-pending**, with no final count asserted. The older 172-test result at `017039eea`
+`732346a87`; parent confirms the combined suite at
+`ae36f5a2639ff1c28d6657621b8afb0d81771b2b`: **255/255 passed, 0 skips, 66.169s**
+(`/tmp/nostrc-completion-reviewed-selection.log`). All six shell suites, four static
+checkers, full actionlint including ShellCheck, and whitespace passed. Subsequent
+`4956fcf2` changes were docs only; this is not a new source review. The older 172-test result at `017039eea`
 remains a dated historical receipt.
 Current bounded evidence, source-specific hashes and remaining acceptance are in
 the [2026-10-16 continuation](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712).
