@@ -146,6 +146,13 @@ jobs:
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" > "$RUNNER_TEMP/package-artifacts.json"
           python3 .github/workflows/dependency_contract.py publish-gate --sha "$REQUESTED_SHA" \
             --publisher windows --release-mode "$RELEASE_MODE" --needs "$RUNNER_TEMP/package-needs.json" --artifacts "$RUNNER_TEMP/package-artifacts.json"
+      - name: Retain publication decision (not a validation receipt)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-publication-decision-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/publication.json
+          if-no-files-found: warn
 
   release:
     name: Create Release

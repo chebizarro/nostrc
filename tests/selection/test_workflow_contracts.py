@@ -188,6 +188,28 @@ class EventToWorkerTests(GitCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(json.loads((directory / "release.json").read_text())["publish"])
 
+    def test_staged_publication_cli_rechecks_identity_and_records_no_validation_pass(self):
+        result, _, directory = self.invoke('workflow_dispatch', {}, command='release-identity', args=('--component', 'app', '--dry-run'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        needs = {job: {'result': 'skipped'} for job in ci.PUBLISHER_JOBS['main']}
+        needs.update({'build-source': {'result': 'success'}, 'validation': {'result': 'skipped'}})
+        (directory / 'needs.json').write_text(json.dumps(needs))
+        (directory / 'artifacts.json').write_text(json.dumps([{'artifacts': [{'name': 'source', 'id': 1, 'size_in_bytes': 1}]}]))
+        args = ('--publisher', 'main', '--release-mode', 'disabled', '--needs', str(directory / 'needs.json'), '--artifacts', str(directory / 'artifacts.json'))
+        result, outputs, _ = self.invoke('workflow_dispatch', {}, command='publish-gate', args=args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        decision = json.loads((directory / 'publication.json').read_text())
+        self.assertEqual(outputs['artifact_ids'], '1')
+        self.assertEqual(decision['validation_status'], 'staged_disabled')
+        self.assertIsNone(decision['validation_passed'])
+        self.assertFalse(decision['publish'])
+        release = json.loads((directory / 'release.json').read_text())
+        release['source_identity']['sha'] = self.base
+        (directory / 'release.json').write_text(json.dumps(release))
+        result, outputs, _ = self.invoke('workflow_dispatch', {}, command='publish-gate', args=args)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('artifact_ids', outputs)
+
     def test_wrong_tag_sha_cannot_route_to_worker(self):
         self.git("tag", "app-v1.2.3", self.base)
         self.assertNotEqual(self.invoke("push", {}, ref="refs/tags/app-v1.2.3")[0].returncode, 0)
@@ -290,6 +312,17 @@ class PublicationTests(unittest.TestCase):
 
 
 class NativeProfileTests(unittest.TestCase):
+    def test_shared_metrics_header_has_input_owner_without_library_cycle(self):
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        classified = s.classify(p, 'libnostr/include/nostr/metrics.h')
+        self.assertEqual(classified['nodes'], ['libnostr.metrics_header'])
+        self.assertEqual(p['nodes']['libnostr.metrics_header']['depends_on'], [])
+        self.assertIn('libnostr.metrics_header', p['nodes']['libgo']['depends_on'])
+        self.assertNotIn('libnostr', p['nodes']['libgo']['depends_on'])
+        affected = s.impact_closure(p, {'libnostr.metrics_header'})
+        self.assertIn('libgo', affected)
+        self.assertIn('libnostr', affected)
+
     def test_existing_macos_libgo_profile_is_faithful_and_stress_gap_is_not_passed(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         profile = p['profiles']['libgo.macos.asan']

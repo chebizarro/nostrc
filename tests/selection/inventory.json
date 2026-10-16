@@ -1303,13 +1303,14 @@
     },
     "libgo": {
       "depends_on": [
-        "vendor.nsync"
+        "vendor.nsync",
+        "libnostr.metrics_header"
       ],
       "id": "libgo",
       "owner_paths": [
         "libgo"
       ],
-      "rationale": "libgo links nsync; changes affect downstream consumers."
+      "rationale": "libgo links nsync and directly includes libnostr/include/nostr/metrics.h. The header is an independent input node so this dependency does not introduce a libgo/libnostr production cycle."
     },
     "libhanami": {
       "depends_on": [],
@@ -1335,6 +1336,12 @@
         "libmarmot"
       ],
       "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "libnostr.metrics_header": {
+      "depends_on": [],
+      "id": "libnostr.metrics_header",
+      "owner_paths": ["libnostr/include/nostr/metrics.h"],
+      "rationale": "Shared header input directly consumed by libgo; header ownership must not imply a dependency on the downstream libnostr library."
     },
     "libnostr": {
       "depends_on": [
@@ -2524,6 +2531,12 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "libnostr/include/nostr/metrics.h",
+      "nodes": ["libnostr.metrics_header"],
+      "effect": "impact",
+      "reason": "Shared metrics declaration header is consumed directly by libgo and its downstream libnostr consumers; do not model a library cycle."
+    },
     {
       "effect": "impact",
       "nodes": [

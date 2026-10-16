@@ -240,15 +240,24 @@ def main():
             selection.write_json(directory / "validation.json", result)
         else:
             release = selection.read_json(directory / "release.json")
+            expected_release = selection.release_plan(ROOT, policy, head=args.sha, tag=release['tag'],
+                                                       component=release['identity'], dry_run=release['dry_run'],
+                                                       run_id=release.get('run_id'))
+            selection.require(release == expected_release, "release identity artifact does not match exact checkout/policy")
             validation_path = directory / "validation.json"
             validation = selection.read_json(validation_path) if validation_path.exists() else None
             result = publish_gate(release, args.publisher, validation, needs, args.release_mode)
-            selection.write_json(directory / "publication.json", result)
             pages = selection.read_json(args.artifacts)
             artifacts = [a for page in pages for a in page["artifacts"]]
             # Use actual applicability here, including deliberately skipped jobs.
             ids = package_artifacts(release, args.publisher, artifacts)
+            result.update(gate="publication", package_artifact_ids=ids, tested_sha=args.sha, tag=release['tag'])
+            selection.write_json(directory / "publication.json", result)
             outputs({"publish": str(result["publish"]).lower(), "artifact_ids": ",".join(ids)})
+            summary = os.environ.get('GITHUB_STEP_SUMMARY')
+            if summary:
+                with open(summary, 'a') as stream:
+                    stream.write(f"Publication gate: {result['validation_status']}; validation required: {result['validation_required']}\\n")
         print(json.dumps(result, indent=2))
         return 0 if result["passed"] else 1
     except (selection.ContractError, selection.CheckFailure, OSError, ValueError, KeyError) as exc:
