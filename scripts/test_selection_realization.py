@@ -1315,7 +1315,7 @@ def _ninja_headers(realization):
     return headers
 
 
-def check_inputs(inventory, realization, source_identity=None, *, after_build=False):
+def check_inputs(inventory, realization, source_identity=None, *, after_build=False, custody=None):
     """Audit EVERY registered execution, including omitted tests; return gaps.
 
     A failed audit is never a passing selective receipt, even after broad recovery.
@@ -1325,6 +1325,12 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     _validate_phase_context(realization)
     if source_identity is not None and _identity(source_identity) != realization["source_identity"]:
         raise RealizationError("input audit identity mismatch")
+    prepared_inputs = {}
+    if custody is not None:
+        from test_selection_custody import PreparedContext
+        if not isinstance(custody, PreparedContext):
+            raise RealizationError('prepared audit requires live contained context')
+        prepared_inputs = custody.audit_inputs(realization)
     tests, descriptors = _metadata(inventory, realization)
     exclusions = _baseline_exclusions(inventory, realization, tests, descriptors)
     excluded_names = {n for exclusion in exclusions for n in exclusion["registrations"]}
@@ -1448,6 +1454,12 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                     gap("generated_runtime_without_target", test=name, input=value)
                 continue
             if relative is None:
+                if kind == 'runtime' and value in prepared_inputs:
+                    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                    if path.is_symlink() or actual != prepared_inputs[value]['binary_sha256']:
+                        raise RealizationError('prepared audit input bytes differ: ' + value)
+                    fingerprints[value] = actual
+                    continue
                 if kind in ("runtime", "source"):
                     gap("external_input", test=name, input=value)
                 if path.is_file() and kind in ("header", "ninja") and value not in fingerprints:
@@ -1513,6 +1525,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "command_specs_hash": _hash(specs),
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
+    if prepared_inputs:
+        result['prepared_inputs'] = prepared_inputs
+        result['complete_gate_eligible'] = False
     result["audit_hash"] = _hash(result)
     return result
 

@@ -341,7 +341,14 @@ def run_lane(args):
         try:
             validate_lifecycle(normalized['contained_lifecycle'], plan, args.profile, profile,
                                normalized.get('profile_fingerprint'))
-            for path, expected in normalized['contained_lifecycle']['runtime_state'].get('artifacts', {}).items():
+            runtime_state = normalized['contained_lifecycle']['runtime_state']
+            if runtime_state['backend_sha256'] != file_hash(work_file(work, 'backend.json')):
+                raise CustodyError('runtime backend changed before final namespace exit')
+            if runtime_state['cache_sha256'] is not None and runtime_state['cache_sha256'] != file_hash(work_file(work, 'build/CMakeCache.txt')):
+                raise CustodyError('runtime cache changed before final namespace exit')
+            if runtime_state['phase_context_hash'] != normalized['phase_context_hash'] or runtime_state['phase_context'] != normalized['phase_context']:
+                raise CustodyError('runtime/normalized phase context differs')
+            for path, expected in runtime_state.get('artifacts', {}).items():
                 relative = Path(path).relative_to('/work')
                 if '..' in relative.parts or file_hash(work_file(work, relative)) != expected:
                     raise CustodyError('runtime artifact changed before final namespace exit')

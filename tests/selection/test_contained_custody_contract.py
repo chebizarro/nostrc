@@ -106,6 +106,19 @@ class ContainedCustodyContract(unittest.TestCase):
         with self.assertRaises(CustodyError):
             gate.work_json(work, '../host.json')
 
+    def test_audit_rejects_a_mapping_in_place_of_live_namespace_context(self):
+        import test_selection_realization as realization
+        with patch.object(realization, '_validate_phase_context'), self.assertRaisesRegex(
+                realization.RealizationError, 'live contained context'):
+            realization.check_inputs({}, {}, custody={'peers': {'011': {}}})
+
+    def test_peer_audit_cannot_reuse_a_different_profile(self):
+        from test_selection_custody import PreparedContext
+        context = object.__new__(PreparedContext)
+        context.control = {'profile': {'execution_domain': 'prepared_peer_linux_v1'}}
+        with self.assertRaisesRegex(CustodyError, 'audit profile differs'):
+            context.audit_inputs({'profile': {}})
+
     def test_tag_and_partial_id_never_authorize_image(self):
         for value in ('latest', 'image:tag', 'sha256:123', 'a' * 64):
             with self.subTest(value=value), self.assertRaises(CustodyError):

@@ -103,7 +103,8 @@ def validate_lifecycle(lifecycle, plan, profile_id, profile, fingerprint):
     state = lifecycle['runtime_state']
     if (state['status'] != 'succeeded' or state['container_id'] != receipt['container_id']
             or state['run_id'] != receipt['run_id'] or state['realization_fingerprint'] != fingerprint
-            or state['effective_configure_args'] != profile['configure_args']):
+            or state['effective_configure_args'] != profile['configure_args']
+            or state['phase_context_hash'] != digest(state['phase_context'])):
         raise CustodyError('contained runtime/cache/profile execution did not finalize')
 
 
@@ -164,6 +165,17 @@ class PreparedContext:
         for version, peer in self.control["peers"].items():
             if file_hash('/peers/' + version + '/driver') != peer["binary_sha256"]:
                 raise CustodyError("prepared runtime peer bytes changed")
+
+    def audit_inputs(self, realization):
+        """Admit only inspected read-only native peer bytes, not arbitrary externals."""
+        profile = self.control['profile']
+        if realization['profile'] != profile:
+            raise CustodyError('runtime audit profile differs')
+        self.validate({**{key: realization[key] for key in ('source_identity', 'inventory_hash', 'profile_id', 'build_dir')},
+            'plan_id': self.control['binding']['plan_id'], 'profile_hash': digest(profile),
+            'required_capabilities': profile.get('capabilities', []),
+            'tests': [test['name'] for test in realization['tests']]})
+        return {'/peers/' + version + '/driver': peer for version, peer in self.control['peers'].items()}
 
 
 class Cancel:

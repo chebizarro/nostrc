@@ -100,7 +100,8 @@ def realization_command(args, policy, backend, *, custody=None):
             raise selection.CheckFailure(f"realization {field} does not match admitted execution checkout: {expected}")
     selection.require(realized["profile_id"] == args.profile and realized["profile"] == profile and realized["inventory_hash"] == selection.digest(policy), "realization policy/profile mismatch")
     if args.command in {"validate", "check-inputs"}:
-        audit = backend.check_inputs(policy, realized, identity, after_build=args.after_build)
+        audit = backend.check_inputs(policy, realized, identity, after_build=args.after_build,
+                                     **({'custody': custody} if custody is not None else {}))
         return audit, 0 if audit["passed"] else 1
     selection.require(plan is not None, "resolve/run requires --plan")
     resolved = backend.resolve_checks(policy, plan, realized, args.profile)
@@ -116,7 +117,8 @@ def realization_command(args, policy, backend, *, custody=None):
         custody.validate(resolved)
     elif set(resolved.get("required_capabilities", [])) & {"docker", "external_peer"}:
         raise selection.CheckFailure("live peer/image lifecycle requires the existing guarded adapter")
-    audit = backend.check_inputs(policy, realized, identity, after_build=False)
+    audit = backend.check_inputs(policy, realized, identity, after_build=False,
+                                 **({'custody': custody} if custody is not None else {}))
     if not audit["passed"]:
         return audit, 1
     if args.phase == "configure":
@@ -145,7 +147,8 @@ def realization_command(args, policy, backend, *, custody=None):
         if returncode:
             raise selection.CheckFailure(f"selected prerequisite build failed: {returncode}; retained {logfile}")
     realized = backend.load_realization(args.build_dir, identity)
-    audit = backend.check_inputs(policy, realized, identity, after_build=True)
+    audit = backend.check_inputs(policy, realized, identity, after_build=True,
+                                 **({'custody': custody} if custody is not None else {}))
     if not audit["passed"]:
         return audit, 1
     if args.phase in {"configure", "build"}:
