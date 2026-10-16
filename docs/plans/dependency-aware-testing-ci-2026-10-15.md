@@ -1,10 +1,10 @@
 # Dependency-aware testing and CI/CD
 
-**Status:** Specification complete; explicit local tooling and shadow/release-staging workflows are integrated at `017039eea`. Review fixes and 172-test regression result confirmed; native root and selected-CLI execution receipts recorded with skips/exclusion limits. Full profile/ownership/live-adapter and W11/W12 acceptance remain incomplete. No default cutover.
+**Status (2026-10-16):** Coherent staged integration at `9c03e77126d8f2f092b22bafbd79280fbaf10950`; parent confirms 244/244 regression tests (0 skips, 58.163s) and full actionlint including ShellCheck. Parent also confirms all six shell suites, four static checkers and range whitespace passed; independent review remains in progress/pending. Real core command/build contracts and bounded libgo diagnostic success are implemented; full profile/ownership, guarded MDK custody, shared sanitizer execution and W11/W12 acceptance remain incomplete. No default/enforce/schedule/protection cutover. Historical receipts retain their exact SHAs; current progress is §11.
 
 **Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
 
-Sections 2–7 retain the implementation specification and historical planning evidence. Execution progress is recorded in §§8–10; §10 and `docs/TESTING.md` distinguish implemented explicit commands from still-proposed/unaccepted behavior. The specification alone is not implementation or rollout evidence.
+Sections 2–7 retain the implementation specification and historical planning evidence. Execution progress is recorded in §§8–11; §11 and `docs/TESTING.md` distinguish current implemented explicit commands from still-proposed/unaccepted behavior. Sections 8–10 retain their dated snapshots, not current pending/completion claims. The specification alone is not implementation or rollout evidence.
 
 ## Goal
 
@@ -1083,7 +1083,7 @@ The final fidelity pass retained the planning response's applicable current-stat
 
 ## 10. Staged integration / final documentation receipt
 
-**Current snapshot:** `017039eea6620caea791162e1646982abf3d69f4`. **Bounded evidence:** [staged implementation receipt](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md). This supersedes the earlier phases' pending-interface/review status without rewriting their historical execution receipts. **No component bump:** documentation only.
+**Historical snapshot:** `017039eea6620caea791162e1646982abf3d69f4`. **Bounded evidence:** [staged implementation receipt](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md). This supersedes the earlier phases' pending-interface/review status without rewriting their historical execution receipts. **No component bump:** documentation only.
 
 ### Implemented and verified, with distinct evidence provenance
 
@@ -1103,3 +1103,33 @@ The final fidelity pass retained the planning response's applicable current-stat
 - `.5`/epic: representative five-sample clean/incremental cost baseline, **20 PR / 2 broad integration runs**, release replacement/dry-run, skip/cancellation/merge-group and no-gap protection/cutover evidence. W12 default/trigger/schedule cleanup remains NOT RUN. `.6` separately tracks existing workflow ShellCheck cleanup.
 
 All scoped beads remain open; no completion/savings/protection claim follows from the passing regression suite or from failed-lane native execution. Final docs pass is documentation-only; parent owns landing/push/branch cleanup after review. No merge back or push by `.5`.
+
+## 11. Dated continuation — coherent integration, 2026-10-16 UTC
+
+**Snapshot:** `9c03e77126d8f2f092b22bafbd79280fbaf10950`, fast-forward merged into the assigned documentation worktree. **Evidence:** [dated staged-acceptance continuation](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712), [fresh native-root QA](../reviews/dependency-aware-testing-ci-2026-10-16-native-root-qa.md). Sections 8–10 remain historical: their native failures, aggregate rejections, counts and SHAs are not rewritten. This docs-only continuation requires **no component bump** and does not close the original scope beads.
+
+### Implemented progress versus remaining acceptance
+
+- **W2–W5 / `.7`: real contracts implemented.** The core backend executes real declared command/build-contract checks, with prerequisite builds, argv/cwd/source/input binding, capability/evidence checks, cancellation/nonzero handling and actual native miniature coverage. The outer local adapter still refuses non-CTest/unsupported capabilities; full production profile/input/semantic union and guarded integration remain open.
+- **Native diagnostic eligibility is now truthful success, not completeness.** Actual `a21d25f7f` standalone libgo receipt: **32/32 passed**, no skips/failures, one CTest `-I`, 8.7923s, zero audit gaps, CLI exit 0 / `job_conclusion=success` / `diagnostic_eligible=true`. Partial aggregate passes (exit 0); **`complete_gate_eligible=false`**, complete aggregate fails (exit 1). Stress target is built for header audit only; `GoChannelStressTest` stays **`not_executed`**, never a stress pass. This newer receipt supersedes the current-status interpretation, not the actual failed `b0a31b0ab` receipt in §10.
+- **Root active-language compiler fix `8db718cb1`: configure + resolve only.** Missing/ambiguous/incorrect active identities still fail closed. Root realization acceptance must not be expanded into root-ASan execution, shared sanitizer or full lane acceptance.
+- **W7/W8 / `.8`–`.9`: faithful metadata, not execution.** Root CI ASan profiles retain actual configure/command/environment and configured registrations; shared Groundhog sanitizer metadata retains separate configure/build/test environments and configured membership. The observed poll-background consumer edge is retained. **Shared phase-aware sanitizer execution remains explicitly unsupported/refused** in core integration/outer/Linux shared routes; no legacy fallback is shared proof. Phase environment application/fingerprinting, input audits and actual ASan/UBSan/LSan execution acceptance remain open.
+- **W6 / `.8`: actual standalone MDK 0.11 smoke, not selector admission.** Final helper configured/built and ran **5/5 CTests**, 0 skips/failures, about 12.91s, using Docker/private bus/throwaway Secret Service and passing before/after keychain guards; cleanup completed, receipt **`complete=false`**. Selector custody/finalization remains unsupported. The inherited-FD proposal failed actual CMake/Ninja/CTest traversal (`EBADF`, CTest exit 8); unaccepted prototypes/negative probe were archived outside the repository, **not shipped**. No fallback/transport redesign or full 0.8/0.9/shared-sanitizer acceptance is implied.
+- **Fresh compiled-source QA:** at `84ae0896b0abd835935c264b872e9b184d616364`, fresh native root configure/all-default-target build/full first serial CTest passed: **437 exact unique cases; 432 passed, 5 skipped, 0 failures/errors/disabled**. Receipt/JUnit/outcomes hashes were independently verified. Required private HOME/XDG/Unix bus/throwaway Secret Service and keychain guards passed. **Groundhog OFF** remains root QA, not GUI/live/profile union; no new run at `9c03e7712` is asserted.
+- **`.11` remains unresolved.** Hosted sanitizer heartbeat failure is retained with original thresholds/exclusions unchanged. The root non-sanitized serial pass and bounded ASan/deterministic probes do not establish cause or authorize a runtime/test correction.
+
+### Current source verification and bead status
+
+Parent confirms at clean `9c03e7712`: **244/244 Python tests, 0 skips, 58.163s** (`/tmp/nostrc-completion-final-selection.log`), and full actionlint including ShellCheck passes. B's `3a7c685e02ba` slice separately passed 244 tests, six shell suites and static checks. Parent now also confirms **all six shell suites passed** at `9c03e7712`: `test-sanitizer-gate.sh`, `test-full-gate.sh`, `test-linux-gate-lifecycle.sh`, `test-linux-gate-smoke.sh`, `test-pre-push.sh`, `test-test-gate.sh`; **all four static checkers and range whitespace passed**. The parent wrapper initially named nonexistent `test-linux-gate.sh`, then corrected its invocation to the real lifecycle suite; this was not a test failure/retry. Independent review remains **in progress / pending**; the B result is not substituted for parent verification. Limited docs verification at `9c03e7712`: all ten CLI helps, three plan-only explain commands and normal policy validation exit 0; strict policy validation intentionally exits 1 (`enforcement_ready=false`). Exact help/command receipts and hashes are in the staged continuation; no new build/test or Oracle review was run in this docs pass.
+
+| Bead | Status and remaining acceptance |
+|---|---|
+| `.6` | **CLOSED** — existing workflow ShellCheck cleanup. |
+| `.10` | **CLOSED** — declared CMake 3.22 inventory-export compatibility, old/current actual configure/export and regression evidence. |
+| `.7` | **OPEN / in progress** — core contracts/diagnostic eligibility implemented; full profile/runtime/header/semantic union, stress gap and guarded capability acceptance remain. |
+| `.8` | **OPEN / in progress** — chain-safe selector MDK custody/finalization, phase-aware shared sanitizer execution/audits and remaining actual matrix/concurrency/cancellation/hosted proof. |
+| `.9` | **OPEN / in progress** — faithful configured membership/phase metadata integrated; complete executed workflow/profile/platform/optional/input union, root-ASan and native stress gaps remain. |
+| `.11` | **OPEN** — causal evidence and deterministic correction/verification unresolved; original guard retained. |
+| `.1`–`.5` / epic | Original scopes stay open; this continuation is not a completion attestation. |
+
+**W1/W11/W12 unchanged:** representative five-sample cost baselines, **20 representative PRs / 2 broad integration runs**, exact release replacement/dry-run, selected-skip/cancellation/merge-group and no-gap protection/operator cutover proof remain unmet; W12 cleanup remains NOT RUN. No default, `enforce`, schedule, requirement or protection change is authorized before W11/operator approval. Parent owns remaining verification, independent review, integration/merge/push and cleanup. No sibling review file or production/runtime/helper/metadata source was edited here.

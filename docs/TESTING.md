@@ -1,6 +1,6 @@
 # Test Strategy & Suite Documentation
 
-> **Staged dependency-aware tooling (2026-10-15): implemented, not cut over.**
+> **Staged dependency-aware tooling (updated 2026-10-16): implemented, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,
 > push requirements and schedules remain authoritative through W11. See the
 > [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
@@ -54,19 +54,56 @@ It maps 32 registrations across `libgo.channel` and `libgo.native_standalone`.
 `GoChannelStressTest` is an explicit `.4` coverage gap: its executable is built
 for header-input auditing only and remains **`not_executed`**.
 
-The native CLI receipt at backend `b0a31b0ab` shows 32/32 executions passed in one
-CTest `-I` invocation, zero audit gaps, about 9.14 seconds, **but lane exit 1,
-`job_conclusion=failure`, `complete_gate_eligible=false`**. Complete **and partial**
-aggregation reject that lane. This is execution proof, not green-lane or complete
-acceptance; do not relax eligibility to hide the excluded registration.
+The newer actual native receipt at backend
+`a21d25f7fdba6b5cb13c44cc837f3763773eb211` records **32/32 passed**, no skips,
+one CTest `-I` invocation, zero audit gaps, about **8.79 seconds**, **CLI exit 0**,
+`job_conclusion=success`, `diagnostic_eligible=true`,
+**`complete_gate_eligible=false`**. Diagnostic `aggregate --partial` exits 0 /
+`passed=true`; complete aggregation still exits 1 / `passed=false`. This is a
+successful **DIAGNOSTIC**, never complete CI/release acceptance or a stress pass.
+The older failed-lane `b0a31b0ab` execution and aggregates remain historical facts
+in the staged receipt; they are not relabeled as successful attempts.
 
-Separately, the native root [QA at `d9e8c6294`](reviews/dependency-aware-testing-ci-2026-10-15-native-root-qa.md)
-built all default targets and recorded **432 passed / 5 skipped / 0 failed**.
-Groundhog was OFF; four Apple signer UI cases and the unconfigured TCP case
-skipped. It remains compiled-source evidence, not selector/profile-union,
-Groundhog, live-peer or installed-desktop acceptance. Keep macOS application test
-backends/private bus/Secret Service isolation and read-only keychain guards as
-required by `AGENTS.md`; never change developer keychain defaults/search lists.
+The fresh native root [QA at `84ae0896b`](reviews/dependency-aware-testing-ci-2026-10-16-native-root-qa.md)
+configured/built all default targets and ran full first-attempt serial CTest:
+**437 registrations, 432 passed / 5 skipped / 0 failed**. Receipt/JUnit/outcome
+hashes were independently verified. Groundhog was OFF; four Apple signer UI cases
+and the unconfigured TCP case skipped. This is root compiled-source evidence, not
+selector/profile-union, Groundhog, GUI/live-peer or installed-desktop acceptance;
+it does not re-date the [older `d9e8c6294` run](reviews/dependency-aware-testing-ci-2026-10-15-native-root-qa.md).
+Keep macOS application test backends/private HOME/XDG/Unix bus/throwaway Secret
+Service isolation and read-only keychain guards as required by `AGENTS.md`; never
+change developer keychain defaults/search lists. `.11`'s hosted sanitizer heartbeat
+failure remains unresolved: the native root pass does not authorize a threshold
+change, exclusion, retry waiver or runtime correction.
+
+### Implemented core contracts and still-refused adapters
+
+- The core backend now executes declared real `command` and `build_contract`
+  checks, including prerequisite builds, bound argv/cwd/source/input identity,
+  capability checks, cancellation/nonzero status and required evidence. Native
+  miniature executions establish those contracts, not the complete production
+  profile union. The outer `scripts/test-gate.sh` adapter **still refuses selected
+  non-CTest checks** and guarded capabilities it cannot safely provide. Do not
+  mistake that adapter refusal for absence of the core implementation.
+- Active compiled-language compiler identity validation is fixed, including the
+  root configure/resolve path. That evidence is **configure + resolve only**, not
+  shared root ASan execution, input-union acceptance or a complete lane.
+- `core.linux.asan` / `core.macos.asan` model the actual root CI configure/command/
+  environment and configured registration membership. `groundhog.linux.sanitizers`
+  retains separate configure/build/test environment metadata (not a flattened
+  environment). These are **configured membership/phase-parity evidence only**.
+  Shared phase-aware sanitizer execution is explicitly unsupported: both the
+  outer adapter and reserved Linux shared route refuse, with no legacy fallback
+  presented as shared proof. No shared ASan/UBSan/LSan acceptance follows.
+- The standalone MDK 0.11 helper actually configured/built and ran **5/5 CTests**
+  with Docker, private bus/throwaway Secret Service and passing read-only keychain
+  guards. Cleanup completed; its receipt stays `complete=false`. This is a safe
+  standalone smoke, **not selector custody/finalization**, the full 0.8/0.9 matrix,
+  shared sanitizer execution or a complete gate. The inherited-FD custody proposal
+  failed an actual CMake/Ninja/CTest traversal (`EBADF` at the consumer); the
+  unaccepted prototype/probe is archived outside the repository, **not shipped**.
+  No environment/config fallback or new transport is authorized by this result.
 
 ### Shadow CI and release staging
 
@@ -88,12 +125,27 @@ required by `AGENTS.md`; never change developer keychain defaults/search lists.
   result/artifact. Do not enable it before W11/operator cutover. This variable
   controls publisher validation, not whether general shadow PR workflows exist.
 
-Complete ownership/profile union, non-CTest execution, guarded live-MDK lifecycle,
-shared sanitizer parity and W11 evidence remain open on `.1`–`.5`; legacy workflow
-ShellCheck cleanup is `.6`. No default/requirement/trigger/schedule removal is
-approved. The current receipt records the confirmed independent-review fixes and
-parent's **172/172 merged tests passed, no skips (34.193s)** at `017039eea`,
-separately from the native execution receipts; no merged-count update is pending.
+At integration `9c03e77126d8f2f092b22bafbd79280fbaf10950`, `.6` (workflow
+ShellCheck) and `.10` (CMake 3.22 inventory compatibility) are closed;
+`.7`/`.8`/`.9` remain open/in progress and `.11` remains open. Existing `.1`–`.5`
+scopes are not closed by this handoff. Remaining acceptance includes complete
+ownership/runtime/header/semantic/profile union, guarded MDK custody/finalization,
+phase-aware shared sanitizer execution and W11/W12 evidence. No default/enforcement,
+requirement/protection, trigger or schedule change is authorized before W11/operator
+cutover.
+
+B's `3a7c685e02ba` slice passed **244 tests, six shell suites and static checks**.
+Parent confirms the combined **244/244 tests, 0 skips, 58.163s** at `9c03e7712`
+(`/tmp/nostrc-completion-final-selection.log`) and full actionlint including
+ShellCheck passed. Parent also confirms all six shell suites passed at that SHA:
+`test-sanitizer-gate.sh`, `test-full-gate.sh`, `test-linux-gate-lifecycle.sh`,
+`test-linux-gate-smoke.sh`, `test-pre-push.sh`, `test-test-gate.sh`; all four static
+checkers and range whitespace passed. These are final combined results, distinct
+from B's earlier pass. Independent review remains **in progress / pending**.
+The older 172-test result at `017039eea` remains a dated historical receipt.
+Current bounded evidence, source-specific hashes and remaining acceptance are in
+the [2026-10-16 continuation](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712).
+Documentation/internal-testing changes require **no component bump**.
 
 ## Overview
 
