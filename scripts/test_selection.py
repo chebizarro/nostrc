@@ -503,7 +503,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: diagnostic/incomplete receipt cannot satisfy complete gate")
         # Explicit diagnostic eligibility never overrides missing/skipped checks
         # or independent worker conclusions checked above/below.
-        if receipt.get("diagnostic_eligible") is False:
+        if receipt.get("diagnostic_eligible") is False or backend.get("diagnostic_eligible") is False:
             errors.append(f"{lane_id}: diagnostic execution did not qualify")
         results = receipt.get("checks")
         require(isinstance(results, dict), f"{lane_id}: malformed checks")

@@ -69,6 +69,26 @@ class DiagnosticEligibilityTests(unittest.TestCase):
         result["complete_gate_eligible"] = True
         self.assertFalse(s.aggregate(p, selected, [result], complete=False)["passed"])
 
+    def test_omitted_outer_diagnostic_flag_cannot_hide_nested_negative(self):
+        p, selected, result = self.native_shape()
+        result.pop("diagnostic_eligible")
+        result["backend_receipt"] = {"diagnostic_eligible": False, "complete_gate_eligible": False}
+        partial = s.aggregate(p, selected, [result], complete=False)
+        self.assertFalse(partial["passed"], partial)
+        self.assertFalse(partial["diagnostic_eligible"])
+        self.assertFalse(partial["complete_gate_eligible"])
+        self.assertTrue(any("diagnostic execution did not qualify" in e for e in partial["errors"]))
+        self.assertFalse(s.aggregate(p, selected, [result])["passed"])
+
+    def test_omitted_outer_positive_backend_remains_diagnostic_only(self):
+        p, selected, result = self.native_shape()
+        result.pop("diagnostic_eligible")
+        result["backend_receipt"] = {"diagnostic_eligible": True, "complete_gate_eligible": False}
+        partial = s.aggregate(p, selected, [result], complete=False)
+        self.assertTrue(partial["passed"], partial)
+        self.assertFalse(partial["complete_gate_eligible"])
+        self.assertFalse(s.aggregate(p, selected, [result])["passed"])
+
     def test_inventory_gaps_alone_block_complete_even_if_receipt_drops_flags(self):
         p, selected, result = self.native_shape()
         legacy = receipt(p, selected)

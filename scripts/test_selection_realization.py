@@ -53,59 +53,125 @@ def _atomic(path, value):
 
 
 def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
-    """One owned process group; retain logs/status even on SIGTERM or timeout."""
-    previous_handler, process, output = None, None, ""
+    """Capture exact bytes; cleanup/evidence failures cannot mask the first error."""
+    previous_handler, process, output, original = None, None, b"", None
     status = {"argv": [str(x) for x in argv], "cwd": str(Path(cwd or Path.cwd()).resolve()),
-              "environment_hash": _hash(env if env is not None else dict(os.environ)), "started": time.time()}
+              "environment_hash": _hash(env if env is not None else dict(os.environ)), "started": time.time(),
+              "output_encoding": "raw bytes", "text_decoding": "utf-8/surrogateescape"}
     def cancel(signum, frame):
         raise KeyboardInterrupt(f"command cancelled by signal {signum}")
+    def cleanup_error(stage, error):
+        status.setdefault("cleanup_errors", []).append({"stage": stage, "error": type(error).__name__ + ": " + str(error)})
+    def signal_owned(force=False):
+        # A known-reaped child no longer owns its PID. Do not poll/reap before
+        # group cleanup: an exited leader can still have children holding the
+        # output pipe. Group errors (including zombie-group EPERM) stay evidence.
+        if process.returncode is not None:
+            return
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, sig)
+            else:
+                process.kill() if force else process.terminate()
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            cleanup_error("signal_group", error)
+            # The unreaped direct child still belongs to this Popen. A group
+            # failure must remain visible even if direct-child cleanup succeeds.
+            try:
+                process.kill() if force else process.terminate()
+            except OSError as fallback:
+                cleanup_error("signal_child", fallback)
     try:
         try:
             previous_handler = signal.signal(signal.SIGTERM, cancel)
         except ValueError:
             pass
         process = subprocess.Popen([str(x) for x in argv], cwd=cwd, env=env,
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            start_new_session=os.name != "nt")
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
+        status["child_pid"] = process.pid
         output, _ = process.communicate(timeout=timeout)
         status.update(outcome="passed" if process.returncode == 0 else "failed", exit_code=process.returncode)
-        return subprocess.CompletedProcess(argv, process.returncode, output)
+        # Text consumers keep their existing interface without discarding any
+        # byte. Logs below remain raw; no implicit locale/strict decoding occurs.
+        return subprocess.CompletedProcess(argv, process.returncode, output.decode("utf-8", errors="surrogateescape"))
     except BaseException as exc:
+        original = exc
+        status.update(outcome="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
+                      error=type(exc).__name__ + ": " + str(exc))
+        exc.execution_status = status
+        if isinstance(exc, UnicodeDecodeError):
+            output = bytes(exc.object)
+        elif isinstance(getattr(exc, "output", None), bytes):
+            output = exc.output
         if process is not None:
-            # Only this command's process group, never siblings or global prune.
-            # Ignore a second cancellation while reaping the owned group.
             try:
                 signal.signal(signal.SIGTERM, signal.SIG_IGN)
             except ValueError:
                 pass
             try:
-                if os.name != "nt":
-                    os.killpg(process.pid, signal.SIGTERM)
-                else:
-                    process.terminate()
-            except ProcessLookupError:
-                pass
+                signal_owned()
+                try:
+                    output, _ = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired as expired:
+                    if isinstance(expired.output, bytes):
+                        output = expired.output
+                    signal_owned(force=True)
+                    output, _ = process.communicate(timeout=5)
+            except Exception as error:
+                cleanup_error("drain_or_reap", error)
+                if isinstance(getattr(error, "output", None), bytes):
+                    output = error.output
+                # Do not block forever on a descendant holding the pipe. The
+                # attempt is failed and incomplete cleanup is explicit evidence.
+                if process.stdout is not None:
+                    try:
+                        process.stdout.close()
+                    except Exception as close_error:
+                        cleanup_error("close_output", close_error)
+                try:
+                    signal_owned(force=True)
+                    process.wait(timeout=5)
+                except Exception as final_error:
+                    cleanup_error("final_reap", final_error)
             try:
-                output, _ = process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                if os.name != "nt":
-                    os.killpg(process.pid, signal.SIGKILL)
-                else:
-                    process.kill()
-                output, _ = process.communicate()
+                reaped = process.poll() is not None
+            except Exception as poll_error:
+                cleanup_error("poll", poll_error)
+                reaped = False
+            status["cleanup_complete"] = reaped and not status.get("cleanup_errors")
         else:
-            output = f"cannot execute {argv[0]}: {exc}\n"
-        status.update(outcome="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
-                      error=type(exc).__name__ + ": " + str(exc), exit_code=process.returncode if process else None)
+            output = f"cannot execute {argv[0]}: {exc}\n".encode("utf-8", errors="surrogateescape")
+        status["exit_code"] = process.returncode if process is not None else None
         if isinstance(exc, OSError):
-            raise RealizationError(f"cannot execute {argv[0]}: {exc}") from exc
+            error = RealizationError(f"cannot execute {argv[0]}: {exc}")
+            error.execution_status = status
+            raise error from exc
         raise
     finally:
         if previous_handler is not None:
             signal.signal(signal.SIGTERM, previous_handler)
         if log_path:
-            Path(log_path).write_text(output)
-            _atomic(str(log_path) + ".process.json", dict(status, ended=time.time()))
+            status.update(ended=time.time(), output_sha256=hashlib.sha256(output).hexdigest())
+            evidence_error = None
+            try:
+                Path(log_path).write_bytes(output)
+            except OSError as error:
+                evidence_error = error
+                status.setdefault("evidence_errors", []).append("log: " + str(error))
+            if evidence_error is not None and original is None:
+                status.update(outcome="failed", error="cannot retain command output: " + str(evidence_error))
+            try:
+                _atomic(str(log_path) + ".process.json", status)
+            except OSError as error:
+                evidence_error = error
+                status.setdefault("evidence_errors", []).append("status: " + str(error))
+            if evidence_error is not None and original is None:
+                error = RealizationError("cannot retain command evidence: " + str(evidence_error))
+                error.execution_status = status
+                raise error from evidence_error
 
 
 def _command(argv, cwd=None, env=None):
@@ -379,7 +445,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     before = {p.name: p.read_bytes() for p in (build / ".cmake/api/v1/reply").glob("index-*.json")}
     started = time.monotonic()
     output = _command(cmd, env=env)
-    (build / "nostrc-selection-configure.log").write_text(output)
+    (build / "nostrc-selection-configure.log").write_text(output, errors="surrogateescape")
     reply_dir = build / ".cmake/api/v1/reply"
     indexes = sorted(reply_dir.glob("index-*.json"), key=lambda p: p.stat().st_mtime_ns)
     if not indexes or (indexes[-1].name in before and before[indexes[-1].name] == indexes[-1].read_bytes()):
@@ -1312,12 +1378,12 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, **kwargs):
         except ValueError:
             pass
         return _run_resolved(resolved, build_dir, evidence_dir, attempt, **kwargs)
-    except (RealizationError, OSError, KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         if existed:
             raise
         if not directory.exists():
             directory.mkdir(parents=True, exist_ok=True)
-            (directory / "preexecution-failure.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+            (directory / "preexecution-failure.txt").write_text(f"{type(exc).__name__}: {exc}\n", errors="backslashreplace")
             raise
         if not existed:
             directory.mkdir(parents=True, exist_ok=True)
@@ -1336,9 +1402,11 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, **kwargs):
                            error=str(exc), ended=time.time())
             receipt.update({k: resolved[k] for k in ("source_identity", "inventory_hash", "profile_id", "profile_fingerprint", "plan_hash", "resolved_hash")})
             receipt["schema_version"] = 1
+            if hasattr(exc, "execution_status"):
+                receipt["process_error"] = exc.execution_status
             _atomic(path, receipt)
-            (directory / "execution-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
-        if isinstance(exc, (KeyboardInterrupt, subprocess.TimeoutExpired, OSError)):
+            (directory / "execution-error.txt").write_text(f"{type(exc).__name__}: {exc}\n", errors="backslashreplace")
+        if isinstance(exc, (KeyboardInterrupt, subprocess.TimeoutExpired, OSError, UnicodeError)):
             raise RealizationError(f"execution interrupted/failed; retained {directory}: {exc}") from exc
         raise
     finally:
@@ -1382,7 +1450,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "resolved_hash": resolved["resolved_hash"], "attempt": attempt,
         "lane_id": resolved["profile_id"], "profile": resolved["profile_id"],
         "plan_id": resolved["plan_id"], "profile_hash": resolved["profile_hash"],
-        "registration_audit": "passed", "job_conclusion": "success",
+        "registration_audit": "passed", "job_conclusion": "running",
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
         "started": started, "commands": commands, "evidence_dir": str(directory),
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
@@ -1554,8 +1622,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         result["initial_failure"] = any(
             earlier["checks"].get(ident, {}).get("outcome", "missing") not in ("passed", "expected_incompatibility")
             for earlier in previous_attempts)
-    if receipt["outcome"] not in ("passed", "not_applicable"):
-        receipt["job_conclusion"] = "failure"
+    receipt["job_conclusion"] = "success" if receipt["outcome"] in ("passed", "not_applicable") else "failure"
     receipt["ended"] = time.time()
     _atomic(directory / "receipt.json", receipt)
     return receipt
