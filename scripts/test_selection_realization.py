@@ -1742,7 +1742,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         if not isinstance(custody, PreparedContext):
             raise RealizationError("prepared profile requires live contained runtime custody")
         custody.validate(resolved)
-    elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer"}:
+    elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer", "prepared_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
     directory = _attempt_directory(resolved, evidence_dir, attempt)
     previous_attempts = []

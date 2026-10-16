@@ -115,7 +115,7 @@ def realization_command(args, policy, backend, *, custody=None):
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
     if custody is not None:
         custody.validate(resolved)
-    elif set(resolved.get("required_capabilities", [])) & {"docker", "external_peer"}:
+    elif set(resolved.get("required_capabilities", [])) & {"docker", "external_peer", "prepared_peer"}:
         raise selection.CheckFailure("live peer/image lifecycle requires the existing guarded adapter")
     audit = backend.check_inputs(policy, realized, identity, after_build=False,
                                  **({'custody': custody} if custody is not None else {}))

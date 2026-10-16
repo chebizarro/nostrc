@@ -106,6 +106,16 @@ class ContainedCustodyContract(unittest.TestCase):
         with self.assertRaises(CustodyError):
             gate.work_json(work, '../host.json')
 
+    def test_prepared_peer_capability_without_contained_domain_cannot_launch(self):
+        import test_selection_realization as realization
+        resolved = {'source_identity': {}, 'profile_fingerprint': 'bound', 'required_capabilities': ['prepared_peer']}
+        metadata = {'profile_fingerprint': 'bound', 'profile': {}}
+        with patch.object(realization, 'load_realization', return_value=metadata), \
+                patch.object(realization, '_validate_resolved_phase'), \
+                patch.object(realization, '_attempt_directory', side_effect=AssertionError('must not launch')), \
+                self.assertRaisesRegex(realization.RealizationError, 'guarded adapter'):
+            realization._run_resolved(resolved, self.root, self.root / 'evidence')
+
     def test_audit_rejects_a_mapping_in_place_of_live_namespace_context(self):
         import test_selection_realization as realization
         with patch.object(realization, '_validate_phase_context'), self.assertRaisesRegex(
