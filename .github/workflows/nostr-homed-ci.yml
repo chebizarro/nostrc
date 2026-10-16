@@ -113,7 +113,9 @@ jobs:
         shell: bash
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
-        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+        # Container steps may use a different HOME/uid from actions/checkout.
+        # Trust only this checkout for this read; retain exact-SHA verification.
+        run: test "$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install build deps
         run: |
