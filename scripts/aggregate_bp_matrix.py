@@ -103,8 +103,15 @@ def write_svg_xy(series_map, x_values, filename, title, y_label=""):
 
 def aggregate(base_dir: Path, out_prefix: Path):
     rows = []
-    # Detect whether base_dir is a combo dir containing mode_* subdirs,
-    # or already a mode dir containing cap_* subdirs.
+    # The regular workflow passes the matrix root, one level above its combo.
+    # Never pool different workload parameters into the same capacity series.
+    combo_dirs = sorted(p for p in base_dir.glob('dur_*_burst_*_sleep_*') if p.is_dir())
+    if len(combo_dirs) > 1:
+        print("Multiple workload combinations found; aggregate each combo directory separately.")
+        return 1
+    if combo_dirs:
+        base_dir = combo_dirs[0]
+    # Retain support for direct combo and mode directory callers.
     mode_dirs = sorted(base_dir.glob('mode_*'))
     if mode_dirs:
         iterator = []
@@ -310,7 +317,7 @@ def aggregate(base_dir: Path, out_prefix: Path):
 
 def main():
     ap = argparse.ArgumentParser(description='Aggregate bp matrix outputs into CSV/SVG comparisons')
-    ap.add_argument('--base', type=str, required=True, help='base directory: either a combo dir containing mode_* or a single mode_* dir containing cap_*')
+    ap.add_argument('--base', type=str, required=True, help='base directory: a matrix root containing one combo, a combo containing mode_*, or a mode containing cap_*')
     ap.add_argument('--out-prefix', type=str, default=None, help='output prefix path for summary (default: <base>/summary)')
     args = ap.parse_args()
     base = Path(args.base)

@@ -113,10 +113,11 @@ def main():
                                 # aggregate and optional report for this combo+mode
                                 agg_prefix = mode_dir / "summary"
                                 acmd = [sys.executable, str(AGGREGATE), "--base", str(mode_dir), "--out-prefix", str(agg_prefix)]
-                                subprocess.run(acmd, cwd=REPO_ROOT)
-                                if args.report:
+                                agg_rc = subprocess.run(acmd, cwd=REPO_ROOT).returncode
+                                overall |= agg_rc
+                                if args.report and agg_rc == 0:
                                     rcmd = [sys.executable, str(REPORT), "--base", str(mode_dir), "--out", str(mode_dir / "REPORT.md")]
-                                    subprocess.run(rcmd, cwd=REPO_ROOT)
+                                    overall |= subprocess.run(rcmd, cwd=REPO_ROOT).returncode
                     else:
                         mode_dir = combo_dir / f"mode_{mode}"
                         extra_env = {}
@@ -127,10 +128,11 @@ def main():
                         if args.aggregate or args.report:
                             agg_prefix = mode_dir / "summary"
                             acmd = [sys.executable, str(AGGREGATE), "--base", str(mode_dir), "--out-prefix", str(agg_prefix)]
-                            subprocess.run(acmd, cwd=REPO_ROOT)
-                            if args.report:
+                            agg_rc = subprocess.run(acmd, cwd=REPO_ROOT).returncode
+                            overall |= agg_rc
+                            if args.report and agg_rc == 0:
                                 rcmd = [sys.executable, str(REPORT), "--base", str(mode_dir), "--out", str(mode_dir / "REPORT.md")]
-                                subprocess.run(rcmd, cwd=REPO_ROOT)
+                                overall |= subprocess.run(rcmd, cwd=REPO_ROOT).returncode
     print("Matrix run complete. Artifacts in:", outdir)
     return overall
 
