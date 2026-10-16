@@ -15,6 +15,15 @@ cp "$scripts/install-hooks.sh" "$repo/scripts/install-hooks.sh"
 cp "$scripts/linux-gate.sh" "$repo/scripts/linux-gate.sh"
 cp "$scripts/linux-gate-smoke.sh" "$repo/scripts/linux-gate-smoke.sh"
 cp "$scripts/sanitizer-gate-ci.py" "$repo/scripts/sanitizer-gate-ci.py"
+cat > "$repo/scripts/test-gate.sh" <<'GATE'
+#!/bin/bash
+set -eu
+printf 'SHARED_GATE %s\n' "$*" >> "$TRACE"
+while [ $# -gt 0 ]; do
+    if [ "$1" = --refs-file ]; then cat "$2" >> "$TRACE"; break; fi
+    shift
+done
+GATE
 # The sanitizer stage reads the candidate's groundhog-sanitizers job.
 mkdir -p "$repo/.github/workflows"
 cp "$scripts/../.github/workflows/groundhog-ci.yml" "$repo/.github/workflows/groundhog-ci.yml"
@@ -117,7 +126,15 @@ case "$1" in
     info)
         [ "${DOCKER_DOWN:-0}" != 1 ] || exit 1
         [ "${2:-}" != --format ] || echo aarch64 ;;
-    build) ;;
+    build)
+        while [ $# -gt 0 ]; do
+            if [ "$1" = --iidfile ]; then
+                printf 'sha256:%064d\n' 1 > "$2"
+                break
+            fi
+            shift
+        done ;;
+    rm) ;;
     run)
         stage=linux
         case " $* " in *" nostrc-linux-gate-asan-"*) stage=sanitizer ;; esac
@@ -199,6 +216,15 @@ awk '/^BUILD /{b=NR} /^SANITIZER_TESTS$/{t=NR} END{exit !(b && t && b < t)}' "$t
 absent 'SKIPPED' "$tmp/output"
 assert_clean
 
+# The optional shared broad diagnostic supplements (never replaces) all legacy
+# full-gate stages and receives the original pushed range.
+NOSTRC_SELECTIVE_GATE=1 run_hook > "$tmp/shared-output" 2>&1
+grep -q '^BUILD ' "$tmp/trace"
+grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
+grep -q '^SHARED_GATE .*--broad --pre-push --refs-file' "$tmp/trace"
+grep -q "refs/heads/candidate $candidate refs/heads/candidate $base" "$tmp/trace"
+assert_clean
+
 # A Groundhog build fails before configure with an actionable macOS dependency hint.
 if run_hook qrencode > "$tmp/no-qrencode-output" 2>&1; then
     echo "missing libqrencode unexpectedly passed pre-push" >&2
@@ -224,6 +250,15 @@ if (cd "$branch" && PATH="$tmp/bin:$tmp/docker-bin:$PATH" TRACE="$tmp/trace" MAI
 fi
 grep -q 'No pre-push refs received' "$tmp/no-refs-output"
 absent '^CONFIGURE ' "$tmp/trace"
+assert_clean
+
+# Generic all-zero OIDs (including SHA-256 length) are deletion-only events.
+: > "$tmp/trace"
+printf '(delete) %064d refs/heads/gone %s\n' 0 "$candidate" |
+    (cd "$branch" && PATH="$tmp/bin:$tmp/docker-bin:$PATH" TRACE="$tmp/trace" MAIN="$repo" \
+        "$repo/.beads/hooks/pre-push") > "$tmp/deleted-output" 2>&1
+absent '^CONFIGURE ' "$tmp/trace"
+absent '^DOCKER_RUN ' "$tmp/trace"
 assert_clean
 
 # Real CMake/CTest with no add_test calls returns success; the gate must reject it.

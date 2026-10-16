@@ -108,8 +108,67 @@ if [ "$MODE" = sanitizers ]; then
 fi
 VOLUME="${NOSTRC_GATE_VOLUME:-$VOLUME}"
 
+# Each invocation owns its container and its immutable build result, even if a
+# sibling checkout rebuilds the same human-readable image tag. Keep this small
+# receipt directory on failure/cancellation; the volume retains build/test logs.
+RUN_STATE="$(mktemp -d "${TMPDIR:-/tmp}/nostrc-linux-gate.XXXXXXXX")"
+RUN_ID="nostrc-gate-$(basename "$RUN_STATE" | tr '[:upper:]' '[:lower:]')-$$"
+container_pid=""
+build_pid=""
+container_started=0
+run_status=failed
+write_receipt() {
+    python3 - "$RUN_STATE/receipt.json" "$RUN_ID" "$MODE" "$ARCH" "$IMAGE" "${IMAGE_ID:-}" "$run_status" "$SOURCE" <<'RECEIPT'
+import json, os, pathlib, sys
+path, run, mode, arch, tag, image, status, source = sys.argv[1:]
+cidfile = pathlib.Path(path).parent / 'container.id'
+container_id = cidfile.read_text().strip() if cidfile.exists() else None
+with open(path + '.tmp', 'w') as stream:
+    json.dump(dict(schema_version=1, run_id=run, container_id=container_id, mode=mode, architecture=arch,
+                   image_tag=tag, image_id=image, image_build_complete=bool(image), status=status, source=source,
+                   bypasses=['NOSTRC_GATE_LINUX_TESTS=0'] if status == 'bypassed' else [],
+                   source_identity='legacy-unverified', complete=False), stream, sort_keys=True)
+os.replace(path + '.tmp', path)
+RECEIPT
+}
+cleanup_owned() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [ -n "$build_pid" ]; then
+        kill -TERM "$build_pid" 2>/dev/null || true
+        kill -KILL "$build_pid" 2>/dev/null || true
+        wait "$build_pid" 2>/dev/null || true
+    fi
+    if [ -n "$container_pid" ]; then
+        kill -TERM "$container_pid" 2>/dev/null || true
+        # The unique name is assigned by this run before startup, so a signal
+        # between Docker create and cidfile publication still addresses only us.
+        if [ "$container_started" = 1 ]; then docker rm -f "$RUN_ID" >/dev/null 2>&1 || true; fi
+        kill -KILL "$container_pid" 2>/dev/null || true
+        wait "$container_pid" 2>/dev/null || true
+    elif [ "$container_started" = 1 ]; then
+        docker rm -f "$RUN_ID" >/dev/null 2>&1 || true
+    fi
+    write_receipt || true
+    echo "==> $GATE: $run_status; lifecycle receipt: $RUN_STATE/receipt.json"
+    exit "$status"
+}
+trap cleanup_owned EXIT
+trap 'run_status=cancelled; exit 130' INT TERM
+
 echo "==> $GATE ($ARCH): preparing image $IMAGE (the first build takes a few minutes)"
-docker build -q --platform "linux/$ARCH" -t "$IMAGE" - < "$SCRIPTS/linux-ci.Dockerfile" >/dev/null
+docker build -q --platform "linux/$ARCH" --iidfile "$RUN_STATE/image.id" -t "$IMAGE" - < "$SCRIPTS/linux-ci.Dockerfile" >/dev/null &
+build_pid=$!
+status=0
+wait "$build_pid" || status=$?
+build_pid=""
+[ "$status" -eq 0 ] || exit "$status"
+IMAGE_ID="$(cat "$RUN_STATE/image.id")"
+if ! [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "==> $GATE: Docker did not record an immutable image ID" >&2
+    exit 1
+fi
+write_receipt
 
 # GCC 14 and Clang 16 reject these by default, and hosted CI's Clang jobs fail
 # on them; Ubuntu 24.04's GCC 13 only warns. The first is the nanosleep class
@@ -283,9 +342,11 @@ if [ "$MODE" = sanitizers ] && [ -n "${NOSTRC_GATE_HOST_BUILD_SIGNAL:-}" ]; then
                   -e "GATE_WAIT_FILE=/gate-signal/$(basename "$NOSTRC_GATE_HOST_BUILD_SIGNAL")")
 fi
 
-# --init: a signal to this script (the macOS stage failed) stops the container.
+# --init and the owned-container EXIT trap stop only this run on cancellation.
 # (${SIGNAL_MOUNT[@]+...}: bash 3.2 calls an empty array unbound under set -u.)
-exec docker run --rm --init --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL_MOUNT[@]}"} \
+container_started=1
+docker run --rm --init --name "$RUN_ID" --label "org.nostrc.gate.run=$RUN_ID" \
+    --cidfile "$RUN_STATE/container.id" --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL_MOUNT[@]}"} \
     -e JOBS="${JOBS:-}" -e RUN_TESTS="${NOSTRC_GATE_LINUX_TESTS:-1}" \
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
     -e VOLUME="$VOLUME" -e MODE="$MODE" -e GATE="$GATE" -e GATE_CONFIG="$GATE_CONFIG" \
@@ -294,6 +355,18 @@ exec docker run --rm --init --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL
     -e NOSTRC_CTEST_QUARANTINE_FILE=/work/src/scripts/grotto-ci-quarantine.tsv \
     -v "$SOURCE:/src:ro" -v "$SCRIPTS/linux-gate-smoke.sh:/gate/smoke.sh:ro" \
     -v "$SCRIPTS/sanitizer-gate-ci.py:/gate/sanitizer-gate-ci.py:ro" \
-    -v "$VOLUME:/work" -v nostrc-linux-gate-tests:/gate-lock "$IMAGE" \
-    bash -c 'JOBS="${JOBS:-$(nproc)}"; '"$CMD"
+    -v "$VOLUME:/work" -v nostrc-linux-gate-tests:/gate-lock "$IMAGE_ID" \
+    bash -c 'JOBS="${JOBS:-$(nproc)}"; '"$CMD" &
+container_pid=$!
+status=0
+wait "$container_pid" || status=$?
+container_pid=""
+if [ "$status" -eq 0 ]; then
+    if [ "$MODE" = smoke ] && [ "${NOSTRC_GATE_LINUX_TESTS:-1}" = 0 ]; then
+        run_status=bypassed
+    else
+        run_status=passed
+    fi
+fi
+exit "$status"
 }
