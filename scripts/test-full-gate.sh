@@ -1,9 +1,32 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+phase=setup
+record_failure() {
+    # Keep Bash's reported location and caller stack for failures in helpers.
+    printf 'event=%s status=%s source=%s bash_line=%s phase=%s\ncommand=%s\nfunctions=%s\ncall_lines=%s\n\n' \
+        "$1" "$2" "${BASH_SOURCE[0]}" "$3" "$phase" "$4" "${FUNCNAME[*]}" "${BASH_LINENO[*]}" >> "$tmp/failure.log" || :
+}
+finish() {
+    local status="$1"
+    trap - ERR EXIT
+    if [ "$status" -eq 0 ]; then
+        rm -rf "$tmp"
+    else
+        record_failure EXIT "$status" "$2" "$3"
+        cp "${BASH_SOURCE[0]}" "$tmp/failing-fixture.sh" || :
+        printf 'test-full-gate failed (status=%s, phase=%s); private fixture retained: %s\n' \
+            "$status" "$phase" "$tmp" >&2 || :
+        printf 'Failure commands/lines: %s/failure.log; fixture logs and worktrees retained in place.\n' "$tmp" >&2 || :
+    fi
+    exit "$status"
+}
+trap 'record_failure ERR "$?" "$LINENO" "$BASH_COMMAND"' ERR
+trap 'finish "$?" "$LINENO" "$BASH_COMMAND"' EXIT
+# A helper's EXIT diagnostics may still be inside its redirected fixture log.
+printf 'test-full-gate fixture: %s (retained on failure; diagnostics: failure.log)\n' "$tmp" >&2 || :
 repo="$tmp/main"
 branch="$tmp/candidate"
 mkdir -p "$repo/scripts" "$repo/.beads/hooks" "$tmp/bin" "$tmp/docker-bin"
@@ -204,6 +227,7 @@ assert_clean() {
     [ "$(git -C "$repo" worktree list --porcelain | grep -c '^worktree ')" -eq 2 ]
     [ ! -e "$branch/_build" ]
 }
+phase=baseline
 run_hook > "$tmp/output" 2>&1
 grep -q '^BEADS$' "$tmp/trace"
 grep -q 'BUILD_GROUNDHOG=ON' "$tmp/trace"
@@ -222,6 +246,7 @@ assert_clean
 
 # The optional shared broad diagnostic supplements (never replaces) all legacy
 # full-gate stages and receives the original pushed range.
+phase=shared-diagnostic
 NOSTRC_SELECTIVE_GATE=1 run_hook > "$tmp/shared-output" 2>&1
 grep -q '^BUILD ' "$tmp/trace"
 grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
@@ -230,6 +255,7 @@ grep -q "refs/heads/candidate $candidate refs/heads/candidate $base" "$tmp/trace
 assert_clean
 
 # A Groundhog build fails before configure with an actionable macOS dependency hint.
+phase=missing-qrencode
 if run_hook qrencode > "$tmp/no-qrencode-output" 2>&1; then
     echo "missing libqrencode unexpectedly passed pre-push" >&2
     exit 1
@@ -239,6 +265,7 @@ absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
 # An upstream hook may consume all of stdin; the build gate must still see the ref.
+phase=drained-stdin
 run_hook "" 1
 grep -q '^BEADS$' "$tmp/trace"
 grep -q '^CONFIGURE ' "$tmp/trace"
@@ -246,6 +273,7 @@ grep -q '^CTEST ' "$tmp/trace"
 assert_clean
 
 # No input must block, rather than letting a drained or malformed chain pass.
+phase=empty-refs
 : > "$tmp/trace"
 if (cd "$branch" && PATH="$tmp/bin:$tmp/docker-bin:$PATH" TRACE="$tmp/trace" MAIN="$repo" \
     "$repo/.beads/hooks/pre-push" </dev/null) > "$tmp/no-refs-output" 2>&1; then
@@ -257,6 +285,7 @@ absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
 # Generic all-zero OIDs (including SHA-256 length) are deletion-only events.
+phase=deleted-refs
 : > "$tmp/trace"
 printf '(delete) %064d refs/heads/gone %s\n' 0 "$candidate" |
     (cd "$branch" && PATH="$tmp/bin:$tmp/docker-bin:$PATH" TRACE="$tmp/trace" MAIN="$repo" \
@@ -266,6 +295,7 @@ absent '^DOCKER_RUN ' "$tmp/trace"
 assert_clean
 
 # Real CMake/CTest with no add_test calls returns success; the gate must reject it.
+phase=no-registered-tests
 if run_hook "" 0 real > "$tmp/no-tests-output" 2>&1; then
     echo 'Zero registered CTest tests were accepted' >&2
     exit 1
@@ -275,6 +305,7 @@ assert_clean
 
 # The macOS run goes through linux-gate-smoke.sh: a test that fails and then
 # passes alone passes the push, loudly, and is counted in the shared history.
+phase=legacy-rerun
 CTEST_PARALLEL_LEVEL=3 run_hook flaky > "$tmp/flaky-output" 2>&1
 grep -qF -- '--no-tests=error --output-on-failure --parallel 3 -LE ^perf$ -R .' "$tmp/trace"
 grep -qF -- '-R ^(dummy)$' "$tmp/trace"
@@ -290,6 +321,7 @@ grep -q $'\tdummy$' "$repo/.git/nostrc-macos-gate-history/reruns"
 ls "$repo/.git/nostrc-macos-gate-history/"*-first-run.log >/dev/null
 assert_clean
 # ... and a test that fails alone too blocks it.
+phase=failed-rerun
 if run_hook test > "$tmp/test-output" 2>&1; then
     echo 'a test failing in its rerun too did not block the push' >&2
     exit 1
@@ -300,6 +332,7 @@ assert_clean
 
 # A git older than 2.31 echoes --path-format=absolute back instead of
 # applying it (W25 review N6): the history still lands in the common dir.
+phase=old-git
 mkdir -p "$tmp/oldgit"
 real_git="$(command -v git)"
 cat > "$tmp/oldgit/git" <<MOCK
@@ -319,6 +352,7 @@ absent 'path-format' "$tmp/oldgit-output"
 assert_clean
 
 for stage in beads configure build test linux sanitizer; do
+    phase="expected-failure:$stage"
     if run_hook "$stage"; then
         echo "$stage failure did not block the push" >&2
         exit 1
@@ -330,6 +364,7 @@ for stage in beads configure build test linux sanitizer; do
 done
 
 # A checkout that rewrites the running hook mid-push must not change what runs.
+phase=hook-rewrite
 cp "$branch/scripts/pre-push" "$tmp/pre-push.orig"
 SPLICE="$branch/scripts/pre-push" run_hook
 absent '^SPLICED$' "$tmp/trace"
@@ -339,6 +374,7 @@ assert_clean
 
 # A Linux failure that is in by the end of the host build blocks the push
 # before the host test run.
+phase=linux-failure
 if BUILD_SLEEP=3 run_hook linux > "$tmp/linux-output" 2>&1; then
     echo 'Linux failure did not block the push' >&2
     exit 1
@@ -349,6 +385,7 @@ assert_clean
 
 # So does a sanitizer failure (a leak report), named as one; its tests ran
 # after the host build.
+phase=sanitizer-failure
 if BUILD_SLEEP=3 run_hook sanitizer > "$tmp/sanitizer-output" 2>&1; then
     echo 'Sanitizer failure did not block the push' >&2
     exit 1
@@ -358,6 +395,7 @@ awk '/^BUILD /{b=NR} /^SANITIZER_TESTS$/{t=NR} END{exit !(b && t && b < t)}' "$t
 assert_clean
 
 # A host failure stops the Linux stage instead of waiting for it.
+phase=host-failure-cancels-linux
 start=$SECONDS
 if LINUX_SLEEP=60 run_hook build; then
     echo 'build failure did not block the push' >&2
@@ -368,6 +406,7 @@ assert_clean
 
 # Without Docker the push is blocked, unless the Linux stage is skipped, which
 # is announced.
+phase=no-docker
 if DOCKER_DOWN=1 run_hook > "$tmp/no-docker-output" 2>&1; then
     echo 'A push without Docker was accepted' >&2
     exit 1
@@ -376,6 +415,7 @@ grep -q 'needs Docker' "$tmp/no-docker-output"
 grep -q 'NOSTRC_SKIP_LINUX_GATE=1' "$tmp/no-docker-output"
 absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
+phase=skip-linux
 DOCKER_DOWN=1 NOSTRC_SKIP_LINUX_GATE=1 run_hook > "$tmp/skip-output" 2>&1
 grep -q 'Linux build SKIPPED (NOSTRC_SKIP_LINUX_GATE=1)' "$tmp/skip-output"
 grep -q 'sanitizer stage SKIPPED too' "$tmp/skip-output"
@@ -384,6 +424,7 @@ absent '^DOCKER_RUN ' "$tmp/trace"
 assert_clean
 
 # NOSTRC_SKIP_SANITIZER_GATE=1 skips the sanitizer stage alone, loudly.
+phase=skip-sanitizer
 NOSTRC_SKIP_SANITIZER_GATE=1 run_hook > "$tmp/skip-san-output" 2>&1
 grep -q 'SANITIZER STAGE SKIPPED (NOSTRC_SKIP_SANITIZER_GATE=1)' "$tmp/skip-san-output"
 grep -q '^DOCKER_RUN linux ' "$tmp/trace"
@@ -392,6 +433,7 @@ grep -q '^CTEST ' "$tmp/trace"
 assert_clean
 
 # The candidate's own static checks run first and block the push.
+phase=static-checks
 mkdir -p "$branch/scripts"
 cat > "$branch/scripts/check-linux-ci-packages.py" <<'CHECK'
 import os, sys
@@ -411,6 +453,7 @@ fi
 absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
+phase=unrelated-prose
 mkdir -p "$branch/docs"
 printf 'unrelated prose\n' > "$branch/docs/prose.md"
 git -C "$branch" add docs/prose.md
@@ -426,6 +469,7 @@ absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
 assert_clean
 
 # Unknown ownership now broadens through the shared selector, never skips.
+phase=unknown-ownership
 printf 'unknown\n' > "$branch/new-unclassified-input"
 git -C "$branch" add new-unclassified-input
 git -C "$branch" commit -qm unknown
@@ -444,6 +488,7 @@ for path in CMakeLists.txt cmake/BuildConfig.cmake gnome/seahorse/secret_store.c
     nips/nip19/src/nip19.c nips/nip55l/dbus/org.nostr.Signer.xml \
     apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml \
     .github/workflows/groundhog-ci.yml; do
+    phase="dependency:$path"
     mkdir -p "$branch/$(dirname "$path")"
     # Appended: the workflow stays readable by the sanitizer stage.
     printf '# dependency change\n' >> "$branch/$path"
@@ -461,6 +506,7 @@ done
 # image: the sanitizer stage runs for them too.
 for path in libjson/src/json.c components/nostrdb/src/nostrdb_storage.c \
     third_party/nsync/internal/mu.c NipOptions.cmake scripts/linux-ci.Dockerfile; do
+    phase="dependency:$path"
     mkdir -p "$branch/$(dirname "$path")"
     printf '# dependency change\n' >> "$branch/$path"
     git -C "$branch" add "$path"
@@ -474,6 +520,7 @@ done
 
 # A range git cannot compute (a force push over a remote tip never fetched)
 # runs the stage: it must not read as "no files changed".
+phase=unknown-range
 printf 'unrelated 2\n' > "$branch/unrelated"
 git -C "$branch" add unrelated
 git -C "$branch" commit -qm "unrelated 2"
@@ -488,6 +535,7 @@ base="$(git -C "$branch" rev-parse HEAD~1)"
 
 # A new branch (no remote oid) is filtered against its merge base with
 # origin/master: a docs-only branch skips the sanitizer stage.
+phase=new-docs-branch
 git -C "$repo" update-ref refs/remotes/origin/master "$candidate"
 mkdir -p "$branch/docs"
 printf 'notes\n' > "$branch/docs/notes.md"
