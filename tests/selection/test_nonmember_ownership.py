@@ -120,6 +120,8 @@ class NonmemberOwnership(unittest.TestCase):
             self.assertIn('nostrc_describe_test(' + row['test'] + ' OWNER gnome.nostr_homed gnome.nostr_homed.test_inputs TARGETS ' + row['target'], text)
             self.assertTrue((ROOT / row['source']).is_file())
             self.assertTrue((ROOT / row['common_source']).is_file())
+            self.assertIn('{source}/' + row['source'], inputs)
+            self.assertIn('{source}/' + row['common_source'], inputs)
         self.assertFalse(any('gnome.nostr_homed.test_inputs' in n.get('depends_on', [])
                              for n in self.policy['nodes'].values()))
 

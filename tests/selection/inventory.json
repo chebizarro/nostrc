@@ -5078,7 +5078,9 @@
       "nodes": [
         "selection.contract",
         "static.policy",
-        "version.contract"
+        "version.contract",
+        "gnome.nostr_homed",
+        "gnome.nostr_homed.test_inputs"
       ],
       "profiles": [
         "static.policy"
@@ -5120,6 +5122,13 @@
         "{source}/cmake/NostrcTestInventory.cmake",
         "{source}/gnome/groundhog/CMakeLists.txt",
         "{source}/gnome/groundhog/TestInventory.cmake",
+        "{source}/gnome/nostr-homed/tests/unit/test_manifest.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_cache.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_cache_config.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_uid_map.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_groups.c",
+        "{source}/gnome/nostr-homed/src/common/nostr_manifest.c",
+        "{source}/gnome/nostr-homed/src/common/nostr_cache.c",
         "{source}/gnome/nostr-homed/CMakeLists.txt",
         "{source}/gnome/nostr-homed/TestInventory.cmake",
         "{source}/gnome/nostr-homed/meson.build",

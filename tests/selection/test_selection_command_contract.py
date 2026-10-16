@@ -27,6 +27,13 @@ SUPPORT_INPUTS = {
     "tests/TestInventory.cmake",
     "nostr-gtk/TestInventory.cmake",
     "gnome/groundhog/TestInventory.cmake",
+    "gnome/nostr-homed/tests/unit/test_manifest.c",
+    "gnome/nostr-homed/tests/unit/test_cache.c",
+    "gnome/nostr-homed/tests/unit/test_cache_config.c",
+    "gnome/nostr-homed/tests/unit/test_uid_map.c",
+    "gnome/nostr-homed/tests/unit/test_groups.c",
+    "gnome/nostr-homed/src/common/nostr_manifest.c",
+    "gnome/nostr-homed/src/common/nostr_cache.c",
     "scripts/check-macos-keychain.sh",
     "scripts/linux-gate.sh",
     "scripts/mdk-gate.py",
@@ -189,6 +196,10 @@ class SelectionCommandInputAuditTests(unittest.TestCase):
         check["profiles"] = ["closure.fixture"]
         copy_inputs(self.policy, self.root)
         r._git(self.root, "init", "-q")
+        # Keep automatic maintenance, but join it before copying/removing .git.
+        # A detached first-commit repack can otherwise outlive the fixture.
+        r._git(self.root, "config", "gc.autoDetach", "false")
+        r._git(self.root, "config", "maintenance.autoDetach", "false")
         r._git(self.root, "add", ".")
         r._git(self.root, "-c", "user.name=Input fixture", "-c", "user.email=input@example.invalid",
                "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")
