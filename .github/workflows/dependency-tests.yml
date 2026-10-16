@@ -69,6 +69,22 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       plan_id: ${{ needs.select.outputs.plan_id }}
       profile: core.linux
+  core_asan:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'core.linux.asan')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: core.linux.asan
+  core_native:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'core.macos.asan')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: core.macos.asan
   grotto:
     needs: select
     if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'grotto.linux')
@@ -85,6 +101,14 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       plan_id: ${{ needs.select.outputs.plan_id }}
       profile: groundhog.linux
+  groundhog_sanitizers:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'groundhog.linux.sanitizers')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: groundhog.linux.sanitizers
   mdk08:
     needs: select
     if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'groundhog.mdk08')
@@ -126,7 +150,7 @@ jobs:
   gate:
     name: Dependency gate
     if: always()
-    needs: [select, core, grotto, groundhog, mdk08, libgo, libgo_native, policy, broad]
+    needs: [select, core, core_asan, core_native, grotto, groundhog, groundhog_sanitizers, mdk08, libgo, libgo_native, policy, broad]
     runs-on: ubuntu-24.04
     outputs:
       validation_artifact: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}
