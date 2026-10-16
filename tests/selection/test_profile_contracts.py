@@ -149,7 +149,11 @@ class ConfiguredMembershipContracts(unittest.TestCase):
             for owners, names in export["source_owner_membership"].items():
                 for check in self.policy["checks"].values():
                     if set(check.get("ctest_tests", {}).get(profile, [])) & set(names):
-                        self.assertEqual(set(check["nodes"]), set(owners.split(",")) | {"execution.core"})
+                        edges = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())["audits"]
+                        observed_nodes = {node for audit in edges for edge in audit["edges"]
+                                          if edge["check"] == next(key for key, value in self.policy["checks"].items() if value is check)
+                                          for node in edge["required_nodes"]}
+                        self.assertEqual(set(check["nodes"]), set(owners.split(",")) | {"execution.core"} | observed_nodes)
             self.assertFalse(set(members) & set(export["fixture_registrations"]))
             self.assertEqual(export["legacy_excluded_registrations"],
                              ["MockRelayUnit", "concurrency_subscription_shutdown_asan", "test_json_envelope"])

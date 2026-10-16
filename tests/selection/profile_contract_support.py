@@ -5,10 +5,12 @@ static, include/exclude and dynamically supplied matrices cannot silently change
 without updating their supported mapping or their explicitly incomplete record.
 """
 from pathlib import Path
+import hashlib
 import re
 
 
-def source_jobs(root):
+def source_job_blocks(root):
+    """Literal complete job bodies bind setup/steps as well as matrix declarations."""
     jobs = {}
     for path in sorted((Path(root) / ".github/workflows").iterdir()):
         if path.suffix not in {".yml", ".yaml"}:
@@ -62,12 +64,18 @@ def source_jobs(root):
                 while matrix and not matrix[-1].strip():
                     matrix.pop()
             key = path.relative_to(root).as_posix() + ":" + name
-            jobs[key] = "\n".join(matrix)
+            jobs[key] = {"matrix_source": "\n".join(matrix),
+                         "source_sha256": hashlib.sha256(("\n".join(block) + "\n").encode()).hexdigest()}
     return jobs
 
 
+def source_jobs(root):
+    return {key: value["matrix_source"] for key, value in source_job_blocks(root).items()}
+
+
 def validate_job_accounting(policy, root):
-    observed = source_jobs(root)
+    blocks = source_job_blocks(root)
+    observed = {key: value["matrix_source"] for key, value in blocks.items()}
     records = policy["workflow_jobs"]
     if set(observed) != set(records):
         raise ValueError("unaccounted/stale workflow jobs: " + str(sorted(set(observed) ^ set(records))))
@@ -76,6 +84,10 @@ def validate_job_accounting(policy, root):
         record = records[key]
         if record["matrix_source"] != matrix:
             raise ValueError("workflow matrix changed: " + key)
+        if record.get("source_sha256") != blocks[key]["source_sha256"]:
+            raise ValueError("workflow job setup/steps changed: " + key)
+        if record.get("coverage_gap") and not record.get("unsupported_reason", "").strip():
+            raise ValueError("job gap lacks specific unsupported reason: " + key)
         if not record.get("profiles") and not record.get("coverage_gap"):
             raise ValueError("job has neither profiles nor an explicit gap: " + key)
         if record.get("coverage_gap") and record["coverage_gap"] not in gaps:

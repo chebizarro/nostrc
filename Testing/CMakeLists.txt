@@ -465,6 +465,8 @@ set_tests_properties(Nip46QRSocket PROPERTIES
 # Install Rules
 # ============================================================================
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")
+
 # Test infrastructure is installed only on request, so a package built with
 # the default options does not ship a mock relay. Linux builds only reach this
 # directory since nostrc-ig0z, and several Linux recipes install the whole tree.
