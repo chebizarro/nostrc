@@ -71,6 +71,16 @@ def extract_toolchain(owner, image, destination):
     return "/rustup/" + toolchain
 
 
+def build_recipe(version):
+    command = "set -eu; mkdir -p /work/home /work/cargo; cd /work/driver-source; "
+    command += "rustc --version; cargo --version; git --version; make --version; perl -e 'use FindBin;'; pkg-config --version; "
+    command += "cargo build --release --locked; "
+    if version in {"09", "011"}:
+        command += "cargo test --release --locked; "
+    command += "cp /work/target/release/" + PEERS[version][1] + " /work/driver"
+    return ["/bin/sh", "-c", command]
+
+
 def prepare(args):
     source = Path(args.source_root).resolve(strict=True)
     evidence = Path(args.evidence_dir).resolve()
@@ -116,23 +126,17 @@ def prepare(args):
             environment = {"HOME": "/work/home", "CARGO_HOME": "/work/cargo", "CARGO_TARGET_DIR": "/work/target",
                            "PATH": bin_dir + ":/usr/bin:/bin", "RUSTC": bin_dir + "/rustc", "RUSTDOC": bin_dir + "/rustdoc",
                            "CARGO_NET_GIT_FETCH_WITH_CLI": "true", "CARGO_BUILD_JOBS": "2"}
-            command = "set -eu; mkdir -p /work/home /work/cargo; cd /work/driver-source; "
-            command += "rustc --version; cargo --version; git --version; make --version; perl -e 'use FindBin;'; pkg-config --version; "
-            command += "cargo build --release --locked; "
-            if version in {"09", "011"}:
-                command += "cargo test --release --locked; "
-            command += "cp /work/target/release/" + PEERS[version][1] + " /work/driver"
             record["rust_bin_dir"] = bin_dir
             if not Path(bin_dir).parent.name.startswith(PEERS[version][2]):
                 raise CustodyError("Rust image toolchain version differs from locked driver recipe")
-            code = builder.run(args.builder_image, ["/bin/sh", "-c", command],
+            code = builder.run(args.builder_image, build_recipe(version),
                 timeout=args.timeout, network="bridge", mounts=[(work, "/work", False), (state / "rustup", "/rustup", True)],
                 environment=environment, binding=record)
             record["builder_custody"] = builder.receipt
             record["toolchain_custody"] = extraction.receipt
             record["exit_code"] = code
-            if (context_hash(context) != before or context_hash(work / "driver-source") != before
-                    or source_identity(source) != identity):
+            record['source_identity_after'] = source_identity(source)
+            if context_hash(context) != before or context_hash(work / "driver-source") != before:
                 raise CustodyError("source context changed during preparation")
             if code or not builder.receipt["cleanup_complete"]:
                 raise CustodyError("peer build/parity/custody did not succeed")
@@ -156,7 +160,7 @@ def prepare(args):
     return 0 if record["complete"] else 1
 
 
-def snapshot(source, destination, sha):
+def snapshot(source, destination, sha, gitlink_sources=None, prefix=''):
     """Independent shallow Git objects, including exact nested gitlinks."""
     subprocess.run(['git', 'init', '--quiet', str(destination)], check=True)
     subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(destination),
@@ -169,14 +173,15 @@ def snapshot(source, destination, sha):
             continue
         metadata, relative = line.split('\t', 1)
         commit = metadata.split()[2]
-        local = Path(source) / relative
-        if not (local / '.git').exists():
+        explicit = (gitlink_sources or {}).get(prefix + relative)
+        local = Path(explicit) if explicit is not None else Path(source) / relative
+        if explicit is None and not (local / '.git').exists():
             raw = git(source, 'rev-parse', '--git-path', 'modules/' + relative).decode().strip()
             local = Path(raw) if Path(raw).is_absolute() else Path(source) / raw
         if not local.exists():
-            raise CustodyError('exact gitlink object store unavailable: ' + relative)
+            raise CustodyError('exact gitlink object store unavailable: ' + prefix + relative)
         links[relative] = commit
-        nested = snapshot(local.resolve(), destination / relative, commit)
+        nested = snapshot(local.resolve(), destination / relative, commit, gitlink_sources, prefix + relative + '/')
         links.update({relative + '/' + key: value for key, value in nested.items()})
     return links
 
@@ -199,7 +204,8 @@ def validate_peer(path, source, expected):
     for key in ('version', 'context_sha256', 'cargo_lock_sha256', 'builder_image_id', 'rust_image_id', 'source_identity'):
         if builder['binding'][key] != record[key]:
             raise CustodyError('prepared build binding differs: ' + key)
-    if builder['image_id'] != record['builder_image_id'] or builder['network'] != 'bridge':
+    if (builder['image_id'] != record['builder_image_id'] or builder['network'] != 'bridge'
+            or builder['argv'] != build_recipe(version)):
         raise CustodyError('prepared builder domain differs')
     extraction = record['toolchain_custody']
     if (not extraction.get('cleanup_complete') or extraction.get('rpc_indeterminate')
@@ -275,7 +281,15 @@ def run_lane(args):
         for version in versions:
             if '-D' + overrides[version] + ':STRING=/peers/' + version + '/driver' not in profile['configure_args']:
                 raise CustodyError('prepared native driver override absent from exact profile')
-        links = snapshot(source, state / 'source', identity['sha'])
+        gitlink_sources = {}
+        for item in args.gitlink_source:
+            name, location = item.split('=', 1)
+            if name in gitlink_sources or not name or name.startswith('/') or '..' in Path(name).parts:
+                raise CustodyError('invalid/duplicate explicit gitlink source')
+            gitlink_sources[name] = Path(location).resolve(strict=True)
+        links = snapshot(source, state / 'source', identity['sha'], gitlink_sources)
+        if set(gitlink_sources) - set(links):
+            raise CustodyError('unclaimed explicit gitlink source')
         if selection.load_inventory(state / 'source' / args.inventory) != policy:
             raise CustodyError('snapshotted inventory differs')
         binding = {'source_identity': plan['source_identity'], 'source_gitlinks': links,
@@ -346,6 +360,8 @@ def parser():
     lane.add_argument('--plan', required=True)
     lane.add_argument('--profile', required=True)
     lane.add_argument('--peer-receipt', action='append', default=[])
+    lane.add_argument('--gitlink-source', action='append', default=[], metavar='PATH=OBJECT_REPO',
+                      help='explicit local Git object source; exact gitlink commit is fetched/verified')
     lane.add_argument('--timeout', type=int, default=1800)
     return root
 

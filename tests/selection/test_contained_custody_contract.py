@@ -1,5 +1,7 @@
 """Pure contract/failure tests. Positive lifecycle evidence is tests/custody."""
 import copy
+import importlib.util
+import subprocess
 import json
 import os
 from pathlib import Path
@@ -18,6 +20,34 @@ class ContainedCustodyContract(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.owner = ContainerOwner(self.root / 'owner')
+
+    def test_snapshot_requires_and_verifies_exact_gitlink_object_sources(self):
+        spec = importlib.util.spec_from_file_location('contained_gate_contract',
+            Path(__file__).resolve().parents[2] / 'scripts/contained-gate.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        def repository(name):
+            path = self.root / name
+            path.mkdir()
+            subprocess.run(['git', 'init', '-q', str(path)], check=True)
+            subprocess.run(['git', '-C', str(path), 'config', 'user.name', 'fixture'], check=True)
+            subprocess.run(['git', '-C', str(path), 'config', 'user.email', 'fixture@example.invalid'], check=True)
+            (path / 'file').write_text(name)
+            subprocess.run(['git', '-C', str(path), 'add', '.'], check=True)
+            subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(path), 'commit', '-qm', 'fixture'], check=True)
+            return path, subprocess.check_output(['git', '-C', str(path), 'rev-parse', 'HEAD']).decode().strip()
+        source, _ = repository('source')
+        child, child_sha = repository('child')
+        subprocess.run(['git', '-C', str(source), 'update-index', '--add', '--cacheinfo',
+                        '160000,' + child_sha + ',docs/child'], check=True)
+        subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(source), 'commit', '-qm', 'gitlink'], check=True)
+        sha = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD']).decode().strip()
+        with self.assertRaises(CustodyError):
+            gate.snapshot(source, self.root / 'missing', sha)
+        links = gate.snapshot(source, self.root / 'exact', sha, {'docs/child': child})
+        self.assertEqual(links, {'docs/child': child_sha})
+        self.assertEqual((self.root / 'exact/docs/child/file').read_text(), 'child')
+        self.assertEqual(subprocess.check_output(['git', '-C', str(self.root / 'exact/docs/child'), 'rev-parse', 'HEAD']).decode().strip(), child_sha)
 
     def test_tag_and_partial_id_never_authorize_image(self):
         for value in ('latest', 'image:tag', 'sha256:123', 'a' * 64):
