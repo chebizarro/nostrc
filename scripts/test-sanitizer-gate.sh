@@ -222,14 +222,17 @@ for path in docs/plans/x.md README.md AGENTS.md apps/gnostr/src/main.c \
     scripts/pre-push apps/gnostr/CMakeLists.txt apps/gnostr/data/schemas/other.xml \
     components/other/x.c third_partyx/y.c cmakefoo/z.cmake libhanami/src/h.c \
     tools/nostr-cli.c benchmark/bench.c gnome/CMakeLists.txt; do
-    affected skip "$path"
+    # Shared ownership is incomplete during staging: substantive inputs must
+    # broaden rather than retain the old independent directory skip list.
+    case "$path" in docs/*) affected skip "$path" ;; *) affected run "$path" ;; esac
 done
 affected skip
 affected run docs/a.md gnome/groundhog/README.md
-grep -q 'gnome/groundhog/ (1: gnome/groundhog/README.md)' "$tmp/why" || fail "run reason: $(cat "$tmp/why")"
-affected skip docs/a.md AGENTS.md
-grep -q 'none of its 2 changed file(s) is under' "$tmp/why" || fail "skip reason: $(cat "$tmp/why")"
-echo 'ok: the path filter'
+affected run previously-unknown-component/input.c
+grep -q 'shared selection broadened' "$tmp/why" || fail "unknown-path reason: $(cat "$tmp/why")"
+affected skip docs/a.md LICENSE
+grep -q 'no sanitizer execution' "$tmp/why" || fail "skip reason: $(cat "$tmp/why")"
+echo 'ok: shared selection and conservative incomplete-profile broadening'
 
 # ---- the path filter against the build's ninja graph ------------------------
 # A fake ninja answers for a source tree whose build dir is inside it, as in

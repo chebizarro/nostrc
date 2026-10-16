@@ -28,14 +28,15 @@ key such as working-directory, `defaults`, a job container or services, an
 expression in an env value, a step writing $GITHUB_ENV), it fails instead of
 guessing: update the reader and scripts/linux-gate.sh with the job.
 
-affected: exit 0 when one of the changed paths (one per line on stdin) is
-under SANITIZER_PATHS, 1 when none is; print why either way.
+affected: delegate impact classification to the shared inventory; unknown
+paths and incomplete sanitizer profile coverage broaden. Exit 0 to run, 1 to
+skip, 2 for an invalid/unreadable contract (callers must run or fail, not skip).
 
 check-inputs: every source file the job's build reads (ninja's inputs of its
 targets, the deps log's headers, the configure inputs of build.ninja) must be
-under SANITIZER_BUILD_PATHS, or `affected` could skip a push that changes the
-job's result; exit 1 naming each one that is not. Run by the gate after each
-sanitizer build and by the job itself.
+under SANITIZER_BUILD_PATHS in legacy mode; exit 1 naming each one that is
+not. --shared-profile delegates to the shared realized input audit, without
+fallback. Legacy audit remains until profile parity and realization are met.
 
 No PyYAML: the macOS host that runs the pre-push hook has no yaml module, so
 this reads the subset of YAML the workflows use (block mappings, sequences,
@@ -43,6 +44,8 @@ this reads the subset of YAML the workflows use (block mappings, sequences,
 """
 
 import argparse
+import json
+from pathlib import Path
 import os
 import re
 import shlex
@@ -83,15 +86,6 @@ SANITIZER_BUILD_PATHS = (
     "third_party/",
     "tests/",
 )
-# ... and what is not a build input but changes how the job runs here.
-SANITIZER_PATHS = SANITIZER_BUILD_PATHS + (
-    WORKFLOW,
-    "scripts/linux-ci.Dockerfile",    # the compiler, sanitizer runtime and libraries
-    "scripts/linux-gate.sh",          # the stage itself
-    "scripts/linux-gate-smoke.sh",
-    "scripts/sanitizer-gate-ci.py",
-)
-
 # Keys the gate reproduces: of the job, and of its configure, build and test
 # steps. Anything else fails `config`.
 JOB_KEYS = {"name", "runs-on", "timeout-minutes", "env", "steps", "needs", "permissions", "if"}
@@ -443,21 +437,100 @@ def _under(path, prefix):
                               (path.startswith(prefix) or path == prefix[:-1]))
 
 
-def affected(paths):
-    """(True, why) when a path is under SANITIZER_PATHS, else (False, why)."""
-    hits = {}
-    for path in paths:
-        for prefix in SANITIZER_PATHS:
-            if _under(path, prefix):
-                hits.setdefault(prefix, []).append(path)
-    if hits:
-        return True, "the range touches " + ", ".join(
-            "%s (%d: %s%s)" % (p, len(v), v[0], ", ..." if len(v) > 1 else "")
-            for p, v in sorted(hits.items()))
+def affected(paths, source_root=None, inventory=None):
+    """Shared impact selection; unknown paths broaden, never a legacy skip."""
+    root = Path(source_root or Path(__file__).resolve().parents[1])
+    sys.path.insert(0, str(root / "scripts"))
+    import test_selection as shared
+    policy = shared.load_inventory(inventory or root / "tests/selection/inventory.json")
     if not paths:
         return False, "the range changes no files"
-    return False, "none of its %d changed file(s) is under %s" % (
-        len(paths), " ".join(SANITIZER_PATHS))
+    changes = [{"status": "M", "old_path": p, "new_path": p} for p in paths]
+    plan = shared.make_plan(policy, changes, head="0" * 40, context="local")
+    if plan["broadening_reasons"]:
+        return True, "shared selection broadened: " + "; ".join(plan["broadening_reasons"])
+    profiles = [name for name, p in policy["profiles"].items() if "sanitizer_compatibility" in p]
+    if not profiles:
+        if any(shared.classify(policy, p)["effect"] != "non_execution" for p in paths):
+            return True, "shared sanitizer profile incomplete: conservative broad sanitizer coverage"
+    else:
+        for profile in profiles:
+            expected = shared_config(policy, profile, str(root))
+            observed = job_config((root / WORKFLOW).read_text(), str(root))
+            if expected != observed:
+                raise WorkflowError("shared/workflow sanitizer parity mismatch: " + profile)
+    # During staged migration the existing workflow remains a parity oracle;
+    # compare logical registrations rather than retaining a second path filter.
+    config = job_config((root / WORKFLOW).read_text(), str(root))
+    tests = set(config["GH_SAN_TESTS"])
+    for ident in plan["selected_checks"]:
+        check = policy["checks"][ident]
+        registrations = {name for names in check.get("ctest_tests", {}).values() for name in names}
+        if registrations & tests:
+            return True, "shared selection affects sanitizer check " + ident
+    return False, "shared selection contains no sanitizer execution"
+
+
+def shared_config(policy, profile_id, source_root):
+    """Compatibility metadata API for the inventory owner (no guessed defaults).
+
+    profile.sanitizer_compatibility contains the GH_SAN_* config object, with
+    {source_root} substitutions only. configure_args/environment must agree
+    with it; missing metadata is failure, never fallback to the workflow.
+    The parser remains a strict migration parity oracle until W11 cutover.
+    """
+    try:
+        profile = policy["profiles"][profile_id]
+        config = profile["sanitizer_compatibility"]
+    except KeyError as exc:
+        raise WorkflowError(f"missing shared sanitizer metadata: {profile_id}: {exc}") from exc
+    def expand(value):
+        if isinstance(value, str):
+            return value.replace("{source_root}", source_root)
+        if isinstance(value, list):
+            return [expand(v) for v in value]
+        if isinstance(value, dict):
+            return {k: expand(v) for k, v in value.items()}
+        raise WorkflowError("unsupported shared sanitizer metadata type")
+    config = expand(config)
+    arrays = {"GH_SAN_TESTS", "GH_SAN_TARGETS", "GH_SAN_CONFIGURE", "GH_SAN_CONFIGURE_ENV", "GH_SAN_BUILD_ENV", "GH_SAN_ENV"}
+    if not isinstance(config, dict) or set(config) != arrays | {"GH_SAN_SKIP_PATTERN", "GH_SAN_TEST_JOBS"}:
+        raise WorkflowError("shared sanitizer config has missing/unsupported fields")
+    for name in arrays:
+        if not isinstance(config[name], list) or not all(isinstance(x, str) and x for x in config[name]):
+            raise WorkflowError("shared sanitizer config requires string argv: " + name)
+    if not config["GH_SAN_TESTS"] or not config["GH_SAN_TARGETS"]:
+        raise WorkflowError("shared sanitizer test/target selection is empty")
+    if not isinstance(config["GH_SAN_TEST_JOBS"], str) or not config["GH_SAN_TEST_JOBS"].isdigit() or int(config["GH_SAN_TEST_JOBS"]) < 1:
+        raise WorkflowError("shared sanitizer test parallelism is invalid")
+    if not isinstance(config["GH_SAN_SKIP_PATTERN"], str) or not config["GH_SAN_SKIP_PATTERN"]:
+        raise WorkflowError("shared sanitizer skip policy is absent")
+    if config.get("GH_SAN_CONFIGURE") != profile.get("configure_args"):
+        raise WorkflowError("shared sanitizer configure_args disagree with compatibility config")
+    environment = dict(item.split("=", 1) for item in config.get("GH_SAN_ENV", []))
+    environment.pop(TESTS_VAR, None)
+    if environment != expand(profile.get("environment", {})):
+        raise WorkflowError("shared sanitizer environment disagrees with compatibility config")
+    registrations = [name for check in policy["checks"].values()
+                     for name in check.get("ctest_tests", {}).get(profile_id, [])]
+    if len(registrations) != len(set(registrations)) or set(registrations) != set(config.get("GH_SAN_TESTS", [])):
+        raise WorkflowError("shared sanitizer exact check membership disagrees with compatibility config")
+    return config
+
+
+def configuration(workflow, source_root, inventory=None, profile=None):
+    observed = job_config(Path(workflow).read_text(), source_root)
+    if profile is None:
+        # Legacy behavior remains explicit until the parent provides/accepts the
+        # shared profile. This branch is not evidence of W7 completion.
+        return observed
+    with open(inventory, encoding="utf-8") as stream:
+        policy = json.load(stream)
+    config = shared_config(policy, profile, source_root)
+    if config != observed:
+        changed = sorted(k for k in set(config) | set(observed) if config.get(k) != observed.get(k))
+        raise WorkflowError("shared/workflow sanitizer parity mismatch: " + ", ".join(changed))
+    return config
 
 
 def build_inputs(build_dir, source_root, targets):
@@ -495,13 +568,27 @@ def main(argv=None):
     cfg = sub.add_parser("config")
     cfg.add_argument("--workflow", default=WORKFLOW)
     cfg.add_argument("--source-root", default=".")
-    sub.add_parser("affected")
+    cfg.add_argument("--shared-profile", help="require shared config and exact workflow parity")
+    cfg.add_argument("--inventory", default="tests/selection/inventory.json")
+    cfg.add_argument("--json", action="store_true", help="emit config JSON for inventory-owner handoff")
+    aff = sub.add_parser("affected")
+    aff.add_argument("--source-root")
+    aff.add_argument("--inventory")
     chk = sub.add_parser("check-inputs")
     chk.add_argument("--build-dir", required=True)
     chk.add_argument("--source-root", default=".")
     chk.add_argument("--workflow")
+    chk.add_argument("--shared-profile", help="use shared realized input audit; no legacy fallback")
+    chk.add_argument("--inventory", default="tests/selection/inventory.json")
     args = parser.parse_args(argv)
     if args.command == "check-inputs":
+        if args.shared_profile:
+            # The realization/backend owns the audit. A legacy Ninja-only tree
+            # without realization must visibly fail this explicit shared mode.
+            return subprocess.call([sys.executable, str(Path(args.source_root) / "scripts/test-plan.py"),
+                                    "check-inputs", "--repo", args.source_root,
+                                    "--inventory", args.inventory, "--profile", args.shared_profile,
+                                    "--build-dir", args.build_dir, "--after-build"])
         workflow = args.workflow or os.path.join(args.source_root, WORKFLOW)
         try:
             with open(workflow, encoding="utf-8") as f:
@@ -528,12 +615,16 @@ def main(argv=None):
         return 0
     if args.command == "affected":
         paths = [line.rstrip("\n") for line in sys.stdin if line.strip()]
-        run, why = affected(paths)
+        try:
+            run, why = affected(paths, args.source_root, args.inventory)
+        except Exception as exc:
+            print("sanitizer-gate-ci: shared selection failed: %s" % exc, file=sys.stderr)
+            return 2
         print(why)
         return 0 if run else 1
     try:
-        with open(args.workflow, encoding="utf-8") as f:
-            sys.stdout.write(as_bash(job_config(f.read(), args.source_root)))
+        config = configuration(args.workflow, args.source_root, args.inventory, args.shared_profile)
+        sys.stdout.write(json.dumps(config, sort_keys=True) + "\n" if args.json else as_bash(config))
     except (OSError, WorkflowError, ValueError) as e:
         print("sanitizer-gate-ci: %s: %s" % (args.workflow, e), file=sys.stderr)
         return 2
