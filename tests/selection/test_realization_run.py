@@ -25,6 +25,15 @@ class ExecutionTests(Project):
         log = (Path(receipt["evidence_dir"]) / "ctest.log").read_text()
         self.assertLess(log.index("z-first"), log.index("a-model"))
 
+    def test_build_path_alias_does_not_change_ctest_working_directory(self):
+        resolved, audit = self.ready()
+        alias = self.build.parent / "build-alias"
+        alias.symlink_to(self.build, target_is_directory=True)
+        receipt = r.run_resolved(resolved, alias, self.evidence, input_audit=audit)
+        self.assertEqual(receipt["outcome"], "passed", receipt)
+        command = next(c for c in receipt["commands"] if c[0] == "ctest")
+        self.assertEqual(command[command.index("--test-dir") + 1], str(self.build))
+
     def test_gui_skip_is_failure_not_acceptance(self):
         resolved, audit = self.ready(["gui"])
         receipt = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit)

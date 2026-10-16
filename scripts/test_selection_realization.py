@@ -1036,7 +1036,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
     """
     if attempt < 1 or parallel < 1:
         raise ValueError("attempt and parallel must be positive")
-    build_dir = Path(build_dir).absolute()
+    build_dir = Path(build_dir).resolve()
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("resolved profile fingerprint mismatch")
