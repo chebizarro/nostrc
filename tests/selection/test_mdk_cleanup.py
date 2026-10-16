@@ -71,10 +71,14 @@ def register(name,args):
 subprocess.run(['ctest','--test-dir',str(case),'--output-on-failure','--no-tests=error','-R','^consumer$'],check=True)
 '''
         result, receipt, state = self.run_guard(body)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('2/2 Test', result.stdout)
-        self.assertEqual(receipt['status'], 'command_succeeded')
-        self.assertTrue(receipt['cleanup_complete'])
+        self.assertEqual(receipt['status'], 'cleanup_unverified')
+        self.assertEqual(receipt['command_status'], 'succeeded')
+        self.assertEqual(receipt['command_exit_code'], 0)
+        self.assertFalse(receipt['cleanup_complete'])
+        self.assertEqual(receipt['cleanup_results'], dict(original_session='quiescent',
+            recorded_containers='removed', arbitrary_process_tree='unverified'))
         self.assertFalse(receipt['complete'])
         config = json.loads((state / 'config.json').read_text())
         canonical = json.dumps(config, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
@@ -109,8 +113,12 @@ orphan=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],stdin
             pid = int((state / 'grandchild.pid').read_text())
             try:
                 self.assert_stopped(pid)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertTrue(receipt['cleanup_complete'])
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(receipt['status'], 'cleanup_unverified')
+                self.assertEqual(receipt['command_exit_code'], 0)
+                self.assertFalse(receipt['cleanup_complete'])
+                self.assertEqual(receipt['cleanup_results']['original_session'], 'quiescent')
+                self.assertEqual(receipt['cleanup_results']['arbitrary_process_tree'], 'unverified')
                 self.assertIsNone(sibling.poll(), 'sibling process was killed')
             finally:
                 self.clean_known_descendant(pid, receipt['child_pid'])
@@ -137,6 +145,9 @@ os.close(reader)
             self.assertNotEqual(result.returncode, 0, result.stderr)
             self.assertFalse(receipt['cleanup_complete'])
             self.assertEqual(receipt['status'], 'cleanup_failed')
+            self.assertEqual(receipt['command_exit_code'], 0)
+            self.assertEqual(receipt['cleanup_results'], dict(original_session='unverified',
+                recorded_containers='removed', arbitrary_process_tree='unverified'))
             self.assertIn('owned session descendants remain', ' '.join(receipt['cleanup_errors']))
             trace = [json.loads(line) for line in (self.base / 'trace').read_text().splitlines()]
             removed = [args[-1] for args in trace if args[:2] == ['rm', '-f']]

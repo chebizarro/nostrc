@@ -102,12 +102,24 @@ class MDKGateTests(unittest.TestCase):
     def receipts(self):
         return [json.loads(x.read_text()) for x in self.evidence.glob('*/receipt.json')]
 
+    def assert_command_completed_without_tree_proof(self, receipt):
+        self.assertEqual(receipt['status'], 'cleanup_unverified')
+        self.assertEqual(receipt['exit_code'], 1)
+        self.assertEqual(receipt['command_status'], 'succeeded')
+        self.assertEqual(receipt['command_exit_code'], 0)
+        self.assertFalse(receipt['cleanup_complete'])
+        self.assertEqual(receipt['cleanup_results'], dict(original_session='quiescent',
+            recorded_containers='removed', arbitrary_process_tree='unverified'))
+        self.assertFalse(receipt['complete'])
+
     def test_two_roots_different_inputs_bind_exact_ids(self):
         a,b = self.root('a'),self.root('b')
         children = [self.start(a),self.start(b)]
-        self.assertEqual([p.wait(timeout=15) for p in children],[0,0])
+        self.assertEqual([p.wait(timeout=15) for p in children],[1,1])
         receipts = self.receipts()
         self.assertEqual(len(receipts),2)
+        for receipt in receipts:
+            self.assert_command_completed_without_tree_proof(receipt)
         ids = {r['image_results'][0]['image_id'] for r in receipts}
         tags = {r['images']['011']['tag'] for r in receipts}
         self.assertEqual(len(ids),2)
@@ -134,8 +146,11 @@ class MDKGateTests(unittest.TestCase):
             self.assertEqual(second.wait(timeout=10),130)
             self.assertIsNone(first.poll())
             release.touch()
-            self.assertEqual(first.wait(timeout=10),0)
-            self.assertEqual(self.start(other,(version,)).wait(timeout=10),0)
+            self.assertEqual(first.wait(timeout=10),1)
+            self.assertEqual(self.start(other,(version,)).wait(timeout=10),1)
+            for receipt in self.receipts():
+                if receipt['command_exit_code'] == 0:
+                    self.assert_command_completed_without_tree_proof(receipt)
         self.assertEqual(len([x for x in self.traces() if x[0]=='build']),4)
         runs = [x for x in self.traces() if x[0]=='run']
         self.assertEqual(len({x[-1] for x in runs}),4)
@@ -148,8 +163,9 @@ class MDKGateTests(unittest.TestCase):
 
     def test_vectors_preserved_before_later_fixture_reset(self):
         child = self.start(self.root('vectors'),ARTIFACT_DIR=str(self.base/'artifacts'))
-        self.assertEqual(child.wait(timeout=10),0)
+        self.assertEqual(child.wait(timeout=10),1)
         receipt = self.receipts()[0]
+        self.assert_command_completed_without_tree_proof(receipt)
         artifact = Path(receipt['containers'][0]['artifact'])
         self.assertEqual(artifact.read_text(),'{"simulated":true}\n')
         self.assertEqual((self.base/'artifacts/vectors.jsonl').read_text(),'reset')
@@ -179,7 +195,10 @@ class MDKGateTests(unittest.TestCase):
         first.terminate()
         self.assertEqual(first.wait(timeout=10),130)
         self.assertFalse(self.receipts()[0]['image_results'][0]['build_complete'])
-        self.assertEqual(self.start(root,('08',)).wait(timeout=10),0)
+        self.assertEqual(self.start(root,('08',)).wait(timeout=10),1)
+        for receipt in self.receipts():
+            if receipt['command_exit_code'] == 0:
+                self.assert_command_completed_without_tree_proof(receipt)
 
     def test_cancel_removes_only_run_owned_container(self):
         ready = self.base/'run-ready'
