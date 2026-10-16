@@ -181,6 +181,18 @@ class ConfiguredMembershipContracts(unittest.TestCase):
                 self.assertTrue(set(s.classify(self.policy, source)["nodes"]) <= set(check["nodes"]))
         self.assertFalse(export["matches_declared_architecture"])
 
+    def test_poll_consumer_reaches_background_through_observed_runtime_target(self):
+        source = "gnome/groundhog/src/ui/gh-poll-ui.c"
+        evidence = self.exports["sanitizer_linux_arm64"]["selected_membership"]["groundhog-background"]
+        self.assertIn("groundhog", evidence["targets"])
+        self.assertIn(source, evidence["primary_source_inputs"])
+        self.assertIn("groundhog.poll_ui", evidence["nodes"])
+        check = self.policy["checks"][evidence["check"]]
+        self.assertIn("groundhog", check["build_targets"])
+        plan = s.make_plan(self.policy, [{"status": "M", "old_path": source, "new_path": source}],
+                           head="0" * 40, context="local")
+        self.assertEqual(plan["selected_checks"], ["groundhog.poll_ui", "sanitizer.groundhog_background"])
+
     def test_native_stress_gap_and_all_union_gaps_stay_incomplete(self):
         members = registrations(self.policy, "libgo.macos.asan")
         self.assertEqual(len(set(members)), 32)
