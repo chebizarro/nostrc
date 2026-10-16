@@ -5085,6 +5085,7 @@
         "{source}/tests/selection/realization_support.py",
         "{source}/tests/selection/selector_support.py",
         "{source}/tests/selection/test_aggregation.py",
+        "{source}/tests/selection/test_broad_setup_contracts.py",
         "{source}/tests/selection/test_cmake_inventory_compat.py",
         "{source}/tests/selection/test_command_execution.py",
         "{source}/tests/selection/test_command_output_bytes.py",
@@ -10665,17 +10666,17 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "bbfec47bf2f67d3765d193945d482f55b38eb28a8584e154b6eecc5fd3e5bcc9",
+      "source_sha256": "0fbbfdf89fe0bc07a3e4ac38c68fd73e27fd3fd7a5f422a6ff1dd43c6540ea1a",
       "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
-      "workflow_sha256": "11e36343fa3432c6c82acfc73c44d4ed3427b832b88185bc48b6b65b30ac4bea"
+      "workflow_sha256": "f1282f0ee7091b0ff5cb5f951ff0c6d1c40dd31fc249558b868ce3bb0ff95130"
     },
     ".github/workflows/bp-matrix.yml:bp-matrix": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "966162010685611b48fb90d2582aef0a685cff08d2df4d5136060d6324ec4a73",
+      "source_sha256": "04d0677475294f39e22faa3de88745437587b6a2594ea6b13d05ab69c194e85d",
       "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
-      "workflow_sha256": "ebfd668f95383f0b130079e6b9457091fb5a49c9b97c173aae3d26d55da1ad19"
+      "workflow_sha256": "7b1b9cf920224f239240e3a1191c66f297f6bc36009fa53db6c921d65a7313dc"
     },
     ".github/workflows/dependency-broad.yml:core": {
       "matrix_source": "",
@@ -10955,23 +10956,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "8ca627db0bf4449222e1502bd4ce567b34b9878e52a1f68dcc66b608c5aa2483"
+      "workflow_sha256": "d83e7f677684aab653c34bdab2c99364df0fc687e1d3f0b56dc61ce26f9fff5e"
     },
     ".github/workflows/grotto-fuzz.yml:fuzz-test": {
       "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "e0d34353806faeae46a5951182cb1de202f7a704b6ddde746f90ab265e977e35",
+      "source_sha256": "41321b5f8b3f14958df15a8b9cf11a6037b34d17d927c9ad707e348d60595d49",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "8ca627db0bf4449222e1502bd4ce567b34b9878e52a1f68dcc66b608c5aa2483"
+      "workflow_sha256": "d83e7f677684aab653c34bdab2c99364df0fc687e1d3f0b56dc61ce26f9fff5e"
     },
     ".github/workflows/grotto-fuzz.yml:coverage-report": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "dda9cfbbe29a65015fdc0ea54141a2704ab79d39a2c584fcdc0bcfcd720a041c",
+      "source_sha256": "3fefe6a6753499763ba2daf1f2b69d31937cdb365bc2a5f4829287a58ebbe710",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "8ca627db0bf4449222e1502bd4ce567b34b9878e52a1f68dcc66b608c5aa2483"
+      "workflow_sha256": "d83e7f677684aab653c34bdab2c99364df0fc687e1d3f0b56dc61ce26f9fff5e"
     },
     ".github/workflows/groundhog-ci.yml:groundhog": {
       "matrix_source": "",
@@ -11144,9 +11145,9 @@
       "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "ae9973bef5e4f540147a2af37e681b44ba4a7e0a4e082ad2fac52c2f1c964a64",
+      "source_sha256": "64ae85cb2b56c4106f90f71ddde343362a63f645294e3efb84366406017ac43c",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "a5f8ad3f0fdeb5d321566e1b033aba737d9f7af13adc142cc5febe6a248986bd"
+      "workflow_sha256": "b262ba369c646b2b05e5c96e72f600588fba264dcc4d68ad0d8e09bd64b4ac26"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
       "matrix_source": "",
@@ -11154,7 +11155,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "91b074efcb6d38fc9648815b070f8815c4449c81b302c65069b93baa6e7e02d6",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "a5f8ad3f0fdeb5d321566e1b033aba737d9f7af13adc142cc5febe6a248986bd"
+      "workflow_sha256": "b262ba369c646b2b05e5c96e72f600588fba264dcc4d68ad0d8e09bd64b4ac26"
     },
     ".github/workflows/nostrc-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
