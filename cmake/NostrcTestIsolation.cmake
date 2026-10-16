@@ -55,4 +55,8 @@ function(nostrc_isolate_tests fixture)
   file(WRITE "${_script}" "${_body}")
   add_test(NAME ${fixture} COMMAND ${CMAKE_COMMAND} -P "${_script}")
   set_tests_properties(${fixture} PROPERTIES FIXTURES_SETUP ${fixture})
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(${fixture} OWNER testing.framework EXPECTED fixture
+      INPUTS "${_script}" "${CMAKE_CURRENT_FUNCTION_LIST_FILE}")
+  endif()
 endfunction()

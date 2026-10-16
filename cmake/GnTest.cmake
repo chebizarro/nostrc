@@ -19,7 +19,10 @@
 
 # ── Standard GLib test (no display required) ─────────────────────────
 function(gn_add_gtest NAME)
-  cmake_parse_arguments(ARG "" "TIMEOUT" "SOURCES;LIBS;ENV" ${ARGN})
+  cmake_parse_arguments(ARG "" "TIMEOUT;EXPECTED" "SOURCES;LIBS;ENV;OWNER;INPUTS;REQUIRES;TARGETS" ${ARGN})
+  if(NOT ARG_EXPECTED)
+    set(ARG_EXPECTED pass)
+  endif()
 
   if(NOT ARG_SOURCES)
     message(FATAL_ERROR "gn_add_gtest(${NAME}): SOURCES is required")
@@ -29,6 +32,10 @@ function(gn_add_gtest NAME)
   target_link_libraries(${NAME} PRIVATE ${ARG_LIBS})
 
   add_test(NAME ${NAME} COMMAND ${NAME})
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(${NAME} OWNER ${ARG_OWNER} TARGETS ${NAME} ${ARG_TARGETS}
+      INPUTS ${ARG_INPUTS} REQUIRES ${ARG_REQUIRES} EXPECTED "${ARG_EXPECTED}")
+  endif()
 
   # Base environment for all GLib tests
   set(_env
@@ -56,7 +63,10 @@ endfunction()
 
 # ── GTK widget test (requires Xvfb for headless rendering) ───────────
 function(gn_add_gtest_xvfb NAME)
-  cmake_parse_arguments(ARG "" "TIMEOUT" "SOURCES;LIBS;ENV" ${ARGN})
+  cmake_parse_arguments(ARG "" "TIMEOUT;EXPECTED" "SOURCES;LIBS;ENV;OWNER;INPUTS;REQUIRES;TARGETS" ${ARGN})
+  if(NOT ARG_EXPECTED)
+    set(ARG_EXPECTED pass)
+  endif()
 
   if(NOT ARG_SOURCES)
     message(FATAL_ERROR "gn_add_gtest_xvfb(${NAME}): SOURCES is required")
@@ -78,6 +88,11 @@ function(gn_add_gtest_xvfb NAME)
   else()
     message(WARNING "xvfb-run not found; widget test '${NAME}' may fail without a display")
     add_test(NAME ${NAME} COMMAND ${NAME})
+  endif()
+
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(${NAME} OWNER ${ARG_OWNER} TARGETS ${NAME} ${ARG_TARGETS}
+      INPUTS ${ARG_INPUTS} REQUIRES display ${ARG_REQUIRES} EXPECTED "${ARG_EXPECTED}")
   endif()
 
   # Environment: GLib hardening + GDK backend for Xvfb
@@ -103,7 +118,7 @@ function(gn_add_gtest_xvfb NAME)
   endif()
 
   # Label for CI filtering
-  set_tests_properties(${NAME} PROPERTIES LABELS "gtk;widget")
+  set_property(TEST ${NAME} APPEND PROPERTY LABELS "gtk;widget")
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(${NAME})
