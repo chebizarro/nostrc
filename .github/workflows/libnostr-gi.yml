@@ -74,8 +74,8 @@ jobs:
       - name: Select clang toolchain (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "CXX=clang++" >> $GITHUB_ENV
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -93,11 +93,11 @@ jobs:
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
-        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
+        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> "$GITHUB_ENV"
 
       - name: Configure (with GLib, no nostrdb/apps)
         run: >-
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
           -DGO_WARNINGS_AS_ERRORS=ON -DNOSTR_WITH_GLIB=ON
           -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
           -DNOSTR_ENABLE_GI=ON

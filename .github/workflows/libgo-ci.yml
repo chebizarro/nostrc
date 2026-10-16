@@ -82,36 +82,38 @@ jobs:
           sudo apt-get install -y build-essential ninja-build clang git python3 python3-pip libsoup-3.0-dev libnsync-dev
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
           cmake --version
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "CXX=clang++" >> $GITHUB_ENV
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
           brew install libsoup@3 nsync || true
           # Ensure Homebrew pkg-config paths are visible (not always by default in Actions shells)
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}" >> $GITHUB_ENV
-          echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}" >> $GITHUB_ENV
+          {
+            echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:${PKG_CONFIG_PATH}"
+            echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}"
+            echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}"
+          } >> "$GITHUB_ENV"
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
-        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
+        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> "$GITHUB_ENV"
 
       - name: Configure (sanitizers)
         working-directory: libgo
         run: |
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
             tsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
             tsan_mpmc)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_TSAN_MPMC_SLOTS=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
           esac
@@ -180,10 +182,10 @@ jobs:
         run: |
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGOF_PORTABLE_CONTEXT=OFF -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DGOF_PORTABLE_CONTEXT=OFF -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
               ;;
             tsan)
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DGOF_PORTABLE_CONTEXT=OFF -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DGOF_PORTABLE_CONTEXT=OFF -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON
               ;;
           esac
 
@@ -259,12 +261,12 @@ jobs:
 
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
-        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
+        run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> "$GITHUB_ENV"
 
       - name: Configure fuzz driver
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
             -DENABLE_FUZZING=ON \
             -DENABLE_FUZZING_RUNTIME=OFF \
             -DBUILD_LIBMARMOT=OFF \

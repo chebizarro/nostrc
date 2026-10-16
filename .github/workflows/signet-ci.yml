@@ -75,8 +75,8 @@ jobs:
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev \
             libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "CXX=clang++" >> $GITHUB_ENV
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Configure (signet enabled)
         run: |
