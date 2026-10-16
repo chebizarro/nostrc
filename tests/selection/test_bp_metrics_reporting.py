@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""BP reporting regressions; run with python3 tests/test_bp_metrics_reporting.py.
+"""BP reporting regressions; run with python3 tests/selection/test_bp_metrics_reporting.py.
 
-fixtures/bp_metrics_reporting.jsonl contains two consecutive, unmodified JSON
+tests/fixtures/bp_metrics_reporting.jsonl contains two consecutive, unmodified JSON
 lines emitted by test_subscription_backpressure_long on Ubuntu 24.04/aarch64,
 GCC 13, Release + NOSTR_ENABLE_METRICS=ON, source a478070509569c26917dd5fb13a548b1f68eade9.
 Captured 2026-10-16 from the full regular matrix (cap=1, duration-ms=15000,
@@ -20,11 +20,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import run_bp_matrix as runner
 
-FIXTURE = Path(__file__).with_name("fixtures") / "bp_metrics_reporting.jsonl"
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "bp_metrics_reporting.jsonl"
 COMBO = "dur_15000_burst_128_sleep_500"
 
 
