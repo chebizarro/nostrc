@@ -557,7 +557,10 @@ if (BUILD_TESTING)
     add_test(NAME gnostr-resource-build
       COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/common/test_blueprint_resources.py
-        --component gnostr)
+        --component gnostr
+        --blueprint-compiler "${BLUEPRINT_COMPILER}"
+        --generator "${CMAKE_GENERATOR}"
+        --make-program "${CMAKE_MAKE_PROGRAM}")
     set_tests_properties(gnostr-resource-build PROPERTIES
       TIMEOUT 120
       LABELS "build;resource;unit;gnostr")

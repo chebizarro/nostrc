@@ -525,7 +525,10 @@ if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME nostr-gtk-resource-build
       COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_ROOT}/tests/common/test_blueprint_resources.py --component nostr-gtk)
+        ${PROJECT_ROOT}/tests/common/test_blueprint_resources.py --component nostr-gtk
+        --blueprint-compiler "${BLUEPRINT_COMPILER}"
+        --generator "${CMAKE_GENERATOR}"
+        --make-program "${CMAKE_MAKE_PROGRAM}")
     set_tests_properties(nostr-gtk-resource-build PROPERTIES
       TIMEOUT 120
       LABELS "build;resource;unit;nostr-gtk")

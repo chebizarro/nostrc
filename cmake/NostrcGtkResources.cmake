@@ -8,11 +8,17 @@ function(nostrc_compile_blueprint_resources output_variable resource_xml resourc
   find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${resource_xml}")
-  file(STRINGS "${resource_xml}" resource_entries REGEX "<file[ >]")
+  execute_process(
+    COMMAND "${GLIB_COMPILE_RESOURCES}" --generate-dependencies
+            "--sourcedir=${data_dir}" "${resource_xml}"
+    OUTPUT_VARIABLE resource_dependencies
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY)
+  string(REPLACE "\n" ";" resource_paths "${resource_dependencies}")
   set(resource_inputs)
-  foreach(entry IN LISTS resource_entries)
-    string(REGEX REPLACE ".*<file[^>]*>([^<]+)</file>.*" "\\1" relative_path "${entry}")
-    list(APPEND resource_inputs "${data_dir}/${relative_path}")
+  foreach(resource_path IN LISTS resource_paths)
+    get_filename_component(resource_input "${resource_path}" ABSOLUTE BASE_DIR "${data_dir}")
+    list(APPEND resource_inputs "${resource_input}")
   endforeach()
 
   set(compiled_ui_files)
