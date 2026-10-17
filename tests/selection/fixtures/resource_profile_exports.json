@@ -1,6 +1,11 @@
 {
   "architecture": "aarch64",
   "authored_x86_64_execution_acceptance": false,
+  "configured_cache": {
+    "BLUEPRINT_COMPILER": "/usr/local/bin/blueprint-compiler",
+    "CMAKE_GENERATOR": "Ninja",
+    "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja"
+  },
   "ctest": [
     {
       "backtrace": 4,
@@ -8,7 +13,13 @@
         "/usr/bin/python3",
         "{source}/tests/common/test_blueprint_resources.py",
         "--component",
-        "nostr-gtk"
+        "nostr-gtk",
+        "--blueprint-compiler",
+        "/usr/local/bin/blueprint-compiler",
+        "--generator",
+        "Ninja",
+        "--make-program",
+        "/usr/bin/ninja"
       ],
       "name": "nostr-gtk-resource-build",
       "properties": [
@@ -38,7 +49,13 @@
         "/usr/bin/python3",
         "{source}/apps/gnostr/../../tests/common/test_blueprint_resources.py",
         "--component",
-        "gnostr"
+        "gnostr",
+        "--blueprint-compiler",
+        "/usr/local/bin/blueprint-compiler",
+        "--generator",
+        "Ninja",
+        "--make-program",
+        "/usr/bin/ninja"
       ],
       "name": "gnostr-resource-build",
       "properties": [
@@ -296,19 +313,20 @@
     "nostr-gtk-resource-build"
   ],
   "profile": "core.linux",
+  "raw_cmake_cache_sha256": "06d5b9ab751b6680ee15bfe58679059b02b881176e07f97dd62389773ec52e21",
   "raw_descriptors_sha256": "8891ff1c359ce1258fb021aa29e7e11c1fc5b4d3e8f5c1d6d91e18d3a6cad262",
-  "raw_selected_sha256": "a5196a418eae0c2094da9204291ed14fd61a6f5d6265700a342b39cef0c3f30a",
+  "raw_selected_sha256": "d6edd11cd42710567835dfb36dc97b6b25cc02fd52f7d5336255346f44ff09bb",
   "schema_version": 1,
   "scope": "Fresh exact core.linux configure/export on Linux arm64; raw component diagnostic only, no authored x86_64 admission or complete profile coverage.",
-  "source_head": "07b893b9889a7b7061faf11a58704e0043ebfea0",
+  "source_head": "ca84a466cab965c6523dbca78f3ad7087db115d8",
   "source_sha256": {
     "CMakeLists.txt": "e4db97d904e02d45118d4ea6a7ea1cc28b302915946a35aa03df14cf8cb9b56f",
-    "apps/gnostr/CMakeLists.txt": "29a1726cde48025fd51a6b70909f581d369c830964b3e5a2c0daf8115efbd6d8",
+    "apps/gnostr/CMakeLists.txt": "ea547c775aeda5fe04f93d80809e429b1b481b0005f7b0a2186874a8b786285b",
     "apps/gnostr/TestInventory.cmake": "8e4a340dd44ce303d2287b5263ba9b2330ad2ee9e455c8962f1001473cbe1b75",
-    "cmake/NostrcGtkResources.cmake": "b2579e587d6668cade277b8407f07a595851e8814d42dc4137325734290140ae",
+    "cmake/NostrcGtkResources.cmake": "130658f717f58904fc1c84ba7694a17bf66d88d74de5d2ddcb67c316cb840689",
     "cmake/NostrcTestInventory.cmake": "c5e79f71f39db770185629f1e09e56f2b06b96d5f892a24259261f1241ed0008",
-    "nostr-gtk/CMakeLists.txt": "ff06ac255d410cad94587949f297fa6b5c837f41f85bb97eebf81d8f84462f6a",
+    "nostr-gtk/CMakeLists.txt": "ae51713e79102d27d3e4a9b3834524b99d3592c04455987e90400d5344bc20d9",
     "nostr-gtk/TestInventory.cmake": "c2d8a7eab79df441156ba61d750d35d2c67b05a3bd85b08bc6ad077886fb30c0",
-    "tests/common/test_blueprint_resources.py": "cc6b2bd0fc72d9e037e0a14f73a98e2c88f8687852f90c48633d910eb157e5f5"
+    "tests/common/test_blueprint_resources.py": "ae7c26287d95d3fb55ffc221b91263dcd5861b28957d0feb1b33323d1dd03973"
   }
 }

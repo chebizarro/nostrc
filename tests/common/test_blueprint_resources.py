@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -14,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--component", choices=("gnostr", "nostr-gtk"), required=True)
 parser.add_argument("--blueprint-compiler", default=shutil.which("blueprint-compiler"))
+parser.add_argument("--generator")
+parser.add_argument("--make-program")
 options, unittest_args = parser.parse_known_args()
 IS_APP = options.component == "gnostr"
 COMPONENT = ROOT / ("apps/gnostr" if IS_APP else "nostr-gtk")
@@ -89,6 +92,9 @@ nostrc_compile_blueprint_resources(resource_c
   "${CMAKE_CURRENT_BINARY_DIR}/resources.c" blueprint_outputs
 ''' + arguments + ''')
 add_executable(resource-probe probe.c "${resource_c}")
+if(TARGET blueprint_outputs)
+  add_dependencies(resource-probe blueprint_outputs)
+endif()
 target_link_libraries(resource-probe PRIVATE PkgConfig::GIO)
 ''')
         (self.source / "probe.c").write_text('''#include <gio/gio.h>
@@ -106,14 +112,32 @@ int main(int argc, char **argv) {
 }
 ''')
 
+    def after_output_second(self):
+        # Make 3.81 compares whole seconds. Fixture edits/reconfiguration must be
+        # newer than the last output, not aliases within that timestamp quantum.
+        outputs = [self.build / name for name in ("resources.c", "resource-probe")]
+        timestamps = [p.stat().st_mtime for p in outputs if p.exists()]
+        if timestamps:
+            delay = int(max(timestamps)) + 1 - time.time()
+            if delay > 0:
+                time.sleep(delay)
+
+    def write_input(self, path, content):
+        self.after_output_second()
+        path.write_text(content)
+
     def configure(self, compiler=None):
+        self.after_output_second()
         if compiler is None:
             compiler = options.blueprint_compiler
         configured = re.findall(r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/data/(\S+\.blp)",
                                 (self.source / "CMakeLists.txt").read_text())
         self.current_outputs = ({Path(p).with_suffix(".ui").as_posix() for p in configured}
                                 if compiler else set())
-        run("cmake", "-S", str(self.source), "-B", str(self.build), "-G", "Ninja",
+        generator_args = ["-G", options.generator] if options.generator else []
+        if options.make_program:
+            generator_args.append(f"-DCMAKE_MAKE_PROGRAM={options.make_program}")
+        run("cmake", "-S", str(self.source), "-B", str(self.build), *generator_args,
             f"-DBLUEPRINT_COMPILER={compiler}")
 
     def compile(self, ok=True):
@@ -149,7 +173,7 @@ int main(int argc, char **argv) {
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
 
-        self.blp.write_text(self.blp.read_text().replace("Fresh Blueprint marker", "Incremental marker"))
+        self.write_input(self.blp, self.blp.read_text().replace("Fresh Blueprint marker", "Incremental marker"))
         before = hashes(self.source)
         self.compile()
         self.assertIn(b"Incremental marker", self.extract())
@@ -164,13 +188,32 @@ int main(int argc, char **argv) {
 
         source_only = ("ui/widgets/gnostr-note-embed.ui" if IS_APP else "gnostr-thread-view.ui")
         ui = self.source / "data" / source_only
-        ui.write_text(ui.read_text() + "\n<!-- source-only marker -->\n")
+        self.write_input(ui, ui.read_text() + "\n<!-- source-only marker -->\n")
         before = hashes(self.source)
         self.compile()
         prefix = "/org/gnostr/ui/" if IS_APP else "/org/nostr/gtk/"
         self.assertEqual(self.extract(prefix + source_only), ui.read_bytes())
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
+
+    def test_same_line_manifest_entries_both_rebuild(self):
+        names = ("dependency-a.txt", "dependency-b.txt")
+        manifest = self.source / "data" / MANIFEST
+        entries = "".join(f"<file>{name}</file>" for name in names)
+        manifest.write_text(manifest.read_text().replace("</gresource>", entries + "\n</gresource>", 1))
+        for name in names:
+            (self.source / "data" / name).write_text("original " + name)
+        before = hashes(self.source)
+        self.configure()
+        self.compile()
+        self.check_all_resources()
+        self.assertEqual(before, hashes(self.source))
+        for name in names:
+            self.write_input(self.source / "data" / name, "updated " + name)
+            before = hashes(self.source)
+            self.compile()
+            self.check_all_resources()
+            self.assertEqual(before, hashes(self.source))
 
     def test_retired_blueprint_uses_current_source_and_active_outputs(self):
         self.blp.write_text(self.blp.read_text().replace(MARKER, "Obsolete generated marker"))
