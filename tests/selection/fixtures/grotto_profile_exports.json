@@ -5,7 +5,7 @@
   "schema_version": 1,
   "scope": "Fresh ordinary Grotto CMake/CTest exports on actual Linux arm64, not native x86_64 profile acceptance or default-all build success. No diagnostic nonmembers admitted.",
   "source_dirty": true,
-  "source_head": "4ecc6829c4890db0d9616b18165f406837f88d32",
+  "source_head": "07b893b9889a7b7061faf11a58704e0043ebfea0",
   "source_sha256": {
     ".github/workflows/grotto-ci.yml": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
     "apps/grotto/CMakeLists.txt": "91730bc81471ff1b0878dd8a5b40c49cb9cebe1e1ba900cd0122a50e69375518",
@@ -15,13 +15,13 @@
     "apps/grotto/tests/CMakeLists.txt": "b8f540f7faa8cd391ae0ed27efede47d89350ac69721fb4439ee87c83484435a",
     "apps/grotto/tests/TestInventory.cmake": "5dd25c9bee4c4b9150ef8259addd0028af99d951081feff5045d61514cd5bc33",
     "apps/grotto/tests/identity-tests.cmake": "645eff815ead31c6ae1f9690c94111dfcb4313aeb761f8ca1fb43115aa2c6b93",
-    "cmake/NostrcGtkResources.cmake": "524e35b927834054cee4e1dbc7d9192e1a40368f569f22de5836444e68c15492",
+    "cmake/NostrcGtkResources.cmake": "b2579e587d6668cade277b8407f07a595851e8814d42dc4137325734290140ae",
     "cmake/NostrcTestInventory.cmake": "c5e79f71f39db770185629f1e09e56f2b06b96d5f892a24259261f1241ed0008",
     "nips/nip55l/CMakeLists.txt": "343e3710e64d35dd25789b4094466aa5b40304c3e6bb4cd1a2e738d4bf186bfd",
     "nips/nip55l/TestInventory.cmake": "680870a408ef323c8ddefa1b000c479befd1f508d3cdeafeb00f3b067dfd62e9",
     "nostr-gtk/CMakeLists.txt": "ff06ac255d410cad94587949f297fa6b5c837f41f85bb97eebf81d8f84462f6a",
     "nostr-gtk/TestInventory.cmake": "c2d8a7eab79df441156ba61d750d35d2c67b05a3bd85b08bc6ad077886fb30c0",
-    "tests/common/test_blueprint_resources.py": "5d4eb752bdc5b7fb167221e7857e57b504d2e6904924109fa146ddb855af2233"
+    "tests/common/test_blueprint_resources.py": "cc6b2bd0fc72d9e037e0a14f73a98e2c88f8687852f90c48633d910eb157e5f5"
   },
   "variants": {
     "asan-ubsan": {
