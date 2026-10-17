@@ -40,7 +40,9 @@ def parser():
             cmd.add_argument("--strict", action="store_true")
             cmd.add_argument("--after-build", action="store_true")
             cmd.add_argument("--evidence-dir")
-            cmd.add_argument("--parallel", type=int, default=1)
+            cmd.add_argument("--parallel", type=int, default=None, help="legacy shared build/test override (default: 1 for legacy profiles)")
+            cmd.add_argument("--build-parallel", type=int, help="must match authored build_parallelism (or parallelism fallback)")
+            cmd.add_argument("--test-parallel", type=int, help="must match authored test_parallelism (or parallelism fallback)")
             cmd.add_argument("--timeout", type=int)
             cmd.add_argument("--evidence-path", action="append", default=[])
         elif name == "aggregate":
@@ -261,6 +263,11 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
                 path = (Path(args.repo) / os.fsdecode(value)).resolve()
                 if not any(path == root or root in path.parents for root in excluded):
                     raise selection.CheckFailure(f"committed-tree execution refuses untracked source input: {os.fsdecode(value)}")
+    if args.command == "run":
+        if state is not None:
+            state["stage"] = "execution_options"
+        jobs = backend.effective_phase_parallelism(profile, getattr(args, "parallel", None),
+            build_parallel=getattr(args, "build_parallel", None), test_parallel=getattr(args, "test_parallel", None))
     if state is not None:
         state["stage"] = "configure" if args.configure or args.phase == "configure" else "load_realization"
     if args.configure or args.phase == "configure":
@@ -307,9 +314,10 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
     if args.command == "resolve":
         return resolved, 0
     selection.require(args.evidence_dir is not None, "run requires --evidence-dir")
-    selection.require(args.parallel > 0 and (args.timeout is None or args.timeout > 0), "parallel/timeout must be positive")
+    selection.require(args.timeout is None or args.timeout > 0, "timeout must be positive")
     if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
-        diagnostic_options = backend._diagnostic_execution_options(resolved, realized, args.parallel, args.timeout)
+        diagnostic_options = backend._diagnostic_execution_options(resolved, realized, jobs["build"], args.timeout)
+        backend._diagnostic_execution_options(resolved, realized, jobs["test"], args.timeout)
         args.timeout = diagnostic_options["timeout_seconds"]
     if state is not None:
         state["stage"] = "capability"
@@ -338,7 +346,7 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
         if state is not None:
             state["stage"] = "build"
             state["work_status"]["build"] = "started"
-        command = ["cmake", "--build", args.build_dir, "--parallel", str(args.parallel)]
+        command = ["cmake", "--build", args.build_dir, "--parallel", str(jobs["build"])]
         if resolved.get("configuration"):
             command += ["--config", resolved["configuration"]]
         command += ["--target", *resolved["build_targets"]]
@@ -378,7 +386,8 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
             return audit, 1
         raise selection.CheckFailure("post-build input audit failed; original findings retained")
     if args.phase in {"configure", "build"}:
-        return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False}, 0
+        return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False,
+                **({"execution_parallelism": jobs, "commands": build_commands} if "execution_parallelism" in resolved else {})}, 0
     if state is not None:
         state["stage"] = "test"
         state["work_status"]["test"] = "started"
@@ -387,6 +396,7 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
             state["backend_receipt_path"] = str(path)
     raw = backend.run_resolved(resolved, args.build_dir, args.evidence_dir, args.attempt, input_audit=audit,
                                build=False, parallel=args.parallel, timeout=args.timeout, evidence_paths=args.evidence_path,
+                               build_parallel=getattr(args, "build_parallel", None), test_parallel=getattr(args, "test_parallel", None),
                                **({"custody": custody} if custody is not None else {}))
     raw["build_seconds"] = build_seconds
     raw["configure_seconds"] = realized.get("configure_seconds")
@@ -407,6 +417,14 @@ def normalize_receipt(policy, plan, resolved, raw):
         selection.require(raw.get("configuration") == resolved.get("configuration") == configuration
                           == resolved.get("phase_context", {}).get("configuration"),
                           "backend diagnostic configuration differs from resolved/phase/profile configuration")
+    phase_profile = policy.get("profiles", {}).get(profile_id, {})
+    authored_phases = any(key in phase_profile for key in ("build_parallelism", "test_parallelism"))
+    if authored_phases or "execution_parallelism" in resolved or "execution_parallelism" in raw:
+        selection.require(authored_phases, "phase parallelism requires an authored profile")
+        jobs = selection.validate_phase_parallelism_evidence(phase_profile, raw, require_test=bool(resolved["tests"]))
+        selection.require(selection.digest(resolved.get("execution_parallelism")) == selection.digest(jobs)
+                          and selection.digest(resolved.get("phase_context", {}).get("execution_parallelism")) == selection.digest(jobs),
+                          "resolved phase parallelism differs from authored profile")
     lane = next((x for x in plan["lanes"] if x["profile"] == profile_id), None)
     selection.require(lane is not None, "backend returned unselected profile")
     for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context", "phase_context_hash"):
@@ -437,6 +455,7 @@ def normalize_receipt(policy, plan, resolved, raw):
             "diagnostic_eligible": raw.get("diagnostic_eligible", False),
             "complete_gate_eligible": raw.get("complete_gate_eligible", False),
             "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", []),
+            **({"execution_parallelism": raw["execution_parallelism"]} if "execution_parallelism" in resolved else {}),
             **({"complete": False} if raw.get("complete") is False else {})}
 
 

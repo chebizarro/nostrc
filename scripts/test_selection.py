@@ -197,7 +197,7 @@ def validate_inventory(policy):
                 and all(x in {'local', 'ci', 'release'} for x in contexts), f'{ident}: invalid contexts')
         if profile.get('execution_domain') == 'prepared_peer_linux_v1':
             require(contexts == ['local'], f'{ident}: prepared runtime is local-only')
-        if "phase_environments" in profile or "sanitizer_compatibility" in profile:
+        if any(key in profile for key in ("phase_environments", "sanitizer_compatibility", "build_parallelism", "test_parallelism")):
             from test_selection_realization import RealizationError, validate_phase_profile
             try:
                 validate_phase_profile(profile)
@@ -537,6 +537,31 @@ def validate_plan(plan, policy):
     return plan
 
 
+def validate_phase_parallelism_evidence(profile, evidence, *, require_test=False):
+    if not any(key in profile for key in ("build_parallelism", "test_parallelism")):
+        return None
+    from test_selection_realization import authored_phase_parallelism
+    expected = authored_phase_parallelism(profile)
+    require(digest(evidence.get("execution_parallelism")) == digest(expected), "execution parallelism differs from authored profile")
+    require(digest(evidence.get("phase_context", {}).get("execution_parallelism")) == digest(expected),
+            "phase context parallelism differs from authored profile")
+    commands = evidence.get("commands")
+    require(isinstance(commands, list), "missing phase execution argv")
+    saw_test = False
+    for command in commands:
+        require(isinstance(command, list) and command and all(isinstance(v, str) for v in command), "invalid phase execution argv")
+        tool = Path(command[0]).name
+        phase = "build" if tool == "cmake" and command[1:2] == ["--build"] else "test" if tool == "ctest" else None
+        if phase is None:
+            continue
+        saw_test |= phase == "test"
+        require(command.count("--parallel") == 1 and command[command.index("--parallel") + 1:command.index("--parallel") + 2] == [str(expected[phase])]
+                and not any(v == "--" or v.startswith("--parallel=") or re.fullmatch(r"-j.*", v) for v in command),
+                f"{phase} argv parallelism differs from authored profile")
+    require(not require_test or saw_test, "missing actual CTest phase execution argv")
+    return expected
+
+
 def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=None, job_conclusions=None, repo=None):
     validate_plan(plan, policy)
     errors, visible, incomplete_lanes = [], [], []
@@ -587,6 +612,15 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: {key} did not pass")
         backend = receipt.get("backend_receipt", {})
         profile = policy["profiles"][lane["profile"]]
+        if any(key in profile for key in ("build_parallelism", "test_parallelism")):
+            try:
+                jobs = validate_phase_parallelism_evidence(profile, backend,
+                    require_test=any(policy["checks"][ident]["kind"] == "ctest" for ident in lane["checks"]))
+                require(digest(receipt.get("execution_parallelism")) == digest(jobs)
+                        and digest(receipt.get("phase_context", {}).get("execution_parallelism")) == digest(jobs),
+                        "receipt phase parallelism differs from authored profile")
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                errors.append(f"{lane_id}: phase parallelism did not qualify: {exc}")
         if profile.get("execution_domain") == "prepared_peer_linux_v1":
             from test_selection_custody import CustodyError, validate_lifecycle
             try:
