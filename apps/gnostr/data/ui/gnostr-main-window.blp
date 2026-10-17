@@ -32,7 +32,9 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
                             vexpand: true;
                             spacing: 24;
 
-                            Adw.Spinner {
+                            Gtk.Spinner {
+                                spinning: true;
+                                halign: center;
                                 height-request: 64;
                                 width-request: 64;
                             }
