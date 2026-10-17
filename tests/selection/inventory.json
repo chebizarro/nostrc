@@ -5374,6 +5374,47 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "gnostr.resource_build": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.linux": [
+          "gnostr-resource-build"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "gnostr",
+        "testing.framework",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "nostr.gtk.resource_build": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.linux": [
+          "nostr-gtk-resource-build"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nostr.gtk",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "selection.contract": {
       "build_targets": [],
       "command": [
@@ -5435,22 +5476,30 @@
         "{source}/Testing/TestInventory.cmake",
         "{source}/VERSION_MANIFEST.md",
         "{source}/apps/gnostr/CMakeLists.txt",
+        "{source}/apps/gnostr/TestInventory.cmake",
         "{source}/apps/grotto/CMakeLists.txt",
+        "{source}/apps/grotto/TestInventory.cmake",
         "{source}/apps/grotto/meson.build",
+        "{source}/apps/grotto/native-host/CMakeLists.txt",
+        "{source}/apps/grotto/native-host/TestInventory.cmake",
+        "{source}/apps/grotto/tests/CMakeLists.txt",
+        "{source}/apps/grotto/tests/TestInventory.cmake",
+        "{source}/apps/grotto/tests/identity-tests.cmake",
+        "{source}/cmake/NostrcGtkResources.cmake",
         "{source}/cmake/NostrcTestInventory.cmake",
         "{source}/gnome/groundhog/CMakeLists.txt",
         "{source}/gnome/groundhog/TestInventory.cmake",
-        "{source}/gnome/nostr-homed/tests/unit/test_manifest.c",
-        "{source}/gnome/nostr-homed/tests/unit/test_cache.c",
-        "{source}/gnome/nostr-homed/tests/unit/test_cache_config.c",
-        "{source}/gnome/nostr-homed/tests/unit/test_uid_map.c",
-        "{source}/gnome/nostr-homed/tests/unit/test_groups.c",
-        "{source}/gnome/nostr-homed/src/common/nostr_manifest.c",
-        "{source}/gnome/nostr-homed/src/common/nostr_cache.c",
         "{source}/gnome/nostr-homed/CMakeLists.txt",
         "{source}/gnome/nostr-homed/TestInventory.cmake",
         "{source}/gnome/nostr-homed/meson.build",
         "{source}/gnome/nostr-homed/nostr-homed.pc.in",
+        "{source}/gnome/nostr-homed/src/common/nostr_cache.c",
+        "{source}/gnome/nostr-homed/src/common/nostr_manifest.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_cache.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_cache_config.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_groups.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_manifest.c",
+        "{source}/gnome/nostr-homed/tests/unit/test_uid_map.c",
         "{source}/gnome/nostr-seal/src/main.c",
         "{source}/gnome/nostr-shell-extension/metadata.json",
         "{source}/libgo/CMakeLists.txt",
@@ -5489,6 +5538,7 @@
         "{source}/nips/nip47/TestInventory.cmake",
         "{source}/nips/nip49/TestInventory.cmake",
         "{source}/nips/nip51/TestInventory.cmake",
+        "{source}/nips/nip55l/CMakeLists.txt",
         "{source}/nips/nip55l/TestInventory.cmake",
         "{source}/nips/nip55l/include/nostr/nip55l/signer_ops.h",
         "{source}/nips/nip57/TestInventory.cmake",
@@ -5512,19 +5562,18 @@
         "{source}/nostr-gtk/CMakeLists.txt",
         "{source}/nostr-gtk/TestInventory.cmake",
         "{source}/nostr-gtk/meson.build",
+        "{source}/scripts/aggregate_bp_matrix.py",
         "{source}/scripts/check-macos-keychain.sh",
         "{source}/scripts/contained-gate.py",
         "{source}/scripts/contained-runner.py",
+        "{source}/scripts/generate_bp_report.py",
         "{source}/scripts/linux-gate.sh",
         "{source}/scripts/mdk-gate.py",
+        "{source}/scripts/metrics_summary.py",
+        "{source}/scripts/run_bp_matrix.py",
         "{source}/scripts/sanitizer-gate-ci.py",
         "{source}/scripts/test-gate.sh",
         "{source}/scripts/test-plan.py",
-        "{source}/scripts/run_bp_matrix.py",
-        "{source}/scripts/metrics_summary.py",
-        "{source}/scripts/aggregate_bp_matrix.py",
-        "{source}/scripts/generate_bp_report.py",
-        "{source}/tests/fixtures/bp_metrics_reporting.jsonl",
         "{source}/scripts/test_selection.py",
         "{source}/scripts/test_selection_custody.py",
         "{source}/scripts/test_selection_realization.py",
@@ -5533,18 +5582,23 @@
         "{source}/signet/src/signetd_main.c",
         "{source}/tests/CMakeLists.txt",
         "{source}/tests/TestInventory.cmake",
+        "{source}/tests/common/test_blueprint_resources.py",
         "{source}/tests/custody/test_contained_engine.py",
         "{source}/tests/custody/test_contained_linux.py",
         "{source}/tests/custody/workload.py",
+        "{source}/tests/fixtures/bp_metrics_reporting.jsonl",
+        "{source}/tests/selection/fixtures/grotto_profile_exports.json",
         "{source}/tests/selection/fixtures/hosted_audit_edges.json",
         "{source}/tests/selection/fixtures/nonmember_audit_edges.json",
         "{source}/tests/selection/fixtures/profile_exports.json",
+        "{source}/tests/selection/fixtures/resource_profile_exports.json",
         "{source}/tests/selection/golden/selection.json",
         "{source}/tests/selection/inventory.json",
         "{source}/tests/selection/profile_contract_support.py",
         "{source}/tests/selection/realization_support.py",
         "{source}/tests/selection/selector_support.py",
         "{source}/tests/selection/test_aggregation.py",
+        "{source}/tests/selection/test_bp_metrics_reporting.py",
         "{source}/tests/selection/test_broad_setup_contracts.py",
         "{source}/tests/selection/test_cmake_inventory_compat.py",
         "{source}/tests/selection/test_command_execution.py",
@@ -5552,14 +5606,16 @@
         "{source}/tests/selection/test_command_signal_bytes.py",
         "{source}/tests/selection/test_contained_custody_contract.py",
         "{source}/tests/selection/test_diagnostic_eligibility.py",
+        "{source}/tests/selection/test_diagnostic_nonmembers.py",
+        "{source}/tests/selection/test_execution_parallelism.py",
+        "{source}/tests/selection/test_failure_receipts.py",
         "{source}/tests/selection/test_git_ranges.py",
+        "{source}/tests/selection/test_grotto_profiles.py",
         "{source}/tests/selection/test_local_command_adapter.py",
         "{source}/tests/selection/test_mdk_cleanup.py",
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
         "{source}/tests/selection/test_nonmember_ownership.py",
-        "{source}/tests/selection/test_diagnostic_nonmembers.py",
-        "{source}/tests/selection/test_bp_metrics_reporting.py",
         "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
@@ -5572,6 +5628,7 @@
         "{source}/tests/selection/test_realization_support_inputs.py",
         "{source}/tests/selection/test_realization_toolchains.py",
         "{source}/tests/selection/test_release_plan.py",
+        "{source}/tests/selection/test_resource_profile_contracts.py",
         "{source}/tests/selection/test_sanitizer_adapter.py",
         "{source}/tests/selection/test_sanitizer_route_refusal.py",
         "{source}/tests/selection/test_selection_command_contract.py",
@@ -5579,13 +5636,7 @@
         "{source}/tests/selection/test_selector_checkout_binding.py",
         "{source}/tests/selection/test_selector_cli.py",
         "{source}/tests/selection/test_shared_sanitizer_execution.py",
-        "{source}/tests/selection/test_workflow_contracts.py",
-        "{source}/apps/grotto/TestInventory.cmake",
-        "{source}/apps/grotto/tests/TestInventory.cmake",
-        "{source}/apps/grotto/native-host/TestInventory.cmake",
-        "{source}/tests/selection/fixtures/grotto_profile_exports.json",
-        "{source}/tests/selection/test_grotto_profiles.py",
-        "{source}/tests/selection/test_failure_receipts.py"
+        "{source}/tests/selection/test_workflow_contracts.py"
       ],
       "working_directory": "{source}"
     },
@@ -7871,6 +7922,71 @@
     }
   },
   "path_rules": [
+    {
+      "effect": "impact",
+      "exact": "tests/common/test_blueprint_resources.py",
+      "nodes": [
+        "gnostr",
+        "nostr.gtk",
+        "selection.contract"
+      ],
+      "reason": "Exact shared resource fixture/helper consumer scope; selection.contract also verifies the source."
+    },
+    {
+      "effect": "impact",
+      "exact": "cmake/NostrcGtkResources.cmake",
+      "nodes": [
+        "gnostr",
+        "nostr.gtk",
+        "selection.contract"
+      ],
+      "reason": "Exact shared resource fixture/helper consumer scope; selection.contract also verifies the source."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/gnostr/TestInventory.cmake",
+      "nodes": [
+        "gnostr",
+        "selection.contract"
+      ],
+      "reason": "Exact shared resource fixture/helper consumer scope; selection.contract also verifies the source."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/nip55l/CMakeLists.txt",
+      "nodes": [
+        "nip55l",
+        "selection.contract"
+      ],
+      "reason": "Exact registration source read by selection.contract; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/tests/identity-tests.cmake",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Exact registration source read by selection.contract; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/tests/CMakeLists.txt",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Exact registration source read by selection.contract; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/native-host/CMakeLists.txt",
+      "nodes": [
+        "grotto.native_host",
+        "selection.contract"
+      ],
+      "reason": "Exact registration source read by selection.contract; retain component ownership."
+    },
     {
       "effect": "impact",
       "exact": "apps/grotto/native-host/TestInventory.cmake",
@@ -10691,7 +10807,7 @@
         "skip_pattern": "\\*\\*\\*Skipped|Not Run",
         "build_parallelism": 2,
         "test_parallelism": 1,
-        "execution_gap": "Shared CLI currently uses one parallel setting. Serial execution preserves GUI/DBus safety but build2/test1 parity is not implemented. Default-all legacy build is distinct from signer-tests compile aggregate and selected-target builds.",
+        "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
         "runtime_wrapper": [
           "dbus-run-session",
           "--",
@@ -10700,7 +10816,9 @@
           "-s",
           "-screen 0 1280x800x24"
         ]
-      }
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 1
     },
     "groundhog.mdk011": {
       "architecture": "x86_64",
@@ -11239,7 +11357,7 @@
         "skip_pattern": "\\*\\*\\*Skipped|Not Run",
         "build_parallelism": 2,
         "test_parallelism": 1,
-        "execution_gap": "Shared CLI currently uses one parallel setting. Serial execution preserves GUI/DBus safety but build2/test1 parity is not implemented. Default-all legacy build is distinct from signer-tests compile aggregate and selected-target builds.",
+        "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
         "runtime_wrapper": [
           "dbus-run-session",
           "--",
@@ -11248,7 +11366,9 @@
           "-s",
           "-screen 0 1280x800x24"
         ]
-      }
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 1
     },
     "groundhog.linux": {
       "architecture": "x86_64",
@@ -12048,9 +12168,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "f79d8d3667090f1e09c04f0c2cdd6cfc847e164305499d310b53a158389648cf",
-      "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Grotto build2/test1 API, original default build, remaining native extras and advisory TSan are not complete original workflow acceptance.",
-      "workflow_sha256": "e7a5544a07bc894e7da8324a7080d354a665ddc25d3a06b86d24030c37d197fa"
+      "source_sha256": "55c262266adf7d3692242e797b6622426c60f545322bef7c46e9e87148e0da0a",
+      "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
+      "workflow_sha256": "db84c2c495a96ad0d76132bb788e54a4d0410d82d3da4e277e6d52408c719b12"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -12068,7 +12188,7 @@
       ],
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "2a7f620283dbce0fba38ccabc998f09289fb60dcb52b1901f5ac7824bc4fa4fa",
-      "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Default-all build mutation, build2/test1 API, full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
+      "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Authored build2/test1 is supported. Default-all selector build attestation/coverage (.34), full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
       "workflow_sha256": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
       "unimplemented_variants": [
         {

@@ -52,8 +52,10 @@ class GrottoProfiles(unittest.TestCase):
                 self.assertEqual(build, ['--build', 'build', '--parallel', '2'])
                 self.assertEqual(profile['workflow_contract']['build_command'],
                                  ['cmake', '--build', '{build}', '--parallel', '2'])
-                self.assertIn('build2/test1', profile['workflow_contract']['execution_gap'])
-                self.assertEqual(profile['parallelism'], 1)
+                self.assertEqual(profile['build_parallelism'], 2)
+                self.assertEqual(profile['test_parallelism'], 1)
+                self.assertIn('Default-all', profile['workflow_contract']['execution_gap'])
+                self.assertNotIn('build2/test1 API', profile['workflow_contract']['execution_gap'])
                 self.assertEqual(profile['setup'], '.github/workflows/grotto-ci.yml:signer')
                 self.assertEqual(profile['workflow_contract']['matrix']['runner'], 'ubuntu-24.04')
                 self.assertEqual(profile['capabilities'], ['display', 'private_bus'])
@@ -134,6 +136,8 @@ class GrottoProfiles(unittest.TestCase):
     def test_export_source_bindings_require_fresh_registration_evidence(self):
         exports = json.loads(EXPORT.read_text())
         for relative, expected in exports['source_sha256'].items():
+            self.assertIn('{source}/' + relative,
+                          self.policy['checks']['selection.contract']['runtime_inputs'])
             self.assertEqual(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(), expected, relative)
 
     def test_build_aggregate_is_not_native_host_packaging_or_ctest_coverage(self):

@@ -516,8 +516,14 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
                         self.assertEqual(args[:2], ['scripts/test-plan.py', 'run'])
                         self.assertEqual(args[args.index('--profile') + 1], profile)
                         self.assertEqual(args[args.index('--phase') + 1], 'all')
-                        self.assertEqual(args[args.index('--parallel') + 1],
-                                         '1' if profile.startswith('grotto.linux') else '2')
+                        if profile.startswith('grotto.linux'):
+                            self.assertNotIn('--parallel', args)
+                            self.assertEqual(args[args.index('--build-parallel') + 1], '2')
+                            self.assertEqual(args[args.index('--test-parallel') + 1], '1')
+                        else:
+                            self.assertEqual(args[args.index('--parallel') + 1], '2')
+                            self.assertNotIn('--build-parallel', args)
+                            self.assertNotIn('--test-parallel', args)
                         receipt_path = temp / 'dependency/receipts' / profile / 'receipt.json'
                         self.assertEqual(receipt_path.exists(), fail == '0')
                         if fail == '1':

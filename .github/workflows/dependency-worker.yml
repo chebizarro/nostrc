@@ -139,10 +139,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dependency/receipts/$PROFILE"
-          # Grotto's legacy GUI/DBus selection is serial. Separate build2/test1
-          # fidelity remains a gap until the shared execution API supports it.
-          parallel=2
-          case "$PROFILE" in grotto.linux*) parallel=1 ;; esac
+          parallel_args=(--parallel 2)
+          # Preserve Grotto's authored build2/test1 without changing legacy lanes.
+          case "$PROFILE" in
+            grotto.linux*) parallel_args=(--build-parallel 2 --test-parallel 1) ;;
+          esac
           wrapper=(env)
           if [[ "$RUNNER_OS" == Linux ]]; then
             wrapper=(xvfb-run -a dbus-run-session --)
@@ -152,7 +153,7 @@ jobs:
           fi
           "${wrapper[@]}" python3 scripts/test-plan.py run \
             --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
-            --build-dir "$RUNNER_TEMP/dependency-build" --configure --phase all --parallel "$parallel" \
+            --build-dir "$RUNNER_TEMP/dependency-build" --configure --phase all "${parallel_args[@]}" \
             --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
             --output "$RUNNER_TEMP/dependency/receipts/$PROFILE/receipt.json" \
             2>&1 | tee "$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log"
