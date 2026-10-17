@@ -1,6 +1,8 @@
 """Real CLI negative receipts are evidence, never validation attestations."""
 import copy
 import hashlib
+import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -8,11 +10,28 @@ import platform
 import shutil
 import subprocess
 import sys
+from unittest import mock
 
 from realization_support import Project, ROOT, r
 from selector_support import s
 
 PAYLOAD = b"negative:\xff\x00\xfe\r\n"
+REPEATED_SIGTERM_PROBE = '''
+original_render = module._failure_receipt
+original_write = module.selection.write_json
+output = sys.argv[sys.argv.index('--output') + 1]
+def repeat_during_render(*args, **kwargs):
+    os.kill(os.getpid(), signal.SIGTERM)
+    os.kill(os.getpid(), signal.SIGTERM)
+    return original_render(*args, **kwargs)
+def repeat_during_write(path, value):
+    if str(path).endswith('/failure.json') or str(path) == output:
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return original_write(path, value)
+module._failure_receipt = repeat_during_render
+module.selection.write_json = repeat_during_write
+'''
 
 
 class FailureReceiptTests(Project):
@@ -43,7 +62,8 @@ class FailureReceiptTests(Project):
         if postaudit:
             next(rule for rule in self.inventory["path_rules"] if rule.get("exact") == "shared.h")["nodes"] = ["other"]
         if configure_failure:
-            cmake.write_text(cmake.read_text() + '\nmessage(FATAL_ERROR "intentional configure negative")\n')
+            cmake.write_text(cmake.read_text() + f'\nexecute_process(COMMAND "{sys.executable}" "-c" "import os; os.write(1,bytes([255,0,254]))")\n'
+                             + 'message(FATAL_ERROR "intentional configure negative")\n')
         if configure_cancel:
             body = (f"import os,signal,subprocess; os.write(1,{PAYLOAD!r}); "
                     "parent=int(subprocess.check_output(['ps','-o','ppid=','-p',str(os.getppid())]).strip()); "
@@ -79,14 +99,29 @@ class FailureReceiptTests(Project):
         self.planfile, self.output = self.root.parent / "plan.json", self.root.parent / "receipt.json"
         s.write_json(self.planfile, self.plan)
 
-    def cli(self, *options, expected=1, configure=True, attempt=1):
+    def cli(self, *options, expected=1, configure=True, attempt=1, injection=None):
         args = [sys.executable, str(ROOT / "scripts/test-plan.py"), "run", "--repo", str(self.root),
                 "--inventory", "inventory.json", "--profile", "synthetic", "--plan", str(self.planfile),
                 "--build-dir", str(self.build), "--evidence-dir", str(self.evidence), "--attempt", str(attempt),
                 "--output", str(self.output)]
         if configure:
             args.append("--configure")
+        if injection is not None:
+            # Retained-review probes inject at the real CLI/backend seam in a
+            # child process; configure, audits and emission remain real.
+            harness = ("import importlib,importlib.util,os,signal,sys\n"
+                       f"sys.path.insert(0,{str(ROOT / 'scripts')!r})\n"
+                       f"spec=importlib.util.spec_from_file_location('probe_cli',{str(ROOT / 'scripts/test-plan.py')!r})\n"
+                       "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)\n"
+                       "backend=importlib.import_module('test_selection_realization')\n"
+                       + injection + "\n"
+                       "previous=signal.getsignal(signal.SIGTERM)\n"
+                       "status=module.main(sys.argv[1:])\n"
+                       "assert signal.getsignal(signal.SIGTERM)==previous, 'SIGTERM handler not restored'\n"
+                       "sys.exit(status)\n")
+            args = [sys.executable, "-c", harness, *args[2:]]
         result = subprocess.run([*args, *options], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
+        self.last_cli_process = result
         self.assertEqual(result.returncode, expected, result.stderr.decode(errors="replace") + result.stdout.decode(errors="replace"))
         return s.read_json(self.output) if self.output.exists() else None
 
@@ -208,7 +243,81 @@ class FailureReceiptTests(Project):
         status = s.read_json(log["path"] + ".process.json")
         self.assertNotEqual(status["exit_code"], 0)
         self.assertIn(b"intentional configure negative", Path(log["path"]).read_bytes())
+        self.assertIn(b"intentional configure negative", self.last_cli_process.stderr)
+        self.assertIn("intentional configure negative", receipt["failure"]["errors"][0]["message"])
+        self.assertIn(b"\xff\x00\xfe", Path(log["path"]).read_bytes())
         self.assertFalse((self.build / "nostrc-test-realization.json").exists())
+        # Existing library callers still receive the CMake cause, not just a
+        # pointer. Surrogateescape text and the raw log retain invalid bytes.
+        with self.assertRaises(r.RealizationError) as caught:
+            r.configure_profile(self.root, self.build, "synthetic", self.profile,
+                                self.plan["source_identity"], s.digest(self.inventory))
+        self.assertIn("intentional configure negative", str(caught.exception))
+        self.assertIn(b"\xff\x00\xfe", str(caught.exception).encode("utf-8", "surrogateescape"))
+        library_log = self.build / "nostrc-selection-configure.log"
+        library_status = s.read_json(str(library_log) + ".process.json")
+        self.assertIn(b"\xff\x00\xfe", library_log.read_bytes())
+        self.assertEqual(library_status["output_sha256"], hashlib.sha256(library_log.read_bytes()).hexdigest())
+        self.assertNotEqual(library_status["exit_code"], 0)
+
+    def test_unexpected_resolve_exception_is_retained_only_at_admitted_cli_boundary(self):
+        self.prepare()
+        injection = '''
+def unexpected(*args, **kwargs):
+    try:
+        raise ValueError('retained underlying resolve cause')
+    except ValueError as cause:
+        raise IndexError('injected non-listed resolve exception') from cause
+backend.resolve_checks = unexpected
+'''
+        receipt = self.cli(injection=injection)
+        self.assert_negative(receipt, "resolve")
+        self.assertEqual(receipt["failure"]["cli_exit_code"], 1)
+        self.assertEqual([e["type"] for e in receipt["failure"]["errors"]], ["IndexError", "ValueError"])
+        self.assertIn("retained underlying resolve cause", receipt["failure"]["errors"][1]["message"])
+        self.assertEqual(receipt["failure"]["work_status"]["test"], "not_executed")
+        backend = importlib.import_module("test_selection_realization")
+        spec = importlib.util.spec_from_file_location("library_failure_probe", ROOT / "scripts/test-plan.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        args = module.parser().parse_args(["run", "--repo", str(self.root), "--profile", "synthetic",
+            "--plan", str(self.planfile), "--build-dir", str(self.build), "--evidence-dir", str(self.evidence), "--configure"])
+        original = IndexError("library exception must escape unchanged")
+        before = {str(p): p.read_bytes() for p in self.evidence.rglob("*") if p.is_file()}
+        with mock.patch.object(backend, "resolve_checks", side_effect=original), self.assertRaises(IndexError) as caught:
+            module.realization_command(args, self.inventory, backend)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.evidence.rglob("*") if p.is_file()})
+
+    def test_repeated_sigterm_during_negative_render_and_both_writes_is_bounded(self):
+        self.prepare(preaudit=True)
+        receipt = self.cli(injection=REPEATED_SIGTERM_PROBE)
+        self.assert_negative(receipt, "preaudit")
+        self.assertEqual(receipt["job_conclusion"], "failure")
+        self.assertEqual(receipt["failure"]["errors"][0]["type"], "CheckFailure")
+        finalization = receipt["failure"]["finalization"]
+        self.assertEqual(finalization["sigterm_policy"], "record_then_ignore_during_serialization")
+        self.assertIn(15, finalization["sigterms_before_serialization"])
+        self.assertFalse(finalization["delivery_guaranteed"])
+        self.assertEqual(next(self.evidence.rglob("failure.json")).read_bytes(), self.output.read_bytes())
+
+    def test_repeat_sigterm_preserves_original_cancellation_and_process_status(self):
+        body = (f"import os,signal; os.write(1,{PAYLOAD!r}); "
+                "os.kill(os.getppid(),signal.SIGTERM); signal.pause()\n")
+        self.prepare(command=body)
+        receipt = self.cli(injection=REPEATED_SIGTERM_PROBE)
+        self.assert_negative(receipt, "test")
+        self.assertEqual(receipt["job_conclusion"], "cancelled")
+        self.assertIn("KeyboardInterrupt", [e["type"] for e in receipt["failure"]["errors"]])
+        process = receipt["failure"]["backend_receipt"]["process_error"]
+        self.assertEqual(process["outcome"], "cancelled")
+        self.assertTrue(process["cleanup_complete"])
+        self.assertIsNotNone(process["exit_code"])
+        self.assertIn(15, receipt["failure"]["finalization"]["sigterms_before_serialization"])
+        log = next(e for e in receipt["failure"]["evidence"] if e["path"].endswith("command-command.actual.log"))
+        self.assertEqual(Path(log["path"]).read_bytes(), PAYLOAD)
+        self.assertEqual(log["sha256"], process["output_sha256"])
+        self.assertEqual(next(self.evidence.rglob("failure.json")).read_bytes(), self.output.read_bytes())
 
     def test_build_failure_retains_exact_invalid_bytes_and_child_status(self):
         self.prepare(build_failure=True)

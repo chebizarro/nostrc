@@ -165,7 +165,7 @@ def _failure_receipt(args, policy, plan, lane, state, exc):
     return result
 
 
-def realization_command(args, policy, backend, *, custody=None, retain_lane_failures=False):
+def realization_command(args, policy, backend, *, custody=None, retain_lane_failures=False, report_failure=None):
     # Library adapters keep their existing exception/composition contract. The
     # CLI opts into retained negatives; this cannot authorize a peer adapter.
     if args.command != "run" or not retain_lane_failures:
@@ -196,27 +196,42 @@ def realization_command(args, policy, backend, *, custody=None, retain_lane_fail
     directory.mkdir(parents=True, exist_ok=False)
     state = {"directory": directory, "stage": "source_validation", "audits": [], "evidence_paths": [],
              "work_status": {p: "not_executed" for p in ("configure", "build", "test")}}
-    previous_handler = None
+    previous_handler, finalization_signals = None, []
     def cancel(signum, frame):
         raise KeyboardInterrupt(f"lane execution cancelled by signal {signum}")
+    def defer_cancel(signum, frame):
+        finalization_signals.append(signum)
     try:
         try:
             previous_handler = signal.signal(signal.SIGTERM, cancel)
         except ValueError:
             pass  # Library callers outside the main thread own cancellation.
         return _realization_command(args, policy, backend, custody=custody, state=state)
-    except (selection.CheckFailure, selection.ContractError, backend.RealizationError,
-            OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+    except (Exception, KeyboardInterrupt) as exc:
+        # Only this already-admitted CLI reporting path catches arbitrary
+        # execution exceptions. Library callers and admission checks stay above.
+        if previous_handler is not None:
+            signal.signal(signal.SIGTERM, defer_cancel)
         if state["stage"] in state["work_status"]:
             state["work_status"][state["stage"]] = "interrupted_or_failed"
         result = _failure_receipt(args, policy, plan, lane, state, exc)
         print(f"test-plan: {exc}", file=sys.stderr)
-        code = 1 if isinstance(exc, (selection.CheckFailure, backend.RealizationError, subprocess.TimeoutExpired, KeyboardInterrupt)) else 2
+        code = 2 if isinstance(exc, (selection.ContractError, OSError, ValueError, KeyError, TypeError, AttributeError)) and not isinstance(exc, selection.CheckFailure) else 1
         result["failure"]["cli_exit_code"] = code
+        # Freeze the repeat-signal snapshot before either retained or caller
+        # output is serialized. Later SIGTERM cannot interrupt these writes;
+        # SIGKILL, crashes, I/O errors and other signals still have no guarantee.
+        if previous_handler is not None:
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        result["failure"]["finalization"] = {
+            "sigterm_policy": "record_then_ignore_during_serialization" if previous_handler is not None else "caller_owned",
+            "sigterms_before_serialization": list(finalization_signals), "delivery_guaranteed": False}
         try:
             selection.write_json(directory / "failure.json", result)
         except OSError as error:
             result["failure"]["retention_error"] = type(error).__name__ + ": " + str(error)
+        if report_failure is not None:
+            report_failure(result)
         return result, code
     finally:
         if previous_handler is not None:
@@ -448,14 +463,17 @@ def main(argv=None):
                 realization = importlib.import_module("test_selection_realization")
             except ImportError as exc:
                 raise selection.ContractError("real realization module unavailable; no execution/validation was performed") from exc
+            def report(result):
+                if args.output:
+                    selection.write_json(args.output, result)
+                else:
+                    print(json.dumps(result, sort_keys=True, indent=2))
             try:
-                result, code = realization_command(args, policy, realization, retain_lane_failures=True)
+                result, code = realization_command(args, policy, realization, retain_lane_failures=True, report_failure=report)
             except realization.RealizationError as exc:
                 raise selection.CheckFailure(str(exc)) from exc
-            if args.output:
-                selection.write_json(args.output, result)
-            else:
-                print(json.dumps(result, sort_keys=True, indent=2))
+            if result.get("receipt_kind") != "lane_failure_v1":
+                report(result)
             return code
         if args.command == "validate":
             # Surface tracked coverage without treating metadata as live acceptance.

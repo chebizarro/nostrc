@@ -220,7 +220,9 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
 def _command(argv, cwd=None, env=None, *, log_path=None):
     result = _execute(argv, cwd=cwd, env=env, log_path=log_path)
     if result.returncode:
-        detail = f"retained {log_path}" if log_path is not None else result.stdout
+        detail = result.stdout
+        if log_path is not None:
+            detail += f"\nretained {log_path}"
         raise RealizationError(f"command failed ({result.returncode}): {argv!r}\n{detail}")
     return result.stdout
 
