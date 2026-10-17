@@ -60,12 +60,15 @@ jobs:
             libjson-glib-dev libgit2-dev libnsync-dev libgtk-4-dev libadwaita-1-dev \
             libsecret-1-dev libgcrypt20-dev libqrencode-dev libsqlite3-dev \
             libsqlcipher-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libzbar-dev libpeas-dev blueprint-compiler xvfb xauth dbus-x11 \
+            libzbar-dev libpeas-2-dev blueprint-compiler xvfb xauth dbus-x11 dbus-bin \
             gettext locales desktop-file-utils appstream python3-gi gnome-keyring \
+            libxml2-dev at-spi2-core nodejs \
             glib-networking gjs adwaita-icon-theme librsvg2-common \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
           sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+          # The default root app requires the libpeas-2 ABI, not libpeas-1.0.
+          pkg-config --modversion libpeas-2
       - name: Install pinned Blueprint compiler for application profiles
         if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'grotto.linux' || inputs.profile == 'groundhog.mdk08')
         run: |

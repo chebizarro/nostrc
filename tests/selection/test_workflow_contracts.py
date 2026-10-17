@@ -414,6 +414,7 @@ class WorkflowWiringTests(unittest.TestCase):
             'core.linux': 'core', 'core.linux.asan': 'core_asan', 'core.macos.asan': 'core_native',
             'grotto.linux': 'grotto', 'groundhog.linux': 'groundhog',
             'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',
+            'groundhog.mdk011': 'mdk011',
             'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',
         }
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
@@ -433,6 +434,19 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn('plan_id: ${{ needs.select.outputs.plan_id }}', block)
                 self.assertIn('sha: ${{ needs.select.outputs.sha }}', block)
                 self.assertNotIn('continue-on-error', block)
+
+    def test_worker_installs_the_required_libpeas_abi_and_conditional_tools(self):
+        text = workflow('dependency-worker')
+        setup = text.split('- name: Install Linux profile prerequisites', 1)[1].split('- name:', 1)[0]
+        packages = re.search(r'apt-get install(.*?)sudo localedef', setup, re.S).group(1).split()
+        self.assertIn('libpeas-2-dev', packages)
+        self.assertNotIn('libpeas-dev', packages)
+        for package in ('libxml2-dev', 'at-spi2-core', 'dbus-bin', 'nodejs'):
+            self.assertIn(package, packages)
+        self.assertIn('pkg-config --modversion libpeas-2', setup)
+        # This ABI requirement comes from the actual default application configure.
+        self.assertIn('pkg_check_modules(LIBPEAS REQUIRED IMPORTED_TARGET libpeas-2)',
+                      (ROOT / 'apps/gnostr/CMakeLists.txt').read_text())
 
     def test_native_root_setup_and_phase_metadata_are_not_standalone_libgo_aliases(self):
         text = workflow('dependency-worker')

@@ -4667,7 +4667,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-adopted-commits"
         ]
       },
@@ -4681,7 +4681,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4690,7 +4690,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-adopted-welcome"
         ]
       },
@@ -4704,7 +4704,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4713,7 +4713,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-concurrent-commits"
         ]
       },
@@ -4727,7 +4727,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4736,7 +4736,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-control"
         ]
       },
@@ -4750,7 +4750,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4759,7 +4759,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-groundhog-invites-mdk"
         ]
       },
@@ -4773,7 +4773,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4782,7 +4782,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-mdk09-probe"
         ]
       },
@@ -4799,7 +4799,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4808,7 +4808,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-mdk-invites-groundhog"
         ]
       },
@@ -4822,7 +4822,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4831,7 +4831,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-mdk-invites-groundhog-gui"
         ]
       },
@@ -4845,7 +4845,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4854,7 +4854,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-media-policy"
         ]
       },
@@ -4868,7 +4868,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4877,7 +4877,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-polls"
         ]
       },
@@ -4891,7 +4891,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4900,7 +4900,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-routing-rotation"
         ]
       },
@@ -4914,7 +4914,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4923,7 +4923,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-white-noise-dm"
         ]
       },
@@ -4937,7 +4937,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4946,7 +4946,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-white-noise-media"
         ]
       },
@@ -4960,7 +4960,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4969,7 +4969,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-white-noise-reactions"
         ]
       },
@@ -4983,7 +4983,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -4992,7 +4992,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-white-noise-voice"
         ]
       },
@@ -5006,7 +5006,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -5015,7 +5015,7 @@
       "build_targets": [],
       "cost": "expensive",
       "ctest_tests": {
-        "groundhog.linux": [
+        "groundhog.mdk011": [
           "groundhog-mdk011-interop-white-noise-welcome"
         ]
       },
@@ -5029,7 +5029,7 @@
         "execution.groundhog"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.mdk011"
       ],
       "requirement": "blocking",
       "runtime_inputs": []
@@ -5732,6 +5732,11 @@
         "homed_groups"
       ],
       "not_selected_status": "not_executed"
+    },
+    {
+      "id": "worker_setup_and_grotto_execution",
+      "tracking": "nostrc-0cfsg.31",
+      "reason": "Worker setup, ordinary/live routing and exact Grotto profiles are under validation. No additional diagnostic nonmember list is admitted; root ASan exclusions remain unexecuted. Native Grotto extras and unverified runner/toolchain variants remain unsupported."
     }
   ],
   "enforcement_ready": false,
@@ -10257,6 +10262,41 @@
     }
   ],
   "profiles": {
+    "groundhog.mdk011": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus",
+        "docker"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=ON",
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_MDK011_INTEROP=ON",
+        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice"
+      ],
+      "environment": {},
+      "feature_variants": [
+        "mdk011_live"
+      ],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+      "source_dir": ".",
+      "timeout_seconds": 3600
+    },
     "core.linux.asan": {
       "architecture": "x86_64",
       "build_type": "Debug",
@@ -10707,8 +10747,7 @@
       "build_type": "Debug",
       "capabilities": [
         "display",
-        "private_bus",
-        "docker"
+        "private_bus"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -10722,8 +10761,8 @@
         "-DBUILD_APPS=OFF",
         "-DBUILD_RELAYD=ON",
         "-DSIGNET_ENABLE=OFF",
-        "-DBUILD_MDK011_INTEROP=ON",
-        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice"
+        "-DBUILD_MDK011_INTEROP=OFF",
+        "-DBUILD_MDK_INTEROP=OFF"
       ],
       "environment": {},
       "feature_variants": [],
@@ -11217,6 +11256,14 @@
     }
   },
   "workflow_jobs": {
+    ".github/workflows/dependency-tests.yml:mdk011": {
+      "matrix_source": "",
+      "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
+    },
     ".github/workflows/bp-matrix-nightly.yml:nightly-matrix": {
       "matrix_source": "",
       "profiles": [],
@@ -11383,7 +11430,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -11391,7 +11438,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -11399,7 +11446,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -11407,7 +11454,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -11415,7 +11462,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -11423,7 +11470,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -11431,7 +11478,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -11439,7 +11486,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -11447,7 +11494,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -11455,7 +11502,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -11463,7 +11510,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "208e3031a4863b5758aeb0843e73a1f16495c1f40359c099e03b37e16e0404ac",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -11471,23 +11518,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "1398db5eb2b802c62b36f3dfb4ff6f4c6b7d8f2ff369a3474d2c57bcd321cf6c",
+      "source_sha256": "9be0af73634bb16b79868ac756cfb13c2dbad6d4e6cb1f2545c5ad90f37a0898",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
+      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "7bdae5d1881fe6596eb4a6b6bcb8f44e70b6a3df758c059679fb34d494057016",
+      "source_sha256": "c40f755efa9013d2819b0350e8d1c0f148c1ca362c7b16b4a0d83177a72f405e",
       "unsupported_reason": "Worker dispatch covers ten authored diagnostic profiles only; setup capability/platform checks and retained receipts are not complete original workflow variant acceptance.",
-      "workflow_sha256": "1cc2f197566eadcd1bd79c1e5e7f6dad3c4de76d89076e9c2dcaa002a1d38cd6"
+      "workflow_sha256": "1d0dd12d8247178832bf36b13a4bde833af85f7196d91d020f0cb3f1c77a9cde"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -11532,11 +11579,12 @@
     ".github/workflows/groundhog-ci.yml:groundhog": {
       "matrix_source": "",
       "profiles": [
-        "groundhog.linux"
+        "groundhog.linux",
+        "groundhog.mdk011"
       ],
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "0a51bb0bfd467c571dda1d2987cb2f2a6600e5dfa708be41d3d5b767f2fb39ef",
-      "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
+      "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
       "workflow_sha256": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
