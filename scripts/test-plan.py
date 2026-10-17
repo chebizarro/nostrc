@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Shared dependency-aware test planner. See --help for explicit contracts."""
 import argparse
+import hashlib
 import importlib
 import json
 import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -58,7 +60,170 @@ def parser():
     return root
 
 
-def realization_command(args, policy, backend, *, custody=None):
+def _retained_file(path):
+    path = Path(path)
+    if not path.is_file() or path.is_symlink():
+        return {"path": str(path), "status": "missing_or_unsafe"}
+    hashed = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            while chunk := stream.read(65536):
+                hashed.update(chunk)
+        return {"path": str(path), "status": "retained", "sha256": hashed.hexdigest(), "bytes": path.stat().st_size}
+    except OSError as exc:
+        return {"path": str(path), "status": "unavailable", "error": type(exc).__name__}
+
+
+def _source_status(repo, excluded=()):
+    """Safe dirty-source diagnostics: names/status/hashes, never diffs or contents."""
+    raw = selection.git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
+    entries, records = iter(raw.split(b"\0")), []
+    for entry in entries:
+        if not entry:
+            continue
+        status, name = os.fsdecode(entry[:2]), os.fsdecode(entry[3:])
+        record = {"git_status": status, "path": name}
+        path = Path(repo) / name
+        if status == "??" and not path.is_symlink() and any(path.resolve().is_relative_to(Path(p).resolve()) for p in excluded):
+            continue
+        if "R" in status or "C" in status:
+            record["original_path"] = os.fsdecode(next(entries))
+        # Resolve before opening: a changed symlink must not disclose or hash a
+        # target outside the checkout. Only filenames and link status survive.
+        if path.is_symlink() or not path.resolve().is_relative_to(Path(repo).resolve()):
+            record["content_status"] = "symlink_or_outside_checkout"
+        else:
+            retained = _retained_file(path)
+            record.update({k: v for k, v in retained.items() if k != "path"})
+        records.append(record)
+    return {"head": selection.commit_sha(repo, "HEAD"), "changes": records}
+
+
+def _failure_receipt(args, policy, plan, lane, state, exc):
+    resolved = state.get("resolved")
+    raw = None
+    raw_path = state.get("backend_receipt_path")
+    if raw_path and Path(raw_path).is_file():
+        # Retain bytes even if the child receipt cannot be interpreted.
+        try:
+            raw = selection.read_json(raw_path)
+        except (OSError, ValueError):
+            pass
+    observed = raw.get("observed_executions", {}) if isinstance(raw, dict) else {}
+    if not isinstance(observed, dict):
+        observed = {}
+    observed = {n: outcome for n, outcome in observed.items() if isinstance(outcome, str) and outcome in selection.OUTCOMES}
+    checks = {}
+    for ident in lane["checks"]:
+        check = policy["checks"][ident]
+        names = check["ctest_tests"][args.profile] if check["kind"] == "ctest" else [ident]
+        outcomes = [observed.get(n, "missing") for n in names]
+        checks[ident] = {"outcome": next((o for o in outcomes if o != "passed"), "passed"),
+                         "expected_executions": names, "observed_executions": [n for n in names if observed.get(n, "missing") != "missing"]}
+    error_chain, cancelled = [], False
+    cause = exc
+    while cause is not None:
+        item = {"type": type(cause).__name__, "message": str(cause)}
+        if hasattr(cause, "execution_status"):
+            item["process_status"] = cause.execution_status
+        cancelled |= isinstance(cause, KeyboardInterrupt)
+        error_chain.append(item)
+        cause = cause.__cause__
+    # Hash only explicit owned evidence, never arbitrary source contents.
+    paths = list(state["evidence_paths"])
+    if raw_path and Path(raw_path).parent.is_dir():
+        paths += [p for p in Path(raw_path).parent.rglob("*") if p.is_file()]
+    paths += [Path(str(p) + ".process.json") for p in state["evidence_paths"] if str(p).endswith(".log")]
+    failed_audit = any(not a["passed"] for a in state["audits"])
+    registration_status = "failed" if failed_audit else "passed" if state["audits"] else "not_performed"
+    input_status = "failed" if failed_audit else "passed" if any(a.get("after_build") for a in state["audits"]) else "not_completed"
+    result = {"schema_version": 1, "receipt_kind": "lane_failure_v1",
+              "plan_id": plan["plan_id"], "inventory_hash": plan["inventory_hash"],
+              "source_identity": plan["source_identity"], "lane_id": lane["id"],
+              "profile": args.profile, "profile_hash": lane["profile_hash"],
+              "profile_fingerprint": state.get("realized", {}).get("profile_fingerprint"),
+              "registration_audit": registration_status, "input_audit": input_status,
+              "job_conclusion": "cancelled" if cancelled else "failure", "checks": checks,
+              "complete": False, "diagnostic_eligible": False, "complete_gate_eligible": False,
+              "coverage_gaps": plan.get("coverage_gaps", []),
+              "failure": {"stage": state["stage"], "errors": error_chain,
+                          "requested_phase": args.phase, "attempt": args.attempt,
+                          "input_audits": state["audits"], "resolved": resolved,
+                          "work_status": state["work_status"],
+                          "execution_status": {n: observed.get(n, "not_executed" if state["work_status"]["test"] == "not_executed" else "missing")
+                              for n in (resolved.get("expected_executions", resolved["tests"]) if resolved else
+                                        [n for c in checks.values() for n in c["expected_executions"]])},
+                          "evidence": [_retained_file(p) for p in sorted(set(map(str, paths)))],
+                          "backend_receipt": raw}}
+    for key in ("phase_context", "phase_context_hash"):
+        if key in state.get("realized", {}):
+            result[key] = state["realized"][key]
+    try:
+        result["failure"]["source_status"] = _source_status(args.repo, (args.build_dir, args.evidence_dir))
+    except (OSError, ValueError) as error:
+        result["failure"]["source_status_error"] = type(error).__name__ + ": " + str(error)
+    return result
+
+
+def realization_command(args, policy, backend, *, custody=None, retain_lane_failures=False):
+    # Library adapters keep their existing exception/composition contract. The
+    # CLI opts into retained negatives; this cannot authorize a peer adapter.
+    if args.command != "run" or not retain_lane_failures:
+        return _realization_command(args, policy, backend, custody=custody)
+    # Only an admitted plan/profile can name a lane. Invalid plans never acquire
+    # authorization by passing through an exception handler.
+    plan = selection.validate_plan(selection.read_json(args.plan), policy)
+    lane = next((x for x in plan["lanes"] if x["profile"] == args.profile), None)
+    selection.require(lane is not None, "run profile is not selected by plan")
+    selection.require(args.evidence_dir is not None and args.attempt > 0, "run requires evidence directory and positive attempt")
+    # A valid logical plan does not authorize a different checkout or a build
+    # realized elsewhere. Preserve rejection without a lane execution receipt.
+    if selection.commit_sha(args.repo, "HEAD") != plan["source_identity"]["sha"]:
+        if plan["source_identity"]["kind"] == "committed":
+            raise selection.ContractError("execution checkout is not the selected committed SHA")
+        raise selection.CheckFailure("source checkout HEAD does not match execution identity")
+    if not args.configure and args.phase != "configure":
+        record = Path(args.build_dir) / "nostrc-test-realization.json"
+        if record.is_file():
+            realized = selection.read_json(record)
+            root = Path(args.repo).resolve()
+            paths = {"repo_root": root, "source_dir": (root / backend._expand_source(policy["profiles"][args.profile]["source_dir"], root)).resolve(),
+                     "build_dir": Path(args.build_dir).resolve()}
+            for field, expected in paths.items():
+                if Path(realized[field]).resolve() != expected:
+                    raise selection.CheckFailure(f"realization {field} does not match admitted execution checkout: {expected}")
+    directory = Path(args.evidence_dir) / plan["source_identity"]["sha"] / args.profile / plan["plan_id"] / f"lane-{args.phase}-attempt-{args.attempt}"
+    directory.mkdir(parents=True, exist_ok=False)
+    state = {"directory": directory, "stage": "source_validation", "audits": [], "evidence_paths": [],
+             "work_status": {p: "not_executed" for p in ("configure", "build", "test")}}
+    previous_handler = None
+    def cancel(signum, frame):
+        raise KeyboardInterrupt(f"lane execution cancelled by signal {signum}")
+    try:
+        try:
+            previous_handler = signal.signal(signal.SIGTERM, cancel)
+        except ValueError:
+            pass  # Library callers outside the main thread own cancellation.
+        return _realization_command(args, policy, backend, custody=custody, state=state)
+    except (selection.CheckFailure, selection.ContractError, backend.RealizationError,
+            OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+        if state["stage"] in state["work_status"]:
+            state["work_status"][state["stage"]] = "interrupted_or_failed"
+        result = _failure_receipt(args, policy, plan, lane, state, exc)
+        print(f"test-plan: {exc}", file=sys.stderr)
+        code = 1 if isinstance(exc, (selection.CheckFailure, backend.RealizationError, subprocess.TimeoutExpired, KeyboardInterrupt)) else 2
+        result["failure"]["cli_exit_code"] = code
+        try:
+            selection.write_json(directory / "failure.json", result)
+        except OSError as error:
+            result["failure"]["retention_error"] = type(error).__name__ + ": " + str(error)
+        return result, code
+    finally:
+        if previous_handler is not None:
+            signal.signal(signal.SIGTERM, previous_handler)
+
+
+def _realization_command(args, policy, backend, *, custody=None, state=None):
     """Compose the real realization API; never emulate a configure/audit/run."""
     selection.require(args.phase in ("configure", "build", "test", "all"), "unknown execution phase")
     plan = selection.read_json(args.plan) if args.plan else None
@@ -81,14 +246,26 @@ def realization_command(args, policy, backend, *, custody=None):
                 path = (Path(args.repo) / os.fsdecode(value)).resolve()
                 if not any(path == root or root in path.parents for root in excluded):
                     raise selection.CheckFailure(f"committed-tree execution refuses untracked source input: {os.fsdecode(value)}")
+    if state is not None:
+        state["stage"] = "configure" if args.configure or args.phase == "configure" else "load_realization"
     if args.configure or args.phase == "configure":
         selection.require(identity is not None, "configure requires --plan with execution source identity")
         profile_checks = [c for c in policy["checks"].values() if args.profile in c["profiles"]]
         source_only = profile_checks and all(c["kind"] == "command" and not c.get("build_targets") for c in profile_checks)
         configure = backend.configure_command_profile if source_only else backend.configure_profile
-        realized = configure(args.repo, args.build_dir, args.profile, profile, identity, selection.digest(policy))
+        options = {}
+        if state is not None and not source_only:
+            logfile = state["directory"] / "configure.log"
+            state["evidence_paths"].append(logfile)
+            options = {"log_path": logfile}
+        realized = configure(args.repo, args.build_dir, args.profile, profile, identity, selection.digest(policy), **options)
+        if state is not None:
+            state["work_status"]["configure"] = "passed"
     else:
         realized = backend.load_realization(args.build_dir, identity)
+    if state is not None:
+        state["realized"] = realized
+        state["stage"] = "realization_validation"
     # Stored identity equality is insufficient: another checkout may share the
     # same commit, or the original build's source may since have advanced.
     repo_root = Path(args.repo).resolve()
@@ -104,7 +281,11 @@ def realization_command(args, policy, backend, *, custody=None):
                                      **({'custody': custody} if custody is not None else {}))
         return audit, 0 if audit["passed"] else 1
     selection.require(plan is not None, "resolve/run requires --plan")
+    if state is not None:
+        state["stage"] = "resolve"
     resolved = backend.resolve_checks(policy, plan, realized, args.profile)
+    if state is not None:
+        state["resolved"] = resolved
     if args.resolved:
         supplied = selection.read_json(args.resolved)
         selection.require(supplied == resolved, "supplied resolved plan differs from fresh resolution")
@@ -115,19 +296,33 @@ def realization_command(args, policy, backend, *, custody=None):
     if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
         diagnostic_options = backend._diagnostic_execution_options(resolved, realized, args.parallel, args.timeout)
         args.timeout = diagnostic_options["timeout_seconds"]
+    if state is not None:
+        state["stage"] = "capability"
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
     if custody is not None:
         custody.validate(resolved)
     elif set(resolved.get("required_capabilities", [])) & {"docker", "external_peer", "prepared_peer"}:
         raise selection.CheckFailure("live peer/image lifecycle requires the existing guarded adapter")
+    if state is not None:
+        state["stage"] = "preaudit"
     audit = backend.check_inputs(policy, realized, identity, after_build=False,
                                  **({'custody': custody} if custody is not None else {}))
+    if state is not None:
+        state["audits"].append(audit)
+        auditpath = state["directory"] / "preaudit.json"
+        selection.write_json(auditpath, audit)
+        state["evidence_paths"].append(auditpath)
     if not audit["passed"]:
-        return audit, 1
+        if state is None:
+            return audit, 1
+        raise selection.CheckFailure("pre-build input audit failed; original findings retained")
     if args.phase == "configure":
         return {"schema_version": 1, "phase": "configure", "resolved": resolved, "input_audit": audit, "execution_complete": False}, 0
     build_seconds, build_commands, build_evidence = 0.0, [], []
     if args.phase in {"all", "build"} and resolved["build_targets"]:
+        if state is not None:
+            state["stage"] = "build"
+            state["work_status"]["build"] = "started"
         command = ["cmake", "--build", args.build_dir, "--parallel", str(args.parallel)]
         if resolved.get("configuration"):
             command += ["--config", resolved["configuration"]]
@@ -136,6 +331,8 @@ def realization_command(args, policy, backend, *, custody=None):
         directory.mkdir(parents=True, exist_ok=True)
         logfile = directory / f"build-attempt-{args.attempt}.log"
         started = time.monotonic()
+        if state is not None:
+            state["evidence_paths"].append(logfile)
         with logfile.open("x"):
             pass  # reserve this exact attempt; never overwrite previous evidence
         try:
@@ -149,13 +346,30 @@ def realization_command(args, policy, backend, *, custody=None):
         build_evidence.append(str(logfile))
         if returncode:
             raise selection.CheckFailure(f"selected prerequisite build failed: {returncode}; retained {logfile}")
+        if state is not None:
+            state["work_status"]["build"] = "passed"
+    if state is not None:
+        state["stage"] = "postaudit"
     realized = backend.load_realization(args.build_dir, identity)
     audit = backend.check_inputs(policy, realized, identity, after_build=True,
                                  **({'custody': custody} if custody is not None else {}))
+    if state is not None:
+        state["audits"].append(audit)
+        auditpath = state["directory"] / "postaudit.json"
+        selection.write_json(auditpath, audit)
+        state["evidence_paths"].append(auditpath)
     if not audit["passed"]:
-        return audit, 1
+        if state is None:
+            return audit, 1
+        raise selection.CheckFailure("post-build input audit failed; original findings retained")
     if args.phase in {"configure", "build"}:
         return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False}, 0
+    if state is not None:
+        state["stage"] = "test"
+        state["work_status"]["test"] = "started"
+        path = backend._attempt_directory(resolved, args.evidence_dir, args.attempt) / "receipt.json"
+        if not path.parent.exists():
+            state["backend_receipt_path"] = str(path)
     raw = backend.run_resolved(resolved, args.build_dir, args.evidence_dir, args.attempt, input_audit=audit,
                                build=False, parallel=args.parallel, timeout=args.timeout, evidence_paths=args.evidence_path,
                                **({"custody": custody} if custody is not None else {}))
@@ -163,6 +377,9 @@ def realization_command(args, policy, backend, *, custody=None):
     raw["configure_seconds"] = realized.get("configure_seconds")
     raw["commands"] = build_commands + raw.get("commands", [])
     raw["build_evidence"] = build_evidence
+    if state is not None:
+        state["stage"] = "normalize"
+        state["work_status"]["test"] = raw.get("outcome", "unknown")
     result = normalize_receipt(policy, plan, resolved, raw)
     return result, 0 if raw.get("outcome") == "passed" else 1
 
@@ -232,7 +449,7 @@ def main(argv=None):
             except ImportError as exc:
                 raise selection.ContractError("real realization module unavailable; no execution/validation was performed") from exc
             try:
-                result, code = realization_command(args, policy, realization)
+                result, code = realization_command(args, policy, realization, retain_lane_failures=True)
             except realization.RealizationError as exc:
                 raise selection.CheckFailure(str(exc)) from exc
             if args.output:

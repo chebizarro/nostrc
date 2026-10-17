@@ -217,10 +217,11 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
                 raise error from evidence_error
 
 
-def _command(argv, cwd=None, env=None):
-    result = _execute(argv, cwd=cwd, env=env)
+def _command(argv, cwd=None, env=None, *, log_path=None):
+    result = _execute(argv, cwd=cwd, env=env, log_path=log_path)
     if result.returncode:
-        raise RealizationError(f"command failed ({result.returncode}): {argv!r}\n{result.stdout}")
+        detail = f"retained {log_path}" if log_path is not None else result.stdout
+        raise RealizationError(f"command failed ({result.returncode}): {argv!r}\n{detail}")
     return result.stdout
 
 
@@ -600,7 +601,7 @@ def _validate_native_profile(profile, toolchains=None, configuration=None, compi
 
 
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
-                      inventory_hash):
+                      inventory_hash, *, log_path=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
 
     profile: source_dir (repo-relative), configure_args (argv), environment (map),
@@ -629,8 +630,8 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
            f"-DNOSTRC_TEST_SELECTION_TOKEN={token}"]
     before = {p.name: p.read_bytes() for p in (build / ".cmake/api/v1/reply").glob("index-*.json")}
     started = time.monotonic()
-    output = _command(cmd, env=env)
-    (build / "nostrc-selection-configure.log").write_text(output, errors="surrogateescape")
+    logfile = Path(log_path) if log_path is not None else build / "nostrc-selection-configure.log"
+    _command(cmd, env=env, log_path=logfile)
     reply_dir = build / ".cmake/api/v1/reply"
     indexes = sorted(reply_dir.glob("index-*.json"), key=lambda p: p.stat().st_mtime_ns)
     if not indexes or (indexes[-1].name in before and before[indexes[-1].name] == indexes[-1].read_bytes()):

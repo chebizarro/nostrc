@@ -106,7 +106,8 @@ def _nested_incomplete(value):
     """An optimistic wrapper cannot launder nested diagnostic evidence to release."""
     if isinstance(value, dict):
         if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
-                or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY):
+                or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY
+                or value.get("receipt_kind") == "lane_failure_v1"):
             return True
         return any(_nested_incomplete(v) for v in value.values())
     return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
@@ -570,6 +571,12 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             continue
         seen.add(lane_id)
         lane = expected[lane_id]
+        if receipt.get("receipt_kind") == "lane_failure_v1":
+            failure = receipt.get("failure", {})
+            errors.append(f"{lane_id}: lane failure at {failure.get('stage', 'unknown')}")
+            visible.append({"lane": lane_id, "outcome": receipt.get("job_conclusion"),
+                            "failure_stage": failure.get("stage"), "errors": failure.get("errors", []),
+                            "input_audits": failure.get("input_audits", [])})
         for key in ("plan_id", "inventory_hash", "source_identity"):
             if receipt.get(key) != plan[key]:
                 errors.append(f"{lane_id}: stale {key}")
