@@ -109,6 +109,10 @@ int main(int argc, char **argv) {
     def configure(self, compiler=None):
         if compiler is None:
             compiler = options.blueprint_compiler
+        configured = re.findall(r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/data/(\S+\.blp)",
+                                (self.source / "CMakeLists.txt").read_text())
+        self.current_outputs = ({Path(p).with_suffix(".ui").as_posix() for p in configured}
+                                if compiler else set())
         run("cmake", "-S", str(self.source), "-B", str(self.build), "-G", "Ninja",
             f"-DBLUEPRINT_COMPILER={compiler}")
 
@@ -123,9 +127,8 @@ int main(int argc, char **argv) {
             for entry in resource:
                 relative = entry.text
                 name = resource.attrib["prefix"] + "/" + entry.attrib.get("alias", relative)
-                expected = self.build / "data" / relative
-                if not expected.is_file():
-                    expected = self.source / "data" / relative
+                expected = ((self.build if relative in self.current_outputs else self.source)
+                            / "data" / relative)
                 actual = self.extract(name)
                 if entry.attrib.get("preprocess") == "xml-stripblanks":
                     # GLib's documented preprocessing changes whitespace, not UI.
@@ -169,6 +172,29 @@ int main(int argc, char **argv) {
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
 
+    def test_retired_blueprint_uses_current_source_and_active_outputs(self):
+        self.blp.write_text(self.blp.read_text().replace(MARKER, "Obsolete generated marker"))
+        self.configure()
+        self.compile()
+        self.assertIn(b"Obsolete generated marker", self.extract())
+
+        cmake = self.source / "CMakeLists.txt"
+        argument = ('  "${CMAKE_CURRENT_SOURCE_DIR}/data/'
+                    + self.blp.relative_to(self.source / "data").as_posix() + '"')
+        self.assertIn(argument, cmake.read_text())
+        cmake.write_text(cmake.read_text().replace(argument, ""))
+        self.ui.write_text(self.ui.read_text().replace(MARKER, "Current source-only marker"))
+        remaining = sorted(self.current_outputs - {PRIMARY})[0]
+        (self.source / "data" / remaining).write_text("active tracked fallback must not win")
+        before = hashes(self.source)
+        self.configure()
+        self.assertNotIn(PRIMARY, self.current_outputs)
+        self.compile()
+        self.assertEqual(self.extract(), self.ui.read_bytes())
+        self.assertNotIn(b"Obsolete generated marker", self.extract())
+        self.check_all_resources()
+        self.assertEqual(before, hashes(self.source))
+
     def test_no_compiler_fallback_ignores_stale_generated_tree(self):
         self.blp.write_text(self.blp.read_text().replace(MARKER, "Old generated marker"))
         self.configure()
@@ -179,6 +205,7 @@ int main(int argc, char **argv) {
         self.compile()
         self.assertEqual(self.extract(), self.ui.read_bytes())
         assert_primary_contract(self, self.extract())
+        self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
 
     def test_bad_blueprint_refuses_instead_of_using_valid_fallback(self):
