@@ -12,7 +12,7 @@ import test_selection as selection
 
 # Each lane is a separate reusable call so needs supplies an independent conclusion.
 LANES = {"core.linux": "core", "core.linux.asan": "core_asan", "core.macos.asan": "core_native",
-         "grotto.linux": "grotto", "groundhog.linux": "groundhog",
+         "grotto.linux": "grotto", "grotto.linux.asan_ubsan": "grotto_asan", "groundhog.linux": "groundhog",
          "groundhog.linux.sanitizers": "groundhog_sanitizers", "groundhog.mdk08": "mdk08",
          "groundhog.mdk011": "mdk011",
          "libgo.linux.asan": "libgo", "libgo.macos.asan": "libgo_native", "static.policy": "policy"}

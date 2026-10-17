@@ -20,6 +20,323 @@
     ]
   },
   "checks": {
+    "grotto.signer.native": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "nip55l_dbus_contract_fail_teardown",
+          "nip55l_fake_secret_service_contract",
+          "nip55l_getrelays",
+          "nip55l_keyring_schema",
+          "nip55l_nip44_b64",
+          "nip55l_profile_guard",
+          "nip55l_selector_safety",
+          "nip55l_sign_event_json",
+          "nostr_signer_webext_host_e2e",
+          "nostr_signer_webext_host_errors",
+          "nostr_signer_webext_host_framing",
+          "nostr_signer_webext_host_policy",
+          "nostr_signer_webext_host_router",
+          "nostr_signer_webext_host_webln",
+          "signer/activity",
+          "signer/approval-controller",
+          "signer/approval-dialog",
+          "signer/approval-integration",
+          "signer/background",
+          "signer/blueprint-drift",
+          "signer/bunker",
+          "signer/bunker-e2e",
+          "signer/bunker-headless",
+          "signer/bunker-startup",
+          "signer/clients",
+          "signer/core",
+          "signer/crypto",
+          "signer/dbus",
+          "signer/desktop-contract",
+          "signer/home-model",
+          "signer/hsm-provider",
+          "signer/identity",
+          "signer/identity-management",
+          "signer/identity-model",
+          "signer/legacy-dirs",
+          "signer/onboarding",
+          "signer/permissions",
+          "signer/profile-guard",
+          "signer/qr-scanner",
+          "signer/rate-limiter",
+          "signer/room-flow",
+          "signer/secure-mem",
+          "signer/session",
+          "signer/session-lock",
+          "signer/signer-core",
+          "signer/social-recovery",
+          "signer/trust-tiers",
+          "signer/ui",
+          "signer/ui-accessibility",
+          "signer/ui-layout"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "gnome.common",
+        "gnome.seahorse",
+        "grotto.daemon",
+        "grotto.gui",
+        "grotto.native_host",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.core",
+        "nip55l.glib",
+        "nip55l.test_inputs",
+        "nip59",
+        "nip5f",
+        "nostr.gobject",
+        "nostrdb",
+        "packaging.grotto",
+        "packaging.groundhog",
+        "packaging.shared",
+        "shared.tests",
+        "testing.framework",
+        "vendor.nostrdb",
+        "version.contract"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.package_contract.native": {
+      "build_targets": [],
+      "command": [
+        "python3",
+        "{source}/scripts/check-linux-ci-packages.py",
+        "--self-test"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "command",
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "grotto.daemon",
+        "grotto.gui",
+        "grotto.native_host"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/scripts/check-linux-ci-packages.py",
+        "{source}/scripts/linux-ci.Dockerfile",
+        "{source}/.github/workflows/grotto-ci.yml",
+        "{source}/.github/workflows/groundhog-ci.yml",
+        "{source}/.github/workflows/gnostr-appimage.yml",
+        "{source}/.github/workflows/signet-ci.yml",
+        "{source}/.github/workflows/nostrc-ci.yml"
+      ],
+      "working_directory": "{source}"
+    },
+    "grotto.quarantine_contract.native": {
+      "build_targets": [],
+      "command": [
+        "python3",
+        "{source}/scripts/test-grotto-quarantine.py"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "command",
+      "nodes": [
+        "execution.grotto",
+        "grotto.gui",
+        "grotto.daemon",
+        "grotto.native_host"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/scripts/test-grotto-quarantine.py",
+        "{source}/scripts/linux-gate-smoke.sh",
+        "{source}/scripts/grotto-ci-quarantine.tsv"
+      ],
+      "working_directory": "{source}"
+    },
+    "grotto.signer.asan_ubsan": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux.asan_ubsan": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "signer/activity",
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/background",
+          "signer/bunker",
+          "signer/bunker-e2e",
+          "signer/clients",
+          "signer/onboarding",
+          "signer/permissions",
+          "signer/trust-tiers"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "gnome.common",
+        "gnome.seahorse",
+        "grotto.daemon",
+        "grotto.gui",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.core",
+        "nip55l.glib",
+        "nip55l.test_inputs",
+        "nip5f",
+        "nostr.gobject",
+        "nostrdb",
+        "shared.tests",
+        "testing.framework",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "grotto.linux.asan_ubsan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.package_contract.asan_ubsan": {
+      "build_targets": [],
+      "command": [
+        "python3",
+        "{source}/scripts/check-linux-ci-packages.py",
+        "--self-test"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "command",
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "grotto.daemon",
+        "grotto.gui",
+        "grotto.native_host"
+      ],
+      "profiles": [
+        "grotto.linux.asan_ubsan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/scripts/check-linux-ci-packages.py",
+        "{source}/scripts/linux-ci.Dockerfile",
+        "{source}/.github/workflows/grotto-ci.yml",
+        "{source}/.github/workflows/groundhog-ci.yml",
+        "{source}/.github/workflows/gnostr-appimage.yml",
+        "{source}/.github/workflows/signet-ci.yml",
+        "{source}/.github/workflows/nostrc-ci.yml"
+      ],
+      "working_directory": "{source}"
+    },
+    "grotto.quarantine_contract.asan_ubsan": {
+      "build_targets": [],
+      "command": [
+        "python3",
+        "{source}/scripts/test-grotto-quarantine.py"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "command",
+      "nodes": [
+        "execution.grotto",
+        "grotto.gui",
+        "grotto.daemon",
+        "grotto.native_host"
+      ],
+      "profiles": [
+        "grotto.linux.asan_ubsan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/scripts/test-grotto-quarantine.py",
+        "{source}/scripts/linux-gate-smoke.sh",
+        "{source}/scripts/grotto-ci-quarantine.tsv"
+      ],
+      "working_directory": "{source}"
+    },
+    "grotto.lsan_counterfactual": {
+      "build_targets": [],
+      "command": [
+        "python3",
+        "{source}/scripts/test-grotto-lsan-suppressions.py",
+        "{build}/lsan-counterfactuals"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "command",
+      "nodes": [
+        "execution.grotto",
+        "grotto.gui",
+        "grotto.daemon",
+        "grotto.native_host",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk"
+      ],
+      "profiles": [
+        "grotto.linux.asan_ubsan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/scripts/test-grotto-lsan-suppressions.py",
+        "{source}/apps/grotto/tests/lsan.supp",
+        "{source}/apps/grotto",
+        "{source}/nips/nip55l",
+        "{source}/nostr-gobject",
+        "{source}/nostr-gtk"
+      ],
+      "working_directory": "{source}"
+    },
     "root.asan.libgo": {
       "build_targets": [],
       "cost": "ordinary",
@@ -4218,7 +4535,9 @@
       "runtime_inputs": []
     },
     "grotto.build_contract": {
-      "build_targets": [],
+      "build_targets": [
+        "signer-tests"
+      ],
       "command": [
         "cmake",
         "--build",
@@ -4233,8 +4552,6 @@
       "nodes": [
         "grotto.gui",
         "grotto.daemon",
-        "grotto.native_host",
-        "packaging.grotto",
         "execution.grotto"
       ],
       "profiles": [
@@ -5202,15 +5519,15 @@
         "{source}/scripts/mdk-gate.py",
         "{source}/scripts/sanitizer-gate-ci.py",
         "{source}/scripts/test-gate.sh",
-          "{source}/scripts/test-plan.py",
-          "{source}/scripts/run_bp_matrix.py",
-          "{source}/scripts/metrics_summary.py",
-          "{source}/scripts/aggregate_bp_matrix.py",
-          "{source}/scripts/generate_bp_report.py",
-          "{source}/tests/fixtures/bp_metrics_reporting.jsonl",
+        "{source}/scripts/test-plan.py",
+        "{source}/scripts/run_bp_matrix.py",
+        "{source}/scripts/metrics_summary.py",
+        "{source}/scripts/aggregate_bp_matrix.py",
+        "{source}/scripts/generate_bp_report.py",
+        "{source}/tests/fixtures/bp_metrics_reporting.jsonl",
         "{source}/scripts/test_selection.py",
         "{source}/scripts/test_selection_custody.py",
-          "{source}/scripts/test_selection_realization.py",
+        "{source}/scripts/test_selection_realization.py",
         "{source}/signet/meson.build",
         "{source}/signet/src/signetctl_main.c",
         "{source}/signet/src/signetd_main.c",
@@ -5240,9 +5557,9 @@
         "{source}/tests/selection/test_mdk_cleanup.py",
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
-          "{source}/tests/selection/test_nonmember_ownership.py",
-          "{source}/tests/selection/test_diagnostic_nonmembers.py",
-          "{source}/tests/selection/test_bp_metrics_reporting.py",
+        "{source}/tests/selection/test_nonmember_ownership.py",
+        "{source}/tests/selection/test_diagnostic_nonmembers.py",
+        "{source}/tests/selection/test_bp_metrics_reporting.py",
         "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
@@ -5262,7 +5579,13 @@
         "{source}/tests/selection/test_selector_checkout_binding.py",
         "{source}/tests/selection/test_selector_cli.py",
         "{source}/tests/selection/test_shared_sanitizer_execution.py",
-        "{source}/tests/selection/test_workflow_contracts.py"
+        "{source}/tests/selection/test_workflow_contracts.py",
+        "{source}/apps/grotto/TestInventory.cmake",
+        "{source}/apps/grotto/tests/TestInventory.cmake",
+        "{source}/apps/grotto/native-host/TestInventory.cmake",
+        "{source}/tests/selection/fixtures/grotto_profile_exports.json",
+        "{source}/tests/selection/test_grotto_profiles.py",
+        "{source}/tests/selection/test_failure_receipts.py"
       ],
       "working_directory": "{source}"
     },
@@ -7548,6 +7871,33 @@
     }
   },
   "path_rules": [
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/native-host/TestInventory.cmake",
+      "nodes": [
+        "grotto.native_host",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata consumed by selection.contract; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/tests/TestInventory.cmake",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata consumed by selection.contract; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/TestInventory.cmake",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata consumed by selection.contract; retain component ownership."
+    },
     {
       "exact": "tests/custody/test_contained_engine.py",
       "effect": "global",
@@ -10262,6 +10612,96 @@
     }
   ],
   "profiles": {
+    "grotto.linux.asan_ubsan": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_APPS=ON",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=OFF",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_SIGNER_TESTS=ON",
+        "-DBUILD_NATIVE_HOST=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DGNOSTR_ENABLE_ASAN=ON",
+        "-DGNOSTR_ENABLE_UBSAN=ON"
+      ],
+      "environment": {
+        "G_SLICE": "always-malloc",
+        "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+        "TSAN_OPTIONS": "halt_on_error=1"
+      },
+      "feature_variants": [],
+      "instrumentation": "asan_ubsan",
+      "local_availability": "host_or_container",
+      "parallelism": 1,
+      "platform": "linux",
+      "setup": ".github/workflows/grotto-ci.yml:signer",
+      "source_dir": ".",
+      "timeout_seconds": 3600,
+      "workflow_contract": {
+        "matrix": {
+          "runner": "ubuntu-24.04",
+          "mode": "asan-ubsan"
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "{build}",
+          "--parallel",
+          "2"
+        ],
+        "test_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "-j1",
+          "-R",
+          "^(signer/bunker|signer/bunker-e2e|signer/approval-controller|signer/approval-integration|signer/permissions|signer/trust-tiers|signer/onboarding|signer/background|signer/clients|signer/activity|nip55l_approval_service|nip55l_cache_concurrency|nip55l_dbus_contract)$",
+          "--no-tests=error",
+          "--output-on-failure"
+        ],
+        "required_minimum": [
+          "signer/bunker",
+          "signer/bunker-e2e",
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/permissions",
+          "signer/trust-tiers",
+          "signer/onboarding",
+          "signer/background",
+          "signer/clients",
+          "signer/activity",
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract"
+        ],
+        "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+        "build_parallelism": 2,
+        "test_parallelism": 1,
+        "execution_gap": "Shared CLI currently uses one parallel setting. Serial execution preserves GUI/DBus safety but build2/test1 parity is not implemented. Default-all legacy build is distinct from signer-tests compile aggregate and selected-target builds.",
+        "runtime_wrapper": [
+          "dbus-run-session",
+          "--",
+          "xvfb-run",
+          "-a",
+          "-s",
+          "-screen 0 1280x800x24"
+        ]
+      }
+    },
     "groundhog.mdk011": {
       "architecture": "x86_64",
       "build_type": "Debug",
@@ -10729,18 +11169,86 @@
       "configure_args": [
         "-G",
         "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_APPS=ON",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=ON",
         "-DBUILD_TESTING=ON",
-        "-DBUILD_APPS=ON"
+        "-DBUILD_SIGNER_TESTS=ON",
+        "-DBUILD_NATIVE_HOST=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF"
       ],
-      "environment": {},
+      "environment": {
+        "G_SLICE": "always-malloc",
+        "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+        "TSAN_OPTIONS": "halt_on_error=1"
+      },
       "feature_variants": [],
       "instrumentation": "none",
       "local_availability": "host_or_container",
-      "parallelism": 2,
+      "parallelism": 1,
       "platform": "linux",
-      "setup": ".github/workflows/grotto-ci.yml",
+      "setup": ".github/workflows/grotto-ci.yml:signer",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "workflow_contract": {
+        "matrix": {
+          "runner": "ubuntu-24.04",
+          "mode": "native"
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "{build}",
+          "--parallel",
+          "2"
+        ],
+        "test_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "-j1",
+          "-R",
+          "^(signer/|nip55l_|nostr_signer_webext_host_)",
+          "--no-tests=error",
+          "--output-on-failure"
+        ],
+        "required_minimum": [
+          "signer/bunker",
+          "signer/bunker-e2e",
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/permissions",
+          "signer/background",
+          "signer/onboarding",
+          "signer/clients",
+          "signer/activity",
+          "signer/ui-layout",
+          "signer/desktop-contract",
+          "signer/blueprint-drift",
+          "signer/qr-scanner",
+          "signer/trust-tiers",
+          "signer/home-model",
+          "nip55l_approval_service",
+          "nip55l_dbus_contract"
+        ],
+        "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+        "build_parallelism": 2,
+        "test_parallelism": 1,
+        "execution_gap": "Shared CLI currently uses one parallel setting. Serial execution preserves GUI/DBus safety but build2/test1 parity is not implemented. Default-all legacy build is distinct from signer-tests compile aggregate and selected-target builds.",
+        "runtime_wrapper": [
+          "dbus-run-session",
+          "--",
+          "xvfb-run",
+          "-a",
+          "-s",
+          "-screen 0 1280x800x24"
+        ]
+      }
     },
     "groundhog.linux": {
       "architecture": "x86_64",
@@ -11256,10 +11764,18 @@
     }
   },
   "workflow_jobs": {
+    ".github/workflows/dependency-tests.yml:grotto_asan": {
+      "matrix_source": "",
+      "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
+    },
     ".github/workflows/dependency-tests.yml:mdk011": {
       "matrix_source": "",
       "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be",
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
@@ -11430,7 +11946,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -11438,7 +11954,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -11446,7 +11962,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -11454,7 +11970,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -11462,7 +11978,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -11470,7 +11986,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -11478,7 +11994,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -11486,7 +12002,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -11494,7 +12010,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -11502,7 +12018,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -11510,7 +12026,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "208e3031a4863b5758aeb0843e73a1f16495c1f40359c099e03b37e16e0404ac",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -11518,23 +12034,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "9be0af73634bb16b79868ac756cfb13c2dbad6d4e6cb1f2545c5ad90f37a0898",
+      "source_sha256": "e108e2dd6f31a94f39602d5a9159c3f0884cd0cd7d38268e607f2ede140dd070",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "108836e7d46661de6db748844d5dababe6b3f195b03465c00d0e6fbb37fd49be"
+      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "c40f755efa9013d2819b0350e8d1c0f148c1ca362c7b16b4a0d83177a72f405e",
-      "unsupported_reason": "Worker dispatch covers ten authored diagnostic profiles only; setup capability/platform checks and retained receipts are not complete original workflow variant acceptance.",
-      "workflow_sha256": "1d0dd12d8247178832bf36b13a4bde833af85f7196d91d020f0cb3f1c77a9cde"
+      "source_sha256": "f79d8d3667090f1e09c04f0c2cdd6cfc847e164305499d310b53a158389648cf",
+      "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Grotto build2/test1 API, original default build, remaining native extras and advisory TSan are not complete original workflow acceptance.",
+      "workflow_sha256": "e7a5544a07bc894e7da8324a7080d354a665ddc25d3a06b86d24030c37d197fa"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -11546,11 +12062,82 @@
     },
     ".github/workflows/grotto-ci.yml:signer": {
       "matrix_source": "matrix:\n        include:\n          - {runner: ubuntu-24.04, mode: native}\n          - {runner: ubuntu-latest, mode: native}\n          - {runner: ubuntu-24.04, mode: asan-ubsan}\n          - {runner: ubuntu-24.04, mode: tsan}",
-      "profiles": [],
+      "profiles": [
+        "grotto.linux",
+        "grotto.linux.asan_ubsan"
+      ],
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "2a7f620283dbce0fba38ccabc998f09289fb60dcb52b1901f5ac7824bc4fa4fa",
-      "unsupported_reason": "Grotto distro/native/ASan/UBSan/advisory-TSan variants, dbgsym setup, package smoke and quarantine semantics are not equivalent to the generic grotto.linux diagnostic.",
-      "workflow_sha256": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10"
+      "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Default-all build mutation, build2/test1 API, full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
+      "workflow_sha256": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
+      "unimplemented_variants": [
+        {
+          "runner": "ubuntu-latest",
+          "mode": "native",
+          "status": "unsupported",
+          "reason": "Runner label/environment not verified; fixed ubuntu-24.04 is not equivalent."
+        },
+        {
+          "runner": "ubuntu-24.04",
+          "mode": "tsan",
+          "status": "unsupported",
+          "advisory": true,
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DBUILD_GROUNDHOG=OFF",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DGNOSTR_ENABLE_TSAN=ON",
+            "-DNOSTR_USE_SYSTEM_NSYNC=OFF",
+            "-DGO_TSAN_MPMC_SLOTS=ON",
+            "-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer",
+            "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer"
+          ],
+          "required_names": [
+            "signer/bunker",
+            "signer/bunker-e2e",
+            "nip55l_approval_service",
+            "nip55l_cache_concurrency"
+          ],
+          "reason": "Pinned instrumented unmodified GLib/nsync linkage and advisory receipt/job semantics are not implemented by the shared worker. No gating substitute or pass."
+        }
+      ],
+      "unimplemented_native_steps": {
+        "baseline": {
+          "status": "not_executed",
+          "names": [
+            "groundhog-nip29-service",
+            "groundhog-mls-service",
+            "groundhog-nip46-pair-nak"
+          ],
+          "reason": "Go/nak0.19.7 and exact existing quarantine/smoke semantics not implemented in this projection; ordinary in-process tests, not live reference peers."
+        },
+        "meson": {
+          "status": "unsupported"
+        },
+        "debian_package": {
+          "status": "unsupported"
+        },
+        "shell_extension": {
+          "status": "unsupported",
+          "requires": [
+            "private_bus"
+          ]
+        }
+      },
+      "unimplemented_optional_variants": [
+        "ENABLE_NOSTR_WALLET_AGENT WebLN/paired registrations are absent under ordinary defaults; not passed.",
+        "Standalone nip55l activation/fuzz-enabled registrations are not represented by these Grotto profiles."
+      ]
     },
     ".github/workflows/grotto-fuzz.yml:select-fuzz": {
       "matrix_source": "",

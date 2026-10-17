@@ -70,7 +70,7 @@ jobs:
           # The default root app requires the libpeas-2 ABI, not libpeas-1.0.
           pkg-config --modversion libpeas-2
       - name: Install pinned Blueprint compiler for application profiles
-        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'grotto.linux' || inputs.profile == 'groundhog.mdk08')
+        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')
         run: |
           set -euo pipefail
           curl -fL https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o "$RUNNER_TEMP/blueprint.tar.xz"
@@ -95,6 +95,37 @@ jobs:
             "https://ddebs.ubuntu.com/ubuntu/pool/main/libs/libsecret/libsecret-1-0-dbgsym_${version}_${arch}.ddeb" \
             --output "$RUNNER_TEMP/libsecret-dbgsym.ddeb"
           sudo dpkg-deb --extract "$RUNNER_TEMP/libsecret-dbgsym.ddeb" /
+      - name: Matching third-party symbols for narrow GUI LSan exceptions
+        if: runner.os == 'Linux' && inputs.profile == 'grotto.linux.asan_ubsan'
+        run: |
+          set -eu
+          # Same packages as linux-ci.Dockerfile (nostrc-ydtdf / nostrc-ojtu3).
+          sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
+          for suite in noble noble-updates noble-proposed; do
+            echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
+          done | sudo tee /etc/apt/sources.list.d/ddebs.list
+          sudo apt-get update
+          gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
+          if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then
+            # Noble updates' 4.14.5+ds-0ubuntu0.10 has no amd64 dbgsym.
+            # Keep GTK runtime, headers and tools at a version with real symbols.
+            gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
+            test -n "$gtk_version"
+            test "$gtk_version" != '(none)'
+            echo "::warning::Installed GTK has no matching dbgsym; using GTK $gtk_version with matching symbols for sanitizer coverage"
+            sudo apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+              "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+              "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+              "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
+          fi
+          set --
+          for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0; do
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            echo "Required symbols: $package-dbgsym=$version"
+            set -- "$@" "$package-dbgsym=$version"
+          done
+          # Exact dependencies fail closed; never skip symbols or widen suppressions.
+          sudo apt-get install -y --no-install-recommends --no-remove "$@"
       - name: Install existing native standalone libgo prerequisites
         if: runner.os == 'macOS' && inputs.profile == 'libgo.macos.asan'
         run: brew install ninja libsoup@3 nsync
@@ -108,11 +139,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dependency/receipts/$PROFILE"
+          # Grotto's legacy GUI/DBus selection is serial. Separate build2/test1
+          # fidelity remains a gap until the shared execution API supports it.
+          parallel=2
+          case "$PROFILE" in grotto.linux*) parallel=1 ;; esac
           wrapper=(env)
-          if [[ "$RUNNER_OS" == Linux ]]; then wrapper=(xvfb-run -a dbus-run-session --); fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            wrapper=(xvfb-run -a dbus-run-session --)
+            case "$PROFILE" in
+              grotto.linux*) wrapper=(dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24') ;;
+            esac
+          fi
           "${wrapper[@]}" python3 scripts/test-plan.py run \
             --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
-            --build-dir "$RUNNER_TEMP/dependency-build" --configure --phase all --parallel 2 \
+            --build-dir "$RUNNER_TEMP/dependency-build" --configure --phase all --parallel "$parallel" \
             --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
             --output "$RUNNER_TEMP/dependency/receipts/$PROFILE/receipt.json" \
             2>&1 | tee "$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log"
@@ -134,4 +174,5 @@ jobs:
           path: |
             ${{ runner.temp }}/dependency/evidence
             ${{ runner.temp }}/dependency-build/nostrc-test-inventory*
+            ${{ runner.temp }}/dependency-build/nostrc-test-descriptors*
           if-no-files-found: warn

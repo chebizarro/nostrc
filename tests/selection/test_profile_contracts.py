@@ -316,7 +316,7 @@ class WorkflowMatrixAccounting(unittest.TestCase):
     def test_every_existing_job_matrix_has_a_mapping_or_explicit_gap(self):
         policy = s.load_inventory(INVENTORY)
         observed = validate_job_accounting(policy, ROOT)
-        self.assertEqual(len(observed), 88)
+        self.assertEqual(len(observed), 89)
         unsupported = [key for key, record in policy["workflow_jobs"].items() if not record["profiles"]]
         self.assertTrue(unsupported)
         for key in unsupported:

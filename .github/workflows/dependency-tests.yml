@@ -93,6 +93,14 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       plan_id: ${{ needs.select.outputs.plan_id }}
       profile: grotto.linux
+  grotto_asan:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'grotto.linux.asan_ubsan')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: grotto.linux.asan_ubsan
   groundhog:
     needs: select
     if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'groundhog.linux')
@@ -158,7 +166,7 @@ jobs:
   gate:
     name: Dependency gate
     if: always()
-    needs: [select, core, core_asan, core_native, grotto, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, policy, broad]
+    needs: [select, core, core_asan, core_native, grotto, grotto_asan, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, policy, broad]
     runs-on: ubuntu-24.04
     outputs:
       validation_artifact: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}
