@@ -217,10 +217,13 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
                 raise error from evidence_error
 
 
-def _command(argv, cwd=None, env=None):
-    result = _execute(argv, cwd=cwd, env=env)
+def _command(argv, cwd=None, env=None, *, log_path=None):
+    result = _execute(argv, cwd=cwd, env=env, log_path=log_path)
     if result.returncode:
-        raise RealizationError(f"command failed ({result.returncode}): {argv!r}\n{result.stdout}")
+        detail = result.stdout
+        if log_path is not None:
+            detail += f"\nretained {log_path}"
+        raise RealizationError(f"command failed ({result.returncode}): {argv!r}\n{detail}")
     return result.stdout
 
 
@@ -413,6 +416,35 @@ def _generated_ctest_commands(build):
 PHASES = ("configure", "build", "test")
 
 
+def authored_phase_parallelism(profile):
+    """Optional split authoring; absent fields leave the legacy API unchanged."""
+    if not any(key in profile for key in ("build_parallelism", "test_parallelism")):
+        return None
+    jobs = {phase: profile.get(phase + "_parallelism", profile.get("parallelism", 1))
+            for phase in ("build", "test")}
+    provided = [profile[key] for key in ("parallelism", "build_parallelism", "test_parallelism") if key in profile]
+    if any(type(value) is not int or value < 1 for value in [*jobs.values(), *provided]):
+        raise RealizationError("build/test parallelism must be authored positive integers")
+    return jobs
+
+
+def effective_phase_parallelism(profile, parallel=None, *, build_parallel=None, test_parallel=None,
+                                phases=("build", "test")):
+    for value in (parallel, build_parallel, test_parallel):
+        if value is not None and (type(value) is not int or value < 1):
+            raise ValueError("parallelism overrides must be positive integers")
+    authored = authored_phase_parallelism(profile)
+    if authored is None:
+        if build_parallel is not None or test_parallel is not None:
+            raise RealizationError("phase parallelism overrides require authored build_parallelism/test_parallelism")
+        return {phase: 1 if parallel is None else parallel for phase in ("build", "test")}
+    for phase, override in (("build", build_parallel), ("test", test_parallel)):
+        effective = parallel if override is None else override
+        if (phase in phases or override is not None) and effective is not None and effective != authored[phase]:
+            raise RealizationError(f"{phase} parallelism override {effective} differs from authored profile {authored[phase]}")
+    return authored
+
+
 def _environment_map(value, label):
     if not isinstance(value, dict) or any(
             not isinstance(k, str) or not k or "=" in k or "\x00" in k
@@ -436,6 +468,7 @@ def _expand_source(value, source_root):
 
 def validate_phase_profile(profile):
     """Validate authored metadata without host checks or environment flattening."""
+    authored = authored_phase_parallelism(profile)
     common = _environment_map(profile.get("environment", {}), "environment")
     phases = profile.get("phase_environments", {p: {} for p in PHASES})
     if not isinstance(phases, dict) or set(phases) != set(PHASES):
@@ -476,7 +509,7 @@ def validate_phase_profile(profile):
                 or any(not isinstance(x, str) or not x or "\x00" in x for x in values)
                 or len(values) != len(set(values))):
             raise RealizationError(f"invalid sanitizer_compatibility {field}")
-    jobs = profile.get("parallelism")
+    jobs = authored["test"] if authored is not None else profile.get("parallelism")
     if type(jobs) is not int or jobs < 1 or compat["GH_SAN_TEST_JOBS"] != str(jobs):
         raise RealizationError("sanitizer_compatibility parallelism disagreement")
     if compat["GH_SAN_SKIP_PATTERN"] != r"\*\*\*Skipped|Not Run":
@@ -512,11 +545,13 @@ def _phase_context(profile, root, source, configuration):
             if not path.is_relative_to(root) or not path.exists():
                 raise RealizationError(f"profile template input escapes/misses source root: {path}")
             inputs.add(str(path))
+    authored = authored_phase_parallelism(profile)
     return {"source_root": str(root), "source_dir": str(source), "configuration": configuration,
             "environment_overlays": {p: {k: _expand_source(v, root) for k, v in
                 dict(profile.get("environment", {}), **profile.get("phase_environments", {}).get(p, {})).items()} for p in PHASES},
             "environment_hashes": {p: _hash(env) for p, env in environments.items()},
-            "template_inputs": sorted(inputs)}
+            "template_inputs": sorted(inputs),
+            **({"execution_parallelism": authored} if authored is not None else {})}
 
 
 def _profile_fingerprint(realization):
@@ -541,10 +576,14 @@ def _validate_phase_context(realization):
 
 
 def _validate_resolved_phase(resolved, realization):
+    if _hash(resolved.get("phase_context")) != resolved.get("phase_context_hash"):
+        raise RealizationError("resolved phase identity mismatch: phase context content hash")
     for key in ("profile_hash", "configuration", "phase_context", "phase_context_hash"):
         expected = _hash(realization["profile"]) if key == "profile_hash" else realization[key]
-        if resolved.get(key) != expected:
+        if _hash(resolved.get(key)) != _hash(expected):
             raise RealizationError(f"resolved phase identity mismatch: {key}")
+    if _hash(resolved.get("execution_parallelism")) != _hash(authored_phase_parallelism(realization["profile"])):
+        raise RealizationError("resolved phase parallelism identity mismatch")
     compatibility_targets = sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", []))
     if (resolved.get("compatibility_build_targets", []) != compatibility_targets
             or not set(compatibility_targets).issubset(resolved["build_targets"])):
@@ -600,7 +639,7 @@ def _validate_native_profile(profile, toolchains=None, configuration=None, compi
 
 
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
-                      inventory_hash):
+                      inventory_hash, *, log_path=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
 
     profile: source_dir (repo-relative), configure_args (argv), environment (map),
@@ -629,8 +668,8 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
            f"-DNOSTRC_TEST_SELECTION_TOKEN={token}"]
     before = {p.name: p.read_bytes() for p in (build / ".cmake/api/v1/reply").glob("index-*.json")}
     started = time.monotonic()
-    output = _command(cmd, env=env)
-    (build / "nostrc-selection-configure.log").write_text(output, errors="surrogateescape")
+    logfile = Path(log_path) if log_path is not None else build / "nostrc-selection-configure.log"
+    _command(cmd, env=env, log_path=logfile)
     reply_dir = build / ".cmake/api/v1/reply"
     indexes = sorted(reply_dir.glob("index-*.json"), key=lambda p: p.stat().st_mtime_ns)
     if not indexes or (indexes[-1].name in before and before[indexes[-1].name] == indexes[-1].read_bytes()):
@@ -1094,6 +1133,9 @@ def _command_specs(inventory, realization):
             if len(declared) != len(set(declared)) or (names and sorted(names) != sorted(declared)):
                 raise RealizationError(f"build_contract target disagreement: {ident}")
             names = declared
+            authored = authored_phase_parallelism(realization["profile"])
+            if authored is not None:
+                argv += ["--parallel", str(authored["build"])]
         if any(n not in targets for n in names):
             raise RealizationError(f"unknown command build target: {ident}")
         target_ids = _target_closure([targets[n]["id"] for n in names], realization)
@@ -1338,6 +1380,9 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
         "registered_commands": {t["name"]: t["command"] for t in realization["tests"] if "command" in t}}
+    authored = authored_phase_parallelism(realization["profile"])
+    if authored is not None:
+        result["execution_parallelism"] = authored
     result["resolved_hash"] = _hash(result)
     return result
 
@@ -1638,6 +1683,9 @@ def _diagnostic_execution_options(resolved, realization, parallel, timeout=None)
                for e in resolved.get("baseline_exclusions", [])):
         return None
     profile = realization["profile"]
+    authored = authored_phase_parallelism(profile)
+    if authored is not None and any(value != profile.get("parallelism", 1) for value in authored.values()):
+        raise RealizationError("diagnostic nonmember split parallelism is not admitted")
     expected = {"parallel": profile.get("parallelism", 1), "timeout_seconds": profile.get("timeout_seconds")}
     effective_timeout = expected["timeout_seconds"] if timeout is None else timeout
     if (type(parallel) is not int or parallel != expected["parallel"]
@@ -1646,16 +1694,17 @@ def _diagnostic_execution_options(resolved, realization, parallel, timeout=None)
     return expected
 
 
-def build_resolved(resolved, build_dir, parallel=1):
+def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     """Build selected prerequisites before the mandatory post-build audit."""
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("build profile identity mismatch")
     _validate_resolved_phase(resolved, realization)
-    _diagnostic_execution_options(resolved, realization, parallel)
+    jobs = effective_phase_parallelism(realization["profile"], parallel, build_parallel=build_parallel, phases=("build",))
+    _diagnostic_execution_options(resolved, realization, jobs["build"])
     if not resolved["build_targets"]:
         return {"commands": [], "build_seconds": 0}
-    cmd = ["cmake", "--build", str(build_dir), "--parallel", str(parallel)]
+    cmd = ["cmake", "--build", str(build_dir), "--parallel", str(jobs["build"])]
     if resolved["configuration"]:
         cmd += ["--config", resolved["configuration"]]
     cmd += ["--target", *resolved["build_targets"]]
@@ -1707,13 +1756,14 @@ def cli(args, policy):
                     raise RealizationError("provided resolved plan is stale or differs from current resolution")
             code = 0
             if args.command == "run":
+                parallel = None if authored_phase_parallelism(profile) is not None else profile.get("parallelism", 1)
                 pre = check_inputs(policy, realized, identity)
                 if not pre["passed"]:
                     result, code = pre, 1
                 else:
                     build_result = {"commands": [], "build_seconds": 0}
                     if args.phase in ("build", "all"):
-                        build_result = build_resolved(result, args.build_dir, profile.get("parallelism", 1))
+                        build_result = build_resolved(result, args.build_dir, parallel)
                     audit = check_inputs(policy, realized, identity, after_build=True)
                     if not audit["passed"]:
                         result, code = audit, 1
@@ -1722,7 +1772,7 @@ def cli(args, policy):
                     else:
                         evidence = Path(args.output).absolute().parent / "selection-evidence" if args.output else Path(args.build_dir) / "selection-evidence"
                         result = run_resolved(result, args.build_dir, evidence, args.attempt,
-                            input_audit=audit, build=False, parallel=profile.get("parallelism", 1),
+                            input_audit=audit, build=False, parallel=parallel,
                             timeout=profile.get("timeout_seconds"),
                             evidence_paths=[Path(args.build_dir) / "mdk011-interop-artifacts"])
                         result["build"] = build_result
@@ -1805,25 +1855,31 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, **kwargs):
 
 
 def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=None,
-                 build=True, parallel=1, timeout=None, evidence_paths=(), custody=None):
+                 build=True, parallel=None, timeout=None, evidence_paths=(), custody=None,
+                 build_parallel=None, test_parallel=None):
     """One CTest invocation per profile/attempt; no retries or quarantine policy.
 
     Existing platform/MDK adapters still own isolation locks, images and process
     cleanup. This runner refuses Docker/external-peer profiles until that adapter
     attests/provisions them; it must not race fixed-tag image lifecycles.
     """
-    if attempt < 1 or parallel < 1:
-        raise ValueError("attempt and parallel must be positive")
+    if attempt < 1:
+        raise ValueError("attempt must be positive")
     build_dir = Path(build_dir).resolve()
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("resolved profile fingerprint mismatch")
     _validate_resolved_phase(resolved, realization)
+    jobs = effective_phase_parallelism(realization["profile"], parallel,
+                                      build_parallel=build_parallel, test_parallel=test_parallel,
+                                      phases=("build", "test") if build else ("test",))
     if timeout is None:
         timeout = realization["profile"].get("timeout_seconds")
     if timeout is not None and (type(timeout) not in (int, float) or timeout <= 0):
         raise RealizationError("execution timeout must be positive")
-    execution_options = _diagnostic_execution_options(resolved, realization, parallel, timeout)
+    execution_options = _diagnostic_execution_options(resolved, realization, jobs["test"], timeout)
+    if build:
+        _diagnostic_execution_options(resolved, realization, jobs["build"], timeout)
     if realization["profile"].get("execution_domain") == "prepared_peer_linux_v1":
         from test_selection_custody import PreparedContext
         if not isinstance(custody, PreparedContext):
@@ -1865,6 +1921,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "available_capabilities": realization["profile"].get("capabilities", []),
         "target_ids": resolved["target_ids"], "build_targets": resolved["build_targets"],
         "command_specs_hash": resolved.get("command_specs_hash")}
+    if authored_phase_parallelism(realization["profile"]) is not None:
+        receipt["execution_parallelism"] = jobs
     if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in receipt["baseline_exclusions"]):
         receipt["complete"] = False
         receipt["execution_options"] = execution_options
@@ -1894,7 +1952,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     build_env = phase_environment(realization["profile"], realization["repo_root"], "build")
     config = ["-C", resolved["configuration"]] if resolved["configuration"] else []
     if build and resolved["build_targets"]:
-        cmd = ["cmake", "--build", str(build_dir), "--parallel", str(parallel)]
+        cmd = ["cmake", "--build", str(build_dir), "--parallel", str(jobs["build"])]
         if resolved["configuration"]:
             cmd += ["--config", resolved["configuration"]]
         cmd += ["--target", *resolved["build_targets"]]
@@ -1958,7 +2016,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         if sorted(t["name"] for t in selected) != resolved["tests"]:
             raise RealizationError("CTest indexed selection differs from resolved closure")
         junit = directory / "results.xml"
-        cmd = [*args, "--output-on-failure", "--output-junit", str(junit), "--parallel", str(parallel)]
+        cmd = [*args, "--output-on-failure", "--output-junit", str(junit), "--parallel", str(jobs["test"])]
         if timeout is not None:
             cmd += ["--timeout", str(timeout)]
         commands.append(cmd)

@@ -1,0 +1,3104 @@
+{
+  "architecture": "aarch64",
+  "authored_x86_64_execution_acceptance": false,
+  "platform": "linux",
+  "schema_version": 1,
+  "scope": "Fresh ordinary Grotto CMake/CTest exports on actual Linux arm64, not native x86_64 profile acceptance or default-all build success. No diagnostic nonmembers admitted.",
+  "source_dirty": true,
+  "source_head": "07b893b9889a7b7061faf11a58704e0043ebfea0",
+  "source_sha256": {
+    ".github/workflows/grotto-ci.yml": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
+    "apps/grotto/CMakeLists.txt": "91730bc81471ff1b0878dd8a5b40c49cb9cebe1e1ba900cd0122a50e69375518",
+    "apps/grotto/TestInventory.cmake": "f483df8b876c4d87365a704bfe58c29c243ec680c617b65c647c88cae56ee38b",
+    "apps/grotto/native-host/CMakeLists.txt": "bec75451622c1854922ba47410cd3d9d628199495cdf8a9a714f2d96cd174d88",
+    "apps/grotto/native-host/TestInventory.cmake": "f2c4590486107e03394be4ad132b93048cb739de1995308656e3f6fe4be6fc0b",
+    "apps/grotto/tests/CMakeLists.txt": "b8f540f7faa8cd391ae0ed27efede47d89350ac69721fb4439ee87c83484435a",
+    "apps/grotto/tests/TestInventory.cmake": "5dd25c9bee4c4b9150ef8259addd0028af99d951081feff5045d61514cd5bc33",
+    "apps/grotto/tests/identity-tests.cmake": "645eff815ead31c6ae1f9690c94111dfcb4313aeb761f8ca1fb43115aa2c6b93",
+    "cmake/NostrcGtkResources.cmake": "b2579e587d6668cade277b8407f07a595851e8814d42dc4137325734290140ae",
+    "cmake/NostrcTestInventory.cmake": "c5e79f71f39db770185629f1e09e56f2b06b96d5f892a24259261f1241ed0008",
+    "nips/nip55l/CMakeLists.txt": "343e3710e64d35dd25789b4094466aa5b40304c3e6bb4cd1a2e738d4bf186bfd",
+    "nips/nip55l/TestInventory.cmake": "680870a408ef323c8ddefa1b000c479befd1f508d3cdeafeb00f3b067dfd62e9",
+    "nostr-gtk/CMakeLists.txt": "ff06ac255d410cad94587949f297fa6b5c837f41f85bb97eebf81d8f84462f6a",
+    "nostr-gtk/TestInventory.cmake": "c2d8a7eab79df441156ba61d750d35d2c67b05a3bd85b08bc6ad077886fb30c0",
+    "tests/common/test_blueprint_resources.py": "cc6b2bd0fc72d9e037e0a14f73a98e2c88f8687852f90c48633d910eb157e5f5"
+  },
+  "variants": {
+    "asan-ubsan": {
+      "all_registration_names": [
+        "GoChannelCloseTest",
+        "GoChannelIncremental",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest",
+        "MockRelayIntegration",
+        "MockRelayServerBasic",
+        "MockRelayUnit",
+        "Nip46MockRelay",
+        "Nip46QRSocket",
+        "SignerIntegration",
+        "TestHarnessExample",
+        "concurrency_channels",
+        "concurrency_subscription_shutdown",
+        "concurrency_subscription_shutdown_asan",
+        "glib_async_integration",
+        "gnostr_asan_test",
+        "grelay_ingress_security",
+        "grotto-native-host-test-homes",
+        "grotto-test-homes",
+        "grotto-tests-test-homes",
+        "grotto_app_dbus_service_configured",
+        "grotto_dbus_service_configured",
+        "libnostr_connection_teardown_stress",
+        "libnostr_core_audit",
+        "libnostr_crypto_audit",
+        "libnostr_event_validation",
+        "libnostr_filter_limit_zero",
+        "libnostr_misc_audit",
+        "libnostr_networking_audit",
+        "libnostr_parsing_audit",
+        "libnostr_reconnect_same_second",
+        "libnostr_relay_callback_lifetime",
+        "libnostr_relay_write_unsent",
+        "libnostr_store_txn_audit",
+        "libnostr_subscription_dispatch",
+        "marmot_gobject_test",
+        "marmot_test_adopted",
+        "marmot_test_adopted_commits",
+        "marmot_test_app_data_update",
+        "marmot_test_commits",
+        "marmot_test_extension",
+        "marmot_test_interop",
+        "marmot_test_kp_lifecycle",
+        "marmot_test_kp_profile",
+        "marmot_test_large_commit_bound",
+        "marmot_test_media",
+        "marmot_test_mls_crypto",
+        "marmot_test_mls_framing",
+        "marmot_test_mls_group",
+        "marmot_test_mls_key_package",
+        "marmot_test_mls_key_schedule",
+        "marmot_test_mls_key_schedule_vectors",
+        "marmot_test_mls_tls",
+        "marmot_test_mls_tree",
+        "marmot_test_mls_tree_vectors",
+        "marmot_test_mls_welcome",
+        "marmot_test_protocol",
+        "marmot_test_ratchet_persist",
+        "marmot_test_rfc9420_vectors",
+        "marmot_test_storage",
+        "marmot_test_storage_contract",
+        "marmot_test_types",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostr-gtk-resource-build",
+        "nostr_gtk_portable_media_lint",
+        "nostr_gtk_portable_media_lint_selftest",
+        "nostr_gtk_portable_potfiles",
+        "nostr_signer_webext_extension_policy",
+        "nostr_signer_webext_extension_webln",
+        "nostr_signer_webext_host_e2e",
+        "nostr_signer_webext_host_errors",
+        "nostr_signer_webext_host_framing",
+        "nostr_signer_webext_host_policy",
+        "nostr_signer_webext_host_router",
+        "nostr_signer_webext_host_webln",
+        "nostrc-test-bus-selftest",
+        "profile_fetch_simulation",
+        "profile_fetch_stress",
+        "signer/activity",
+        "signer/approval-controller",
+        "signer/approval-dialog",
+        "signer/approval-integration",
+        "signer/background",
+        "signer/blueprint-drift",
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/bunker-headless",
+        "signer/bunker-startup",
+        "signer/clients",
+        "signer/core",
+        "signer/crypto",
+        "signer/dbus",
+        "signer/desktop-contract",
+        "signer/home-model",
+        "signer/hsm-provider",
+        "signer/identity",
+        "signer/identity-management",
+        "signer/identity-model",
+        "signer/legacy-dirs",
+        "signer/onboarding",
+        "signer/permissions",
+        "signer/profile-guard",
+        "signer/qr-scanner",
+        "signer/rate-limiter",
+        "signer/secure-mem",
+        "signer/session",
+        "signer/session-lock",
+        "signer/signer-core",
+        "signer/social-recovery",
+        "signer/trust-tiers",
+        "signer/ui",
+        "signer/ui-accessibility",
+        "signer/ui-layout",
+        "test-bc-blob-store",
+        "test-hanami-blossom-batch",
+        "test-hanami-blossom-client",
+        "test-hanami-blossom-content-type",
+        "test-hanami-blossom-shim",
+        "test-hanami-blossom-shim-auto",
+        "test-hanami-bud02-auth",
+        "test-hanami-config",
+        "test-hanami-grasp",
+        "test-hanami-index",
+        "test-hanami-integration",
+        "test-hanami-nostr",
+        "test-hanami-odb-backend",
+        "test-hanami-refdb-backend",
+        "test-hanami-server-capability-probe-shim",
+        "test-hanami-transport",
+        "test-hanami-types",
+        "test-nip34",
+        "test_connection_idle_writable",
+        "test_connection_recv_drain",
+        "test_connection_shutdown_order",
+        "test_connection_tls_no_resumption",
+        "test_connection_writable_rearm",
+        "test_envelope",
+        "test_envelope_fallback",
+        "test_envelope_parse",
+        "test_event_canonical",
+        "test_event_priority",
+        "test_filters_move_semantics",
+        "test_fuzz_envelope_roundtrip",
+        "test_fuzz_filter_parse",
+        "test_interop",
+        "test_json_envelope",
+        "test_json_event",
+        "test_json_event_fuzzlite",
+        "test_json_filter",
+        "test_json_filter_fuzzlite",
+        "test_json_filter_robust",
+        "test_json_filter_tags",
+        "test_json_int_array",
+        "test_json_parse",
+        "test_json_raw",
+        "test_ndb_empty",
+        "test_ndb_integration",
+        "test_ndb_ordering",
+        "test_ndb_perf",
+        "test_ndb_session_e2e",
+        "test_ndb_tie_break",
+        "test_neg_bound",
+        "test_neg_fingerprint",
+        "test_neg_message",
+        "test_neg_session",
+        "test_neg_session_caps",
+        "test_neg_session_need",
+        "test_neg_session_synth",
+        "test_neg_varint",
+        "test_nip04_aead",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip05_parse",
+        "test_nip05_resolve_json_errors",
+        "test_nip05_resolve_json_names",
+        "test_nip05_resolve_json_relays",
+        "test_nip06",
+        "test_nip11",
+        "test_nip14",
+        "test_nip17",
+        "test_nip19",
+        "test_nip19_tlv",
+        "test_nip21",
+        "test_nip22",
+        "test_nip23",
+        "test_nip24",
+        "test_nip25",
+        "test_nip27",
+        "test_nip28",
+        "test_nip30",
+        "test_nip39",
+        "test_nip40",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_nip44_vectors",
+        "test_nip46_async_api",
+        "test_nip46_bunker_connect_auth",
+        "test_nip46_bunker_nip44",
+        "test_nip46_bunker_reply",
+        "test_nip46_bunker_roundtrip",
+        "test_nip46_bunker_sign_event_acl_deny",
+        "test_nip46_bunker_sign_event_cb",
+        "test_nip46_bunker_sign_event_real",
+        "test_nip46_bunker_uri_issue",
+        "test_nip46_c1_hardening",
+        "test_nip46_caller_hardening",
+        "test_nip46_client_api",
+        "test_nip46_client_connect",
+        "test_nip46_client_connect_edge",
+        "test_nip46_e2e_mock",
+        "test_nip46_encryption_detection",
+        "test_nip46_envelope_build",
+        "test_nip46_glib_lifetime",
+        "test_nip46_msg",
+        "test_nip46_msg_comprehensive",
+        "test_nip46_nostrconnect_qr_login",
+        "test_nip46_pending_lifetime",
+        "test_nip46_relay_lifecycle",
+        "test_nip46_request_lifecycle",
+        "test_nip46_response_validation",
+        "test_nip46_rpc_flow_mock",
+        "test_nip46_session_management",
+        "test_nip46_signed_response_admission",
+        "test_nip46_transport_modes",
+        "test_nip46_uri",
+        "test_nip46_uri_comprehensive",
+        "test_nip47_nwc_crypto",
+        "test_nip47_nwc_envelope",
+        "test_nip47_nwc_info",
+        "test_nip47_nwc_session",
+        "test_nip47_nwc_uri",
+        "test_nip47_spec_source",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors",
+        "test_nip51",
+        "test_nip57",
+        "test_nip58",
+        "test_nip59",
+        "test_nip59_rng_failure",
+        "test_nip5f_loopback",
+        "test_nip5f_negative_env",
+        "test_nip5f_tcp",
+        "test_nip60",
+        "test_nip61",
+        "test_nip70",
+        "test_nip73",
+        "test_nip75",
+        "test_nip86_policy",
+        "test_nip92",
+        "test_nip98",
+        "test_nip99",
+        "test_nipb0",
+        "test_nostr",
+        "test_nostr_gobject_event",
+        "test_nostr_gobject_integ_event_flow",
+        "test_nostr_gobject_lifecycle_leaks",
+        "test_nostr_gobject_main_thread_latency",
+        "test_nostr_gobject_nip19",
+        "test_nostr_gobject_profile_provider_conflict_resolution",
+        "test_nostr_gobject_profile_provider_lru",
+        "test_nostr_gobject_profile_service_batching",
+        "test_nostr_gobject_relay_connect",
+        "test_nostr_gobject_relay_teardown",
+        "test_nostr_gobject_store_contract",
+        "test_nostr_gobject_subscription_eose_order",
+        "test_nostr_gtk_bind_latency_budget",
+        "test_nostr_gtk_bind_latency_perf",
+        "test_nostr_gtk_content_parser",
+        "test_nostr_gtk_markdown_pango",
+        "test_nostr_gtk_media",
+        "test_nostr_gtk_nip34_issue_model",
+        "test_nostr_gtk_nip34_issue_view",
+        "test_nostr_gtk_og_metadata",
+        "test_nostr_gtk_og_preview_card",
+        "test_nostr_gtk_portable",
+        "test_nostr_gtk_portable_i18n",
+        "test_nostr_gtk_reference_card",
+        "test_nostr_gtk_standalone_core",
+        "test_otel_consumer",
+        "test_otel_encoding",
+        "test_otel_producer",
+        "test_otel_replay",
+        "test_otel_roundtrip",
+        "test_pool_redial",
+        "test_relay",
+        "test_relay_shutdown",
+        "test_relay_teardown_leaks",
+        "test_relay_unsubscribe",
+        "test_roundtrip",
+        "test_schema",
+        "test_subscription_backpressure",
+        "test_subscription_backpressure_long",
+        "test_subscription_blocking_depth",
+        "test_subscription_lifecycle"
+      ],
+      "closure_names": [
+        "grotto-tests-test-homes",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "signer/activity",
+        "signer/approval-controller",
+        "signer/approval-integration",
+        "signer/background",
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/clients",
+        "signer/onboarding",
+        "signer/permissions",
+        "signer/trust-tiers"
+      ],
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_APPS=ON",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=OFF",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_SIGNER_TESTS=ON",
+        "-DBUILD_NATIVE_HOST=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DGNOSTR_ENABLE_ASAN=ON",
+        "-DGNOSTR_ENABLE_UBSAN=ON"
+      ],
+      "descriptors": {
+        "grotto-tests-test-homes": {
+          "declared_depends": [],
+          "expected": [
+            "fixture"
+          ],
+          "inputs": [
+            "{build}/apps/grotto/tests/grotto-tests-test-homes.cmake",
+            "{source}/cmake/NostrcTestIsolation.cmake"
+          ],
+          "owner": [
+            "testing.framework"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l-test-homes": {
+          "declared_depends": [],
+          "expected": [
+            "fixture"
+          ],
+          "inputs": [
+            "{build}/nips/nip55l/nip55l-test-homes.cmake",
+            "{source}/cmake/NostrcTestIsolation.cmake"
+          ],
+          "owner": [
+            "testing.framework"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_approval_service": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_cache_concurrency": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "nip04",
+            "nip06",
+            "nip19",
+            "nip44",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_dbus_contract": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f",
+            "shared.tests"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "signer/activity": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-activity",
+            "grotto-daemon",
+            "test-control-untrusted",
+            "grotto-schemas"
+          ]
+        },
+        "signer/approval-controller": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-approval-controller",
+            "grotto-schemas"
+          ]
+        },
+        "signer/approval-integration": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/lsan.supp",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui",
+            "grotto.daemon"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-approval-integration",
+            "grotto-daemon",
+            "grotto-schemas"
+          ]
+        },
+        "signer/background": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{build}/apps/grotto/tests/../org.nostr.Grotto-autostart.desktop",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto-autostart.desktop.in",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-background",
+            "grotto-schemas"
+          ]
+        },
+        "signer/bunker": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [],
+          "targets": [
+            "test-bunker-startup",
+            "grotto-schemas"
+          ]
+        },
+        "signer/bunker-e2e": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-bunker-e2e",
+            "grotto-daemon",
+            "grotto-schemas"
+          ]
+        },
+        "signer/clients": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-clients",
+            "grotto-daemon",
+            "test-control-untrusted",
+            "grotto-schemas"
+          ]
+        },
+        "signer/onboarding": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/lsan.supp",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-onboarding",
+            "grotto-schemas"
+          ]
+        },
+        "signer/permissions": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "signer/trust-tiers": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f"
+          ],
+          "requires": [],
+          "targets": []
+        }
+      },
+      "fixture_names": [
+        "grotto-tests-test-homes",
+        "nip55l-test-homes"
+      ],
+      "ownership_witnesses": {
+        "gnome.common": {
+          "input": "gnome/common/gn-session-bus-probe.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "gnome.seahorse": {
+          "input": "gnome/seahorse/secret_store.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "grotto.daemon": {
+          "input": "apps/grotto/daemon/grotto_clients.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "grotto.gui": {
+          "input": "apps/grotto/src/accounts_store.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "libgo": {
+          "input": "libgo/src/blocking_executor.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "libjson": {
+          "input": "libjson/src/json.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "libnostr": {
+          "input": "libnostr/src/brown_list.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip04": {
+          "input": "nips/nip04/src/nip04.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip06": {
+          "input": "nips/nip06/src/nip06.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip11": {
+          "input": "nips/nip11/src/nip11.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip19": {
+          "input": "nips/nip19/src/bech32.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip44": {
+          "input": "nips/nip44/src/core/nip44.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip46": {
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip49": {
+          "input": "nips/nip49/src/core/nip49.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip55l": {
+          "kind": "descriptor",
+          "test": "nip55l_approval_service"
+        },
+        "nip55l.core": {
+          "input": "nips/nip55l/src/core/signer_ops.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip55l.glib": {
+          "input": "nips/nip55l/src/glib/daemon_main.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip55l.test_inputs": {
+          "input": "nips/nip55l/tests/test_signer_approval_service.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip5f": {
+          "input": "nips/nip5f/src/core/sock_client.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nostr.gobject": {
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nostrdb": {
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "shared.tests": {
+          "input": "tests/common/nostrc-test-bus.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "testing.framework": {
+          "kind": "descriptor",
+          "test": "grotto-tests-test-homes"
+        },
+        "vendor.nostrdb": {
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "kind": "FileAPI_or_runtime"
+        }
+      },
+      "primary_names": [
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "signer/activity",
+        "signer/approval-controller",
+        "signer/approval-integration",
+        "signer/background",
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/clients",
+        "signer/onboarding",
+        "signer/permissions",
+        "signer/trust-tiers"
+      ],
+      "raw_descriptors_sha256": "e3fad28ecb4b24f9f9f8c316c102ce25e5300f7a6301151380458a686e101147",
+      "raw_selected_sha256": "708795f137ab8a4c7dd5599b73d1c1e172310cdd3f6656f482a1e1d2f4fb612e",
+      "target_mapping": {
+        "grotto-tests-test-homes": {
+          "command": [
+            "/usr/bin/cmake",
+            "-P",
+            "{build}/apps/grotto/tests/grotto-tests-test-homes.cmake"
+          ],
+          "targets": []
+        },
+        "nip55l-test-homes": {
+          "command": [
+            "/usr/bin/cmake",
+            "-P",
+            "{build}/nips/nip55l/nip55l-test-homes.cmake"
+          ],
+          "targets": []
+        },
+        "nip55l_approval_service": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_approval_service"
+          ],
+          "targets": [
+            "test_nip55l_approval_service"
+          ]
+        },
+        "nip55l_cache_concurrency": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_cache_concurrency"
+          ],
+          "targets": [
+            "test_nip55l_cache_concurrency"
+          ]
+        },
+        "nip55l_dbus_contract": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_dbus_contract"
+          ],
+          "targets": [
+            "test_nip55l_dbus_contract"
+          ]
+        },
+        "signer/activity": {
+          "command": [
+            "{build}/apps/grotto/tests/test-activity"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-activity",
+            "test-control-untrusted"
+          ]
+        },
+        "signer/approval-controller": {
+          "command": [
+            "{build}/apps/grotto/tests/test-approval-controller"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-approval-controller"
+          ]
+        },
+        "signer/approval-integration": {
+          "command": [
+            "{build}/apps/grotto/tests/test-approval-integration",
+            "{build}/apps/grotto/grotto-daemon"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-approval-integration"
+          ]
+        },
+        "signer/background": {
+          "command": [
+            "{build}/apps/grotto/tests/test-background"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-background"
+          ]
+        },
+        "signer/bunker": {
+          "command": [
+            "{build}/apps/grotto/tests/test-bunker-startup"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-bunker-startup"
+          ]
+        },
+        "signer/bunker-e2e": {
+          "command": [
+            "{build}/apps/grotto/tests/test-bunker-e2e",
+            "{build}/apps/grotto/grotto-daemon",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml",
+            "/usr/bin/glib-compile-schemas"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-bunker-e2e"
+          ]
+        },
+        "signer/clients": {
+          "command": [
+            "{build}/apps/grotto/tests/test-clients"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-clients",
+            "test-control-untrusted"
+          ]
+        },
+        "signer/onboarding": {
+          "command": [
+            "{build}/apps/grotto/tests/test-onboarding"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-onboarding"
+          ]
+        },
+        "signer/permissions": {
+          "command": [
+            "{build}/nips/nip55l/test_signer_permissions",
+            "-p",
+            "/permissions"
+          ],
+          "targets": [
+            "test_signer_permissions"
+          ]
+        },
+        "signer/trust-tiers": {
+          "command": [
+            "{build}/nips/nip55l/test_signer_permissions",
+            "-p",
+            "/trust-tiers"
+          ],
+          "targets": [
+            "test_signer_permissions"
+          ]
+        }
+      }
+    },
+    "native": {
+      "all_registration_names": [
+        "GoChannelCloseTest",
+        "GoChannelIncremental",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest",
+        "MockRelayIntegration",
+        "MockRelayServerBasic",
+        "MockRelayUnit",
+        "Nip46MockRelay",
+        "Nip46QRSocket",
+        "SignerIntegration",
+        "TestHarnessExample",
+        "concurrency_channels",
+        "concurrency_subscription_shutdown",
+        "glib_async_integration",
+        "grelay_ingress_security",
+        "grotto-native-host-test-homes",
+        "grotto-test-homes",
+        "grotto-tests-test-homes",
+        "grotto_app_dbus_service_configured",
+        "grotto_dbus_service_configured",
+        "groundhog-about",
+        "groundhog-about-gui",
+        "groundhog-account",
+        "groundhog-account-backends",
+        "groundhog-account-relays",
+        "groundhog-account-remote-switch",
+        "groundhog-account-store",
+        "groundhog-account-store-gui",
+        "groundhog-account-ui",
+        "groundhog-agent-events",
+        "groundhog-agents-page",
+        "groundhog-attachment-ui",
+        "groundhog-attachments",
+        "groundhog-auth-policy",
+        "groundhog-background",
+        "groundhog-background-desktop",
+        "groundhog-background-gui",
+        "groundhog-blossom",
+        "groundhog-blueprint",
+        "groundhog-bus-probe",
+        "groundhog-composer",
+        "groundhog-contact-directory",
+        "groundhog-conversation-info",
+        "groundhog-conversation-info-gui",
+        "groundhog-conversation-list",
+        "groundhog-conversation-menu",
+        "groundhog-conversation-menu-gui",
+        "groundhog-conversation-view",
+        "groundhog-conversations",
+        "groundhog-data",
+        "groundhog-desktop",
+        "groundhog-diagnostics",
+        "groundhog-dm-inbox",
+        "groundhog-dm-send",
+        "groundhog-e2e-dm",
+        "groundhog-expiry",
+        "groundhog-gdk-frame-tolerance",
+        "groundhog-group-ui",
+        "groundhog-group-ui-gui",
+        "groundhog-i18n",
+        "groundhog-icons",
+        "groundhog-identity",
+        "groundhog-inbox-setup",
+        "groundhog-issue-uploader",
+        "groundhog-launch",
+        "groundhog-link-policy",
+        "groundhog-media",
+        "groundhog-media-cache-binding",
+        "groundhog-media-purge",
+        "groundhog-message-reply",
+        "groundhog-metainfo",
+        "groundhog-metainfo-merged",
+        "groundhog-mls-files",
+        "groundhog-mls-kp-lifecycle",
+        "groundhog-mls-kp-lifecycle-adopted",
+        "groundhog-mls-media",
+        "groundhog-mls-poll",
+        "groundhog-mls-remote",
+        "groundhog-mls-service",
+        "groundhog-mls-ui",
+        "groundhog-mls-ui-gui",
+        "groundhog-multi-send",
+        "groundhog-net",
+        "groundhog-new-message",
+        "groundhog-nip29",
+        "groundhog-nip29-group-list",
+        "groundhog-nip29-service",
+        "groundhog-nip46-credentials-keyring",
+        "groundhog-nip46-credentials-list",
+        "groundhog-nip46-inbox-nak",
+        "groundhog-nip46-nak",
+        "groundhog-nip46-pair-dialog",
+        "groundhog-nip46-pair-nak",
+        "groundhog-nip46-session",
+        "groundhog-nip46-wire",
+        "groundhog-notifier",
+        "groundhog-notifier-gui",
+        "groundhog-onboarding",
+        "groundhog-outbox",
+        "groundhog-packaging-version",
+        "groundhog-poll-ui",
+        "groundhog-portable-singleton",
+        "groundhog-potfiles",
+        "groundhog-preferences",
+        "groundhog-privacy-e2e",
+        "groundhog-privacy-mls",
+        "groundhog-privacy-static",
+        "groundhog-privacy-summary",
+        "groundhog-profile-guard",
+        "groundhog-public-note-post",
+        "groundhog-reaction-send",
+        "groundhog-reactions",
+        "groundhog-relay",
+        "groundhog-relay-guard",
+        "groundhog-relay-publish",
+        "groundhog-relay-publish-wire",
+        "groundhog-relay-wire",
+        "groundhog-remote-feature-matrix",
+        "groundhog-requests",
+        "groundhog-requests-gui",
+        "groundhog-resource",
+        "groundhog-schema",
+        "groundhog-secret-service-sessions",
+        "groundhog-shell",
+        "groundhog-signer-nip46",
+        "groundhog-status-notifier",
+        "groundhog-store",
+        "groundhog-store-conversations",
+        "groundhog-store-key",
+        "groundhog-store-key-keyring",
+        "groundhog-store-marmot",
+        "groundhog-store-sqlite",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes",
+        "groundhog-tls-resumption",
+        "groundhog-two-instance",
+        "groundhog-two-instance-acceptance",
+        "groundhog-two-instance-remote-acceptance",
+        "groundhog-update-handoff",
+        "groundhog-version",
+        "groundhog-voice",
+        "groundhog-voice-ui",
+        "libnostr_connection_teardown_stress",
+        "libnostr_core_audit",
+        "libnostr_crypto_audit",
+        "libnostr_event_validation",
+        "libnostr_filter_limit_zero",
+        "libnostr_misc_audit",
+        "libnostr_networking_audit",
+        "libnostr_parsing_audit",
+        "libnostr_reconnect_same_second",
+        "libnostr_relay_callback_lifetime",
+        "libnostr_relay_write_unsent",
+        "libnostr_store_txn_audit",
+        "libnostr_subscription_dispatch",
+        "marmot_gobject_test",
+        "marmot_test_adopted",
+        "marmot_test_adopted_commits",
+        "marmot_test_app_data_update",
+        "marmot_test_commits",
+        "marmot_test_extension",
+        "marmot_test_interop",
+        "marmot_test_kp_lifecycle",
+        "marmot_test_kp_profile",
+        "marmot_test_large_commit_bound",
+        "marmot_test_media",
+        "marmot_test_mls_crypto",
+        "marmot_test_mls_framing",
+        "marmot_test_mls_group",
+        "marmot_test_mls_key_package",
+        "marmot_test_mls_key_schedule",
+        "marmot_test_mls_key_schedule_vectors",
+        "marmot_test_mls_tls",
+        "marmot_test_mls_tree",
+        "marmot_test_mls_tree_vectors",
+        "marmot_test_mls_welcome",
+        "marmot_test_protocol",
+        "marmot_test_ratchet_persist",
+        "marmot_test_rfc9420_vectors",
+        "marmot_test_storage",
+        "marmot_test_storage_contract",
+        "marmot_test_types",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostr-gtk-resource-build",
+        "nostr_gtk_portable_media_lint",
+        "nostr_gtk_portable_media_lint_selftest",
+        "nostr_gtk_portable_potfiles",
+        "nostr_signer_webext_extension_policy",
+        "nostr_signer_webext_extension_webln",
+        "nostr_signer_webext_host_e2e",
+        "nostr_signer_webext_host_errors",
+        "nostr_signer_webext_host_framing",
+        "nostr_signer_webext_host_policy",
+        "nostr_signer_webext_host_router",
+        "nostr_signer_webext_host_webln",
+        "nostrc-test-bus-selftest",
+        "profile_fetch_simulation",
+        "profile_fetch_stress",
+        "signer/activity",
+        "signer/approval-controller",
+        "signer/approval-dialog",
+        "signer/approval-integration",
+        "signer/background",
+        "signer/blueprint-drift",
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/bunker-headless",
+        "signer/bunker-startup",
+        "signer/clients",
+        "signer/core",
+        "signer/crypto",
+        "signer/dbus",
+        "signer/desktop-contract",
+        "signer/home-model",
+        "signer/hsm-provider",
+        "signer/identity",
+        "signer/identity-management",
+        "signer/identity-model",
+        "signer/legacy-dirs",
+        "signer/onboarding",
+        "signer/permissions",
+        "signer/profile-guard",
+        "signer/qr-scanner",
+        "signer/rate-limiter",
+        "signer/room-flow",
+        "signer/secure-mem",
+        "signer/session",
+        "signer/session-lock",
+        "signer/signer-core",
+        "signer/social-recovery",
+        "signer/trust-tiers",
+        "signer/ui",
+        "signer/ui-accessibility",
+        "signer/ui-layout",
+        "test-bc-blob-store",
+        "test-hanami-blossom-batch",
+        "test-hanami-blossom-client",
+        "test-hanami-blossom-content-type",
+        "test-hanami-blossom-shim",
+        "test-hanami-blossom-shim-auto",
+        "test-hanami-bud02-auth",
+        "test-hanami-config",
+        "test-hanami-grasp",
+        "test-hanami-index",
+        "test-hanami-integration",
+        "test-hanami-nostr",
+        "test-hanami-odb-backend",
+        "test-hanami-refdb-backend",
+        "test-hanami-server-capability-probe-shim",
+        "test-hanami-transport",
+        "test-hanami-types",
+        "test-nip34",
+        "test_connection_idle_writable",
+        "test_connection_recv_drain",
+        "test_connection_shutdown_order",
+        "test_connection_tls_no_resumption",
+        "test_connection_writable_rearm",
+        "test_envelope",
+        "test_envelope_fallback",
+        "test_envelope_parse",
+        "test_event_canonical",
+        "test_event_priority",
+        "test_filters_move_semantics",
+        "test_fuzz_envelope_roundtrip",
+        "test_fuzz_filter_parse",
+        "test_interop",
+        "test_json_envelope",
+        "test_json_event",
+        "test_json_event_fuzzlite",
+        "test_json_filter",
+        "test_json_filter_fuzzlite",
+        "test_json_filter_robust",
+        "test_json_filter_tags",
+        "test_json_int_array",
+        "test_json_parse",
+        "test_json_raw",
+        "test_ndb_empty",
+        "test_ndb_integration",
+        "test_ndb_ordering",
+        "test_ndb_perf",
+        "test_ndb_session_e2e",
+        "test_ndb_tie_break",
+        "test_neg_bound",
+        "test_neg_fingerprint",
+        "test_neg_message",
+        "test_neg_session",
+        "test_neg_session_caps",
+        "test_neg_session_need",
+        "test_neg_session_synth",
+        "test_neg_varint",
+        "test_nip04_aead",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip05_parse",
+        "test_nip05_resolve_json_errors",
+        "test_nip05_resolve_json_names",
+        "test_nip05_resolve_json_relays",
+        "test_nip06",
+        "test_nip11",
+        "test_nip14",
+        "test_nip17",
+        "test_nip19",
+        "test_nip19_tlv",
+        "test_nip21",
+        "test_nip22",
+        "test_nip23",
+        "test_nip24",
+        "test_nip25",
+        "test_nip27",
+        "test_nip28",
+        "test_nip29",
+        "test_nip30",
+        "test_nip39",
+        "test_nip40",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_nip44_vectors",
+        "test_nip46_async_api",
+        "test_nip46_bunker_connect_auth",
+        "test_nip46_bunker_nip44",
+        "test_nip46_bunker_reply",
+        "test_nip46_bunker_roundtrip",
+        "test_nip46_bunker_sign_event_acl_deny",
+        "test_nip46_bunker_sign_event_cb",
+        "test_nip46_bunker_sign_event_real",
+        "test_nip46_bunker_uri_issue",
+        "test_nip46_c1_hardening",
+        "test_nip46_caller_hardening",
+        "test_nip46_client_api",
+        "test_nip46_client_connect",
+        "test_nip46_client_connect_edge",
+        "test_nip46_e2e_mock",
+        "test_nip46_encryption_detection",
+        "test_nip46_envelope_build",
+        "test_nip46_glib_lifetime",
+        "test_nip46_msg",
+        "test_nip46_msg_comprehensive",
+        "test_nip46_nostrconnect_qr_login",
+        "test_nip46_pending_lifetime",
+        "test_nip46_relay_lifecycle",
+        "test_nip46_request_lifecycle",
+        "test_nip46_response_validation",
+        "test_nip46_rpc_flow_mock",
+        "test_nip46_session_management",
+        "test_nip46_signed_response_admission",
+        "test_nip46_transport_modes",
+        "test_nip46_uri",
+        "test_nip46_uri_comprehensive",
+        "test_nip47_nwc_crypto",
+        "test_nip47_nwc_envelope",
+        "test_nip47_nwc_info",
+        "test_nip47_nwc_session",
+        "test_nip47_nwc_uri",
+        "test_nip47_spec_source",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors",
+        "test_nip51",
+        "test_nip57",
+        "test_nip58",
+        "test_nip59",
+        "test_nip59_rng_failure",
+        "test_nip5f_loopback",
+        "test_nip5f_negative_env",
+        "test_nip5f_tcp",
+        "test_nip60",
+        "test_nip61",
+        "test_nip70",
+        "test_nip73",
+        "test_nip75",
+        "test_nip86_policy",
+        "test_nip92",
+        "test_nip98",
+        "test_nip99",
+        "test_nipb0",
+        "test_nostr",
+        "test_nostr_gobject_event",
+        "test_nostr_gobject_integ_event_flow",
+        "test_nostr_gobject_lifecycle_leaks",
+        "test_nostr_gobject_main_thread_latency",
+        "test_nostr_gobject_nip19",
+        "test_nostr_gobject_profile_provider_conflict_resolution",
+        "test_nostr_gobject_profile_provider_lru",
+        "test_nostr_gobject_profile_service_batching",
+        "test_nostr_gobject_relay_connect",
+        "test_nostr_gobject_relay_teardown",
+        "test_nostr_gobject_store_contract",
+        "test_nostr_gobject_subscription_eose_order",
+        "test_nostr_gtk_bind_latency_budget",
+        "test_nostr_gtk_bind_latency_perf",
+        "test_nostr_gtk_content_parser",
+        "test_nostr_gtk_markdown_pango",
+        "test_nostr_gtk_media",
+        "test_nostr_gtk_nip34_issue_model",
+        "test_nostr_gtk_nip34_issue_view",
+        "test_nostr_gtk_og_metadata",
+        "test_nostr_gtk_og_preview_card",
+        "test_nostr_gtk_portable",
+        "test_nostr_gtk_portable_i18n",
+        "test_nostr_gtk_reference_card",
+        "test_nostr_gtk_standalone_core",
+        "test_otel_consumer",
+        "test_otel_encoding",
+        "test_otel_producer",
+        "test_otel_replay",
+        "test_otel_roundtrip",
+        "test_pool_redial",
+        "test_relay",
+        "test_relay_shutdown",
+        "test_relay_teardown_leaks",
+        "test_relay_unsubscribe",
+        "test_roundtrip",
+        "test_schema",
+        "test_subscription_backpressure",
+        "test_subscription_backpressure_long",
+        "test_subscription_blocking_depth",
+        "test_subscription_lifecycle"
+      ],
+      "closure_names": [
+        "grotto-native-host-test-homes",
+        "grotto-tests-test-homes",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostr_signer_webext_host_e2e",
+        "nostr_signer_webext_host_errors",
+        "nostr_signer_webext_host_framing",
+        "nostr_signer_webext_host_policy",
+        "nostr_signer_webext_host_router",
+        "nostr_signer_webext_host_webln",
+        "signer/activity",
+        "signer/approval-controller",
+        "signer/approval-dialog",
+        "signer/approval-integration",
+        "signer/background",
+        "signer/blueprint-drift",
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/bunker-headless",
+        "signer/bunker-startup",
+        "signer/clients",
+        "signer/core",
+        "signer/crypto",
+        "signer/dbus",
+        "signer/desktop-contract",
+        "signer/home-model",
+        "signer/hsm-provider",
+        "signer/identity",
+        "signer/identity-management",
+        "signer/identity-model",
+        "signer/legacy-dirs",
+        "signer/onboarding",
+        "signer/permissions",
+        "signer/profile-guard",
+        "signer/qr-scanner",
+        "signer/rate-limiter",
+        "signer/room-flow",
+        "signer/secure-mem",
+        "signer/session",
+        "signer/session-lock",
+        "signer/signer-core",
+        "signer/social-recovery",
+        "signer/trust-tiers",
+        "signer/ui",
+        "signer/ui-accessibility",
+        "signer/ui-layout"
+      ],
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_APPS=ON",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_SIGNER_TESTS=ON",
+        "-DBUILD_NATIVE_HOST=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF"
+      ],
+      "descriptors": {
+        "grotto-native-host-test-homes": {
+          "declared_depends": [],
+          "expected": [
+            "fixture"
+          ],
+          "inputs": [
+            "{build}/apps/grotto/native-host/grotto-native-host-test-homes.cmake",
+            "{source}/cmake/NostrcTestIsolation.cmake"
+          ],
+          "owner": [
+            "testing.framework"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "grotto-tests-test-homes": {
+          "declared_depends": [],
+          "expected": [
+            "fixture"
+          ],
+          "inputs": [
+            "{build}/apps/grotto/tests/grotto-tests-test-homes.cmake",
+            "{source}/cmake/NostrcTestIsolation.cmake"
+          ],
+          "owner": [
+            "testing.framework"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l-test-homes": {
+          "declared_depends": [],
+          "expected": [
+            "fixture"
+          ],
+          "inputs": [
+            "{build}/nips/nip55l/nip55l-test-homes.cmake",
+            "{source}/cmake/NostrcTestIsolation.cmake"
+          ],
+          "owner": [
+            "testing.framework"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_approval_service": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_cache_concurrency": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "nip04",
+            "nip06",
+            "nip19",
+            "nip44",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_dbus_contract": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f",
+            "shared.tests"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_dbus_contract_fail_teardown": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f",
+            "shared.tests"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_fake_secret_service_contract": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f",
+            "shared.tests"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_getrelays": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip44",
+            "nip49",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_keyring_schema": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_nip44_b64": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip44",
+            "nip49",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_profile_guard": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip44",
+            "nip49",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_selector_safety": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip44",
+            "nip49",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nip55l_sign_event_json": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip44",
+            "nip49",
+            "nip55l.test_inputs"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "nostr_signer_webext_host_e2e": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.native_host",
+            "nip55l"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test_nmh_e2e",
+            "nostr-signer-daemon",
+            "nostr-signer-webext-host"
+          ]
+        },
+        "nostr_signer_webext_host_errors": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.native_host"
+          ],
+          "requires": [],
+          "targets": [
+            "test_nmh_errors"
+          ]
+        },
+        "nostr_signer_webext_host_framing": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.native_host"
+          ],
+          "requires": [],
+          "targets": [
+            "test_nmh_framing"
+          ]
+        },
+        "nostr_signer_webext_host_policy": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.native_host"
+          ],
+          "requires": [],
+          "targets": [
+            "test_nmh_policy"
+          ]
+        },
+        "nostr_signer_webext_host_router": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.native_host"
+          ],
+          "requires": [],
+          "targets": [
+            "test_nmh_router"
+          ]
+        },
+        "nostr_signer_webext_host_webln": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.native_host"
+          ],
+          "requires": [],
+          "targets": [
+            "test_nmh_webln"
+          ]
+        },
+        "signer/activity": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-activity",
+            "grotto-daemon",
+            "test-control-untrusted",
+            "grotto-schemas"
+          ]
+        },
+        "signer/approval-controller": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-approval-controller",
+            "grotto-schemas"
+          ]
+        },
+        "signer/approval-dialog": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display"
+          ],
+          "targets": [
+            "test-approval-dialog",
+            "grotto-schemas"
+          ]
+        },
+        "signer/approval-integration": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/lsan.supp",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui",
+            "grotto.daemon"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-approval-integration",
+            "grotto-daemon",
+            "grotto-schemas"
+          ]
+        },
+        "signer/background": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{build}/apps/grotto/tests/../org.nostr.Grotto-autostart.desktop",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto-autostart.desktop.in",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-background",
+            "grotto-schemas"
+          ]
+        },
+        "signer/blueprint-drift": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/test-blueprint-drift.py",
+            "{source}/apps/grotto/tests/../data/ui"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "signer/bunker": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [],
+          "targets": [
+            "test-bunker-startup",
+            "grotto-schemas"
+          ]
+        },
+        "signer/bunker-e2e": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-bunker-e2e",
+            "grotto-daemon",
+            "grotto-schemas"
+          ]
+        },
+        "signer/bunker-headless": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-bunker-e2e",
+            "grotto-daemon",
+            "grotto-schemas"
+          ]
+        },
+        "signer/bunker-startup": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [],
+          "targets": [
+            "test-bunker-startup",
+            "grotto-schemas"
+          ]
+        },
+        "signer/clients": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-clients",
+            "grotto-daemon",
+            "test-control-untrusted",
+            "grotto-schemas"
+          ]
+        },
+        "signer/core": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-core",
+            "grotto-schemas"
+          ]
+        },
+        "signer/crypto": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-crypto",
+            "grotto-schemas"
+          ]
+        },
+        "signer/dbus": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-dbus",
+            "grotto-schemas"
+          ]
+        },
+        "signer/desktop-contract": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/test-desktop-contract.py",
+            "{source}/apps/grotto/tests/../CMakeLists.txt",
+            "{source}/apps/grotto/tests/../meson.build",
+            "{source}/apps/grotto/tests/../data",
+            "{source}/apps/grotto/tests/..{source}",
+            "{source}/apps/grotto/tests/../packaging",
+            "{source}/apps/grotto/tests/../daemon/main_daemon.c",
+            "{source}/apps/grotto/tests/../daemon/packaging/systemd/user",
+            "{source}/flake.nix",
+            "{build}/apps/grotto/tests/../org.nostr.Grotto-autostart.desktop",
+            "{build}/apps/grotto/tests/../org.nostr.Grotto.service",
+            "{build}/apps/grotto/tests/../org.nostr.Signer.service"
+          ],
+          "owner": [
+            "grotto.gui",
+            "grotto.daemon"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "grotto",
+            "grotto-schemas",
+            "test-desktop-activation"
+          ]
+        },
+        "signer/home-model": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-home-dashboard"
+          ]
+        },
+        "signer/hsm-provider": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-hsm-provider",
+            "grotto-schemas"
+          ]
+        },
+        "signer/identity": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-identity",
+            "grotto-schemas"
+          ]
+        },
+        "signer/identity-management": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-identity-management",
+            "grotto-daemon",
+            "test-identity-consumer-a",
+            "test-identity-consumer-b",
+            "grotto-schemas"
+          ]
+        },
+        "signer/identity-model": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-home-model",
+            "grotto-schemas"
+          ]
+        },
+        "signer/legacy-dirs": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-legacy-dirs"
+          ]
+        },
+        "signer/onboarding": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/lsan.supp",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-onboarding",
+            "grotto-schemas"
+          ]
+        },
+        "signer/permissions": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "signer/profile-guard": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-profile-guard"
+          ]
+        },
+        "signer/qr-scanner": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display"
+          ],
+          "targets": [
+            "test-qr-scanner",
+            "grotto-schemas"
+          ]
+        },
+        "signer/rate-limiter": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-rate-limiter",
+            "grotto-schemas"
+          ]
+        },
+        "signer/room-flow": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui",
+            "grotto.daemon"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-room-flow",
+            "grotto-daemon",
+            "room-flow-schemas",
+            "grotto-schemas"
+          ]
+        },
+        "signer/secure-mem": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-secure-mem",
+            "grotto-schemas"
+          ]
+        },
+        "signer/session": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-session",
+            "grotto-schemas"
+          ]
+        },
+        "signer/session-lock": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.daemon"
+          ],
+          "requires": [
+            "private_bus"
+          ],
+          "targets": [
+            "test-session-lock",
+            "grotto-schemas"
+          ]
+        },
+        "signer/signer-core": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-signer-core",
+            "grotto-schemas"
+          ]
+        },
+        "signer/social-recovery": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [],
+          "targets": [
+            "test-social-recovery",
+            "grotto-schemas"
+          ]
+        },
+        "signer/trust-tiers": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "owner": [
+            "nip55l",
+            "gnome.seahorse",
+            "nip04",
+            "nip06",
+            "nip49",
+            "nip55l.test_inputs",
+            "nip5f"
+          ],
+          "requires": [],
+          "targets": []
+        },
+        "signer/ui": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display"
+          ],
+          "targets": [
+            "test-ui",
+            "grotto-schemas"
+          ]
+        },
+        "signer/ui-accessibility": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.Control1.xml",
+            "{source}/apps/grotto/tests/../po/es.po",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-ui-layout",
+            "grotto_test_locales",
+            "grotto_resources",
+            "grotto-schemas"
+          ]
+        },
+        "signer/ui-layout": {
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.Control1.xml",
+            "{source}/apps/grotto/tests/../po/es.po",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml"
+          ],
+          "owner": [
+            "grotto.gui"
+          ],
+          "requires": [
+            "display",
+            "private_bus"
+          ],
+          "targets": [
+            "test-ui-layout",
+            "grotto_test_locales",
+            "grotto_resources",
+            "grotto-schemas"
+          ]
+        }
+      },
+      "fixture_names": [
+        "grotto-native-host-test-homes",
+        "grotto-tests-test-homes",
+        "nip55l-test-homes"
+      ],
+      "ownership_witnesses": {
+        "gnome.common": {
+          "input": "gnome/common/gn-session-bus-probe.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "gnome.seahorse": {
+          "input": "gnome/seahorse/secret_store.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "grotto.daemon": {
+          "input": "apps/grotto/daemon/grotto_clients.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "grotto.gui": {
+          "input": "apps/grotto/src/accounts_store.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "grotto.native_host": {
+          "input": "apps/grotto/native-host/main_native_host.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "groundhog.identity_auth": {
+          "input": "gnome/groundhog/src/identity/gh-identity.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "groundhog.relay": {
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "groundhog.resources": {
+          "input": "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+          "kind": "FileAPI_or_runtime"
+        },
+        "groundhog.unclassified": {
+          "input": "gnome/groundhog/src/app/gh-account-controller.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "libgo": {
+          "input": "libgo/src/blocking_executor.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "libjson": {
+          "input": "libjson/src/json.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "libnostr": {
+          "input": "libnostr/src/brown_list.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip04": {
+          "input": "nips/nip04/src/nip04.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip06": {
+          "input": "nips/nip06/src/nip06.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip11": {
+          "input": "nips/nip11/src/nip11.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip17": {
+          "input": "nips/nip17/src/nip17.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip19": {
+          "input": "nips/nip19/src/bech32.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip44": {
+          "input": "nips/nip44/src/core/nip44.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip46": {
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip49": {
+          "input": "nips/nip49/src/core/nip49.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip55l": {
+          "kind": "descriptor",
+          "test": "nip55l_approval_service"
+        },
+        "nip55l.core": {
+          "input": "nips/nip55l/src/core/signer_ops.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip55l.glib": {
+          "input": "nips/nip55l/src/glib/daemon_main.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip55l.test_inputs": {
+          "input": "nips/nip55l/tests/test_getrelays.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip59": {
+          "input": "nips/nip59/src/nip59.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nip5f": {
+          "input": "nips/nip5f/src/core/sock_client.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nostr.gobject": {
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "nostrdb": {
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "packaging.grotto": {
+          "input": "apps/grotto/packaging/README.md",
+          "kind": "FileAPI_or_runtime"
+        },
+        "packaging.groundhog": {
+          "input": "flake.nix",
+          "kind": "FileAPI_or_runtime"
+        },
+        "packaging.shared": {
+          "input": "flake.nix",
+          "kind": "FileAPI_or_runtime"
+        },
+        "shared.tests": {
+          "input": "tests/common/nostrc-test-bus.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "testing.framework": {
+          "kind": "descriptor",
+          "test": "grotto-native-host-test-homes"
+        },
+        "vendor.nostrdb": {
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "kind": "FileAPI_or_runtime"
+        },
+        "version.contract": {
+          "input": "apps/grotto/CMakeLists.txt",
+          "kind": "FileAPI_or_runtime"
+        }
+      },
+      "primary_names": [
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostr_signer_webext_host_e2e",
+        "nostr_signer_webext_host_errors",
+        "nostr_signer_webext_host_framing",
+        "nostr_signer_webext_host_policy",
+        "nostr_signer_webext_host_router",
+        "nostr_signer_webext_host_webln",
+        "signer/activity",
+        "signer/approval-controller",
+        "signer/approval-dialog",
+        "signer/approval-integration",
+        "signer/background",
+        "signer/blueprint-drift",
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/bunker-headless",
+        "signer/bunker-startup",
+        "signer/clients",
+        "signer/core",
+        "signer/crypto",
+        "signer/dbus",
+        "signer/desktop-contract",
+        "signer/home-model",
+        "signer/hsm-provider",
+        "signer/identity",
+        "signer/identity-management",
+        "signer/identity-model",
+        "signer/legacy-dirs",
+        "signer/onboarding",
+        "signer/permissions",
+        "signer/profile-guard",
+        "signer/qr-scanner",
+        "signer/rate-limiter",
+        "signer/room-flow",
+        "signer/secure-mem",
+        "signer/session",
+        "signer/session-lock",
+        "signer/signer-core",
+        "signer/social-recovery",
+        "signer/trust-tiers",
+        "signer/ui",
+        "signer/ui-accessibility",
+        "signer/ui-layout"
+      ],
+      "raw_descriptors_sha256": "754b429168836270ab4c045e653bc857e09518cf503a7e836e3bcb8a2b6d85a9",
+      "raw_selected_sha256": "63e989aa586f223e02fd796d9c7ee5c284ab5edea3282c9f3504fc8a4d47ec90",
+      "target_mapping": {
+        "grotto-native-host-test-homes": {
+          "command": [
+            "/usr/bin/cmake",
+            "-P",
+            "{build}/apps/grotto/native-host/grotto-native-host-test-homes.cmake"
+          ],
+          "targets": []
+        },
+        "grotto-tests-test-homes": {
+          "command": [
+            "/usr/bin/cmake",
+            "-P",
+            "{build}/apps/grotto/tests/grotto-tests-test-homes.cmake"
+          ],
+          "targets": []
+        },
+        "nip55l-test-homes": {
+          "command": [
+            "/usr/bin/cmake",
+            "-P",
+            "{build}/nips/nip55l/nip55l-test-homes.cmake"
+          ],
+          "targets": []
+        },
+        "nip55l_approval_service": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_approval_service"
+          ],
+          "targets": [
+            "test_nip55l_approval_service"
+          ]
+        },
+        "nip55l_cache_concurrency": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_cache_concurrency"
+          ],
+          "targets": [
+            "test_nip55l_cache_concurrency"
+          ]
+        },
+        "nip55l_dbus_contract": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_dbus_contract"
+          ],
+          "targets": [
+            "test_nip55l_dbus_contract"
+          ]
+        },
+        "nip55l_dbus_contract_fail_teardown": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_dbus_contract"
+          ],
+          "targets": [
+            "test_nip55l_dbus_contract"
+          ]
+        },
+        "nip55l_fake_secret_service_contract": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_dbus_contract",
+            "--fake-secret-service-contract"
+          ],
+          "targets": [
+            "test_nip55l_dbus_contract"
+          ]
+        },
+        "nip55l_getrelays": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_getrelays"
+          ],
+          "targets": [
+            "test_nip55l_getrelays"
+          ]
+        },
+        "nip55l_keyring_schema": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_keyring_schema"
+          ],
+          "targets": [
+            "test_nip55l_keyring_schema"
+          ]
+        },
+        "nip55l_nip44_b64": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_nip44_b64"
+          ],
+          "targets": [
+            "test_nip55l_nip44_b64"
+          ]
+        },
+        "nip55l_profile_guard": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_profile_guard"
+          ],
+          "targets": [
+            "test_nip55l_profile_guard"
+          ]
+        },
+        "nip55l_selector_safety": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_selector_safety"
+          ],
+          "targets": [
+            "test_nip55l_selector_safety"
+          ]
+        },
+        "nip55l_sign_event_json": {
+          "command": [
+            "{build}/nips/nip55l/test_nip55l_sign_event_json"
+          ],
+          "targets": [
+            "test_nip55l_sign_event_json"
+          ]
+        },
+        "nostr_signer_webext_host_e2e": {
+          "command": [
+            "{build}/apps/grotto/native-host/test_nmh_e2e"
+          ],
+          "targets": [
+            "nostr-signer-daemon",
+            "nostr-signer-webext-host",
+            "test_nmh_e2e"
+          ]
+        },
+        "nostr_signer_webext_host_errors": {
+          "command": [
+            "{build}/apps/grotto/native-host/test_nmh_errors"
+          ],
+          "targets": [
+            "test_nmh_errors"
+          ]
+        },
+        "nostr_signer_webext_host_framing": {
+          "command": [
+            "{build}/apps/grotto/native-host/test_nmh_framing"
+          ],
+          "targets": [
+            "test_nmh_framing"
+          ]
+        },
+        "nostr_signer_webext_host_policy": {
+          "command": [
+            "{build}/apps/grotto/native-host/test_nmh_policy"
+          ],
+          "targets": [
+            "test_nmh_policy"
+          ]
+        },
+        "nostr_signer_webext_host_router": {
+          "command": [
+            "{build}/apps/grotto/native-host/test_nmh_router"
+          ],
+          "targets": [
+            "test_nmh_router"
+          ]
+        },
+        "nostr_signer_webext_host_webln": {
+          "command": [
+            "{build}/apps/grotto/native-host/test_nmh_webln"
+          ],
+          "targets": [
+            "test_nmh_webln"
+          ]
+        },
+        "signer/activity": {
+          "command": [
+            "{build}/apps/grotto/tests/test-activity"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-activity",
+            "test-control-untrusted"
+          ]
+        },
+        "signer/approval-controller": {
+          "command": [
+            "{build}/apps/grotto/tests/test-approval-controller"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-approval-controller"
+          ]
+        },
+        "signer/approval-dialog": {
+          "command": [
+            "{build}/apps/grotto/tests/test-approval-dialog"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-approval-dialog"
+          ]
+        },
+        "signer/approval-integration": {
+          "command": [
+            "{build}/apps/grotto/tests/test-approval-integration",
+            "{build}/apps/grotto/grotto-daemon"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-approval-integration"
+          ]
+        },
+        "signer/background": {
+          "command": [
+            "{build}/apps/grotto/tests/test-background"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-background"
+          ]
+        },
+        "signer/blueprint-drift": {
+          "command": [
+            "/usr/bin/python3",
+            "{source}/apps/grotto/tests/test-blueprint-drift.py",
+            "{source}/apps/grotto/tests/.."
+          ],
+          "targets": []
+        },
+        "signer/bunker": {
+          "command": [
+            "{build}/apps/grotto/tests/test-bunker-startup"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-bunker-startup"
+          ]
+        },
+        "signer/bunker-e2e": {
+          "command": [
+            "{build}/apps/grotto/tests/test-bunker-e2e",
+            "{build}/apps/grotto/grotto-daemon",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml",
+            "/usr/bin/glib-compile-schemas"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-bunker-e2e"
+          ]
+        },
+        "signer/bunker-headless": {
+          "command": [
+            "{build}/apps/grotto/tests/test-bunker-e2e",
+            "{build}/apps/grotto/grotto-daemon",
+            "{source}/apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml",
+            "/usr/bin/glib-compile-schemas",
+            "--headless"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-bunker-e2e"
+          ]
+        },
+        "signer/bunker-startup": {
+          "command": [
+            "{build}/apps/grotto/tests/test-bunker-startup"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-bunker-startup"
+          ]
+        },
+        "signer/clients": {
+          "command": [
+            "{build}/apps/grotto/tests/test-clients"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-clients",
+            "test-control-untrusted"
+          ]
+        },
+        "signer/core": {
+          "command": [
+            "{build}/apps/grotto/tests/test-core"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-core"
+          ]
+        },
+        "signer/crypto": {
+          "command": [
+            "{build}/apps/grotto/tests/test-crypto"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-crypto"
+          ]
+        },
+        "signer/dbus": {
+          "command": [
+            "{build}/apps/grotto/tests/test-dbus"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-dbus"
+          ]
+        },
+        "signer/desktop-contract": {
+          "command": [
+            "/usr/bin/python3",
+            "{source}/apps/grotto/tests/test-desktop-contract.py",
+            "{source}",
+            "{build}",
+            "{build}/apps/grotto/tests/test-desktop-activation"
+          ],
+          "targets": [
+            "grotto",
+            "grotto-schemas",
+            "test-desktop-activation"
+          ]
+        },
+        "signer/home-model": {
+          "command": [
+            "{build}/apps/grotto/tests/test-home-dashboard"
+          ],
+          "targets": [
+            "test-home-dashboard"
+          ]
+        },
+        "signer/hsm-provider": {
+          "command": [
+            "{build}/apps/grotto/tests/test-hsm-provider"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-hsm-provider"
+          ]
+        },
+        "signer/identity": {
+          "command": [
+            "{build}/apps/grotto/tests/test-identity"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-identity"
+          ]
+        },
+        "signer/identity-management": {
+          "command": [
+            "{build}/apps/grotto/tests/test-identity-management"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "test-identity-consumer-a",
+            "test-identity-consumer-b",
+            "test-identity-management"
+          ]
+        },
+        "signer/identity-model": {
+          "command": [
+            "{build}/apps/grotto/tests/test-home-model"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-home-model"
+          ]
+        },
+        "signer/legacy-dirs": {
+          "command": [
+            "{build}/apps/grotto/tests/test-legacy-dirs"
+          ],
+          "targets": [
+            "test-legacy-dirs"
+          ]
+        },
+        "signer/onboarding": {
+          "command": [
+            "{build}/apps/grotto/tests/test-onboarding"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-onboarding"
+          ]
+        },
+        "signer/permissions": {
+          "command": [
+            "{build}/nips/nip55l/test_signer_permissions",
+            "-p",
+            "/permissions"
+          ],
+          "targets": [
+            "test_signer_permissions"
+          ]
+        },
+        "signer/profile-guard": {
+          "command": [
+            "{build}/apps/grotto/tests/test-profile-guard"
+          ],
+          "targets": [
+            "test-profile-guard"
+          ]
+        },
+        "signer/qr-scanner": {
+          "command": [
+            "{build}/apps/grotto/tests/test-qr-scanner"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-qr-scanner"
+          ]
+        },
+        "signer/rate-limiter": {
+          "command": [
+            "{build}/apps/grotto/tests/test-rate-limiter"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-rate-limiter"
+          ]
+        },
+        "signer/room-flow": {
+          "command": [
+            "{build}/apps/grotto/tests/test-room-flow",
+            "{build}/apps/grotto/grotto-daemon"
+          ],
+          "targets": [
+            "grotto-daemon",
+            "grotto-schemas",
+            "room-flow-schemas",
+            "test-room-flow"
+          ]
+        },
+        "signer/secure-mem": {
+          "command": [
+            "{build}/apps/grotto/tests/test-secure-mem"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-secure-mem"
+          ]
+        },
+        "signer/session": {
+          "command": [
+            "{build}/apps/grotto/tests/test-session"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-session"
+          ]
+        },
+        "signer/session-lock": {
+          "command": [
+            "{build}/apps/grotto/tests/test-session-lock"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-session-lock"
+          ]
+        },
+        "signer/signer-core": {
+          "command": [
+            "{build}/apps/grotto/tests/test-signer-core"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-signer-core"
+          ]
+        },
+        "signer/social-recovery": {
+          "command": [
+            "{build}/apps/grotto/tests/test-social-recovery"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-social-recovery"
+          ]
+        },
+        "signer/trust-tiers": {
+          "command": [
+            "{build}/nips/nip55l/test_signer_permissions",
+            "-p",
+            "/trust-tiers"
+          ],
+          "targets": [
+            "test_signer_permissions"
+          ]
+        },
+        "signer/ui": {
+          "command": [
+            "{build}/apps/grotto/tests/test-ui"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "test-ui"
+          ]
+        },
+        "signer/ui-accessibility": {
+          "command": [
+            "{build}/apps/grotto/tests/test-ui-layout"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "grotto_resources",
+            "grotto_test_locales",
+            "test-ui-layout"
+          ]
+        },
+        "signer/ui-layout": {
+          "command": [
+            "{build}/apps/grotto/tests/test-ui-layout"
+          ],
+          "targets": [
+            "grotto-schemas",
+            "grotto_resources",
+            "grotto_test_locales",
+            "test-ui-layout"
+          ]
+        }
+      }
+    }
+  }
+}

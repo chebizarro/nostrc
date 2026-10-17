@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 from selector_support import GitCase, ROOT, policy, receipt, s
+from profile_contract_support import step_script
 
 SPEC = importlib.util.spec_from_file_location("dependency_contract", ROOT / ".github/workflows/dependency_contract.py")
 ci = importlib.util.module_from_spec(SPEC)
@@ -412,8 +413,9 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_current_inventory_profiles_have_exact_independent_worker_calls_and_gate_needs(self):
         expected = {
             'core.linux': 'core', 'core.linux.asan': 'core_asan', 'core.macos.asan': 'core_native',
-            'grotto.linux': 'grotto', 'groundhog.linux': 'groundhog',
+            'grotto.linux': 'grotto', 'grotto.linux.asan_ubsan': 'grotto_asan', 'groundhog.linux': 'groundhog',
             'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',
+            'groundhog.mdk011': 'mdk011',
             'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',
         }
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
@@ -433,6 +435,19 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn('plan_id: ${{ needs.select.outputs.plan_id }}', block)
                 self.assertIn('sha: ${{ needs.select.outputs.sha }}', block)
                 self.assertNotIn('continue-on-error', block)
+
+    def test_worker_installs_the_required_libpeas_abi_and_conditional_tools(self):
+        text = workflow('dependency-worker')
+        setup = text.split('- name: Install Linux profile prerequisites', 1)[1].split('- name:', 1)[0]
+        packages = re.search(r'apt-get install(.*?)sudo localedef', setup, re.S).group(1).split()
+        self.assertIn('libpeas-2-dev', packages)
+        self.assertNotIn('libpeas-dev', packages)
+        for package in ('libxml2-dev', 'at-spi2-core', 'dbus-bin', 'nodejs'):
+            self.assertIn(package, packages)
+        self.assertIn('pkg-config --modversion libpeas-2', setup)
+        # This ABI requirement comes from the actual default application configure.
+        self.assertIn('pkg_check_modules(LIBPEAS REQUIRED IMPORTED_TARGET libpeas-2)',
+                      (ROOT / 'apps/gnostr/CMakeLists.txt').read_text())
 
     def test_native_root_setup_and_phase_metadata_are_not_standalone_libgo_aliases(self):
         text = workflow('dependency-worker')
@@ -462,8 +477,7 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_worker_pipeline_preserves_named_failure_without_synthesizing_receipt(self):
         # Execute the real worker shell with a fake CLI; this is routing/pipefail evidence only.
         text = workflow('dependency-worker')
-        block = text.split('- name: Resolve, audit, build and execute exact selected checks', 1)[1].split('      #', 1)[0]
-        script = '\n'.join(line[10:] for line in block.split('        run: |\n', 1)[1].splitlines())
+        script = step_script(text, 'Resolve, audit, build and execute exact selected checks')
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             binary = root / 'bin'
@@ -481,9 +495,13 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
             fake.chmod(0o755)
             for name, skip in (('xvfb-run', 1), ('dbus-run-session', 1)):
                 wrapper = binary / name
-                wrapper.write_text('#!/bin/sh\nshift ' + str(skip) + '\nexec "$@"\n')
+                if name == 'xvfb-run':
+                    wrapper.write_text('#!/bin/sh\nshift\nif [ "$1" = -s ]; then shift 2; fi\nexec "$@"\n')
+                else:
+                    wrapper.write_text('#!/bin/sh\nshift ' + str(skip) + '\nexec "$@"\n')
                 wrapper.chmod(0o755)
-            for profile in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers'):
+            for profile in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers',
+                            'grotto.linux', 'grotto.linux.asan_ubsan', 'groundhog.mdk011'):
                 for fail in ('0', '1'):
                     with self.subTest(profile=profile, failure=fail):
                         temp = root / (profile + '-' + fail)
@@ -498,6 +516,14 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
                         self.assertEqual(args[:2], ['scripts/test-plan.py', 'run'])
                         self.assertEqual(args[args.index('--profile') + 1], profile)
                         self.assertEqual(args[args.index('--phase') + 1], 'all')
+                        if profile.startswith('grotto.linux'):
+                            self.assertNotIn('--parallel', args)
+                            self.assertEqual(args[args.index('--build-parallel') + 1], '2')
+                            self.assertEqual(args[args.index('--test-parallel') + 1], '1')
+                        else:
+                            self.assertEqual(args[args.index('--parallel') + 1], '2')
+                            self.assertNotIn('--build-parallel', args)
+                            self.assertNotIn('--test-parallel', args)
                         receipt_path = temp / 'dependency/receipts' / profile / 'receipt.json'
                         self.assertEqual(receipt_path.exists(), fail == '0')
                         if fail == '1':

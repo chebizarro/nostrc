@@ -106,7 +106,8 @@ def _nested_incomplete(value):
     """An optimistic wrapper cannot launder nested diagnostic evidence to release."""
     if isinstance(value, dict):
         if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
-                or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY):
+                or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY
+                or value.get("receipt_kind") == "lane_failure_v1"):
             return True
         return any(_nested_incomplete(v) for v in value.values())
     return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
@@ -196,7 +197,7 @@ def validate_inventory(policy):
                 and all(x in {'local', 'ci', 'release'} for x in contexts), f'{ident}: invalid contexts')
         if profile.get('execution_domain') == 'prepared_peer_linux_v1':
             require(contexts == ['local'], f'{ident}: prepared runtime is local-only')
-        if "phase_environments" in profile or "sanitizer_compatibility" in profile:
+        if any(key in profile for key in ("phase_environments", "sanitizer_compatibility", "build_parallelism", "test_parallelism")):
             from test_selection_realization import RealizationError, validate_phase_profile
             try:
                 validate_phase_profile(profile)
@@ -536,6 +537,41 @@ def validate_plan(plan, policy):
     return plan
 
 
+def validate_phase_parallelism_evidence(profile, evidence, *, require_test=False,
+                                       build_contracts=(), resolved_commands=None):
+    if not any(key in profile for key in ("build_parallelism", "test_parallelism")):
+        return None
+    from test_selection_realization import authored_phase_parallelism
+    expected = authored_phase_parallelism(profile)
+    require(digest(evidence.get("execution_parallelism")) == digest(expected), "execution parallelism differs from authored profile")
+    require(digest(evidence.get("phase_context", {}).get("execution_parallelism")) == digest(expected),
+            "phase context parallelism differs from authored profile")
+    commands = evidence.get("commands")
+    require(isinstance(commands, list), "missing phase execution argv")
+
+    def validate_command(command):
+        require(isinstance(command, list) and command and all(isinstance(v, str) for v in command), "invalid phase execution argv")
+        tool = Path(command[0]).name
+        phase = "build" if tool == "cmake" and command[1:2] == ["--build"] else "test" if tool == "ctest" else None
+        if phase is None:
+            return None
+        require(command.count("--parallel") == 1 and command[command.index("--parallel") + 1:command.index("--parallel") + 2] == [str(expected[phase])]
+                and not any(v == "--" or v.startswith("--parallel=") or re.fullmatch(r"-j.*", v) for v in command),
+                f"{phase} argv parallelism differs from authored profile")
+        return phase
+
+    phases = [validate_command(command) for command in commands]
+    require(not require_test or "test" in phases, "missing actual CTest phase execution argv")
+    for ident in build_contracts:
+        argv = evidence.get("checks", {}).get(ident, {}).get("argv")
+        require(validate_command(argv) == "build", f"missing physical build_contract argv: {ident}")
+        if resolved_commands is not None:
+            require(digest(argv) == digest(resolved_commands[ident]["argv"]),
+                    f"build_contract argv differs from resolved spec: {ident}")
+        require(argv in commands, f"missing global build_contract command identity: {ident}")
+    return expected
+
+
 def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=None, job_conclusions=None, repo=None):
     validate_plan(plan, policy)
     errors, visible, incomplete_lanes = [], [], []
@@ -570,6 +606,12 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             continue
         seen.add(lane_id)
         lane = expected[lane_id]
+        if receipt.get("receipt_kind") == "lane_failure_v1":
+            failure = receipt.get("failure", {})
+            errors.append(f"{lane_id}: lane failure at {failure.get('stage', 'unknown')}")
+            visible.append({"lane": lane_id, "outcome": receipt.get("job_conclusion"),
+                            "failure_stage": failure.get("stage"), "errors": failure.get("errors", []),
+                            "input_audits": failure.get("input_audits", [])})
         for key in ("plan_id", "inventory_hash", "source_identity"):
             if receipt.get(key) != plan[key]:
                 errors.append(f"{lane_id}: stale {key}")
@@ -580,6 +622,21 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: {key} did not pass")
         backend = receipt.get("backend_receipt", {})
         profile = policy["profiles"][lane["profile"]]
+        if any(key in profile for key in ("build_parallelism", "test_parallelism")):
+            try:
+                jobs = validate_phase_parallelism_evidence(profile, backend,
+                    require_test=any(policy["checks"][ident]["kind"] == "ctest" for ident in lane["checks"]),
+                    build_contracts=[ident for ident in lane["checks"] if policy["checks"][ident]["kind"] == "build_contract"])
+                for ident in lane["checks"]:
+                    if policy["checks"][ident]["kind"] == "build_contract":
+                        require(digest(receipt.get("checks", {}).get(ident, {}).get("argv"))
+                                == digest(backend.get("checks", {}).get(ident, {}).get("argv")),
+                                f"receipt build_contract argv differs from backend: {ident}")
+                require(digest(receipt.get("execution_parallelism")) == digest(jobs)
+                        and digest(receipt.get("phase_context", {}).get("execution_parallelism")) == digest(jobs),
+                        "receipt phase parallelism differs from authored profile")
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                errors.append(f"{lane_id}: phase parallelism did not qualify: {exc}")
         if profile.get("execution_domain") == "prepared_peer_linux_v1":
             from test_selection_custody import CustodyError, validate_lifecycle
             try:

@@ -1,0 +1,314 @@
+{
+  "architecture": "aarch64",
+  "authored_x86_64_execution_acceptance": false,
+  "ctest": [
+    {
+      "backtrace": 4,
+      "command": [
+        "/usr/bin/python3",
+        "{source}/tests/common/test_blueprint_resources.py",
+        "--component",
+        "nostr-gtk"
+      ],
+      "name": "nostr-gtk-resource-build",
+      "properties": [
+        {
+          "name": "LABELS",
+          "value": [
+            "build",
+            "nostr-gtk",
+            "resource",
+            "selection:nostr.gtk",
+            "unit"
+          ]
+        },
+        {
+          "name": "TIMEOUT",
+          "value": 120.0
+        },
+        {
+          "name": "WORKING_DIRECTORY",
+          "value": "{build}/nostr-gtk"
+        }
+      ]
+    },
+    {
+      "backtrace": 9,
+      "command": [
+        "/usr/bin/python3",
+        "{source}/apps/gnostr/../../tests/common/test_blueprint_resources.py",
+        "--component",
+        "gnostr"
+      ],
+      "name": "gnostr-resource-build",
+      "properties": [
+        {
+          "name": "DEPENDS",
+          "value": [
+            "gnostr-test-homes"
+          ]
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": [
+            "GSETTINGS_BACKEND=memory",
+            "NOSTRC_TEST_ISOLATION=1",
+            "HOME={build}/apps/gnostr/test-homes/gnostr-resource-build/home",
+            "XDG_DATA_HOME={build}/apps/gnostr/test-homes/gnostr-resource-build/data",
+            "XDG_CONFIG_HOME={build}/apps/gnostr/test-homes/gnostr-resource-build/config",
+            "XDG_CACHE_HOME={build}/apps/gnostr/test-homes/gnostr-resource-build/cache",
+            "XDG_STATE_HOME={build}/apps/gnostr/test-homes/gnostr-resource-build/state",
+            "GST_REGISTRY={build}/apps/gnostr/gst-registry.bin"
+          ]
+        },
+        {
+          "name": "FIXTURES_REQUIRED",
+          "value": [
+            "gnostr-test-homes"
+          ]
+        },
+        {
+          "name": "LABELS",
+          "value": [
+            "build",
+            "gnostr",
+            "resource",
+            "selection:gnostr",
+            "unit"
+          ]
+        },
+        {
+          "name": "TIMEOUT",
+          "value": 120.0
+        },
+        {
+          "name": "WORKING_DIRECTORY",
+          "value": "{build}/apps/gnostr"
+        }
+      ]
+    },
+    {
+      "backtrace": 15,
+      "command": [
+        "/usr/bin/cmake",
+        "-P",
+        "{build}/apps/gnostr/gnostr-test-homes.cmake"
+      ],
+      "name": "gnostr-test-homes",
+      "properties": [
+        {
+          "name": "FIXTURES_SETUP",
+          "value": [
+            "gnostr-test-homes"
+          ]
+        },
+        {
+          "name": "LABELS",
+          "value": [
+            "selection:testing.framework"
+          ]
+        },
+        {
+          "name": "WORKING_DIRECTORY",
+          "value": "{build}/apps/gnostr"
+        }
+      ]
+    }
+  ],
+  "descriptors": {
+    "gnostr-resource-build": {
+      "binary_dir": "{build}/apps/gnostr",
+      "declared_depends": [],
+      "expected": [
+        "pass"
+      ],
+      "inputs": [
+        "{source}/apps/gnostr/TestInventory.cmake",
+        "{source}/apps/gnostr/CMakeLists.txt",
+        "{source}/tests/common/test_blueprint_resources.py",
+        "{source}/cmake/NostrcGtkResources.cmake",
+        "{source}/apps/gnostr/data/assets/background.png",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-bug-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-calendar-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-compose-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-messages-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-network-offline-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-network-wired-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/actions/gnostr-notifications-symbolic.svg",
+        "{source}/apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.gnostr.svg",
+        "{source}/apps/gnostr/data/org.gnostr.gnostr.appdata.xml",
+        "{source}/apps/gnostr/data/org.gnostr.gnostr.desktop",
+        "{source}/apps/gnostr/data/org.gnostr.gnostr.search-provider.ini",
+        "{source}/apps/gnostr/data/resources.gresource.xml",
+        "{source}/apps/gnostr/data/schemas/gschemas.compiled",
+        "{source}/apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-about-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-about-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-app-handler-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-app-handler-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-channel-create-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-channel-create-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-filter-set-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-filter-set-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-login.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-login.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-mute-list.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-mute-list.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-nip51-list-picker-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-nip51-list-picker-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-nwc-connect.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-nwc-connect.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-profile-edit.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-profile-edit.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-relay-discovery.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-relay-discovery.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-relay-manager.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-relay-manager.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-report-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-report-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-settings-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-settings-dialog.ui",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-zap-dialog.blp",
+        "{source}/apps/gnostr/data/ui/dialogs/gnostr-zap-dialog.ui",
+        "{source}/apps/gnostr/data/ui/gnostr-main-window.blp",
+        "{source}/apps/gnostr/data/ui/gnostr-main-window.ui",
+        "{source}/apps/gnostr/data/ui/styles/gnostr.css",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-apps-page.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-apps-page.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-article-card.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-article-card.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-article-composer.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-article-composer.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-article-reader.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-article-reader.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-articles-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-articles-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-calendar-events-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-calendar-events-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-channel-list-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-channel-list-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-channel-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-channel-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-chat-message-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-chat-message-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-chat-room-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-chat-room-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-community-list-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-dm-conversation-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-dm-conversation-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-dm-inbox-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-dm-inbox-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-dm-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-dm-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-live-card.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-live-card.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-note-embed.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-notification-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-notification-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-notifications-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-notifications-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-plugin-manager-panel.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-plugin-manager-panel.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-plugin-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-plugin-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-profile-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-profile-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-search-results-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-search-results-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-session-view.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-session-view.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-timeline-row.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-timeline-row.ui",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-zap-goal-widget.blp",
+        "{source}/apps/gnostr/data/ui/widgets/gnostr-zap-goal-widget.ui",
+        "{source}/apps/gnostr/data/ui/widgets/page-discover.blp",
+        "{source}/apps/gnostr/data/ui/widgets/page-discover.ui"
+      ],
+      "name": "gnostr-resource-build",
+      "owner": [
+        "gnostr"
+      ],
+      "owner_authority": "descriptor",
+      "requires": [],
+      "source_dir": "{source}/apps/gnostr",
+      "targets": []
+    },
+    "gnostr-test-homes": {
+      "binary_dir": "{build}/apps/gnostr",
+      "declared_depends": [],
+      "expected": [
+        "fixture"
+      ],
+      "inputs": [
+        "{build}/apps/gnostr/gnostr-test-homes.cmake",
+        "{source}/cmake/NostrcTestIsolation.cmake"
+      ],
+      "name": "gnostr-test-homes",
+      "owner": [
+        "testing.framework"
+      ],
+      "owner_authority": "descriptor",
+      "requires": [],
+      "source_dir": "{source}/apps/gnostr",
+      "targets": []
+    },
+    "nostr-gtk-resource-build": {
+      "binary_dir": "{build}/nostr-gtk",
+      "declared_depends": [],
+      "expected": [
+        "pass"
+      ],
+      "inputs": [
+        "{source}/nostr-gtk/TestInventory.cmake",
+        "{source}/nostr-gtk/CMakeLists.txt",
+        "{source}/tests/common/test_blueprint_resources.py",
+        "{source}/cmake/NostrcGtkResources.cmake",
+        "{source}/nostr-gtk/data/gnostr-thread-view.blp",
+        "{source}/nostr-gtk/data/gnostr-thread-view.ui",
+        "{source}/nostr-gtk/data/nostr-gtk.gresource.xml",
+        "{source}/nostr-gtk/data/ui/gnostr-composer.blp",
+        "{source}/nostr-gtk/data/ui/gnostr-composer.ui",
+        "{source}/nostr-gtk/data/ui/gnostr-profile-pane.blp",
+        "{source}/nostr-gtk/data/ui/gnostr-profile-pane.ui",
+        "{source}/nostr-gtk/data/ui/nostr-note-card-row.blp",
+        "{source}/nostr-gtk/data/ui/nostr-note-card-row.ui",
+        "{source}/nostr-gtk/data/ui/widgets/gnostr-note-embed.blp",
+        "{source}/nostr-gtk/data/ui/widgets/gnostr-note-embed.ui",
+        "{source}/nostr-gtk/data/ui/widgets/gnostr-timeline-view.blp",
+        "{source}/nostr-gtk/data/ui/widgets/gnostr-timeline-view.ui"
+      ],
+      "name": "nostr-gtk-resource-build",
+      "owner": [
+        "nostr.gtk"
+      ],
+      "owner_authority": "descriptor",
+      "requires": [],
+      "source_dir": "{source}/nostr-gtk",
+      "targets": []
+    }
+  },
+  "fixture_names": [
+    "gnostr-test-homes"
+  ],
+  "platform": "linux",
+  "primary_names": [
+    "gnostr-resource-build",
+    "nostr-gtk-resource-build"
+  ],
+  "profile": "core.linux",
+  "raw_descriptors_sha256": "8891ff1c359ce1258fb021aa29e7e11c1fc5b4d3e8f5c1d6d91e18d3a6cad262",
+  "raw_selected_sha256": "a5196a418eae0c2094da9204291ed14fd61a6f5d6265700a342b39cef0c3f30a",
+  "schema_version": 1,
+  "scope": "Fresh exact core.linux configure/export on Linux arm64; raw component diagnostic only, no authored x86_64 admission or complete profile coverage.",
+  "source_head": "07b893b9889a7b7061faf11a58704e0043ebfea0",
+  "source_sha256": {
+    "CMakeLists.txt": "e4db97d904e02d45118d4ea6a7ea1cc28b302915946a35aa03df14cf8cb9b56f",
+    "apps/gnostr/CMakeLists.txt": "29a1726cde48025fd51a6b70909f581d369c830964b3e5a2c0daf8115efbd6d8",
+    "apps/gnostr/TestInventory.cmake": "8e4a340dd44ce303d2287b5263ba9b2330ad2ee9e455c8962f1001473cbe1b75",
+    "cmake/NostrcGtkResources.cmake": "b2579e587d6668cade277b8407f07a595851e8814d42dc4137325734290140ae",
+    "cmake/NostrcTestInventory.cmake": "c5e79f71f39db770185629f1e09e56f2b06b96d5f892a24259261f1241ed0008",
+    "nostr-gtk/CMakeLists.txt": "ff06ac255d410cad94587949f297fa6b5c837f41f85bb97eebf81d8f84462f6a",
+    "nostr-gtk/TestInventory.cmake": "c2d8a7eab79df441156ba61d750d35d2c67b05a3bd85b08bc6ad077886fb30c0",
+    "tests/common/test_blueprint_resources.py": "cc6b2bd0fc72d9e037e0a14f73a98e2c88f8687852f90c48633d910eb157e5f5"
+  }
+}

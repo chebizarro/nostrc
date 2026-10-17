@@ -85,7 +85,7 @@ class ContainedCustodyContract(unittest.TestCase):
         for context in ('ci', 'release'):
             plan = selection.make_plan(policy, [], head='a' * 40, context=context, mode='broad')
             self.assertNotIn(profile, plan['expected_lane_ids'])
-            self.assertEqual(len(plan['expected_lane_ids']), 10)
+            self.assertEqual(len(plan['expected_lane_ids']), 12)
             self.assertEqual(plan['omitted_profiles'][0]['id'], profile)
             self.assertEqual(plan['omitted_profiles'][0]['status'], 'not_executed')
             selection.validate_plan(plan, policy)

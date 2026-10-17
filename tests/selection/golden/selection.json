@@ -6,7 +6,14 @@
     ],
     "mode": "affected",
     "checks": [
-      "grotto.build_contract"
+      "grotto.build_contract",
+      "grotto.lsan_counterfactual",
+      "grotto.package_contract.asan_ubsan",
+      "grotto.package_contract.native",
+      "grotto.quarantine_contract.asan_ubsan",
+      "grotto.quarantine_contract.native",
+      "grotto.signer.asan_ubsan",
+      "grotto.signer.native"
     ],
     "excluded_prefixes": [
       "mdk"
@@ -213,6 +220,13 @@
     "mode": "affected",
     "checks": [
       "grotto.build_contract",
+      "grotto.lsan_counterfactual",
+      "grotto.package_contract.asan_ubsan",
+      "grotto.package_contract.native",
+      "grotto.quarantine_contract.asan_ubsan",
+      "grotto.quarantine_contract.native",
+      "grotto.signer.asan_ubsan",
+      "grotto.signer.native",
       "selection.contract"
     ],
     "excluded_prefixes": [

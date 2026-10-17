@@ -107,7 +107,7 @@ class ProductionInventory(unittest.TestCase):
 
     def test_every_job_binds_its_setup_and_has_an_explicit_remainder(self):
         blocks = source_job_blocks(ROOT)
-        self.assertEqual(len(blocks), 87)
+        self.assertEqual(len(blocks), 89)
         self.assertIn("{source}/tests/selection/test_broad_setup_contracts.py",
                       self.policy["checks"]["selection.contract"]["runtime_inputs"])
         self.assertEqual(validate_job_accounting(self.policy, ROOT),

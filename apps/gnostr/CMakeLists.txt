@@ -38,14 +38,6 @@ pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
 pkg_check_modules(WEBKITGTK QUIET IMPORTED_TARGET webkitgtk-6.0)
 pkg_check_modules(LIBPEAS REQUIRED IMPORTED_TARGET libpeas-2)
 
-# Find blueprint-compiler for compiling .blp files to .ui files
-find_program(BLUEPRINT_COMPILER blueprint-compiler)
-if(BLUEPRINT_COMPILER)
-  message(STATUS "Found blueprint-compiler: ${BLUEPRINT_COMPILER}")
-else()
-  message(WARNING "blueprint-compiler not found - using pre-compiled .ui files")
-endif()
-
 # Blueprint source files (.blp) - these are the source of truth for UI definitions
 set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.blp
@@ -93,95 +85,11 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-calendar-events-view.blp
 )
 
-# Compile Blueprint files to UI files if blueprint-compiler is available
-set(COMPILED_UI_FILES)
-if(BLUEPRINT_COMPILER)
-  foreach(BLP_FILE ${BLUEPRINT_SOURCES})
-    # Get relative path and convert .blp to .ui
-    file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
-    string(REGEX REPLACE "\\.blp$" ".ui" UI_REL ${BLP_REL})
-    set(UI_FILE ${CMAKE_CURRENT_SOURCE_DIR}/data/${UI_REL})
-    
-    add_custom_command(
-      OUTPUT ${UI_FILE}
-      COMMAND ${BLUEPRINT_COMPILER} compile --output ${UI_FILE} ${BLP_FILE}
-      DEPENDS ${BLP_FILE}
-      COMMENT "Compiling Blueprint: ${BLP_REL}"
-      VERBATIM
-    )
-    list(APPEND COMPILED_UI_FILES ${UI_FILE})
-  endforeach()
-  
-  # Create a target for all Blueprint compilations
-  add_custom_target(gnostr_blueprints ALL DEPENDS ${COMPILED_UI_FILES})
-endif()
-
-# UI files that are compiled from Blueprint sources
-set(UI_FILES
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-main-window.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-session-view.ui
-  # gnostr-timeline-view.ui moved to nostr-gtk (nostrc-lx32)
-  # gnostr-composer.ui moved to nostr-gtk (nostrc-lx35)
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.ui
-  # note-card-row.ui moved to nostr-gtk (nostrc-lx33)
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-inbox-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-dm-conversation-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notifications-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-notification-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-article-card.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-articles-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-live-card.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-zap-goal-widget.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-list-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-community-list-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-channel-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-room-view.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-chat-message-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-apps-page.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-plugin-manager-panel.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-plugin-row.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-channel-create-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-settings-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-manager.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-profile-edit.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nwc-connect.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-zap-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-mute-list.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-login.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-about-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-report-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-app-handler-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-relay-discovery.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-filter-set-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/dialogs/gnostr-nip51-list-picker-dialog.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-calendar-events-view.ui
-)
-
-# Compile Gtk resources
-set(GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml)
-set(GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
-add_custom_command(
-  OUTPUT ${GRESOURCE_C}
-  COMMAND glib-compile-resources
-          --target=${GRESOURCE_C}
-          --generate-source
-          ${GRESOURCE_XML}
-  DEPENDS ${GRESOURCE_XML} ${UI_FILES}
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/styles/gnostr.css
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-bug-symbolic.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-compose-symbolic.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-notifications-symbolic.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-messages-symbolic.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-calendar-symbolic.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-network-offline-symbolic.svg
-          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-network-wired-symbolic.svg
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
-  VERBATIM)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NostrcGtkResources.cmake")
+nostrc_compile_blueprint_resources(GRESOURCE_C
+  "${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml"
+  "${CMAKE_CURRENT_BINARY_DIR}/resources.c"
+  gnostr_blueprints ${BLUEPRINT_SOURCES})
 
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/services/*.c src/notifications/*.c src/sync/*.c src/search-provider/*.c)
 # Explicitly append app-local timeline factory source so it is always built,
@@ -643,6 +551,17 @@ include(CTest)
 if (BUILD_TESTING)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+
+  if(BLUEPRINT_COMPILER)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME gnostr-resource-build
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/common/test_blueprint_resources.py
+        --component gnostr)
+    set_tests_properties(gnostr-resource-build PROPERTIES
+      TIMEOUT 120
+      LABELS "build;resource;unit;gnostr")
+  endif()
 
   add_executable(gnostr-test-resource-icons
     tests/test_resource_icons.c

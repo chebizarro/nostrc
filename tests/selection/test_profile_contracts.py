@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from selector_support import ROOT, s
+from selector_support import ROOT, s, change
 from profile_contract_support import source_jobs, step_script, validate_job_accounting
 
 INVENTORY = ROOT / "tests/selection/inventory.json"
@@ -273,11 +273,50 @@ class SharedSanitizerContracts(unittest.TestCase):
                 self.assertIn("sanitizer-gate-ci:", result.stderr)
 
 
+class OrdinaryLiveProfileContracts(unittest.TestCase):
+    def test_ordinary_groundhog_has_no_live_registration_or_capability(self):
+        policy = s.load_inventory(INVENTORY)
+        ordinary = policy['profiles']['groundhog.linux']
+        live = policy['profiles']['groundhog.mdk011']
+        self.assertEqual(ordinary['capabilities'], ['display', 'private_bus'])
+        self.assertEqual(live['capabilities'], ['display', 'private_bus', 'docker'])
+        self.assertIn('-DBUILD_MDK011_INTEROP=OFF', ordinary['configure_args'])
+        self.assertIn('-DBUILD_MDK011_INTEROP=ON', live['configure_args'])
+        for ident, check in policy['checks'].items():
+            if ident.startswith('mdk011.'):
+                self.assertEqual(check['profiles'], ['groundhog.mdk011'])
+                self.assertEqual(set(check['ctest_tests']), {'groundhog.mdk011'})
+        self.assertTrue(registrations(policy, 'groundhog.mdk011'))
+        self.assertFalse(any('mdk' in name for name in registrations(policy, 'groundhog.linux')))
+
+    def test_non_mls_changes_do_not_select_live_checks_but_mls_still_does(self):
+        policy = s.load_inventory(INVENTORY)
+        for path in ('apps/grotto/src/ui/main-window.c',
+                     'apps/grotto/daemon/nostr-signer-daemon.c',
+                     '.github/workflows/grotto-ci.yml',
+                     'gnome/groundhog/src/ui/gh-about-dialog.c',
+                     'gnome/groundhog/src/ui/gh-poll-ui.c'):
+            with self.subTest(path=path):
+                plan = s.make_plan(policy, [change(path)], head='a' * 40, base='b' * 40, context='ci')
+                self.assertEqual(plan['effective_mode'], 'affected')
+                self.assertFalse(any(ident.startswith(('mdk011.', 'mdk08.', 'prepared011.'))
+                                     for ident in plan['selected_checks']))
+                self.assertNotIn('groundhog.mdk011', plan['expected_lane_ids'])
+                self.assertNotIn('groundhog.mdk08', plan['expected_lane_ids'])
+        for path in ('gnome/groundhog/src/mls/gh-mls-service.c',
+                     'gnome/groundhog/src/ui/gh-mls-copy.c'):
+            with self.subTest(path=path):
+                plan = s.make_plan(policy, [change(path)], head='a' * 40, base='b' * 40, context='ci')
+                self.assertIn('mdk08.compatibility', plan['selected_checks'])
+                self.assertTrue(any(ident.startswith('mdk011.') for ident in plan['selected_checks']))
+                self.assertIn('groundhog.mdk011', plan['expected_lane_ids'])
+
+
 class WorkflowMatrixAccounting(unittest.TestCase):
     def test_every_existing_job_matrix_has_a_mapping_or_explicit_gap(self):
         policy = s.load_inventory(INVENTORY)
         observed = validate_job_accounting(policy, ROOT)
-        self.assertEqual(len(observed), 87)
+        self.assertEqual(len(observed), 89)
         unsupported = [key for key, record in policy["workflow_jobs"].items() if not record["profiles"]]
         self.assertTrue(unsupported)
         for key in unsupported:

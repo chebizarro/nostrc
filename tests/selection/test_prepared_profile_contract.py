@@ -25,7 +25,7 @@ class PreparedProfileContract(unittest.TestCase):
         members = [name for check in policy["checks"].values()
                    for name in check.get("ctest_tests", {}).get(PROFILE, [])]
         old = [name for key, check in policy["checks"].items() if key.startswith("mdk011.")
-               for name in check["ctest_tests"]["groundhog.linux"]]
+               for name in check["ctest_tests"]["groundhog.mdk011"]]
         self.assertEqual(len(members), 15)
         self.assertEqual(len(old), 16)
         self.assertEqual(set(members), set(old) - {"groundhog-mdk011-interop-mdk09-probe"})

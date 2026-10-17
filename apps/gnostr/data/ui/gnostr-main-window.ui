@@ -39,7 +39,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="vexpand">true</property>
                             <property name="spacing">24</property>
                             <child>
-                              <object class="AdwSpinner">
+                              <object class="GtkSpinner">
+                                <property name="spinning">true</property>
+                                <property name="halign">3</property>
                                 <property name="height-request">64</property>
                                 <property name="width-request">64</property>
                               </object>
