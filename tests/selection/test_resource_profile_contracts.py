@@ -33,7 +33,18 @@ class ResourceProfileContracts(unittest.TestCase):
             self.assertEqual(len(descriptor['inputs']), count)
             self.assertIn('{source}/tests/common/test_blueprint_resources.py', descriptor['inputs'])
             self.assertIn('{source}/cmake/NostrcGtkResources.cmake', descriptor['inputs'])
-            self.assertIn('--component', registrations[name]['command'])
+            command = registrations[name]['command']
+            self.assertIn('--component', command)
+            for flag, cache_key in (
+                    ('--blueprint-compiler', 'BLUEPRINT_COMPILER'),
+                    ('--generator', 'CMAKE_GENERATOR'),
+                    ('--make-program', 'CMAKE_MAKE_PROGRAM')):
+                self.assertEqual(command.count(flag), 1)
+                self.assertEqual(command[command.index(flag) + 1],
+                                 self.export['configured_cache'][cache_key])
+        configure_args = self.policy['profiles']['core.linux']['configure_args']
+        self.assertEqual(self.export['configured_cache']['CMAKE_GENERATOR'],
+                         configure_args[configure_args.index('-G') + 1])
         properties = {item['name']: item['value']
                       for item in registrations['gnostr-resource-build']['properties']}
         self.assertEqual(properties['FIXTURES_REQUIRED'], ['gnostr-test-homes'])
