@@ -576,9 +576,11 @@ def _validate_phase_context(realization):
 
 
 def _validate_resolved_phase(resolved, realization):
+    if _hash(resolved.get("phase_context")) != resolved.get("phase_context_hash"):
+        raise RealizationError("resolved phase identity mismatch: phase context content hash")
     for key in ("profile_hash", "configuration", "phase_context", "phase_context_hash"):
         expected = _hash(realization["profile"]) if key == "profile_hash" else realization[key]
-        if resolved.get(key) != expected:
+        if _hash(resolved.get(key)) != _hash(expected):
             raise RealizationError(f"resolved phase identity mismatch: {key}")
     if _hash(resolved.get("execution_parallelism")) != _hash(authored_phase_parallelism(realization["profile"])):
         raise RealizationError("resolved phase parallelism identity mismatch")

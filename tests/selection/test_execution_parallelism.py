@@ -76,6 +76,77 @@ class PhaseParallelismTests(Project):
         self.assertEqual(raw["checks"]["build.contract"]["observed_executions"], ["build.contract"])
         self.assertEqual(raw["checks"]["build.contract"]["argv"], contract["argv"])
 
+    def assert_recomposition_rejected(self, receipt, resolved):
+        with self.assertRaises(s.ContractError):
+            self.adapter().normalize_receipt(self.inventory, self.plan, resolved, receipt["backend_receipt"])
+        for complete in (False, True):
+            result = s.aggregate(self.inventory, self.plan, [receipt], complete=complete)
+            self.assertFalse(result["passed"], result)
+            self.assertFalse(result["complete_gate_eligible"], result)
+            self.assertTrue(any("phase parallelism" in error for error in result["errors"]), result)
+
+    def test_recomposed_build_contract_check_argv_cannot_contradict_authored_jobs(self):
+        self.prepare(contract=True)
+        receipt = self.cli(expected=0)
+        resolved, _ = self.assert_jobs(receipt, {"build": 2, "test": 1})
+        changed = copy.deepcopy(receipt)
+        argv = changed["backend_receipt"]["checks"]["build.contract"]["argv"]
+        argv[argv.index("--parallel") + 1] = "9"
+        self.assert_recomposition_rejected(changed, resolved)
+        # A valid job count still cannot replace the freshly resolved target spec.
+        changed = copy.deepcopy(receipt["backend_receipt"])
+        argv = changed["checks"]["build.contract"]["argv"]
+        argv[argv.index("--target") + 1] = "shared"
+        changed["commands"].append(list(argv))
+        with self.assertRaisesRegex(s.ContractError, "differs from resolved spec"):
+            self.adapter().normalize_receipt(self.inventory, self.plan, resolved, changed)
+        changed = copy.deepcopy(receipt)
+        changed["checks"]["build.contract"]["argv"] = ["cmake", "--build", str(self.build), "--parallel", "9"]
+        self.assertFalse(s.aggregate(self.inventory, self.plan, [changed])["passed"])
+
+    def test_recomposed_build_contract_requires_its_global_command_identity(self):
+        self.prepare(contract=True)
+        receipt = self.cli(expected=0)
+        resolved, _ = self.assert_jobs(receipt, {"build": 2, "test": 1})
+        for contradict_check in (False, True):
+            with self.subTest(contradict_check=contradict_check):
+                changed = copy.deepcopy(receipt)
+                raw = changed["backend_receipt"]
+                raw["commands"] = [c for c in raw["commands"] if Path(c[0]).name != "cmake"]
+                if contradict_check:
+                    argv = raw["checks"]["build.contract"]["argv"]
+                    argv[argv.index("--parallel") + 1] = "9"
+                self.assert_recomposition_rejected(changed, resolved)
+
+    def test_test_only_selected_build_contract_does_not_require_prerequisite_build(self):
+        self.prepare(contract=True)
+        self.cli("--phase", "build", expected=0)
+        receipt = self.cli("--phase", "test", configure=False, expected=0)
+        raw = receipt["backend_receipt"]
+        commands = [c for c in raw["commands"] if Path(c[0]).name == "cmake"]
+        self.assertEqual(commands, [raw["checks"]["build.contract"]["argv"]])
+        self.assertEqual(raw["build_evidence"], [])
+        realized = r.load_realization(self.build, self.plan["source_identity"])
+        resolved = r.resolve_checks(self.inventory, self.plan, realized, "synthetic")
+        normalized = self.adapter().normalize_receipt(self.inventory, self.plan, resolved, raw)
+        self.assertTrue(s.aggregate(self.inventory, self.plan, [normalized])["passed"])
+
+    def test_nested_phase_context_types_and_content_hash_refuse_before_build(self):
+        self.prepare()
+        resolved = self.cli("--phase", "build", expected=0)["resolved"]
+        for key, invalid in (("test", True), ("build", 2.0)):
+            for rehash_context in (False, True):
+                with self.subTest(key=key, invalid=invalid, rehash_context=rehash_context):
+                    changed = copy.deepcopy(resolved)
+                    changed["phase_context"]["execution_parallelism"][key] = invalid
+                    if rehash_context:
+                        changed["phase_context_hash"] = s.digest(changed["phase_context"])
+                    changed["resolved_hash"] = s.digest({k: v for k, v in changed.items() if k != "resolved_hash"})
+                    with mock.patch.object(r, "_execute") as execute:
+                        with self.assertRaisesRegex(r.RealizationError, "resolved phase"):
+                            r.build_resolved(changed, self.build)
+                        execute.assert_not_called()
+
     def test_explicit_phase_cli_values_agree_independently(self):
         self.prepare()
         self.assert_jobs(self.cli("--parallel", "1", "--build-parallel", "2", "--test-parallel", "1", expected=0), {"build": 2, "test": 1})
