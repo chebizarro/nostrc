@@ -421,7 +421,9 @@ def normalize_receipt(policy, plan, resolved, raw):
     authored_phases = any(key in phase_profile for key in ("build_parallelism", "test_parallelism"))
     if authored_phases or "execution_parallelism" in resolved or "execution_parallelism" in raw:
         selection.require(authored_phases, "phase parallelism requires an authored profile")
-        jobs = selection.validate_phase_parallelism_evidence(phase_profile, raw, require_test=bool(resolved["tests"]))
+        jobs = selection.validate_phase_parallelism_evidence(phase_profile, raw, require_test=bool(resolved["tests"]),
+            build_contracts=[ident for ident, spec in resolved.get("command_executions", {}).items() if spec["kind"] == "build_contract"],
+            resolved_commands=resolved.get("command_executions", {}))
         selection.require(selection.digest(resolved.get("execution_parallelism")) == selection.digest(jobs)
                           and selection.digest(resolved.get("phase_context", {}).get("execution_parallelism")) == selection.digest(jobs),
                           "resolved phase parallelism differs from authored profile")

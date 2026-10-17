@@ -537,7 +537,8 @@ def validate_plan(plan, policy):
     return plan
 
 
-def validate_phase_parallelism_evidence(profile, evidence, *, require_test=False):
+def validate_phase_parallelism_evidence(profile, evidence, *, require_test=False,
+                                       build_contracts=(), resolved_commands=None):
     if not any(key in profile for key in ("build_parallelism", "test_parallelism")):
         return None
     from test_selection_realization import authored_phase_parallelism
@@ -547,18 +548,27 @@ def validate_phase_parallelism_evidence(profile, evidence, *, require_test=False
             "phase context parallelism differs from authored profile")
     commands = evidence.get("commands")
     require(isinstance(commands, list), "missing phase execution argv")
-    saw_test = False
-    for command in commands:
+
+    def validate_command(command):
         require(isinstance(command, list) and command and all(isinstance(v, str) for v in command), "invalid phase execution argv")
         tool = Path(command[0]).name
         phase = "build" if tool == "cmake" and command[1:2] == ["--build"] else "test" if tool == "ctest" else None
         if phase is None:
-            continue
-        saw_test |= phase == "test"
+            return None
         require(command.count("--parallel") == 1 and command[command.index("--parallel") + 1:command.index("--parallel") + 2] == [str(expected[phase])]
                 and not any(v == "--" or v.startswith("--parallel=") or re.fullmatch(r"-j.*", v) for v in command),
                 f"{phase} argv parallelism differs from authored profile")
-    require(not require_test or saw_test, "missing actual CTest phase execution argv")
+        return phase
+
+    phases = [validate_command(command) for command in commands]
+    require(not require_test or "test" in phases, "missing actual CTest phase execution argv")
+    for ident in build_contracts:
+        argv = evidence.get("checks", {}).get(ident, {}).get("argv")
+        require(validate_command(argv) == "build", f"missing physical build_contract argv: {ident}")
+        if resolved_commands is not None:
+            require(digest(argv) == digest(resolved_commands[ident]["argv"]),
+                    f"build_contract argv differs from resolved spec: {ident}")
+        require(argv in commands, f"missing global build_contract command identity: {ident}")
     return expected
 
 
@@ -615,7 +625,13 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
         if any(key in profile for key in ("build_parallelism", "test_parallelism")):
             try:
                 jobs = validate_phase_parallelism_evidence(profile, backend,
-                    require_test=any(policy["checks"][ident]["kind"] == "ctest" for ident in lane["checks"]))
+                    require_test=any(policy["checks"][ident]["kind"] == "ctest" for ident in lane["checks"]),
+                    build_contracts=[ident for ident in lane["checks"] if policy["checks"][ident]["kind"] == "build_contract"])
+                for ident in lane["checks"]:
+                    if policy["checks"][ident]["kind"] == "build_contract":
+                        require(digest(receipt.get("checks", {}).get(ident, {}).get("argv"))
+                                == digest(backend.get("checks", {}).get(ident, {}).get("argv")),
+                                f"receipt build_contract argv differs from backend: {ident}")
                 require(digest(receipt.get("execution_parallelism")) == digest(jobs)
                         and digest(receipt.get("phase_context", {}).get("execution_parallelism")) == digest(jobs),
                         "receipt phase parallelism differs from authored profile")
