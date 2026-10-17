@@ -85,8 +85,11 @@ set(BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-calendar-events-view.blp
 )
 
-include(cmake/GnostrResources.cmake)
-gnostr_compile_resources(GRESOURCE_C "${CMAKE_CURRENT_SOURCE_DIR}/data" ${BLUEPRINT_SOURCES})
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NostrcGtkResources.cmake")
+nostrc_compile_blueprint_resources(GRESOURCE_C
+  "${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml"
+  "${CMAKE_CURRENT_BINARY_DIR}/resources.c"
+  gnostr_blueprints ${BLUEPRINT_SOURCES})
 
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/services/*.c src/notifications/*.c src/sync/*.c src/search-provider/*.c)
 # Explicitly append app-local timeline factory source so it is always built,
@@ -552,7 +555,9 @@ if (BUILD_TESTING)
   if(BLUEPRINT_COMPILER)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME gnostr-resource-build
-      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_resource_build.py)
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/common/test_blueprint_resources.py
+        --component gnostr)
     set_tests_properties(gnostr-resource-build PROPERTIES
       TIMEOUT 120
       LABELS "build;resource;unit;gnostr")

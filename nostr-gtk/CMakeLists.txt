@@ -57,8 +57,6 @@ configure_file(
   @ONLY)
 
 # ── Blueprint compilation ────────────────────────────────────────────
-find_program(BLUEPRINT_COMPILER blueprint-compiler)
-
 set(NOSTR_GTK_BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/nostr-note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.blp
@@ -67,46 +65,12 @@ set(NOSTR_GTK_BLUEPRINT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
 )
 
-set(NOSTR_GTK_COMPILED_UI_FILES)
-if(BLUEPRINT_COMPILER)
-  foreach(BLP_FILE ${NOSTR_GTK_BLUEPRINT_SOURCES})
-    file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
-    string(REGEX REPLACE "\\.blp$" ".ui" UI_REL ${BLP_REL})
-    set(UI_FILE ${CMAKE_CURRENT_SOURCE_DIR}/data/${UI_REL})
-
-    add_custom_command(
-      OUTPUT ${UI_FILE}
-      COMMAND ${BLUEPRINT_COMPILER} compile --output ${UI_FILE} ${BLP_FILE}
-      DEPENDS ${BLP_FILE}
-      COMMENT "Compiling nostr-gtk Blueprint: ${BLP_REL}"
-      VERBATIM)
-    list(APPEND NOSTR_GTK_COMPILED_UI_FILES ${UI_FILE})
-  endforeach()
-
-  add_custom_target(nostr_gtk_blueprints ALL DEPENDS ${NOSTR_GTK_COMPILED_UI_FILES})
-endif()
-
 # ── GResource compilation ────────────────────────────────────────────
-find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
-
-set(GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/nostr-gtk.gresource.xml)
-set(GRESOURCE_C   ${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-resources.c)
-
-# Collect all UI template files as dependencies
-file(GLOB _UI_FILES CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/*.ui)
-
-add_custom_command(
-  OUTPUT ${GRESOURCE_C}
-  COMMAND ${GLIB_COMPILE_RESOURCES}
-          --generate-source
-          --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data
-          --target=${GRESOURCE_C}
-          ${GRESOURCE_XML}
-  DEPENDS ${GRESOURCE_XML} ${_UI_FILES}
-  COMMENT "Compiling nostr-gtk GResources"
-  VERBATIM)
+include("${PROJECT_ROOT}/cmake/NostrcGtkResources.cmake")
+nostrc_compile_blueprint_resources(GRESOURCE_C
+  "${CMAKE_CURRENT_SOURCE_DIR}/data/nostr-gtk.gresource.xml"
+  "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-resources.c"
+  nostr_gtk_blueprints ${NOSTR_GTK_BLUEPRINT_SOURCES})
 
 # ── Source files ─────────────────────────────────────────────────────
 # Standalone core: must compile and link without any apps/gnostr header or
@@ -556,6 +520,16 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h"
 # ── Tests ────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
   include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
+
+  if(BLUEPRINT_COMPILER)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME nostr-gtk-resource-build
+      COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_ROOT}/tests/common/test_blueprint_resources.py --component nostr-gtk)
+    set_tests_properties(nostr-gtk-resource-build PROPERTIES
+      TIMEOUT 120
+      LABELS "build;resource;unit;nostr-gtk")
+  endif()
 
   gn_add_gtest_xvfb(test_nostr_gtk_portable
     SOURCES tests/test_portable.c
