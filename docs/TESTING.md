@@ -1,10 +1,11 @@
 # Test Strategy & Suite Documentation
 
-> **Staged dependency-aware tooling (updated 2026-10-16): implemented, not cut over.**
+> **Staged dependency-aware tooling (updated 2026-10-18): implemented, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,
 > push requirements and schedules remain authoritative through W11. See the
 > [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
-> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md).
+> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). Current bounded
+> source-specific results: [6299f003 checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
@@ -307,6 +308,9 @@ protection changes; **no component bump** for these internal tests/docs.
 
 ### 2026-10-16 final focused checkpoint — df2b23612, bounded scopes only
 
+> Historical source-specific checkpoint; current progress is recorded below in
+> the [2026-10-18 migration checkpoint](#2026-10-18-migration-checkpoint--6299f003).
+
 Parent integration source **`df2b236124254450ac1645146fd0e3a4958a53c7`** is not
 master. This dated section supersedes the preceding pending A/B/native status,
 **not historical receipts**. The [final focused evidence](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-final-focused-checkpoint--df2b23612)
@@ -377,6 +381,52 @@ prepared partial diagnostic **DEFERRED**. **W11 NOT MET: 0/20 PR comparisons,
 0/2 broad integrations, cost/release/protection/operator proof unmet. W12 NOT RUN.**
 No general default/enforce/schedule/protection changes. **No bump:** internal
 tooling/test/doc changes only; this pass edits no source, tracker or settings.
+
+### 2026-10-18 migration checkpoint — 6299f003
+
+Reviewed compiled source **`6299f003399d0b99f269289baf88242e3340246d`** adds
+admitted negative CLI receipts, independent authored build/test jobs, worker
+libpeas-2/routing repairs, bounded Grotto native/ASan projections and clean
+Gnostr/nostr-gtk CMake resources. Full details, original failures and remaining
+acceptance: [current staged receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
+
+- `python3 scripts/test-plan.py run --help` documents `--build-parallel` and
+  `--test-parallel`. These must match profile `build_parallelism` /
+  `test_parallelism`; each falls back to legacy `parallelism`, then 1. They do
+  not enable unsupported default-all builds or expand capability admission.
+- Ordinary admitted CLI failures now retain `lane_failure_v1`, raw diagnostics,
+  actual phase/process status and ineligible coverage. A negative receipt is not
+  a passing worker; invalid plan/source/build-path admission still fails closed.
+- **437/437 selection tests**, **13/13 actual custody tests**, all six shell
+  contract/lifecycle suites, four statics, full actionlint/ShellCheck and range
+  whitespace pass at the exact source. These are not production profile-union,
+  sanitizer or release acceptance.
+- Fresh native default configure/all-target build pass. Awake full serial CTest
+  on Oct 18: **439 total / 434 passed / 5 existing skips / 0 failed**; wrapper,
+  cleanup and original-HOME read-only keychain guards **0**. Groundhog/Homed
+  opt-ins OFF. Five skip names and exact commands are in the staged receipt.
+- The first full run remains **422 pass / 5 skip / 12 timeouts**, wrapper **8**,
+  with actual overlapping clamshell/maintenance sleep evidence. The separate
+  awake attempt changes neither source, timeouts nor selection; it does not
+  erase that failure or prove a distinct cause for every timeout.
+- Raw Linux/aarch64 Grotto native **56/56**, ASan **15/15** and resource results
+  are bounded diagnostics, not authored x86_64 or whole-job acceptance. Exact
+  configured compiler/generator/make-program and actual GLib manifest inputs
+  now drive resource CTests; active/retired generated lookup and installs retain
+  the **6 library + 51 application** resource paths.
+
+Only the existing exact Groundhog sanitizer nonmember policy is authorized.
+Core/Grotto extensions remain unapproved; new registration/full-build coverage
+and workflow variants remain gaps. **`.28` / `.30` / `.32` / `.33` CLOSED for finite
+repairs; `.31` / `.9` OPEN, `.34` default-all attestation OPEN.** Exact-source
+`.32` fresh full-root Groundhog-ON builds also pass native and strict-read-only
+Linux/arm64, with unchanged 4,770 tracked hashes and all 57 installed resource
+paths. That separate build proof runs no CTest; details are in the current receipt,
+not inferred from a resource fixture. **W11 NOT MET; W12 NOT RUN.** Legacy local
+requirements/jobs/schedules/protections and disabled-by-default release publisher
+remain unchanged. Internal tooling is no-bump; compatible shipped UI/build fixes
+fold into intended Gnostr **0.1.0** and unreleased nostr-gtk **1.2.0**, with no
+published release metadata changes.
 
 ### Historical post-review verification
 

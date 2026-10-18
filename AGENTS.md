@@ -27,6 +27,11 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   `libgo.macos.asan` is standalone macOS/arm64 libgo ASan/UBSan, not native root.
   `NOSTRC_SELECTIVE_GATE=1` adds diagnostics to existing push gates, never replaces
   them. Partial success cannot establish complete-gate or release acceptance.
+  Authored `build_parallelism` / `test_parallelism` are independently enforced;
+  legacy `parallelism` remains their fallback. Phase overrides must match the
+  profile, and physical argv/resolved/retained evidence must agree. Admitted CLI
+  `lane_failure_v1` receipts retain failures, never successful coverage; invalid
+  admission still refuses before authorizing a lane.
 - The outer adapter supports ordinary unwrapped `command`/`build_contract` checks
   and legacy CTest lanes. Missing/unsupported capabilities fail visibly. Selected
   non-CTest checks needing `display`/`private_bus`, including mixed lanes, refuse

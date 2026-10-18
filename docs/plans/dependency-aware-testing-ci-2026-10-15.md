@@ -1,15 +1,15 @@
 # Dependency-aware testing and CI/CD
 
-> **Current progress: [§15](#15-final-focused-progress--2026-10-16-df2b23612).**
-> The status summary immediately below and earlier same-date progress sections
-> are **HISTORICAL / superseded snapshots**. Their pending statements and failed
-> audits retain their original source identities; §15 records completed final gates.
+> **Current progress: [§16](#16-migration-progress--2026-10-18-6299f003).**
+> The status summary immediately below and earlier progress sections are
+> **HISTORICAL / superseded snapshots**. Their pending statements and failed
+> audits retain their original source identities; §16 records current bounded gates.
 
 **Status (2026-10-16):** Integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` implements actual separate phase environments/fingerprints/audits, ordinary outer command/build contracts, an explicit shared sanitizer phase route, 98 exact command inputs/87-job accounting and independent workers for all ten authored profiles. This is not production/hosted or W11 acceptance. Review R1 / `.22` is CLOSED **by prelaunch guard/refusal only** at `8179275b2`: selected command/build-contract lanes needing display/private bus, including mixed lanes, are refused without dropping capabilities or fabricating receipts. No drain fix or wrapped positive acceptance; full custody `.23` and unknown full-gate fixture failure/lost-trace `.24` stay OPEN. Parent final combined at `2d64a7ac2`: **307/307 passed, 0 skips, 125.303s**; subsequent changes are docs/failure forensics only. Parent confirms at `97e393cba`: **all six shell suites, four static checkers, full actionlint including ShellCheck and range whitespace passed** (`/tmp/nostrc-phase-final-test-*.log`); no rereview/full-slice acceptance is claimed. Parent native combined **306/306 passed, 0 skips, 146.958s** at `90a1b675f`; production Linux/x86_64 command **306 passed, 0 skips, 405.309s** at `7e3745463` with 99 audited hashes/no gaps. These do not invalidate the wrapped-cancellation adversary or confer full-slice acceptance. Fresh native root build at `7fdadd251` passed, BUILD ONLY/Groundhog OFF. MDK always refuses full lifecycle success; `.11` cause, full union and W11/W12 remain open. No default/enforce/threshold/schedule/protection cutover. Current progress is §13; §§8–12 and earlier review/verification receipts retain their dated SHAs and limits.
 
 **Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
 
-Sections 2–7 retain the implementation specification and historical planning evidence. Execution progress is recorded in §§8–13; §13 and `docs/TESTING.md` distinguish current implemented explicit commands from still-proposed/unaccepted behavior. Sections 8–12 retain their dated snapshots, not current pending/completion claims. The specification alone is not implementation or rollout evidence.
+Sections 2–7 retain the implementation specification and historical planning evidence. Sections 8–15 retain dated execution snapshots, not current pending/completion claims. Section 16 and `docs/TESTING.md` distinguish current explicit diagnostics from still-proposed or unaccepted behavior. The specification alone is not implementation or rollout evidence.
 
 ## Goal
 
@@ -1251,3 +1251,34 @@ accounting. No general default/enforce/schedule/required-check/protection change
 No component bump: internal tooling/tests/docs only. Parent owns final gates,
 source-specific acceptance and landing; no source/tracker/settings edits, broad
 Oracle/review, push or merge by this docs task.
+
+## 16. Migration progress — 2026-10-18, 6299f003
+
+**Reviewed compiled source:** `6299f003399d0b99f269289baf88242e3340246d`.
+[Current source-specific receipt](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003)
+supersedes earlier pending statuses only; historical failures and their original
+counts/SHAs remain intact. This progress index organizes the original detailed
+specification, not a substitute for its completion criteria.
+
+| Scope | Completed bounded work | Remaining requirement |
+|---|---|---|
+| W5–W7 / `.30` CLOSED | Admitted CLI negative receipts retain exact lane/raw audits/logs/status; invalid admission still refuses. Configure diagnostics, unexpected exceptions and repeated-SIGTERM reporting corrections verified. | Negative evidence never qualifies as complete/release coverage; no hosted success inferred. |
+| W5–W7 / `.33` CLOSED | Authored build/test jobs, legacy fallback and explicit phase flags; physical build-contract argv/global command identity and canonical nested context/hash validated. Parent 24 phase regressions pass. | Default-generator/all-build attestation `.34` remains unsupported; do not fake an `all` codemodel target. |
+| W4–W7 / `.31` / `.9` OPEN | Worker libpeas-2 and ordinary/live MDK011 routes repaired. Grotto native/ASan build2/test1 projections, fresh raw arm64 56/56 and 15/15 names, 191 exact contract inputs, 13 profiles/152 checks/89 workflow hashes. | No authored x86_64 selector/whole-job acceptance; all 89 mappings retain unsupported union reasons. Core exclusions/new Gtk registration, full builds, Go/nak baseline, Meson/packages/shell-extension and ubuntu-latest/TSan remain gaps. |
+| W4–W9 / `.28` / `.32` | Gtk.Spinner compatibility and build-tree-only shared resources; current-owned-output lookup, GLib dependency discovery and configured compiler/generator/make-program. Both installed contracts retain 57 entries. Source guard unchanged. | `.28` / `.32` CLOSED: exact6299 fresh full-root Groundhog-ON builds pass native and strict-read-only Linux/arm64, 4,770 tracked hashes unchanged and 57 installed resource paths verified; no CTest in that separate probe. Meson writes are separately `nostrc-ql5j0`; sanitizer/hosted acceptance is not inferred. |
+| Final local gates | At `6299f003`: 437/437 selection, 13/13 actual custody; six shell suites/four statics/actionlint with ShellCheck/range whitespace all 0. Fresh native default configure/build 0 and awake 439 CTests: 434 pass / 5 existing skips / 0 fail; wrapper/cleanup/keychain 0. | Default native Groundhog/Homed opt-ins OFF, no production sanitizer/profile-union/W11 acceptance. Preserve first 422 pass / 5 skip / 12 timeout wrapper-8 run and actual host-sleep evidence. |
+| W11–W12 | Independent source reviews corrected concrete receipt/phase/resource issues; final actual-diff Oracle findings corrected, not waived. | W11 NOT MET; W12 NOT RUN. Old `249f9657` hosted run38878691465 failed; run38873978927 canceled, neither accepted. No new accepted PR/broad/cost/release/protection/operator proof. |
+
+**Unchanged policy:** only exact reviewed Groundhog sanitizer diagnostic
+nonmembers remain authorized. Core/Grotto extension has no approval from the
+unanswered optional prompt. No selective-default/enforcement, legacy trigger/
+schedule/required-check/protection or release-publisher-default cutover. Original
+`.1`–`.5` / `.7`–`.9` acceptance, `.23` native custody, `.29` JSON-GLib and
+legacy MDK `cleanup_unverified` remain distinct open scopes; prepared partial
+diagnostic remains deferred. Never close those scopes from these finite fixes.
+
+**Versions:** internal CLI/CI/test/doc work is no-bump. Compatible shipped
+resource/UI build fixes fold into already intended final Gnostr 0.1.0 and
+unreleased nostr-gtk 1.2.0, not a second increment; published columns/tags unchanged.
+Parent owns final authoritative tracker export, push and clean merged-branch/
+worktree removal, preserving unrelated main-checkout changes.

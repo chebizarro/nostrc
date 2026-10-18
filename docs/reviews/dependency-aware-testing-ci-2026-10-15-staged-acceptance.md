@@ -1,6 +1,6 @@
 # Dependency-aware testing — staged implementation receipt
 
-> **Current bounded evidence: [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612).**
+> **Current bounded evidence: [2026-10-18 migration checkpoint](#2026-10-18-migration-checkpoint--6299f003).**
 > Earlier same-date sections are **HISTORICAL / superseded snapshots**, not current
 > pending statuses. Their source-specific negatives and failed audits stay intact.
 
@@ -561,3 +561,154 @@ PR comparisons, 0/2 successful broad integrations; cost/release/protection/opera
 proof unmet. W12 NOT RUN.** No general default/enforce/schedule/trigger,
 threshold/exclusion, required-check or protection changes. Parent owns final
 verified tracker export, docs integration, landing/push and owned branch cleanup.
+
+## 2026-10-18 migration checkpoint — 6299f003
+
+**Reviewed compiled source:** `6299f003399d0b99f269289baf88242e3340246d`,
+merged locally to master after independent reviews and the gates below. Later
+tracker/documentation commits do not extend these source-specific results to a
+new hosted execution. Earlier failures, counts and pending statements remain
+historical, not retroactively passed.
+
+### Implemented and reviewed
+
+- **Admitted negative receipts (`nostrc-0cfsg.30`):** the ordinary CLI retains
+  `lane_failure_v1` for execution-stage failures, original raw audits/log bytes,
+  source-path diagnostics and phase/process status. Admission still precedes
+  reporting: invalid plans, wrong source identity and unsafe build paths do not
+  authorize a lane. Every negative is ineligible for complete/release promotion.
+  The worker consumes the same CLI path; no fabricated lane or successful receipt
+  replaces a missing capability. Library adapter exception behavior is preserved.
+  Review corrections preserve configure error text, catch unexpected exceptions
+  only inside the admitted CLI boundary and bound repeated SIGTERM during negative
+  serialization; crashes, SIGKILL and I/O failure do not gain a delivery guarantee.
+- **Phase jobs (`nostrc-0cfsg.33`):** optional authored `build_parallelism` /
+  `test_parallelism` fall back independently to legacy `parallelism`, then 1.
+  `--build-parallel` / `--test-parallel` must match authorship. Actual argv,
+  profile/resolved/phase/receipt identity and aggregation are checked. Review
+  regressions reject contradictory per-check build-contract argv, missing global
+  physical commands and nested bool/float context/hash substitution. A legitimate
+  test-only invocation does not acquire a fabricated prerequisite-build command.
+- **Worker/Grotto (`.31` / `.9`, still OPEN):** install the actual libpeas-2 ABI;
+  keep ordinary Groundhog selection separate from live MDK011 capability routes;
+  author fixed Ubuntu 24.04 Grotto native and ASan projections with build **2** /
+  test **1**. Fresh raw Linux/aarch64 runs retain **56/56 native** and **15/15
+  ASan** selected names, including aliases. They are not authored x86_64 selector
+  acceptance. Native minimum-name assertions are not the full regex selection.
+  **13 profiles, 152 checks, 191 explicit selection-contract inputs and 89
+  workflow-job source hashes** are bound; all 89 job records still carry explicit
+  unsupported whole-job/profile-union reasons. Metadata is not execution proof.
+- **CMake resources (`.28` / `.32`):** Gtk.Spinner preserves the supported
+  GTK 4.14/libadwaita 1.5 floor. Both Gnostr and nostr-gtk generate UI only in the
+  build tree through `cmake/NostrcGtkResources.cmake`, preserving installed/public
+  resource paths. Current-output-set lookup fences retired generated files;
+  source-only fallback is used when Blueprint is absent. GLib's actual dependency
+  output replaces line-regex XML parsing. Both resource CTests receive the exact
+  configured compiler, generator and make program. Real regressions cover retired
+  inputs, same-line manifest entries, custom compiler outside PATH and Make
+  without Ninja; fixture source stays unchanged. All **6 library + 51 application**
+  resource paths are retained. The old four dirty library UI files and exact
+  version rationale remain in the [historical resource brief](nostrc-0cfsg32-clean-resource-builds-2026-10-17.md).
+
+Independent reviews found and corrected the receipt/phase and retired-output
+issues, rather than waiving tests. Parent re-executed the original retired-output
+reproducer for both components (correct fallback, no obsolete bytes, source
+clean) and **24/24 phase cases**. B-scope independent review ran **63/63 focused
+cases** and inspected actual export evidence. One final Oracle review received
+an independently verified actual 21-file diff after repairing context transport;
+its compiler/dependency/generator findings were reproduced and corrected in
+`bf49ae80e`, with exact metadata refreshed by `9e2fc1d7a`. This is scoped review,
+not general product or release approval. No Nostr runtime/protocol surface changed.
+
+### Exact local gates and preserved failures
+
+At unchanged `6299f003`, **437/437 selection tests** (zero skips, 158.626s),
+**13/13 actual contained custody tests** (zero skips, 11.571s), six shell suites
+(`test-full-gate.sh`, `test-linux-gate-lifecycle.sh`, `test-linux-gate-smoke.sh`,
+`test-pre-push.sh`, `test-sanitizer-gate.sh`, `test-test-gate.sh`), four mandatory
+statics, actionlint including ShellCheck and range whitespace all exit **0**.
+All 16 owned custody containers were removed. Their bounded receipts remain
+`complete=false` / `complete_gate_eligible=false`; shell regressions are not
+production sanitizer execution. Exact commands and source identities:
+`/tmp/nostrc-migration-final-validation-6299f003/local-gates.json` and per-gate logs.
+
+Fresh native macOS/arm64 default configure and all-default-target build exit
+**0**. The separately authorized awake full serial CTest at the same source,
+2026-10-18 **09:14:51–09:20:12 EDT**, has **439 registrations: 434 passed, 5
+skipped, 0 failed**. CTest, wrapper, awake supervisor, service/bus cleanup and
+read-only original-HOME keychain guards all exit **0**. Owned children and
+caffeinate were reaped, bus/socket gone, no attempt processes remain, and no
+sleep/wake events occurred during that attempt. Full report:
+`/tmp/nostrc-migration-final-validation-6299f003-awake/report.md`; raw receipt,
+JUnit, outcomes and cleanup records are alongside it. This reuses the exact-source
+successful fresh build, not a new configure/build. Groundhog/Homed opt-ins remain
+OFF in this native default configuration; do not infer their acceptance.
+
+The five skips are **not passes**: `test_nip5f_tcp`, `signer/qr-scanner`,
+`signer/onboarding`, `signer/ui-layout`, `signer/ui-accessibility`.
+
+The first actual `6299f003` native attempt remains **FAILED**: **422 pass / 5
+skip / 12 timeout**, CTest/wrapper **8**, cleanup **0**, preserved under
+`/tmp/nostrc-migration-final-validation-6299f003/native/`. Its wall-clock interval
+was 2026-10-17 10:51–13:46 EDT despite 298.911s outer monotonic elapsed time;
+read-only pmset evidence includes clamshell sleep at 10:55:29 and repeated
+sleep/wake throughout the interval. That corroborates environmental suspension,
+not a separate proven cause for each timeout. The awake attempt changes neither
+source, timeout nor test selection. The old failures were webext framing,
+signer crypto/bunker/bunker-e2e/bunker-headless/identity-management,
+`gnostr-resource-build`, and Gnostr ndb-ingest-sync/timeline-feed-controller/
+event-model-windowing/delete-authorization/ndb-main-thread-violations. Their raw
+logs and receipt are not overwritten or converted into the later pass.
+
+The earlier `2053081` native configure/wrapper **1** (uninitialized pinned
+nostrdb) is also preserved: no build/CTest ran there. Required pinned submodules
+were subsequently initialized only in the isolated integration worktree. Main's
+unrelated files and current dirty submodule were preserved against a fresh
+Oct 18 baseline, not restored to the older baseline.
+
+**Final `.32` full-root proof at exact `6299f003`:** fresh native Darwin/arm64
+and strict-read-only Ubuntu 24.04/arm64 Release/Ninja root configure with
+`BUILD_GROUNDHOG=ON`, followed by unfiltered all-default-target builds, exit **0**
+on both. All **4,770 tracked-file hashes** match before/after; the unchanged
+committed-source guard accepts. Component installs and all **6 library / 51 app**
+resource paths pass. Linux has no writable source alias; its earlier `/src`
+Git-layout preflight failure remains separately retained, not passed. This probe
+runs no CTest and is not sanitizer/selector/hosted acceptance. Summary:
+`/tmp/nostrc-6299-groundhog-on/evidence-summary.json`, SHA-256
+`8bd85e73ab50bbce90422d58fccdec3454cc89a79d7277ce8b16f1a0dc96a5ad`;
+raw logs, before/after manifests and `SHA256SUMS.json` are alongside it. Parent
+checked summary hash, actual full-build tails, configure/install/source identity
+records and the earlier source reviews. **`.28`, `.30`, `.32`, `.33` CLOSED for
+these finite repairs**; broad acceptance beads below remain open.
+
+### Remaining acceptance and policy
+
+Hosted [run 38878691465](https://github.com/chebizarro/nostrc/actions/runs/38878691465)
+at old `249f9657` **FAILED**: three undeclared core exclusions, missing libpeas-2,
+ordinary/live-peer routing, dirty-source refusal and missing lane-negative
+identity were separately diagnosed. Broad Adw/JSON-GLib/keyring failures are not
+all fixed or waived by this wave. The older `38873978927` was canceled as
+superseded, not accepted. Local fixes do not retroactively pass either run.
+
+**No new diagnostic nonmember admission:** only the existing exact reviewed
+Groundhog sanitizer route remains authorized. Core-ASan/Grotto extension was
+asked but is not approved by an unanswered/preselected option. The new Gtk
+resource registration, core exclusions, full default-generator build attestation
+(**`.34` OPEN**), Grotto baseline Go/nak/Meson/package/shell-extension steps,
+ubuntu-latest/TSan variants and full workflow union remain real gaps. Default-all
+is not faked as a File API target. `.31` / `.9`, `.29` JSON-GLib leak, `.23` native
+custody and original acceptance scopes stay open; legacy MDK remains
+`cleanup_unverified`, prepared partial diagnostic deferred, Meson resource writes
+separately tracked as `nostrc-ql5j0`.
+
+**W11 NOT MET; W12 NOT RUN.** No new accepted PR-comparison/broad-integration,
+cost, release, protection or operator cutover proof is supplied. Existing local
+push gates, legacy jobs/triggers/schedules/protections remain unchanged; release
+publisher mode stays disabled by default. No selective-default/enforcement cutover.
+
+**Versions:** CLI/CI/test metadata needs no component bump. Shipped compatible
+Gnostr UI/build and nostr-gtk resource corrections are PATCH-class, folded into
+the already intended final **Gnostr 0.1.0** (only its preview is tagged) and
+unreleased **nostr-gtk 1.2.0** wave. Authoritative sources agree; no duplicate
+increment or published release-column/tag changes. See the resource brief for
+verified preview tag/source identity. Tracker/documentation followup is no-bump.

@@ -1,5 +1,11 @@
 # Review brief: clean CMake resource generation — nostrc-0cfsg.32
 
+> **Historical implementation handoff at `abf275b43`, not the final acceptance
+> receipt.** Later retired-output, compiler, generator and manifest-dependency
+> corrections and current bead/verification state are recorded in the
+> [2026-10-18 staged checkpoint](dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
+> Pending-status and ownership statements below describe that handoff only.
+
 This is an implementation/review handoff, **not independent approval**. The bead
 stays in progress until full-root clean-build evidence and review are accepted.
 No Oracle, push, master merge, root inventory/workflow/core-script change,
