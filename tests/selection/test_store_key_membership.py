@@ -55,6 +55,25 @@ class StoreKeyMembership(unittest.TestCase):
         self.assertEqual(self.export['actual_architecture'], 'aarch64')
         self.assertFalse(self.export['authored_x86_64_execution_acceptance'])
 
+    def assert_classification_covered(self, owned, covered, path):
+        self.assertIs(owned.get('unclassified'), False, path)
+        if owned['effect'] == 'global':
+            return
+        self.assertEqual(owned['effect'], 'impact', path)
+        nodes = set(owned['nodes'])
+        self.assertTrue(nodes, path)
+        self.assertTrue(nodes <= self.policy['nodes'].keys(), path)
+        self.assertTrue(nodes <= covered, path)
+
+    def test_unrecognized_or_empty_input_classification_is_rejected(self):
+        covered = set(self.policy['nodes']) | {'unknown.node'}
+        cases = [s.classify(self.policy, 'unowned-store-key-input.c'),
+                 {'effect': 'impact', 'nodes': [], 'unclassified': False},
+                 {'effect': 'impact', 'nodes': ['unknown.node'], 'unclassified': False}]
+        for owned in cases:
+            with self.subTest(owned=owned), self.assertRaises(AssertionError):
+                self.assert_classification_covered(owned, covered, 'negative-input')
+
     def test_actual_target_source_and_fixture_inputs_reach_each_check(self):
         for ident, name in CHECKS.items():
             exported = self.export['primary'][name]
@@ -76,7 +95,7 @@ class StoreKeyMembership(unittest.TestCase):
                 path = path.removeprefix('{source}/')
                 self.assertTrue((ROOT / path).is_file(), path)
                 owned = s.classify(self.policy, path)
-                self.assertTrue(owned['effect'] == 'global' or set(owned['nodes']) <= covered, path)
+                self.assert_classification_covered(owned, covered, path)
             props = self.export['properties'][name]
             self.assertEqual(props['FIXTURES_REQUIRED'], ['groundhog-test-homes'])
             self.assertIn('NOSTRC_TEST_ISOLATION=1', props['ENVIRONMENT'])
