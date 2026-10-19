@@ -469,5 +469,45 @@ review found only the fixture portability issue corrected above.
 `.9`, `.2` and the wider acceptance scope remain open. Other semantic, membership,
 missing runtime inputs and lifecycle gaps are not repaired by these two mappings.
 
+### Guarded NIP archive semantic-impact repair
+
+Code SHA `c6c757b375339db0b685855f4413714707ab9b8f` adds seven prerequisites to
+`nostr.gobject`: `nip04`, `nip06`, `nip11`, `nip19`, `nip44`, `nip46`, `nip49`.
+They match the guarded eight-archive loop at `nostr-gobject/CMakeLists.txt:240–244`
+(two archives belong to NIP-49) and the forwarding contract at root
+`CMakeLists.txt:428–462`. Fresh File API links show the actual executable archive
+closures; the isolated `test_nostr_gobject_event` consumer supplies the helper
+backtrace without competing direct origins. Deduplicated Groundhog links may
+retain another valid direct origin; those origins were not discarded.
+
+The existing component graph is a profile union: absent optional targets may
+conservatively over-select. This is a specific production prerequisite family,
+not catchall ownership; test vectors remain check-local. No profile, registration,
+capability, exclusion, nonmember or audit-engine policy changes.
+
+On the **same fresh** 422-registration / 552-target Groundhog Linux/arm64 graph,
+applying the original versus repaired inventory changes missing-impact findings
+from **9,475 to 9,234**: **241 removed, zero added**, covering 54 registration/node
+pairs. Unclaimed registrations remain 408 and owner disagreement remains 1;
+both audits fail. The original-inventory comparison is counterfactual metadata
+on the new graph, not an earlier-source configure or hosted rerun. Explicit
+`x86_64` to `aarch64` diagnostic override is not authored-profile admission.
+Separately, replaying frozen hosted receipts removes 218 Groundhog / 132 Grotto /
+53 Grotto-ASan findings; those replay figures are not fresh hosted results.
+
+Local checkpoint `/tmp/nostrc-semantic-nip-links-20261019/checkpoint.json`, SHA-256
+`102b8dc7b431bdd064e28a9bae43f365f276fbfa58383267f14cdaa8e0d0a18e`, retains
+source/input hashes, arguments, raw failed audits, link backtraces and setup
+failures. Parent verification independently checks source/evidence hashes and
+set difference (241 removed, none added). Regression witnesses cover each NIP
+source, retain unrelated libgo savings, and fail without the authored family.
+Independent **445/445 selection tests pass, zero skips, 163.983 seconds** at that
+code SHA; six shell suites, four statics and actionlint pass. Native macOS/arm64
+root default-all configure/build passes with libsecret/secret-service safety
+flags and build parallelism 4; Groundhog remains default-off. No native full-root
+CTest, Linux build/execution, postbuild/header audit, hosted/W11 or release
+acceptance follows. Bounded independent review found no blockers. `.9` and the
+wider acceptance beads stay open.
+
 **Version assessment:** this audit, ledger, tracker reconciliation, internal CI
 profile authoring and test-only changes require no shipped component bump.
