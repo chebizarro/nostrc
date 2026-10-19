@@ -23,7 +23,7 @@ def miniature(repo, host=None):
         target = repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
-    for name in ("test-plan.py", "test_selection.py", "test_selection_realization.py", "sanitizer-gate-ci.py"):
+    for name in ("test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py", "sanitizer-gate-ci.py"):
         write("scripts/" + name, (ROOT / "scripts" / name).read_text())
     write("cmake/NostrcTestInventory.cmake", (ROOT / "cmake/NostrcTestInventory.cmake").read_text())
     write(".gitignore", "__pycache__/\n")

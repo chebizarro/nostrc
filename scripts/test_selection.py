@@ -13,6 +13,8 @@ import subprocess
 import tempfile
 from collections import deque
 
+import test_selection_subset as subset
+
 SCHEMA_VERSION = 1
 ID = re.compile(r"[a-z0-9_]+(?:\.[a-z0-9_]+)*\Z")
 SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z")
@@ -107,7 +109,7 @@ def _nested_incomplete(value):
     if isinstance(value, dict):
         if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
                 or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY
-                or value.get("receipt_kind") == "lane_failure_v1"):
+                or subset.marked(value) or value.get("receipt_kind") == "lane_failure_v1"):
             return True
         return any(_nested_incomplete(v) for v in value.values())
     return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
@@ -234,6 +236,7 @@ def validate_inventory(policy):
         _ids(members, checks, f"alias {alias}")
     try:
         diagnostic_nonmember_contracts(policy)
+        subset.contracts(policy)
     except ValueError as exc:
         raise ContractError(str(exc)) from exc
     return policy
@@ -658,7 +661,19 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile)
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append(f"{lane_id}: diagnostic nonmember evidence did not qualify: {exc}")
+        subset_contract = subset.contracts(policy).get(lane["profile"])
+        try:
+            if subset_contract is not None:
+                subset.validate_receipt(receipt, backend, exclusions, subset_contract, plan, lane, profile)
+            else:
+                subset.validate_nested(receipt, None)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            errors.append(f"{lane_id}: ordinary subset evidence did not qualify: {exc}")
         for exclusion in exclusions:
+            if isinstance(exclusion, dict) and exclusion.get("authority") == subset.AUTHORITY:
+                if subset_contract is None:
+                    errors.append(f"{lane_id}: unsupported ordinary subset profile")
+                continue
             if isinstance(exclusion, dict) and exclusion.get("authority") == NONMEMBER_AUTHORITY:
                 if contract is None:
                     errors.append(f"{lane_id}: unsupported diagnostic nonmember profile")
@@ -684,7 +699,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             errors.append(f"{lane_id}: stale coverage gap accounting")
         incomplete = (receipt.get("complete_gate_eligible") is False or backend.get("complete_gate_eligible") is False
                       or receipt.get("baseline_exclusions") or backend.get("baseline_exclusions")
-                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps"))
+                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps") or subset.nested(receipt))
         if incomplete:
             incomplete_lanes.append(lane_id)
             if complete:

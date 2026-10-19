@@ -39,7 +39,8 @@ git('init', '-q')
 git('config', 'user.name', 'Gate Test')
 git('config', 'user.email', 'gate@example.invalid')
 for path in ('scripts/test-gate.sh', 'scripts/test-plan.py', 'scripts/test_selection.py',
-             'scripts/test_selection_realization.py', 'scripts/check-macos-keychain.sh',
+             'scripts/test_selection_realization.py', 'scripts/test_selection_subset.py',
+             'scripts/check-macos-keychain.sh',
              'cmake/NostrcTestInventory.cmake'):
     dest = repo / path
     dest.parent.mkdir(parents=True, exist_ok=True)

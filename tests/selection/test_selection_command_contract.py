@@ -48,6 +48,7 @@ SUPPORT_INPUTS = {
     "scripts/test-plan.py",
     "scripts/test_selection.py",
     "scripts/test_selection_realization.py",
+    "scripts/test_selection_subset.py",
     "scripts/run_bp_matrix.py",
     "scripts/metrics_summary.py",
     "scripts/aggregate_bp_matrix.py",

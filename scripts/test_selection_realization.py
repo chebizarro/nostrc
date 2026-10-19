@@ -588,6 +588,11 @@ def _validate_resolved_phase(resolved, realization):
     if (resolved.get("compatibility_build_targets", []) != compatibility_targets
             or not set(compatibility_targets).issubset(resolved["build_targets"])):
         raise RealizationError("resolved sanitizer_compatibility build targets changed")
+    import test_selection_subset as subset
+    try:
+        subset.validate_resolved(resolved, realization)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RealizationError(str(exc)) from exc
 
 
 def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):
@@ -1023,7 +1028,12 @@ def _baseline_exclusions(inventory, realization, tests, descriptors):
             raise RealizationError("baseline exclusion actual sanitizer instrumentation differs")
         applicable.append(dict(record, status="not_executed", authority="existing_workflow_baseline",
                                target_ids=target_ids, audit_build_targets=[targets[0]["name"]]))
-    return applicable + _diagnostic_nonmembers(inventory, realization, tests, descriptors)
+    import test_selection_subset as subset
+    try:
+        ordinary = subset.admit(inventory, realization, tests, descriptors)
+    except ValueError as exc:
+        raise RealizationError(str(exc)) from exc
+    return applicable + _diagnostic_nonmembers(inventory, realization, tests, descriptors) + ordinary
 
 
 def _fixture_closure(names, tests, descriptors):
@@ -1380,6 +1390,8 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
         "registered_commands": {t["name"]: t["command"] for t in realization["tests"] if "command" in t}}
+    if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
+        result["complete"] = False
     authored = authored_phase_parallelism(realization["profile"])
     if authored is not None:
         result["execution_parallelism"] = authored
@@ -1640,7 +1652,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "command_specs_hash": _hash(specs),
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
-    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in exclusions):
+    if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
+        result["complete"] = False
+    if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in exclusions):
         result["nonmember_binding"] = _nonmember_binding(realization, descriptors)
     if prepared_inputs:
         result['prepared_inputs'] = prepared_inputs
@@ -1678,7 +1692,16 @@ def _execution_outcomes(junit, names, expected_outcomes):
     return outcomes
 
 
-def _diagnostic_execution_options(resolved, realization, parallel, timeout=None):
+def _diagnostic_execution_options(resolved, realization, parallel, timeout=None, *, phase="test"):
+    import test_selection_subset as subset
+    if any(e.get("authority") == subset.AUTHORITY for e in resolved.get("baseline_exclusions", [])):
+        profile = realization["profile"]
+        jobs = effective_phase_parallelism(profile)
+        effective_timeout = profile.get("timeout_seconds") if timeout is None else timeout
+        if (type(parallel) is not int or parallel != jobs[phase]
+                or isinstance(effective_timeout, bool) or effective_timeout != profile.get("timeout_seconds")):
+            raise RealizationError("ordinary subset phase parallel/timeout override differs from authored profile")
+        return dict(build_parallel=jobs["build"], test_parallel=jobs["test"], timeout_seconds=effective_timeout)
     if not any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1"
                for e in resolved.get("baseline_exclusions", [])):
         return None
@@ -1701,7 +1724,7 @@ def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
         raise RealizationError("build profile identity mismatch")
     _validate_resolved_phase(resolved, realization)
     jobs = effective_phase_parallelism(realization["profile"], parallel, build_parallel=build_parallel, phases=("build",))
-    _diagnostic_execution_options(resolved, realization, jobs["build"])
+    _diagnostic_execution_options(resolved, realization, jobs["build"], phase="build")
     if not resolved["build_targets"]:
         return {"commands": [], "build_seconds": 0}
     cmd = ["cmake", "--build", str(build_dir), "--parallel", str(jobs["build"])]
@@ -1712,7 +1735,9 @@ def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     output = _command(cmd, env=phase_environment(realization["profile"], realization["repo_root"], "build"))
     load_realization(build_dir, resolved["source_identity"])
     return {"commands": [cmd], "build_seconds": time.monotonic() - start, "output": output,
-            "phase_context_hash": realization["phase_context_hash"]}
+            "phase_context_hash": realization["phase_context_hash"],
+            **({"baseline_exclusions": resolved["baseline_exclusions"], "complete": False,
+                "complete_gate_eligible": False} if resolved.get("complete") is False else {})}
 
 
 def cli(args, policy):
@@ -1879,7 +1904,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         raise RealizationError("execution timeout must be positive")
     execution_options = _diagnostic_execution_options(resolved, realization, jobs["test"], timeout)
     if build:
-        _diagnostic_execution_options(resolved, realization, jobs["build"], timeout)
+        _diagnostic_execution_options(resolved, realization, jobs["build"], timeout, phase="build")
     if realization["profile"].get("execution_domain") == "prepared_peer_linux_v1":
         from test_selection_custody import PreparedContext
         if not isinstance(custody, PreparedContext):
@@ -1923,7 +1948,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "command_specs_hash": resolved.get("command_specs_hash")}
     if authored_phase_parallelism(realization["profile"]) is not None:
         receipt["execution_parallelism"] = jobs
-    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in receipt["baseline_exclusions"]):
+    if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in receipt["baseline_exclusions"]):
         receipt["complete"] = False
         receipt["execution_options"] = execution_options
         receipt["nonmember_binding"] = _nonmember_binding(realization, {d["name"]: d for d in realization["descriptors"]})
@@ -1976,7 +2001,25 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         raise RealizationError("CTest registrations/properties changed after resolution")
     tests = {t["name"]: t for t in fresh}
     for exclusion in resolved.get("baseline_exclusions", []):
-        if exclusion.get("authority") == "reviewed_diagnostic_nonmembers_v1":
+        if exclusion.get("authority") == "reviewed_diagnostic_nonmember_subset_v1":
+            import test_selection_subset as subset
+            descriptors = {d["name"]: d for d in realization["descriptors"]}
+            contract = {k: exclusion[k] for k in subset.CONTRACT_KEYS}
+            try:
+                subset.contracts({"profiles": {resolved["profile_id"]: realization["profile"]},
+                                  "diagnostic_nonmember_subsets": {resolved["profile_id"]: contract}})
+                subset.validate_record(exclusion, contract, _nonmember_binding(realization, descriptors), resolved["profile_id"])
+                subset.validate_graph(contract, realization, tests, descriptors, contract["primary_registrations"])
+            except ValueError as exc:
+                raise RealizationError(str(exc)) from exc
+            ids = _target_closure({i for name in contract["registrations"]
+                for i in _mapped_targets(tests[name], descriptors[name], realization)}, realization)
+            targets = sorted({realization["targets"][i]["name"] for i in ids})
+            if (set(contract["registrations"]) & set(resolved["tests"]) or ids != exclusion["target_ids"]
+                    or targets != exclusion["audit_build_targets"] or not set(ids) <= set(resolved["target_ids"])
+                    or not set(targets) <= set(resolved["build_targets"])):
+                raise RealizationError("ordinary subset execution collision or missing audit target closure")
+        elif exclusion.get("authority") == "reviewed_diagnostic_nonmembers_v1":
             from test_selection import validate_nonmember_record
             descriptors = {d["name"]: d for d in realization["descriptors"]}
             contract = {k: exclusion[k] for k in ("schema_version", "profile_hash", "registrations", "required_closure", "review")}

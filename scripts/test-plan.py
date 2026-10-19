@@ -315,8 +315,8 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
         return resolved, 0
     selection.require(args.evidence_dir is not None, "run requires --evidence-dir")
     selection.require(args.timeout is None or args.timeout > 0, "timeout must be positive")
-    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
-        diagnostic_options = backend._diagnostic_execution_options(resolved, realized, jobs["build"], args.timeout)
+    if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in resolved.get("baseline_exclusions", [])):
+        diagnostic_options = backend._diagnostic_execution_options(resolved, realized, jobs["build"], args.timeout, phase="build")
         backend._diagnostic_execution_options(resolved, realized, jobs["test"], args.timeout)
         args.timeout = diagnostic_options["timeout_seconds"]
     if state is not None:
@@ -339,8 +339,9 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
         if state is None:
             return audit, 1
         raise selection.CheckFailure("pre-build input audit failed; original findings retained")
+    incomplete = ({"complete": False, "complete_gate_eligible": False} if resolved.get("complete") is False else {})
     if args.phase == "configure":
-        return {"schema_version": 1, "phase": "configure", "resolved": resolved, "input_audit": audit, "execution_complete": False}, 0
+        return {"schema_version": 1, "phase": "configure", "resolved": resolved, "input_audit": audit, "execution_complete": False, **incomplete}, 0
     build_seconds, build_commands, build_evidence = 0.0, [], []
     if args.phase in {"all", "build"} and resolved["build_targets"]:
         if state is not None:
@@ -386,7 +387,7 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
             return audit, 1
         raise selection.CheckFailure("post-build input audit failed; original findings retained")
     if args.phase in {"configure", "build"}:
-        return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False,
+        return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False, **incomplete,
                 **({"execution_parallelism": jobs, "commands": build_commands} if "execution_parallelism" in resolved else {})}, 0
     if state is not None:
         state["stage"] = "test"
@@ -412,7 +413,7 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
 def normalize_receipt(policy, plan, resolved, raw):
     """Retain backend evidence and validate it before adding logical lane identity."""
     profile_id = resolved["profile_id"]
-    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
+    if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in resolved.get("baseline_exclusions", [])):
         configuration = policy["profiles"][profile_id]["build_type"]
         selection.require(raw.get("configuration") == resolved.get("configuration") == configuration
                           == resolved.get("phase_context", {}).get("configuration"),
@@ -448,7 +449,7 @@ def normalize_receipt(policy, plan, resolved, raw):
         actual_outcome = next((observed[n] for n in sorted(names) if observed[n] != "passed"), "passed")
         selection.require(record.get("outcome") == actual_outcome, "backend check/observed outcome contradiction")
         checks[ident] = dict(record, expected_executions=names, observed_executions=[n for n in names if observed.get(n) != "missing"])
-    return {"schema_version": 1, "plan_id": plan["plan_id"], "inventory_hash": plan["inventory_hash"],
+    result = {"schema_version": 1, "plan_id": plan["plan_id"], "inventory_hash": plan["inventory_hash"],
             "source_identity": plan["source_identity"], "lane_id": lane["id"], "profile": profile_id,
             "profile_hash": lane["profile_hash"], "profile_fingerprint": resolved["profile_fingerprint"],
             "phase_context": resolved.get("phase_context"), "phase_context_hash": resolved.get("phase_context_hash"),
@@ -459,6 +460,15 @@ def normalize_receipt(policy, plan, resolved, raw):
             "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", []),
             **({"execution_parallelism": raw["execution_parallelism"]} if "execution_parallelism" in resolved else {}),
             **({"complete": False} if raw.get("complete") is False else {})}
+    import test_selection_subset as subset
+    contract = subset.contracts(policy).get(profile_id)
+    if contract is not None:
+        selection.require(raw.get("baseline_exclusions") == resolved.get("baseline_exclusions"),
+                          "backend ordinary subset accounting differs from fresh resolution")
+        subset.validate_receipt(result, raw, result["baseline_exclusions"], contract, plan, lane, phase_profile)
+    else:
+        subset.validate_nested(result, None)
+    return result
 
 
 def main(argv=None):

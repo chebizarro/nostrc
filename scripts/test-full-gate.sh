@@ -40,6 +40,7 @@ cp "$scripts/linux-gate-smoke.sh" "$repo/scripts/linux-gate-smoke.sh"
 cp "$scripts/sanitizer-gate-ci.py" "$repo/scripts/sanitizer-gate-ci.py"
 cp "$scripts/test_selection.py" "$repo/scripts/test_selection.py"
 cp "$scripts/test_selection_realization.py" "$repo/scripts/test_selection_realization.py"
+cp "$scripts/test_selection_subset.py" "$repo/scripts/test_selection_subset.py"
 mkdir -p "$repo/tests/selection"
 cp "$scripts/../tests/selection/inventory.json" "$repo/tests/selection/inventory.json"
 cat > "$repo/scripts/test-gate.sh" <<'GATE'
