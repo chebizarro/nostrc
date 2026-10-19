@@ -8,8 +8,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from selector_support import ROOT, s, change
+from realization_support import Project, r
 from profile_contract_support import source_jobs, step_script, validate_job_accounting
 
 INVENTORY = ROOT / "tests/selection/inventory.json"
@@ -271,6 +273,48 @@ class SharedSanitizerContracts(unittest.TestCase):
                                         cwd=ROOT, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("sanitizer-gate-ci:", result.stderr)
+
+
+class AuthoredDebugConfigureContracts(Project):
+    # Project only the authored configure args/build type onto the mini-project;
+    # this does not establish Linux/compiler/capability or production admission.
+    def use_authored_configure(self, ident, variant):
+        authored = s.load_inventory(INVENTORY)["profiles"][ident]
+        self.profile = {"source_dir": ".", "environment": {}, "capabilities": [],
+                        "build_type": authored["build_type"],
+                        "configure_args": list(authored["configure_args"])}
+        self.build = Path(self.temp.name) / (ident + "-" + variant)
+
+    def test_debug_profiles_realize_their_authored_configuration(self):
+        for ident in ("core.linux", "groundhog.mdk08"):
+            with self.subTest(profile=ident):
+                self.use_authored_configure(ident, "debug")
+                self.assertEqual(self.profile["build_type"], "Debug")
+                self.assertEqual([arg for arg in self.profile["configure_args"]
+                                  if arg.startswith("-DCMAKE_BUILD_TYPE=")],
+                                 ["-DCMAKE_BUILD_TYPE=Debug"])
+                realized = self.configure()
+                self.assertIn("CMAKE_BUILD_TYPE:STRING=Debug\n",
+                              (self.build / "CMakeCache.txt").read_text())
+                self.assertEqual(realized["configuration"], "Debug")
+                self.assertEqual(realized["phase_context"]["configuration"], "Debug")
+                self.assertEqual(realized["profile"], self.profile)
+                self.assertEqual(r.load_realization(self.build, self.identity), realized)
+
+    def test_missing_or_contradictory_configure_type_still_fails_closed(self):
+        for ident in ("core.linux", "groundhog.mdk08"):
+            for variant in ("missing", "Release"):
+                with self.subTest(profile=ident, variant=variant):
+                    self.use_authored_configure(ident, variant)
+                    args = self.profile["configure_args"]
+                    args.remove("-DCMAKE_BUILD_TYPE=Debug")
+                    if variant == "Release":
+                        args.append("-DCMAKE_BUILD_TYPE=Release")
+                    # Do not let an ambient CMake default conceal the missing flag.
+                    with mock.patch.dict(os.environ, {"CMAKE_BUILD_TYPE": ""}), self.assertRaisesRegex(
+                            r.RealizationError, "profile build type Debug differs from realized"):
+                        self.configure()
+                    self.assertFalse((self.build / "nostrc-test-realization.json").exists())
 
 
 class OrdinaryLiveProfileContracts(unittest.TestCase):

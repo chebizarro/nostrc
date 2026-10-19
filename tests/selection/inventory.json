@@ -11264,6 +11264,7 @@
       "configure_args": [
         "-G",
         "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
         "-DBUILD_TESTING=ON"
       ],
       "environment": {},
@@ -11414,6 +11415,7 @@
       "configure_args": [
         "-G",
         "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
         "-DBUILD_TESTING=ON",
         "-DBUILD_GROUNDHOG=ON",
         "-DBUILD_MDK_INTEROP=ON"
