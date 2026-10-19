@@ -1,5 +1,147 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Current API refresh — 2026-10-19
+
+**Frozen snapshot: `2026-10-19T04:10:01.512997Z`.** Sequential read-only API
+capture window `2026-10-19T04:09:10.542307Z`–`2026-10-19T04:10:01.512997Z`;
+per-query UTC windows and response hashes are in the
+[current run ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#current-canonical-data).
+This refresh covers API-visible run/attempt/jobs/artifacts, not new production,
+CI or test implementation, a live dashboard, or an atomic server snapshot.
+
+### Current totals and dispositions
+
+| Evidence | Observed at this snapshot | Acceptance disposition |
+|---|---|---|
+| Shadow workflow roots / attempts | **9 / 9**, all attempt 1: 7 failed pushes, 1 cancelled manual, 1 pending push | Failed/cancelled/pending history retained; no retry counted as a comparison |
+| Actual nested broad accounting | **7 failures**, 1 prelaunch selection failure, 1 incomplete call | **0/2 successful complete broad roots**; never count parent colors, subjobs or skipped jobs |
+| Repository context since 2026-10-15 | **160 roots**: 147 push, 9 schedule, 4 manual; **0 PR events** | **0/20 qualifying reviewed distinct PR comparisons**; no legacy/selective pair accepted |
+| Artifact inventory | **292 API-visible**, **100 selected small archives**, 192 other archives not downloaded | 59 historical archives revalidated unchanged + **41 new**; no binaries/installers executed |
+| Reusable broad / worker / release standalone histories | **0 / 0 / 0** | Not an execution count: real nested broad jobs exist; no exact-tag publication validation is established |
+
+All four workflow histories and repository context are paginated and match their
+API totals. Every returned root's attempts `1..run_attempt` was enumerated, and
+attempt/job source identities checked. Deleted/inaccessible history is not
+inferred. Existing qualification policy is unchanged: **W11 NOT MET / W12 NOT
+RUN**, `.5` stays in progress; no status promotion or closure follows this refresh.
+W1 measurements, reviewed comparison/required-workload union and release/operator
+acceptance remain missing, not replaced by diagnostics or another local test run.
+
+### Newly reviewed source-bound roots
+
+- [39194059430/1](https://github.com/chebizarro/nostrc/actions/runs/39194059430),
+  source `5280ea324ec474e9d0644638565a2e5a01748b51`: **completed failure**.
+  Its 47 nested broad jobs are 43 success, 3 failure, 1 skipped. Failures are
+  [macOS core ASan/UBSan](https://github.com/chebizarro/nostrc/actions/runs/39194059430/job/117872921493),
+  [JSON fuzz](https://github.com/chebizarro/nostrc/actions/runs/39194059430/job/117872963370),
+  and actual [family accounting](https://github.com/chebizarro/nostrc/actions/runs/39194059430/job/117882302404).
+  Fourteen small archives bind plan
+  `fccd676fa5ec6c3fbdb78fa3a889aed6dba0923d8ea00333cfa1cae35974ceb4`.
+  Aggregate [12162288486](https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12162288486)
+  requests `complete=true` but reports **`passed=false`,
+  `complete_gate_eligible=false`**, 467 errors. Requested completeness is not
+  successful coverage. The historical Debug configure failures still occur in
+  `core.linux` and `groundhog.mdk08` at this source.
+- [39194781902/1](https://github.com/chebizarro/nostrc/actions/runs/39194781902),
+  source `2c5b18c23344b3a4c32faf2738e6c34064ab1af7`: **completed failure**, not
+  the active parent described by the earlier two-lane observation below.
+  Its 47 nested broad jobs are 40 success, 2 failure
+  ([JSON fuzz](https://github.com/chebizarro/nostrc/actions/runs/39194781902/job/117875216973)
+  and [family accounting](https://github.com/chebizarro/nostrc/actions/runs/39194781902/job/117883493320)),
+  4 cancelled Grotto variants (including explicitly advisory TSan), 1 skipped
+  coverage report. Fourteen small archives bind plan
+  `368f3aa180642f6b60ed07b55731cfaab38a3f0193d8aef9b19148599b40a368`.
+  Aggregate [12162865868](https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12162865868)
+  requests `complete=true`, but **`passed=false`,
+  `complete_gate_eligible=false`**, 465 errors. No cancellation/skip is waived.
+  Both previously verified lane ZIPs `12161152656` and `12161662149` were
+  downloaded afresh; their archive/member hashes match the earlier observation.
+  Resolved and phase configuration are Debug; `core.linux` now fails preaudit
+  and `groundhog.mdk08` fails capability admission, not configure agreement.
+- [39196963896/1](https://github.com/chebizarro/nostrc/actions/runs/39196963896),
+  source `e57ef16ed1aeff152d808aec407c1b6f86bfc6be`: parent **pending**, not
+  unlaunched. It already exposes 45 nested broad jobs: 34 success, 1 failed
+  [JSON fuzz](https://github.com/chebizarro/nostrc/actions/runs/39196963896/job/117883093746),
+  7 in progress and 3 pending. Family accounting, coverage report and dependency
+  gate/aggregate are **not yet returned**, not assumed permanently absent or
+  successful. Thirteen small archives bind plan
+  `237a4ae7e06f9a651e7f909b8cf2c7425696fe18fd890ba4597e956091de080a`:
+  1 plan and all 12 selected lane receipts (3 success, 9 failure). A completed
+  selected subset is not a completed broad root. Later status/uploads are
+  outside this frozen capture and must be reviewed separately.
+
+Exact-source broad workflow accounting requires every required family result to
+be success. Actual accounting failures—not the root conclusion, successful
+package/interop jobs, empty standalone history or aggregate `complete` request—
+exclude the completed candidates. No full required-workload union is accepted.
+Across all nine roots, **374 nested broad job observations** (315 success,
+38 failure, 7 skipped, 4 cancelled, 7 in progress, 3 pending) remain job counts,
+not 374 root integrations. No new fuzz/macOS failure cause is inferred from
+conclusions alone; the older log/call-stack evidence below stays source-bound.
+
+### Current selected receipt findings (latest source `e57ef16ed`)
+
+These are emitted prebuild finding counts, **not distinct root-cause bug counts**.
+All nine failed lanes remain incomplete/ineligible. The three successful lanes
+are bounded static/standalone diagnostics, not full root/profile-union acceptance.
+
+| Profile | Current retained observation | Existing scope |
+|---|---|---|
+| `core.linux` | Debug resolved/phase agreement; preaudit: 429 unclaimed registrations, 1,380 missing-impact findings, 2 generated-runtime-without-target findings | `.9` / `.31` |
+| `core.linux.asan`, `core.macos.asan` | Each preaudit retains 3 unclaimed registrations | `.9`; no new nonmember admission |
+| `groundhog.linux` | Preaudit: 408 unclaimed registrations, 9,475 missing-impact findings, 1 owner disagreement | `.9` / `.31` |
+| `grotto.linux` | Preaudit: 402 unclaimed registrations, 9,104 missing-impact findings, 2 generated-runtime-without-target findings | `.9` / `.31` |
+| `grotto.linux.asan_ubsan` | Preaudit: 321 unclaimed registrations, 330 missing-impact findings, 2 generated-runtime-without-target findings | `.9` / `.31` |
+| `groundhog.linux.sanitizers` | Resolve refuses `diagnostic nonmember fresh registration partition differs` | `.9` / `.8`; exact existing policy only |
+| `groundhog.mdk08`, `groundhog.mdk011` | Debug resolved/phase agreement; live peer/image lifecycle capability refusal | `.8` / `.23` |
+| `libgo.linux.asan`, `libgo.macos.asan`, `static.policy` | Success receipts, respectively 33, 32 and 1 observed executions; `complete_gate_eligible=false` | Bounded diagnostics, not qualifying roots |
+
+The prior `target_mapping` finding is no longer emitted in `core.linux`,
+`groundhog.linux` or `grotto.linux.asan_ubsan` at this source. Other membership,
+semantic/runtime and lifecycle failures remain; this is not a full-audit pass or
+closure of the concurrent inventory/semantic-edge work. No inventory, code or
+tests were changed or independently exercised in this docs-only refresh.
+
+### Integrity, historical retention and verification limits
+
+All **100/100** archive digests and sizes match the frozen API metadata; ZIP CRCs
+pass and member hashes are retained. The set comprises 8 plan payloads, 7 failed
+aggregate payloads, 56 normalized lane receipts, 9 historical raw failed audits
+without payload plan/lane fields, and 20 historical log-only archives. Only the
+normalized payloads assert full source/plan/inventory/lane identity; raw/log-only
+archives bind their available fields plus API/run/source and attempt-suffixed
+name/member-path provenance. Missing payload identity is explicit, never fabricated
+or upgraded to coverage. All attempt suffixes are 1; backend retry counters are
+not GitHub attempts. No binary execution, installations or broad raw-evidence
+artifact retrieval was performed.
+
+Fresh inputs/scripts/logs: `/tmp/nostrc-acceptance-refresh-20261019/`.
+`capture.py`, `validate_artifacts.py --cached` and `build_refresh.py` check API
+pagination/source/attempts, digest/CRC/payload identities, actual broad accounting,
+root-deduplicated counters and historical hash equality. Their exact hashes,
+API/workflow/result hashes and all 41 new archive/member hashes are in the ledger.
+An initial local validator assumption failed on a historical raw audit's absent
+`plan_id`; the corrected classifier records that limitation explicitly. Both
+logs remain retained; no failed hosted attempt was rewritten. Raw local files
+and GitHub artifacts are not permanent storage.
+
+The original `2026-10-19T03:01:13.808922Z` ledger snapshot (reconciled
+`03:11:57.005478Z`), all six prior failed/cancelled attempts, local receipts,
+hashes and the earlier two-lane `03:40:29Z` observation remain historical below.
+Historical protection/release-mode observations and local quality gates were
+**not re-queried or rerun**; none is presented as new/current acceptance evidence.
+This is documentation/evidence plus a `.5` comment only; no tracker export,
+closure/status promotion, release/default/protection change, push or merge.
+**No component version bump: documentation-only.**
+
+## Historical criterion audit and follow-ups retained
+
+Everything below is the original source/time-bound audit and follow-up text,
+including its “current” wording and original local evidence/hashes. Use the
+explicit newer snapshot above for current API-visible counters and run state.
+The original implementation audit was not re-executed by this refresh.
+
+
 **Audit date:** 2026-10-18. **Audited implementation:**
 `2743f17354ac13527d8d8919f81abc711396c959`. This is an acceptance/evidence audit,
 not another implementation wave or authority to change rollout policy.
