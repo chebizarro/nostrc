@@ -321,6 +321,9 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
         args.timeout = diagnostic_options["timeout_seconds"]
     if state is not None:
         state["stage"] = "capability"
+    if args.phase == "test" and any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1"
+                                     for e in resolved.get("baseline_exclusions", [])):
+        raise selection.CheckFailure("ordinary diagnostic subset test-only phase is unsupported; use --phase all to retain physical build proof")
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
     if custody is not None:
         custody.validate(resolved)

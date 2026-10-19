@@ -1737,7 +1737,8 @@ def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     return {"commands": [cmd], "build_seconds": time.monotonic() - start, "output": output,
             "phase_context_hash": realization["phase_context_hash"],
             **({"baseline_exclusions": resolved["baseline_exclusions"], "complete": False,
-                "complete_gate_eligible": False} if resolved.get("complete") is False else {})}
+                "complete_gate_eligible": False} if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1"
+                    for e in resolved.get("baseline_exclusions", [])) else {})}
 
 
 def cli(args, policy):

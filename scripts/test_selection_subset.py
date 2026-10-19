@@ -265,7 +265,8 @@ def validate_resolved(resolved, realization):
         require(ids == record["target_ids"] and targets == record["audit_build_targets"]
                 and set(ids) <= set(resolved["target_ids"]) and set(targets) <= set(resolved["build_targets"])
                 and not set(REGISTRATIONS) & set(resolved["tests"]), "execution collision or missing audit build closure")
-        require(resolved.get("complete_gate_eligible") is False, "resolved diagnostic became complete")
+        require(resolved.get("complete") is False and resolved.get("complete_gate_eligible") is False,
+                "resolved diagnostic incomplete flags missing or contradictory")
 
 
 def validate_receipt(receipt, backend, exclusions, contract, plan, lane, profile):

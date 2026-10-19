@@ -281,6 +281,7 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             lambda x: x["build_targets"].remove("subset-bin"), lambda x: x["target_ids"].clear(),
             lambda x: x["tests"].append(subset.REGISTRATIONS[0]),
             lambda x: x["baseline_exclusions"][0]["binding"].update(generation_hash="0" * 64),
+            lambda x: x.pop("complete"), lambda x: x.pop("complete_gate_eligible"),
             lambda x: x["phase_context"].update(configuration="Release")):
             bad = copy.deepcopy(resolved)
             mutation(bad)
@@ -296,6 +297,63 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             r._diagnostic_execution_options(resolved, real, 2, phase="test")
         with self.assertRaises(r.RealizationError):
             r._diagnostic_execution_options(resolved, real, 1, 10, phase="test")
+
+    def test_standalone_build_accounting_and_stripped_incomplete_flags(self):
+        real = self.configure("grotto.linux")
+        resolved = r.resolve_checks(self.inventory, self.plan, real, self.pid)
+        built = r.build_resolved(resolved, self.build)
+        self.assertEqual(built["baseline_exclusions"], resolved["baseline_exclusions"])
+        self.assertIs(built["complete"], False)
+        self.assertIs(built["complete_gate_eligible"], False)
+        self.assertEqual(built["baseline_exclusions"][0]["status"], "not_executed")
+        self.assertTrue((self.build / "libgo/subset-bin").is_file())
+        for field in ("complete", "complete_gate_eligible"):
+            bad = copy.deepcopy(resolved)
+            bad.pop(field)
+            with self.subTest(field=field), mock.patch.object(r, "_execute", wraps=r._execute) as execute:
+                with self.assertRaisesRegex(r.RealizationError, "incomplete flags"):
+                    r.build_resolved(bad, self.build)
+                self.assertFalse(any(call.args[0][:2] == ["cmake", "--build"] for call in execute.call_args_list))
+
+    def test_cli_test_only_refuses_before_ctest_without_changing_other_phases(self):
+        _, _, _, _ = self.execute("grotto.linux")
+        plan_file = self.build / "phase-plan.json"
+        s.write_json(plan_file, self.plan)
+        def args(phase):
+            return adapter.parser().parse_args(["run", "--repo", str(self.root), "--profile", self.pid,
+                "--plan", str(plan_file), "--build-dir", str(self.build),
+                "--evidence-dir", str(self.evidence / ("phase-" + phase)), "--phase", phase])
+        with mock.patch.object(r, "run_resolved", wraps=r.run_resolved) as run, mock.patch.object(r, "_execute", wraps=r._execute) as execute:
+            failure, code = adapter.realization_command(args("test"), self.inventory, r, retain_lane_failures=True)
+            self.assertEqual(code, 1)
+            self.assertEqual(failure["receipt_kind"], "lane_failure_v1")
+            self.assertEqual(failure["failure"]["stage"], "capability")
+            self.assertEqual(failure["failure"]["input_audits"], [])
+            self.assertIn("test-only phase is unsupported", " ".join(e["message"] for e in failure["failure"]["errors"]))
+            self.assertEqual(failure["failure"]["work_status"]["test"], "not_executed")
+            run.assert_not_called()
+            self.assertFalse(any("--output-junit" in call.args[0] for call in execute.call_args_list))
+        for phase in ("configure", "build"):
+            result, code = adapter.realization_command(args(phase), self.inventory, r)
+            self.assertEqual(code, 0, result)
+            self.assertIs(result["complete"], False)
+            self.assertIs(result["complete_gate_eligible"], False)
+            self.assertEqual(result["resolved"]["baseline_exclusions"][0]["status"], "not_executed")
+
+    def test_active_production_policy_cannot_promote_ordinary_evidence(self):
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        release = s.release_plan(ROOT, policy, head="HEAD", component="libgo", dry_run=True, run_id="ordinary-production-negative")
+        self.assertEqual(release["diagnostic_nonmember_subset_profiles"], sorted(subset.PROFILES))
+        validation = dict(passed=True, complete=True, mode="broad", partial_profiles=[], tag=release["tag"],
+                          **{k: release[k] for k in ("source_identity", "tested_sha", "inventory_hash")})
+        jobs = {job: "success" for job in release["required_package_jobs"]}
+        for pid in subset.PROFILES:
+            # A separately complete summary cannot launder a nested ordinary
+            # receipt even when its omission records and flags are stripped.
+            bad = dict(validation, evidence=[{"profile": pid, "complete": True, "passed": True}])
+            result = s.aggregate_release(release, bad, jobs)
+            self.assertFalse(result["passed"])
+            self.assertIn("ordinary subset receipt cannot authorize complete release validation", result["errors"])
 
     def test_receipt_nested_stripped_malformed_cross_profile_and_release_promotion_refuse(self):
         _, resolved, _, result = self.execute("grotto.linux")
