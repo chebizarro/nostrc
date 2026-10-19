@@ -131,9 +131,20 @@ class StoreKeyMembership(unittest.TestCase):
             self.assertTrue(set(evidence['names']).isdisjoint(self.names(profile)))
         self.assertFalse(self.policy['enforcement_ready'])
 
-    def test_export_provenance_is_bound_to_unchanged_sources(self):
+    def test_export_provenance_keeps_historical_tooling_and_unchanged_graph_sources(self):
+        # This witness predates the approved ordinary-subset implementation.
+        # Preserve its tooling hashes, not a claim that it attests today's engine.
+        historical_tooling = {
+            'scripts/test_selection.py': '9554e1d25685d0e4ddd1db30b0257e62c5378a14e25b5ed610ecc571557769c6',
+            'scripts/test_selection_realization.py': '7a4a645c905ea2e3b9de8a0755026d98317d2854b7a0f41752d4f5c75f38b489',
+        }
+        self.assertEqual(self.export['source_identity'], {'kind': 'committed', 'sha': 'fb7335cb0e9546463293b6adf2044fe54178f5ac'})
+        self.assertTrue(historical_tooling.keys() <= self.export['source_file_sha256'].keys())
         for path, expected in self.export['source_file_sha256'].items():
-            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
+            if path in historical_tooling:
+                self.assertEqual(expected, historical_tooling[path], path)
+            else:
+                self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
 
     def test_selection_contract_tracks_the_new_test_and_export(self):
         inputs = self.policy['checks']['selection.contract']['runtime_inputs']

@@ -41,7 +41,8 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   separate configure/build/test environments, fingerprints and full input audits.
   Enforce authored execution options and independent profile/resolved/phase
   configuration agreement; shared quarantine/retry overrides refuse.
-- Only `groundhog.linux.sanitizers` admits its **exact reviewed nonmember list and
+- The original full-partition nonmember authority admits only
+  `groundhog.linux.sanitizers` with its **exact reviewed nonmember list and
   required fixture closure**, bound to fresh source/profile/context/export/partition/
   build/audit identity. Only unclaimed membership findings are removed: omitted
   targets remain built as required and source/Ninja/header/runtime audited.
@@ -49,6 +50,21 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   `complete_gate_eligible=false`. Complete/release promotion, including nested
   receipts, refuses. No selected-only audit fallback or automatic architecture/
   prepared-profile admission.
+- The separately approved ordinary subset authority is limited to the exact 33
+  reviewed libgo registrations in `groundhog.linux` and `grotto.linux`; it is not
+  a complete partition or permission for other profiles/families. Fresh authored
+  x86 profile, full registration universe, candidate contract/fixture, source,
+  inventory, phase, generation and toolchain bindings must agree. Only those
+  matching unclaimed-registration findings may be reclassified; omitted target
+  closures remain built/audited as required. All other input/ownership/runtime
+  failures remain blocking. Omitted registrations remain `not_executed`, with
+  `complete=false` and `complete_gate_eligible=false`; nested complete/release
+  promotion refuses. No selected test or required fixture may be silently omitted,
+  and no architecture alias, sanitizer-policy relaxation or rollout cutover is
+  authorized by this subset. Ordinary-subset `--phase test` refuses before CTest;
+  use `--phase all` to retain physical prerequisite-build proof. Standalone build
+  results also retain both incomplete flags and omission accounting. See the
+  source-bound admission receipt in TESTING.
 - `scripts/contained-gate.py prepare` / `run` provide attested locked 08/09/011
   preparation and verified CID lifecycle/final retained bytes. The distinct
   `groundhog.linux.arm64.prepared011` route is **local-only contained Linux/arm64**,

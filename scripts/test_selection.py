@@ -13,6 +13,8 @@ import subprocess
 import tempfile
 from collections import deque
 
+import test_selection_subset as subset
+
 SCHEMA_VERSION = 1
 ID = re.compile(r"[a-z0-9_]+(?:\.[a-z0-9_]+)*\Z")
 SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z")
@@ -107,7 +109,7 @@ def _nested_incomplete(value):
     if isinstance(value, dict):
         if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
                 or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY
-                or value.get("receipt_kind") == "lane_failure_v1"):
+                or subset.marked(value) or value.get("receipt_kind") == "lane_failure_v1"):
             return True
         return any(_nested_incomplete(v) for v in value.values())
     return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
@@ -234,6 +236,7 @@ def validate_inventory(policy):
         _ids(members, checks, f"alias {alias}")
     try:
         diagnostic_nonmember_contracts(policy)
+        subset.contracts(policy)
     except ValueError as exc:
         raise ContractError(str(exc)) from exc
     return policy
@@ -582,6 +585,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
     if complete and (plan.get("partial_profiles") or plan["source_identity"].get("kind") != "committed"):
         errors.append("partial/dirty run cannot satisfy complete gate")
     expected = {lane["id"]: lane for lane in plan["lanes"]}
+    subset_profiles = sorted({lane["profile"] for lane in plan["lanes"]} & subset.contracts(policy).keys())
     seen = set()
     if job_conclusions is not None:
         require(isinstance(job_conclusions, dict), "malformed worker conclusions")
@@ -658,7 +662,19 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile)
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append(f"{lane_id}: diagnostic nonmember evidence did not qualify: {exc}")
+        subset_contract = subset.contracts(policy).get(lane["profile"])
+        try:
+            if subset_contract is not None:
+                subset.validate_receipt(receipt, backend, exclusions, subset_contract, plan, lane, profile)
+            else:
+                subset.validate_nested(receipt, None)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            errors.append(f"{lane_id}: ordinary subset evidence did not qualify: {exc}")
         for exclusion in exclusions:
+            if isinstance(exclusion, dict) and exclusion.get("authority") == subset.AUTHORITY:
+                if subset_contract is None:
+                    errors.append(f"{lane_id}: unsupported ordinary subset profile")
+                continue
             if isinstance(exclusion, dict) and exclusion.get("authority") == NONMEMBER_AUTHORITY:
                 if contract is None:
                     errors.append(f"{lane_id}: unsupported diagnostic nonmember profile")
@@ -684,7 +700,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             errors.append(f"{lane_id}: stale coverage gap accounting")
         incomplete = (receipt.get("complete_gate_eligible") is False or backend.get("complete_gate_eligible") is False
                       or receipt.get("baseline_exclusions") or backend.get("baseline_exclusions")
-                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps"))
+                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps") or subset.nested(receipt))
         if incomplete:
             incomplete_lanes.append(lane_id)
             if complete:
@@ -732,7 +748,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
     errors += [f"missing lane: {lane}" for lane in sorted(set(expected) - seen)]
     return {"schema_version": 1, "plan_id": plan["plan_id"], "passed": not errors, "errors": errors, "non_clean_results": visible,
             "tested_sha": plan["tested_sha"], "source_identity": plan["source_identity"], "inventory_hash": plan["inventory_hash"],
-            "mode": plan["effective_mode"], "partial_profiles": plan["partial_profiles"], "complete": complete,
+            "mode": plan["effective_mode"], "partial_profiles": plan["partial_profiles"], "complete": bool(complete and not subset_profiles),
+            **({"diagnostic_nonmember_subset_profiles": subset_profiles} if subset_profiles else {}),
             "diagnostic_eligible": not errors, "incomplete_lanes": incomplete_lanes,
             "complete_gate_eligible": bool(complete and not errors and not incomplete_lanes),
             "tag": plan["event"].get("tag") if isinstance(plan["event"], dict) else None,
@@ -820,7 +837,8 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
             "source_identity": {"kind": "committed", "sha": tested}, "inventory_hash": digest(policy),
             "mode": "broad", "publishers": publishers, "required_package_jobs": jobs,
             "validation_only": publishers == ["none"], "dry_run": dry_run, "publish": bool(tag and not dry_run and publishers != ["none"]),
-            "run_id": run_id, "verified_versions": verified}
+            "run_id": run_id, "verified_versions": verified,
+            **({"diagnostic_nonmember_subset_profiles": sorted(subset.contracts(policy))} if subset.contracts(policy) else {})}
 
 
 def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile):
@@ -882,6 +900,8 @@ def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, la
 def aggregate_release(release, validation, jobs):
     require(isinstance(jobs, dict), "malformed package conclusions")
     errors = []
+    if subset.references_profiles(validation, release.get("diagnostic_nonmember_subset_profiles", [])):
+        errors.append("ordinary subset receipt cannot authorize complete release validation")
     if (not validation.get("passed") or not validation.get("complete") or _nested_incomplete(validation)
             or validation.get("source_identity") != release["source_identity"]
             or validation.get("tested_sha") != release["tested_sha"]

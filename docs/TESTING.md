@@ -1,6 +1,6 @@
 # Test Strategy & Suite Documentation
 
-> **Staged dependency-aware tooling (updated 2026-10-18): implemented, not cut over.**
+> **Staged dependency-aware tooling (updated 2026-10-19): implemented, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,
 > push requirements and schedules remain authoritative through W11. See the
 > [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
@@ -8,15 +8,41 @@
 > source-specific results: [6299f003 checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
 > Acceptance decisions and run counts: [criterion audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
 > and [timestamped run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md).
-> The backfilled snapshot verifies **0/20 PR comparisons / 0/2 successful broad
-> integrations**, not from unit counts: six shadow attempts and five failed nested
-> broad accounting jobs were inspected. Refresh before reporting later progress;
-> a documentation push can produce a new run outside this frozen snapshot.
+> The ledger snapshot at **2026-10-19T04:10:01.512997Z** verifies **0/20 PR
+> comparisons / 0/2 successful broad integrations**: nine roots/attempts, seven
+> failed nested broad accounting jobs, one unlaunched and one incomplete call.
+> These are dated reviewed counts, not live counters or unit-test totals. Refresh
+> before reporting later progress; subsequent pushes/PRs are outside that snapshot.
 > `.1` is closed for the proven logical contract; `.2`–`.5` remain open for the
 > audit's specific root, custody, CI/release and operational gaps.
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
+
+## Approved ordinary libgo subset — diagnostic accounting only
+
+The exact 33 reviewed libgo registrations in each of `groundhog.linux` and
+`grotto.linux` now have a separate source-bound diagnostic subset authority. This
+accounts for tests built but intentionally outside those ordinary workflow filters;
+it does not execute them or expand the workflow filters. Fresh x86 configure,
+real target-closure builds and full input audits underpin the records. The original
+Groundhog sanitizer full-partition policy is unchanged.
+
+Only those matching unclaimed-registration findings can be reclassified. All other
+registration/input/runtime/ownership gaps remain blocking; omitted targets remain
+built/audited as required. Omission receipts are `not_executed`, `complete=false`
+and `complete_gate_eligible=false`, including through adapters and nested receipt
+validation. Independent genuinely complete broad validation retains its own route;
+these incomplete ordinary receipts cannot be pasted into it as complete proof.
+
+Use the existing explicit `scripts/test-gate.sh --profile groundhog.linux ...` or
+`--profile grotto.linux ...` route with committed endpoints. It still refuses on
+remaining full-audit findings. See the [source-bound admission and limits](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#approved-ordinary-libgo-subset-admission).
+This is not local/CI default activation, W11 acceptance or a release-policy cutover.
+For these ordinary subsets, backend `--phase test` refuses before CTest because no
+split-phase build-custody extension is implemented; use `--phase all` to retain the
+physical prerequisite-build proof. This restriction does not change legacy or
+non-subset phases.
 
 ## Dependency-aware commands — explicit diagnostics
 

@@ -1,0 +1,3644 @@
+{
+  "candidate_contract": {
+    "registrations": {
+      "GoChannelCloseTest": {
+        "command": [
+          "{build}/libgo/go_channel_close_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoChannelCloseTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_channel_close_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_channel_close_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_channel_close_test",
+          "nostrgo"
+        ]
+      },
+      "GoChannelMpmcSlotTest": {
+        "command": [
+          "{build}/libgo/go_channel_mpmc_slot_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoChannelMpmcSlotTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_channel_mpmc_slot_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_channel_mpmc_slot_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 60.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_channel_mpmc_slot_test",
+          "nostrgo"
+        ]
+      },
+      "GoChannelStressTest": {
+        "command": [
+          "{build}/libgo/go_channel_stress_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoChannelStressTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_channel_stress_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_channel_stress_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 120.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_channel_stress_test",
+          "nostrgo"
+        ]
+      },
+      "GoChannelTest": {
+        "command": [
+          "{build}/libgo/go_channel_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoChannelTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_channel_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_channel_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_channel_test",
+          "nostrgo"
+        ]
+      },
+      "GoContextCancelTest": {
+        "command": [
+          "{build}/libgo/go_context_cancel_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoContextCancelTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_context_cancel_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_context_cancel_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_context_cancel_test",
+          "nostrgo"
+        ]
+      },
+      "GoContextStressTest": {
+        "command": [
+          "{build}/libgo/go_context_stress_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoContextStressTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_context_stress_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_context_stress_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 30.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_context_stress_test",
+          "nostrgo"
+        ]
+      },
+      "GoContextTimeoutTest": {
+        "command": [
+          "{build}/libgo/go_context_timeout_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoContextTimeoutTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_context_timeout_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_context_timeout_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_context_timeout_test",
+          "nostrgo"
+        ]
+      },
+      "GoErrorTest": {
+        "command": [
+          "{build}/libgo/error_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoErrorTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "error_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/error_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "error_test",
+          "nostrgo"
+        ]
+      },
+      "GoFiberBasicTest": {
+        "command": [
+          "{build}/libgo/gof_test_basic"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberBasicTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_basic"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_basic.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_basic",
+          "nostrgo"
+        ]
+      },
+      "GoFiberBasicTestW4": {
+        "command": [
+          "{build}/libgo/gof_test_basic"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberBasicTestW4",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_basic"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_basic.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "ENVIRONMENT": [
+            "GOF_NWORKERS=4"
+          ],
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_basic",
+          "nostrgo"
+        ]
+      },
+      "GoFiberChanExtTest": {
+        "command": [
+          "{build}/libgo/gof_test_chan_ext"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberChanExtTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_chan_ext"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_chan_ext.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 15.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_chan_ext",
+          "nostrgo"
+        ]
+      },
+      "GoFiberChanExtTestW4": {
+        "command": [
+          "{build}/libgo/gof_test_chan_ext"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberChanExtTestW4",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_chan_ext"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_chan_ext.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "ENVIRONMENT": [
+            "GOF_NWORKERS=4"
+          ],
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 15.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_chan_ext",
+          "nostrgo"
+        ]
+      },
+      "GoFiberChanTest": {
+        "command": [
+          "{build}/libgo/gof_test_chan"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberChanTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_chan"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_chan.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 15.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_chan",
+          "nostrgo"
+        ]
+      },
+      "GoFiberChanTestW4": {
+        "command": [
+          "{build}/libgo/gof_test_chan"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberChanTestW4",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_chan"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_chan.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "ENVIRONMENT": [
+            "GOF_NWORKERS=4"
+          ],
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 15.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_chan",
+          "nostrgo"
+        ]
+      },
+      "GoFiberContextTest": {
+        "command": [
+          "{build}/libgo/gof_test_context"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberContextTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_context"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_context.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_context",
+          "nostrgo"
+        ]
+      },
+      "GoFiberIoDeadlockTest": {
+        "command": [
+          "{build}/libgo/gof_test_io_deadlock"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberIoDeadlockTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_io_deadlock"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_io_deadlock.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 15.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_io_deadlock",
+          "nostrgo"
+        ]
+      },
+      "GoFiberIoDeadlockTestW4": {
+        "command": [
+          "{build}/libgo/gof_test_io_deadlock"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberIoDeadlockTestW4",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_io_deadlock"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_io_deadlock.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "ENVIRONMENT": [
+            "GOF_NWORKERS=4"
+          ],
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 15.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_io_deadlock",
+          "nostrgo"
+        ]
+      },
+      "GoFiberIoTest": {
+        "command": [
+          "{build}/libgo/gof_test_io"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberIoTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_io"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_io.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_io",
+          "nostrgo"
+        ]
+      },
+      "GoFiberIoTimeoutTest": {
+        "command": [
+          "{build}/libgo/gof_test_io_timeout"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberIoTimeoutTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_io_timeout"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_io_timeout.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 2.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_io_timeout",
+          "nostrgo"
+        ]
+      },
+      "GoFiberIoTimeoutTestW4": {
+        "command": [
+          "{build}/libgo/gof_test_io_timeout"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberIoTimeoutTestW4",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_io_timeout"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_io_timeout.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "ENVIRONMENT": [
+            "GOF_NWORKERS=4"
+          ],
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 2.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_io_timeout",
+          "nostrgo"
+        ]
+      },
+      "GoFiberStarvationTest": {
+        "command": [
+          "{build}/libgo/gof_test_starvation"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberStarvationTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_starvation"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_starvation.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 20.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_starvation",
+          "nostrgo"
+        ]
+      },
+      "GoFiberStarvationTestW4": {
+        "command": [
+          "{build}/libgo/gof_test_starvation"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoFiberStarvationTestW4",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "gof_test_starvation"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/fiber/chan/chan.c",
+          "{source}/libgo/fiber/context/context_asm.c",
+          "{source}/libgo/fiber/context/context_x86_64_linux.S",
+          "{source}/libgo/fiber/debug/introspect.c",
+          "{source}/libgo/fiber/debug/trace.c",
+          "{source}/libgo/fiber/io/io.c",
+          "{source}/libgo/fiber/io/netpoll_epoll.c",
+          "{source}/libgo/fiber/io/netpoll_iocp.c",
+          "{source}/libgo/fiber/io/netpoll_kqueue.c",
+          "{source}/libgo/fiber/sched/api.c",
+          "{source}/libgo/fiber/sched/fiber_hooks_impl.c",
+          "{source}/libgo/fiber/sched/park.c",
+          "{source}/libgo/fiber/sched/sched.c",
+          "{source}/libgo/fiber/stack/stack.c",
+          "{source}/libgo/fiber/tests/test_starvation.c",
+          "{source}/libgo/fiber/timers/timer_bridge.c",
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c"
+        ],
+        "properties": {
+          "ENVIRONMENT": [
+            "GOF_NWORKERS=4"
+          ],
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 20.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_fiber",
+          "gof_test_starvation",
+          "nostrgo"
+        ]
+      },
+      "GoHashMapTest2": {
+        "command": [
+          "{build}/libgo/hash_map_test2"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoHashMapTest2",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "hash_map_test2"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/hash_map_test2.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "hash_map_test2",
+          "nostrgo"
+        ]
+      },
+      "GoIntArrayTest": {
+        "command": [
+          "{build}/libgo/int_array_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoIntArrayTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "int_array_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/int_array_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "int_array_test",
+          "nostrgo"
+        ]
+      },
+      "GoLongAdderStressTest": {
+        "command": [
+          "{build}/libgo/long_adder_stress_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoLongAdderStressTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "long_adder_stress_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/long_adder_stress_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 45.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "long_adder_stress_test",
+          "nostrgo"
+        ]
+      },
+      "GoRefPtrTest": {
+        "command": [
+          "{build}/libgo/refptr_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoRefPtrTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "refptr_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/refptr_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "nostrgo",
+          "refptr_test"
+        ]
+      },
+      "GoSelectCancelTest": {
+        "command": [
+          "{build}/libgo/go_select_cancel_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoSelectCancelTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_select_cancel_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_select_cancel_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_select_cancel_test",
+          "nostrgo"
+        ]
+      },
+      "GoSelectClosedTest": {
+        "command": [
+          "{build}/libgo/go_select_closed_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoSelectClosedTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_select_closed_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_select_closed_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_select_closed_test",
+          "nostrgo"
+        ]
+      },
+      "GoSelectMultiTest": {
+        "command": [
+          "{build}/libgo/go_select_multi_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoSelectMultiTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_select_multi_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_select_multi_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_select_multi_test",
+          "nostrgo"
+        ]
+      },
+      "GoSelectTest": {
+        "command": [
+          "{build}/libgo/go_select_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoSelectTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_select_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_select_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_select_test",
+          "nostrgo"
+        ]
+      },
+      "GoStringArrayTest": {
+        "command": [
+          "{build}/libgo/string_array_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoStringArrayTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "string_array_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/string_array_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "nostrgo",
+          "string_array_test"
+        ]
+      },
+      "GoTickerTest": {
+        "command": [
+          "{build}/libgo/go_ticker_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoTickerTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_ticker_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_ticker_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 30.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_ticker_test",
+          "nostrgo"
+        ]
+      },
+      "GoWaitGroupTest": {
+        "command": [
+          "{build}/libgo/go_wait_group_test"
+        ],
+        "descriptor": {
+          "binary_dir": "{build}/libgo",
+          "declared_depends": [],
+          "expected": [],
+          "inputs": [],
+          "name": "GoWaitGroupTest",
+          "owner": [
+            "libgo"
+          ],
+          "owner_authority": "descriptor",
+          "requires": [],
+          "source_dir": "{source}/libgo",
+          "targets": [
+            "go_wait_group_test"
+          ]
+        },
+        "input_names": [
+          "{source}/libgo/src/blocking_executor.c",
+          "{source}/libgo/src/channel.c",
+          "{source}/libgo/src/context.c",
+          "{source}/libgo/src/counter.c",
+          "{source}/libgo/src/error.c",
+          "{source}/libgo/src/fiber_hooks_stub.c",
+          "{source}/libgo/src/go.c",
+          "{source}/libgo/src/hash_map.c",
+          "{source}/libgo/src/int_array.c",
+          "{source}/libgo/src/metrics_stub.c",
+          "{source}/libgo/src/select.c",
+          "{source}/libgo/src/string_array.c",
+          "{source}/libgo/src/ticker.c",
+          "{source}/libgo/src/wait_group.c",
+          "{source}/libgo/tests/go_wait_group_test.c"
+        ],
+        "properties": {
+          "LABELS": [
+            "selection:libgo"
+          ],
+          "TIMEOUT": 10.0,
+          "WORKING_DIRECTORY": "{build}/libgo"
+        },
+        "runtime_inputs": [],
+        "target_names": [
+          "go_wait_group_test",
+          "nostrgo"
+        ]
+      }
+    },
+    "source_hashes": {
+      "{source}/libgo/fiber/chan/chan.c": "06aa6d3e7f74d8083553aba22a557531735c936b63890deb4f9568310b33dcba",
+      "{source}/libgo/fiber/context/context_asm.c": "664164af94381d9ef608a7ac186ed12f60dde5b756ef093ff834966a03efee66",
+      "{source}/libgo/fiber/context/context_x86_64_linux.S": "460f4a5e27b9e1660b847f4bf98feb8de482709e227f219fd0a3184f582c30d8",
+      "{source}/libgo/fiber/debug/introspect.c": "50c0ab3a2d9383c9bb0e96d971d587daaa941559445ddea317bd74f83ff9a618",
+      "{source}/libgo/fiber/debug/trace.c": "51a10b50dcec294c95074325205fb57329563739a7a972d9a9af25fd78c14813",
+      "{source}/libgo/fiber/io/io.c": "e240207964f346abc4d11829fa418c1e34c6d3364ce100ecc790528ace96143c",
+      "{source}/libgo/fiber/io/netpoll_epoll.c": "c7e76ee1ff9aa7603d02db518e653106c5903efb746103da81ade0496a72295b",
+      "{source}/libgo/fiber/io/netpoll_iocp.c": "3aab7e3c5f6b280251cd13aac42d163e6197964337d6e32d2c44042d211de5fd",
+      "{source}/libgo/fiber/io/netpoll_kqueue.c": "4a5e6d34f2a0b2978200fa318757734c97750ced2fd2617c0464f87a9be2c9ce",
+      "{source}/libgo/fiber/sched/api.c": "16c90681d29dda8b409f2469027420f8e6582b6d4b92bc7be11cf803bd4c39fd",
+      "{source}/libgo/fiber/sched/fiber_hooks_impl.c": "29536a67b6f66c5ef6d55183496e45f12bd906946f52e749ec709c2c92055f23",
+      "{source}/libgo/fiber/sched/park.c": "76098d0bb235330bc5c82cfed8a2729f253724b8c297c40d8e4cd8510c0564bf",
+      "{source}/libgo/fiber/sched/sched.c": "7d92a78078e9132632848c8e51652b6ec00d805849256d838e6a3c31aae984d1",
+      "{source}/libgo/fiber/stack/stack.c": "1113e318b8712a1f87494a50bd4880b087ad19c5681b5fdbc89f31d2e7832082",
+      "{source}/libgo/fiber/tests/test_basic.c": "2b9ec7d46d99dff953d91e76cc09088735145e737661107ed1e6f9e87f7fa3ca",
+      "{source}/libgo/fiber/tests/test_chan.c": "e04aaa90d3dcba344ad1dc46f5b5767ab684990b2520dc1b761498d1c90bcb3b",
+      "{source}/libgo/fiber/tests/test_chan_ext.c": "6d210be817f7c4f61a72cb0a51c505a92e452b76a38635ad8d7e83a067d38203",
+      "{source}/libgo/fiber/tests/test_context.c": "9c68227616290bff17c6dd442316e2eb0545fd02fb87feac7fc7e3ded6a6b349",
+      "{source}/libgo/fiber/tests/test_io.c": "a4836e784a93189163b1f797223d4a4ddaf1d63c7003391c9290314f97844dbd",
+      "{source}/libgo/fiber/tests/test_io_deadlock.c": "d6f5f38762ddea763a940529c268c664ae09850cb977c8c04110562330a25c21",
+      "{source}/libgo/fiber/tests/test_io_timeout.c": "255d12ac31dc8cbb2728112087c790e3f13a134c3778bae07049d8b0e3387fa5",
+      "{source}/libgo/fiber/tests/test_starvation.c": "4b194d5c226a97977f5915b4fc369ce1eca521cfd9c3d24bede54040370ec65d",
+      "{source}/libgo/fiber/timers/timer_bridge.c": "007edd46db52dcbcfe1a0664ca1e52e18824fe598b5060a0668eae5051d3432e",
+      "{source}/libgo/src/blocking_executor.c": "3e80d9884a9be0e43c5f723d93e18680ebf91b67779f261dc8b19135d6805a25",
+      "{source}/libgo/src/channel.c": "b8700ecd84b72ddabda7565c59bc0632ccbf4faf8f5dcd6942d2f6d04311031c",
+      "{source}/libgo/src/context.c": "ff441c21df283c722be9b6a1998dd50c7c180d2ef9cf1ce7870cea4dd6ed96e2",
+      "{source}/libgo/src/counter.c": "4e01d482c356268b41cb94d999b0bc74cad4116b9371068247aa59225cc35a71",
+      "{source}/libgo/src/error.c": "877ad203cbced8273204dbf7dc763442a9c87e454574276686b5ddaec5999906",
+      "{source}/libgo/src/fiber_hooks_stub.c": "47ec7fb4ebe3ad31af5ed6b2554dbb5dbc620c003f0ac5113b61e8152a189db8",
+      "{source}/libgo/src/go.c": "096795582429bd408e580223bf4cdf228413ec8a74fc8f4fbe939eb899d1a524",
+      "{source}/libgo/src/hash_map.c": "90e4af69809425360c4f7d0265fecde47d40b7d1165f7e385ab73656af25a2d2",
+      "{source}/libgo/src/int_array.c": "1a7f7a6b48086a2942bf4091d89183b14aef227df311b51151a79691441a122a",
+      "{source}/libgo/src/metrics_stub.c": "44cf85d0846debda40bed8f43d395f0611407667a467532a40d6f719bc9bc40f",
+      "{source}/libgo/src/select.c": "68b9ff40a21940c253e5be590b21ece6b3ef8039e801106648bfc61c24abe510",
+      "{source}/libgo/src/string_array.c": "9a08bf8df1408ed9295d1d00c59d5088c5fae6a2838580fd2222e14d631e2cc8",
+      "{source}/libgo/src/ticker.c": "84d415d817bc9bcbd58aaf73cb2348d6d63415cf671033b2ca8a86a779473d4b",
+      "{source}/libgo/src/wait_group.c": "32846aded613a1e30f99641dab8191d915caa916698ad8ac28082acc68938091",
+      "{source}/libgo/tests/error_test.c": "fc81bbf61672e35f97809ec4df5751ebf1da5a3efa1738311c462003774e0201",
+      "{source}/libgo/tests/go_channel_close_test.c": "9540ff39ea7438a85773313da67168fbc0574c6e298fc05589aebfacd30c5723",
+      "{source}/libgo/tests/go_channel_mpmc_slot_test.c": "b14068454ff5941cca3100c7414da5dd6ae1ae102031af84a0c09e155ae0c371",
+      "{source}/libgo/tests/go_channel_stress_test.c": "32527ec279ca9f7d5a5e83385adcf1134d284aa01e5794c8bca2a45769662180",
+      "{source}/libgo/tests/go_channel_test.c": "21309efa40bcadfd0f45d228680d4024b6e6661fbd38c602123cb7412a8987c1",
+      "{source}/libgo/tests/go_context_cancel_test.c": "c86c4b750482e43ddd8032c180881898e8e755ae55cbe5741d974418fec1ebba",
+      "{source}/libgo/tests/go_context_stress_test.c": "50c6144b2fbe01717fb06aba7c2aedd920dbb7f2610a067e4c56edefc87d7315",
+      "{source}/libgo/tests/go_context_timeout_test.c": "717f267604357acbcffde8e25c48548189a88c3723b73bd2f2e46ed67445a8c9",
+      "{source}/libgo/tests/go_select_cancel_test.c": "2ede0c59be689569f31c286de2f655b41342aa079f1b68ba4ade7dcf1dd3c657",
+      "{source}/libgo/tests/go_select_closed_test.c": "9081865087c6e71f52695f5e7bd4d5aebf54b8abc3291298aa2ed8b012f33715",
+      "{source}/libgo/tests/go_select_multi_test.c": "0d5180a61cd7baa34389a347ed1f93e0428934966e5e51331604b5195d8d42bf",
+      "{source}/libgo/tests/go_select_test.c": "af52f08abc0f3e94c110eb553e694660b3d1ea0e0e07fb6ff9bbe2616753672c",
+      "{source}/libgo/tests/go_ticker_test.c": "627b287e1b88853f7408e51106dd8ddeecd1ba1d3216bf0237e28e336d8c5a6f",
+      "{source}/libgo/tests/go_wait_group_test.c": "89ea038fb60080b8ad090c9b78d59b279e11aa23b081ff9de20733be660d8912",
+      "{source}/libgo/tests/hash_map_test2.c": "dd28f7fbb794b67400820a8ba5aa61ab4c67436b10bc97d3718368eadc6f8f8f",
+      "{source}/libgo/tests/int_array_test.c": "177aeee7c4d2b4a4bbb559d20308b6a20ff1724269696806a172772f234dcf4c",
+      "{source}/libgo/tests/long_adder_stress_test.c": "ec7155854a48799abea637867306a7d43ee05e86082a6d305d99ab7dd8a138c6",
+      "{source}/libgo/tests/refptr_test.c": "bbd3d5a31f7fc3aa7388361f77ffbcafd77a363b8c8222736a1db4055ac02a6f",
+      "{source}/libgo/tests/string_array_test.c": "44a5a96f5b36396a1889669e4c1cb736c17812b7fbccc0fdc0a30b43063f7ae7"
+    },
+    "targets": {
+      "error_test": {
+        "artifacts": [
+          "{build}/libgo/error_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "error_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/error_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_channel_close_test": {
+        "artifacts": [
+          "{build}/libgo/go_channel_close_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_channel_close_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_channel_close_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_channel_mpmc_slot_test": {
+        "artifacts": [
+          "{build}/libgo/go_channel_mpmc_slot_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_channel_mpmc_slot_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_channel_mpmc_slot_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_channel_stress_test": {
+        "artifacts": [
+          "{build}/libgo/go_channel_stress_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_channel_stress_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_channel_stress_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_channel_test": {
+        "artifacts": [
+          "{build}/libgo/go_channel_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_channel_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_channel_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_context_cancel_test": {
+        "artifacts": [
+          "{build}/libgo/go_context_cancel_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_context_cancel_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_context_cancel_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_context_stress_test": {
+        "artifacts": [
+          "{build}/libgo/go_context_stress_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_context_stress_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_context_stress_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_context_timeout_test": {
+        "artifacts": [
+          "{build}/libgo/go_context_timeout_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_context_timeout_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_context_timeout_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_fiber": {
+        "artifacts": [
+          "{build}/libgo/libgo_fiber.a"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [],
+        "name": "go_fiber",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/sched/api.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/sched/sched.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/sched/park.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/sched/fiber_hooks_impl.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/stack/stack.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/chan/chan.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/io/io.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/io/netpoll_epoll.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/io/netpoll_kqueue.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/io/netpoll_iocp.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/timers/timer_bridge.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/debug/trace.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/debug/introspect.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/context/context_x86_64_linux.S"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/context/context_asm.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "go_select_cancel_test": {
+        "artifacts": [
+          "{build}/libgo/go_select_cancel_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_select_cancel_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_select_cancel_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_select_closed_test": {
+        "artifacts": [
+          "{build}/libgo/go_select_closed_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_select_closed_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_select_closed_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_select_multi_test": {
+        "artifacts": [
+          "{build}/libgo/go_select_multi_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_select_multi_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_select_multi_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_select_test": {
+        "artifacts": [
+          "{build}/libgo/go_select_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_select_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_select_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_ticker_test": {
+        "artifacts": [
+          "{build}/libgo/go_ticker_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_ticker_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_ticker_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "go_wait_group_test": {
+        "artifacts": [
+          "{build}/libgo/go_wait_group_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "go_wait_group_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/go_wait_group_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_basic": {
+        "artifacts": [
+          "{build}/libgo/gof_test_basic"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_basic",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_basic.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_chan": {
+        "artifacts": [
+          "{build}/libgo/gof_test_chan"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_chan",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_chan.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_chan_ext": {
+        "artifacts": [
+          "{build}/libgo/gof_test_chan_ext"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_chan_ext",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_chan_ext.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_context": {
+        "artifacts": [
+          "{build}/libgo/gof_test_context"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_context",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_context.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_io": {
+        "artifacts": [
+          "{build}/libgo/gof_test_io"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_io",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_io.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_io_deadlock": {
+        "artifacts": [
+          "{build}/libgo/gof_test_io_deadlock"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_io_deadlock",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_io_deadlock.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_io_timeout": {
+        "artifacts": [
+          "{build}/libgo/gof_test_io_timeout"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_io_timeout",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_io_timeout.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "gof_test_starvation": {
+        "artifacts": [
+          "{build}/libgo/gof_test_starvation"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "go_fiber",
+          "nostrgo"
+        ],
+        "name": "gof_test_starvation",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/fiber/tests/test_starvation.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "hash_map_test2": {
+        "artifacts": [
+          "{build}/libgo/hash_map_test2"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "hash_map_test2",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/hash_map_test2.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "int_array_test": {
+        "artifacts": [
+          "{build}/libgo/int_array_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "int_array_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/int_array_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "long_adder_stress_test": {
+        "artifacts": [
+          "{build}/libgo/long_adder_stress_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "long_adder_stress_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/long_adder_stress_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "nostrgo": {
+        "artifacts": [
+          "{build}/libgo/libnostrgo.a"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [],
+        "name": "nostrgo",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/go.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/context.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/channel.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/wait_group.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/hash_map.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/counter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/select.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/string_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/int_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/ticker.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/metrics_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/fiber_hooks_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/blocking_executor.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "refptr_test": {
+        "artifacts": [
+          "{build}/libgo/refptr_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "refptr_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/refptr_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "string_array_test": {
+        "artifacts": [
+          "{build}/libgo/string_array_test"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo"
+        ],
+        "name": "string_array_test",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/tests/string_array_test.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      }
+    }
+  },
+  "candidate_contract_hash": "1b388f407707962875055bb166ba8d01b295330621469e5f6527d5c218b4e402",
+  "evidence_kind": "reviewed_local_emulated_linux_amd64_full_audits_v1",
+  "historical_reconciliation": {
+    "archive_inventory_sha256": "c9ee552207eb1b3a2c5fdd2cbc1d61886f43f29ebe79f7d3cca2d316780659cc",
+    "arm64_witness_is_not_x86_authority": true,
+    "hosted_sources": [
+      "6ce261c4234c35d5f6c95822edeab83fdae48b60",
+      "fb7335cb0e9546463293b6adf2044fe54178f5ac"
+    ],
+    "initial_local_counts": {
+      "grotto.linux": 459,
+      "groundhog.linux": 421
+    },
+    "restored_with_iproute2": [
+      "relayd_bind_iface_integ"
+    ],
+    "restored_with_node": [
+      "nostr_signer_webext_extension_policy",
+      "nostr_signer_webext_extension_webln"
+    ],
+    "reviewed_counts": {
+      "grotto.linux": 461,
+      "groundhog.linux": 422
+    }
+  },
+  "image": {
+    "additional_packages": {
+      "iproute2": "6.1.0-1ubuntu6.4",
+      "nodejs": "18.19.1+dfsg-6ubuntu5"
+    },
+    "dockerfile": "scripts/linux-ci.Dockerfile",
+    "dockerfile_sha256": "cb084ff531d8805d320a9f8bf3d29807a8f845f2f5b524d5a861cac0e2a0359f",
+    "id": "sha256:4ec508175b7ec99e70e9538ab61cd4eda8a2741b7a1b3e6d3ea5d9323872ce61"
+  },
+  "limits": {
+    "complete": false,
+    "complete_gate_eligible": false,
+    "current_attestation": false,
+    "hosted_acceptance": false,
+    "note": "Historical review provenance only. Fresh source/inventory/profile/context/export/build/audit bindings remain mandatory; other findings block lane launch.",
+    "outer_arbitrary_tree_custody": false,
+    "w11_credit": false
+  },
+  "machine": {
+    "architecture": "x86_64",
+    "compiler": "GNU 13.3.0",
+    "compiler_target": "x86_64-linux-gnu",
+    "dpkg_architecture": "amd64",
+    "execution": "Docker linux/amd64 via Rosetta on ARM64 host; not an ARM64 graph alias",
+    "gid": 1001,
+    "platform": "linux",
+    "uid": 1001
+  },
+  "profiles": {
+    "grotto.linux": {
+      "audit_build_targets": [
+        "error_test",
+        "go_channel_close_test",
+        "go_channel_mpmc_slot_test",
+        "go_channel_stress_test",
+        "go_channel_test",
+        "go_context_cancel_test",
+        "go_context_stress_test",
+        "go_context_timeout_test",
+        "go_fiber",
+        "go_select_cancel_test",
+        "go_select_closed_test",
+        "go_select_multi_test",
+        "go_select_test",
+        "go_ticker_test",
+        "go_wait_group_test",
+        "gof_test_basic",
+        "gof_test_chan",
+        "gof_test_chan_ext",
+        "gof_test_context",
+        "gof_test_io",
+        "gof_test_io_deadlock",
+        "gof_test_io_timeout",
+        "gof_test_starvation",
+        "hash_map_test2",
+        "int_array_test",
+        "long_adder_stress_test",
+        "nostrgo",
+        "refptr_test",
+        "string_array_test"
+      ],
+      "build_command": [
+        "cmake",
+        "--build",
+        "/evidence/reconciled/grotto.linux/build",
+        "--config",
+        "Debug",
+        "--parallel",
+        "2",
+        "--target",
+        "error_test",
+        "go_channel_close_test",
+        "go_channel_mpmc_slot_test",
+        "go_channel_stress_test",
+        "go_channel_test",
+        "go_context_cancel_test",
+        "go_context_stress_test",
+        "go_context_timeout_test",
+        "go_fiber",
+        "go_select_cancel_test",
+        "go_select_closed_test",
+        "go_select_multi_test",
+        "go_select_test",
+        "go_ticker_test",
+        "go_wait_group_test",
+        "gof_test_basic",
+        "gof_test_chan",
+        "gof_test_chan_ext",
+        "gof_test_context",
+        "gof_test_io",
+        "gof_test_io_deadlock",
+        "gof_test_io_timeout",
+        "gof_test_starvation",
+        "hash_map_test2",
+        "int_array_test",
+        "long_adder_stress_test",
+        "nostrgo",
+        "refptr_test",
+        "string_array_test"
+      ],
+      "build_exit": 0,
+      "build_seconds": 10.34180498123169,
+      "candidate_findings": [
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelCloseTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelMpmcSlotTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelStressTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoContextCancelTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoContextStressTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoContextTimeoutTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoErrorTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberBasicTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberBasicTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanExtTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanExtTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberContextTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoDeadlockTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoDeadlockTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoTimeoutTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoTimeoutTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberStarvationTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberStarvationTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoHashMapTest2"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoIntArrayTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoLongAdderStressTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoRefPtrTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectCancelTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectClosedTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectMultiTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoStringArrayTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoTickerTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoWaitGroupTest"
+        }
+      ],
+      "postaudit": {
+        "findings": 21729,
+        "header_entries": 337042,
+        "kinds": {
+          "generated_runtime_without_target": 2,
+          "missing_discovered_header_index": 574,
+          "missing_impact_edge": 20745,
+          "missing_input": 6,
+          "unclaimed_registration": 402
+        },
+        "passed": false,
+        "sha256": "c36dc3e96660ec246efdaeee9b49baa558d65f53bc8ae4bd8db9680ca35a1a08"
+      },
+      "preaudit": {
+        "findings": 9375,
+        "kinds": {
+          "generated_runtime_without_target": 2,
+          "missing_impact_edge": 8971,
+          "unclaimed_registration": 402
+        },
+        "passed": false,
+        "sha256": "0dd4932485713e94ade4889c3675f2e6a6ece6c095f284c9a1f322a0f186ee81"
+      },
+      "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
+      "raw_directory": "/tmp/nostrc-ordinary-subset-fresh-x86-20261019/reconciled/grotto.linux",
+      "realization_file_sha256": "a9e7a3a7c8df2d49faf5f000f5b75aeb3ce16f6ac48205703a64ef6d7bb340b3",
+      "record_hash": "b4e2f33eb6ca250daeaf23b42433df908037be625ac8746ec0d89d47600a38a8",
+      "target_ids": [
+        "error_test::@01832e3469ab35a56bce",
+        "go_channel_close_test::@01832e3469ab35a56bce",
+        "go_channel_mpmc_slot_test::@01832e3469ab35a56bce",
+        "go_channel_stress_test::@01832e3469ab35a56bce",
+        "go_channel_test::@01832e3469ab35a56bce",
+        "go_context_cancel_test::@01832e3469ab35a56bce",
+        "go_context_stress_test::@01832e3469ab35a56bce",
+        "go_context_timeout_test::@01832e3469ab35a56bce",
+        "go_fiber::@01832e3469ab35a56bce",
+        "go_select_cancel_test::@01832e3469ab35a56bce",
+        "go_select_closed_test::@01832e3469ab35a56bce",
+        "go_select_multi_test::@01832e3469ab35a56bce",
+        "go_select_test::@01832e3469ab35a56bce",
+        "go_ticker_test::@01832e3469ab35a56bce",
+        "go_wait_group_test::@01832e3469ab35a56bce",
+        "gof_test_basic::@01832e3469ab35a56bce",
+        "gof_test_chan::@01832e3469ab35a56bce",
+        "gof_test_chan_ext::@01832e3469ab35a56bce",
+        "gof_test_context::@01832e3469ab35a56bce",
+        "gof_test_io::@01832e3469ab35a56bce",
+        "gof_test_io_deadlock::@01832e3469ab35a56bce",
+        "gof_test_io_timeout::@01832e3469ab35a56bce",
+        "gof_test_starvation::@01832e3469ab35a56bce",
+        "hash_map_test2::@01832e3469ab35a56bce",
+        "int_array_test::@01832e3469ab35a56bce",
+        "long_adder_stress_test::@01832e3469ab35a56bce",
+        "nostrgo::@01832e3469ab35a56bce",
+        "refptr_test::@01832e3469ab35a56bce",
+        "string_array_test::@01832e3469ab35a56bce"
+      ],
+      "universe_count": 461,
+      "universe_hash": "b665cc8ff6f9df7396ab10960e1291bfa248db9b2beaa896cc1b5c98d3471691"
+    },
+    "groundhog.linux": {
+      "audit_build_targets": [
+        "error_test",
+        "go_channel_close_test",
+        "go_channel_mpmc_slot_test",
+        "go_channel_stress_test",
+        "go_channel_test",
+        "go_context_cancel_test",
+        "go_context_stress_test",
+        "go_context_timeout_test",
+        "go_fiber",
+        "go_select_cancel_test",
+        "go_select_closed_test",
+        "go_select_multi_test",
+        "go_select_test",
+        "go_ticker_test",
+        "go_wait_group_test",
+        "gof_test_basic",
+        "gof_test_chan",
+        "gof_test_chan_ext",
+        "gof_test_context",
+        "gof_test_io",
+        "gof_test_io_deadlock",
+        "gof_test_io_timeout",
+        "gof_test_starvation",
+        "hash_map_test2",
+        "int_array_test",
+        "long_adder_stress_test",
+        "nostrgo",
+        "refptr_test",
+        "string_array_test"
+      ],
+      "build_command": [
+        "cmake",
+        "--build",
+        "/evidence/reconciled/groundhog.linux/build",
+        "--config",
+        "Debug",
+        "--parallel",
+        "1",
+        "--target",
+        "error_test",
+        "go_channel_close_test",
+        "go_channel_mpmc_slot_test",
+        "go_channel_stress_test",
+        "go_channel_test",
+        "go_context_cancel_test",
+        "go_context_stress_test",
+        "go_context_timeout_test",
+        "go_fiber",
+        "go_select_cancel_test",
+        "go_select_closed_test",
+        "go_select_multi_test",
+        "go_select_test",
+        "go_ticker_test",
+        "go_wait_group_test",
+        "gof_test_basic",
+        "gof_test_chan",
+        "gof_test_chan_ext",
+        "gof_test_context",
+        "gof_test_io",
+        "gof_test_io_deadlock",
+        "gof_test_io_timeout",
+        "gof_test_starvation",
+        "hash_map_test2",
+        "int_array_test",
+        "long_adder_stress_test",
+        "nostrgo",
+        "refptr_test",
+        "string_array_test"
+      ],
+      "build_exit": 0,
+      "build_seconds": 20.05278182029724,
+      "candidate_findings": [
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelCloseTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelMpmcSlotTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelStressTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoChannelTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoContextCancelTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoContextStressTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoContextTimeoutTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoErrorTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberBasicTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberBasicTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanExtTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanExtTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberChanTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberContextTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoDeadlockTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoDeadlockTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoTimeoutTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberIoTimeoutTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberStarvationTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoFiberStarvationTestW4"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoHashMapTest2"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoIntArrayTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoLongAdderStressTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoRefPtrTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectCancelTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectClosedTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectMultiTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoSelectTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoStringArrayTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoTickerTest"
+        },
+        {
+          "kind": "unclaimed_registration",
+          "test": "GoWaitGroupTest"
+        }
+      ],
+      "postaudit": {
+        "findings": 22259,
+        "header_entries": 317530,
+        "kinds": {
+          "check_descriptor_owner_disagreement": 1,
+          "missing_discovered_header_index": 468,
+          "missing_impact_edge": 21378,
+          "missing_input": 6,
+          "unclaimed_registration": 406
+        },
+        "passed": false,
+        "sha256": "1e747b9c51c43496f2f5d840aa2fa4e9d347e9840e48a776dedd0a680f00ba72"
+      },
+      "preaudit": {
+        "findings": 9638,
+        "kinds": {
+          "check_descriptor_owner_disagreement": 1,
+          "missing_impact_edge": 9231,
+          "unclaimed_registration": 406
+        },
+        "passed": false,
+        "sha256": "af1f70075c56c8a95821ec4c1535f70f662a9556c5f24f581d587966336263db"
+      },
+      "profile_hash": "f024669154f7c94561f96174c2b0a35ae2713cb138d1efeabbc64e3497e0b63e",
+      "raw_directory": "/tmp/nostrc-ordinary-subset-fresh-x86-20261019/reconciled/groundhog.linux",
+      "realization_file_sha256": "5b52e9a273a9c91f30b3c915e0d06852232826174500daacea5a052901f82a64",
+      "record_hash": "01ec15fee90b8bedf80becb6ad3da05d06f9222aa9a2fbe5b06f368ab24aa029",
+      "target_ids": [
+        "error_test::@01832e3469ab35a56bce",
+        "go_channel_close_test::@01832e3469ab35a56bce",
+        "go_channel_mpmc_slot_test::@01832e3469ab35a56bce",
+        "go_channel_stress_test::@01832e3469ab35a56bce",
+        "go_channel_test::@01832e3469ab35a56bce",
+        "go_context_cancel_test::@01832e3469ab35a56bce",
+        "go_context_stress_test::@01832e3469ab35a56bce",
+        "go_context_timeout_test::@01832e3469ab35a56bce",
+        "go_fiber::@01832e3469ab35a56bce",
+        "go_select_cancel_test::@01832e3469ab35a56bce",
+        "go_select_closed_test::@01832e3469ab35a56bce",
+        "go_select_multi_test::@01832e3469ab35a56bce",
+        "go_select_test::@01832e3469ab35a56bce",
+        "go_ticker_test::@01832e3469ab35a56bce",
+        "go_wait_group_test::@01832e3469ab35a56bce",
+        "gof_test_basic::@01832e3469ab35a56bce",
+        "gof_test_chan::@01832e3469ab35a56bce",
+        "gof_test_chan_ext::@01832e3469ab35a56bce",
+        "gof_test_context::@01832e3469ab35a56bce",
+        "gof_test_io::@01832e3469ab35a56bce",
+        "gof_test_io_deadlock::@01832e3469ab35a56bce",
+        "gof_test_io_timeout::@01832e3469ab35a56bce",
+        "gof_test_starvation::@01832e3469ab35a56bce",
+        "hash_map_test2::@01832e3469ab35a56bce",
+        "int_array_test::@01832e3469ab35a56bce",
+        "long_adder_stress_test::@01832e3469ab35a56bce",
+        "nostrgo::@01832e3469ab35a56bce",
+        "refptr_test::@01832e3469ab35a56bce",
+        "string_array_test::@01832e3469ab35a56bce"
+      ],
+      "universe_count": 422,
+      "universe_hash": "c2c86b682fc38b2fbfd06ab5da937bbb87ca083baef16f4568a885a6f1d39397"
+    }
+  },
+  "review_source_identity": {
+    "kind": "committed",
+    "sha": "32f756b734deb72e41cdb16b9a3089c2839ca642"
+  },
+  "schema_version": 1,
+  "toolchain_contracts": {
+    "grotto.linux": {
+      "cmake": {
+        "generator": {
+          "multiConfig": false,
+          "name": "Ninja"
+        },
+        "paths": {
+          "cmake": "/usr/bin/cmake",
+          "cpack": "/usr/bin/cpack",
+          "ctest": "/usr/bin/ctest",
+          "root": "/usr/share/cmake-3.28"
+        },
+        "version": {
+          "isDirty": false,
+          "major": 3,
+          "minor": 28,
+          "patch": 3,
+          "string": "3.28.3",
+          "suffix": ""
+        }
+      },
+      "tool_versions": {
+        "ctest": "ctest version 3.28.3\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).",
+        "ninja": "1.11.1"
+      },
+      "toolchains": {
+        "kind": "toolchains",
+        "toolchains": [
+          {
+            "compiler": {
+              "implicit": {},
+              "path": "/usr/bin/cc"
+            },
+            "language": "ASM"
+          },
+          {
+            "compiler": {
+              "id": "GNU",
+              "implicit": {
+                "includeDirectories": [
+                  "/usr/lib/gcc/x86_64-linux-gnu/13/include",
+                  "/usr/local/include",
+                  "/usr/include/x86_64-linux-gnu",
+                  "/usr/include"
+                ],
+                "linkDirectories": [
+                  "/usr/lib/gcc/x86_64-linux-gnu/13",
+                  "/usr/lib/x86_64-linux-gnu",
+                  "/usr/lib",
+                  "/lib/x86_64-linux-gnu",
+                  "/lib"
+                ],
+                "linkFrameworkDirectories": [],
+                "linkLibraries": [
+                  "gcc",
+                  "gcc_s",
+                  "c",
+                  "gcc",
+                  "gcc_s"
+                ]
+              },
+              "path": "/usr/bin/cc",
+              "version": "13.3.0"
+            },
+            "language": "C",
+            "sourceFileExtensions": [
+              "c",
+              "m"
+            ]
+          },
+          {
+            "compiler": {
+              "implicit": {},
+              "path": "/usr/bin/c++"
+            },
+            "language": "CXX"
+          }
+        ],
+        "version": {
+          "major": 1,
+          "minor": 0
+        }
+      }
+    },
+    "groundhog.linux": {
+      "cmake": {
+        "generator": {
+          "multiConfig": false,
+          "name": "Ninja"
+        },
+        "paths": {
+          "cmake": "/usr/bin/cmake",
+          "cpack": "/usr/bin/cpack",
+          "ctest": "/usr/bin/ctest",
+          "root": "/usr/share/cmake-3.28"
+        },
+        "version": {
+          "isDirty": false,
+          "major": 3,
+          "minor": 28,
+          "patch": 3,
+          "string": "3.28.3",
+          "suffix": ""
+        }
+      },
+      "tool_versions": {
+        "ctest": "ctest version 3.28.3\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).",
+        "ninja": "1.11.1"
+      },
+      "toolchains": {
+        "kind": "toolchains",
+        "toolchains": [
+          {
+            "compiler": {
+              "implicit": {},
+              "path": "/usr/bin/cc"
+            },
+            "language": "ASM"
+          },
+          {
+            "compiler": {
+              "id": "GNU",
+              "implicit": {
+                "includeDirectories": [
+                  "/usr/lib/gcc/x86_64-linux-gnu/13/include",
+                  "/usr/local/include",
+                  "/usr/include/x86_64-linux-gnu",
+                  "/usr/include"
+                ],
+                "linkDirectories": [
+                  "/usr/lib/gcc/x86_64-linux-gnu/13",
+                  "/usr/lib/x86_64-linux-gnu",
+                  "/usr/lib",
+                  "/lib/x86_64-linux-gnu",
+                  "/lib"
+                ],
+                "linkFrameworkDirectories": [],
+                "linkLibraries": [
+                  "gcc",
+                  "gcc_s",
+                  "c",
+                  "gcc",
+                  "gcc_s"
+                ]
+              },
+              "path": "/usr/bin/cc",
+              "version": "13.3.0"
+            },
+            "language": "C",
+            "sourceFileExtensions": [
+              "c",
+              "m"
+            ]
+          },
+          {
+            "compiler": {
+              "implicit": {},
+              "path": "/usr/bin/c++"
+            },
+            "language": "CXX"
+          }
+        ],
+        "version": {
+          "major": 1,
+          "minor": 0
+        }
+      }
+    }
+  }
+}
