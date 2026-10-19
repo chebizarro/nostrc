@@ -25,7 +25,7 @@ REGISTRATIONS = tuple(sorted((
     "GoSelectMultiTest", "GoSelectTest", "GoStringArrayTest", "GoTickerTest", "GoWaitGroupTest",
 )))
 CONTRACT_KEYS = {"schema_version", "profile_hash", "workflow", "registrations", "registration_universe",
-                 "universe_hash", "primary_registrations", "required_closure", "candidate_contract_hash", "review"}
+                 "universe_hash", "primary_registrations", "required_closure", "candidate_contract_hash", "toolchain_contract_hash", "review"}
 REVIEW_KEYS = {"reviewer", "approval_document", "tracking", "source_sha", "pre_audit_sha256",
                "post_audit_sha256", "realization_sha256", "profile_fingerprint", "source_inputs",
                "platform", "architecture", "compiler", "feature_variants", "instrumentation"}
@@ -59,7 +59,7 @@ def contracts(policy):
         require(set(REGISTRATIONS) < universe and primary <= required <= universe
                 and not set(REGISTRATIONS) & required, "universe/primary/fixture collision")
         require(record["universe_hash"] == digest(record["registration_universe"])
-                and _sha(record["candidate_contract_hash"]), "invalid graph hash")
+                and _sha(record["candidate_contract_hash"]) and _sha(record["toolchain_contract_hash"]), "invalid graph/toolchain hash")
         path, include, exclude = PROFILES[profile_id]
         workflow = record["workflow"]
         require(isinstance(workflow, dict) and set(workflow) == {"path", "sha256", "include", "exclude"}
@@ -186,9 +186,16 @@ def candidate_contract(realization, tests, descriptors):
     return result
 
 
+def toolchain_contract(realization):
+    # System/compiler paths remain explicit; none of these are checkout-local
+    # IDs. A different compiler/tool version or generator needs fresh review.
+    return {k: realization[k] for k in ("toolchains", "tool_versions", "cmake")}
+
+
 def validate_graph(contract, realization, tests, descriptors, authored):
     from test_selection import digest
     import test_selection_realization as backend
+    require(digest(toolchain_contract(realization)) == contract["toolchain_contract_hash"], "reviewed compiler/toolchain/generator changed")
     require(sorted(tests) == contract["registration_universe"], "fresh registration universe changed")
     require(sorted(authored) == contract["primary_registrations"]
             and backend._fixture_closure(authored, tests, descriptors) == contract["required_closure"], "authored primary/fixture closure changed")

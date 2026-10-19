@@ -95,6 +95,7 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             "registration_universe": sorted(tests), "universe_hash": s.digest(sorted(tests)),
             "primary_registrations": ["a-model"], "required_closure": r._fixture_closure(["a-model"], tests, descriptors),
             "candidate_contract_hash": s.digest(subset.candidate_contract(real, tests, descriptors)),
+            "toolchain_contract_hash": s.digest(subset.toolchain_contract(real)),
             "review": {"reviewer": "synthetic-fixture-only", "approval_document": "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
                 "tracking": ["nostrc-0cfsg.2", "nostrc-0cfsg.9"], "source_sha": self.identity["sha"],
                 "source_inputs": inputs, "pre_audit_sha256": "a" * 64, "post_audit_sha256": "b" * 64,
@@ -177,6 +178,44 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         self.assertEqual(before_post["input_hashes"], after_post["input_hashes"])
         self.assertEqual(before_post["header_entries"], after_post["header_entries"])
 
+    def test_production_records_bind_exact_x86_witness_not_current_acceptance(self):
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        path = "tests/selection/fixtures/ordinary_subset_x86_exports.json"
+        fixture = json.loads((ROOT / path).read_text())
+        self.assertIn("{source}/" + path, policy["checks"]["selection.contract"]["runtime_inputs"])
+        self.assertEqual(fixture["machine"]["architecture"], "x86_64")
+        self.assertEqual(fixture["machine"]["compiler_target"], "x86_64-linux-gnu")
+        self.assertEqual(fixture["machine"]["uid"], 1001)
+        for key in ("complete", "complete_gate_eligible", "outer_arbitrary_tree_custody", "hosted_acceptance", "w11_credit", "current_attestation"):
+            self.assertIs(fixture["limits"][key], False)
+        packed = fixture["candidate_contract"]
+        reconstructed = {}
+        for name, record in packed["registrations"].items():
+            reconstructed[name] = {k: v for k, v in record.items() if k not in ("target_names", "input_names")}
+            reconstructed[name]["targets"] = [packed["targets"][n] for n in record["target_names"]]
+            reconstructed[name]["input_hashes"] = {n: packed["source_hashes"][n] for n in record["input_names"]}
+        self.assertEqual(sorted(reconstructed), list(subset.REGISTRATIONS))
+        self.assertEqual(s.digest(reconstructed), fixture["candidate_contract_hash"])
+        records = subset.contracts(policy)
+        self.assertEqual(set(records), set(subset.PROFILES))
+        for pid, contract in records.items():
+            witness = fixture["profiles"][pid]
+            self.assertEqual(s.digest(contract), witness["record_hash"])
+            self.assertEqual(contract["candidate_contract_hash"], s.digest(reconstructed))
+            self.assertEqual(contract["toolchain_contract_hash"], s.digest(fixture["toolchain_contracts"][pid]))
+            self.assertEqual(contract["review"]["source_sha"], fixture["review_source_identity"]["sha"])
+            self.assertEqual(contract["review"]["post_audit_sha256"], witness["postaudit"]["sha256"])
+            self.assertEqual(contract["review"]["pre_audit_sha256"], witness["preaudit"]["sha256"])
+            self.assertEqual(contract["review"]["realization_sha256"], witness["realization_file_sha256"])
+            self.assertEqual(len(contract["registration_universe"]), {"groundhog.linux": 422, "grotto.linux": 461}[pid])
+            self.assertEqual(witness["build_exit"], 0)
+            self.assertEqual(len(witness["audit_build_targets"]), 29)
+            self.assertFalse(witness["preaudit"]["passed"])
+            self.assertFalse(witness["postaudit"]["passed"])
+            self.assertEqual(witness["candidate_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
+            for name, expected in contract["review"]["source_inputs"].items():
+                self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
+
     def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):
         policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
         for path in ("gnome/groundhog/src/store/gh-store-key.c", "apps/grotto/src/main.c"):
@@ -223,7 +262,9 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             lambda t, d, x: d[name].update(owner=["other"]), lambda t, d, x: d[name].update(targets=["missing"]),
             lambda t, d, x: d[name].update(source_dir=str(self.root)),
             lambda t, d, x: x["runtime_file_manifest"].update({name: [str(self.root / "vector.txt")]}),
-            lambda t, d, x: x["targets"].clear()):
+            lambda t, d, x: x["targets"].clear(),
+            lambda t, d, x: x["tool_versions"].update(ninja="unreviewed-version"),
+            lambda t, d, x: x["toolchains"].clear()):
             t, d, x = copy.deepcopy(tests), copy.deepcopy(descriptors), copy.deepcopy(real)
             mutation(t, d, x)
             with self.subTest(mutation=mutation), self.assertRaises((ValueError, r.RealizationError)):
