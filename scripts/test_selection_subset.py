@@ -90,6 +90,7 @@ def marked(value):
         str(value.get("authority", "")).startswith("reviewed_diagnostic_nonmember_subset")
         or value.get("id") == IDENT or "candidate_contract_hash" in value
         or value.get("registrations") == list(REGISTRATIONS)
+        or "diagnostic_nonmember_subset_profiles" in value
         or bool(value.get("diagnostic_nonmember_subsets")))
 
 
@@ -156,6 +157,8 @@ def candidate_contract(realization, tests, descriptors):
     for name in REGISTRATIONS:
         require(name in tests and descriptors.get(name, {}).get("owner") == ["libgo"], "missing/changed libgo owner: " + name)
         desc = descriptors[name]
+        require(Path(desc.get("source_dir", "")).resolve() == Path(realization["repo_root"]).resolve() / "libgo",
+                "candidate left the reviewed libgo source directory: " + name)
         props = backend._properties(tests[name])
         require(not any(props.get(k) for k in ("FIXTURES_SETUP", "FIXTURES_CLEANUP", "FIXTURES_REQUIRED", "DEPENDS"))
                 and not desc.get("declared_depends") and desc.get("expected") in ([], ["pass"]), "candidate fixture/dependency changed: " + name)
@@ -273,7 +276,7 @@ def validate_receipt(receipt, backend, exclusions, contract, plan, lane, profile
     require(isinstance(audit, dict) and audit.get("passed") is True and audit.get("after_build") is True
             and audit.get("gaps") == [] and audit.get("selective_enforcement") is False
             and audit.get("baseline_exclusions") == exclusions and audit.get("nonmember_binding") == binding
-            and audit.get("complete_gate_eligible") is False and audit.get("phase_context") == phase
+            and audit.get("complete") is False and audit.get("complete_gate_eligible") is False and audit.get("phase_context") == phase
             and audit.get("audit_hash") == digest({k: v for k, v in audit.items() if k != "audit_hash"}), "full post-build audit missing/stale")
     for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context_hash"):
         require(audit.get(key) == expected[key], "audit identity differs: " + key)

@@ -585,6 +585,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
     if complete and (plan.get("partial_profiles") or plan["source_identity"].get("kind") != "committed"):
         errors.append("partial/dirty run cannot satisfy complete gate")
     expected = {lane["id"]: lane for lane in plan["lanes"]}
+    subset_profiles = sorted({lane["profile"] for lane in plan["lanes"]} & subset.contracts(policy).keys())
     seen = set()
     if job_conclusions is not None:
         require(isinstance(job_conclusions, dict), "malformed worker conclusions")
@@ -747,7 +748,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
     errors += [f"missing lane: {lane}" for lane in sorted(set(expected) - seen)]
     return {"schema_version": 1, "plan_id": plan["plan_id"], "passed": not errors, "errors": errors, "non_clean_results": visible,
             "tested_sha": plan["tested_sha"], "source_identity": plan["source_identity"], "inventory_hash": plan["inventory_hash"],
-            "mode": plan["effective_mode"], "partial_profiles": plan["partial_profiles"], "complete": complete,
+            "mode": plan["effective_mode"], "partial_profiles": plan["partial_profiles"], "complete": bool(complete and not subset_profiles),
+            **({"diagnostic_nonmember_subset_profiles": subset_profiles} if subset_profiles else {}),
             "diagnostic_eligible": not errors, "incomplete_lanes": incomplete_lanes,
             "complete_gate_eligible": bool(complete and not errors and not incomplete_lanes),
             "tag": plan["event"].get("tag") if isinstance(plan["event"], dict) else None,
@@ -835,7 +837,8 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
             "source_identity": {"kind": "committed", "sha": tested}, "inventory_hash": digest(policy),
             "mode": "broad", "publishers": publishers, "required_package_jobs": jobs,
             "validation_only": publishers == ["none"], "dry_run": dry_run, "publish": bool(tag and not dry_run and publishers != ["none"]),
-            "run_id": run_id, "verified_versions": verified}
+            "run_id": run_id, "verified_versions": verified,
+            **({"diagnostic_nonmember_subset_profiles": sorted(subset.contracts(policy))} if subset.contracts(policy) else {})}
 
 
 def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile):
@@ -897,6 +900,8 @@ def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, la
 def aggregate_release(release, validation, jobs):
     require(isinstance(jobs, dict), "malformed package conclusions")
     errors = []
+    if subset.nested(release):
+        errors.append("diagnostic subset inventory cannot authorize complete release validation")
     if (not validation.get("passed") or not validation.get("complete") or _nested_incomplete(validation)
             or validation.get("source_identity") != release["source_identity"]
             or validation.get("tested_sha") != release["tested_sha"]

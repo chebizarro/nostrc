@@ -144,7 +144,18 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                 self.assertFalse(set(subset.REGISTRATIONS) & set(result["backend_receipt"]["observed_executions"]))
                 partial = s.aggregate(self.inventory, self.plan, [result], complete=False)
                 self.assertTrue(partial["passed"], partial)
-                self.assertFalse(s.aggregate(self.inventory, self.plan, [result])["passed"])
+                complete = s.aggregate(self.inventory, self.plan, [result])
+                self.assertFalse(complete["passed"])
+                self.assertFalse(complete["complete"])
+                plan_file = self.build / "adapter-plan.json"
+                s.write_json(plan_file, self.plan)
+                args = adapter.parser().parse_args(["run", "--repo", str(self.root), "--profile", pid,
+                    "--plan", str(plan_file), "--build-dir", str(self.build),
+                    "--evidence-dir", str(self.evidence / "adapter"), "--phase", "all"])
+                cli_result, code = adapter.realization_command(args, self.inventory, r)
+                self.assertEqual(code, 0, cli_result)
+                self.assertTrue(s.aggregate(self.inventory, self.plan, [cli_result], complete=False)["passed"])
+                self.assertFalse(cli_result["complete"])
 
     def test_only_exact_33_unclaimed_findings_removed_full_remainder_unchanged(self):
         real = self.configure(admit=False)
@@ -165,6 +176,20 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         self.assertFalse({s.canonical(g) for g in after_post["gaps"]} - {s.canonical(g) for g in before_post["gaps"]})
         self.assertEqual(before_post["input_hashes"], after_post["input_hashes"])
         self.assertEqual(before_post["header_entries"], after_post["header_entries"])
+
+    def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for path in ("gnome/groundhog/src/store/gh-store-key.c", "apps/grotto/src/main.c"):
+            plan = s.make_plan(policy, [change(path)], head="a" * 40)
+            self.assertFalse(any(pid.startswith("libgo.") for pid in plan["expected_lane_ids"]))
+            for check_id in plan["selected_checks"]:
+                check = policy["checks"][check_id]
+                for pid in subset.PROFILES:
+                    self.assertFalse(set(subset.REGISTRATIONS) & set(check.get("ctest_tests", {}).get(pid, [])))
+        plan = s.make_plan(policy, [change("libgo/src/channel.c")], head="a" * 40)
+        self.assertIn("libgo.channel", plan["selected_checks"])
+        self.assertIn("libgo.native_standalone", plan["selected_checks"])
+        self.assertTrue(any(pid.startswith("libgo.") for pid in plan["expected_lane_ids"]))
 
     def test_schema_name_count_duplicates_unknown_profile_and_evidence_drift(self):
         self.configure()
@@ -196,6 +221,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             lambda t, d, x: t[name]["properties"].append({"name": "FIXTURES_REQUIRED", "value": ["private"]}),
             lambda t, d, x: d["a-model"]["declared_depends"].append(name),
             lambda t, d, x: d[name].update(owner=["other"]), lambda t, d, x: d[name].update(targets=["missing"]),
+            lambda t, d, x: d[name].update(source_dir=str(self.root)),
+            lambda t, d, x: x["runtime_file_manifest"].update({name: [str(self.root / "vector.txt")]}),
             lambda t, d, x: x["targets"].clear()):
             t, d, x = copy.deepcopy(tests), copy.deepcopy(descriptors), copy.deepcopy(real)
             mutation(t, d, x)
@@ -256,6 +283,11 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                               **{k: release[k] for k in ("source_identity", "tested_sha", "inventory_hash")},
                               attempts=[{"unrelated": payload}])
             self.assertFalse(s.aggregate_release(release, validation, {})["passed"])
+        # The source-bound release plan carries active subset authority even if
+        # an attacker supplies a receipt-free, flag-stripped optimistic summary.
+        validation.pop("attempts")
+        guarded_release = dict(release, diagnostic_nonmember_subset_profiles=[self.pid])
+        self.assertFalse(s.aggregate_release(guarded_release, validation, {})["passed"])
 
     def test_retained_source_ninja_header_runtime_and_audit_bytes_refuse_execution(self):
         real, resolved, audit, result = self.execute()
