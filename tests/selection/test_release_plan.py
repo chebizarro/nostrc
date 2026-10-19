@@ -94,9 +94,20 @@ class ReleaseTests(GitCase):
 
     def test_release_validation_exact_tag_sha_broad_identity(self):
         result = self.tagged("app-v1.2.3")
+        jobs = {j: "success" for j in result["required_package_jobs"]}
+        valid = self.validation(result)
+        baseline = s.aggregate_release(result, valid, jobs)
+        self.assertTrue(baseline["passed"])
+        self.assertTrue(baseline["publish"])
+        self.assertEqual(baseline["errors"], [])
         for key, wrong in (("tested_sha", self.base), ("tag", "other"), ("mode", "affected"), ("inventory_hash", "stale"), ("passed", False), ("partial_profiles", ["linux"])):
-            valid = self.validation(result); valid[key] = wrong
-            self.assertFalse(s.aggregate_release(result, valid, {})["publish"])
+            with self.subTest(key=key):
+                invalid = copy.deepcopy(valid)
+                invalid[key] = wrong
+                rejected = s.aggregate_release(result, invalid, jobs)
+                self.assertFalse(rejected["passed"])
+                self.assertFalse(rejected["publish"])
+                self.assertEqual(rejected["errors"], ["missing/mismatched broad exact-tag validation"])
 
     def test_checked_in_version_sources_match_independent_manifest(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
