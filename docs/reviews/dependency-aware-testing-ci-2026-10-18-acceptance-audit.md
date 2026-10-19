@@ -589,5 +589,97 @@ setup failures and source identities. Parent independently verifies evidence
 hashes and the five-removed/zero-added set difference. No W11 counter advances
 from these diagnostics; `.9`, `.2` and wider acceptance remain open.
 
+## Approved ordinary libgo subset admission
+
+Owner approval is implemented by code `48af17055f17d88f0392ab716cc93ae4644bd3d5`.
+`diagnostic_nonmember_subsets` now has two exact records: the 33 reviewed libgo
+registrations independently in `groundhog.linux` and `grotto.linux`. Their authority
+is `reviewed_diagnostic_nonmember_subset_v1`; the original sanitizer full-partition
+contract is unchanged. This is an implemented backend/adapter/aggregation path,
+not a proposal or permission to omit the rest of either build tree.
+
+Admission checks exact profile/workflow hashes, full registration universe,
+primary/fixture closure, normalized candidate contracts, toolchain and reviewed
+source controls. Fresh source/inventory/profile/phase/configuration/generation/
+registration/descriptor/target/audit bindings remain independently checked.
+Omitted real target closures are still built and fully source/Ninja/header/runtime
+audited as required. Only matching unclaimed-registration findings change.
+All omitted names remain `not_executed`, `complete=false`,
+`complete_gate_eligible=false`; other failures still stop the lane. Grotto's
+independent build-2/test-1 contract is enforced. Standalone build output retains
+omission accounting; stripping either incomplete flag refuses before build.
+
+The ordinary subset's standalone **`--phase test` is explicitly unsupported** and
+refuses before CTest; use `--phase all` for physical prerequisite-build proof.
+No new retained-build custody extension was fabricated. Non-subset and legacy
+sanitizer phase behavior remains unchanged. Independent genuinely complete broad
+validation keeps its existing release route, but incomplete ordinary receipts,
+nested records, stripped flags and disguised profile evidence cannot be promoted
+through that route.
+
+### Actual source-bound x86 proof
+
+A repository-Dockerfile image was built for actual Linux/amd64 execution through
+Rosetta on the ARM64 host, not by changing an ARM64 profile label. `uname` and GNU
+compiler target report `x86_64` / `x86_64-linux-gnu`; the 27 executables per profile
+have ELF64 `e_machine=62`. The 33 registrations share **29 transitive build targets**
+per profile, including their libraries. All 29 target-closure builds pass. This is
+emulated x86 configure/build/audit evidence, not hosted/native-hardware performance
+or outer arbitrary-tree custody acceptance.
+
+Initial missing `iproute2`/Node prerequisites produced incomplete 421/459-name
+exports; those attempts remain retained. Restoring those actual prerequisites
+produced the reviewed universes of **422 Groundhog / 461 Grotto** names, consistent
+with hosted artifacts. The older ARM64 Grotto witness had 459, not 461; it was not
+silently substituted. Historical archives lacked complete realization properties,
+transitive mappings and postbuild proof, so they were not used alone for admission.
+
+Reviewed record/export provenance is source `32f756b734deb72e41cdb16b9a3089c2839ca642`;
+independently fresh configure/export/build/preaudit/postaudit admission proof is
+source `6cc11141326aa56b457fec7d6cf6b94b4b354047`. The final flag/phase corrections
+are source `48af17055`; the earlier full profile proof is **not relabeled** as a
+new execution on that SHA. All 192 reviewed graph-control source hashes per record
+still match final code. Parent verification independently recomputes the exact set
+differences below and confirms full input hashes/header entries are unchanged.
+
+| Profile | Prebuild findings before → after | Postbuild findings before → after |
+|---|---:|---:|
+| `groundhog.linux` | 9,638 → 9,605 | 22,259 → 22,226 |
+| `grotto.linux` | 9,375 → 9,342 | 21,704 → 21,671 |
+
+Each comparison is on the same fresh graph and removes exactly the **33 named
+unclaimed findings**, with **zero added findings**. Both full audits still fail.
+The actual CLI records `lane_failure_v1` at preaudit with build/test unexecuted;
+its diagnostic eligibility is false. The separate manual omitted-target builds
+are not claimed as successful gated execution or complete profile coverage.
+
+Immutable local handoff:
+`/tmp/nostrc-ordinary-subset-fresh-x86-20261019/checkpoint-final.json`, SHA-256
+`af62989d8e79f3637f4bc8f7c1718ce5892c55d672ea4cef366bbf2fe910d216`.
+It retains original setup/build/audit failures, final source/file/receipt hashes,
+image/Dockerfile/toolchain evidence and a hashed generation/build archive. Tracked
+`tests/selection/fixtures/ordinary_subset_x86_exports.json` preserves normalized
+reviewed exports; local archived builds are historical evidence, not current
+attestations. Reuse always requires the normal fresh checks.
+
+### Verification and limits
+
+Parent independently runs **466/466 selection tests, zero skips**, on `48af17055`
+with `/usr/bin/env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1`. Native default-all
+build, six shell suites, four statics and actionlint pass; libsecret/secret-service
+safety flags are used, Groundhog remains default-off. Bounded review found two
+integration defects (missing standalone-build flags and late test-only refusal),
+both corrected with adversarial regressions. The earlier 463-case run's six
+publication errors are retained; the fix preserves independent complete broad
+validation while still rejecting incomplete ordinary evidence. No failed attempt
+is counted as successful coverage.
+
+The explicit diagnostic records are admitted, but **local/CI defaults, original
+workflows, schedules, protections and release mode are unchanged**. No W11 credit,
+complete/release eligibility, full-root CTest, general native/wrapped custody, or
+migration completion is claimed. `.9`, `.2`, `.4` and `.5` retain their wider unmet
+acceptance scope. The existing run ledger remains its dated snapshot; a new PR
+requires separate source-linked comparison review before any counter can advance.
+
 **Version assessment:** this audit, ledger, tracker reconciliation, internal CI
 profile authoring and test-only changes require no shipped component bump.

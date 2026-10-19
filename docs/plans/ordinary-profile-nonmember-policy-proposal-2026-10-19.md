@@ -1,21 +1,28 @@
 # Ordinary-profile libgo nonmember policy — review proposal
 
-**Status: proposed, not approved for implementation or activation.**
+**Status: implemented; exact ordinary records admitted from reviewed x86 evidence.**
 **Date:** 2026-10-19. **Repository baseline:** `6ce261c4234c35d5f6c95822edeab83fdae48b60`.
 **Tracking:** `nostrc-0cfsg.9` (profile accounting), `.2` (backend acceptance), `.5` (rollout evidence).
 
-The owner authorized preparation of this proposal only. It changes no code,
-policy record, workflow, registration, protection, release mode or acceptance
-status. Publishing this document is not approval of the policy it describes.
+Implementation source: `48af17055f17d88f0392ab716cc93ae4644bd3d5`. See the
+[source-bound admission receipt and verification limits](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#approved-ordinary-libgo-subset-admission).
+The specification below records the approved scope; it does not claim migration
+completion or change rollout/release acceptance.
 
-## Decision requested
+The owner initially authorized preparation only, then approved proceeding with
+this scoped implementation. The document itself changes no executable policy.
+The exact records may be admitted only after their source/profile proof obligations
+are met and reviewed; no default/enforcement, protection, release-mode or acceptance
+cutover is authorized. Routine implementation/evidence review does not require
+another owner approval loop.
 
-Approve or reject **implementation of an explicit diagnostic-only subset contract**
-for exactly the 33 libgo registrations below in exactly `groundhog.linux` and
-`grotto.linux`. If implementation is approved, activation still requires a separate
-review of fresh, source-bound evidence on each authored Linux/x86_64 profile.
-Neither decision authorizes defaults/enforcement, complete/release eligibility,
-W11 credit, or broader exclusions.
+## Approved implementation scope
+
+Implement an **explicit diagnostic-only subset contract** for exactly the 33 libgo
+registrations below in exactly `groundhog.linux` and `grotto.linux`. Admission
+requires a separate technical review of fresh, source-bound evidence on each
+authored Linux/x86_64 profile. Approval does not authorize defaults/enforcement,
+complete/release eligibility, W11 credit, or broader exclusions.
 
 **Recommendation:** implement the bounded subset mechanism only after review,
 without generalizing the existing full-partition sanitizer contract. This accounts
@@ -283,7 +290,11 @@ reviewed evidence maintenance and re-review on graph/filter/contract drift. Avoi
 schema/framework generalization beyond these two profiles and this exact family.
 Further nonmember families need separate evidence and owner approval.
 
-**Approval stages:** this document only → explicit implementation approval →
-reviewed implementation and fresh per-profile authored evidence → explicit activation
-approval. None bypasses remaining audits, W11/operator rollout approval, or release
-acceptance. **Current state: first stage only; no implementation or activation.**
+**Delivery stages:** scoped implementation approval (received) → reviewed
+implementation and fresh per-profile authored evidence → admission of only the
+proven exact diagnostic records. None bypasses remaining audits, W11/operator
+rollout approval, or release acceptance. Missing proof blocks admission, not
+implementation of the fully tested mechanism; broader scope changes still require
+the owner. The two exact records have now been admitted through the reviewed evidence and
+implementation, not merely by updating this document. Runtime freshness checks,
+remaining audit failures and incomplete/release restrictions still apply.
