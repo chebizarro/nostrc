@@ -900,8 +900,8 @@ def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, la
 def aggregate_release(release, validation, jobs):
     require(isinstance(jobs, dict), "malformed package conclusions")
     errors = []
-    if subset.nested(release):
-        errors.append("diagnostic subset inventory cannot authorize complete release validation")
+    if subset.references_profiles(validation, release.get("diagnostic_nonmember_subset_profiles", [])):
+        errors.append("ordinary subset receipt cannot authorize complete release validation")
     if (not validation.get("passed") or not validation.get("complete") or _nested_incomplete(validation)
             or validation.get("source_identity") != release["source_identity"]
             or validation.get("tested_sha") != release["tested_sha"]

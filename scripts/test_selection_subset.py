@@ -100,6 +100,15 @@ def nested(value):
     return isinstance(value, list) and any(nested(v) for v in value)
 
 
+def references_profiles(value, profiles):
+    """Recognize embedded ordinary receipts even after omission records are stripped."""
+    if isinstance(value, dict):
+        if any(isinstance(value.get(k), str) and value[k] in profiles for k in ("profile", "profile_id")):
+            return True
+        return any(references_profiles(child, profiles) for child in value.values())
+    return isinstance(value, list) and any(references_profiles(child, profiles) for child in value)
+
+
 def validate_record(record, contract, identities, profile_id):
     from test_selection import digest, NONMEMBER_BINDING_KEYS, _nonmember_names
     keys = CONTRACT_KEYS | {"id", "profile", "status", "authority", "target_ids", "audit_build_targets", "binding"}

@@ -324,11 +324,15 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                               **{k: release[k] for k in ("source_identity", "tested_sha", "inventory_hash")},
                               attempts=[{"unrelated": payload}])
             self.assertFalse(s.aggregate_release(release, validation, {})["passed"])
-        # The source-bound release plan carries active subset authority even if
-        # an attacker supplies a receipt-free, flag-stripped optimistic summary.
+        # Independent broad validation keeps its existing release route; it
+        # cannot be pasted over an embedded ordinary receipt missing omissions.
         validation.pop("attempts")
         guarded_release = dict(release, diagnostic_nonmember_subset_profiles=[self.pid])
-        self.assertFalse(s.aggregate_release(guarded_release, validation, {})["passed"])
+        self.assertTrue(s.aggregate_release(guarded_release, validation, {})["passed"])
+        for wrapper in ({"profile": self.pid}, {"profile_id": self.pid},
+                        {"attempts": [{"profile": self.pid, "complete": True, "passed": True}]}):
+            bad = dict(validation, embedded=wrapper)
+            self.assertFalse(s.aggregate_release(guarded_release, bad, {})["passed"])
 
     def test_retained_source_ninja_header_runtime_and_audit_bytes_refuse_execution(self):
         real, resolved, audit, result = self.execute()
