@@ -1,6 +1,8 @@
 # Dependency-aware testing — staged implementation receipt
 
-> **Current bounded evidence: [2026-10-18 migration checkpoint](#2026-10-18-migration-checkpoint--6299f003).**
+> **Current acceptance accounting:** [criterion audit](dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
+> and [source-linked run ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md).
+> **Compiled-source bounded evidence:** [2026-10-18 migration checkpoint](#2026-10-18-migration-checkpoint--6299f003).
 > Earlier same-date sections are **HISTORICAL / superseded snapshots**, not current
 > pending statuses. Their source-specific negatives and failed audits stay intact.
 

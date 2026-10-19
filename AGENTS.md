@@ -58,6 +58,12 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
 - Legacy `mdk-gate.py` always reports `cleanup_complete=false`; otherwise successful
   commands return nonzero `cleanup_unverified`, with scoped cleanup errors separate.
   Do not promote historical smoke into successful arbitrary-tree lifecycle proof.
+- Before reporting W11 progress or closing acceptance scope, refresh the
+  [acceptance audit and run ledger](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
+  from source-linked GitHub jobs/artifacts and update `.5`. Count reviewed distinct
+  PR comparisons and successful complete broad integrations, not unit cases,
+  nested jobs, retries or partial diagnostics. Record the snapshot time; never
+  present an old ledger as a live counter or erase a failed attempt.
 - Shadow workflows are additive, not accepted required checks. Publisher
   `NOSTRC_DEPENDENCY_RELEASE_MODE` is `disabled` by default; `disabled`/`shadow`
   publication decisions are not validation attestations. No default/enforcement,

@@ -1,15 +1,16 @@
 # Dependency-aware testing and CI/CD
 
-> **Current progress: [§16](#16-migration-progress--2026-10-18-6299f003).**
+> **Current acceptance accounting: [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18).**
 > The status summary immediately below and earlier progress sections are
 > **HISTORICAL / superseded snapshots**. Their pending statements and failed
-> audits retain their original source identities; §16 records current bounded gates.
+> audits retain their original source identities; §16 records compiled gates and
+> §17 records the independently backfilled acceptance snapshot.
 
 **Status (2026-10-16):** Integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` implements actual separate phase environments/fingerprints/audits, ordinary outer command/build contracts, an explicit shared sanitizer phase route, 98 exact command inputs/87-job accounting and independent workers for all ten authored profiles. This is not production/hosted or W11 acceptance. Review R1 / `.22` is CLOSED **by prelaunch guard/refusal only** at `8179275b2`: selected command/build-contract lanes needing display/private bus, including mixed lanes, are refused without dropping capabilities or fabricating receipts. No drain fix or wrapped positive acceptance; full custody `.23` and unknown full-gate fixture failure/lost-trace `.24` stay OPEN. Parent final combined at `2d64a7ac2`: **307/307 passed, 0 skips, 125.303s**; subsequent changes are docs/failure forensics only. Parent confirms at `97e393cba`: **all six shell suites, four static checkers, full actionlint including ShellCheck and range whitespace passed** (`/tmp/nostrc-phase-final-test-*.log`); no rereview/full-slice acceptance is claimed. Parent native combined **306/306 passed, 0 skips, 146.958s** at `90a1b675f`; production Linux/x86_64 command **306 passed, 0 skips, 405.309s** at `7e3745463` with 99 audited hashes/no gaps. These do not invalidate the wrapped-cancellation adversary or confer full-slice acceptance. Fresh native root build at `7fdadd251` passed, BUILD ONLY/Groundhog OFF. MDK always refuses full lifecycle success; `.11` cause, full union and W11/W12 remain open. No default/enforce/threshold/schedule/protection cutover. Current progress is §13; §§8–12 and earlier review/verification receipts retain their dated SHAs and limits.
 
 **Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
 
-Sections 2–7 retain the implementation specification and historical planning evidence. Sections 8–15 retain dated execution snapshots, not current pending/completion claims. Section 16 and `docs/TESTING.md` distinguish current explicit diagnostics from still-proposed or unaccepted behavior. The specification alone is not implementation or rollout evidence.
+Sections 2–7 retain the implementation specification and historical planning evidence. Sections 8–15 retain dated execution snapshots, not current pending/completion claims. Sections 16–17 and `docs/TESTING.md` distinguish compiled diagnostics and acceptance accounting from still-proposed or unaccepted behavior. The specification alone is not implementation or rollout evidence.
 
 ## Goal
 
@@ -956,9 +957,9 @@ Rollback restores old broad required jobs before removing the new requirement. K
 
 ### Execution index
 
-**Latest bounded checkpoint (2026-10-16):** [§15](#15-final-focused-progress--2026-10-16-df2b23612)
-records exact sanitizer nonmember/configuration contracts and completed
-A/B/native/parent gates. §14 remains the historical, superseded pending snapshot.
+**Latest acceptance accounting (2026-10-18):** [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
+links the criterion audit and source-linked run ledger. [§16](#16-migration-progress--2026-10-18-6299f003)
+retains the compiled-source gates; earlier checkpoints remain historical.
 W2–W10 progress is not full acceptance;
 **W11 NOT MET / W12 NOT RUN**. The index's “Done when” column remains the required
 acceptance contract, not a claim that those conditions have passed.
@@ -1282,3 +1283,29 @@ resource/UI build fixes fold into already intended final Gnostr 0.1.0 and
 unreleased nostr-gtk 1.2.0, not a second increment; published columns/tags unchanged.
 Parent owns final authoritative tracker export, push and clean merged-branch/
 worktree removal, preserving unrelated main-checkout changes.
+
+## 17. Acceptance reconciliation and run ledger — 2026-10-18
+
+The [criterion-by-criterion audit](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
+reconciles `.1`–`.5` against their existing contracts. The [canonical run ledger](../reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md)
+replaces assumed counts with a timestamped API/artifact-backed snapshot. It is
+not a live dashboard or another production execution receipt.
+
+At audited implementation `2743f1735`, 437/437 selection cases and six shell
+suites/four statics/actionlint pass. GitHub backfill found six shadow attempts,
+five failed nested broad accounting jobs and one prelaunch selection failure;
+146 repository runs in the queried window include no PR events. All 59 selected
+small artifact archive digests match. **Verified qualifying counts: 0/20 PR
+comparisons and 0/2 successful broad integrations.** Do not count pushes,
+standalone native tests, nested jobs or diagnostic receipts toward those totals.
+
+`.1` is CLOSED for its finite logical contract after source/test evidence and
+independent acceptance review; `.2`–`.5` stay open for the audit's named root, custody, CI/release and operational
+requirements. No original scope is waived. The latest broad call still fails
+JSON fuzz and skips its coverage report; actual selected workers also retain
+Debug-configuration, registration, semantic/runtime and custody gaps.
+
+The owning migration session must refresh the ledger and `.5` before reporting
+progress or proposing acceptance. W11 NOT MET / W12 NOT RUN; no approval,
+requirement, trigger/schedule, default or release-mode cutover. This pass changes
+only evidence/documentation/tracker state; no component bump.

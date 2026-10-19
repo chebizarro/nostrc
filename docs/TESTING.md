@@ -6,6 +6,14 @@
 > [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
 > and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). Current bounded
 > source-specific results: [6299f003 checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
+> Acceptance decisions and run counts: [criterion audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
+> and [timestamped run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md).
+> The backfilled snapshot verifies **0/20 PR comparisons / 0/2 successful broad
+> integrations**, not from unit counts: six shadow attempts and five failed nested
+> broad accounting jobs were inspected. Refresh before reporting later progress;
+> a documentation push can produce a new run outside this frozen snapshot.
+> `.1` is closed for the proven logical contract; `.2`–`.5` remain open for the
+> audit's specific root, custody, CI/release and operational gaps.
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
