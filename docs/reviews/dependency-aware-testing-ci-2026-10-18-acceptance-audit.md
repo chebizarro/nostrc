@@ -219,5 +219,44 @@ auto-updater or proof that future/expired artifacts were reviewed. No counter
 advances from a green subset, retry, diagnostic/native test run or merely
 `complete=true` in an unsuccessful aggregate's requested-mode field.
 
-**Version assessment:** this audit, ledger, tracker reconciliation and documentation
-are internal evidence only; no shipped artifact change or component bump.
+## Follow-up repairs after the frozen ledger snapshot
+
+The following local repairs are separate from the historical hosted results above;
+they do not revise or erase those failures or advance W11 counters.
+
+- `24d361f19607ea8de9a703054c89390bf1ce7ce8` adds
+  `-DCMAKE_BUILD_TYPE=Debug` to `core.linux` and `groundhog.mdk08` in
+  `tests/selection/inventory.json`. `AuthoredDebugConfigureContracts` in
+  `tests/selection/test_profile_contracts.py` executes miniature real CMake
+  configurations, verifies Debug cache/realization/phase agreement, and proves
+  missing or contradictory Release arguments still refuse without a realization
+  receipt. Independent configuration guards, capabilities and membership are
+  unchanged. A separate macOS/arm64 minimal cache/codemodel probe passed for both
+  argument lists; this is not production Linux, full-profile or hosted proof.
+- `3946ff8d4` integrates the permanent `.4` regression correction in
+  `test_release_validation_exact_tag_sha_broad_identity`: a passing publication
+  baseline with all required package results precedes six independent validation
+  mutations, each rejected with the exact identity/eligibility error. Existing
+  missing/failed-package tests remain. This replaces the earlier confounded test
+  evidence, not the historical audit-only probe or actual release acceptance.
+- At integrated code SHA `3946ff8d49a4d31c89bf5d35e6646b54a5a2eab1`,
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -v`
+  passes **439/439, zero skips, 147.860 seconds**. Log SHA-256:
+  `9f06926b96fb675904f8b8bbfe9daf9e00d8e108d3b856da8f002023bc61dfe7`.
+  All six existing gate shell suites, four static checks and actionlint pass.
+  After initializing pinned submodules in the clean worktree, native macOS/arm64
+  root configure and default-all build pass with
+  `-DNIP55L_SECRET_BACKEND=libsecret` and
+  `-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`, build parallelism 4.
+  Groundhog remains default-off; no full-root CTest execution, production Linux
+  selector admission or hosted success is inferred. The minimal probe JSON hash
+  is `f055bc89fb31b38186f07a06ad6a03ae9fe4288449092a981bcb2ea749004eb4`.
+  Logs are local diagnostic retention, not durable hosted artifact acceptance.
+- The independently reviewed three-file change has no identified blocker. `.31`,
+  `.4` and their parent acceptance beads remain open. A new source-bound hosted
+  run and its artifacts must be reviewed before claiming the configure blocker
+  resolved in production. Membership, runtime/target mappings, sanitizer parity,
+  MDK lifecycle, exact-tag publication validation and rollout prerequisites remain.
+
+**Version assessment:** this audit, ledger, tracker reconciliation, internal CI
+profile authoring and test-only changes require no shipped component bump.
