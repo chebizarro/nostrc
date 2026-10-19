@@ -1,0 +1,212 @@
+{
+  "actual_architecture": "aarch64",
+  "authored_profile_hash": "f024669154f7c94561f96174c2b0a35ae2713cb138d1efeabbc64e3497e0b63e",
+  "authored_x86_64_execution_acceptance": false,
+  "baseline_store_source_lanes": [
+    "groundhog.linux",
+    "groundhog.linux.arm64.prepared011",
+    "groundhog.linux.sanitizers",
+    "groundhog.mdk011",
+    "groundhog.mdk08"
+  ],
+  "closure_names": [
+    "groundhog-store-key",
+    "groundhog-store-key-keyring",
+    "groundhog-test-gst-registry",
+    "groundhog-test-homes"
+  ],
+  "evidence_kind": "fresh_configure_export_and_prebuild_input_audit",
+  "export_sha256": {
+    "CMakeCache.txt": "3871cae0e9bdfa6ceb44d20196f76f7818b7519e45c1636ba68178851fa31e7a",
+    "audit-before.json": "cc55f1b6c46a2161a92525541eb098c57e2038e462f75afabb207562bc33d092",
+    "compile_commands.json": "4754d744a160249f22b72fc2955bec1f874bf45cb2d05d4eb3472033c7b0d642",
+    "nostrc-test-descriptors-Debug.json": "09d43388c5f9cc8fba33ca201c5f42d30bf1985e107805e7b2fbb9e1fbee14e3",
+    "nostrc-test-realization.json": "c7c0d67c114da3449f09ec8bd560229179abb330faca03bcf4fbec0f8f597885"
+  },
+  "libgo_boundary": {
+    "grotto.linux": {
+      "closure_sha256": "1a7838c876523b157f98fb3bdfb5a32729a074a982ecc7f1564d447a1458e55e",
+      "export_sha256": "a795f9ffb58c80956b714d7f0379b28cdc5fef75c46ba00079a629e1ef1d598d",
+      "names": [
+        "GoChannelCloseTest",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest"
+      ],
+      "registration_count": 459
+    },
+    "groundhog.linux": {
+      "closure_sha256": "1a7838c876523b157f98fb3bdfb5a32729a074a982ecc7f1564d447a1458e55e",
+      "export_sha256": "c7c0d67c114da3449f09ec8bd560229179abb330faca03bcf4fbec0f8f597885",
+      "names": [
+        "GoChannelCloseTest",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest"
+      ],
+      "registration_count": 422
+    }
+  },
+  "primary": {
+    "groundhog-store-key": {
+      "closure_names": [
+        "groundhog-store-key",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-store-key",
+        "test-groundhog-store-key"
+      ],
+      "runtime_inputs": [
+        "{source}/cmake/NostrcTestIsolation.cmake",
+        "{build}/gnome/groundhog/groundhog-test-homes.cmake"
+      ],
+      "source_inputs": [
+        "{source}/gnome/groundhog/src/store/gh-store-key.c",
+        "{source}/gnome/groundhog/tests/store/fake-secret.c",
+        "{source}/gnome/groundhog/tests/store/test_store_key.c"
+      ]
+    },
+    "groundhog-store-key-keyring": {
+      "closure_names": [
+        "groundhog-store-key-keyring",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-store-key",
+        "nostrc-test-bus",
+        "test-groundhog-store-key-keyring"
+      ],
+      "runtime_inputs": [
+        "{source}/cmake/NostrcTestIsolation.cmake",
+        "{build}/gnome/groundhog/groundhog-test-homes.cmake"
+      ],
+      "source_inputs": [
+        "{source}/gnome/groundhog/src/store/gh-store-key.c",
+        "{source}/gnome/groundhog/tests/store/fake-secret.c",
+        "{source}/gnome/groundhog/tests/store/test_store_key_keyring.c",
+        "{source}/tests/common/nostrc-test-bus.c"
+      ]
+    }
+  },
+  "profile": "groundhog.linux",
+  "properties": {
+    "groundhog-store-key": {
+      "DEPENDS": [
+        "groundhog-test-homes",
+        "groundhog-test-gst-registry"
+      ],
+      "ENVIRONMENT": [
+        "G_DEBUG=fatal-criticals,fatal-warnings",
+        "GSETTINGS_BACKEND=memory",
+        "NOSTRC_TEST_ISOLATION=1",
+        "HOME={build}/gnome/groundhog/test-homes/groundhog-store-key/home",
+        "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key/data",
+        "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key/config",
+        "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key/cache",
+        "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key/state",
+        "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+      ],
+      "FIXTURES_REQUIRED": [
+        "groundhog-test-homes"
+      ],
+      "TIMEOUT": 30.0
+    },
+    "groundhog-store-key-keyring": {
+      "DEPENDS": [
+        "groundhog-test-homes",
+        "groundhog-test-gst-registry"
+      ],
+      "ENVIRONMENT": [
+        "G_DEBUG=fatal-criticals",
+        "GSETTINGS_BACKEND=memory",
+        "NOSTRC_TEST_ISOLATION=1",
+        "HOME={build}/gnome/groundhog/test-homes/groundhog-store-key-keyring/home",
+        "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key-keyring/data",
+        "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key-keyring/config",
+        "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key-keyring/cache",
+        "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-store-key-keyring/state",
+        "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+      ],
+      "FIXTURES_REQUIRED": [
+        "groundhog-test-homes"
+      ],
+      "SKIP_RETURN_CODE": 77,
+      "TIMEOUT": 90.0
+    }
+  },
+  "source_file_sha256": {
+    ".github/workflows/grotto-ci.yml": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
+    ".github/workflows/groundhog-ci.yml": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c",
+    "CMakeLists.txt": "e4db97d904e02d45118d4ea6a7ea1cc28b302915946a35aa03df14cf8cb9b56f",
+    "gnome/groundhog/CMakeLists.txt": "e9ec66371ad955063bd4cbe1e442c39fedec122040c9a18503adddb3afc667a7",
+    "gnome/groundhog/TestInventory.cmake": "cee18cd570d162868132545f5e00baa7564c00f88ef1617705f571a0ae95bc67",
+    "libgo/CMakeLists.txt": "e69ad00997e0b45883a5aee2c2904b452ccaa469c54289d8ad9f4f0dfa4bd6e3",
+    "scripts/test_selection.py": "9554e1d25685d0e4ddd1db30b0257e62c5378a14e25b5ed610ecc571557769c6",
+    "scripts/test_selection_realization.py": "7a4a645c905ea2e3b9de8a0755026d98317d2854b7a0f41752d4f5c75f38b489"
+  },
+  "source_identity": {
+    "kind": "committed",
+    "sha": "fb7335cb0e9546463293b6adf2044fe54178f5ac"
+  }
+}
