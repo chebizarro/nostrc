@@ -258,5 +258,74 @@ they do not revise or erase those failures or advance W11 counters.
   resolved in production. Membership, runtime/target mappings, sanitizer parity,
   MDK lifecycle, exact-tag publication validation and rollout prerequisites remain.
 
+### Bounded hosted follow-up: configuration repair
+
+At `2026-10-19T03:40:29Z`, run
+[39194781902](https://github.com/chebizarro/nostrc/actions/runs/39194781902)
+was still active. Two completed attempt-1 lane receipts bind committed source
+`2c5b18c23344b3a4c32faf2738e6c34064ab1af7` and retain both resolved and phase
+configuration `Debug`. The previous configure mismatch is no longer their failure.
+Both remain failed, `complete=false`, `complete_gate_eligible=false`:
+
+| Profile | Receipt artifact | Verified archive SHA-256 | Current failure |
+|---|---|---|---|
+| `core.linux` | `12161152656` | `6ce38875cc72169731aabdd4e3734003cd1dbf4484c2e54b1eae89d721979331` | Full prebuild input audit; original findings retained |
+| `groundhog.mdk08` | `12161662149` | `099737fc758330b9aaaab114386c71520d16bad47664f4e25e7f2f9e0dc7cd3e` | Live peer/image lifecycle requires existing guarded adapter |
+
+Both downloads match GitHub's published artifact digest and pass ZIP CRC checks.
+This is a **two-lane observation**, not a complete run-ledger refresh or a successful
+profile/integration. The frozen ledger snapshot and its counters are unchanged;
+no W11 progress or bead closure follows. `.31` retains the wider remaining scope.
+
+### Wrapper input/target mapping follow-up
+
+Commit `224209d37838f2a28fd5baaaab248e8df57e53cf` corrects two actual
+`target_mapping` findings from hosted source `2743f1735`, run `39132650260`:
+artifact `12138577637` is GNostr/GrottoASan; `12138633221` is relayd/GroundhogLinux.
+
+- `tests/CMakeLists.txt` now mirrors app-enable options and GTK/GLib availability
+  before registering GNostr wrapper tests. `tests/` precedes `apps/`, so checking
+  `TARGET gnostr` there would be premature. Explicitly disabled apps no longer
+  register an impossible executable; enabled apps retain sanitizer commands,
+  settings and timeouts. The enabled ASan descriptor names real target `gnostr`,
+  schema source/generated input and required display capability.
+- `apps/relayd/tests/CMakeLists.txt` describes `relayd_bind_iface_integ` with real
+  target `nostrc-relayd` and `run_bind_iface_integ.sh`; its temporary configuration
+  is generated inline by that script. Neither wrapper command changes.
+- Existing `tests/selection/test_realization_inputs.py` covers enabled/default,
+  each disabled option and missing dependency states, unchanged sanitizer command
+  contracts, File API mappings and real schema/target dependency closure.
+  Review correction `abcf04bfd6c0dc74264d06278a8f64834ef19b40` pins the miniature
+  fixture to Ninja/Release and proves ambient Debug/Ninja Multi-Config cannot
+  change its descriptor/configuration contract. No inventory input addition is
+  needed because this existing test file is already authored.
+- Actual full-source Linux/arm64 configure/CTest-export/File API/Ninja probes
+  record Groundhog 422 registrations (relayd present), GrottoASan with GNostr
+  disabled 336 (GNostr absent), and GNostr enabled 400 (GNostr present). The
+  corresponding export SHA-256 values are
+  `215f3c675933269150219777036c0399b44b21f40b6ba78a585e0f9ebbffa11d`,
+  `7afa0116f0b7d4fcee2bb1e01155fa37f8756b7ba49d0c7dce9e2e1a67dffd11`, and
+  `360f4fb9904c7e1692e55b42aebed0ecdb1c3e31943509a9e863b50d284afa48`.
+  Local checkpoint `/tmp/nostrc-wrapper-mapping-20261019/checkpoint.json`
+  (SHA-256 `33e19b3484fdca9bc51848a5a299d6e6b1a713067ff97c1d2c7e057792dccf4c`)
+  records arguments, image, pins, source/file identities and setup failures.
+  This is **configure/export/graph evidence only**: no Linux product build,
+  application execution, full input-audit pass, x86 profile admission or hosted
+  acceptance. No exclusions, nonmember admission or audit guards are changed.
+
+At final code SHA `abcf04bfd6c0dc74264d06278a8f64834ef19b40`, independent
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -v`
+passes **444/444, zero skips, 154.531 seconds**. All six shell gate suites, four
+static checks and actionlint pass. The native macOS/arm64 default-all root
+configure/build passed on the unchanged CMake/product bytes at `224209d37`, using
+`-DNIP55L_SECRET_BACKEND=libsecret` and
+`-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`, build parallelism 4;
+Groundhog is default-off and the latter variable is unused in that configuration.
+No native full-root CTest or application execution is claimed. Bounded independent
+review found only the fixture portability issue corrected above.
+
+`.9`, `.2` and the wider acceptance scope remain open. Other semantic, membership,
+missing runtime inputs and lifecycle gaps are not repaired by these two mappings.
+
 **Version assessment:** this audit, ledger, tracker reconciliation, internal CI
 profile authoring and test-only changes require no shipped component bump.
