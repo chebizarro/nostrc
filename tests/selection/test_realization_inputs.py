@@ -1,9 +1,11 @@
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from realization_support import Project, ROOT, r
 
@@ -78,6 +80,7 @@ class WrapperTargetMappingTests(unittest.TestCase):
 
     def configure(self, options=(), sanitize="address,undefined", deps=True):
         self.assertIsNotNone(shutil.which("cmake"))
+        self.assertIsNotNone(shutil.which("ninja"))
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         source = Path(temp.name).resolve() / "source"
@@ -135,26 +138,43 @@ add_subdirectory(apps/relayd/tests)
 nostrc_finalize_test_inventory()
 ''')
         command = ["cmake", "-S", str(source), "-B", str(build),
+                   "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
                    "-DNOSTRC_TEST_SELECTION_TOKEN=wrapper-contract",
                    f"-DSANITIZE={sanitize}", f"-DTEST_APP_DEPS={'ON' if deps else 'OFF'}", *options]
         proc = subprocess.run(command, capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        proc = subprocess.run(["ctest", "--test-dir", str(build), "--show-only=json-v1"],
+        proc = subprocess.run(["ctest", "--test-dir", str(build), "-C", "Release", "--show-only=json-v1"],
                               capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         tests = {t["name"]: t for t in json.loads(proc.stdout)["tests"]}
         descriptors = {d["name"]: d for d in json.loads(
-            (build / "nostrc-test-descriptors-.json").read_text())["tests"]}
+            (build / "nostrc-test-descriptors-Release.json").read_text())["tests"]}
         reply = build / ".cmake/api/v1/reply"
         codemodel = json.loads(next(reply.glob("codemodel-v2-*.json")).read_text())
+        configurations = codemodel["configurations"]
+        self.assertEqual([c["name"] for c in configurations], ["Release"])
         targets = {}
-        for entry in codemodel["configurations"][0]["targets"]:
+        for entry in configurations[0]["targets"]:
             target = json.loads((reply / entry["jsonFile"]).read_text())
             targets[target["id"]] = {
                 "id": target["id"], "name": target["name"], "type": target["type"],
                 "artifacts": [str(build / a["path"]) for a in target.get("artifacts", [])],
                 "dependencies": [d["id"] for d in target.get("dependencies", [])]}
         return source, build, tests, descriptors, {"targets": targets}
+
+    def test_ambient_generator_and_build_type_do_not_change_fixture_contract(self):
+        with patch.dict(os.environ, {"CMAKE_BUILD_TYPE": "Debug",
+                                     "CMAKE_GENERATOR": "Ninja Multi-Config"}):
+            _, build, tests, descriptors, realization = self.configure()
+        cache = (build / "CMakeCache.txt").read_text().splitlines()
+        self.assertIn("CMAKE_GENERATOR:INTERNAL=Ninja", cache)
+        self.assertIn("CMAKE_BUILD_TYPE:STRING=Release", cache)
+        self.assertEqual([p.name for p in build.glob("nostrc-test-descriptors-*.json")],
+                         ["nostrc-test-descriptors-Release.json"])
+        for name, target in (("gnostr_asan_test", "gnostr"),
+                             ("relayd_bind_iface_integ", "nostrc-relayd")):
+            ids = r._mapped_targets(tests[name], descriptors[name], realization)
+            self.assertEqual([realization["targets"][i]["name"] for i in ids], [target])
 
     def test_disabled_apps_never_register_missing_executable(self):
         for options, deps in [(["-DBUILD_APPS=OFF"], True),
