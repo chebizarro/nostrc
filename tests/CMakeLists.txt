@@ -475,13 +475,17 @@ target_link_directories(test_relay_shutdown PRIVATE ${SECP256K1_LIBRARY_DIRS})
 # GTK Application Integration Tests
 # These tests require the gnostr binary to be built
 
-# Find gnostr binary. These tests only make sense when apps/ is built:
-# with BUILD_APPS=OFF (Debian/RPM feature set) they used to be registered
-# anyway and report "Not Run" because apps/gnostr does not exist
-# (nostrc-xw95). tests/ is added before apps/, so gate on the option rather
-# than on TARGET gnostr (unset BUILD_APPS defaults to ON further down).
+# tests/ precedes apps/, so TARGET gnostr is not available yet. Match the
+# umbrella's options (all default ON) and GTK4/GLib availability instead.
 set(GNOSTR_BINARY "${CMAKE_BINARY_DIR}/apps/gnostr/gnostr")
-if(NOT DEFINED BUILD_APPS OR BUILD_APPS)
+set(_gnostr_test_app_available FALSE)
+if((NOT DEFINED BUILD_APPS OR BUILD_APPS)
+    AND (NOT DEFINED ENABLE_APPS OR ENABLE_APPS)
+    AND (NOT DEFINED BUILD_GNOSTR_APP OR BUILD_GNOSTR_APP))
+  pkg_check_modules(GNOSTR_TEST_APP_DEPS QUIET gtk4 glib-2.0 gobject-2.0 gio-2.0)
+  set(_gnostr_test_app_available "${GNOSTR_TEST_APP_DEPS_FOUND}")
+endif()
+if(_gnostr_test_app_available)
 
 # Test: Run gnostr with ASan/UBSan (if enabled)
 if(SANITIZE MATCHES "address" OR SANITIZE MATCHES "undefined")
@@ -496,6 +500,13 @@ if(SANITIZE MATCHES "address" OR SANITIZE MATCHES "undefined")
     TIMEOUT 60
     LABELS "sanitizer;gtk"
   )
+  if(COMMAND nostrc_describe_test)
+    # The real executable pulls its resource and schema generator dependencies.
+    nostrc_describe_test(gnostr_asan_test OWNER shared.tests TARGETS gnostr
+      INPUTS "${CMAKE_SOURCE_DIR}/apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml"
+             "${CMAKE_BINARY_DIR}/apps/gnostr/gschemas.compiled"
+      REQUIRES display)
+  endif()
 endif()
 
 # Test: Run gnostr with ThreadSanitizer (if enabled)
@@ -535,7 +546,7 @@ if(VALGRIND_EXECUTABLE AND NOT SANITIZE)
     LABELS "valgrind;gtk"
   )
 endif()
-endif() # BUILD_APPS
+endif() # _gnostr_test_app_available
 
 # ==============================================================================
 # Concurrency Test Suite (No GTK required)

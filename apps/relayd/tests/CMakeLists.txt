@@ -59,6 +59,10 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
       SKIP_RETURN_CODE 77
       LABELS "relay;bind;integration"
     )
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(relayd_bind_iface_integ OWNER relayd TARGETS nostrc-relayd
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/run_bind_iface_integ.sh")
+    endif()
   endif()
 endif()
 
