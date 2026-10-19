@@ -81,6 +81,46 @@ class ProductionInventory(unittest.TestCase):
         good = s.make_plan(self.policy, [change(schema)], head="a" * 40, base="b" * 40, context="ci")
         self.assertIn(check, good["selected_checks"])
 
+    def test_nostr_gobject_nip_link_family_selects_groundhog_media(self):
+        # Failed hosted source 2743f17354ac13527d8d8919f81abc711396c959,
+        # run 39132650260, artifact 12138633221: these seven source witnesses
+        # each reported missing_impact_edge for groundhog.media / groundhog-media.
+        # nostr-gobject/CMakeLists.txt's guarded NIP loop forwards these archives
+        # to executable consumers via the root nostrc_link_archives helper.
+        witnesses = {
+            "nip04": "nips/nip04/src/nip04.c",
+            "nip06": "nips/nip06/src/nip06.c",
+            "nip11": "nips/nip11/src/nip11.c",
+            "nip19": "nips/nip19/src/bech32.c",
+            "nip44": "nips/nip44/src/core/nip44.c",
+            "nip46": "nips/nip46/src/core/nip46_envelope.c",
+            "nip49": "nips/nip49/src/core/nip49.c",
+        }
+        check = "groundhog.media"
+        self.assertEqual(self.policy["checks"][check]["ctest_tests"]["groundhog.linux"],
+                         ["groundhog-media"])
+        self.assertTrue(set(witnesses) <= set(self.policy["nodes"]["nostr.gobject"]["depends_on"]))
+        for node, path in witnesses.items():
+            with self.subTest(node=node, input=path):
+                self.assertEqual(s.classify(self.policy, path)["nodes"], [node])
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertEqual(plan["effective_mode"], "affected")
+                self.assertFalse(plan["broadening_reasons"])
+                self.assertIn(check, plan["selected_checks"])
+                self.assertNotIn("libgo.channel", plan["selected_checks"])
+                broken = copy.deepcopy(self.policy)
+                # Remove the entire newly authored family so transitive links
+                # (e.g. nip46 -> nip04/nip44) cannot hide an absent prerequisite.
+                broken["nodes"]["nostr.gobject"]["depends_on"] = [
+                    dep for dep in broken["nodes"]["nostr.gobject"]["depends_on"]
+                    if dep not in witnesses]
+                bad = s.make_plan(broken, [change(path)], head="a" * 40,
+                                  base="b" * 40, context="ci")
+                self.assertNotIn(check, bad["selected_checks"])
+        self.assertEqual(self.policy["nodes"]["groundhog.unclassified"]["depends_on"], [])
+        self.assertEqual(self.policy["nodes"]["execution.groundhog"]["depends_on"], [])
+
     def test_test_vector_edges_do_not_become_production_dependencies(self):
         for node, spec in self.policy["nodes"].items():
             if node.endswith(".test_inputs") or node == "marmot.vector_inputs":

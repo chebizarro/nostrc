@@ -7680,13 +7680,20 @@
         "libnostr",
         "libjson",
         "libgo",
-        "nostrdb"
+        "nostrdb",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49"
       ],
       "id": "nostr.gobject",
       "owner_paths": [
         "nostr-gobject"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "NIP archive family in nostr-gobject/CMakeLists.txt's guarded target loop; root nostrc_link_archives forwards shared-runtime archives to executable consumers. Optional absent targets may overselect; test inputs remain check-local."
     },
     "nostr.gtk": {
       "depends_on": [
