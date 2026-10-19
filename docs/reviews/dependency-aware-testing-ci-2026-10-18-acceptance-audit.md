@@ -509,5 +509,85 @@ CTest, Linux build/execution, postbuild/header audit, hosted/W11 or release
 acceptance follows. Bounded independent review found no blockers. `.9` and the
 wider acceptance beads stay open.
 
+### Ordinary Groundhog store-key membership repair
+
+Code `61d7ecb2af1f61230c60ace365ec5d1b41e3e158` adds ordinary `groundhog.linux`
+membership to the existing `sanitizer.groundhog_store_key` and
+`sanitizer.groundhog_store_key_keyring` checks. Their historical IDs are retained;
+profile instrumentation remains ordinary versus sanitizer. Both exact CTest names
+are already included by the unchanged source workflow filter at
+`.github/workflows/groundhog-ci.yml:272–276`. Profiles, nodes, dependency edges,
+commands, fixture properties, capabilities, exclusions and audit guards are
+unchanged. The new test/export fixture are authored `selection.contract` inputs.
+Review correction `59dad1a077d5e7fb4e1ecac10742888dae6e7655` makes the regression
+reject unknown, empty and unknown-node classifications before checking ownership
+coverage; explicit recognized global inputs remain allowed. The negative test
+exposes the previous vacuous empty-subset assertion.
+
+On the same fresh committed-source Groundhog graph, comparing the exact original
+`fb7335cb0` inventory with the repaired inventory removes **five findings, zero
+added**: two unclaimed registrations (`groundhog-store-key`,
+`groundhog-store-key-keyring`), two missing `groundhog.store` source edges for
+`gh-store-key.c`, and one missing `shared.tests` edge for `nostrc-test-bus.c`.
+Groundhog remains failed: **406 unclaimed + 9,231 missing-impact + 1 owner
+disagreement = 9,638 findings**. The Grotto audit is unchanged and failed:
+**400 unclaimed + 8,971 missing-impact + 2 generated-runtime = 9,373 findings**.
+The comparison is counterfactual inventory on the same fresh graph, not a hosted
+rerun. Linux `x86_64` to `aarch64` overrides occur only in diagnostic copies.
+
+A real nonroot Linux/arm64 selected-target build and direct CTest diagnostic under
+private D-Bus/Xvfb passes both primaries and both required fixture setups
+(`groundhog-test-gst-registry`, `groundhog-test-homes`), with unchanged CTest
+properties. This is **not** backend `run_resolved`, a passing input audit,
+selected-gate receipt, all-target Linux build, postbuild/header audit, authored
+x86 admission, or hosted/release acceptance. Store-source edits retain their
+pre-existing MDK consumer lanes; the repair does not claim those lanes disappear.
+No Grotto or unrelated libgo memberships are added.
+
+**Execution boundary needing a policy decision:** fresh ordinary Groundhog and
+Grotto exports each contain 33 precisely owned libgo registrations, but all 33
+fall outside their respective source workflow test filters. Presence alone does
+not authorize enrollment or execution. They remain unclaimed; no ordinary-profile
+nonmember policy was approved or implemented in this pass. Any exact policy
+proposal requires separate owner review and must preserve not-executed status and
+ineligibility for complete/release promotion. No such policy change is authorized
+by this membership repair.
+
+**Baseline and launch diagnostics retained:** unchanged native 445-case baseline
+first reports 8 failures and 8 errors. Hash-only phase validation detects cached
+parent `XPC_SERVICE_NAME` differing from inherited child value `0`; that is the
+only environment-key difference, and the child environment reproduces the stored
+phase hash. Cause JSON SHA-256:
+`28a0e64fc1acec7e1bc39bd41979a855c8db381252e6d27dcb6c1f1eb0c3ae19`.
+An explicit `/usr/bin/env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1` launch
+passes the unchanged 445 baseline with no parent/child environment differences.
+The guard and environment hashing remain unchanged. A separate shell-assignment
+launch exits 133 before any test output; the same failure reproduces with
+`/usr/bin/true`, so it is a retained launcher failure, not a test-suite result;
+its underlying launcher cause is not diagnosed. The tested command uses
+`/usr/bin/env`, not that assignment form. Linux root setup also has one retained
+custody-test failure because its deliberate `User=0` mutation is no mutation under
+root; the intended nonroot `ci` operator baseline passes 445 cases.
+
+At `61d7ecb2a`, the child records 452/452 controlled native and 452/452 nonroot
+Linux cases passing; parent independently records 452/452 native, zero skips,
+152.766 seconds. Those runs are **not relabeled** as full verification of the
+later test-only review correction. On corrected source
+`59dad1a077d5e7fb4e1ecac10742888dae6e7655`, parent independently runs
+`/usr/bin/env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -v`:
+**453/453 pass, zero skips, 150.113 seconds**. Native default-all build, six shell suites,
+four statics and actionlint pass; build uses libsecret/secret-service safety flags,
+parallelism 4 and default-off Groundhog. No native full-root CTest is claimed.
+
+Local checkpoint `/tmp/nostrc-registration-membership-20261019/checkpoint.json`
+(SHA-256 `28fe90c0fc2436fc370cd6cc306f351b500ae710dcc9e9c50ee0bcc5faa1128d`)
+binds the corrected source and eight focused regressions. Its immutable earlier
+checkpoint `checkpoint-61d7ecb2a.json` (SHA-256
+`19359b878854ecaa1093615959bef9d84fde85ea007bce2548f0417728ba0f3c`)
+retains the configure/audit/build/direct-execution evidence, original failures,
+setup failures and source identities. Parent independently verifies evidence
+hashes and the five-removed/zero-added set difference. No W11 counter advances
+from these diagnostics; `.9`, `.2` and wider acceptance remain open.
+
 **Version assessment:** this audit, ledger, tracker reconciliation, internal CI
 profile authoring and test-only changes require no shipped component bump.
