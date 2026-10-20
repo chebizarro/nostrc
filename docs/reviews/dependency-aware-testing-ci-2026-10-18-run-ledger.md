@@ -1,5 +1,168 @@
 # Dependency-aware testing acceptance run ledger
 
+## Follow-up snapshot — 2026-10-20T23:44:45.035117Z
+
+**Current frozen snapshot**, captured sequentially
+`2026-10-20T23:41:39.393572Z`–`2026-10-20T23:44:45.035117Z` UTC
+(October 21 local). Base `1fad10a239f9cef72b7b056b8ab99679337d53c4`.
+Not a live dashboard or atomic API snapshot. All older text below is retained
+historical evidence, including prior pending/failed/cancelled observations.
+
+### Reviewed root dispositions
+
+All four workflow histories were paginated and matched API totals. Every
+shadow root's attempts `1..run_attempt` and attempt-specific jobs were fetched,
+source/attempt IDs checked; all 14 currently have only attempt 1. Counts derive
+from these reviewed dispositions, **not parent colors or nested-job counts**.
+
+| Run / attempt | API head | Event / parent | Actual broad accounting / qualifying disposition |
+|---|---|---|---|
+| [38833746063/1](https://github.com/chebizarro/nostrc/actions/runs/38833746063) | `5467c02d1` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/38833746063/job/116770701220); rejected |
+| [38845886339/1](https://github.com/chebizarro/nostrc/actions/runs/38845886339) | `33a101276` | push / failure | not launched: selection failed; rejected |
+| [38856570439/1](https://github.com/chebizarro/nostrc/actions/runs/38856570439) | `8a031f443` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/38856570439/job/116841163905); rejected |
+| [38873978927/1](https://github.com/chebizarro/nostrc/actions/runs/38873978927) | `a47807050` | manual / cancelled | [failed](https://github.com/chebizarro/nostrc/actions/runs/38873978927/job/116900093654); rejected |
+| [38878691465/1](https://github.com/chebizarro/nostrc/actions/runs/38878691465) | `249f9657f` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/38878691465/job/116915712972); rejected |
+| [39132650260/1](https://github.com/chebizarro/nostrc/actions/runs/39132650260) | `2743f1735` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39132650260/job/117700034296); rejected |
+| [39194059430/1](https://github.com/chebizarro/nostrc/actions/runs/39194059430) | `5280ea324` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39194059430/job/117882302404); rejected |
+| [39194781902/1](https://github.com/chebizarro/nostrc/actions/runs/39194781902) | `2c5b18c23` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39194781902/job/117883493320); rejected |
+| [39196963896/1](https://github.com/chebizarro/nostrc/actions/runs/39196963896) | `e57ef16ed` | push / failure (was pending) | [failed](https://github.com/chebizarro/nostrc/actions/runs/39196963896/job/117892316778); rejected |
+| [39198909741/1](https://github.com/chebizarro/nostrc/actions/runs/39198909741) | `fb7335cb0` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39198909741/job/117902065231); rejected |
+| [39202094613/1](https://github.com/chebizarro/nostrc/actions/runs/39202094613) | `6ce261c42` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39202094613/job/117912056510); rejected |
+| [39271217772/1](https://github.com/chebizarro/nostrc/actions/runs/39271217772) | `b72b9ec70` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39271217772/job/118146290151); rejected |
+| [39280037488/1](https://github.com/chebizarro/nostrc/actions/runs/39280037488) | `d120bc972` | PR #1 / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39280037488/job/118179549498); selected failures too; PR comparison rejected |
+| [39280051357/1](https://github.com/chebizarro/nostrc/actions/runs/39280051357) | `1fad10a23` | push / failure | [failed](https://github.com/chebizarro/nostrc/actions/runs/39280051357/job/118172318805); rejected |
+
+**0/20 qualifying reviewed distinct PR comparisons; 0/2 successful complete
+broad integrations. W11 NOT MET / W12 NOT RUN.** Distinct representative PRs
+still require source/range-bound legacy/selective evidence and reviewed
+differences; complete broad acceptance still requires successful accounting and
+reviewed full required-workload/receipt union. No criterion is waived.
+
+Repository history since `2026-10-15T00:00:00Z`: **190 roots**, 167 push /
+13 schedule / 6 PR / 4 manual. The six PR workflow events all have head
+`d120bc972` (static, libhanami, Grotto, Groundhog, nostrc, shadow); these are
+**one PR candidate**, not six distinct comparisons. No qualifying credit.
+Shadow: 14 roots / 14 attempts, 12 failed pushes + 1 failed PR + 1 cancelled
+manual. Thirteen launched broad calls each expose 47 jobs: **611 observations**
+(541 success / 52 failure / 14 skipped / 4 cancelled), with **13 failed family
+accounting jobs**. The other root never launched broad. No pending call remains.
+Broad/worker/release standalone workflow histories remain 0/0/0, not zero nested
+executions. Exact-source broad workflow bytes (all API heads) retain SHA-256
+`79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6`,
+requiring every family result to equal success. Existing failures, cancellations,
+advisory distinctions and skips are retained; no successful full union inferred.
+
+### PR identity and exact failed workers
+
+For PR #1, API/job head is `d120bc972bbb0f4c09951e376bcc229b41931e0e`;
+**tested source is `39dcccd70e629adb3efb0d904700afe1e45793f9`**, the synthetic
+merge with parents `b72b9ec70f4aee51a4a5f42447bc763cce5cc516` and that PR head.
+The [Git commit API](https://api.github.com/repos/chebizarro/nostrc/git/commits/39dcccd70e629adb3efb0d904700afe1e45793f9)
+and [actual worker log](https://github.com/chebizarro/nostrc/actions/runs/39280037488/job/118152909114)
+(`refs/pull/1/merge`, checkout/input SHA) establish the relationship. Do not
+silently equate API head and tested source. Every PR payload binds the tested
+source, inventory and plan `a6ebb802ba08794d50d49d9ec1938fdfa29a4e1907199200ea3a583d3239553a`.
+All attempt suffixes are 1; backend retries are not GitHub attempts.
+
+The [follow-up audit](dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#pr-1-worker-findings-and-bounded-next-fix)
+records each lane's exact failure stage and findings. Nine failed selected
+workers retain failures; only standalone libgo Linux/macOS and static policy
+succeed as bounded diagnostics. Ordinary Groundhog/Grotto fail at resolve on
+reviewed toolchain drift, before build/CTest; no missing-impact or membership
+finding is reclassified by the new worker PATH fix. Shared sanitizer partition,
+core/Grotto full audits and live MDK lifecycle refusal remain blockers.
+
+| Newly reviewed aggregate | Artifact | ZIP SHA-256 | Retained result |
+|---|---|---|---|
+| `39196963896` | `12163810593` | `e008a02d6bada4d975205b4727a337bf5f265535b16c84ffd005e4b2ab34ba3d` | passed=false, eligible=false, complete request=true; 465 errors |
+| `39198909741` | `12164233557` | `ccdaf5891a2f5a6e69d722947a806031aeff44c6af340c47ac0eed531bd0bda6` | passed=false, eligible=false, complete request=true; 465 errors |
+| `39202094613` | `12166635041` | `b71ef1d0f3c85dfb299d33af9004d3147dbc425ae0aa92b0194a7ab8425b695f` | passed=false, eligible=false, complete request=true; 469 errors |
+| `39271217772` | `12197688339` | `a959bb6e68989c6707bcf20b90ad8f2cae44503fb682f4e605b6f826da7725e0` | passed=false, eligible=false, complete request=true; 469 errors |
+| `39280037488` | `12202839496` | `558efdd3b8e0f92da1a4abd7b6b50e66dcb94b472ad60acd63d59c6f6fb4d4cc` | passed=false, eligible=false, complete=false; 471 errors |
+| `39280051357` | `12204875011` | `51b6c573eff92ea0e044c983e83c7b748e04a7acdecb3190d374021261e61383` | passed=false, eligible=false, complete=false; 471 errors |
+
+### Integrity and reproducibility limits
+
+534 API-visible artifacts. **171/171** small plan/receipt/aggregate ZIPs match
+API SHA-256 and size, pass CRC, and bind payload identity where available:
+13 plans, 13 failed aggregates, 116 normalized lane receipts, 9 historical raw
+failed audits lacking payload plan/lane fields, 20 historical log-only archives.
+The last 29 remain explicit negative/incomplete evidence, not normalized success.
+All **100** cached historical archive/member hashes equal the previous index;
+**71** additional archives were retrieved/validated against the new API capture.
+Of the 363 artifacts outside this small set, 12 PR raw evidence ZIPs were also
+inspected separately (matching API digest/size/CRC); the other 351 were not
+retrieved. No downloaded binaries/installers were executed.
+
+PR small-archive hashes (artifact IDs resolve under
+`https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/<id>`):
+
+```text
+plan                    12198423491 cc98766b9d07bc9842874fb37626f854cc43624ce816c0a87f1be5ded7c53fe0
+core.linux              12201515906 29255db6a5a06684bbed4b09ab6f2fdbbb68b17e96f5ba31cae221baffc6b566
+core.linux.asan         12201400042 774ef0ddede653b86baf29f3c8de352bec4d31632651d74aac8df30ac4bf7a35
+core.macos.asan         12201736755 182c69fc7019e1bf91de520d86c0edb5c4d2e4e196b1943ebff33deb3406a07a
+grotto.linux            12201635211 985f749ff6982e84bce4eb6bf0a1b40bb5c25eea8e8dd57a64246233c222de7c
+grotto.linux.asan_ubsan  12200198920 a473fbe6a8768923e8c44c8a9c695c8c39785eb83e27936ca0ed1579af27682b
+groundhog.linux         12202406176 7e51d9bec0c7e2f1bc096d96b56690238d4548f4afc709d51f1b5a8ae33c254f
+groundhog.sanitizers    12201771381 f145031a330fb051beb58eb9cb27d61dc30bfe89c3168366e4dc67d66483b036
+groundhog.mdk011        12201192525 fe0ae490cac2c1d37b2a498b8717d4c8b7830597854e7344a2c6636dbe4f7451
+groundhog.mdk08         12202011656 5230887ec1423701b40fdcac6824387f8b3410fc18d9710f76468d7446976ebb
+libgo.linux.asan        12201242112 d09682777af3d3be22c2fc8afbe224a8ae0bc0e9a591fd4a2830442442c8dad7
+libgo.macos.asan        12200958584 09f2d8ec06fd48843a9cf0532122f88624bb57f9111c3e33bcbbb8a2128b64eb
+static.policy           12201942608 64c7a33eb79d7d36d1f548f656bb2df01b0c439a8470b539f21b8b66ebfe593f
+```
+
+Temporary raw capture: `/tmp/nostrc-ci-followup-20261021/`; it and GitHub raw
+artifacts can expire. The retained hashes/links do not guarantee future raw-byte
+availability. API histories use the same four workflow IDs and repository
+window as the previous capture. `queries.json` retains each query's UTC start/
+finish, API path, response SHA-256, pagination and totals; `capture-summary.json`
+retains all full root source/attempt IDs. First five query windows are
+23:41:39.393696–23:41:48.525439 (shadow), 23:41:48.525879–23:41:52.994207
+(broad), 23:41:52.994549–23:41:55.604492 (worker),
+23:41:55.604932–23:41:56.031878 (release),
+23:41:56.032211–23:42:09.630055 (repository), all October 20 UTC.
+Checks include cached historical equality, PR merge-parent/checkout identity,
+source/plan/inventory/lane binding and root-deduplicated rejected dispositions.
+Initial PR archive retrieval hit a TLS handshake timeout; retrieval subsequently
+succeeded with verified bytes. No hosted attempt was retried or relabelled.
+
+```text
+capture.py                     0391e774f2c115c6264c5a80efaa653ed612ce6cb43e483996cd56515d192f68
+capture-summary.json           23003b9158b7567e924ccdd530b1a58b0a06e6417fa90a16063723783557b846
+queries.json                   e1e0db77da6c768b9b59d6d0d711b5be64c53d904839b4717c05b6e715f82377
+validate_artifacts.py          3364fb7aa501b2f2ca49601b5033526763048d03bb5ca3c28c794cd379426bb1
+artifact-validation-result    eecf397dff1a50f1d696e0230d71e304e17a9d70d97518a3b08a8a6b21eb538c
+artifact-retrieval-index.json  ff214c9136c7af349ebc1041c6e43f2c9bee9d724785f1f1f1625a1ce7cd748d
+pr1-tested-commit.json         8939bda8f0948394db06a8e49c4bc4cf78e9de53a5753055bfe184a2eed57a28
+runner-software.md             3911b4bc1aa423be7b7469a75f3093f51306c02f2638f2a8b4f5ed31f3ffe791
+```
+
+Final source-bound verification: `verify-followup.py` PASS checks all API
+response hashes/pagination, 14 rejected dispositions, repository PR deduplication,
+171 artifact identities / 100 historical equal, PR merge/source/lane binding,
+ordinary refusal/incomplete flags, historical document-body preservation and the
+five-file ownership boundary. It also proves inventory differs only in the two
+worker source-accounting hashes, not any profile or subset authority. Script
+SHA-256 `a836c6385d0d69e9f2a93fd540814498b22b67bd9fbea3c455662faac5b4963c`;
+log `75c51e5ecd18dac4c9d2427b68c54a19e83cd8c5f21458708792a0717aeb5f71`.
+[Local implementation gates and their limits](dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#pr-1-worker-findings-and-bounded-next-fix)
+are separate from this frozen hosted snapshot, never additions to its counters.
+Jev advisory range triage: 89 requests / 755,636 input tokens / USD 0.031736;
+range suggestions guided bounded reads, while broad inventory ranking was not
+decisive and structured source/hash checks supplied the evidence. No truth,
+acceptance authority or measured savings is assigned to these judgments.
+
+Protection, release mode, baseline costs and native/product acceptance were
+**not refreshed**. No default/enforcement/release, legacy gate/trigger/schedule,
+protection or acceptance-policy cutover; no unmet criterion/bead closed.
+Version assessment: internal worker/tests/evidence only, **no component bump**.
+
+## Historical 2026-10-19 snapshot retained
+
+The following body is preserved unchanged, including its dated “current” wording.
+
 **Current versioned snapshot: 2026-10-19T04:10:01.512997Z**, observed over
 `2026-10-19T04:09:10.542307Z`–`2026-10-19T04:10:01.512997Z` UTC.
 This is not a live dashboard or an atomic API snapshot; per-query windows are

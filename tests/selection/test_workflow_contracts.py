@@ -450,6 +450,65 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('pkg_check_modules(LIBPEAS REQUIRED IMPORTED_TARGET libpeas-2)',
                       (ROOT / 'apps/gnostr/CMakeLists.txt').read_text())
 
+    def test_ordinary_tool_selection_is_scoped_and_precedes_execution(self):
+        text = workflow('dependency-worker')
+        block = text.split('- name: Select reviewed ordinary profile tools', 1)[1].split('- name:', 1)[0]
+        self.assertIn("if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')", block)
+        self.assertLess(text.index('- name: Install Linux profile prerequisites'),
+                        text.index('- name: Select reviewed ordinary profile tools'))
+        self.assertLess(text.index('- name: Select reviewed ordinary profile tools'),
+                        text.index('- name: Resolve, audit, build and execute exact selected checks'))
+        self.assertIn('for tool in cmake ctest cpack ninja;', block)
+        self.assertNotIn('sudo', block)
+        self.assertNotIn('|| true', block)
+        # No profile/authority rehash or compiler alias to make drift acceptable.
+        self.assertNotIn('inventory.json', block)
+        self.assertNotIn('compiler', step_script(text, 'Select reviewed ordinary profile tools'))
+
+    def test_ordinary_tools_shadow_hosted_tools_without_shadowing_blueprint(self):
+        script = step_script(workflow('dependency-worker'), 'Select reviewed ordinary profile tools')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            distro, hosted = root / 'distro', root / 'hosted'
+            distro.mkdir()
+            hosted.mkdir()
+            tools = ('cmake', 'ctest', 'cpack', 'ninja')
+            for tool in tools:
+                target = distro / tool
+                target.write_text('#!/bin/sh\necho distro-' + tool + '\n')
+                target.chmod(0o755)
+                target = hosted / tool
+                target.write_text('#!/bin/sh\necho wrong-hosted-tool >&2\nexit 97\n')
+                target.chmod(0o755)
+            blueprint = hosted / 'blueprint-compiler'
+            blueprint.write_text('#!/bin/sh\necho pinned-blueprint\n')
+            blueprint.chmod(0o755)
+            path_file = root / 'github-path'
+            # Substitute only the system-tool directory for this portable shell test.
+            script = script.replace('/usr/bin/', str(distro) + '/')
+            env = dict(os.environ, RUNNER_TEMP=str(root), GITHUB_PATH=str(path_file),
+                       PATH=str(hosted) + os.pathsep + os.environ['PATH'])
+            result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            selected = path_file.read_text().strip()
+            self.assertEqual(set(p.name for p in Path(selected).iterdir()), set(tools))
+            for tool in tools:
+                self.assertEqual((Path(selected) / tool).resolve(), (distro / tool).resolve())
+            env['PATH'] = selected + os.pathsep + env['PATH']
+            result = subprocess.run(['bash', '-c', 'cmake; ctest; cpack; ninja; blueprint-compiler'],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), ['distro-' + t for t in tools] + ['pinned-blueprint'])
+            # Missing tools cannot publish a partial PATH selection.
+            (distro / 'ninja').unlink()
+            path_file.unlink()
+            root2 = root / 'missing'
+            root2.mkdir()
+            env['RUNNER_TEMP'] = str(root2)
+            result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(path_file.exists())
+
     def test_native_root_setup_and_phase_metadata_are_not_standalone_libgo_aliases(self):
         text = workflow('dependency-worker')
         self.assertIn("(inputs.profile == 'libgo.macos.asan' || inputs.profile == 'core.macos.asan') && 'macos-latest' || 'ubuntu-24.04'", text)

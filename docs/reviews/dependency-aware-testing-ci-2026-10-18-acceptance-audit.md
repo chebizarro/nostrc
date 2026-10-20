@@ -1,5 +1,118 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Follow-up refresh — 2026-10-21 local / 2026-10-20 UTC
+
+**Frozen API snapshot: `2026-10-20T23:44:45.035117Z`**, sequential capture
+`23:41:39.393572Z`–`23:44:45.035117Z`, from implementation base
+`1fad10a239f9cef72b7b056b8ab99679337d53c4` (merged PR #1).
+The [new ledger section](dependency-aware-testing-ci-2026-10-18-run-ledger.md#follow-up-snapshot--2026-10-20t234445035117z)
+records all 14 reviewed root dispositions, source/attempt identities and artifact
+integrity. Older snapshots below remain historical, not live counters.
+
+- **14 shadow roots / 14 attempts**, all attempt 1: 12 failed pushes, 1 failed
+  PR run, 1 cancelled manual run. All are terminal; the previously pending
+  `39196963896` is now a retained failure, not a successful integration.
+- **13 failed actual broad family accounting jobs**, 1 selection failure before
+  launch. **0/2 successful complete broad integrations**. The 611 nested jobs
+  (541 success / 52 failure / 14 skipped / 4 cancelled) are not integrations.
+- Repository context since October 15: **190 roots** (167 push / 13 schedule /
+  6 PR / 4 manual). All six PR workflow events share head `d120bc972`; they
+  are not six comparisons. PR #1 is rejected for qualifying credit: selected
+  workers and actual broad family accounting fail; no reviewed successful
+  legacy/selective comparison or required-workload union is established.
+  **0/20 qualifying reviewed distinct PR comparisons; W11 NOT MET / W12 NOT RUN.**
+- 534 API-visible artifacts; 171 small plan/receipt/aggregate ZIPs verified
+  (100 cached historical bytes unchanged + 71 newly reviewed archives).
+  All sizes/API digests/CRCs and available payload identities pass. Separately,
+  12 PR evidence ZIPs were inspected for failure-stage details. No downloaded
+  binary or installer was executed; these are inspections, not hosted reruns.
+
+### PR #1 worker findings and bounded next fix
+
+[Shadow run 39280037488/1](https://github.com/chebizarro/nostrc/actions/runs/39280037488)
+has API/job head **`d120bc972bbb0f4c09951e376bcc229b41931e0e`**, but its
+plan and checkout correctly test synthetic merge
+**`39dcccd70e629adb3efb0d904700afe1e45793f9`**. The Git commit API proves
+parents `b72b9ec70` and `d120bc972`; the retained job log explicitly records
+`refs/pull/1/merge` and that checkout. This distinction is checked, not replaced
+with a fabricated head-equals-tested-SHA assertion. Plan ID
+`a6ebb802ba08794d50d49d9ec1938fdfa29a4e1907199200ea3a583d3239553a`;
+all 12 normalized receipts match its tested source/plan/inventory/lane identity.
+
+| Profile | Retained failure / bounded result | Existing scope |
+|---|---|---|
+| `groundhog.linux`, `grotto.linux` | Resolve refuses `ordinary nonmember subset: reviewed compiler/toolchain/generator changed`; configure passed, build/test not executed | `.9` / `.31` |
+| `core.linux` | Preaudit: 429 unclaimed, 581 missing-impact, 2 generated-runtime-without-target findings | `.9` / `.31` |
+| `core.linux.asan`, `core.macos.asan` | Each preaudit retains 3 unclaimed registrations (`MockRelayUnit`, `concurrency_subscription_shutdown_asan`, `test_json_envelope`) | `.9`; no additional nonmember authority |
+| `grotto.linux.asan_ubsan` | Preaudit: 321 unclaimed, 277 missing-impact, 2 generated-runtime-without-target findings | `.9` / `.31` |
+| `groundhog.linux.sanitizers` | Resolve refuses fresh registration partition mismatch | `.8` / `.9`; original exact policy unchanged |
+| `groundhog.mdk08`, `groundhog.mdk011` | Capability refusal: guarded live peer/image lifecycle required | `.8` / `.23` |
+| `libgo.linux.asan`, `libgo.macos.asan`, `static.policy` | Success diagnostics (33 / 32 / 1 observed executions), not complete eligible roots | No acceptance credit |
+
+The [Groundhog worker log](https://github.com/chebizarro/nostrc/actions/runs/39280037488/job/118152909114)
+shows apt installing CMake `3.28.3-1build7` and Ninja `1.11.1-2`, but the worker
+never selected those tools over the hosted PATH. Its recorded
+[runner image manifest](https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md)
+advertises CMake **3.31.6** and Ninja **1.13.2**. The exact ordinary contract was
+reviewed with CMake/CTest **3.28.3**, Ninja **1.11.1**, `/usr/bin` CMake paths.
+Thus installing dependencies without selecting them is a concrete worker setup
+bug. **The exact invoked hosted tool versions are not retained in these resolve
+failures**; PATH shadowing explains the refusal, but a fresh hosted rerun must
+establish whether any additional compiler/graph drift remains. Master push
+[39280051357](https://github.com/chebizarro/nostrc/actions/runs/39280051357)
+also retains the same ordinary refusal (artifacts `12201691329`, `12200151668`).
+
+The bounded fix selects only distro `cmake`, `ctest`, `cpack`, `ninja` through a
+private worker PATH directory, **only for `groundhog.linux` / `grotto.linux`**.
+It prints their versions and refuses missing tools before publishing PATH.
+Pinned Blueprint and other tools keep their existing lookup. No profile or
+review hash is rewritten; the full exact toolchain, graph, source, fixture,
+input and header audits still decide admission. Exactly 33 ordinary omissions
+remain `not_executed`, with `complete=false` and `complete_gate_eligible=false`; no sanitizer/core
+policy extension, selected-only audit fallback, default/enforcement/release,
+legacy trigger/schedule/protection change or unmet-criterion closure.
+
+**Final local gates:** `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover
+-s tests/selection -v` under `caffeinate -i`: **468/468 PASS, zero skips,
+201.382s, exit 0**. Focused workflow contracts **38/38 PASS**; all six existing
+shell regression suites (`test-pre-push`, `test-full-gate`,
+`test-linux-gate-lifecycle`, `test-linux-gate-smoke`, `test-sanitizer-gate`,
+`test-test-gate`), four mandatory static checkers, actionlint and whitespace PASS.
+All 89 job-accounting records validate; only the worker job's two source hashes
+changed in inventory. Every profile, exact-33 review record and other inventory
+field equals the base. The first full run retained **468 cases, 1 failure +
+2 errors**: a portable `/var` versus `/private/var` test assertion (already
+corrected but loaded before the edit) and stale worker source-accounting hashes.
+No test was skipped/weakened; both earlier focused/full failure logs remain.
+
+One bounded static review completed with **no blockers** on the authoritative
+five-file delta. The review tool initially supplied an unrelated older policy
+diff; that blocked input was corrected in the same chat with the actual inline
+delta, not treated as a review of this change. No additional broad rereview.
+**Hosted rerun, full production-profile/root configure/build/CTest and release
+validation at the changed worker source: NOT RUN.** Shell regressions and the
+miniature below do not substitute for those gates.
+
+Final selection log SHA-256
+`2e9d87c872915cebecbc25e564144a41d7f511a877390076b09ff2858271d20d`;
+first failed full log `32568f810a994b2b91fa96f8a1089d68e635f8384a395b582128f0ceb52d3748`;
+six-shell log `396387fe02ddddcb4458c895c0794291086ca964e22e930e36e2df5106fe9c9f`.
+No policy relaxation or hosted success inferred from their exits.
+A Linux/amd64 miniature (existing pinned local image, not a GitHub runner)
+executes the actual worker setup shell with poisoned higher-PATH tools, then
+configures/builds/tests one C target. Its CMake File API identity and CTest/Ninja
+versions match the reviewed tool fields, and 1/1 CTest passes. This does **not**
+prove the full profile toolchain/candidate contract or production acceptance.
+Probe result SHA-256 `3236f82594052ea02f5418227fd2a459aa954f0c7b8c9b3421ca99d173900177`;
+raw evidence `/tmp/nostrc-ci-followup-20261021/` is temporary.
+`.2`–`.5`, `.9`, `.31` and other unmet scopes remain open.
+**Version assessment: no component bump; internal CI/test/docs only.**
+
+## Earlier snapshots retained
+
+All following content, including its dated “current” headings, is unchanged
+historical evidence. Use the newer explicit snapshot above for refreshed counts.
+
 ## Current API refresh — 2026-10-19
 
 **Frozen snapshot: `2026-10-19T04:10:01.512997Z`.** Sequential read-only API
