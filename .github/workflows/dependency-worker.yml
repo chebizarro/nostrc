@@ -69,6 +69,22 @@ jobs:
           sudo localedef -i en_US -f UTF-8 en_US.UTF-8
           # The default root app requires the libpeas-2 ABI, not libpeas-1.0.
           pkg-config --modversion libpeas-2
+      - name: Select reviewed ordinary profile tools
+        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')
+        run: |
+          set -euo pipefail
+          # Hosted PATH also contains newer CMake/Ninja; apt installation alone
+          # does not select the distro tools bound by the exact-33 review.
+          tool_bin="$RUNNER_TEMP/dependency-ordinary-tools"
+          mkdir "$tool_bin"
+          for tool in cmake ctest cpack ninja; do
+            test -x "/usr/bin/$tool"
+            ln -s "/usr/bin/$tool" "$tool_bin/$tool"
+            "$tool_bin/$tool" --version
+          done
+          # Only these tools precede PATH: keep pinned Blueprint and other setup.
+          # The selector still checks the full reviewed toolchain fingerprint.
+          echo "$tool_bin" >> "$GITHUB_PATH"
       - name: Install pinned Blueprint compiler for application profiles
         if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')
         run: |
