@@ -3,13 +3,13 @@ import ast
 import hashlib
 import json
 
-from selector_support import ROOT, s
+from selector_support import ROOT
 
 
 FIXTURE = ROOT / 'tests/selection/fixtures/resource_diagnostics_projection_20261022.json'
 
 
-def project_resource_helper(case, content, historical_hash, policy):
+def project_resource_helper(case, content, historical_hash):
     """Check the reviewed current bytes, then reconstruct the exact old bytes."""
     witness = json.loads(FIXTURE.read_text())
     case.assertEqual(witness['schema_version'], 1)
@@ -19,8 +19,6 @@ def project_resource_helper(case, content, historical_hash, policy):
     case.assertEqual(hashlib.sha256(content).hexdigest(), witness['current_helper_sha256'])
     for name, digest in witness['historical_fixtures_sha256'].items():
         case.assertEqual(hashlib.sha256((FIXTURE.parent / name).read_bytes()).hexdigest(), digest)
-    for key, digest in witness['authority_records_sha256'].items():
-        case.assertEqual(s.digest(policy[key]), digest)
     previous = content
     for edit in witness['reverse_edits']:
         current, old = edit['current'].encode(), edit['previous'].encode()

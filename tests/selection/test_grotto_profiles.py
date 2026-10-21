@@ -162,7 +162,7 @@ endif()
                     self.assertEqual(content.count(call + metadata), 1)
                     content = content.replace(call + metadata, call)
             if relative == 'tests/common/test_blueprint_resources.py':
-                content = project_resource_helper(self, content, expected, self.policy)
+                content = project_resource_helper(self, content, expected)
             self.assertEqual(hashlib.sha256(content).hexdigest(), expected, relative)
 
     def test_build_aggregate_is_not_native_host_packaging_or_ctest_coverage(self):

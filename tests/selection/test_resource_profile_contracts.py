@@ -77,8 +77,8 @@ class ResourceProfileContracts(unittest.TestCase):
             content = (ROOT / relative).read_bytes()
             if relative == 'tests/common/test_blueprint_resources.py':
                 with self.assertRaises(AssertionError):
-                    project_resource_helper(self, content + b'\n', expected, self.policy)
-                content = project_resource_helper(self, content, expected, self.policy)
+                    project_resource_helper(self, content + b'\n', expected)
+                content = project_resource_helper(self, content, expected)
             self.assertEqual(hashlib.sha256(content).hexdigest(), expected, relative)
 
     def test_new_gtk_registration_is_visible_but_not_in_legacy_grotto_selection(self):
