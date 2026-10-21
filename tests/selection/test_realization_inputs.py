@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from realization_support import Project, ROOT, r
+from selector_support import s
 
 
 class InputTests(Project):
@@ -28,6 +30,46 @@ class InputTests(Project):
         self.assertTrue(audit["requires_broad"])
         self.assertTrue(any(g["kind"] == "missing_impact_edge" and g["test"] == "omitted"
                             and g["input"] == "shared.h" for g in audit["gaps"]))
+
+    def test_production_conversations_edge_covers_linked_sources_and_headers(self):
+        # A real miniature link/header audit using the production semantic graph;
+        # not evidence that an existing full production profile passes.
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        self.inventory["nodes"].update(copy.deepcopy(policy["nodes"]))
+        self.inventory["nodes"]["application"]["depends_on"] = ["groundhog.mls_service", "vectors"]
+        for rule in self.inventory["path_rules"]:
+            if rule.get("exact") == "shared.h":
+                rule["nodes"] = ["nostr.gtk"]
+        self.inventory["path_rules"].append({"exact": "portable.c", "nodes": ["nostr.gtk"]})
+        (self.root / "portable.c").write_text('#include "shared.h"\nint portable(void) { return SHARED; }\n')
+        cmake = self.root / "CMakeLists.txt"
+        cmake.write_text(cmake.read_text().replace("add_executable(shared main.c)",
+            "add_library(portable STATIC portable.c)\nadd_executable(shared main.c)\n"
+            "target_link_libraries(shared PRIVATE portable)"))
+        realized = self.configure()
+        self.build_all()
+        before = r.check_inputs(self.inventory, realized)
+        after = self.audit(realized)
+        self.assertTrue(before["passed"], before["gaps"])
+        self.assertTrue(after["passed"], after["gaps"])
+        self.assertGreater(after["header_entries"], 0)
+        broken = copy.deepcopy(self.inventory)
+        broken["nodes"]["groundhog.conversations"]["depends_on"].remove("nostr.gtk")
+        # Omitted executions are still audited. Removing the single shared edge
+        # must expose both source and discovered-header findings for every test.
+        for postbuild, good in ((False, before), (True, after)):
+            bad = r.check_inputs(broken, realized, after_build=postbuild)
+            self.assertFalse(bad["passed"])
+            self.assertTrue(bad["requires_broad"])
+            self.assertEqual(bad["input_hashes"], good["input_hashes"])
+            for test in ("a-model", "gui", "omitted"):
+                for path, kind in (("portable.c", "source"), ("shared.h", "header")):
+                    if kind == "header" and not postbuild:
+                        continue
+                    self.assertTrue(any(g["kind"] == "missing_impact_edge"
+                        and g.get("test") == test and g.get("input") == path
+                        and g.get("input_kind") == kind and g.get("missing_nodes") == ["nostr.gtk"]
+                        for g in bad["gaps"]), (test, path, bad["gaps"]))
 
     def test_missing_runtime_file_is_not_ignored(self):
         realized = self.configure()

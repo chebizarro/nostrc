@@ -121,6 +121,32 @@ class ProductionInventory(unittest.TestCase):
         self.assertEqual(self.policy["nodes"]["groundhog.unclassified"]["depends_on"], [])
         self.assertEqual(self.policy["nodes"]["execution.groundhog"]["depends_on"], [])
 
+    def test_conversations_portable_dependency_selects_transitive_consumers(self):
+        # PR4 run 39522018295, source 033cc630b1b7f3b728166fe96026c796a70bd301:
+        # both ordinary full preaudits report these portable sources through
+        # groundhog-conversations (CMake PUBLIC NostrGtk::Portable, gh-message.c).
+        consumers = {"groundhog.media", "groundhog.mls_service", "groundhog.mls_files",
+                     "groundhog.mls_media", "groundhog.mls_ui"}
+        broken = copy.deepcopy(self.policy)
+        broken["nodes"]["groundhog.conversations"]["depends_on"] = [
+            node for node in broken["nodes"]["groundhog.conversations"]["depends_on"]
+            if node != "nostr.gtk"]
+        for path in ("nostr-gtk/src/gn-nostr-reference.c",
+                     "nostr-gtk/include/nostr-gtk-1.0/gn-nostr-reference.h"):
+            with self.subTest(input=path):
+                self.assertEqual(s.classify(self.policy, path)["nodes"], ["nostr.gtk"])
+                good = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertEqual(good["effective_mode"], "affected")
+                self.assertFalse(good["broadening_reasons"])
+                self.assertTrue(consumers <= set(good["selected_checks"]))
+                self.assertNotIn("libgo.channel", good["selected_checks"])
+                bad = s.make_plan(broken, [change(path)], head="a" * 40,
+                                  base="b" * 40, context="ci")
+                self.assertTrue(consumers.isdisjoint(bad["selected_checks"]))
+        for node in ("groundhog.unclassified", "execution.groundhog"):
+            self.assertEqual(self.policy["nodes"][node]["depends_on"], [])
+
     def test_test_vector_edges_do_not_become_production_dependencies(self):
         for node, spec in self.policy["nodes"].items():
             if node.endswith(".test_inputs") or node == "marmot.vector_inputs":

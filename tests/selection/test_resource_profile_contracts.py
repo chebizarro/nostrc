@@ -50,7 +50,12 @@ class ResourceProfileContracts(unittest.TestCase):
         self.assertEqual(properties['FIXTURES_REQUIRED'], ['gnostr-test-homes'])
         self.assertEqual(properties['DEPENDS'], ['gnostr-test-homes'])
 
-    def test_resource_sources_select_real_checks_without_live_reference_checks(self):
+    def test_resource_sources_select_real_checks_and_portable_library_consumers(self):
+        # The existing nostr.gtk node owns both portable code and GTK resources.
+        # Conversations now correctly depends on that node; its MDK consumers
+        # must be selected conservatively too, not hidden by a resource exclusion.
+        portable_consumers = {"mdk08.compatibility"} | {
+            name for name in self.policy['checks'] if name.startswith('mdk011.')}
         for path, required in (
                 ('apps/gnostr/data/ui/gnostr-main-window.blp', ['gnostr.resource_build']),
                 ('nostr-gtk/data/ui/gnostr-profile-pane.blp', ['nostr.gtk.resource_build']),
@@ -59,8 +64,12 @@ class ResourceProfileContracts(unittest.TestCase):
             with self.subTest(path=path):
                 plan = s.make_plan(self.policy, [change(path)], head='a' * 40, base='b' * 40)
                 self.assertTrue(set(required) <= set(plan['selected_checks']))
-                self.assertFalse(any(name.startswith(('mdk08.', 'mdk011.'))
-                                     for name in plan['selected_checks']))
+                live = {name for name in plan['selected_checks']
+                        if name.startswith(('mdk08.', 'mdk011.'))}
+                expected = set() if path.startswith('apps/gnostr/') else portable_consumers
+                self.assertEqual(live, expected)
+                self.assertEqual(plan['effective_mode'], 'affected')
+                self.assertFalse(plan['broadening_reasons'])
 
     def test_registration_sources_are_exact_audited_contract_inputs(self):
         inputs = self.policy['checks']['selection.contract']['runtime_inputs']
