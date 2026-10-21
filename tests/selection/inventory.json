@@ -5488,15 +5488,12 @@
         "{source}/apps/gnostr/TestInventory.cmake",
         "{source}/apps/grotto/CMakeLists.txt",
         "{source}/apps/grotto/TestInventory.cmake",
-        "{source}/apps/grotto/data/org.nostr.Grotto.service.in",
-        "{source}/apps/grotto/data/org.nostr.Signer.service.in",
         "{source}/apps/grotto/meson.build",
         "{source}/apps/grotto/native-host/CMakeLists.txt",
         "{source}/apps/grotto/native-host/TestInventory.cmake",
         "{source}/apps/grotto/tests/CMakeLists.txt",
         "{source}/apps/grotto/tests/TestInventory.cmake",
         "{source}/apps/grotto/tests/identity-tests.cmake",
-        "{source}/cmake/CheckDbusServiceFile.cmake",
         "{source}/cmake/NostrcGtkResources.cmake",
         "{source}/cmake/NostrcTestInventory.cmake",
         "{source}/gnome/groundhog/CMakeLists.txt",
@@ -5619,7 +5616,6 @@
         "{source}/tests/selection/test_command_execution.py",
         "{source}/tests/selection/test_command_output_bytes.py",
         "{source}/tests/selection/test_command_signal_bytes.py",
-        "{source}/tests/selection/test_configure_outputs.py",
         "{source}/tests/selection/test_contained_custody_contract.py",
         "{source}/tests/selection/test_diagnostic_eligibility.py",
         "{source}/tests/selection/test_diagnostic_nonmembers.py",
@@ -7972,18 +7968,6 @@
     }
   },
   "path_rules": [
-    {
-      "effect": "impact",
-      "exact": "apps/grotto/data/org.nostr.Grotto.service.in",
-      "nodes": ["grotto.gui", "selection.contract"],
-      "reason": "Exact configure-output fixture input; retain existing product ownership."
-    },
-    {
-      "effect": "impact",
-      "exact": "apps/grotto/data/org.nostr.Signer.service.in",
-      "nodes": ["grotto.gui", "selection.contract"],
-      "reason": "Exact configure-output fixture input; retain existing product ownership."
-    },
     {
       "effect": "impact",
       "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-nip05.h",

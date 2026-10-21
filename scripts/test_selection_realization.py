@@ -556,8 +556,7 @@ def _phase_context(profile, root, source, configuration):
 
 def _profile_fingerprint(realization):
     keys = ("profile_id", "profile", "source_identity", "inventory_hash", "cmake", "toolchains",
-            "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context",
-            "configure_outputs")
+            "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context")
     return _hash({k: realization.get(k) for k in keys})
 
 
@@ -644,56 +643,6 @@ def _validate_native_profile(profile, toolchains=None, configuration=None, compi
             raise RealizationError(f"profile compiler {profile['compiler']} differs from realized {sorted(actual)}")
 
 
-def _configure_file_outputs(trace, cmake_files, directories, source, build, runtime_inputs):
-    """Recognize direct directory configure_file producers, never arbitrary files.
-
-    File API lists configure inputs, not configure_file output relationships. Use
-    expanded engine trace for that relationship and File API directory/input proof
-    for its context. Included modules/functions (frame != 1), external/generated
-    templates, ambiguous producers and non-file outputs remain unsupported.
-    Unresolved relative outputs refuse all configure-output admission: their
-    binary-directory context could alias any otherwise supported output.
-    """
-    inputs = {str((source / item["path"]).resolve()) for item in cmake_files["inputs"]
-              if not item.get("isGenerated") and not item.get("isExternal")}
-    contexts = {str((source / d["source"] / "CMakeLists.txt").resolve()):
-                (source / d["source"], build / d["build"]) for d in directories}
-    candidates, seen, ambiguous = {}, set(), set()
-    unresolved_relative = False
-    with trace.open() as stream:
-        for line in stream:
-            event = json.loads(line)
-            if event.get("cmd") != "configure_file":
-                continue
-            producer, args = event["file"], event["args"]
-            if len(args) < 2:
-                continue
-            context = contexts.get(producer) if event.get("frame") == 1 else None
-            # Even an unsupported producer can invalidate a supported output.
-            if not Path(args[1]).is_absolute() and context is None:
-                unresolved_relative = True
-                continue
-            output = Path(os.path.abspath((context[1] if context else build) / args[1]))
-            value = str(output)
-            if value in seen:
-                ambiguous.add(value)
-            seen.add(value)
-            if context is None or producer not in inputs:
-                continue
-            src, _ = context
-            template = (src / args[0]).resolve()
-            if (value not in runtime_inputs or str(template) not in inputs
-                    or not template.is_relative_to(source) or not template.is_file()
-                    or not output.is_relative_to(build) or output.resolve() != output
-                    or not output.is_file()):
-                continue
-            candidates[value] = {
-                "producer": producer, "source": str(template), "line": event["line"],
-                "hashes": {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
-                           for p in (Path(producer), template, output)}}
-    return {} if unresolved_relative else {p: spec for p, spec in candidates.items() if p not in ambiguous}
-
-
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
                       inventory_hash, *, log_path=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
@@ -713,7 +662,6 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     query.mkdir(parents=True, exist_ok=True)
     (query / "codemodel-v2").touch()
     (query / "toolchains-v1").touch()
-    (query / "cmakeFiles-v1").touch()
     token = uuid.uuid4().hex
     env = phase_environment(profile, root, "configure")
     args = [_expand_source(x, root) for x in profile.get("configure_args", [])]
@@ -721,9 +669,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     if not source.is_relative_to(root) or not source.is_dir():
         raise RealizationError("profile source directory escapes/misses checkout")
     initial_context = _phase_context(profile, root, source, profile.get("configuration", ""))
-    trace = build / "nostrc-configure-trace.jsonl"
     cmd = ["cmake", "-S", str(source), "-B", str(build), *args,
-           "--trace-expand", "--trace-format=json-v1", f"--trace-redirect={trace}",
            f"-DNOSTRC_TEST_SELECTION_TOKEN={token}"]
     before = {p.name: p.read_bytes() for p in (build / ".cmake/api/v1/reply").glob("index-*.json")}
     started = time.monotonic()
@@ -798,20 +744,13 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
             else:
                 files.append(value)
         runtime_manifest[desc["name"]] = sorted(set(files))
-    cmake_files_reply = client.get("cmakeFiles-v1", {})
-    if "jsonFile" not in cmake_files_reply or "error" in cmake_files_reply:
-        raise RealizationError("missing/errored File API configure-input reply")
-    cmake_files_path = reply_dir / cmake_files_reply["jsonFile"]
-    configure_outputs = _configure_file_outputs(
-        trace, _read(cmake_files_path), configs[0].get("directories", []), source, build,
-        {p for files in runtime_manifest.values() for p in files})
     realization = {
         "schema_version": 1, "repo_root": str(root), "source_dir": str(source),
         "build_dir": str(build), "profile_id": profile_id, "profile": profile,
         "source_identity": identity, "inventory_hash": inventory_hash,
         "configuration": config_name, "targets": targets,
         "tests": ctest.get("tests", []), "descriptors": descriptors["tests"],
-        "runtime_file_manifest": runtime_manifest, "configure_outputs": configure_outputs,
+        "runtime_file_manifest": runtime_manifest,
         "toolchains": tools, "compiled_languages": compiled_languages, "cmake": index.get("cmake", {}),
         "target_settings": target_settings, "environment_hash": _hash(env),
         "phase_context": context, "phase_context_hash": _hash(context),
@@ -829,8 +768,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         if not set(compat["GH_SAN_TESTS"]).issubset({t["name"] for t in realization["tests"]}):
             raise RealizationError("sanitizer_compatibility test missing from CTest")
     # Bind all generated metadata. A later native configure invalidates this file.
-    bound = [descriptor_path, indexes[-1], reply_dir / response["jsonFile"], trace, cmake_files_path]
-    bound += [Path(p) for p in configure_outputs]
+    bound = [descriptor_path, indexes[-1], reply_dir / response["jsonFile"]]
     bound += [reply_dir / t["jsonFile"] for t in configs[0].get("targets", [])]
     bound += list(build.rglob("CTestTestfile.cmake"))
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
@@ -849,8 +787,7 @@ def load_realization(build_dir, expected_identity=None):
     _validate_source_identity(realization["repo_root"], realization["source_identity"], build_dir)
     for name, digest in realization.get("generation_files", {}).items():
         p = Path(name)
-        if (not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest
-                or (name in realization.get("configure_outputs", {}) and p.resolve() != p)):
+        if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest:
             raise RealizationError(f"stale realization metadata: {name}")
     if not realization.get("generation_files"):
         raise RealizationError("unbound generation metadata")
@@ -1596,16 +1533,6 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             gap("target_mapping", test=name, reason=str(exc))
             continue
         inputs = [(p, "runtime") for p in set(desc.get("inputs", []) + realization.get("runtime_file_manifest", {}).get(name, []))]
-        configured = realization.get("configure_outputs", {})
-        for value, _ in list(inputs):
-            if value in configured:
-                spec = configured[value]
-                inputs += [(spec["producer"], "source"), (spec["source"], "source")]
-                for path, digest in spec["hashes"].items():
-                    file = Path(path)
-                    if (not file.is_file() or file.resolve() != file
-                            or hashlib.sha256(file.read_bytes()).hexdigest() != digest):
-                        gap("stale_configure_output", test=name, input=value, changed=path)
         for ident in ids:
             target = realization["targets"][ident]
             inputs += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
@@ -1650,9 +1577,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             if kind == "generated" or (build_relative is not None and kind != "header"):
                 # Generated files are audited through producer target sources and
                 # declared runtime source inputs. Unresolved provenance stays a gap.
-                if kind == "runtime" and value in configured:
-                    fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
-                elif kind == "runtime" and not ids and not support:
+                if kind == "runtime" and not ids and not support:
                     gap("generated_runtime_without_target", test=name, input=value)
                 continue
             if relative is None:
