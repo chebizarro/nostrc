@@ -403,13 +403,38 @@ assertions, successful lifecycle stub or selected-only audit fallback.
 | Exact-SHA/all-applicable publisher validation is actually established | **MISSING EVIDENCE** | No new release-validator standalone record; reusable calls cannot be inferred absent merely from that fact. No qualifying exact-tag broad validation/publisher gate execution was found in the audited shadow/repository window. Windows branch build successes are not publication-validation attestations. Repository release-mode variable lookup returns 404; checked-in fallback remains disabled. Enforced release routing must be exercised nonpublishing before approval. |
 | Temporary duplication/platform boundaries/version | **PROVEN** | Legacy triggers/schedules and publisher/platform prefixes remain; no protection or mode changes. CI-only work has no component bump. |
 
+**Bounded permanent-regression follow-up (2026-10-21):** the earlier
+identity-negative test gap is already repaired at migration base `096091aaa`
+by integrated `3946ff8d4` (see the historical receipt below): all required package
+jobs succeed, the valid baseline passes/publishes, and six independent mutations
+fail with only `missing/mismatched broad exact-tag validation`. This continuation
+extends that same permanent test to nine independent mutations (adding
+`complete=false`, mismatched committed-source SHA and mismatched source kind),
+plus seven independent required-field omissions. The unmodified baseline still
+passes afterward. Existing missing/failed-package coverage remains separate.
+These are release-aggregate unit-contract checks, not execution of the complete
+source/profile/capability validation chain or actual publication. No production
+release contract, workflow, inventory, mode, default or component version changes.
+PR2 hosted run `39519271161` is not evaluated here; no outcome or W11 credit is
+claimed. `.4` remains OPEN for wider acceptance.
+
+Local checks on this bounded continuation: release-plan suite **12/12 PASS**;
+full selection suite **468/468 PASS**, zero skips, 192.337s; `git diff --check`
+PASS. Native macOS/arm64 configure and default build PASS with
+`-DNIP55L_SECRET_BACKEND=libsecret`
+`-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`. The initial configure
+failed because this worktree's pinned `third_party/nostrdb` was uninitialized;
+initializing that exact gitlink allowed the retry to pass, without source edits.
+No native CTest, private-bus UI or hosted/release acceptance is claimed. One
+bounded review found no actionable blockers. Raw local logs (temporary, not
+hosted attestations): `/tmp/nostrc-release-identity-20261021/`.
+
 **Next closure evidence:** repair selected worker coverage, resolve broad JSON
-fuzz failure under `.29`, strengthen the permanent identity-negative test to use
-an all-success package baseline and independently mutated validation fields,
-and demonstrate the release validation/publisher contract at
-exact source with every applicable artifact result, and retain explicit advisory,
-validation-only and fork/merge-group behavior. Do not enable `enforce`, remove
-legacy gates or create/publish a release as a side effect of this audit.
+fuzz failure under `.29`, and demonstrate the release validation/publisher
+contract at exact source with every applicable artifact result, retaining
+explicit advisory, validation-only and fork/merge-group behavior. Do not enable
+`enforce`, remove legacy gates or create/publish a release as a side effect of
+this audit.
 
 ## `.5` — operational baseline, progress and integration acceptance
 
