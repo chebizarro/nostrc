@@ -100,14 +100,33 @@ class ReleaseTests(GitCase):
         self.assertTrue(baseline["passed"])
         self.assertTrue(baseline["publish"])
         self.assertEqual(baseline["errors"], [])
-        for key, wrong in (("tested_sha", self.base), ("tag", "other"), ("mode", "affected"), ("inventory_hash", "stale"), ("passed", False), ("partial_profiles", ["linux"])):
-            with self.subTest(key=key):
+        for key, wrong in (
+            ("tested_sha", self.base),
+            ("tag", "other"),
+            ("mode", "affected"),
+            ("inventory_hash", "stale"),
+            ("passed", False),
+            ("partial_profiles", ["linux"]),
+            ("complete", False),
+            ("source_identity", {"kind": "committed", "sha": self.base}),
+            ("source_identity", {"kind": "working_tree", "sha": self.head}),
+        ):
+            with self.subTest(key=key, wrong=wrong):
                 invalid = copy.deepcopy(valid)
                 invalid[key] = wrong
                 rejected = s.aggregate_release(result, invalid, jobs)
                 self.assertFalse(rejected["passed"])
                 self.assertFalse(rejected["publish"])
                 self.assertEqual(rejected["errors"], ["missing/mismatched broad exact-tag validation"])
+        for key in ("passed", "complete", "source_identity", "tested_sha", "inventory_hash", "mode", "tag"):
+            with self.subTest(missing=key):
+                invalid = copy.deepcopy(valid)
+                del invalid[key]
+                rejected = s.aggregate_release(result, invalid, jobs)
+                self.assertFalse(rejected["passed"])
+                self.assertFalse(rejected["publish"])
+                self.assertEqual(rejected["errors"], ["missing/mismatched broad exact-tag validation"])
+        self.assertEqual(s.aggregate_release(result, valid, jobs), baseline)
 
     def test_checked_in_version_sources_match_independent_manifest(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
