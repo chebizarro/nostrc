@@ -39,8 +39,8 @@ class InputTests(Project):
         self.inventory["nodes"]["application"]["depends_on"] = ["groundhog.mls_service", "vectors"]
         for rule in self.inventory["path_rules"]:
             if rule.get("exact") == "shared.h":
-                rule["nodes"] = ["nostr.gtk"]
-        self.inventory["path_rules"].append({"exact": "portable.c", "nodes": ["nostr.gtk"]})
+                rule["nodes"] = ["nostr.gtk.portable"]
+        self.inventory["path_rules"].append({"exact": "portable.c", "nodes": ["nostr.gtk.portable"]})
         (self.root / "portable.c").write_text('#include "shared.h"\nint portable(void) { return SHARED; }\n')
         cmake = self.root / "CMakeLists.txt"
         cmake.write_text(cmake.read_text().replace("add_executable(shared main.c)",
@@ -54,7 +54,7 @@ class InputTests(Project):
         self.assertTrue(after["passed"], after["gaps"])
         self.assertGreater(after["header_entries"], 0)
         broken = copy.deepcopy(self.inventory)
-        broken["nodes"]["groundhog.conversations"]["depends_on"].remove("nostr.gtk")
+        broken["nodes"]["groundhog.conversations"]["depends_on"].remove("nostr.gtk.portable")
         # Omitted executions are still audited. Removing the single shared edge
         # must expose both source and discovered-header findings for every test.
         for postbuild, good in ((False, before), (True, after)):
@@ -68,8 +68,82 @@ class InputTests(Project):
                         continue
                     self.assertTrue(any(g["kind"] == "missing_impact_edge"
                         and g.get("test") == test and g.get("input") == path
-                        and g.get("input_kind") == kind and g.get("missing_nodes") == ["nostr.gtk"]
+                        and g.get("input_kind") == kind and g.get("missing_nodes") == ["nostr.gtk.portable"]
                         for g in bad["gaps"]), (test, path, bad["gaps"]))
+
+    def test_gtk_resource_split_preserves_legacy_link_and_omitted_runtime_audits(self):
+        # Real C targets mirror the production portable -> legacy topology.
+        # The bundle stand-in is compiled C plus a declared template runtime
+        # input; production Blueprint/GResource generation has its own test.
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        self.inventory["nodes"].update(copy.deepcopy(policy["nodes"]))
+        self.inventory["nodes"]["application"]["depends_on"] = ["groundhog.mls_service", "vectors"]
+        for rule in self.inventory["path_rules"]:
+            if rule.get("exact") == "shared.h":
+                rule["nodes"] = ["nostr.gtk.portable"]
+        for path, owner in (("portable.c", "nostr.gtk.portable"),
+                            ("legacy.c", "nostr.gtk"), ("ui-main.c", "nostr.gtk"),
+                            ("bundle.c", "nostr.gtk.resources"),
+                            ("widget.blp", "nostr.gtk.resources")):
+            self.inventory["path_rules"].append({"exact": path, "nodes": [owner]})
+        (self.root / "portable.c").write_text('#include "shared.h"\nint portable(void) { return SHARED; }\n')
+        (self.root / "bundle.c").write_text('int bundle(void) { return 1; }\n')
+        (self.root / "legacy.c").write_text('extern int portable(void), bundle(void);\nint legacy(void) { return portable() + bundle(); }\n')
+        (self.root / "ui-main.c").write_text('extern int legacy(void);\nint main(void) { return legacy() != 43; }\n')
+        (self.root / "widget.blp").write_text('template input\n')
+        cmake = self.root / "CMakeLists.txt"
+        text = cmake.read_text().replace("add_executable(shared main.c)",
+            "add_library(portable STATIC portable.c)\n"
+            "add_library(legacy STATIC legacy.c bundle.c)\n"
+            "target_link_libraries(legacy PUBLIC portable)\n"
+            "add_executable(shared main.c)\n"
+            "target_link_libraries(shared PRIVATE portable)\n"
+            "add_executable(legacy-ui ui-main.c)\n"
+            "target_link_libraries(legacy-ui PRIVATE legacy)")
+        text = text.replace("nostrc_finalize_test_inventory()", """
+foreach(t ui-selected ui-omitted)
+  add_test(NAME ${t} COMMAND legacy-ui)
+  nostrc_describe_test(${t} OWNER nostr.gtk TARGETS legacy-ui INPUTS widget.blp)
+endforeach()
+nostrc_finalize_test_inventory()
+""")
+        cmake.write_text(text)
+        for name in ("ui-selected", "ui-omitted"):
+            self.inventory["checks"][name] = {"kind": "ctest", "profiles": ["synthetic"],
+                "ctest_tests": {"synthetic": [name]}, "nodes": ["nostr.gtk"]}
+        self.plan["selected_checks"].append("ui-selected")
+        realized = self.configure()
+        self.build_all()
+        before = r.check_inputs(self.inventory, realized)
+        after = self.audit(realized)
+        self.assertTrue(before["passed"], before["gaps"])
+        self.assertTrue(after["passed"], after["gaps"])
+        self.assertGreater(after["header_entries"], 0)
+        for postbuild, good in ((False, before), (True, after)):
+            broken = copy.deepcopy(self.inventory)
+            broken["nodes"]["nostr.gtk"]["depends_on"].remove("nostr.gtk.resources")
+            bad = r.check_inputs(broken, realized, after_build=postbuild)
+            self.assertFalse(bad["passed"])
+            self.assertEqual(good["input_hashes"], bad["input_hashes"])
+            self.assertEqual({g["test"] for g in bad["gaps"]}, {"ui-selected", "ui-omitted"})
+            for name in ("ui-selected", "ui-omitted"):
+                self.assertTrue(any(g["kind"] == "missing_impact_edge"
+                    and g["test"] == name and g["input"] == "widget.blp"
+                    and g["input_kind"] == "runtime"
+                    and g["missing_nodes"] == ["nostr.gtk.resources"] for g in bad["gaps"]))
+            broken = copy.deepcopy(self.inventory)
+            broken["nodes"]["nostr.gtk"]["depends_on"].remove("nostr.gtk.portable")
+            bad = r.check_inputs(broken, realized, after_build=postbuild)
+            self.assertFalse(bad["passed"])
+            self.assertEqual(good["input_hashes"], bad["input_hashes"])
+            for name in ("ui-selected", "ui-omitted"):
+                self.assertTrue(any(g["kind"] == "missing_impact_edge"
+                    and g["test"] == name and g["input"] == "portable.c"
+                    and g["missing_nodes"] == ["nostr.gtk.portable"] for g in bad["gaps"]))
+                if postbuild:
+                    self.assertTrue(any(g["kind"] == "missing_impact_edge"
+                        and g["test"] == name and g["input"] == "shared.h"
+                        and g["input_kind"] == "header" for g in bad["gaps"]))
 
     def test_missing_runtime_file_is_not_ignored(self):
         realized = self.configure()
