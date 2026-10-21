@@ -383,13 +383,33 @@ static void test_unrelated_revision_rechecks_auto_work(void) {
   signer_approval_service_test_after_backend(s, NULL, NULL); stop(s, &w);
   g_mutex_clear(&barrier.lock); g_cond_clear(&barrier.cond);
 }
-static gboolean release_expired_worker(gpointer data) {
-  Barrier *barrier = data;
-  g_mutex_lock(&barrier->lock); barrier->release = TRUE;
-  g_cond_signal(&barrier->cond); g_mutex_unlock(&barrier->lock); return G_SOURCE_REMOVE;
+static gint64 permission_wall_clock(gpointer data) {
+  return (gint64)1700000000 * G_USEC_PER_SEC + g_atomic_int_get((gint *)data);
+}
+static void test_expiry_before_queue(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  gint clock_offset = G_USEC_PER_SEC - 1;
+  SignerPermissions *permissions = signer_approval_service_permissions(s);
+  signer_permissions_set_wall_clock_for_test(permissions, permission_wall_clock, &clock_offset);
+  g_assert_true(signer_permissions_remember(permissions, who.principal, NULL, "ping", -1, TRUE, 1, NULL));
+  guint64 revision = signer_permissions_revision(permissions);
+  g_assert_true(signer_permissions_revision_is_current(permissions, revision));
+  /* A one-second grant created just before a whole-second boundary can
+   * expire before submission (including during the durable remember write). */
+  g_atomic_int_set(&clock_offset, G_USEC_PER_SEC);
+  g_assert_false(signer_permissions_revision_is_current(permissions, revision));
+  Reply expired = {0}; Decision denied = {0};
+  g_autoptr(SignerGateHandle) h = submit(s, &who, "expired", SIGNER_GATE_PING, NULL, NULL, &expired);
+  g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(expired.count, ==, 0);
+  signer_approval_service_decide(s, request_id(&w, 0), FALSE, FALSE, 0, decided, &denied);
+  g_assert_cmpuint(expired.count, ==, 1); g_assert_true(denied.ok);
+  g_assert_cmpstr(expired.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_null(expired.result);
+  reply_clear(&expired); stop(s, &w);
 }
 static void test_expiry_queued_revision(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  gint clock_offset = G_USEC_PER_SEC - 1;
+  signer_permissions_set_wall_clock_for_test(signer_approval_service_permissions(s), permission_wall_clock, &clock_offset);
   Barrier barrier = {0}; g_mutex_init(&barrier.lock); g_cond_init(&barrier.cond);
   signer_approval_service_test_after_backend(s, after_backend, &barrier);
   Reply blocker = {0}, queued = {0}, sentinel = {0}; Decision first = {0}, last = {0};
@@ -400,11 +420,23 @@ static void test_expiry_queued_revision(void) {
   g_mutex_unlock(&barrier.lock);
   SignerPermissions *permissions = signer_approval_service_permissions(s);
   g_assert_true(signer_permissions_remember(permissions, who.principal, NULL, "ping", -1, TRUE, 1, NULL));
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who.principal, "", "ping", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_autoptr(GVariant) rows = signer_permissions_list(permissions, who.principal, NULL);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 1);
+  g_autoptr(GVariant) row = g_variant_get_child_value(rows, 0);
+  guint64 expires = 0; g_assert_true(g_variant_lookup(row, "expires-at", "t", &expires));
+  g_assert_cmpuint(expires, ==, 1700000001);
+  guint64 revision = signer_permissions_revision(permissions);
+  g_assert_true(signer_permissions_revision_is_current(permissions, revision));
   g_autoptr(SignerGateHandle) hq = submit(s, &who, "queued", SIGNER_GATE_PING, NULL, NULL, &queued);
   g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(queued.count, ==, 0);
-  /* This source advances a real permission's absolute expiry, not relay
-   * delivery. No policy mutation occurs while the job is queued. */
-  g_timeout_add(2000, release_expired_worker, &barrier);
+  g_mutex_lock(&barrier.lock); g_assert_cmpuint(barrier.executions, ==, 1); g_mutex_unlock(&barrier.lock);
+  /* Freeze the live grant through durable I/O and queue admission, then cross
+   * its exact absolute expiry before dispatch. No policy mutation or timer. */
+  g_atomic_int_set(&clock_offset, G_USEC_PER_SEC);
+  g_assert_cmpuint(signer_permissions_revision(permissions), ==, revision);
+  g_assert_false(signer_permissions_revision_is_current(permissions, revision));
+  g_mutex_lock(&barrier.lock); barrier.release = TRUE; g_cond_signal(&barrier.cond); g_mutex_unlock(&barrier.lock);
   wait_count(&queued.count, 1);
   g_assert_cmpstr(queued.error, ==, ORG_NOSTR_SIGNER_ERR_CANCELLED); g_assert_null(queued.result);
   g_autoptr(SignerGateHandle) hs = submit(s, &who, "sentinel", SIGNER_GATE_CONNECT, NULL, NULL, &sentinel);
@@ -758,6 +790,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/flow-invalidation", test_flow_invalidation);
   g_test_add_func("/approval/unrelated-revision-auto-work", test_unrelated_revision_rechecks_auto_work);
   g_test_add_func("/approval/tier-lowered-queued-revision", test_tier_lowered_queued_revision);
+  g_test_add_func("/approval/expiry-before-queue", test_expiry_before_queue);
   g_test_add_func("/approval/expiry-queued-revision", test_expiry_queued_revision);
 #endif
   g_test_add_func("/approval/scoped-remember-revoke", test_scoped_remember_and_revoke);

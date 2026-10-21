@@ -2,12 +2,18 @@
 """Exercise each component's resource inputs through the shared real-tool seam."""
 import argparse
 import hashlib
+import io
+import itertools
+import json
 import re
+import selectors
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -26,8 +32,28 @@ RESOURCE = ("/org/gnostr/ui/" if IS_APP else "/org/nostr/gtk/") + PRIMARY
 MARKER = "Loading…" if IS_APP else "User profile"
 
 
+COMMAND_IDS = itertools.count(1)
+PROGRESS_DETAIL_LIMIT = 2048
+
+
+def progress(event, detail):
+    if len(detail) > PROGRESS_DETAIL_LIMIT:
+        detail = detail[:PROGRESS_DETAIL_LIMIT] + " [truncated]"
+    print(f"[resource-build] {event} {detail}", file=sys.stderr, flush=True)
+
+
 def run(*args, ok=True):
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    command_id = next(COMMAND_IDS)
+    started = time.monotonic()
+    progress("command-start", f"id={command_id} argv={json.dumps(args)}")
+    try:
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except BaseException as error:
+        progress("command-end", f"id={command_id} exception={type(error).__name__} "
+                 f"elapsed={time.monotonic() - started:.3f}s")
+        raise
+    progress("command-end", f"id={command_id} rc={result.returncode} "
+             f"elapsed={time.monotonic() - started:.3f}s")
     if ok and result.returncode:
         raise AssertionError(result.stdout.decode(errors="replace"))
     return result
@@ -67,6 +93,10 @@ def normalized_xml(content):
 
 class ResourceBuildTests(unittest.TestCase):
     def setUp(self):
+        started = time.monotonic()
+        progress("stage-start", self.id())
+        self.addCleanup(lambda: progress("stage-end", f"{self.id()} "
+                                        f"elapsed={time.monotonic() - started:.3f}s"))
         self.assertTrue(options.blueprint_compiler, "real blueprint-compiler required")
         self.temp = tempfile.TemporaryDirectory(prefix="nostrc-resources-")
         self.addCleanup(self.temp.cleanup)
@@ -274,6 +304,64 @@ int main(int argc, char **argv) {
         for invalid in invalid_templates:
             with self.assertRaises(AssertionError):
                 assert_primary_contract(self, invalid)
+
+
+class ProgressDiagnosticsTests(unittest.TestCase):
+    def test_start_is_flushed_before_blocked_child_and_failure_is_preserved(self):
+        # Force block buffering: a newline alone must not satisfy this test.
+        worker = '''import runpy, sys
+path, component = sys.argv[1:]
+sys.argv = [path, "--component", component]
+namespace = runpy.run_path(path)
+sys.stderr = open(sys.stderr.fileno(), "w", buffering=8192, closefd=False)
+namespace["run"](sys.executable, "-c",
+    "import sys; sys.stdin.buffer.read(1); print('deliberate child failure'); sys.exit(7)")
+'''
+        with subprocess.Popen([sys.executable, "-c", worker, __file__, options.component],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True) as process:
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stderr, selectors.EVENT_READ)
+                    self.assertTrue(selector.select(10), "command-start was not flushed")
+                start = process.stderr.readline()
+                self.assertIn("[resource-build] command-start", start)
+                self.assertIsNone(process.poll())
+                # The child cannot finish until this explicit release, no sleeps.
+                stdout, stderr = process.communicate("x", timeout=10)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertEqual(stdout, "")
+                self.assertIn("command-end", stderr)
+                self.assertIn("rc=7 elapsed=", stderr)
+                self.assertIn("AssertionError: deliberate child failure", stderr)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+
+    def test_diagnostics_are_bounded_without_changing_child_arguments(self):
+        args = ("fixture-command", "x" * (PROGRESS_DETAIL_LIMIT * 2) + "\nnext-line")
+        result = subprocess.CompletedProcess(args, 7, b"expected failure bytes")
+        output = io.StringIO()
+        with mock.patch("subprocess.run", return_value=result) as child, \
+                mock.patch("sys.stderr", output):
+            self.assertIs(run(*args, ok=False), result)
+        child.assert_called_once_with(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("[truncated]", lines[0])
+        self.assertLess(len(lines[0]), PROGRESS_DETAIL_LIMIT + 100)
+        self.assertIn("rc=7 elapsed=", lines[1])
+
+    def test_launch_exception_is_logged_and_propagated_unchanged(self):
+        error = OSError("deliberate launch failure")
+        output = io.StringIO()
+        with mock.patch("subprocess.run", side_effect=error), mock.patch("sys.stderr", output):
+            with self.assertRaises(OSError) as raised:
+                run("fixture-command")
+        self.assertIs(raised.exception, error)
+        self.assertIn("command-start", output.getvalue())
+        self.assertIn("exception=OSError elapsed=", output.getvalue())
 
 
 if __name__ == "__main__":
