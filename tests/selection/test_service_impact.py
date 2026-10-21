@@ -27,7 +27,8 @@ class ServiceImpact(Project):
         }
         for path, nodes in expected.items():
             self.assertEqual(s.classify(self.policy, path)["nodes"], nodes)
-        for path in ("apps/grotto/src/main.c", "apps/grotto/data/org.nostr.Grotto.desktop"):
+        for path in ("apps/grotto/src/main_app.c", "apps/grotto/data/org.nostr.Grotto.desktop"):
+            self.assertTrue((ROOT / path).is_file())
             self.assertEqual(s.classify(self.policy, path)["nodes"], ["grotto.gui"])
         self.assertNotIn("grotto.gui", self.policy["nodes"]["grotto.daemon"]["depends_on"])
         self.assertNotIn("grotto.daemon", self.policy["nodes"]["grotto.gui"]["depends_on"])
