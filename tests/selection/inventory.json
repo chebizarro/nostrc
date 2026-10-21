@@ -7983,8 +7983,8 @@
     {
       "effect": "impact",
       "exact": "apps/grotto/data/org.nostr.Signer.service.in",
-      "nodes": ["grotto.gui", "selection.contract"],
-      "reason": "Exact configure-output fixture input; retain existing product ownership."
+      "nodes": ["grotto.daemon", "selection.contract"],
+      "reason": "Daemon activation template consumed by grotto_dbus_service_configured; selection.contract also reads the configure-output fixture input."
     },
     {
       "effect": "impact",
@@ -8400,10 +8400,11 @@
       "effect": "impact",
       "exact": "apps/grotto/CMakeLists.txt",
       "nodes": [
+        "grotto.daemon",
         "grotto.gui",
         "version.contract"
       ],
-      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+      "reason": "Shared directory producer configures daemon and GUI activation services; retain GUI and version-contract consumers without making daemon depend on GUI inputs."
     },
     {
       "effect": "impact",
