@@ -504,6 +504,12 @@ endif()
 # Configured, not copied: the installed file needs an absolute Exec= path.
 configure_file(data/org.nostr.Signer.service.in
                ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service @ONLY)
+if(NOSTRC_TEST_SELECTION_TOKEN)
+  include("${CMAKE_SOURCE_DIR}/cmake/NostrcConfigureProvenance.cmake")
+  nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Signer.service.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service")
+endif()
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
 if(BUILD_TESTING)
@@ -521,6 +527,12 @@ endif() # grotto-daemon
 # this is the GtkApplication id, object path /org/nostr/Grotto.
 configure_file(data/org.nostr.Grotto.service.in
                ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Grotto.service @ONLY)
+if(NOSTRC_TEST_SELECTION_TOKEN)
+  include("${CMAKE_SOURCE_DIR}/cmake/NostrcConfigureProvenance.cmake")
+  nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Grotto.service.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Grotto.service")
+endif()
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Grotto.service
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
 if(BUILD_TESTING)
