@@ -1,5 +1,124 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Bounded shared-target edges and resource-history projection — 2026-10-22
+
+**Base:** master `37e144cab898e942d2875d903670ccaf4335158b`.
+Graph/header repair `693d76795260aa148edf47937be2459701e4f0d5`;
+resource-history projection/indentation `784abcc291583fb2ca721d34439a48abe50a2ce0`;
+final live-authority decoupling **`dba601f225fa6ebce0fb81f586105df46d541c9c`**.
+Internal inventory/tests only: **no shipped component version bump**. No product,
+CMake, image, gitlink, profile, exclusion, membership or admission-authority edits.
+
+### Source causes, not emitted-count enrollment
+
+The remaining bulk is rooted in explicitly unclassified Groundhog registrations.
+It is not evidence for attaching broad prerequisites to `groundhog.unclassified`
+or execution nodes. Those nodes retain empty `depends_on`; unclaimed tests remain
+unclaimed. This bounded group repairs three actual shared-target chains:
+
+- **Portable issue-model archive:** `nostr.gtk.portable → nip34` follows both the
+  embedded `gn_issue_model` object and the direct
+  [`nostrc_link_archives(nostr_gtk_portable PRIVATE nip19 nip34)`](../../nostr-gtk/CMakeLists.txt#L257).
+- **Identity shared dependencies:** `groundhog.identity_auth → gnome.seahorse`
+  follows [`groundhog-identity → gnostr-secret`](../../gnome/groundhog/CMakeLists.txt#L266);
+  `groundhog.identity_auth → groundhog.relay` follows its
+  [`groundhog-nip46-session`](../../gnome/groundhog/CMakeLists.txt#L362) dependency.
+- **Group UI consumers:** `groundhog.group_ui → groundhog.account_relays` and
+  `→ groundhog.net` follow the real group-UI → conversation-UI → DM-inbox/account-relay
+  and [conversation-UI web-content/network](../../gnome/groundhog/CMakeLists.txt#L3520)
+  chains. Exact `gh-account-relays.h` ownership now matches its implementation;
+  no directory-wide ownership expansion substitutes for the missing header edge.
+
+[`SharedDependencyEdges`](../../tests/selection/test_shared_dependency_edges.py)
+replays the actual literal link statements/root archive wrapper in an isolated
+CMake project with explicitly fixture-only bodies. File API closure, independent
+five-edge removals, source/runtime/omitted inputs and discovered-header audits are
+exercised. Existing secret-store broad recovery remains broad, not waived.
+PR #6 legacy UI/resource-only changes still avoid MDK; true Portable inputs retain
+real consumers. New regression/support/JSON sources are explicitly declared in
+`selection.contract` before the full suite.
+
+### Fresh independently bound full preaudits
+
+At committed **`693d76795`**, each baseline/repaired inventory was independently
+configured with its own binding on the same source. All four exports reloaded
+under the original phase environment. Only independent **build-root prefixes**
+are normalized; source roots and node labels are identical. Targets, registrations,
+descriptors and full input hashes agree within each pair.
+
+| Authored Linux/x86_64 profile | Registrations / targets | Before → after, both FAIL | Removed / added | Identical full input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **9,325 → 9,280** | **45 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,179 → 9,146** | **33 / 0** | 1,700 |
+
+All removed findings are `missing_impact_edge`; the distinct dependency causes
+are the five edges above, not 78 independent ownership repairs. Groundhog retains
+373 unclaimed registrations and one owner disagreement; Grotto retains 369
+unclaimed registrations. Exact33, 29 required omitted-target closures, 193 reviewed
+source inputs and every authority/profile record are unchanged. Full source,
+runtime and later required Ninja/header audits are not filtered or replaced.
+
+Window `2026-10-21T23:22:48Z`–`23:28:46Z`; existing reviewed amd64 image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+nonroot, read-only source/Git mount and network disabled; no image build.
+Compact comparison `/tmp/nostrc-shared-audit-20261022/comparison-summary.json`,
+SHA-256 **`99bb37b12403df027c852aab570e97c8f5d444ce60a27f9d84288538d261b9ca`**,
+binds raw before/after audits, exports, File API witnesses and exact removed sets.
+These are **prebuild** results on `693d76795`, not relabeled final-tree exports:
+later changes add only test-history projection/source closure and formatting.
+Production selected-profile build/test, fresh physical omitted-target builds and
+production postbuild header audits remain **NOT RUN**. Omissions stay
+`not_executed`, `complete=false`, `complete_gate_eligible=false`.
+
+### Preserve historical resource guards across PR #9
+
+The first full selector run at `693d76795` **FAILS: 496 tests, two failures,
+372.935s**. Both guards correctly reject historical helper hash `ae7c2628…`
+versus current `44f7e7a4…`; the current helper is byte-identical to master37e144cab.
+No original fixture/hash was replaced. The separate
+[`resource_diagnostics_projection_20261022.json`](../../tests/selection/fixtures/resource_diagnostics_projection_20261022.json)
+witness retains both original fixture byte hashes, exact four reverse hunks,
+fresh authored registration/descriptor evidence and PR #9 native resource
+nine-case receipts at `a3aa27ee7`. Current native Grotto's 461 names and affected
+resource descriptor contracts agree with their historical witnesses.
+
+[`project_resource_helper`](../../tests/selection/resource_export_projection.py)
+requires the exact current helper hash, reconstructs the exact historical hash,
+and checks unchanged six resource-case bodies, existing setup and child-call/
+failure/return behavior. Only the three known diagnostic regressions are added;
+unknown byte changes still fail. The historical PR #9 nine-case results are
+**not re-execution here**, and the original timeout cause remains unresolved.
+The witness's authority hashes are dated evidence only: this projection does
+**not** compare against or freeze live authority records. Task-scoped unchanged
+records/profiles are independently verified against master37e144cab in
+`/tmp/nostrc-shared-audit-20261022/task-scoped-authority-proof.json`; actual admission
+validators retain their existing live-source authority.
+
+### Final gates and unchanged acceptance boundaries
+
+- Final **`dba601f22`: 496/496 selector PASS, zero skips, 211.531s**;
+  `env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -q`.
+  Focused graph **2**, resource contracts **4**, Grotto source guard **1** PASS.
+  Intermediate `784abcc29` **496/496 PASS, 216.318s** remains separately retained;
+  it is not substituted for the final decoupled-tree result.
+- Fresh safe-backend native normal configure/all-default build PASS at
+  `693d76795`; compiled product and resource-helper bytes are unchanged through
+  `dba601f22`. **Full native CTest NOT RUN**, intentionally for this inventory/test-only
+  work, not borrowed from PR #9 or earlier native passes.
+- Four final statics, actionlint and whitespace PASS at `dba601f22`; all six
+  shell suites PASS at `693d76795` with their runtime scripts unchanged afterward.
+  One bounded actual graph-diff review found no blockers after stale packaged
+  input was replaced with current inline code. Parent inspected the narrow
+  history projection and requested the applied authority decoupling; no repeat Oracle.
+- Retain the first selector failure, initial miniature fixture failures, the
+  Docker single-directory bind/import failure (before configure), all raw failed
+  full audits, and all earlier historical failures. No guard relaxation, timeout
+  change, hidden retry, source renewal or acceptance promotion.
+- `.2` remains OPEN; `.9` remains in progress. Official `bd export --all` preserves
+  existing issue/memory rows. `bd dolt pull` refused `no remote`; no sync success.
+  No `.5`/W11 ledger/counter refresh, defaults, release/protection changes or hosted
+  credit. Local commits only; parent owns verification, push, merge and cleanup.
+
 ## Bounded service producer ownership — 2026-10-22
 
 **Implementation:** `71d57a83c`; explicit regression-source closure correction

@@ -5607,12 +5607,14 @@
         "{source}/tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json",
         "{source}/tests/selection/fixtures/ordinary_subset_x86_exports.json",
         "{source}/tests/selection/fixtures/profile_exports.json",
+        "{source}/tests/selection/fixtures/resource_diagnostics_projection_20261022.json",
         "{source}/tests/selection/fixtures/resource_profile_exports.json",
         "{source}/tests/selection/fixtures/store_key_membership_exports.json",
         "{source}/tests/selection/golden/selection.json",
         "{source}/tests/selection/inventory.json",
         "{source}/tests/selection/profile_contract_support.py",
         "{source}/tests/selection/realization_support.py",
+        "{source}/tests/selection/resource_export_projection.py",
         "{source}/tests/selection/selector_support.py",
         "{source}/tests/selection/test_aggregation.py",
         "{source}/tests/selection/test_bp_metrics_reporting.py",
@@ -5656,6 +5658,7 @@
         "{source}/tests/selection/test_selector_checkout_binding.py",
         "{source}/tests/selection/test_selector_cli.py",
         "{source}/tests/selection/test_service_impact.py",
+        "{source}/tests/selection/test_shared_dependency_edges.py",
         "{source}/tests/selection/test_shared_sanitizer_execution.py",
         "{source}/tests/selection/test_store_key_membership.py",
         "{source}/tests/selection/test_workflow_contracts.py"
@@ -6474,23 +6477,27 @@
     "groundhog.group_ui": {
       "depends_on": [
         "nip29",
-        "groundhog.conversations"
+        "groundhog.conversations",
+        "groundhog.account_relays",
+        "groundhog.net"
       ],
       "id": "groundhog.group_ui",
       "owner_paths": [
         "gnome/groundhog/CMakeLists.txt"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "groundhog-group-ui links groundhog-conversation-ui, whose groundhog-dm-inbox dependency links groundhog-account-relays and whose web-content sources link groundhog-net (gnome/groundhog/CMakeLists.txt). Schema, test-bus and unclassified application inputs remain separately audited."
     },
     "groundhog.identity_auth": {
       "depends_on": [
-        "nostr.gobject"
+        "nostr.gobject",
+        "gnome.seahorse",
+        "groundhog.relay"
       ],
       "id": "groundhog.identity_auth",
       "owner_paths": [
         "gnome/groundhog/CMakeLists.txt"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "groundhog-identity PUBLIC-links gnostr-secret and groundhog-nip46-session, which PUBLIC-links groundhog-relay (gnome/groundhog/CMakeLists.txt). Shared secret-store and relay inputs must reach identity consumers."
     },
     "groundhog.legacy_harness_inputs": {
       "depends_on": [],
@@ -7720,7 +7727,8 @@
     },
     "nostr.gtk.portable": {
       "depends_on": [
-        "nostr.gobject"
+        "nostr.gobject",
+        "nip34"
       ],
       "id": "nostr.gtk.portable",
       "owner_paths": [
@@ -7728,7 +7736,7 @@
         "nostr-gtk/include",
         "nostr-gtk/po"
       ],
-      "rationale": "Portable target nostr_gtk_portable and its gn_content_parser/gn_issue_model objects; retains the PR5 conversations prerequisite. Legacy UI and GResource inputs have separate ownership below."
+      "rationale": "Portable target nostr_gtk_portable embeds gn_issue_model objects; that object target links nip34 through nostrc_link_archives (nostr-gtk/CMakeLists.txt). Legacy UI and GResource inputs remain separate; no resource-to-Portable dependency."
     },
     "nostr.gtk.resources": {
       "depends_on": [],
@@ -9927,6 +9935,14 @@
         "groundhog.account_relays"
       ],
       "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/app/gh-account-relays.h",
+      "nodes": [
+        "groundhog.account_relays"
+      ],
+      "reason": "GhAccountRelays public declarations are implemented by the matching groundhog-account-relays source target; retain discovered-header impact on its consumers."
     },
     {
       "effect": "impact",

@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 from selector_support import ROOT, s
+from resource_export_projection import project_resource_helper
 from profile_contract_support import step_script
 
 INVENTORY = ROOT / 'tests/selection/inventory.json'
@@ -160,6 +161,8 @@ endif()
 '''.replace('NAME', name)).encode()
                     self.assertEqual(content.count(call + metadata), 1)
                     content = content.replace(call + metadata, call)
+            if relative == 'tests/common/test_blueprint_resources.py':
+                content = project_resource_helper(self, content, expected)
             self.assertEqual(hashlib.sha256(content).hexdigest(), expected, relative)
 
     def test_build_aggregate_is_not_native_host_packaging_or_ctest_coverage(self):

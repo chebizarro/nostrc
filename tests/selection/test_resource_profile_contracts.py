@@ -4,6 +4,7 @@ import json
 import unittest
 
 from selector_support import ROOT, change, s
+from resource_export_projection import project_resource_helper
 
 
 class ResourceProfileContracts(unittest.TestCase):
@@ -73,7 +74,12 @@ class ResourceProfileContracts(unittest.TestCase):
         inputs = self.policy['checks']['selection.contract']['runtime_inputs']
         for relative, expected in self.export['source_sha256'].items():
             self.assertIn('{source}/' + relative, inputs)
-            self.assertEqual(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(), expected, relative)
+            content = (ROOT / relative).read_bytes()
+            if relative == 'tests/common/test_blueprint_resources.py':
+                with self.assertRaises(AssertionError):
+                    project_resource_helper(self, content + b'\n', expected)
+                content = project_resource_helper(self, content, expected)
+            self.assertEqual(hashlib.sha256(content).hexdigest(), expected, relative)
 
     def test_new_gtk_registration_is_visible_but_not_in_legacy_grotto_selection(self):
         exports = json.loads((ROOT / 'tests/selection/fixtures/grotto_profile_exports.json').read_text())
