@@ -1,6 +1,14 @@
 # Ordinary-profile libgo nonmember policy — review proposal
 
 **Status: implemented; exact ordinary records admitted from reviewed x86 evidence.**
+
+**2026-10-22 source-only renewal:** the two explicit configured-service metadata
+points change the reviewed Grotto CMake input and add its hash-recording helper.
+Fresh authored x86 full-universe preaudits and the original source-guard refusal
+support that narrow renewal; exact33/profile/closure/toolchain policy is unchanged.
+The original witness remains historical. No omitted-target physical build or
+postbuild audit was refreshed; both full preaudits still fail. See the
+[bounded byte-provenance receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#bounded-configured-service-byte-provenance--2026-10-22).
 **Date:** 2026-10-19. **Repository baseline:** `6ce261c4234c35d5f6c95822edeab83fdae48b60`.
 **Tracking:** `nostrc-0cfsg.9` (profile accounting), `.2` (backend acceptance), `.5` (rollout evidence).
 
