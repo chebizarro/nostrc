@@ -4,7 +4,8 @@ import json
 import os
 import shutil
 
-from realization_support import Project, ROOT, r
+from selector_support import ROOT
+from realization_support import Project, r
 
 
 class ConfigureOutputTests(Project):

@@ -244,17 +244,50 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             reconstructed[name]["input_hashes"] = {n: packed["source_hashes"][n] for n in record["input_names"]}
         self.assertEqual(sorted(reconstructed), list(subset.REGISTRATIONS))
         self.assertEqual(s.digest(reconstructed), fixture["candidate_contract_hash"])
+        renewal_path = "tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json"
+        renewal = json.loads((ROOT / renewal_path).read_text())
+        self.assertIn("{source}/" + renewal_path, policy["checks"]["selection.contract"]["runtime_inputs"])
+        self.assertEqual(renewal["source_review_scope"], ["apps/grotto/CMakeLists.txt", "cmake/NostrcConfigureProvenance.cmake"])
+        self.assertFalse(any(renewal["limits"].values()))
         records = subset.contracts(policy)
         self.assertEqual(set(records), set(subset.PROFILES))
         for pid, contract in records.items():
             witness = fixture["profiles"][pid]
-            self.assertEqual(s.digest(contract), witness["record_hash"])
+            current = renewal["profiles"][pid]
+            # Retain the original witness byte-for-byte; renew source provenance,
+            # not its exact family/profile/candidate/fixture/toolchain authority.
+            previous = dict(contract, review=current["previous_review"])
+            self.assertEqual(s.digest(previous), witness["record_hash"])
+            self.assertEqual(s.digest(contract), current["record_hash"])
+            self.assertEqual(s.digest({k: v for k, v in contract.items() if k != "review"}), current["unchanged_contract_hash"])
             self.assertEqual(contract["candidate_contract_hash"], s.digest(reconstructed))
             self.assertEqual(contract["toolchain_contract_hash"], s.digest(fixture["toolchain_contracts"][pid]))
-            self.assertEqual(contract["review"]["source_sha"], fixture["review_source_identity"]["sha"])
-            self.assertEqual(contract["review"]["post_audit_sha256"], witness["postaudit"]["sha256"])
-            self.assertEqual(contract["review"]["pre_audit_sha256"], witness["preaudit"]["sha256"])
-            self.assertEqual(contract["review"]["realization_sha256"], witness["realization_file_sha256"])
+            self.assertEqual(previous["review"]["source_sha"], fixture["review_source_identity"]["sha"])
+            self.assertEqual(previous["review"]["post_audit_sha256"], witness["postaudit"]["sha256"])
+            self.assertEqual(previous["review"]["pre_audit_sha256"], witness["preaudit"]["sha256"])
+            self.assertEqual(previous["review"]["realization_sha256"], witness["realization_file_sha256"])
+            self.assertEqual(contract["review"]["source_sha"], renewal["source_identity"]["sha"])
+            self.assertEqual(contract["review"]["pre_audit_sha256"], current["raw_preaudit"]["sha256"])
+            self.assertEqual(contract["review"]["post_audit_sha256"], current["candidate_preaudit"]["sha256"])
+            self.assertEqual(contract["review"]["realization_sha256"], current["realization_file_sha256"])
+            self.assertEqual(contract["review"]["profile_fingerprint"], current["profile_fingerprint"])
+            renewed = {"source_inputs", "source_sha", "reviewer", "pre_audit_sha256", "post_audit_sha256", "realization_sha256", "profile_fingerprint"}
+            self.assertEqual({k: v for k, v in contract["review"].items() if k not in renewed},
+                             {k: v for k, v in previous["review"].items() if k not in renewed})
+            changed = current["source_input_changes"]
+            self.assertEqual(set(changed), set(renewal["source_review_scope"]))
+            self.assertIsNone(changed["cmake/NostrcConfigureProvenance.cmake"]["before"])
+            expected_inputs = dict(previous["review"]["source_inputs"])
+            for name, values in changed.items():
+                self.assertEqual(expected_inputs.get(name), values["before"])
+                expected_inputs[name] = values["after"]
+            self.assertEqual(contract["review"]["source_inputs"], expected_inputs)
+            self.assertIn("reviewed source input changed: apps/grotto/CMakeLists.txt", current["old_source_guard_refusal"])
+            self.assertEqual(current["removed_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
+            self.assertEqual(current["added_findings"], [])
+            self.assertFalse(current["candidate_preaudit"]["passed"])
+            self.assertFalse(current["complete"])
+            self.assertFalse(current["complete_gate_eligible"])
             self.assertEqual(len(contract["registration_universe"]), {"groundhog.linux": 422, "grotto.linux": 461}[pid])
             self.assertEqual(witness["build_exit"], 0)
             self.assertEqual(len(witness["audit_build_targets"]), 29)
