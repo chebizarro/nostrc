@@ -1,5 +1,139 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Bounded PR #4 full-audit root-cause repair — 2026-10-22
+
+**Local implementation:** `dd2ff1d72460c806775cfafe833d63a3a1efdf13`, from master
+`f9d1e853794d81037e8dcf177e40b9bc83178b9c`. This is a bounded worker/audit
+repair, **not a W11 comparison, root-ledger refresh or acceptance promotion**.
+The existing dated ledger and `.5` are unchanged; historical failures remain.
+
+### Exact hosted source and failure
+
+API capture `2026-10-21T15:55:31Z` records
+[PR #4 shadow run 39522018295](https://github.com/chebizarro/nostrc/actions/runs/39522018295)
+completed **failure**. API head is `172139a92e617d19d8d1aa3e0b9bd3fe5937e52d`;
+the plan and both receipts bind actual tested synthetic merge
+`033cc630b1b7f3b728166fe96026c796a70bd301`. The commit API confirms parents
+`f39401e12eaac24cbf86e903cdc37198fb332479` and `172139a92`.
+Plan ID `7a9949362daff9643309ac973078558d304421cecb25feedac9d3f0f1daf2d93`,
+inventory hash `79ad8d8a7884b6afe5df4f6309377ce65691e3ffc78dbc609445631aa1ae680c`.
+
+| Worker | Actual full-registration preaudit | Execution |
+|---|---|---|
+| [Grotto 118971755374](https://github.com/chebizarro/nostrc/actions/runs/39522018295/job/118971755374) | **9,342** = 8,971 missing-impact + 369 unclaimed + 2 generated-runtime-without-target | Configure passed; build/test `not_executed` |
+| [Groundhog 118971755424](https://github.com/chebizarro/nostrc/actions/runs/39522018295/job/118971755424) | **9,605** = 9,231 missing-impact + 373 unclaimed + 1 descriptor-owner disagreement | Configure passed; build/test `not_executed` |
+
+Both receipts are `lane_failure_v1`, `complete=false`,
+`complete_gate_eligible=false`; neither establishes successful hosted coverage.
+All four ZIP sizes/SHA-256 match API metadata and all member CRCs pass:
+
+| Artifact | SHA-256 |
+|---|---|
+| [Grotto receipt 12313524094](https://github.com/chebizarro/nostrc/actions/runs/39522018295/artifacts/12313524094) | `d5c9e2890f203d3e6099a69f26f8756a674299daa98baa11e17f49877643dda7` |
+| [Grotto evidence 12313429141](https://github.com/chebizarro/nostrc/actions/runs/39522018295/artifacts/12313429141) | `78c8e0d1724f0a9830b9e3505ad9e4af0576b19c09c67269f9d9fc552925ffa1` |
+| [Groundhog receipt 12312758821](https://github.com/chebizarro/nostrc/actions/runs/39522018295/artifacts/12312758821) | `b1d3248ce77fc54ceff030da0a9ed895903bc3ece552b73486dfcf6858b3338f` |
+| [Groundhog evidence 12312808738](https://github.com/chebizarro/nostrc/actions/runs/39522018295/artifacts/12312808738) | `72c07fb18ba7db369df4960449996ac7b10a153d99c92ac0e62c7f6b1f594016` |
+
+### One shared missing prerequisite
+
+[Groundhog CMake 449–450](../../gnome/groundhog/CMakeLists.txt#L449-L450)
+already links `groundhog-conversations` **PUBLIC `NostrGtk::Portable`**;
+[`gh-message.c` 364](../../gnome/groundhog/src/app/gh-message.c#L364) calls
+`gn_nostr_shared_note_parse()` through its installed portable header. The semantic
+`groundhog.conversations` node lacked the existing `nostr.gtk` prerequisite.
+The repair adds **that one edge only**, covering transitive media/MLS/group/voice
+consumers. Structural comparison against `f9d1e8537` verifies every other inventory
+field is unchanged: profiles, ownership, membership, exclusions and authorities.
+`groundhog.unclassified` and `execution.groundhog` retain empty dependencies.
+
+New regressions prove real source/header changes select five ordinary transitive
+consumers, not unrelated `libgo.channel`, and expose the missing selection on
+edge removal. A real CMake miniature audits linked sources/discovered headers
+for selected and omitted executions, retaining identical input hashes under
+negative edge removal. It is **not** a production-profile pass.
+
+**Existing granularity limitation, not a policy solution:** `nostr.gtk` owns both
+portable code and GTK resources. The corrected dependency therefore conservatively
+**over-selects MDK consumers for GTK resource changes**; it does not claim those
+resources are portable link inputs. The amended resource regression asserts the
+exact current MDK consumer set and no broadening, while preserving **no MDK for
+app-only Gnostr inputs**. No resource exclusion or finer graph is invented.
+Existing MDK link evidence is at CMake 2526–2528 and 2599–2601.
+
+### Fresh authored x86 audits — both still fail
+
+Local Docker Linux/x86_64, emulated on macOS/arm64; **no authored profile override**.
+Debug, GCC **13.3.0**, CMake/CTest **3.28.3**, Ninja **1.11.1**. Existing image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`;
+source/Git mounts read-only. Each inventory gets its own normal configure and
+hash-bound realization. Baseline policy is the pre-repair inventory on the same
+source snapshot, **not historical-source execution**. Only comparisons normalize
+build-directory spellings; raw records and bindings are unmodified.
+
+| Profile | Audited registrations / targets | Full preaudit before → after | Removed / added | Identical input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **9,605 → 9,325**, both FAIL | **280 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,342 → 9,182**, both FAIL | **160 / 0** | 1,696 |
+
+Every removed finding is `missing_impact_edge` for `nostr.gtk`. Unclaimed counts,
+Groundhog media-owner disagreement and both Grotto configured-service runtime
+gaps remain. Both exact-33 authorities are unchanged, freshly admitted and still
+`not_executed`; `complete=false` and `complete_gate_eligible=false` remain.
+All registrations, including omitted executions, remain audited. **No production-profile build, postbuild/header
+audit or CTest execution is claimed.** Thousands of findings still block it.
+
+Audit window `2026-10-21T16:13:15Z`–`16:17:00Z`; dirty base `f9d1e8537`, snapshot
+`a0b3222cb46ed401878eeb9aeb0ed78f082581be1a9884f328e8d4a6c0a67bb9`.
+All seven captured source hashes match committed implementation `dd2ff1d72`.
+Temporary exact set differences, raw audits, File API and binding/hash manifest:
+`/tmp/nostrc-conversations-edge-20261022/attempt2/summary.json`, SHA-256
+`96100fb4914fdda7394da957e4e000d89ccb028fa2b89a46f44d04c528a80faa`.
+Each profile's `removed-findings.json` sits beside its unmodified before/after audits.
+
+Earlier failed attempts remain: mismatched inventory hash refusal; comparison
+helper's unnormalized-path assertion; effective-environment refusal when trying
+a different container. Final execution uses separately hash-bound policies,
+comparison-only normalization and the original container environment. No guard
+was weakened or receipt rewritten. Only the three named exited probe containers
+were removed; evidence remains. This is not arbitrary-tree/lifecycle acceptance.
+
+### Gates and local handoff
+
+- Clean implementation `dd2ff1d72`: **471/471 selection tests, zero skips,
+  264.246s, exit 0**. Exact log SHA-256
+  `3409f5aec340e2d5cb9051f252d3096e167de13628c6b4ed81c8188c4a644ad1`.
+  Earlier final-content run passed 471/471 in 223.785s. Original full-run resource
+  failures and pre-fix source/header red run remain, not relabeled as success.
+- Fresh safe native default configure/all-default build **PASS**, using the
+  documented toolchain environment and `libsecret` / `secret-service` backend
+  flags. Unix Makefiles, empty build type, Groundhog OFF; warnings retained.
+  Full serial native CTest: **434 pass / 5 existing skips / 0 failures**, 439 total,
+  exit 0, 470.12s. Loopback/Unix-socket sandbox, private HOME/XDG/bus and throwaway
+  Secret Service; both children reaped, socket absent; original-HOME read-only
+  keychain guards pass. Compiled product sources are unchanged from `f9d1e8537`.
+  Logs: `/tmp/nostrc-conversations-edge-20261022/native-configure.log`,
+  `native-build.log`, `native-ctest/ctest.log`, `native-ctest/result.json`.
+- Six normal shell suites, four mandatory statics, full actionlint and whitespace
+  **PASS**. One bounded core-patch review: **no blockers**, after correcting the
+  tool's stale attachment with the actual inline delta in the same chat. The
+  subsequent resource-expectation amendment is full-suite tested, not rereviewed.
+- `.2` stays open and `.9` stays in progress for their wider existing scope.
+  Official `bd export --all`
+  preserves **1,512 issue + 37 memory rows**; only those two issues change
+  semantically. `bd dolt pull` refuses `no remote`. Per-invocation commit-hook
+  override avoids the Beads hook's shared-main export; official owned-worktree
+  export and static gates are performed explicitly, without persistent hook changes.
+
+Gate/source hash checkpoint: `/tmp/nostrc-conversations-edge-20261022/checkpoint.json`,
+SHA-256 `61e2f2b606e442bcd957a69d62e5c7c05bb28898c0179313a522e50e5cf38741`.
+Jev triage/usage notes are in `jev-usage.json` there (109 requests, 883,109 input
+tokens, USD 0.037090); the low-precision inventory scan was replaced by actual
+node/source inspection. **No component bump:** internal CI metadata/tests/docs.
+No push/merge, W11 credit, successful hosted coverage, production-profile/sanitizer/
+live-peer acceptance or release/protection/default/enforcement/legacy cutover is
+claimed. Parent owns independent focused tests, review and landing.
+
+
 ## Bounded PR #2 ordinary-worker diagnosis — 2026-10-21
 
 **Partial worker inspection only, not a root/counter refresh.** API metadata
