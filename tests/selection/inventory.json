@@ -6439,7 +6439,8 @@
     "groundhog.conversations": {
       "depends_on": [
         "groundhog.store",
-        "groundhog.identity_auth"
+        "groundhog.identity_auth",
+        "nostr.gtk"
       ],
       "id": "groundhog.conversations",
       "owner_paths": [
