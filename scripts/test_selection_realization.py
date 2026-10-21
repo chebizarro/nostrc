@@ -556,7 +556,8 @@ def _phase_context(profile, root, source, configuration):
 
 def _profile_fingerprint(realization):
     keys = ("profile_id", "profile", "source_identity", "inventory_hash", "cmake", "toolchains",
-            "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context")
+            "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context",
+            "configure_outputs")
     return _hash({k: realization.get(k) for k in keys})
 
 
@@ -643,6 +644,83 @@ def _validate_native_profile(profile, toolchains=None, configuration=None, compi
             raise RealizationError(f"profile compiler {profile['compiler']} differs from realized {sorted(actual)}")
 
 
+def _configure_file_outputs(trace, manifest, token, cmake_files, directories, source, build):
+    """Admit explicit immediate witnesses, never final-byte-only trace guesses.
+
+    The reviewed helper runs AFTER an unwrapped direct configure_file. Trace
+    proves the association; its immediate hashes must still match final bytes.
+    No command interpreter, process allowlist or configure_file override is used.
+    """
+    helper = source / "cmake/NostrcConfigureProvenance.cmake"
+    inputs = {str((source / item["path"]).resolve()) for item in cmake_files["inputs"]
+              if not item.get("isGenerated") and not item.get("isExternal")}
+    contexts = {str((source / d["source"] / "CMakeLists.txt").resolve()):
+                (source / d["source"], build / d["build"]) for d in directories}
+    candidates, seen, ambiguous, witnessed = {}, set(), set(), []
+    configured = pending = None
+    configure_paths = set()
+    critical = {"configure_file", "_configure_file", "file", "string", "nostrc_record_configure_output"}
+    with trace.open() as stream:
+        for line in stream:
+            event = json.loads(line)
+            cmd, args, file = event.get("cmd"), event.get("args", []), event.get("file")
+            if cmd in ("function", "macro") and args and args[0].lower() in critical and file != str(helper):
+                raise RealizationError("custom configure provenance command override is unsupported")
+            if cmd == "configure_file":
+                configured = event if file in contexts and event.get("frame") == 1 else None
+                if configured and len(args) >= 2:
+                    output = os.path.abspath(contexts[file][1] / args[1])
+                    if output in configure_paths:
+                        ambiguous.add(output)
+                    configure_paths.add(output)
+                pending = None
+                continue
+            if cmd == "nostrc_record_configure_output":
+                pending = None
+                if (configured and len(args) == 3 and file == configured["file"]
+                        and event.get("global_frame") == configured.get("global_frame")):
+                    src, binary = contexts[file]
+                    original = configured["args"]
+                    if len(original) >= 2 and args == [file, os.path.abspath(src / original[0]), os.path.abspath(binary / original[1])]:
+                        pending = event
+                configured = None
+                continue
+            if file == str(helper):
+                if cmd == "file" and args[:2] == ["APPEND", str(manifest)]:
+                    if len(args) != 3:
+                        raise RealizationError("malformed configure producer witness")
+                    witnessed.append(args[2])
+                    fields = args[2].rstrip("\n").split("\t")
+                    if len(fields) != 7 or fields[0] != token or any(not re.fullmatch(r"[0-9a-f]{64}", h) for h in fields[4:]):
+                        raise RealizationError("invalid configure producer witness")
+                    producer, template, output = [bytes.fromhex(p).decode("utf-8") for p in fields[1:4]]
+                    if output in seen:
+                        ambiguous.add(output)
+                    seen.add(output)
+                    if (pending and event.get("global_frame") == pending.get("global_frame", -1) + 1
+                            and pending["args"] == [producer, template, output]
+                            and {producer, template, str(helper)} <= inputs):
+                        hashes = dict(zip((producer, template, output), fields[4:]))
+                        hashes[str(helper)] = hashlib.sha256(helper.read_bytes()).hexdigest()
+                        if (Path(template).is_relative_to(source) and Path(output).is_relative_to(build)
+                                and all(Path(p).is_file() and Path(p).resolve() == Path(p) for p in hashes)):
+                            candidates[output] = {"producer": producer, "source": template,
+                                                  "metadata_helper": str(helper), "hashes": hashes}
+                    pending = None
+                continue
+            # The metadata call must follow the builtin, with only its token
+            # guard/helper include intervening. Other commands cannot claim an
+            # old configure_file result after replacing it with different bytes.
+            if configured and not (cmd == "if" and file == configured["file"]
+                                   or cmd == "include" and file == configured["file"] and args[:1] == [str(helper)]):
+                configured = None
+    if manifest.read_text() != "".join(witnessed):
+        raise RealizationError("configure producer manifest differs from engine witness")
+    return {p: spec for p, spec in candidates.items() if p not in ambiguous
+            and all(hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest
+                    for name, digest in spec["hashes"].items())}
+
+
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
                       inventory_hash, *, log_path=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
@@ -662,14 +740,21 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     query.mkdir(parents=True, exist_ok=True)
     (query / "codemodel-v2").touch()
     (query / "toolchains-v1").touch()
+    (query / "cmakeFiles-v1").touch()
     token = uuid.uuid4().hex
     env = phase_environment(profile, root, "configure")
     args = [_expand_source(x, root) for x in profile.get("configure_args", [])]
+    if any(arg == "--trace-source" or arg.startswith("--trace-source=") for arg in args):
+        raise RealizationError("filtered configure trace cannot establish output provenance")
     source = (root / _expand_source(profile.get("source_dir", "."), root)).resolve()
     if not source.is_relative_to(root) or not source.is_dir():
         raise RealizationError("profile source directory escapes/misses checkout")
     initial_context = _phase_context(profile, root, source, profile.get("configuration", ""))
+    trace = build / "nostrc-configure-trace.jsonl"
+    manifest = build / f"nostrc-configure-producers-{token}.tsv"
+    manifest.write_text("")
     cmd = ["cmake", "-S", str(source), "-B", str(build), *args,
+           "--trace-expand", "--trace-format=json-v1", f"--trace-redirect={trace}",
            f"-DNOSTRC_TEST_SELECTION_TOKEN={token}"]
     before = {p.name: p.read_bytes() for p in (build / ".cmake/api/v1/reply").glob("index-*.json")}
     started = time.monotonic()
@@ -744,13 +829,19 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
             else:
                 files.append(value)
         runtime_manifest[desc["name"]] = sorted(set(files))
+    cmake_files_reply = client.get("cmakeFiles-v1", {})
+    if "jsonFile" not in cmake_files_reply or "error" in cmake_files_reply:
+        raise RealizationError("missing/errored File API configure-input reply")
+    cmake_files_path = reply_dir / cmake_files_reply["jsonFile"]
+    configure_outputs = _configure_file_outputs(trace, manifest, token, _read(cmake_files_path),
+                                               configs[0].get("directories", []), source, build)
     realization = {
         "schema_version": 1, "repo_root": str(root), "source_dir": str(source),
         "build_dir": str(build), "profile_id": profile_id, "profile": profile,
         "source_identity": identity, "inventory_hash": inventory_hash,
         "configuration": config_name, "targets": targets,
         "tests": ctest.get("tests", []), "descriptors": descriptors["tests"],
-        "runtime_file_manifest": runtime_manifest,
+        "runtime_file_manifest": runtime_manifest, "configure_outputs": configure_outputs,
         "toolchains": tools, "compiled_languages": compiled_languages, "cmake": index.get("cmake", {}),
         "target_settings": target_settings, "environment_hash": _hash(env),
         "phase_context": context, "phase_context_hash": _hash(context),
@@ -768,7 +859,9 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         if not set(compat["GH_SAN_TESTS"]).issubset({t["name"] for t in realization["tests"]}):
             raise RealizationError("sanitizer_compatibility test missing from CTest")
     # Bind all generated metadata. A later native configure invalidates this file.
-    bound = [descriptor_path, indexes[-1], reply_dir / response["jsonFile"]]
+    bound = [descriptor_path, indexes[-1], reply_dir / response["jsonFile"], trace, manifest, cmake_files_path]
+    bound += [Path(p) for p in configure_outputs]
+    bound += sorted({Path(spec["metadata_helper"]) for spec in configure_outputs.values()})
     bound += [reply_dir / t["jsonFile"] for t in configs[0].get("targets", [])]
     bound += list(build.rglob("CTestTestfile.cmake"))
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
@@ -787,7 +880,8 @@ def load_realization(build_dir, expected_identity=None):
     _validate_source_identity(realization["repo_root"], realization["source_identity"], build_dir)
     for name, digest in realization.get("generation_files", {}).items():
         p = Path(name)
-        if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest:
+        if (not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest
+                or (name in realization.get("configure_outputs", {}) and p.resolve() != p)):
             raise RealizationError(f"stale realization metadata: {name}")
     if not realization.get("generation_files"):
         raise RealizationError("unbound generation metadata")
@@ -1533,6 +1627,20 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             gap("target_mapping", test=name, reason=str(exc))
             continue
         inputs = [(p, "runtime") for p in set(desc.get("inputs", []) + realization.get("runtime_file_manifest", {}).get(name, []))]
+        configured = realization.get("configure_outputs", {})
+        declared = {p for p, _ in inputs}
+        for value, _ in list(inputs):
+            if value in configured:
+                spec = configured[value]
+                for dependency in (spec["producer"], spec["source"], spec["metadata_helper"]):
+                    if dependency not in declared:
+                        inputs.append((dependency, "source"))
+                        declared.add(dependency)
+                for path, digest in spec["hashes"].items():
+                    file = Path(path)
+                    if (not file.is_file() or file.resolve() != file
+                            or hashlib.sha256(file.read_bytes()).hexdigest() != digest):
+                        gap("stale_configure_output", test=name, input=value, changed=path)
         for ident in ids:
             target = realization["targets"][ident]
             inputs += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
@@ -1577,7 +1685,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             if kind == "generated" or (build_relative is not None and kind != "header"):
                 # Generated files are audited through producer target sources and
                 # declared runtime source inputs. Unresolved provenance stays a gap.
-                if kind == "runtime" and not ids and not support:
+                if kind == "runtime" and value in configured:
+                    fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+                elif kind == "runtime" and not ids and not support:
                     gap("generated_runtime_without_target", test=name, input=value)
                 continue
             if relative is None:

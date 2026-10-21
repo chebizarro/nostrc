@@ -135,10 +135,32 @@ class GrottoProfiles(unittest.TestCase):
 
     def test_export_source_bindings_require_fresh_registration_evidence(self):
         exports = json.loads(EXPORT.read_text())
+        renewal = json.loads((ROOT / 'tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json').read_text())
         for relative, expected in exports['source_sha256'].items():
             self.assertIn('{source}/' + relative,
                           self.policy['checks']['selection.contract']['runtime_inputs'])
-            self.assertEqual(hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(), expected, relative)
+            content = (ROOT / relative).read_bytes()
+            if relative == 'apps/grotto/CMakeLists.txt':
+                # Preserve the historical exports, including ASan; only these two
+                # token-guarded metadata blocks differ, not registration logic.
+                actual = hashlib.sha256(content).hexdigest()
+                change = renewal['profiles']['grotto.linux']['source_input_changes'][relative]
+                self.assertEqual(change, {'before': expected, 'after': actual})
+                self.assertEqual(self.policy['diagnostic_nonmember_subsets']['grotto.linux']
+                                 ['review']['source_inputs'][relative], actual)
+                for name in ('org.nostr.Signer', 'org.nostr.Grotto'):
+                    call = (f'configure_file(data/{name}.service.in\n'
+                            f'               ${{CMAKE_CURRENT_BINARY_DIR}}/{name}.service @ONLY)\n').encode()
+                    metadata = ('''if(NOSTRC_TEST_SELECTION_TOKEN)
+  include("${CMAKE_SOURCE_DIR}/cmake/NostrcConfigureProvenance.cmake")
+  nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/NAME.service.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/NAME.service")
+endif()
+'''.replace('NAME', name)).encode()
+                    self.assertEqual(content.count(call + metadata), 1)
+                    content = content.replace(call + metadata, call)
+            self.assertEqual(hashlib.sha256(content).hexdigest(), expected, relative)
 
     def test_build_aggregate_is_not_native_host_packaging_or_ctest_coverage(self):
         check = self.policy['checks']['grotto.build_contract']

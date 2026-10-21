@@ -1,5 +1,147 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Bounded configured-service byte provenance — 2026-10-22
+
+**Local implementation:** `dc2700cd5ac44579fc51092689bd3c5cb5758d1a`; source-only
+renewal and standalone-test isolation `606215453`; historical-export projection
+`973c09ee6`, from master `a14b8b38cbd1b350324c2fbfed227592ede3ab2b`.
+This repairs the two configured Grotto service runtime-provenance gaps, not the
+remaining ordinary full-audit failures. It is **not a W11 comparison, ledger
+refresh or acceptance promotion**.
+
+### Actual producer and supported byte provenance
+
+The builtin `configure_file(... @ONLY)` calls in
+[`apps/grotto/CMakeLists.txt`](../../apps/grotto/CMakeLists.txt) produce
+`org.nostr.Signer.service` and `org.nostr.Grotto.service` during configure, with no
+build target. The service-contract tests consume those files through the real
+`CheckDbusServiceFile.cmake` checker. File API `cmakeFiles-v1` corroborates the
+directory producers/templates, but neither it nor the final file hash alone
+proves that a later command did not overwrite the configured result.
+
+Both builtin calls remain unwrapped and unchanged. Only selection-token
+configurations call the explicit
+[`NostrcConfigureProvenance.cmake`](../../cmake/NostrcConfigureProvenance.cmake)
+helper immediately afterward. It records the actual producer/template/output
+hashes at that point. Realization cross-checks the complete expanded trace,
+direct directory caller, exact helper append and token manifest, File API inputs
+and directory contexts. Producer/template/helper/output must still have those
+hashes at audit/load time; trace, manifest, File API reply and output bytes are
+generation-bound. No synthetic target, command allowlist, interception, replay or
+generic CMake interpreter is introduced. Unsupported/unrecorded/pre-project,
+included/ambiguous and custom-overridden cases remain refused. Unchanged later
+bytes retain their exact known result; changed bytes do not inherit the template's
+provenance.
+
+Real CMake regressions cover later `file(WRITE/APPEND/GENERATE/COPY/COPY_FILE/CONFIGURE)`
+and `execute_process` overwrites, missing/changed producer/template/helper/output,
+trace/manifest/File API tampering and custom definitions. Full selected **and
+omitted** source/runtime audits and postbuild discovered-header audits remain in
+the miniature tests. No product runtime, target, image or gitlink changes.
+Normal configure artifacts are unchanged; **no shipped component version bump**.
+
+### Deliberate source-only admission renewal
+
+Parent explicitly authorized review of the necessary source changes, not a new
+policy authority. Fresh actual Linux/x86_64 authored configurations first prove
+the old source guard refuses `apps/grotto/CMakeLists.txt`. Renewal changes only
+that reviewed hash and adds the helper (192 → 193 source inputs). Existing
+profiles, exact33 lists, universes, candidate/toolchain contracts, primary/fixture
+closures, 29 required audit targets, workflow bindings and sanitizer authority
+are unchanged. The original witness fixture is unmodified; the
+[new source-renewal witness](../../tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json)
+retains the full previous review and reconstructs its original record hashes.
+
+| Authored profile | Registrations / targets | Raw → source-renewed full preaudit | Full input hashes |
+|---|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **9,358 → 9,325, both FAIL** | 1,316 identical |
+| `grotto.linux` | 461 / 603 | **9,214 → 9,181, both FAIL** | 1,700 identical |
+
+Only the exact33 unclaimed-registration findings per profile are reclassified;
+no other finding is removed and no finding is added by renewal. Grotto's two
+generated-runtime gaps are absent, but auditing the newly proven producer exposes
+one additional real producer-impact gap for `grotto_dbus_service_configured`.
+Thus the prior accepted-source Grotto baseline is **9,182 → 9,181**, not a green
+audit. Groundhog's owner disagreement, all remaining missing-impact and unclaimed
+findings stay blocking. Omitted registrations remain `not_executed`, with
+`complete=false` and `complete_gate_eligible=false`; no selected-only fallback.
+
+These are **prebuild audits** (`after_build=false`), including the candidate audit
+after source renewal. The existing review-schema `post_audit_sha256` now references
+that post-renewal **preaudit**, not a postbuild header audit. Fresh renewal did
+**not** physically rebuild the 29 omitted-target closures or execute a selected
+production profile. The older 29-target physical-build/postbuild witness remains
+historical, not refreshed. The two real configured-service CTests pass as direct
+configure-only diagnostics; that does not execute omitted registrations or
+establish profile acceptance.
+
+Renewal proof window `2026-10-21T20:51:49Z`–`20:55:50Z`, dirty source
+`dc2700cd5`, snapshot
+`1ebc2af6d9e49cba54865dffbf90e427b69fb91144468d90ac366a465dff03ef`.
+Evidence: `/tmp/nostrc-configured-runtime-20261022/explicit/renewal-proof/summary.json`,
+SHA-256 `45dde8abf3ed4539beb8f2d9ae21fa277feab827c43e1b78ab1abbac4ab0c112`.
+Existing reviewed amd64 image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+GCC 13.3.0, CMake/CTest 3.28.3, Ninja 1.11.1; read-only source/Git mounts,
+network disabled, no image build.
+
+**Final actual on-disk inventory proof:** committed source
+`973c09ee655da76f6be173fe0b9983a911b2d6cd`,
+`2026-10-21T21:14:33Z`–`21:16:59Z`. Both fresh authored full-registration
+preaudits retain the same failing 9,325/9,181 findings and full 1,316/1,700
+input-hash sets; only the two Grotto configure outputs are mapped.
+Missing/changed reviewed producer/helper negative controls refuse, and bound
+realizations reload successfully. Under the same evidence root,
+`explicit/final-authored-973c09ee6/summary.json`, SHA-256
+`3c4f872bd776ea6e8a2a52671b622567a40e6bd7269b7ec06cb14a9abfc0179f`,
+contains the exact inventory, generation, source/profile identities and physical
+execution limits. The earlier clean `606215453` proof is retained separately.
+
+### Verification, preserved failures and handoff
+
+- Exact standalone command (no `PYTHONPATH`, no prior cached test modules):
+  `env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -p test_configure_outputs.py -q`:
+  **16/16 PASS**, 16.097 seconds on clean `606215453`; first isolated pass also
+  16/16, 35.882 seconds. The parent-reproduced missing import was real; importing
+  `ROOT` from established `selector_support` fixes isolation. Ordinary-subset
+  **14/14**, source-contract **11/11** and historical Grotto **7/7** pass independently.
+- Clean `973c09ee6` full selector suite: **491/491 PASS, zero skips, 801.591 seconds**,
+  no blanket `PYTHONPATH` or preceding-suite setup. Log SHA-256
+  `dbb9909eb93ff3530efe6fa6753616f3eb6d80497db9c92c03edd19d1c87f9df`.
+  The first full isolated run retained one historical-export hash failure (491
+  tests, 400.178 seconds). Its fix preserves the archived native/ASan export
+  unchanged: removing only the exact two reviewed metadata blocks reproduces the
+  old source hash, while current bytes must match the fresh x86 renewal. No
+  sanitizer/architecture acceptance is inferred from that historical projection.
+- The unusually slow final run was investigated live rather than restarted. The
+  native thread sample shows `os__fcopyfile_impl`/file I/O and open source/destination
+  fixture paths, not a readiness/cancellation wait. The existing command-input
+  fixture copy loop is unchanged from master. Python-frame attachment was
+  permission-denied; exact Python test attribution and the runtime inflation
+  remain unproven. It completed without cancellation/retry. Observation, native
+  stack and process/file snapshots remain in `explicit/hang-973c09ee6/`.
+- Safe native normal-path configure/all-default build PASS at helper implementation
+  `dc2700cd5`; native CTest **434 passed, 5 skipped, zero failed**, 444.06 seconds.
+  Private bus, throwaway Secret Service/home, loopback/Unix-only networking;
+  processes reaped, socket absent and read-only keychain guards PASS. Groundhog is
+  OFF in the default build; this is not authored Linux build/omitted-target proof.
+  Visible skips: `test_nip5f_tcp`, `signer/qr-scanner`, `signer/onboarding`,
+  `signer/ui-layout`, `signer/ui-accessibility`.
+- Six shell regression suites, four normal static checks, actionlint and whitespace
+  checks PASS. Parent's bounded actual diff/helper review accepted the explicit
+  route; its standalone-import finding is fixed. No further Oracle requested or
+  claimed. Earlier Oracle input mismatch/relative-output finding remain retained;
+  they are not approval of the final helper.
+- Unsound trace-only `5f32b2077` is withdrawn by `301e7abce`. Its real later-WRITE
+  false admission, discarded wrapper's observable configure-scope/line drift,
+  failed development/COPY fixture attempts and interrupted configurations remain
+  under `/tmp/nostrc-configured-runtime-20261022`; none is relabeled a pass.
+- `.2` stays open and `.9` in progress for wider blocking audits/execution scope.
+  `.5`, dated W11 ledger, defaults, release mode and protection are unchanged.
+  Official complete `bd export --all` preserves existing records. No push/merge;
+  parent owns landing and cleanup. `bd dolt pull` refused `no remote`; no successful
+  tracker synchronization is claimed.
+
 ## Bounded GTK resource/portable ownership split — 2026-10-22
 
 **Local implementation:** `e770cbea740d60e6eee620cdc77420e1030d4b2b`, from

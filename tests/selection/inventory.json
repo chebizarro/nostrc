@@ -5488,12 +5488,16 @@
         "{source}/apps/gnostr/TestInventory.cmake",
         "{source}/apps/grotto/CMakeLists.txt",
         "{source}/apps/grotto/TestInventory.cmake",
+        "{source}/apps/grotto/data/org.nostr.Grotto.service.in",
+        "{source}/apps/grotto/data/org.nostr.Signer.service.in",
         "{source}/apps/grotto/meson.build",
         "{source}/apps/grotto/native-host/CMakeLists.txt",
         "{source}/apps/grotto/native-host/TestInventory.cmake",
         "{source}/apps/grotto/tests/CMakeLists.txt",
         "{source}/apps/grotto/tests/TestInventory.cmake",
         "{source}/apps/grotto/tests/identity-tests.cmake",
+        "{source}/cmake/CheckDbusServiceFile.cmake",
+        "{source}/cmake/NostrcConfigureProvenance.cmake",
         "{source}/cmake/NostrcGtkResources.cmake",
         "{source}/cmake/NostrcTestInventory.cmake",
         "{source}/gnome/groundhog/CMakeLists.txt",
@@ -5600,6 +5604,7 @@
         "{source}/tests/selection/fixtures/grotto_profile_exports.json",
         "{source}/tests/selection/fixtures/hosted_audit_edges.json",
         "{source}/tests/selection/fixtures/nonmember_audit_edges.json",
+        "{source}/tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json",
         "{source}/tests/selection/fixtures/ordinary_subset_x86_exports.json",
         "{source}/tests/selection/fixtures/profile_exports.json",
         "{source}/tests/selection/fixtures/resource_profile_exports.json",
@@ -5616,6 +5621,7 @@
         "{source}/tests/selection/test_command_execution.py",
         "{source}/tests/selection/test_command_output_bytes.py",
         "{source}/tests/selection/test_command_signal_bytes.py",
+        "{source}/tests/selection/test_configure_outputs.py",
         "{source}/tests/selection/test_contained_custody_contract.py",
         "{source}/tests/selection/test_diagnostic_eligibility.py",
         "{source}/tests/selection/test_diagnostic_nonmembers.py",
@@ -7968,6 +7974,18 @@
     }
   },
   "path_rules": [
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/data/org.nostr.Grotto.service.in",
+      "nodes": ["grotto.gui", "selection.contract"],
+      "reason": "Exact configure-output fixture input; retain existing product ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/data/org.nostr.Signer.service.in",
+      "nodes": ["grotto.gui", "selection.contract"],
+      "reason": "Exact configure-output fixture input; retain existing product ownership."
+    },
     {
       "effect": "impact",
       "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-nip05.h",
@@ -13873,11 +13891,11 @@
         "feature_variants": [],
         "instrumentation": "none",
         "platform": "linux",
-        "post_audit_sha256": "1e747b9c51c43496f2f5d840aa2fa4e9d347e9840e48a776dedd0a680f00ba72",
-        "pre_audit_sha256": "af1f70075c56c8a95821ec4c1535f70f662a9556c5f24f581d587966336263db",
-        "profile_fingerprint": "44b16b25774fbfca7771a3424c912fcc1923d835fdaed36aa31d6f1fa92eaff2",
-        "realization_sha256": "5b52e9a273a9c91f30b3c915e0d06852232826174500daacea5a052901f82a64",
-        "reviewer": "implementation agent; owner-approved exact scope 2026-10-19",
+        "post_audit_sha256": "15766ddd92c78278e0a8b1cf59f02886088ec86fbb31c65d570d2d905637bf0d",
+        "pre_audit_sha256": "1f3098ee7229a5c13cecf904ffd466f8f1d9f14f11d3411483f9eaf895600c55",
+        "profile_fingerprint": "d5a23c1436330cebbf8fba7b9c6be595f84bcf6c281f07684e5b777a50b20745",
+        "realization_sha256": "6c20c4dea140809c014d01283a36ea78e752fef6618e72c17c5b6dfcd566a0f2",
+        "reviewer": "implementation review; parent-authorized source-only renewal 2026-10-22",
         "source_inputs": {
           ".github/workflows/groundhog-ci.yml": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c",
           "CMakeLists.txt": "e4db97d904e02d45118d4ea6a7ea1cc28b302915946a35aa03df14cf8cb9b56f",
@@ -13904,7 +13922,7 @@
           "apps/gnostr/plugins/nip99-marketplace/CMakeLists.txt": "0bc79557c5c49b9881c2d88fa9720c4a9bd83d0710cd473f1c8be122028102cb",
           "apps/grelay/CMakeLists.txt": "12131e856ae06f378795f74da0b00ac1363d83886e8743a888de2471125f165e",
           "apps/grelay/tests/CMakeLists.txt": "82cd8723fb9dbcceea87bcfa95b2ef3578b85d3b644e9327cdae83beb288e551",
-          "apps/grotto/CMakeLists.txt": "91730bc81471ff1b0878dd8a5b40c49cb9cebe1e1ba900cd0122a50e69375518",
+          "apps/grotto/CMakeLists.txt": "82f56ea722138e1dec2391078e9521e0007ec5b46df064c7ad99e637889bcf68",
           "apps/grotto/TestInventory.cmake": "f483df8b876c4d87365a704bfe58c29c243ec680c617b65c647c88cae56ee38b",
           "apps/grotto/native-host/CMakeLists.txt": "bec75451622c1854922ba47410cd3d9d628199495cdf8a9a714f2d96cd174d88",
           "apps/grotto/native-host/TestInventory.cmake": "f2c4590486107e03394be4ad132b93048cb739de1995308656e3f6fe4be6fc0b",
@@ -14070,9 +14088,10 @@
           "tests/CMakeLists.txt": "dcbd3c77e7c4efe4e46640d5259e82433348728ef658c2190b4741b3d87c8462",
           "tests/TestInventory.cmake": "5f4c845c87cdc9a5afb0a3c575521ebeb284a65d09d8ecb58549a642888157ca",
           "tests/testkit/CMakeLists.txt": "4de6d5b104b5326fcae9d58ba086004e144778768ebfe5745a470cf5241673fa",
-          "tools/CMakeLists.txt": "ea70d75e5a64d28d4d9dfe87baefecf3a2e080f31d77bfa83fbffb533e44965b"
+          "tools/CMakeLists.txt": "ea70d75e5a64d28d4d9dfe87baefecf3a2e080f31d77bfa83fbffb533e44965b",
+          "cmake/NostrcConfigureProvenance.cmake": "a3a1743b21c4de4761c35ec81a9ce565218e1005fca4f45b6f2f262e11d3a977"
         },
-        "source_sha": "32f756b734deb72e41cdb16b9a3089c2839ca642",
+        "source_sha": "dc2700cd5ac44579fc51092689bd3c5cb5758d1a",
         "tracking": [
           "nostrc-0cfsg.2",
           "nostrc-0cfsg.9"
@@ -14709,11 +14728,11 @@
         "feature_variants": [],
         "instrumentation": "none",
         "platform": "linux",
-        "post_audit_sha256": "c36dc3e96660ec246efdaeee9b49baa558d65f53bc8ae4bd8db9680ca35a1a08",
-        "pre_audit_sha256": "0dd4932485713e94ade4889c3675f2e6a6ece6c095f284c9a1f322a0f186ee81",
-        "profile_fingerprint": "da961aec3b88ecc5c3e2bf871d91283ce9d5131866e52677fd005f1392d5deb7",
-        "realization_sha256": "a9e7a3a7c8df2d49faf5f000f5b75aeb3ce16f6ac48205703a64ef6d7bb340b3",
-        "reviewer": "implementation agent; owner-approved exact scope 2026-10-19",
+        "post_audit_sha256": "5fc61950dd7f4a518b44269f820b0aabf811dd515f68686d0e3e8b72bbcb4cc2",
+        "pre_audit_sha256": "3d0a45c0c8ad9113c7a7a40b872ac5903b8c0f066c444a6fa23c8c339df71a6b",
+        "profile_fingerprint": "25608811ceb7f21d8e2ed1b3607c52c84a7c24e06ebf677de74640d8c99ce4cc",
+        "realization_sha256": "20c9191cc47cd5b6e81253ee8046f7f5676ea5cec75f3c0999ac8125096bae4f",
+        "reviewer": "implementation review; parent-authorized source-only renewal 2026-10-22",
         "source_inputs": {
           ".github/workflows/grotto-ci.yml": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
           "CMakeLists.txt": "e4db97d904e02d45118d4ea6a7ea1cc28b302915946a35aa03df14cf8cb9b56f",
@@ -14740,7 +14759,7 @@
           "apps/gnostr/plugins/nip99-marketplace/CMakeLists.txt": "0bc79557c5c49b9881c2d88fa9720c4a9bd83d0710cd473f1c8be122028102cb",
           "apps/grelay/CMakeLists.txt": "12131e856ae06f378795f74da0b00ac1363d83886e8743a888de2471125f165e",
           "apps/grelay/tests/CMakeLists.txt": "82cd8723fb9dbcceea87bcfa95b2ef3578b85d3b644e9327cdae83beb288e551",
-          "apps/grotto/CMakeLists.txt": "91730bc81471ff1b0878dd8a5b40c49cb9cebe1e1ba900cd0122a50e69375518",
+          "apps/grotto/CMakeLists.txt": "82f56ea722138e1dec2391078e9521e0007ec5b46df064c7ad99e637889bcf68",
           "apps/grotto/TestInventory.cmake": "f483df8b876c4d87365a704bfe58c29c243ec680c617b65c647c88cae56ee38b",
           "apps/grotto/native-host/CMakeLists.txt": "bec75451622c1854922ba47410cd3d9d628199495cdf8a9a714f2d96cd174d88",
           "apps/grotto/native-host/TestInventory.cmake": "f2c4590486107e03394be4ad132b93048cb739de1995308656e3f6fe4be6fc0b",
@@ -14906,9 +14925,10 @@
           "tests/CMakeLists.txt": "dcbd3c77e7c4efe4e46640d5259e82433348728ef658c2190b4741b3d87c8462",
           "tests/TestInventory.cmake": "5f4c845c87cdc9a5afb0a3c575521ebeb284a65d09d8ecb58549a642888157ca",
           "tests/testkit/CMakeLists.txt": "4de6d5b104b5326fcae9d58ba086004e144778768ebfe5745a470cf5241673fa",
-          "tools/CMakeLists.txt": "ea70d75e5a64d28d4d9dfe87baefecf3a2e080f31d77bfa83fbffb533e44965b"
+          "tools/CMakeLists.txt": "ea70d75e5a64d28d4d9dfe87baefecf3a2e080f31d77bfa83fbffb533e44965b",
+          "cmake/NostrcConfigureProvenance.cmake": "a3a1743b21c4de4761c35ec81a9ce565218e1005fca4f45b6f2f262e11d3a977"
         },
-        "source_sha": "32f756b734deb72e41cdb16b9a3089c2839ca642",
+        "source_sha": "dc2700cd5ac44579fc51092689bd3c5cb5758d1a",
         "tracking": [
           "nostrc-0cfsg.2",
           "nostrc-0cfsg.9"
