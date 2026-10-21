@@ -1,5 +1,106 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Bounded service producer ownership — 2026-10-22
+
+**Implementation:** `71d57a83c`; explicit regression-source closure correction
+`1af1772d128849dd77a25c94d6165941f224388b`, from master `705d7b051` (PR #7).
+This is a metadata-only correction under `.2`/`.9`, **not a W11 comparison,
+ledger refresh or acceptance promotion**. No shipped component version bump.
+
+The source-linked PR #7 final-authored proof and its producer/template/helper
+hashes were verified unchanged. Its 9,181-finding Grotto preaudit contains two
+real impact gaps for `grotto_dbus_service_configured`: the newly proven
+[`apps/grotto/CMakeLists.txt`](../../apps/grotto/CMakeLists.txt#L496-L520)
+producer was classified only as GUI/version input, and its
+[`org.nostr.Signer.service.in`](../../apps/grotto/data/org.nostr.Signer.service.in)
+template as GUI/selection-contract input. The exact producer path now also owns
+`grotto.daemon`; the Signer template replaces GUI ownership with daemon ownership
+while retaining the selection-contract fixture consumer. GUI service/template
+ownership stays separate. No daemon→GUI or catchall prerequisite is introduced.
+
+[`test_service_impact.py`](../../tests/selection/test_service_impact.py) executes
+the actual configure/helper/test statements and real descriptors/checker/templates
+in a miniature CMake project. Counterfactual old ownership reproduces both gaps;
+independent negatives, selected/omitted source/runtime and postbuild header audits,
+no invented target, real configured-service CTests and bound reloads are retained.
+The new test is explicitly declared in `selection.contract`'s source closure.
+
+Groundhog inspection confirms the real
+[configure→READ→configured header→background target](../../gnome/groundhog/CMakeLists.txt#L1504-L1520)
+chain and [compiled template use](../../gnome/groundhog/src/app/gh-background.c).
+The existing `groundhog.resources` path rule already selects the declared
+`sanitizer.groundhog_background` check. A regression pins that route without
+adding dependencies to `groundhog.unclassified`/execution nodes or pulling MDK
+for the template. Ordinary background registrations remain unclaimed; this is
+not new configured-header provenance, ordinary membership or postbuild acceptance.
+No Groundhog graph/product change was justified for that already-covered check.
+
+### Final source-bound full preaudit comparison
+
+Fresh authored Linux/x86_64 configurations independently bind master and repaired
+inventories on committed `1af1772d1`; no inventory-identity guard is bypassed.
+All four exports reload with their original effective environment and bindings.
+
+| Profile | Registrations / targets | Before → after, both FAIL | Removed / added | Identical full input hashes¹ |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **9,325 → 9,325** | **0 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,181 → 9,179** | **2 / 0** | 1,700 |
+
+¹ Only independent build-directory prefixes are normalized; every hash is equal.
+Both removed findings are exactly the daemon service's producer/template
+`missing_impact_edge`s. Grotto retains 8,810 missing-impact and 369 unclaimed
+findings; Groundhog retains 8,951 missing-impact, 373 unclaimed and one owner
+disagreement. The configured service registrations remain unclaimed. Exact33,
+29 required omitted-target closures, 193 reviewed source inputs, all authority
+records/profiles and PR #6 portable/UI/resource optimization remain unchanged.
+No source-renewal churn, filters, exclusions or new nonmember policy.
+
+Raw configure/preaudit window `2026-10-21T22:03:54Z`–`22:12:25Z`; retained-export
+verification finished `22:14:27Z`. Existing reviewed amd64 image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+nonroot, read-only source/Git mounts, network disabled; no image build.
+Evidence `/tmp/nostrc-service-impact-20261022/final-comparison-summary.json`,
+SHA-256 `7b04e3bd6bab9458b6b0f7f96c03481d87da91ea6bdae4bb296472f3ee994e4d`,
+binds each raw audit/export and exact removed set. These remain prebuild audits:
+no production selected-profile build/test, refreshed omitted-target physical
+build or postbuild header proof. Omissions stay `not_executed`, `complete=false`
+and `complete_gate_eligible=false`; all other failures remain blocking.
+
+### Gates and retained failures
+
+- Final `1af1772d1` selector suite **494/494 PASS, zero skips, 673.947 seconds**;
+  `env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -q`.
+  Log SHA-256 `e174ae797327c11ab97abd7c3fece54ea911c3968dd7a627555e9ff3fc52d70e`.
+  First 494-test run failed the explicit source-closure guard (243.730 seconds);
+  declaring the new regression fixed it, not weakening the guard.
+- Safe native normal-path configure/all-default build **PASS** at `71d57a83c`,
+  libsecret/secret-service overrides. Product/test runtime bytes are unchanged
+  from master through `1af1772d1`; default Groundhog is OFF.
+- Native full CTest **FAIL**: **433 passed, 5 skipped, 1 failed**, 520.18 seconds,
+  exit 8. `nip55l_approval_service` aborts `/approval/expiry-queued-revision` at
+  [`test_signer_approval_service.c:404`](../../nips/nip55l/tests/test_signer_approval_service.c#L404):
+  pending length **2**, expected **1**. Cause/inherited/flaky classification is
+  unproven; separate bug **`nostrc-2omeg`** retains the seed and exact evidence.
+  No assertion/product edit, waiver, baseline execution or whole-native retry.
+  Private home/bus/throwaway Secret Service, loopback/Unix-only sandbox; processes
+  reaped, socket absent, read-only keychain guards PASS. The five existing skips
+  remain visible in the retained log; this run is not a passing mandatory gate.
+- Six shell suites, four static checks, actionlint and whitespace checks PASS.
+  One bounded code review found no blockers after stale packaged review input
+  was replaced with the actual inline diff and complete regression code.
+- All failed attempts remain under `/tmp/nostrc-service-impact-20261022`: initial
+  baseline/current inventory-binding refusal; final wrapper's incorrect extra
+  command-input expectation (both raw preaudits had completed with identical
+  CTest input-hash sets); and retained-export reload refusal in a new container's
+  different hostname environment. Docker lifecycle evidence recovered the exact
+  original hostnames; unchanged environment guards then admitted all four reloads.
+  No audit failure was suppressed or failed wrapper relabeled successful.
+- `.2` stays open, `.9` in progress; the separate native bug stays open. Official
+  all-record `bd export --all` preserves prior rows. `bd dolt pull` refused
+  `no remote`; no synchronization success is claimed. Local commits only;
+  parent assesses mandatory gates and owns review/push/merge/cleanup. No `.5`,
+  W11 ledger/default/release/protection changes or complete/release acceptance.
+
 ## Bounded configured-service byte provenance — 2026-10-22
 
 **Local implementation:** `dc2700cd5ac44579fc51092689bd3c5cb5758d1a`; source-only
