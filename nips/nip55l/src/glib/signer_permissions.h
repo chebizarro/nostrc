@@ -41,7 +41,11 @@ SignerPermissionResult signer_permissions_evaluate(SignerPermissions *permission
  * repeated admission/result checks reuse that reservation. No disk/list rows.
  * received_at is the daemon's monotonic arrival time (0 uses the fixture clock). */
 #ifdef NIP55L_TEST_TRUST_ENV
-/* Initialize before admitting work; the fixture clock must be thread-safe. */
+/* Initialize before admitting work; fixture clocks return microseconds and
+ * must be thread-safe. The wall clock controls persisted absolute expiry;
+ * the flow clock controls monotonic consent windows. */
+void signer_permissions_set_wall_clock_for_test(SignerPermissions *permissions,
+    gint64 (*clock)(gpointer), gpointer data);
 void signer_permissions_set_flow_clock_for_test(SignerPermissions *permissions,
     gint64 (*clock)(gpointer), gpointer data);
 #endif

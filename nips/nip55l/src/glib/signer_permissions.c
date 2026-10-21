@@ -21,6 +21,8 @@ struct _SignerPermissions {
   GArray *required;
   GHashTable *flows, *flow_windows;
 #ifdef NIP55L_TEST_TRUST_ENV
+  gint64 (*wall_clock)(gpointer);
+  gpointer wall_clock_data;
   gint64 (*flow_clock)(gpointer);
   gpointer flow_clock_data;
 #endif
@@ -55,7 +57,14 @@ static void row_free(Row *r) {
   g_free(r->decision); g_free(r->legacy); g_free(r);
 }
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(Row, row_free)
-static guint64 now_seconds(void) { return g_get_real_time() / G_USEC_PER_SEC; }
+static guint64 now_seconds(SignerPermissions *p) {
+#ifdef NIP55L_TEST_TRUST_ENV
+  if (p->wall_clock) return p->wall_clock(p->wall_clock_data) / G_USEC_PER_SEC;
+#else
+  (void)p;
+#endif
+  return g_get_real_time() / G_USEC_PER_SEC;
+}
 static gint64 flow_now(SignerPermissions *p) {
 #ifdef NIP55L_TEST_TRUST_ENV
   if (p->flow_clock) return p->flow_clock(p->flow_clock_data);
@@ -65,6 +74,10 @@ static gint64 flow_now(SignerPermissions *p) {
   return g_get_monotonic_time();
 }
 #ifdef NIP55L_TEST_TRUST_ENV
+void signer_permissions_set_wall_clock_for_test(SignerPermissions *p,
+    gint64 (*clock)(gpointer), gpointer data) {
+  p->wall_clock = clock; p->wall_clock_data = data;
+}
 void signer_permissions_set_flow_clock_for_test(SignerPermissions *p,
     gint64 (*clock)(gpointer), gpointer data) {
   g_return_if_fail(g_hash_table_size(p->flows) == 0 && g_hash_table_size(p->flow_windows) == 0);
@@ -220,7 +233,7 @@ guint64 signer_permissions_revision(SignerPermissions *p) {
 }
 gboolean signer_permissions_revision_is_current(SignerPermissions *p, guint64 revision) {
   g_mutex_lock(&p->lock);
-  gboolean current = p->revision == revision && (!p->next_expiry || now_seconds() < p->next_expiry) &&
+  gboolean current = p->revision == revision && (!p->next_expiry || now_seconds(p) < p->next_expiry) &&
       (!p->next_flow_expiry || flow_now(p) < p->next_flow_expiry);
   g_mutex_unlock(&p->lock); return current;
 }
@@ -241,7 +254,7 @@ gboolean signer_permissions_set_required_confirmation(SignerPermissions *p,
   changed(p); return TRUE;
 }
 static void update_expiry_fence(SignerPermissions *p, GKeyFile *records) {
-  guint64 next_expiry = 0, now = now_seconds();
+  guint64 next_expiry = 0, now = now_seconds(p);
   g_auto(GStrv) groups = g_key_file_get_groups(records, NULL);
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
@@ -267,7 +280,7 @@ static gboolean parse_legacy(const gchar *val, gboolean *allow, guint64 *expires
   return !errno && end && !*end;
 }
 /* Initial import only. Existing v2 rows always win, including their expiry. */
-static void migrate(GKeyFile *records, GKeyFile *legacy) {
+static void migrate(SignerPermissions *p, GKeyFile *records, GKeyFile *legacy) {
   g_auto(GStrv) ops = g_key_file_get_groups(legacy, NULL);
   for (guint i = 0; ops[i]; i++) {
     g_auto(GStrv) keys = g_key_file_get_keys(legacy, ops[i], NULL, NULL);
@@ -283,7 +296,7 @@ static void migrate(GKeyFile *records, GKeyFile *legacy) {
       r->principal = g_strndup(keys[j], bar - keys[j]); r->identity = g_strdup(bar + 1);
       r->operation = g_strdup(ops[i]); r->kind = -1; r->expires = expires;
       r->decision = g_strdup(unsafe ? "review" : allow ? "allow" : "deny");
-      if (unsafe) { r->created = now_seconds(); r->legacy = g_strdup("operation-wide event allow"); }
+      if (unsafe) { r->created = now_seconds(p); r->legacy = g_strdup("operation-wide event allow"); }
       else if (allow && !strcmp(r->identity, "*")) r->legacy = g_strdup("identity-wildcard non-event allow");
       if (!valid_row(r)) { g_message("nostr-signer: skipped invalid legacy permission record"); continue; }
       g_autofree gchar *id = row_id(r);
@@ -340,7 +353,7 @@ gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
   }
   g_autofree gchar *before = g_key_file_to_data(next, NULL, NULL);
   if (!imported) {
-    migrate(next, legacy);
+    migrate(p, next, legacy);
     g_key_file_set_boolean(next, "permissions", "legacy-imported", TRUE);
     g_key_file_set_boolean(next, "permissions", "legacy-complete", FALSE);
     /* Persist the import exactly once, before removing rollback authority.
@@ -362,8 +375,8 @@ gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
     if (!strcmp(groups[i], "permissions") || !strcmp(groups[i], "imports")) continue;
     g_autoptr(Row) r = read_row(next, groups[i], NULL);
     if (!r) { g_message("nostr-signer: quarantined invalid permission record"); continue; }
-    if (!strcmp(r->decision, "review") && now_seconds() >= r->created &&
-        now_seconds() - r->created >= REVIEW_LIFETIME) g_key_file_remove_group(next, groups[i], NULL);
+    if (!strcmp(r->decision, "review") && now_seconds(p) >= r->created &&
+        now_seconds(p) - r->created >= REVIEW_LIFETIME) g_key_file_remove_group(next, groups[i], NULL);
   }
   g_autofree gchar *after = g_key_file_to_data(next, NULL, NULL);
   if (strcmp(before, after) && !save_file(next, path, error)) return FALSE;
@@ -373,7 +386,7 @@ gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
   if (differs) changed(p);
   return TRUE;
 }
-static gboolean row_live(Row *r) { return !r->expires || now_seconds() < r->expires; }
+static gboolean row_live(SignerPermissions *p, Row *r) { return !r->expires || now_seconds(p) < r->expires; }
 static gboolean contains_kind(const guint32 *kinds, gsize count, gint kind) {
   for (gsize i = 0; i < count; i++) if (kind >= 0 && kinds[i] == (guint32)kind) return TRUE;
   return FALSE;
@@ -397,7 +410,7 @@ SignerPermissionResult signer_permissions_evaluate(SignerPermissions *p,
         return SIGNER_PERMISSION_DENY;
       continue;
     }
-    if (g_strcmp0(principal, r->principal) || g_strcmp0(op, r->operation) || !row_live(r) ||
+    if (g_strcmp0(principal, r->principal) || g_strcmp0(op, r->operation) || !row_live(p, r) ||
         (g_strcmp0(identity ? identity : "", r->identity) && strcmp(r->identity, "*")) ||
         (r->kind != -1 && r->kind != kind)) continue;
     if (!strcmp(r->decision, "deny")) return SIGNER_PERMISSION_DENY;
@@ -568,7 +581,7 @@ GVariant *signer_permissions_list(SignerPermissions *p, const gchar *principal, 
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
     g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
-    if (r && (!principal || !strcmp(principal, r->principal)) && row_live(r)) variant_row(&b, r);
+    if (r && (!principal || !strcmp(principal, r->principal)) && row_live(p, r)) variant_row(&b, r);
   }
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }
@@ -624,7 +637,7 @@ gboolean signer_permissions_consent_room(SignerPermissions *p,
   if (flow_seals && (g_hash_table_contains(p->flows, key) || g_hash_table_size(p->flows) >= 1024))
     return fail(error, G_IO_ERROR_EXISTS, "flow cannot be reset or enlarged; approve this request once");
   if (encrypt || (seals && !flow_seals)) {
-    guint64 now = now_seconds();
+    guint64 now = now_seconds(p);
     if (ttl > G_MAXUINT64 - now) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "permission expiry overflow");
     g_autoptr(GKeyFile) next = copy_records(p);
     Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity,
@@ -657,7 +670,7 @@ gboolean signer_permissions_clear(SignerPermissions *p, const gchar *principal,
 }
 gboolean signer_permissions_remember(SignerPermissions *p, const gchar *principal,
     const gchar *identity, const gchar *op, gint kind, gboolean allow, guint64 ttl, GError **error) {
-  guint64 now = now_seconds();
+  guint64 now = now_seconds(p);
   if (ttl > G_MAXUINT64 - now) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "permission expiry overflow");
   Row row = {.principal=(gchar *)principal, .identity=(gchar *)(identity ? identity : ""),
     .operation=(gchar *)op, .kind=kind, .decision=allow ? "allow" : "deny", .expires=ttl ? now + ttl : 0};

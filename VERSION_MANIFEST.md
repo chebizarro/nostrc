@@ -31,6 +31,12 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-2omeg: make approval expiry/worker-queue regression ordering
+  deterministic with a private, test-build-only permission wall clock. No bump:
+  test instrumentation and test-only changes; production authorization still
+  uses real time, with unchanged expiry boundaries, APIs and storage/wire formats.
+  nip55l remains unreleased 0.7.0; all version sources and release columns unchanged.
+
 - nostrc-7qnod: release message-menu keyboard focus on dismissal so GTK 4.14
   cannot retain an unrealized popover for a delayed tooltip after row teardown.
   PATCH-class Groundhog bug fix folded into unreleased 0.12.0; no further bump,
