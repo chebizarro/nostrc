@@ -5415,6 +5415,7 @@
       "kind": "ctest",
       "nodes": [
         "nostr.gtk",
+        "nostr.gtk.resources",
         "execution.core"
       ],
       "profiles": [
@@ -5622,6 +5623,7 @@
         "{source}/tests/selection/test_failure_receipts.py",
         "{source}/tests/selection/test_git_ranges.py",
         "{source}/tests/selection/test_grotto_profiles.py",
+        "{source}/tests/selection/test_gtk_ownership.py",
         "{source}/tests/selection/test_local_command_adapter.py",
         "{source}/tests/selection/test_mdk_cleanup.py",
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
@@ -6440,7 +6442,7 @@
       "depends_on": [
         "groundhog.store",
         "groundhog.identity_auth",
-        "nostr.gtk"
+        "nostr.gtk.portable"
       ],
       "id": "groundhog.conversations",
       "owner_paths": [
@@ -7709,15 +7711,37 @@
       ],
       "rationale": "NIP archive family in nostr-gobject/CMakeLists.txt's guarded target loop; root nostrc_link_archives forwards shared-runtime archives to executable consumers. Optional absent targets may overselect; test inputs remain check-local."
     },
-    "nostr.gtk": {
+    "nostr.gtk.portable": {
       "depends_on": [
         "nostr.gobject"
       ],
+      "id": "nostr.gtk.portable",
+      "owner_paths": [
+        "nostr-gtk/src",
+        "nostr-gtk/include",
+        "nostr-gtk/po"
+      ],
+      "rationale": "Portable target nostr_gtk_portable and its gn_content_parser/gn_issue_model objects; retains the PR5 conversations prerequisite. Legacy UI and GResource inputs have separate ownership below."
+    },
+    "nostr.gtk.resources": {
+      "depends_on": [],
+      "id": "nostr.gtk.resources",
+      "owner_paths": [
+        "nostr-gtk/data"
+      ],
+      "rationale": "nostr-gtk/CMakeLists.txt compiles data/ Blueprint and GResource inputs into nostr_gtk only, not NostrGtk::Portable. Shared resource helper consumers are explicit path rules."
+    },
+    "nostr.gtk": {
+      "depends_on": [
+        "nostr.gtk.portable",
+        "nostr.gtk.resources"
+      ],
       "id": "nostr.gtk",
       "owner_paths": [
-        "nostr-gtk"
+        "nostr-gtk/src",
+        "nostr-gtk/include"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Legacy nostr_gtk target: NOSTR_GTK_CORE_SOURCES, NOSTR_GTK_GNOSTR_COUPLED_SOURCES and nonportable headers, linked PUBLIC to nostr_gtk_portable and embedding GRESOURCE_C. Gnostr consumes this target; portable-only consumers do not."
     },
     "nostrdb": {
       "depends_on": [
@@ -7946,10 +7970,218 @@
   "path_rules": [
     {
       "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-nip05.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view-private.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Private header for legacy gnostr-timeline-view.c."
+    },
+    {
+      "effect": "impact",
+      "prefix": "nostr-gtk/data",
+      "nodes": [
+        "nostr.gtk.resources"
+      ],
+      "reason": "GResource/Blueprint inputs compiled into the legacy nostr_gtk target only."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/nostr-gtk-init.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-composer.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-card-visibility-policy.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/note-card-binding-ctx.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/note-card-data.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gn-timeline-tabs.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-timeline-view.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-nip05.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-thread-view.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-profile-pane.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/nostr-note-card-row.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/gnostr-note-embed.c",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/note-card-binding-ctx.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Private header included by the legacy note-card sources."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/src/note-card-data.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Private header included by the legacy note-card sources."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/nostr-gtk.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-thread-view.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-composer.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-profile-pane.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-card-visibility-policy.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/nostr-note-card-row.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gn-timeline-tabs.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-note-embed.h",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
+    },
+    {
+      "effect": "impact",
       "exact": "tests/common/test_blueprint_resources.py",
       "nodes": [
         "gnostr",
-        "nostr.gtk",
+        "nostr.gtk.resources",
         "selection.contract"
       ],
       "reason": "Exact shared resource fixture/helper consumer scope; selection.contract also verifies the source."
@@ -7959,7 +8191,7 @@
       "exact": "cmake/NostrcGtkResources.cmake",
       "nodes": [
         "gnostr",
-        "nostr.gtk",
+        "nostr.gtk.resources",
         "selection.contract"
       ],
       "reason": "Exact shared resource fixture/helper consumer scope; selection.contract also verifies the source."
@@ -8096,7 +8328,7 @@
       "effect": "impact",
       "exact": "nostr-gtk/TestInventory.cmake",
       "nodes": [
-        "nostr.gtk",
+        "nostr.gtk.portable",
         "selection.contract"
       ],
       "reason": "Exact additive registration metadata read by production selection.contract tests; retain component ownership."
@@ -8339,7 +8571,7 @@
       "effect": "impact",
       "exact": "nostr-gtk/CMakeLists.txt",
       "nodes": [
-        "nostr.gtk",
+        "nostr.gtk.portable",
         "version.contract"
       ],
       "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
@@ -8348,7 +8580,7 @@
       "effect": "impact",
       "exact": "nostr-gtk/meson.build",
       "nodes": [
-        "nostr.gtk",
+        "nostr.gtk.portable",
         "version.contract"
       ],
       "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
@@ -8455,10 +8687,10 @@
     {
       "effect": "impact",
       "nodes": [
-        "nostr.gtk"
+        "nostr.gtk.portable"
       ],
       "prefix": "nostr-gtk",
-      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+      "reason": "Portable code/headers/catalogs and conservative fallback for new component inputs; reviewed legacy UI and resource inputs have narrower rules."
     },
     {
       "effect": "impact",

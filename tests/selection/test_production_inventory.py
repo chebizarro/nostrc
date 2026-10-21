@@ -48,7 +48,17 @@ class ProductionInventory(unittest.TestCase):
                 check = self.policy["checks"][edge["check"]]
                 with self.subTest(profile=audit["profile"], check=edge["check"], input=edge["input"]):
                     self.assertIn(edge["test"], check["ctest_tests"][audit["profile"]])
-                    self.assertTrue(set(edge["required_nodes"]) <= self.prerequisites(check["nodes"]))
+                    # Frozen audits called portable parser inputs by the former coarse
+                    # nostr.gtk name. Keep the raw historical edges and translate
+                    # that exact source family, not arbitrary missing edges.
+                    required = set(edge["required_nodes"])
+                    if "nostr.gtk" in required:
+                        self.assertIn(edge["input"], {
+                            "nostr-gtk/src/content_renderer.c",
+                            "nostr-gtk/include/nostr-gtk-1.0/content_renderer.h"})
+                        required.remove("nostr.gtk")
+                        required.add("nostr.gtk.portable")
+                    self.assertTrue(required <= self.prerequisites(check["nodes"]))
                     self.assertTrue(set(s.classify(self.policy, edge["input"])["nodes"]) <= self.prerequisites(check["nodes"]))
 
     def test_real_postbuild_witness_changes_select_their_actual_consumers(self):
@@ -130,11 +140,11 @@ class ProductionInventory(unittest.TestCase):
         broken = copy.deepcopy(self.policy)
         broken["nodes"]["groundhog.conversations"]["depends_on"] = [
             node for node in broken["nodes"]["groundhog.conversations"]["depends_on"]
-            if node != "nostr.gtk"]
+            if node != "nostr.gtk.portable"]
         for path in ("nostr-gtk/src/gn-nostr-reference.c",
                      "nostr-gtk/include/nostr-gtk-1.0/gn-nostr-reference.h"):
             with self.subTest(input=path):
-                self.assertEqual(s.classify(self.policy, path)["nodes"], ["nostr.gtk"])
+                self.assertEqual(s.classify(self.policy, path)["nodes"], ["nostr.gtk.portable"])
                 good = s.make_plan(self.policy, [change(path)], head="a" * 40,
                                    base="b" * 40, context="ci")
                 self.assertEqual(good["effective_mode"], "affected")

@@ -50,15 +50,12 @@ class ResourceProfileContracts(unittest.TestCase):
         self.assertEqual(properties['FIXTURES_REQUIRED'], ['gnostr-test-homes'])
         self.assertEqual(properties['DEPENDS'], ['gnostr-test-homes'])
 
-    def test_resource_sources_select_real_checks_and_portable_library_consumers(self):
-        # The existing nostr.gtk node owns both portable code and GTK resources.
-        # Conversations now correctly depends on that node; its MDK consumers
-        # must be selected conservatively too, not hidden by a resource exclusion.
-        portable_consumers = {"mdk08.compatibility"} | {
-            name for name in self.policy['checks'] if name.startswith('mdk011.')}
+    def test_resource_sources_select_real_checks_without_portable_only_consumers(self):
         for path, required in (
                 ('apps/gnostr/data/ui/gnostr-main-window.blp', ['gnostr.resource_build']),
-                ('nostr-gtk/data/ui/gnostr-profile-pane.blp', ['nostr.gtk.resource_build']),
+                ('nostr-gtk/data/ui/gnostr-profile-pane.blp', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
+                ('nostr-gtk/data/nostr-gtk.gresource.xml', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
+                ('nostr-gtk/data/ui/gnostr-composer.ui', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
                 ('cmake/NostrcGtkResources.cmake', ['gnostr.resource_build', 'nostr.gtk.resource_build']),
                 ('tests/common/test_blueprint_resources.py', ['gnostr.resource_build', 'nostr.gtk.resource_build'])):
             with self.subTest(path=path):
@@ -66,8 +63,9 @@ class ResourceProfileContracts(unittest.TestCase):
                 self.assertTrue(set(required) <= set(plan['selected_checks']))
                 live = {name for name in plan['selected_checks']
                         if name.startswith(('mdk08.', 'mdk011.'))}
-                expected = set() if path.startswith('apps/gnostr/') else portable_consumers
-                self.assertEqual(live, expected)
+                self.assertEqual(live, set())
+                self.assertNotIn('groundhog.media', plan['selected_checks'])
+                self.assertNotIn('groundhog.mls_service', plan['selected_checks'])
                 self.assertEqual(plan['effective_mode'], 'affected')
                 self.assertFalse(plan['broadening_reasons'])
 
