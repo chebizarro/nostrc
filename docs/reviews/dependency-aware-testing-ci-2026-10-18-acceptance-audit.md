@@ -1,5 +1,106 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Bounded GTK resource/portable ownership split — 2026-10-22
+
+**Local implementation:** `e770cbea740d60e6eee620cdc77420e1030d4b2b`, from
+master `7219eb4b5dd7e3bd046dd96f846baa26ed08ddbf` (PR #5). This implements the
+resource-cost optimization left open by the historical PR #4 repair below;
+it is **not a W11 comparison, ledger refresh or acceptance promotion**.
+
+### Actual target boundary, not an MDK filter
+
+[`nostr-gtk/CMakeLists.txt`](../../nostr-gtk/CMakeLists.txt#L199-L276) already
+separates `nostr_gtk_portable` (portable sources plus `gn_content_parser` and
+`gn_issue_model` objects) from legacy `nostr_gtk` (core/coupled UI sources plus
+`GRESOURCE_C`, linking portable PUBLIC). The real ordinary x86 CMake File API
+closures confirm conversations includes portable **without** legacy GTK;
+the generated `nostr-gtk-resources.c` belongs to legacy GTK, not portable.
+
+The inventory now expresses `nostr.gtk.portable`, `nostr.gtk.resources`, and the
+legacy `nostr.gtk` umbrella depending on both. Conversations' prerequisite is
+**portable**, retaining PR #5's real transitive dependency. Exact legacy C/header
+ownership and the `nostr-gtk/data` prefix follow those target inputs. Shared
+Blueprint/resource helpers select both real resource-build checks. Portable
+catalogs and unknown new component inputs retain conservative portable impact.
+Existing direct check/descriptors' coarse GTK ownership is retained; it is not
+permission to weaken source-review bindings or claim minimal ordinary selection.
+
+No CMake, runtime, image, gitlink, membership, profile, exclusion or authority
+record changes. Every ordinary reviewed source-input hash remains equal; both
+exact-33 ordinary and sanitizer authorities are unchanged. Raw historical witness
+fixtures remain untouched: only the two exact parser C/header witness paths map
+the former coarse GTK node label to portable in the regression's interpretation.
+No witness, transitive source/header audit, fixture or omitted execution is dropped.
+
+### Selection and full-audit comparisons
+
+For shared GTK Blueprint/GResource and representative legacy C/header changes,
+CI-context selection changes **76 → 52**, with **all 17 expensive MDK checks
+removed** and no new check added. Shared resource-helper inputs change **77 → 53**,
+also with zero MDK checks. Portable source/public-header samples retain the exact
+same **76-check set**, including all 17 MDK checks. Both resource-build checks and
+existing affected UI consumers remain selected. These are logical selection
+comparisons, **not execution receipts or production acceptance**.
+
+Fresh independent before/after configurations use the unchanged authored
+Linux/x86_64 ordinary profiles on the same current source snapshot: GCC 13.3.0,
+Debug, CMake/CTest 3.28.3, Ninja 1.11.1, existing reviewed image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`.
+Source/Git mounts are read-only and networking disabled; no image was built.
+
+| Profile | Registrations / targets | Full preaudit before → after | Identical input hashes | Semantic additions / removals |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **9,325 → 9,325, both FAIL** | 1,316 | **0 / 0** |
+| `grotto.linux` | 461 / 603 | **9,182 → 9,182, both FAIL** | 1,696 | **0 / 0** |
+
+Raw audits retain the node-identity migration: Groundhog 540 removed/540 added
+and Grotto 560 removed/560 added findings. Only portable-input missing-node labels
+are canonicalized for comparison; raw audits are unmodified. The remaining
+Groundhog owner disagreement, both Grotto generated-runtime gaps and all unclaimed
+registrations remain blocking. Exact-33 omission authority/fixture/build-target
+accounting agrees before/after; omitted registrations remain `not_executed`,
+`complete=false` and `complete_gate_eligible=false`. **No production-profile build,
+postbuild header audit or CTest execution is claimed.**
+
+Audit window `2026-10-21T16:44:13Z`–`16:48:15Z`; dirty base `7219eb4b5`, snapshot
+`fbbe19c869ec5b2e623bc839778aae527b1507b84587ea0fafa79c5550239799`, inventory
+`a1ce3b4556e281279e40788ad47bc92e3c2e2cbcf8a5c7318d93e5e7db3bf29b`.
+Local evidence: `/tmp/nostrc-gtk-resource-split-20261022/summary.json`, SHA-256
+`e74ed34d1bd112d3551008870c269bbed26fc4220212aaa8e3ff3f2af6153ddf`;
+raw independent configurations/audits, full input hashes, selection comparisons,
+logs and review exports are retained alongside it.
+
+### Gates and local handoff
+
+- Clean implementation `e770cbea7`: **475/475 selector tests PASS, zero skips,
+  209.531 seconds**; the preceding development pass was 475/475 in 222.183 seconds.
+- Actual CMake source-list/header ownership and every tracked resource are checked.
+  Real native miniature pre/postbuild audits retain selected **and omitted**
+  source/discovered-header/runtime inputs; removing either portable or resource
+  dependency exposes the expected gaps with identical input hashes. PR #5's
+  conversations edge-removal negative audits remain.
+- Safe native default root configure/all-default build **PASS** with
+  `NIP55L_SECRET_BACKEND=libsecret` and
+  `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`. Groundhog is OFF in this
+  default build; this is not authored Linux/Groundhog build acceptance.
+- Native CTest: **434 passed, 5 skipped, zero failed**, 456.41 seconds. Private bus,
+  throwaway Secret Service/home and loopback-only networking; both private
+  processes reaped and bus socket absent. Read-only macOS keychain checks PASS.
+  Visible skips: `test_nip5f_tcp`, `signer/qr-scanner`, `signer/onboarding`,
+  `signer/ui-layout`, `signer/ui-accessibility`; no live/native UI acceptance inferred.
+- Six shell regression suites, four normal static checks, actionlint and whitespace
+  checks **PASS**. One bounded supplied-diff review: **no blockers**. The first
+  review call refused stale tool-packaged input; the same chat received the actual
+  five-file material before reviewing. Execution results were not independently
+  verified by that reviewer.
+- Development full-suite failure and initial missing-submodule configure logs are
+  retained separately; exact pinned submodules were initialized without gitlink
+  changes before the successful native build. No failed attempt is promoted.
+- **No shipped component bump:** internal graph/test/documentation changes only.
+  `.9` and `.2` retain wider unresolved acceptance scope. `.5`, historical ledger,
+  defaults, release mode and protection remain unchanged. Local commits only;
+  parent owns push, merge and branch/worktree cleanup.
+
 ## Bounded PR #4 full-audit root-cause repair — 2026-10-22
 
 **Local implementation:** `dd2ff1d72460c806775cfafe833d63a3a1efdf13`, from master
