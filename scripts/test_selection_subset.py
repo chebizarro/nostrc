@@ -303,7 +303,7 @@ def validate_receipt(receipt, backend, exclusions, contract, plan, lane, profile
     require(isinstance(executed, list) and set(executed) <= set(contract["required_closure"])
             and not set(REGISTRATIONS) & set(evidence.get("observed_executions", {})), "omission executed/relabelled")
     import test_selection_realization as realization
-    jobs = realization.effective_phase_parallelism(profile)
+    jobs = realization.authored_phase_parallelism(profile) or dict.fromkeys(("build", "test"), profile.get("parallelism", 1))
     if realization.authored_phase_parallelism(profile) is not None:
         validate_phase_parallelism_evidence(profile, evidence, require_test=True)
     options = dict(build_parallel=jobs["build"], test_parallel=jobs["test"], timeout_seconds=profile.get("timeout_seconds"))

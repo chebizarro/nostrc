@@ -1696,7 +1696,8 @@ def _diagnostic_execution_options(resolved, realization, parallel, timeout=None,
     import test_selection_subset as subset
     if any(e.get("authority") == subset.AUTHORITY for e in resolved.get("baseline_exclusions", [])):
         profile = realization["profile"]
-        jobs = effective_phase_parallelism(profile)
+        # Compare against policy, not the legacy API's implicit one-worker default.
+        jobs = authored_phase_parallelism(profile) or dict.fromkeys(("build", "test"), profile.get("parallelism", 1))
         effective_timeout = profile.get("timeout_seconds") if timeout is None else timeout
         if (type(parallel) is not int or parallel != jobs[phase]
                 or isinstance(effective_timeout, bool) or effective_timeout != profile.get("timeout_seconds")):

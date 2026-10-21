@@ -102,7 +102,7 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                 "realization_sha256": "c" * 64, "profile_fingerprint": real["profile_fingerprint"],
                 **{k: self.profile[k] for k in ("platform", "architecture", "compiler", "feature_variants", "instrumentation")}}}
 
-    def execute(self, pid=None):
+    def execute(self, pid=None, *, parallel=None):
         real = self.configure(pid)
         resolved = r.resolve_checks(self.inventory, self.plan, real, self.pid)
         # Existing unrelated remainder is not approved: keep its findings visible.
@@ -122,10 +122,10 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                                 source_identity=self.identity, mode="broad")
         resolved = r.resolve_checks(self.inventory, self.plan, real, self.pid)
         self.assertTrue(r.check_inputs(self.inventory, real)["passed"])
-        r.build_resolved(resolved, self.build)
+        r.build_resolved(resolved, self.build, parallel=parallel)
         audit = r.check_inputs(self.inventory, real, after_build=True)
         self.assertTrue(audit["passed"], audit["gaps"])
-        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=True)
+        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=True, parallel=parallel)
         result = adapter.normalize_receipt(self.inventory, self.plan, resolved, raw)
         return real, resolved, audit, result
 
@@ -157,6 +157,54 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                 self.assertEqual(code, 0, cli_result)
                 self.assertTrue(s.aggregate(self.inventory, self.plan, [cli_result], complete=False)["passed"])
                 self.assertFalse(cli_result["complete"])
+
+    def test_authored_shared_parallelism_matches_worker_and_receipt_without_changing_defaults(self):
+        self.profile["parallelism"] = 2
+        real, resolved, audit, result = self.execute(parallel=2)
+        options = dict(build_parallel=2, test_parallel=2, timeout_seconds=60)
+        self.assertEqual(result["backend_receipt"]["execution_options"], options)
+        self.assertTrue(s.aggregate(self.inventory, self.plan, [result], complete=False)["passed"])
+        self.assertFalse(result["complete"])
+        self.assertFalse(result["complete_gate_eligible"])
+        for command in result["backend_receipt"]["commands"]:
+            if command and command[0] in ("cmake", "ctest"):
+                self.assertEqual(command.count("--parallel"), 1)
+                self.assertEqual(command[command.index("--parallel") + 1], "2")
+        # Legacy API defaults stay at one; they cannot authorize this profile.
+        self.assertEqual(r.effective_phase_parallelism(self.profile), dict(build=1, test=1))
+        for parallel in (None, 1, 3, True):
+            with self.subTest(parallel=parallel), mock.patch.object(r, "_execute", wraps=r._execute) as execute:
+                with self.assertRaises((ValueError, r.RealizationError)):
+                    r.build_resolved(resolved, self.build, parallel=parallel)
+                self.assertFalse(any(call.args[0][:2] == ["cmake", "--build"] for call in execute.call_args_list))
+                with self.assertRaises((ValueError, r.RealizationError)):
+                    r.run_resolved(resolved, self.build, self.evidence / "wrong-parallel",
+                                   input_audit=audit, build=True, parallel=parallel)
+                self.assertFalse(any("--output-junit" in call.args[0] for call in execute.call_args_list))
+        for phase in ("build", "test"):
+            with self.subTest(phase=phase):
+                self.assertEqual(r._diagnostic_execution_options(resolved, real, 2, phase=phase), options)
+                with self.assertRaises(r.RealizationError):
+                    r._diagnostic_execution_options(resolved, real, 2, 10, phase=phase)
+        # Matching forged argv/options at legacy one still fail authored checks.
+        bad = copy.deepcopy(result["backend_receipt"])
+        bad["execution_options"].update(build_parallel=1, test_parallel=1)
+        for command in bad["commands"]:
+            if command and command[0] in ("cmake", "ctest"):
+                command[command.index("--parallel") + 1] = "1"
+        with self.assertRaisesRegex(ValueError, "execution options differ"):
+            subset.validate_receipt(result, bad, resolved["baseline_exclusions"], self.contract,
+                                    self.plan, self.plan["lanes"][0], self.profile)
+        plan_file = self.build / "shared-parallel-plan.json"
+        s.write_json(plan_file, self.plan)
+        args = adapter.parser().parse_args(["run", "--repo", str(self.root), "--profile", self.pid,
+            "--plan", str(plan_file), "--build-dir", str(self.build), "--parallel", "2",
+            "--evidence-dir", str(self.evidence / "worker"), "--phase", "all"])
+        cli_result, code = adapter.realization_command(args, self.inventory, r)
+        self.assertEqual(code, 0, cli_result)
+        self.assertEqual(cli_result["backend_receipt"]["execution_options"], options)
+        self.assertTrue(s.aggregate(self.inventory, self.plan, [cli_result], complete=False)["passed"])
+        self.assertFalse(cli_result["complete_gate_eligible"])
 
     def test_only_exact_33_unclaimed_findings_removed_full_remainder_unchanged(self):
         real = self.configure(admit=False)

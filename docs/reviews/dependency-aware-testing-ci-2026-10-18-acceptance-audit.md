@@ -1,5 +1,93 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Bounded PR #2 ordinary-worker diagnosis — 2026-10-21
+
+**Partial worker inspection only, not a root/counter refresh.** API metadata
+captured `2026-10-21T00:20:20Z`–`00:20:26Z` shows
+[shadow run 39519271161/1](https://github.com/chebizarro/nostrc/actions/runs/39519271161)
+**queued**, conclusion null, while the two ordinary jobs below are completed
+failures. The existing dated root ledger and `.5` counters are **not refreshed**;
+no successful root, qualifying PR comparison or W11 credit is claimed.
+
+API/job head is `9271b0667d141f979f196e59fd5d617117bc81d8`; both logs and
+receipts bind the actual tested checkout to PR synthetic merge
+`bc2c9014847207d0f90782e6120c39f025ab6e30`. The commit API confirms parents
+`1fad10a239f9cef72b7b056b8ab99679337d53c4` and `9271b0667`.
+Plan ID `afbd3888481ea7c935008b6a79b5a73fd4234e844d2bc09ec692650856ad272b`,
+inventory hash `79ad8d8a7884b6afe5df4f6309377ce65691e3ffc78dbc609445631aa1ae680c`.
+Both logs prove the prior tool-selection fix actually invoked CMake/CTest/CPack
+**3.28.3**, Ninja **1.11.1**; neither fails the previous toolchain guard.
+
+| Completed worker | Actual next failure | Retained scope |
+|---|---|---|
+| [Groundhog 118958930421](https://github.com/chebizarro/nostrc/actions/runs/39519271161/job/118958930421) | After configure/resolve, `ordinary subset phase parallel/timeout override differs from authored profile` | Authored/worker shared parallelism is 2; ordinary guard incorrectly derives expected 1 from the legacy API's implicit execution default. Build/test `not_executed`. |
+| [Grotto 118958930323](https://github.com/chebizarro/nostrc/actions/runs/39519271161/job/118958930323) | Full preaudit FAILED: **9,342** findings = **8,971** missing-impact edges + **369** unclaimed registrations + **2** generated-runtime-without-target | Exactly 33 libgo omissions admitted, still `not_executed`. Generated runtime findings name `grotto_app_dbus_service_configured` / `grotto_dbus_service_configured`. Build/test `not_executed`; not repaired by a parallelism fix. |
+
+All four inspected ZIPs match API sizes/SHA-256 and pass member CRC checks:
+
+| Artifact | SHA-256 |
+|---|---|
+| [Grotto receipt 12310032325](https://github.com/chebizarro/nostrc/actions/runs/39519271161/artifacts/12310032325) | `3277703c4afad171b5bda86b20224cd99d7c7e625ed604c25a5780208819ff9a` |
+| [Grotto evidence 12310037498](https://github.com/chebizarro/nostrc/actions/runs/39519271161/artifacts/12310037498) | `d0463af2c28274a7f98559dabf75086c5b501e466c3eca1d422ba3f50cfe1cb0` |
+| [Groundhog receipt 12310816278](https://github.com/chebizarro/nostrc/actions/runs/39519271161/artifacts/12310816278) | `eaae72da3bd95e44e25a3867427a4c19a771df348fccde01aeb6542d8bf5f3a4` |
+| [Groundhog evidence 12311081134](https://github.com/chebizarro/nostrc/actions/runs/39519271161/artifacts/12311081134) | `cd4b299277e161e2c20ab8fbd71a6599b543f789a172012faa8952e8aedc1f26` |
+
+Both normalized receipts are `lane_failure_v1`, `complete=false`,
+`complete_gate_eligible=false`. Grotto retained `preaudit.json` SHA-256
+`d5427a8699d0a9269d0e33c0f14594e463b82d1ddafc6b4709ed2f09bf31e31b`.
+No downloaded binary/installer was executed. Raw capture and local gate logs:
+`/tmp/nostrc-worker-next-evidence/` (temporary).
+
+The bounded implementation from master `f39401e12` corrects the ordinary
+execution guard **and receipt validator** to compare authored split phase values,
+falling back to authored `parallelism`, not implicit legacy API defaults.
+Legacy API/CLI defaults, worker argv, every profile, exact-33 authority/review
+record, source/toolchain/fixture bindings and full audits remain unchanged.
+The new miniature regression reproduces the original failure, then proves real
+build/CTest argv and normalized receipts at shared 2; mismatched/default 1,
+other counts, booleans, timeout overrides and forged legacy-1 evidence refuse.
+Existing split build2/test1 and omission/header/runtime/source negatives remain.
+This is internal testing only: **no component version bump**.
+
+### Local verification at implementation `bbfa17ce2`
+
+- Exact-commit full selection suite: **469/469 PASS, zero skips, 195.775s,
+  exit 0**, `caffeinate -i /usr/bin/env XPC_SERVICE_NAME=0
+  PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/selection -v`.
+  Final log SHA-256 `579ac2cf89adc0649829e53dfc68bf893db8faaecd7cfcdf17bab45d0c78ac4c`.
+- Focused ordinary subset: **14/14 PASS**. Before the correction, the new test
+  fails with the actual parallelism-override error (**14 cases, 1 error**);
+  that log remains. The first full run also printed **469/469 OK, 210.225s**,
+  but its outer zsh wrapper failed assigning read-only `status`; the final
+  clean bash rerun above has independently recorded exit 0. The native-build
+  wrapper had the same post-command error; configure/build were rerun cleanly.
+- Mandatory safe native default configure/default-all build: **PASS, exit 0**,
+  with `~/groundhog-smoke/toolchain/env.sh` and
+  `-DNIP55L_SECRET_BACKEND=libsecret
+  -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`. Default Unix Makefiles,
+  empty build type, `BUILD_GROUNDHOG=OFF`; the unused Groundhog-variable warning
+  remains. No native root CTest or GUI/keychain application execution is claimed.
+  Read-only post-build keychain guard passed; no keychain configuration changed.
+- Six shell suites (`test-pre-push`, `test-full-gate`,
+  `test-linux-gate-lifecycle`, `test-linux-gate-smoke`, `test-sanitizer-gate`,
+  `test-test-gate`), all four mandatory static checkers, actionlint and whitespace:
+  **PASS**. Shell-log concatenation (listed order) SHA-256
+  `f28f6313c7b0cbd34ade4b73be1a91b23e1e35e0d3e5e2231803b614a22c93bb`.
+- One bounded static review: **no blockers**, after the tool's stale October 19
+  attachment was corrected with the actual four-file inline delta in the same
+  chat. No broader rereview. Official `bd export --all` preserves all **1,512
+  issue + 37 memory rows**; only `.31`, `.9`, `.2` have changed semantic content
+  (unchanged memory rows may reorder). `bd dolt pull` still refuses `no remote`.
+  The repository commit hook also exports to the shared main checkout's
+  `.beads/issues.jsonl`; its staged/unstaged state is left for the parent, not
+  reset or committed from this worktree.
+
+`.31`, `.9`, `.2` remain open for the unrepaired full-audit/profile scopes.
+Groundhog reaching/passing its own full audit and both hosted selected builds/
+tests at this fix: **NOT RUN**. W11 **NOT MET**, W12 **NOT RUN**; no authority
+expansion, policy/architecture approval, default/release/protection cutover or
+acceptance closure. Parent reviews/lands the local commit; no push/merge here.
+
 ## Follow-up refresh — 2026-10-21 local / 2026-10-20 UTC
 
 **Frozen API snapshot: `2026-10-20T23:44:45.035117Z`**, sequential capture
