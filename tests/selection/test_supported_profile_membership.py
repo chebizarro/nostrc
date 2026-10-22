@@ -101,7 +101,7 @@ class SupportedProfileMembership(unittest.TestCase):
                                                   'groundhog.gresource_inputs'})
         for ident, node in structural['nodes'].items():
             self.assertEqual(node['depends_on'], [])
-            self.assertEqual(self.p['nodes'][ident], node)
+            self.assertEqual(before_closeout_policy(self.p)['nodes'][ident], node)
         self.assertEqual({k: v for k, v in self.p['nodes'].items() if k not in structural['nodes']},
                          previous['nodes'])
         self.assertEqual(before_closeout_policy(self.p)['profiles'], previous['profiles'])
@@ -163,7 +163,7 @@ class SupportedProfileMembership(unittest.TestCase):
             self.assertNotIn(consumer, selected(bad))
         bundle = repair['resource_bundle']
         self.assertEqual(len(bundle['inputs']), 100)
-        self.assertEqual(self.p['nodes'][bundle['node']]['owner_paths'], bundle['inputs'])
+        self.assertEqual(before_closeout_policy(self.p)['nodes'][bundle['node']]['owner_paths'], bundle['inputs'])
         for path in bundle['inputs']:
             self.assertEqual(s.classify(self.p, path)['nodes'], [bundle['node']])
         self.assertNotIn('gnome/groundhog/data/org.nostr.Groundhog-autostart.desktop.in',

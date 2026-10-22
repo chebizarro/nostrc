@@ -769,7 +769,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
         subset_contract = subset.contracts(policy).get(lane["profile"])
         try:
             if subset_contract is not None:
-                subset.validate_receipt(receipt, backend, exclusions, subset_contract, plan, lane, profile)
+                subset.validate_receipt(receipt, backend, exclusions, subset_contract, plan, lane, profile,
+                                        checks={ident: policy['checks'][ident] for ident in lane['checks']})
             else:
                 subset.validate_nested(receipt, None)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:

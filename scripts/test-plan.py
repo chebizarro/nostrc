@@ -476,6 +476,10 @@ def normalize_receipt(policy, plan, resolved, raw):
         selection.require(set(record.get("executions", [])) == set(names), "backend primary execution membership mismatch")
         actual_outcome = next((observed[n] for n in sorted(names) if observed[n] != "passed"), "passed")
         selection.require(record.get("outcome") == actual_outcome, "backend check/observed outcome contradiction")
+        if check['kind'] in ('command', 'build_contract'):
+            spec = resolved.get('command_executions', {}).get(ident, {})
+            selection.require(all(record.get(key) == spec.get(key) for key in ('argv', 'cwd', 'environment_hash', 'requires')),
+                              'backend physical command differs from fresh resolution')
         checks[ident] = dict(record, expected_executions=names, observed_executions=[n for n in names if observed.get(n) != "missing"])
     result = {"schema_version": 1, "plan_id": plan["plan_id"], "inventory_hash": plan["inventory_hash"],
             "source_identity": plan["source_identity"], "lane_id": lane["id"], "profile": profile_id,
@@ -493,7 +497,8 @@ def normalize_receipt(policy, plan, resolved, raw):
     if contract is not None:
         selection.require(raw.get("baseline_exclusions") == resolved.get("baseline_exclusions"),
                           "backend ordinary subset accounting differs from fresh resolution")
-        subset.validate_receipt(result, raw, result["baseline_exclusions"], contract, plan, lane, phase_profile)
+        subset.validate_receipt(result, raw, result["baseline_exclusions"], contract, plan, lane, phase_profile,
+                                checks={ident: policy['checks'][ident] for ident in lane['checks']})
     else:
         subset.validate_nested(result, None)
     return result

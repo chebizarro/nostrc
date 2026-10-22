@@ -158,6 +158,64 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                 self.assertTrue(s.aggregate(self.inventory, self.plan, [cli_result], complete=False)["passed"])
                 self.assertFalse(cli_result["complete"])
 
+    def test_selected_commands_and_default_build_are_not_ctest_registrations(self):
+        for pid in subset.PROFILES:
+            with self.subTest(profile=pid):
+                if pid != self.pid:
+                    self.inventory.pop('diagnostic_nonmember_subsets', None)
+                    self.build = self.build.parent / 'grotto-command-build'
+                    self.evidence = self.evidence.parent / 'grotto-command-evidence'
+                self.execute(pid)
+                common = dict(profiles=[pid], nodes=['application', 'testing', 'libgo'],
+                              requirement='blocking', expected_outcome='pass', cost='ordinary',
+                              working_directory='{source}', environment={}, requires=[], required_evidence=[])
+                self.inventory['checks']['ordinary.command'] = dict(common, kind='command', build_targets=[],
+                    command=['cmake', '-E', 'cat', '{source}/libgo/vector.bin'], runtime_inputs=['{source}/libgo/vector.bin'])
+                self.inventory['checks']['ordinary.default'] = dict(common, kind='build_contract', build_scope='default',
+                    build_targets=[], command=['cmake', '--build', '{build}', '--config', 'Debug'], runtime_inputs=[])
+                real = r.configure_profile(self.root, self.build, pid, self.profile, self.identity,
+                                           s.digest(self.inventory), inventory=self.inventory)
+                self.plan = s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
+                                        source_identity=self.identity, mode='broad')
+                resolved = r.resolve_checks(self.inventory, self.plan, real, pid)
+                r.build_resolved(resolved, self.build)
+                audit = r.check_inputs(self.inventory, real, after_build=True)
+                self.assertTrue(audit['passed'], audit['gaps'])
+                raw = r.run_resolved(resolved, self.build, self.evidence / 'typed', input_audit=audit, build=True)
+                result = adapter.normalize_receipt(self.inventory, self.plan, resolved, raw)
+                self.assertTrue(s.aggregate(self.inventory, self.plan, [result], complete=False)['passed'])
+                self.assertFalse(s.aggregate(self.inventory, self.plan, [result], complete=True)['passed'])
+                self.assertEqual(result['baseline_exclusions'][0]['registrations'], list(subset.REGISTRATIONS))
+                self.assertEqual(len(result['baseline_exclusions'][0]['registrations']), 33)
+                self.assertFalse(result['complete'])
+                self.assertFalse(result['complete_gate_eligible'])
+                for mutate in (
+                    lambda b: b['checks']['ordinary.command'].update(executions=['a-model']),
+                    lambda b: b['checks']['model.unit'].update(executions=['ordinary.command']),
+                    lambda b: b['expected_executions'].append('forged.command'),
+                    lambda b: b['observed_executions'].update({subset.REGISTRATIONS[0]: 'passed'}),
+                    lambda b: b['checks']['ordinary.command'].pop('process'),
+                    lambda b: b['checks']['ordinary.command'].update(environment_hash='0' * 64),
+                    lambda b: b['checks']['ordinary.command']['process'].update(argv=['forged']),
+                    lambda b: b['checks']['ordinary.command'].update(argv=['/forged/cmake', '-E', 'true']),
+                    lambda b: b['checks']['ordinary.default']['process'].update(exit_code=19),
+                    lambda b: b['checks']['ordinary.default'].update(default_build_hash='0' * 64),
+                ):
+                    bad = copy.deepcopy(raw)
+                    mutate(bad)
+                    with self.assertRaises((ValueError, KeyError)):
+                        adapter.normalize_receipt(self.inventory, self.plan, resolved, bad)
+                    forged = copy.deepcopy(result)
+                    forged['backend_receipt'] = bad
+                    forged['checks'] = copy.deepcopy(bad['checks'])
+                    self.assertFalse(s.aggregate(self.inventory, self.plan, [forged], complete=False)['passed'])
+                for ident, kind in (('ordinary.command', 'ctest'), ('model.unit', 'command')):
+                    forged_policy = copy.deepcopy(self.inventory)
+                    forged_policy['checks'][ident]['kind'] = kind
+                    with self.assertRaises(ValueError):
+                        subset.validate_receipt(result, raw, result['baseline_exclusions'], self.contract,
+                            self.plan, self.plan['lanes'][0], self.profile, checks=forged_policy['checks'])
+
     def test_authored_shared_parallelism_matches_worker_and_receipt_without_changing_defaults(self):
         self.profile["parallelism"] = 2
         real, resolved, audit, result = self.execute(parallel=2)
