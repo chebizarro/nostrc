@@ -93,21 +93,23 @@ must keep their source bindings. No competing core or inventory edits are made
 here. This backend is not a prepared-peer route, Docker lifecycle receipt or
 selector/profile admission.
 
-Both kernel backends still refuse display/private-bus wrappers before a lane
-launch; non-CTest/mixed wrapper refusal and native keyring-service refusal remain.
-The wrapper may be the root rather than the backend finalizer. Safe admission
-needs the parent's explicit protected-finalizer/root lifetime interface and real
-wrapped cancellation/failure/receipt proofs, not just descendant kill success.
-This is **internal remaining engineering for parent I66FCFE65 in this batch**,
-not an external/platform blocker or another deferred acceptance cell. Exact
-interface/ownership requirements and the required real wrapped matrix are in
-`/tmp/nostrc-native-custody-I66FCFE65-interface.json` and the `.23` bead comments.
-The minimal seam keeps `run_api` as the direct reserved finalizer and moves live
-bus/display resource setup behind it, with every service inside the namespace
-before resolve/run. Retaining nested wrappers instead requires an authenticated,
-gated finalizer reservation, never an arbitrary PID declaration. Capabilities
-are never silently dropped. Existing legacy CTest wrapper behavior is untouched.
-MDK/signer/workflow/ledger and sanitizer/dependency lane files are not modified.
+At A's component commit, both kernel backends refused display/private-bus
+wrappers and the protected-finalizer seam was internal parent engineering, not
+an external blocker. That historical refusal/interface evidence remains in
+`/tmp/nostrc-native-custody-I66FCFE65-interface.json` and the bead comments.
+
+The [integrated source-bound report](dependency-aware-testing-integration-2026-10-23.md)
+now records the concrete seam at `df8fb86ff329fffc72064a4ea255322ef3e955a0`:
+`run_api` remains the direct reserved finalizer, actual bus/display services and
+private mounts live inside custody, private in-memory seals are checked after the
+kernel barrier, and exact retained source bytes permit later partial verification.
+The final Linux suite passes79 cases (40 wrapped,30 existing custody,9 service/
+contracts), zero skips, on a provisioned ARM64 nonroot Docker kernel. This is not
+79 native macOS/x86/hosted cases, nor all kernel positives. Actual whole-wrapper
+positive/nonzero/cancel/raw-byte/mixed/sibling/parent-death/LSan and retained-byte
+negatives are covered; the former wrapper engineering deferral is resolved.
+Ptrace wrappers, keyring commands and native macOS positive custody remain
+unsupported. Default legacy behavior and explicit incomplete flags remain.
 
 ## Reproduction and evidence boundaries
 

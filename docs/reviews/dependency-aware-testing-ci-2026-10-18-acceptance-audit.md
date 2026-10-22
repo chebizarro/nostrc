@@ -1,5 +1,44 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Remaining acceptance integration — 2026-10-23
+
+[Source-bound report](dependency-aware-testing-integration-2026-10-23.md), tested
+code `df8fb86ff329fffc72064a4ea255322ef3e955a0`:79/79 supported Linux custody/
+service/contract tests pass, zero skips, including40 real whole-wrapper cases.
+This is provisioned ARM64/nonroot Docker kernel evidence, not authored x86,
+hosted, bare-metal or native Mac cleanup. The internal wrapped-finalizer seam is
+resolved; `.23` remains open for the actual macOS entitlement/positive boundary.
+
+Retained selector invocation:777 reported,733 pass,44 explicit Linux-only skips,
+one class-setup error preventing six Docker lifecycle cases because its fixture
+image lacked musl. Those six actual cases pass in a separate immutable cached
+Alpine invocation with identical source bindings. **No single full-green claim.**
+Fresh safe native default build, six shells/four statics,27 focused contracts,
+three actual cache-export ownership cases and five cache-admission negatives pass.
+The one review's four findings were repaired; no second review or task retry.
+Prior failures and the historical production baseline below keep their sources.
+
+Approved A/C ancestry is preserved. C's original08/09 and source-only-cache
+original011 rebuild/five tests/hello/scoped cleanup remain finite source-specific
+proof, complete=false; unchanged cold011 completion is not claimed. `.35` is
+closed from TCP6 ARM64 cases plus native-x86 NIP55L2 hosted cells at base0ce430299,
+not new shared signer/profile admission. The changed cache helper has separate
+current ownership/cancellation proof, not a repeated original matrix.
+
+Latest retained **bounded** hosted observation is22:15:24.573824Z on2026-10-22:
+48 roots,45 failures/one cancellation/one queued/one in progress; historical46
+identities matched, not freshly refetched. [Dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#bounded-runtime-refresh--2026-10-22t221524573824z)
+retains scope and source links.0/20 reviewed PR comparisons,0/2 complete broad
+integrations; W11 NOT MET/W12 NOT RUN. `.5` stays closed; root/`.8` remain open.
+No local evidence advances these counters or authorizes cutover.
+
+`.11` heartbeat causality and `.29` JSON-GLib remedy are technically unresolved,
+separate from B's provider security-filter failure during history retrieval.
+Original archive `/tmp/nostrc-remaining-acceptance-20261023/provider-blocked-sanitizer.xml`,
+SHA256 `4780d5c74e3c169775968d18eb68b9551c2aa4461eaa34edcc603b6bd5986f36`;
+no retry/reroute, dependency fix, suppression or closure is claimed. Internal
+integration tooling/tests/docs require no tracked component version bump.
+
 ## Final finite integration reconciliation — 2026-10-23 local date
 
 Tested code `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a` has725 selector cases
@@ -23,7 +62,7 @@ unreleased versions; byte-equivalent provenance/ownership and internal validator
 work need no additional bump. Official all-record tracker/event preservation is
 recorded in the register, not a direct semantic database edit.
 
-Latest reviewed hosted snapshot **2026-10-22T19:03:24.712764Z**:45 failed/one
+Earlier complete hosted snapshot **2026-10-22T19:03:24.712764Z**:45 failed/one
 cancelled/zero pending of46 root attempts; **0/20** qualifying comparisons,
 **0/2** complete broad integrations. [New dated ledger and source-linked terminal
 artifact review](dependency-aware-testing-ci-2026-10-18-run-ledger.md#integration-refresh--2026-10-22t190324712764z)

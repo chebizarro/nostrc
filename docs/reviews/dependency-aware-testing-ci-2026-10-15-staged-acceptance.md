@@ -2,7 +2,12 @@
 
 > **Current acceptance accounting:** [criterion audit](dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
 > and [source-linked run ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md).
-> **Final finite code evidence:** [2026-10-23 criterion/runnable-cell register](dependency-aware-testing-ci-2026-10-22-closeout.md),
+> **Latest bounded integration:** [source/proof report](dependency-aware-testing-integration-2026-10-23.md)
+> at `df8fb86ff329fffc72064a4ea255322ef3e955a0`:79/79 supported Linux custody/
+> service/contract tests; retained selector invocation plus six separately corrected
+> real Docker cases, explicitly **not one full-green invocation**. `.35` finite
+> runtime closed; `.8/.11/.23/.29`, root W11/W12 remain open. No cutover/version bump.
+> **Preserved earlier finite code evidence:** [2026-10-23 criterion/runnable-cell register](dependency-aware-testing-ci-2026-10-22-closeout.md),
 > tested `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`:725 selectors, all15 gates,
 > safe native434pass/five skips and supported public core/Groundhog/Grotto/default
 > routes pass. Partial receipts remain ineligible; W11 NOT MET/W12 NOT RUN.

@@ -974,7 +974,18 @@ Rollback restores old broad required jobs before removing the new requirement. K
 
 ### Execution index
 
-**Current finite criterion accounting (2026-10-22):** the
+**Current bounded integration (2026-10-23):**
+[`df8fb86ff` source-bound integration](../reviews/dependency-aware-testing-integration-2026-10-23.md)
+resolves the internal Linux wrapped-finalizer/services seam:79/79 supported
+ARM64 kernel-host custody/service/contract cases pass, zero skips. The retained
+selector run and six corrected real Docker cases are separate, identically bound
+invocations—not a single full-green result. Original C MDK/TCP/native-x86 finite
+proof keeps its own source; `.35` is closed, while broader `.8`, macOS `.23`,
+technical `.11/.29` and B's separate provider failure remain open.193 control keys,
+33 omissions/29 required closures and prior production full audits are preserved.
+No version bump or default/protection/publisher cutover; parent lands local work.
+
+**Finite criterion accounting:** the
 [closeout register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md)
 maps every existing bead and separates membership, supported setup, actual
 execution and engineering versus fixture/operator blockers. Final integration
