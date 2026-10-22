@@ -53,8 +53,11 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   service that defeats those fixtures. Selected contained commands requiring
   keyring plus private bus need their own throwaway service, real secret roundtrip
   and namespace cleanup proof. Declare profile tool support only after supported
-  executable evidence, not bus/display/setup inference. `nip5f_tcp`
-  is a provisioned signer, not loopback: approved TCP-enabled configuration,
+  executable evidence, not bus/display/setup inference. Pinned Nak installation
+  must stamp its actual module version; upstream's `debug` default is not accepted
+  by the executable-version check. Emulation-specific executable identity mismatch
+  does not authorize weaker caller attestation or a passing runtime receipt.
+  `nip5f_tcp` is a provisioned signer, not loopback: approved TCP-enabled configuration,
   isolated identity/token readiness and explicit unidentified-caller approval are
   required. No approval bypass or skip-as-success. See the finite
   [criterion and runnable-cell register](docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).

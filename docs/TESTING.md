@@ -46,6 +46,27 @@ namespace cleanup. These tool/contained contracts landed at exact B `82f79ae75`;
 only the ordinary Groundhog/Grotto tool declarations are reconciled at `012d0fcd8`.
 Production default-producer follow-through still awaits its exact next B tip.
 Component keyring positives are not final ordinary-profile execution.
+
+A metadata `c419d2ac6` and connectivity fixture `dfb15c893` are merged. The
+fixture owns in-process offline-to-online state and retains its original deadline;
+it does not alter product connectivity. Actual Linux NIP55L failures under Rosetta
+are executable-identity mismatches (`/run/rosetta/rosetta` versus the authorized
+fixture executable): preserve the approval wait/failure and require native Linux
+x86 proof, never weaken caller attestation. ARM64 diagnostic passes do not satisfy
+that cell. The exact-33 omission authorities and all historical source controls
+remain unchanged.
+
+The actual public-CLI libgo production route at `38c942c64` passed prerequisite
+and default builds, full audits, and 33 CTests with authored parallelism two and
+`--config Debug`. It remains diagnostic/not complete-gate eligible and does not
+prove root/core default producers. Strict sibling projections/source ownership
+are integrated at `98dac8acb`; follow-up `126e29b65` has 111 focused seam tests
+passing, not a successful final full suite. Real Nak setup exposed upstream's
+`debug` version default; the same pinned module now receives the exact link flag
+`-ldflags='-X main.version=v0.19.7'`. Actual executable-only producer positives and
+the pre-fix refusal are both retained; version verification is unchanged. See the
+register for exact SHAs/manifests and final B/core/gate requirements.
+
 `nip5f_tcp` instead needs a provisioned signer endpoint/token, explicitly approved
 TCP-enabled configuration, isolated identity and unidentified-caller approval;
 loopback success or exit 77 cannot satisfy it. No approval bypass is authorized.

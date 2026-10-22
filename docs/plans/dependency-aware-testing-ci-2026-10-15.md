@@ -1,8 +1,10 @@
 # Dependency-aware testing and CI/CD
 
 > **Current finite integration accounting: [closeout criterion register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).**
-> Integration remains in progress pending frozen A and B follow-through; membership,
-> runnable capabilities, physical execution and complete acceptance are separate cells.
+> A's exact metadata and connectivity-fixture tips are merged; B's final production-producer
+> tip and frozen combined verification remain pending. Actual production libgo default/audit
+> execution passes at its recorded checkpoint, not root/core or hosted acceptance. Membership,
+> runnable capabilities, physical execution and complete acceptance remain separate cells.
 > The status summary below and earlier progress sections are **HISTORICAL snapshots**.
 > Their pending statements and failed audits retain their original source identities;
 > [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18) retains the original
