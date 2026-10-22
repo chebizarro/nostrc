@@ -95,9 +95,16 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   not native arbitrary-tree custody or original Docker image-build execution.
   Raw peer consumers do not establish selector/profile acceptance; full audits
   remain required. The optional prepared selected-closure diagnostic is deferred.
-- Legacy `mdk-gate.py` always reports `cleanup_complete=false`; otherwise successful
-  commands return nonzero `cleanup_unverified`, with scoped cleanup errors separate.
-  Do not promote historical smoke into successful arbitrary-tree lifecycle proof.
+- Legacy `mdk-gate.py run` always reports `cleanup_complete=false`; otherwise
+  successful commands return nonzero `cleanup_unverified`, with scoped cleanup
+  errors separate. The additive `images [--probe]` route owns a unique explicit
+  BuildKit builder, its volume/registration and recorded immutable peer CIDs;
+  `cleanup_complete=true` applies only to those Docker resources, with
+  `complete=false`. No default builder selection/global prune, prepared-route
+  alias, native arbitrary-tree or selector admission follows. Exact-tip original
+  image acceptance remains NOT MET after the retained MDK011 fetch cancellation;
+  08/09 were not started. Do not promote earlier helper smokes or scoped cleanup
+  into full MDK interoperability or complete-gate acceptance.
 - Before reporting W11 progress or closing acceptance scope, refresh the
   [acceptance audit and run ledger](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
   from source-linked GitHub jobs/artifacts and update `.5`. Count reviewed distinct

@@ -27,9 +27,12 @@
 - Root producer/input-edge repair `e47b52946b0dc1ebe5ffcd637da4bcd6ba62d489`
   and exact source/derived-metadata renewal `eb799dbd7cd0a4f339180c643e8a4624f1265f8f`.
 
-**C's additive Docker-resource lifecycle follow-through awaits its exact tip.**
-No moving branch is accepted. Final combined review/gates wait for that handoff;
-component and precondition evidence is not frozen-final-source acceptance.
+- C additive original Docker lifecycle `0c79eff778fa733066df9aef369baa86a0e85356`,
+  through preserving merge `e6134fb1b9315388d29620cd9069ba8d04aaa4af`.
+
+**All implementation lane tips are merged.** No moving branch is accepted.
+Final combined review/gates now follow the stable source freeze; component and
+precondition evidence is not frozen-final-source acceptance.
 
 This register maps the existing epic and all 34 children; it does not create a
 replacement tracker or close any bead. The complete initial criterion text is
@@ -67,12 +70,13 @@ fixtures, review identities and failed attempts remain retained.
 | B native default build/full CTest | **PASS at `1abee21ec` only**: 434 pass, five visible skips. **NOT RUN** at final B tip or combined final source. |
 | A full supported membership/default and mapped-input census | **PASS at `c419d2ac6`**: 610 selector tests, full ordinary pre/postbuild audits zero findings after actual default and mapped target builds, including omitted producers. Native 434 pass/five visible skips. These are A component results, not combined acceptance. |
 | A causal runtime follow-through | At `c419d2ac6`, actual 346-case run retained **343 pass / three fail / zero skips**. At `dfb15c893`, five focused Linux cases **PASS**, including both independent NIP29 registrations; no whole-346 rerun or retroactive green. Native ARM64 NIP55L three-case **PASS** is diagnostic only. |
-| Current combined full selector/six shell/statics/lint | Frozen `98dac8acb` selector run retained **14 failures / 12 errors**. Exact projection/source-enrollment and harness-environment seams have 111 focused cases **PASS**, zero skips, in `126e29b65`; final full suite/shells/statics/lint **NOT RUN**, awaiting C's stable lifecycle tip. |
+| Current combined full selector/six shell/statics/lint | Frozen `98dac8acb` selector run retained **14 failures / 12 errors**. Exact projection/source-enrollment and harness-environment seams have 111 focused cases **PASS**, zero skips, in `126e29b65`; final full suite/shells/statics/lint **NOT RUN** at the stable combined source. |
 | B known production producers | **PASS at `0b9feea6d`**: actual production libgo macOS/Linux defaults, full postbuild and command execution, respectively 553/455 input hashes. Full selector checkpoint 643/644 retained one parent-owned explicit-input enrollment error; that input is now enrolled. Unknown custom/utility producers still refuse. |
 | Root source producers and exact ordinary renewal | **PASS** 43 focused cases, zero skips, at `eb799dbd7`; full fresh core preaudit and all three root default producer bindings have zero findings/gaps at `e47b52946`. Ordinary source refusals at that source are retained; narrowly reviewed renewal is detailed below. Final full ordinary audits/build/execution remain **NOT RUN**. |
 | Current combined safe native fresh default build/full CTest | **NOT RUN**; earlier native receipts are not relabeled. |
 | Actual production libgo backend default route | **PASS at `38c942c64`**: public plan/run `--configure --phase all --parallel 2`, actual prerequisites/default 42-target closure, full registration/input audits and all 33 selected CTests. Physical default argv includes `--config Debug --parallel 2`. `diagnostic_eligible=true`, `complete_gate_eligible=false`; not native x86/hosted or root/core parity. |
 | Current combined fresh authored Linux full audits and actual supported core/default execution | **NOT RUN at final source**. A's source-bound full audits and the actual libgo route above do not substitute for fresh integrated root/core producer/default/postbuild execution. |
+| C scoped original Docker-resource lifecycle | **PASS at `0c79eff77`**:30 focused tests including five real Docker cases, zero skips. Exact original matrix cancelled after1000s during MDK011 dependency fetch; cleanup took2.8s, owned builder/volume/registration absent and locks free. Final-tip original image acceptance **NOT MET**,08/09 **NOT RUN**; earlier three-version positives retain the pre-review helper identity. Legacy run/selector/native arbitrary-tree refusal unchanged; `.8` remains open. |
 | One bounded review of novel integrated seams | **NOT RUN**; parent C review found no immediate blocker, but is not the final integrated review. |
 
 B component proof SHA-256:
@@ -124,6 +128,14 @@ phase cases pass without relaxing source/environment identity guards. All
 original failed logs remain; the 111 focused fixes are not a full-suite pass.
 Receipts and comparison manifests:
 `/tmp/nostrc-closeout-integration-20261022/`.
+
+C lifecycle handoff SHA-256:
+`36efd3b6766b85ee6a6dbe48b4467e33fb268cd3e71b9b865f231c429843656a`;
+all18 referenced source/evidence files were independently hashed. Verification:
+`/tmp/nostrc-closeout-integration-20261022/C-lifecycle-handoff-verification.json`,
+SHA-256 `b1516f6862d2d603468b0acfb067a888050ca092499b8d377460567f2e5a3c2d`.
+The existing three C-owned files are already explicit selection-contract inputs;
+no inventory broadening or new workflow fingerprint renewal was needed.
 
 ## Precise producer and candidate renewal
 
@@ -185,7 +197,7 @@ fresh final full input/header/postbuild audits and actual execution.
 | NIP29 remote-feature connectivity fixture | A `dfb15c893` owns the in-process network monitor, proves offline queued/zero-sign/zero-publish then online acceptance, and retains the original deadline and signed-event assertions. | **PASS** five focused Linux registrations, including both independent NIP29 cases, at A's exact tip. Historical whole-346 failure is retained; final combined targeted verification **NOT RUN**. | Verify the affected exact registrations at frozen final source; do not rerun the whole 346 or change product connectivity/deadlines. |
 | `nip5f_tcp` provisioned signer | Test consumes real TCP endpoint/token, handshake and `get_public_key`; it is not `test_nip5f_loopback`. Ordinary profiles are not declared capable from tool/loopback evidence. | **EXTERNAL BLOCKER / fixture and approval** unless a genuine isolated setup is explicitly delivered. Exit 77 is not passing execution. | Requires approved `ENABLE_TCP_IPC=ON` configuration, isolated signer identity/runtime token readiness and explicit approval for the always-prompted unidentified caller. No approval bypass, fake signer or ambient identity. |
 | Native/mixed-wrapper arbitrary descendants | Direct-child reap is truthfully distinct from arbitrary-tree cleanup. Explicit diagnostic ptrace/contained routes retain their own limits. | **EXTERNAL BLOCKER / platform restriction** for native arbitrary-tree custody without a real kernel primitive; mixed-wrapper implementation remains unsupported and refuses. | Retain negative cleanup evidence, escaped-child/sibling survival tests and prelaunch restrictions. No unsafe PID/name workaround or native parity from contained tests. |
-| Original MDK image-build/BuildKit lifecycle | C is implementing additive `images [--probe]` scoped Docker-resource cleanup with unique explicit builder ownership; legacy run API and prepared-peer route remain distinct. | **NOT RUN at integrated source**, awaiting C's exact tip, five real Docker lifecycle proofs and bounded review. The existing legacy run API still cannot claim complete arbitrary-tree cleanup. | Verify actual private-image positive/negative, partial/cancel/drain and owned CID proofs after exact merge. Preserve incomplete broad cleanup and scoped errors; no default builder or global prune. |
+| Original MDK image-build/BuildKit lifecycle | C `0c79eff77` implements additive `images [--probe]` scoped Docker-resource cleanup with unique explicit builder ownership; legacy run API and prepared-peer route remain distinct. | **PASS** component private-image positive/negative, partial/cancel/drain, owned CID and sibling-survival proofs. Exact original matrix **FAIL / incomplete** after bounded MDK011 dependency-fetch cancellation;08/09 **NOT RUN**. Scope cleanup passed, `complete=false`; `.8` open. | Final integration regressions/review only, **no second whole MDK matrix run**. Retain final-tip original-image NOT MET, old helper smokes and scoped errors; no default builder or global prune. |
 | Hosted broad union, W11 and operator cutover | C authors the broad union and retains failed family accounting. | **EXTERNAL BLOCKER** for qualifying hosted/operator acceptance; local fixes are not hosted samples. | Collect reviewed distinct PR comparisons and successful complete broad integrations, then explicit operator approval. Current dated snapshot remains 0/20 and 0/2. |
 
 NIP-5F source: `nips/nip5f/tests/test_nip5f_tcp.c:24-57` and
@@ -195,7 +207,7 @@ loopback success does not satisfy the provisioned-signer cell.
 ## Every authored profile: membership is not runnable acceptance
 
 This census names all 13 authored profiles. **Final** refers to source frozen
-after C's pending exact handoff, so every final execution/audit cell below is
+after C's exact stable handoff, so every final execution/audit cell below is
 currently **NOT RUN**, even where an earlier component proof passed. Local amd64
 containers on the ARM host are emulated; they are not native Linux x86 acceptance.
 
@@ -208,8 +220,8 @@ containers on the ARM host are emulated; they are not native Linux x86 acceptanc
 | `grotto.linux.asan_ubsan` | A fresh full authored preaudit **PASS**; not granted ordinary33 omission authority. | Display/private bus declared, signer approval still required for that cell. | Final audit/execution **NOT RUN**; no new ordinary default contract or whole-job extras inferred. |
 | `groundhog.linux` | A full mapping/default+mapped pre/postaudits **PASS**; exact193-key/33/29 renewal above. | Actual 346-case history is 343 pass/three failures; five causal NIP29 cases pass at A's fix. Rosetta caller-identity failures retained. | Final default+all mapped/omitted producer builds and full postbuild **NOT RUN**; targeted NIP29 verification, not whole346 rerun. Native x86 NIP55L remains **EXTERNAL BLOCKER**. |
 | `groundhog.linux.sanitizers` | Original immutable full-partition authority remains bound to its exact old universe; fresh extra resource registration is not silently admitted. | No automatic new source/partition/architecture authority. | Final audit **NOT RUN**; expected source/universe refusal must remain explicit, not broad refresh or complete promotion. |
-| `groundhog.mdk08` | Authored membership does not establish actual original-image execution. | C's new scoped image cleanup awaits exact merge; legacy run API and prepared peers are distinct. | Final original-image lifecycle **NOT RUN**; full profile keyring/Nak/signer setup and actual legacy-image dependency proof are not inferred. |
-| `groundhog.mdk011` | Same original-route distinction, no prepared011 alias. | Additive scoped image cleanup is not complete arbitrary-tree custody. | Final image lifecycle **NOT RUN**; original dependency/build/runtime and explicit signer approval remain separate cells. |
+| `groundhog.mdk08` | Authored membership does not establish actual original-image execution. | C's scoped image cleanup is merged; legacy run API and prepared peers are distinct. | Exact-tip matrix cancelled in MDK011 fetch before08; original08 build **NOT RUN**. Scoped lifecycle positives do not infer full profile keyring/Nak/signer setup or actual legacy-image acceptance. |
+| `groundhog.mdk011` | Same original-route distinction, no prepared011 alias. | Additive scoped image cleanup is not complete arbitrary-tree custody. | Exact-tip MDK011 dependency fetch cancelled at1000s; image acceptance **NOT MET** although cleanup passed. Explicit signer approval/build/runtime remain separate cells; no full matrix rerun. |
 | `groundhog.linux.arm64.prepared011` | Local-only contained aarch64 admission, not authored x86 or original Docker route. | Actual prepared-peer/CID evidence is bounded to that context. | Final fresh full audit/execution **NOT RUN**; no selected-only audit fallback or platform alias expansion. |
 | `libgo.linux.asan` | Actual public-CLI prerequisite/default/full audits/all33 tests **PASS** at `38c942c64`; B production postbuild covers455 input hashes at its proof source. | Supported no-capability single-config route; incomplete diagnostic, not root parity. | Final source default/full postbuild/selected execution **NOT RUN**. |
 | `libgo.macos.asan` | B production default/full postbuild/command **PASS**,553 input hashes at its proof source. |32 selected diagnostics, visible excluded stress; standalone ARM64 ASan/UBSan, never native root. | Final selected sanitizer execution **NOT RUN**; omission and incomplete flags remain required. |
@@ -232,7 +244,7 @@ satisfied in full before its bead closes; passing a subset does not close it.
 | `.5` | Source-grounded baseline/commands; accurate plan/AGENTS/TESTING; combined gates/review; explicit external rollout prerequisites. | Register/docs integration in progress. Final gates/review/complete criterion reconciliation **NOT RUN**; dated hosted counters are separate. |
 | `.6` | Full actionlint with ShellCheck, unchanged workloads/artifacts/profiles/advisory behavior. | Historical **PASS / CLOSED**; B component lint **PASS**. Final lint **NOT RUN**. |
 | `.7` | Truthful libgo32 diagnostic; no stress/complete promotion; real command/build-contract absent/wrong-source/input/capability/cancel/nonzero/evidence negatives; full regressions. | Component **PASS**; actual integrated default/core route and final regressions **NOT RUN**. Complete promotion remains forbidden. |
-| `.8` | Full sanitizer phase/config/environment parity; concurrent roots; cancelled/partial MDK images and sibling cleanup; real safe evidence distinguished from simulation. | Component regressions **PASS**; original MDK lifecycle and unsafe wrappers **FAIL / engineering**. Final supported sanitizer route **NOT RUN**. |
+| `.8` | Full sanitizer phase/config/environment parity; concurrent roots; cancelled/partial MDK images and sibling cleanup; real safe evidence distinguished from simulation. | Component regressions and scoped original Docker-resource lifecycle **PASS** at exact C. Final-tip original image matrix remains **FAIL / incomplete**,08/09 **NOT RUN**; no complete arbitrary-tree custody. Final supported sanitizer route **NOT RUN**. |
 | `.9` | Every job/matrix/check mapped or explicitly tracked unsupported; exact native/Linux registrations/semantic edges; isolation goldens; no unexplained omissions or fake enforcement readiness. | A metadata/runtime tips are merged. Source-bound full census/default+mapped pre/postaudits **PASS** at A; exact historical integration projection focused regressions **PASS**. Final combined census/audits/goldens **NOT RUN**. Runnable capability cells remain separate. |
 | `.10` | Actual CMake 3.22/3.25 nested/root/standalone metadata and fixture/DEPENDS parity, current suite, no fallback. | Historical **PASS / CLOSED**. Final current regressions **NOT RUN**; no new claim of old-tool reruns. |
 | `.11` | Source-grounded historical heartbeat cause; deterministic verification where established; unresolved scheduling evidence explicit; original guard retained. | **FAIL / unresolved cause**, not a proved external-toolchain excuse. Later passing samples do not establish causality; no threshold/exclusion/retry waiver. |

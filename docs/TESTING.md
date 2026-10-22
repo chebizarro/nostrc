@@ -48,8 +48,13 @@ Production default producers are merged at exact B `0b9feea6d`, preserving ances
 actual libgo macOS/Linux default/full postbuild/command proofs cover553/455 input
 hashes at B's proof source, not final combined execution. Component keyring
 positives are not final ordinary-profile execution. C's additive Docker-resource
-`images [--probe]` lifecycle awaits its exact tip; it does not change the legacy
-run API or establish complete arbitrary-tree cleanup.
+`images [--probe]` lifecycle is merged at exact `0c79eff77` via `e6134fb1b`:
+30 component cases including five real Docker cases pass, zero skips. It does
+not change the legacy run API or establish complete arbitrary-tree cleanup.
+The final-tip original image matrix cancelled during MDK011 dependency fetch at
+1000s; scoped cleanup passed in2.8s, but original image acceptance is NOT MET
+and08/09 were not started. Earlier three-version positives retain their old
+helper identity. No second whole matrix run, `.8` closure or hosted credit.
 
 A metadata `c419d2ac6` and connectivity fixture `dfb15c893` are merged. The
 fixture owns in-process offline-to-online state and retains its original deadline;

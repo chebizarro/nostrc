@@ -4,7 +4,9 @@
 > A's metadata/connectivity tips and B's exact production-producer tip are merged.
 > Root producer repairs and precise80-entry candidate/source renewal are committed at
 > `e47b52946` / `eb799dbd7`; original refusals and immutable exports remain retained.
-> Final combined review/gates await C's exact additive Docker-resource lifecycle tip.
+> C's exact additive Docker-resource lifecycle tip `0c79eff77` is now merged;
+> final combined review/gates follow the stable freeze. Scoped cleanup passes,
+> but the retained final-tip original matrix cancellation is NOT MET acceptance.
 > Actual production libgo default/audit execution passes at its recorded checkpoint,
 > not root/core or hosted acceptance. Membership,
 > runnable capabilities, physical execution and complete acceptance remain separate cells.
