@@ -1,5 +1,106 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Headless relay/network transport membership — 2026-10-22
+
+**Base:** master `53f2e822d04bd32e243a9cf969396f2f241af83e`.
+**Implementation/tested commit:** `1ed8f087e6571207c132ae885dbe7ede43f18dfd`.
+Checkpoint snapshot **2026-10-22T03:12:58Z**; integration independently verified
+its SHA-256 and all **132 retained artifact hashes**. This is bounded membership
+progress, not a hosted ledger refresh. **No shipped component version bump:**
+internal inventory/tests/documentation only.
+
+| Exact registration | Exact build target | Ordinary check (`groundhog.` prefix) | File API target closure |
+|---|---|---|---:|
+| `groundhog-relay` | `test-groundhog-relay` | `transport_scope` | 18 |
+| `groundhog-relay-publish` | `test-groundhog-relay-publish` | `transport_publish` | 18 |
+| `groundhog-relay-wire` | `test-groundhog-relay-wire` | `transport_wire` | 21 |
+| `groundhog-relay-publish-wire` | `test-groundhog-relay-publish-wire` | `transport_publish_wire` | 24 |
+| `groundhog-net` | `test-groundhog-net` | `transport_net` | 22 |
+| `groundhog-tls-resumption` | `test-groundhog-tls-resumption` | `transport_tls` | 22 |
+
+The [export witness](../../tests/selection/fixtures/headless_transport_exports.json)
+and [eight focused regressions](../../tests/selection/test_headless_transport_membership.py)
+retain actual command/artifact, compiled/transitive source, descriptor, schema,
+runtime and fixture closure—not guessed name membership. Both existing setups
+remain `groundhog-test-homes` and `groundhog-test-gst-registry`. Authored isolation,
+G_DEBUG presence/absence, timeouts and TLS skip-77 behavior remain intact. The
+[publish-wire dependency](../../gnome/groundhog/CMakeLists.txt#L349) builds
+`nostrc-relayd` without enrolling daemon-only `groundhog-relayd-publish`.
+Private-bus/display/live/MDK registrations remain outside this family. No graph
+or catchall edges, product/CMake, profile, capability, engine, adapter, workflow
+or default changes.
+
+### Exact authority-array delta and fresh full audits
+
+Only Groundhog's selected `primary_registrations` **21 → 27** and
+`required_closure` **23 → 29** change in the ordinary subset authority. The
+same **33 omissions**, mandatory **29 omitted-target closures**, candidate,
+universe, profile/toolchain fields and all **193 reviewed source hashes** remain
+unchanged; Grotto and sanitizer authorities are unchanged. The
+[new renewal witness](../../tests/selection/fixtures/headless_transport_subset_renewal_20261022.json)
+and composed historical projection retain the exact prior-record digest and all
+**13 older fixtures byte-identically**, rather than renewing source authority.
+
+Fresh authored x86 exports pass actual CLI `resolve`, `admit` and
+`validate_resolved` for **six primaries + two setups**, no required capabilities;
+all-ordinary resolution is **27 primaries / 29 expected executions**. An
+independently configured new-check/old-21/23-array contract makes both actual CLI
+and admission refuse **`authored primary/fixture closure changed`**. No identity
+rebinding or selected-only audit substitutes for these guards.
+
+Independent before/after full configurations use base/implementation respectively;
+only build-root prefixes are normalized. Full target, test, descriptor, runtime
+and input-hash sets agree per pair.
+
+| Profile | Registrations / targets | Before → after, both FAIL | Exact removed / added | Identical full input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **8,905 → 7,900** | **1,005 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,146 → 9,146** | **0 / 0** | 1,700 |
+
+Groundhog removes exactly **six unclaimed + 999 source missing-impact findings**;
+remaining **359 unclaimed + 7,541 missing-impact**. Grotto retains **369 unclaimed
++ 8,777 missing-impact**. Both full preaudits still block execution. Omitted
+registrations remain `not_executed`, `complete=false`,
+`complete_gate_eligible=false`; their full input audit obligations are unchanged.
+
+### Separate physical diagnostics and source-specific gates
+
+At **base `53f2e822d`**, all six targets build and six ELF x86-64 binaries are
+confirmed. Raw CTest **8/8 PASS, zero skips, 6.492s** includes both setups under
+nonroot Linux/amd64 Rosetta, reviewed image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+network disabled and display/Wayland/session-bus/daemon/interop variables unset.
+Build/test parallelism 2 and timeout 3600 match authored options, but this is
+**raw diagnostic CTest, NOT admitted profile/backend execution**. All 199
+product/fixture source hashes agree at implementation; that comparison is not a
+new physical run at the later SHA.
+
+At **`1ed8f087e`**: **521/521 selector PASS, zero skips, 252.368s**;
+**37/37 focused headless/subset PASS**, including eight new membership cases.
+Safe native default-all configure/build, read-only keychain guards, four statics,
+actionlint, inventory validation and whitespace **PASS**. Native Groundhog is
+OFF with libsecret/secret-service safety flags. The component's scoped actual
+inline review found no concrete blockers after rejecting stale packaged context;
+no new integration Oracle review was requested or run.
+
+Evidence: `/tmp/nostrc-headless-next-20261022/checkpoint-final.json`, SHA-256
+**`6b62a5da5c5decdaef06468403a0b99f9da5b499d72b2c3f19eb4e1354bf525e`**;
+`comparison-summary.json`, SHA-256
+**`c1f54b36d28a008bf3402068f790b2e231f899384d7a244214fcd5052b48d131`**;
+`focused-proof.json`, SHA-256
+**`cc714af01eb1455d586bc64c46a245784065083eb0e71dcb0056af6d3189822e`**.
+Initial submodule refusal, diagnostic ELF-parser/development-test errors, static
+PATH harness failure, stale-review rejection and no-remote Dolt refusal remain
+retained; no guard relaxation or erased failed attempt.
+
+**NOT RUN:** full native CTest, Linux all-target/all-29-omitted-target builds,
+production postbuild/header audits and selected-profile backend execution. No
+full-profile/union, hosted/W11, complete-gate, release or cutover credit. `.2`
+remains OPEN and `.9` in progress; `.5`/historical ledger are not refreshed here.
+Custody sibling integration, its two confirmed `selection.contract` runtime
+inputs and final combined selector/native/static gates are **pending a separately
+verified custody commit**; no sibling files or review are preempted by this receipt.
+
 ## Ordinary media ownership disagreement — 2026-10-22
 
 **Base:** `93970ed48fb5711193bc73bd0b304b9e81e6f25f`.

@@ -964,6 +964,22 @@ W2–W10 progress is not full acceptance;
 **W11 NOT MET / W12 NOT RUN**. The index's “Done when” column remains the required
 acceptance contract, not a claim that those conditions have passed.
 
+**Bounded W3–W5 membership checkpoint (2026-10-22):**
+[`1ed8f087e` transport receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#headless-relaynetwork-transport-membership--2026-10-22)
+adds six exact headless relay/network registrations, yielding **27 primaries / 29
+expected executions**. Fresh Groundhog full findings **8,905 → 7,900** remove
+exactly six unclaimed + 999 source findings, zero added; Grotto **9,146 unchanged**.
+Both audits **FAIL**. Exact 33 omissions/29 required omitted-target closures and
+193 source-review hashes per profile remain unchanged; only Groundhog selected
+primary/fixture arrays renew. At that source, **521/521 selector** and **37/37
+focused regressions PASS**, zero skips; safe native default-all build/static gates
+PASS. Separate raw Linux/amd64 **8/8 CTest at base `53f2e822d` is not authored
+gated execution**. Full native CTest, Linux all-target/omitted builds, production
+postbuild headers and selected-profile backend execution NOT RUN. Custody
+integration/two-path input listing and final combined gates await a verified
+sibling commit. `.2` OPEN / `.9` in progress; no closure, source-authority renewal,
+W11/hosted/release/default claim, ledger refresh or shipped version bump.
+
 Sizes describe reviewable implementation slices, not time estimates: S = focused adapter or tests, M = one substantial seam, L = cross-family integration. Split L items into beads before implementation; this index is not a replacement for `bd` tracking.
 
 | Item | Goal | Done when | Key files | Dependencies | Size |

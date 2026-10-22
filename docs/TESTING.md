@@ -19,6 +19,27 @@
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
 
+## Bounded transport membership checkpoint — 2026-10-22
+
+At `1ed8f087e6571207c132ae885dbe7ede43f18dfd` (base `53f2e822d`), six
+headless relay/network registrations extend ordinary Groundhog coverage to
+**27 primaries / 29 expected executions**, with only the exact selected/fixture
+authority arrays renewed. All 33 libgo omissions and 193 source-review hashes per
+profile remain unchanged. Fresh full audits still **FAIL**: Groundhog
+**8,905 → 7,900** (exactly six unclaimed + 999 source findings removed, zero
+added); Grotto **9,146 unchanged**. See the [source-bound transport receipt](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#headless-relaynetwork-transport-membership--2026-10-22).
+
+Source-specific checks: **521/521 selector PASS, zero skips**; **37/37 focused
+headless/subset PASS** (eight new membership cases); safe native default-all
+configure/build and static checks PASS. Separate raw Linux/amd64 CTest at the
+base passes **8/8, zero skips**, including two setups; **not authored gated
+execution**. Full native CTest, Linux all-target/all-29-omitted-target builds,
+production postbuild/header audits and selected-profile backend execution are
+**NOT RUN**. `complete=false` and `complete_gate_eligible=false` remain; no hosted/W11/release credit,
+source-authority renewal, default change or shipped version bump. Custody sibling
+and combined gates remain pending a verified integration commit. This checkpoint
+does not refresh the dated hosted ledger above or close `.2`/`.9`.
+
 ## Approved ordinary libgo subset — diagnostic accounting only
 
 The exact 33 reviewed libgo registrations in each of `groundhog.linux` and
