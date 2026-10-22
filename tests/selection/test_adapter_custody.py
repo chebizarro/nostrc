@@ -114,9 +114,12 @@ peer.recv(1)  # Test-owned emergency release, not a timer or numeric-PID kill.
             output = process.communicate(timeout=20)[0]
             self.assertEqual(process.returncode, 130, output)
             self.assertEqual(peer.recv(1), b'', 'escaped child still owns socket')
-            state = subprocess.run(['ps', '-o', 'stat=', '-p', str(info['pid'])],
-                                   capture_output=True, text=True).stdout.strip()
-            self.assertTrue(not state or state.startswith('Z'), state)
+            if custody != 'pidns':
+                state = subprocess.run(['ps', '-o', 'stat=', '-p', str(info['pid'])],
+                                       capture_output=True, text=True).stdout.strip()
+                self.assertTrue(not state or state.startswith('Z'), state)
+            # pidns PIDs are intentionally not host PIDs. Socket EOF and the
+            # helper's namespace-init wait barrier prove exit, not host ps.
             sibling.stdin.write(b'sibling survived\n')
             sibling.stdin.flush()
             self.assertEqual(sibling.stdout.readline(), b'sibling survived\n')
@@ -126,7 +129,7 @@ peer.recv(1)  # Test-owned emergency release, not a timer or numeric-PID kill.
             self.assertFalse(receipt['complete'])
             self.assertFalse(receipt['complete_gate_eligible'])
             self.assertEqual(receipt['custody_mode'], custody)
-            if custody == 'ptrace':
+            if custody != 'legacy':
                 self.assertFalse(receipt['untraced_profile_parity'])
             if ctest:
                 # CTest buffers test stdout without -V. Preserve its actual raw
@@ -163,6 +166,29 @@ peer.recv(1)  # Test-owned emergency release, not a timer or numeric-PID kill.
         self.cancel_tree(ctest=True)
 
     if sys.platform == 'linux':
+        def test_pidns_command_escaped_child_cancellation(self):
+            self.cancel_tree(custody='pidns')
+
+        def test_pidns_ctest_escaped_child_cancellation(self):
+            self.cancel_tree(ctest=True, custody='pidns')
+
+        def test_pidns_positive_and_failure_preserve_receipts_and_raw_bytes(self):
+            for ctest in (False, True):
+                for code in (0, 23):
+                    with self.subTest(ctest=ctest, code=code):
+                        self.write('app/check.py', f"import os, sys; from pathlib import Path\nif len(sys.argv) > 2: Path(sys.argv[2]).write_text('proof')\nos.write(1, b'final raw \\xff\\n'); raise SystemExit({code})\n")
+                        if ctest:
+                            self.configure_ctest()
+                        head = self.commit()
+                        receipt, directory = self.gate('--head', head, '--native-custody', 'pidns', success=not code)
+                        self.assertEqual(receipt['status'], 'failed' if code else 'partial')
+                        self.assertFalse(receipt['complete'])
+                        self.assertFalse(receipt['complete_gate_eligible'])
+                        self.assertFalse(receipt['untraced_profile_parity'])
+                        logs = list(directory.rglob('LastTest.log' if ctest else 'command-*.log'))
+                        self.assertTrue(logs)
+                        self.assertTrue(any(b'final raw \xff\n' in log.read_bytes() for log in logs))
+
         def test_ptrace_command_escaped_child_cancellation(self):
             self.cancel_tree(custody='ptrace')
 
@@ -170,18 +196,24 @@ peer.recv(1)  # Test-owned emergency release, not a timer or numeric-PID kill.
             self.cancel_tree(ctest=True, custody='ptrace')
 
         def test_ptrace_wrapped_ctest_refuses_before_lane_launch(self):
+            self.wrapped_ctest_refuses_before_lane_launch('ptrace')
+
+        def test_pidns_wrapped_ctest_refuses_before_lane_launch(self):
+            self.wrapped_ctest_refuses_before_lane_launch('pidns')
+
+        def wrapped_ctest_refuses_before_lane_launch(self, custody):
             self.configure_ctest()
             for capabilities in (['display'], ['private_bus'], ['display', 'private_bus']):
                 with self.subTest(capabilities=capabilities):
                     self.policy['profiles']['local.command']['capabilities'] = capabilities
                     self.save_policy()
                     head = self.commit()
-                    receipt, directory = self.gate('--head', head, '--linux-custody', 'ptrace', success=False)
+                    receipt, directory = self.gate('--head', head, '--linux-custody', custody, success=False)
                     self.assertEqual(receipt['status'], 'failed')
                     self.assertFalse(receipt['complete_gate_eligible'])
                     self.assertFalse(receipt['untraced_profile_parity'])
                     lane = receipt['executions'][0]['lanes'][0]
-                    self.assertEqual(lane['error'], f'unsupported ptrace custody wrappers: {sorted(capabilities)}; lane not launched')
+                    self.assertEqual(lane['error'], f'unsupported {custody} custody wrappers: {sorted(capabilities)}; lane not launched')
                     for artifact in ('lane.log', 'resolve.log', 'resolved.json', 'receipt.json', 'submodules.log', 'build'):
                         self.assertFalse(any(directory.rglob(artifact)), artifact)
 
