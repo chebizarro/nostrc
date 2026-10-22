@@ -5513,6 +5513,229 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "groundhog.transport_net": {
+      "build_targets": [
+        "test-groundhog-net"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-net"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nostr.gobject",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.transport_publish": {
+      "build_targets": [
+        "test-groundhog-relay-publish"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-relay-publish"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nostr.gobject",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.transport_publish_wire": {
+      "build_targets": [
+        "test-groundhog-relay-publish-wire"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-relay-publish-wire"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.transport_scope": {
+      "build_targets": [
+        "test-groundhog-relay"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-relay"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nostr.gobject",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.transport_tls": {
+      "build_targets": [
+        "test-groundhog-tls-resumption"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-tls-resumption"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nostr.gobject",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.transport_wire": {
+      "build_targets": [
+        "test-groundhog-relay-wire"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-relay-wire"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nostr.gobject",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "selection.contract": {
       "build_targets": [],
       "command": [
@@ -5700,6 +5923,10 @@
         "{source}/tests/selection/fixtures/resource_profile_exports.json",
         "{source}/tests/selection/fixtures/store_key_membership_exports.json",
         "{source}/tests/selection/golden/selection.json",
+        "{source}/tests/selection/headless_transport_projection.py",
+        "{source}/tests/selection/test_headless_transport_membership.py",
+        "{source}/tests/selection/fixtures/headless_transport_exports.json",
+        "{source}/tests/selection/fixtures/headless_transport_subset_renewal_20261022.json",
         "{source}/tests/selection/inventory.json",
         "{source}/tests/selection/profile_contract_support.py",
         "{source}/tests/selection/realization_support.py",
@@ -13518,16 +13745,22 @@
         "groundhog-mls-service",
         "groundhog-mls-ui",
         "groundhog-mls-ui-gui",
+        "groundhog-net",
         "groundhog-nip46-credentials-list",
         "groundhog-nip46-session",
         "groundhog-packaging-version",
         "groundhog-poll-ui",
+        "groundhog-relay",
+        "groundhog-relay-publish",
+        "groundhog-relay-publish-wire",
+        "groundhog-relay-wire",
         "groundhog-shell",
         "groundhog-signer-nip46",
         "groundhog-store",
         "groundhog-store-conversations",
         "groundhog-store-key",
-        "groundhog-store-key-keyring"
+        "groundhog-store-key-keyring",
+        "groundhog-tls-resumption"
       ],
       "profile_hash": "f024669154f7c94561f96174c2b0a35ae2713cb138d1efeabbc64e3497e0b63e",
       "registration_universe": [
@@ -14001,10 +14234,15 @@
         "groundhog-mls-service",
         "groundhog-mls-ui",
         "groundhog-mls-ui-gui",
+        "groundhog-net",
         "groundhog-nip46-credentials-list",
         "groundhog-nip46-session",
         "groundhog-packaging-version",
         "groundhog-poll-ui",
+        "groundhog-relay",
+        "groundhog-relay-publish",
+        "groundhog-relay-publish-wire",
+        "groundhog-relay-wire",
         "groundhog-shell",
         "groundhog-signer-nip46",
         "groundhog-store",
@@ -14012,7 +14250,8 @@
         "groundhog-store-key",
         "groundhog-store-key-keyring",
         "groundhog-test-gst-registry",
-        "groundhog-test-homes"
+        "groundhog-test-homes",
+        "groundhog-tls-resumption"
       ],
       "review": {
         "approval_document": "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",

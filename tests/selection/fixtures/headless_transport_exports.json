@@ -1,0 +1,3768 @@
+{
+  "primary": {
+    "groundhog-net": {
+      "closure_names": [
+        "groundhog-net",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-diagnostics",
+        "groundhog-net",
+        "groundhog-net-relay",
+        "groundhog-recipient",
+        "groundhog-relay",
+        "groundhog-test-schemas",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nostr",
+        "nostr_gobject",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-net"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-diagnostics.c",
+        "{source}/gnome/groundhog/src/net/gh-net-http.c",
+        "{source}/gnome/groundhog/src/net/gh-net-session.c",
+        "{source}/gnome/groundhog/src/net/gh-net-tls.c",
+        "{source}/gnome/groundhog/src/net/gh-nip05.c",
+        "{source}/gnome/groundhog/src/net/gh-nip11.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-net.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-soup.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-auth.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-guard.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-scope.c",
+        "{source}/gnome/groundhog/src/ui/gh-recipient.c",
+        "{source}/gnome/groundhog/tests/net/socks5-fixture.c",
+        "{source}/gnome/groundhog/tests/net/test_relay_soup.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "groundhog-relay": {
+      "closure_names": [
+        "groundhog-relay",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-diagnostics",
+        "groundhog-relay",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nostr",
+        "nostr_gobject",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-relay"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-diagnostics.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-auth.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-guard.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-scope.c",
+        "{source}/gnome/groundhog/tests/relay/test_relay_scope.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "groundhog-relay-publish": {
+      "closure_names": [
+        "groundhog-relay-publish",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-diagnostics",
+        "groundhog-relay",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nostr",
+        "nostr_gobject",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-relay-publish"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-diagnostics.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-auth.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-guard.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-scope.c",
+        "{source}/gnome/groundhog/tests/relay/test_relay_publish.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "groundhog-relay-publish-wire": {
+      "closure_names": [
+        "groundhog-relay-publish-wire",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-diagnostics",
+        "groundhog-net",
+        "groundhog-net-relay",
+        "groundhog-recipient",
+        "groundhog-relay",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nostr",
+        "nostr-relay-server",
+        "nostr_gobject",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrc-relayd",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "relay_security",
+        "test-groundhog-relay-publish-wire"
+      ],
+      "source_inputs": [
+        "{source}/apps/relayd/src/metrics.c",
+        "{source}/apps/relayd/src/policy_decider.c",
+        "{source}/apps/relayd/src/protocol_nip01.c",
+        "{source}/apps/relayd/src/protocol_nip11.c",
+        "{source}/apps/relayd/src/protocol_nip42.c",
+        "{source}/apps/relayd/src/protocol_nip45.c",
+        "{source}/apps/relayd/src/protocol_nip50.c",
+        "{source}/apps/relayd/src/protocol_nip77.c",
+        "{source}/apps/relayd/src/rate_limit.c",
+        "{source}/apps/relayd/src/relay_ingress.c",
+        "{source}/apps/relayd/src/relay_policy.c",
+        "{source}/apps/relayd/src/relay_server.c",
+        "{source}/apps/relayd/src/relayd_config.c",
+        "{source}/apps/relayd/src/relayd_main.c",
+        "{source}/apps/relayd/src/retention.c",
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-diagnostics.c",
+        "{source}/gnome/groundhog/src/net/gh-net-http.c",
+        "{source}/gnome/groundhog/src/net/gh-net-session.c",
+        "{source}/gnome/groundhog/src/net/gh-net-tls.c",
+        "{source}/gnome/groundhog/src/net/gh-nip05.c",
+        "{source}/gnome/groundhog/src/net/gh-nip11.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-net.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-soup.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-auth.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-guard.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-scope.c",
+        "{source}/gnome/groundhog/src/ui/gh-recipient.c",
+        "{source}/gnome/groundhog/tests/net/socks5-fixture.c",
+        "{source}/gnome/groundhog/tests/relay/test_relay_publish_wire.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "groundhog-relay-wire": {
+      "closure_names": [
+        "groundhog-relay-wire",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-diagnostics",
+        "groundhog-net",
+        "groundhog-net-relay",
+        "groundhog-recipient",
+        "groundhog-relay",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nostr",
+        "nostr_gobject",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-relay-wire"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-diagnostics.c",
+        "{source}/gnome/groundhog/src/net/gh-net-http.c",
+        "{source}/gnome/groundhog/src/net/gh-net-session.c",
+        "{source}/gnome/groundhog/src/net/gh-net-tls.c",
+        "{source}/gnome/groundhog/src/net/gh-nip05.c",
+        "{source}/gnome/groundhog/src/net/gh-nip11.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-net.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-soup.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-auth.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-guard.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-scope.c",
+        "{source}/gnome/groundhog/src/ui/gh-recipient.c",
+        "{source}/gnome/groundhog/tests/net/socks5-fixture.c",
+        "{source}/gnome/groundhog/tests/relay/test_relay_wire.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "groundhog-tls-resumption": {
+      "closure_names": [
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes",
+        "groundhog-tls-resumption"
+      ],
+      "closure_targets": [
+        "groundhog-diagnostics",
+        "groundhog-net",
+        "groundhog-net-relay",
+        "groundhog-recipient",
+        "groundhog-relay",
+        "groundhog-test-schemas",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nostr",
+        "nostr_gobject",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-tls-resumption"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-diagnostics.c",
+        "{source}/gnome/groundhog/src/net/gh-net-http.c",
+        "{source}/gnome/groundhog/src/net/gh-net-session.c",
+        "{source}/gnome/groundhog/src/net/gh-net-tls.c",
+        "{source}/gnome/groundhog/src/net/gh-nip05.c",
+        "{source}/gnome/groundhog/src/net/gh-nip11.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-net.c",
+        "{source}/gnome/groundhog/src/net/gh-relay-soup.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-auth.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-guard.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-publish.c",
+        "{source}/gnome/groundhog/src/relay/gh-relay-scope.c",
+        "{source}/gnome/groundhog/src/ui/gh-recipient.c",
+        "{source}/gnome/groundhog/tests/net/socks5-fixture.c",
+        "{source}/gnome/groundhog/tests/net/test_tls_resumption.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    }
+  },
+  "profile": {
+    "architecture": "x86_64",
+    "build_type": "Debug",
+    "capabilities": [
+      "display",
+      "private_bus"
+    ],
+    "compiler": "gcc",
+    "configure_args": [
+      "-G",
+      "Ninja",
+      "-DCMAKE_BUILD_TYPE=Debug",
+      "-DBUILD_TESTING=ON",
+      "-DBUILD_GROUNDHOG=ON",
+      "-DBUILD_NOSTR_GOBJECT=ON",
+      "-DBUILD_NOSTR_GTK=ON",
+      "-DBUILD_APPS=OFF",
+      "-DBUILD_RELAYD=ON",
+      "-DSIGNET_ENABLE=OFF",
+      "-DBUILD_MDK011_INTEROP=OFF",
+      "-DBUILD_MDK_INTEROP=OFF"
+    ],
+    "environment": {},
+    "feature_variants": [],
+    "instrumentation": "none",
+    "local_availability": "host_or_container",
+    "parallelism": 2,
+    "platform": "linux",
+    "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+    "source_dir": ".",
+    "timeout_seconds": 3600
+  },
+  "provenance": "Fresh authored Linux/x86_64 export at 53f2e822d; exact command/File API/descriptor/runtime/fixture closure, not full-profile acceptance.",
+  "realization": {
+    "descriptors": [
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [
+          "{source}/gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+        ],
+        "name": "groundhog-net",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": [
+          "test-groundhog-net",
+          "groundhog-test-schemas"
+        ]
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-relay",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-relay-publish",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-relay-publish-wire",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-relay-wire",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "fixture"
+        ],
+        "inputs": [],
+        "name": "groundhog-test-gst-registry",
+        "owner": [
+          "testing.framework"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "fixture"
+        ],
+        "inputs": [
+          "{build}/gnome/groundhog/groundhog-test-homes.cmake",
+          "{source}/cmake/NostrcTestIsolation.cmake"
+        ],
+        "name": "groundhog-test-homes",
+        "owner": [
+          "testing.framework"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [
+          "{source}/gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+        ],
+        "name": "groundhog-tls-resumption",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": [
+          "test-groundhog-tls-resumption",
+          "groundhog-test-schemas"
+        ]
+      }
+    ],
+    "targets": {
+      "groundhog-diagnostics::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-diagnostics.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2",
+          "-pthread"
+        ],
+        "dependencies": [],
+        "id": "groundhog-diagnostics::@264a94c6b18579f76d51",
+        "name": "groundhog-diagnostics",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-diagnostics.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "groundhog-net-relay::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-net-relay.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51",
+          "groundhog-recipient::@264a94c6b18579f76d51",
+          "groundhog-net::@264a94c6b18579f76d51"
+        ],
+        "id": "groundhog-net-relay::@264a94c6b18579f76d51",
+        "name": "groundhog-net-relay",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-relay-soup.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-relay-net.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "groundhog-net::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-net.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-pthread"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip19::@c476aefc5d4177e752ee",
+          "groundhog-recipient::@264a94c6b18579f76d51"
+        ],
+        "id": "groundhog-net::@264a94c6b18579f76d51",
+        "name": "groundhog-net",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-net-http.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-net-tls.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-nip05.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-nip11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/net/gh-net-session.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "groundhog-recipient::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-recipient.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip19::@c476aefc5d4177e752ee"
+        ],
+        "id": "groundhog-recipient::@264a94c6b18579f76d51",
+        "name": "groundhog-recipient",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/ui/gh-recipient.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "groundhog-relay::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-relay.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51"
+        ],
+        "id": "groundhog-relay::@264a94c6b18579f76d51",
+        "name": "groundhog-relay",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-scope.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-gnostr.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-publish.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-publish-gnostr.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-auth.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-gnostr-write.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/relay/gh-relay-guard.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "groundhog-test-schemas::@264a94c6b18579f76d51": {
+        "artifacts": [],
+        "compile_fragments": [],
+        "dependencies": [],
+        "id": "groundhog-test-schemas::@264a94c6b18579f76d51",
+        "name": "groundhog-test-schemas",
+        "sources": [
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/gnome/groundhog/CMakeFiles/groundhog-test-schemas"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/gnome/groundhog/CMakeFiles/groundhog-test-schemas.rule"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/gnome/groundhog/test-schemas/gschemas.compiled.rule"
+          }
+        ],
+        "type": "UTILITY"
+      },
+      "nip04::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/libnip04.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip04::@6027616dcf59074a386e",
+        "name": "nip04",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/src/nip04.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip06::@c7b4c7b933bb53d4442b": {
+        "artifacts": [
+          "{build}/nips/nip06/libnip06.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip06::@c7b4c7b933bb53d4442b",
+        "name": "nip06",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip06/src/nip06.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip11::@20bc37d91fa2bcdc8615": {
+        "artifacts": [
+          "{build}/nips/nip11/libnip11.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37"
+        ],
+        "id": "nip11::@20bc37d91fa2bcdc8615",
+        "name": "nip11",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip11/src/nip11.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip19::@c476aefc5d4177e752ee": {
+        "artifacts": [
+          "{build}/nips/nip19/libnip19.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip19::@c476aefc5d4177e752ee",
+        "name": "nip19",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/nip19.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/pointer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/pointer_api.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/tlv.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr-relay-server::@37fb974ccf49cf372ed8": {
+        "artifacts": [
+          "{build}/apps/relayd/libnostr-relay-server.a"
+        ],
+        "compile_fragments": [
+          "-g"
+        ],
+        "dependencies": [
+          "relay_security::@37fb974ccf49cf372ed8",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37"
+        ],
+        "id": "nostr-relay-server::@37fb974ccf49cf372ed8",
+        "name": "nostr-relay-server",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/relay_server.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/relayd_config.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/policy_decider.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/protocol_nip01.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/protocol_nip11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/protocol_nip42.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/protocol_nip45.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/protocol_nip50.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/protocol_nip77.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/retention.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/metrics.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr::@458585523a3aea9bfd6f": {
+        "artifacts": [
+          "{build}/libnostr/libnostr.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostr::@458585523a3aea9bfd6f",
+        "name": "nostr",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/timestamp.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/tag.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/event.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/envelope.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/init.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/filter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/connection.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/keys.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/json.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_json_parse.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/simplepool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/brown_list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/secure_buf.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/rate_limiter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_log.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/security_limits_runtime.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/storage_registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_core.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_limits.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip39_wordlist_en.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip39.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/metrics.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/metrics_collector.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_json_glib.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_event_boxed.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_filter_boxed.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/nostrdb/ndb_backend.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_gobject::@fe10a9cbaf9890d616d0": {
+        "artifacts": [
+          "{build}/nostr-gobject/libnostr-gobject-1.0.so"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-pthread"
+        ],
+        "dependencies": [],
+        "id": "nostr_gobject::@fe10a9cbaf9890d616d0",
+        "name": "nostr_gobject",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr-error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr-enums.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_event.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_event_bus.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_keys.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_relay.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_simple_pool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_pool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_relay_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_ndb_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/crypto_utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_async.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_query_batcher.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_subscription_registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_filter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_json.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_pointer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip19.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_tag_list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip46_client.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip46_bunker.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip49.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_bip39.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_profile_provider.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_profile_service.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/storage_ndb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gn-timeline-query.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gn-nostr-profile.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-thread-graph-model.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-thread-subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-identity.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-relays.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-mute-list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-sync-service.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-signer-bridge.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-app-bridge.c"
+          },
+          {
+            "compiled": true,
+            "generated": true,
+            "path": "{build}/nostr-gobject/signer_proxy.c"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gobject/signer_proxy.c.rule"
+          }
+        ],
+        "type": "SHARED_LIBRARY"
+      },
+      "nostr_json::@e17704836e43f277fe37": {
+        "artifacts": [
+          "{build}/libjson/libnostr-json.so"
+        ],
+        "compile_fragments": [
+          "-g -std=gnu11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNOSTR_ENABLE_LEGACY_ALIASES",
+          "-Werror"
+        ],
+        "dependencies": [],
+        "id": "nostr_json::@e17704836e43f277fe37",
+        "name": "nostr_json",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libjson/src/json.c"
+          }
+        ],
+        "type": "SHARED_LIBRARY"
+      },
+      "nostr_nip44_core::@eba61e620492a073b8b9": {
+        "artifacts": [
+          "{build}/nips/nip44/libnostr_nip44_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostr_nip44_core::@eba61e620492a073b8b9",
+        "name": "nostr_nip44_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_convkey.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_padding.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_chacha.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_base64.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip46_core::@b661c98b3f3661245af9": {
+        "artifacts": [
+          "{build}/nips/nip46/libnostr_nip46_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nostr_nip44_core::@eba61e620492a073b8b9"
+        ],
+        "id": "nostr_nip46_core::@b661c98b3f3661245af9",
+        "name": "nostr_nip46_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_session.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_uri.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_envelope.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_msg.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip49_core::@fe397a1d206baae8ca7f": {
+        "artifacts": [
+          "{build}/nips/nip49/libnostr_nip49_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip19::@c476aefc5d4177e752ee"
+        ],
+        "id": "nostr_nip49_core::@fe397a1d206baae8ca7f",
+        "name": "nostr_nip49_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49_kdf.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49_aead.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49_bech.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip49_glib::@fe397a1d206baae8ca7f": {
+        "artifacts": [
+          "{build}/nips/nip49/libnostr_nip49_glib.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f"
+        ],
+        "id": "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+        "name": "nostr_nip49_glib",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/glib/nip49_g.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrc-relayd::@37fb974ccf49cf372ed8": {
+        "artifacts": [
+          "{build}/apps/relayd/nostrc-relayd"
+        ],
+        "compile_fragments": [
+          "-g"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "relay_security::@37fb974ccf49cf372ed8",
+          "nostr-relay-server::@37fb974ccf49cf372ed8",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37"
+        ],
+        "id": "nostrc-relayd::@37fb974ccf49cf372ed8",
+        "name": "nostrc-relayd",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/relayd_main.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "nostrdb::@458585523a3aea9bfd6f": {
+        "artifacts": [
+          "{build}/libnostr/libnostrdb.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-include",
+          "{build}/libnostr/nostrdb_compat/hex_compat.h"
+        ],
+        "dependencies": [],
+        "id": "nostrdb::@458585523a3aea9bfd6f",
+        "name": "nostrdb",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/base64.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/binmoji.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/block.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/configurator.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/content_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hkdf_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hmac_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/invoice.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/metadata.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostr_bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostrdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/mdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/midl.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/amount.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32_util.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bolt11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/hash_u5.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/node_id.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/list/list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/debug.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/take/take.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrdb_storage::@7c93004a91abd73fa0d4": {
+        "artifacts": [
+          "{build}/components/nostrdb/libnostrdb_storage.a"
+        ],
+        "compile_fragments": [
+          "-g"
+        ],
+        "dependencies": [
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostrdb_storage::@7c93004a91abd73fa0d4",
+        "name": "nostrdb_storage",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/components/nostrdb/src/nostrdb_storage.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrdb_vendored::@7c93004a91abd73fa0d4": {
+        "artifacts": [
+          "{build}/components/nostrdb/libnostrdb_vendored.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-include",
+          "{build}/components/nostrdb/nostrdb_vendored_compat/hex_compat.h"
+        ],
+        "dependencies": [],
+        "id": "nostrdb_vendored::@7c93004a91abd73fa0d4",
+        "name": "nostrdb_vendored",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/base64.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/binmoji.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/block.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/configurator.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/content_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hkdf_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hmac_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/invoice.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/metadata.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostr_bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostrdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/amount.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32_util.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bolt11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/hash_u5.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/node_id.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/list/list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/debug.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/take/take.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/mdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/midl.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrgo::@01832e3469ab35a56bce": {
+        "artifacts": [
+          "{build}/libgo/libnostrgo.a"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [],
+        "id": "nostrgo::@01832e3469ab35a56bce",
+        "name": "nostrgo",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/go.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/context.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/channel.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/wait_group.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/hash_map.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/counter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/select.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/string_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/int_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/ticker.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/metrics_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/fiber_hooks_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/blocking_executor.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "relay_security::@37fb974ccf49cf372ed8": {
+        "artifacts": [
+          "{build}/apps/relayd/librelay_security.a"
+        ],
+        "compile_fragments": [
+          "-g"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "relay_security::@37fb974ccf49cf372ed8",
+        "name": "relay_security",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/relay_policy.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/rate_limit.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/apps/relayd/src/relay_ingress.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "test-groundhog-net::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-net"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51",
+          "groundhog-test-schemas::@264a94c6b18579f76d51",
+          "groundhog-recipient::@264a94c6b18579f76d51",
+          "groundhog-net::@264a94c6b18579f76d51",
+          "groundhog-net-relay::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-net::@264a94c6b18579f76d51",
+        "name": "test-groundhog-net",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/net/test_relay_soup.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/net/socks5-fixture.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-relay-publish-wire::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-relay-publish-wire"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrc-relayd::@37fb974ccf49cf372ed8",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51",
+          "groundhog-recipient::@264a94c6b18579f76d51",
+          "groundhog-net::@264a94c6b18579f76d51",
+          "groundhog-net-relay::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-relay-publish-wire::@264a94c6b18579f76d51",
+        "name": "test-groundhog-relay-publish-wire",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/relay/test_relay_publish_wire.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/net/socks5-fixture.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-relay-publish::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-relay-publish"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-relay-publish::@264a94c6b18579f76d51",
+        "name": "test-groundhog-relay-publish",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/relay/test_relay_publish.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-relay-wire::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-relay-wire"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51",
+          "groundhog-recipient::@264a94c6b18579f76d51",
+          "groundhog-net::@264a94c6b18579f76d51",
+          "groundhog-net-relay::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-relay-wire::@264a94c6b18579f76d51",
+        "name": "test-groundhog-relay-wire",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/relay/test_relay_wire.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/net/socks5-fixture.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-relay::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-relay"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-relay::@264a94c6b18579f76d51",
+        "name": "test-groundhog-relay",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/relay/test_relay_scope.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-tls-resumption::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-tls-resumption"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "groundhog-diagnostics::@264a94c6b18579f76d51",
+          "groundhog-relay::@264a94c6b18579f76d51",
+          "groundhog-test-schemas::@264a94c6b18579f76d51",
+          "groundhog-recipient::@264a94c6b18579f76d51",
+          "groundhog-net::@264a94c6b18579f76d51",
+          "groundhog-net-relay::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-tls-resumption::@264a94c6b18579f76d51",
+        "name": "test-groundhog-tls-resumption",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/net/test_tls_resumption.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/net/socks5-fixture.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      }
+    },
+    "tests": [
+      {
+        "backtrace": 2001,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-net"
+        ],
+        "config": "Debug",
+        "name": "groundhog-net",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GSETTINGS_SCHEMA_DIR={build}/gnome/groundhog/test-schemas",
+              "GSETTINGS_BACKEND=memory",
+              "G_DEBUG=fatal-criticals",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-net/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-net/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-net/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-net/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-net/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 120.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 1551,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-relay"
+        ],
+        "config": "Debug",
+        "name": "groundhog-relay",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-relay/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-relay/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-relay/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 20.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 1556,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-relay-publish"
+        ],
+        "config": "Debug",
+        "name": "groundhog-relay-publish",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 20.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 1566,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-relay-publish-wire"
+        ],
+        "config": "Debug",
+        "name": "groundhog-relay-publish-wire",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish-wire/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish-wire/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish-wire/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish-wire/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-publish-wire/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 90.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 1561,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-relay-wire"
+        ],
+        "config": "Debug",
+        "name": "groundhog-relay-wire",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-relay-wire/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-wire/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-wire/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-wire/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-relay-wire/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 60.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 2137,
+        "command": [
+          "/usr/bin/gst-inspect-1.0",
+          "coreelements"
+        ],
+        "config": "Debug",
+        "name": "groundhog-test-gst-registry",
+        "properties": [
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin",
+              "NOSTRC_TEST_ISOLATION=1"
+            ]
+          },
+          {
+            "name": "FIXTURES_SETUP",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:testing.framework"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 600.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 2132,
+        "command": [
+          "/usr/bin/cmake",
+          "-P",
+          "{build}/gnome/groundhog/groundhog-test-homes.cmake"
+        ],
+        "config": "Debug",
+        "name": "groundhog-test-homes",
+        "properties": [
+          {
+            "name": "FIXTURES_SETUP",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:testing.framework"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 2006,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-tls-resumption"
+        ],
+        "config": "Debug",
+        "name": "groundhog-tls-resumption",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GSETTINGS_SCHEMA_DIR={build}/gnome/groundhog/test-schemas",
+              "GSETTINGS_BACKEND=memory",
+              "G_DEBUG=fatal-criticals",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-tls-resumption/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-tls-resumption/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-tls-resumption/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-tls-resumption/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-tls-resumption/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "SKIP_RETURN_CODE",
+            "value": 77
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 60.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      }
+    ]
+  },
+  "realization_sha256": "fe7c6aa01363132d898f602c48f9675c878275ce7c86b54db8c0badde26cca06",
+  "schema_version": 1,
+  "source_identity": {
+    "kind": "committed",
+    "sha": "53f2e822d04bd32e243a9cf969396f2f241af83e"
+  }
+}
