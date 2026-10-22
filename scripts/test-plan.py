@@ -241,6 +241,24 @@ def realization_command(args, policy, backend, *, custody=None, retain_lane_fail
 
 
 def _realization_command(args, policy, backend, *, custody=None, state=None):
+    """Serialize configure/build/audit/query/execution for this physical build."""
+    import fcntl
+    import stat
+    locks = Path('/tmp') / f'nostrc-test-gate-{os.getuid()}'
+    locks.mkdir(mode=0o700, exist_ok=True)
+    selection.require(not locks.is_symlink() and locks.stat().st_uid == os.getuid()
+                      and not locks.stat().st_mode & 0o077, 'unsafe engine lock directory')
+    key = hashlib.sha256(os.fsencode(Path(args.build_dir).resolve())).hexdigest()
+    fd = os.open(locks / ('build-' + key + '.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'a') as lock:
+        info = os.fstat(lock.fileno())
+        selection.require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                          and not info.st_mode & 0o077, 'unsafe engine build lock')
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _realization_command_owned(args, policy, backend, custody=custody, state=state)
+
+
+def _realization_command_owned(args, policy, backend, *, custody=None, state=None):
     """Compose the real realization API; never emulate a configure/audit/run."""
     selection.require(args.phase in ("configure", "build", "test", "all"), "unknown execution phase")
     plan = selection.read_json(args.plan) if args.plan else None

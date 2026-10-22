@@ -816,6 +816,105 @@ def _ninja_input_paths(output):
     return paths
 
 
+def _generation_control(realization, tools):
+    """Bind CMake's regeneration boundary at configure, not first execution."""
+    build = Path(realization['build_dir'])
+    env = phase_environment(realization['profile'], realization['repo_root'], 'build')
+    ninja, cmake = tools['ninja']['path'], tools['cmake']['path']
+    query = _command([ninja, '-t', 'query', 'build.ninja'], cwd=build, env=env)
+    lines = query.splitlines()
+    if lines[:2] != ['build.ninja:', '  input: RERUN_CMAKE'] or '  outputs:' not in lines:
+        raise RealizationError('unsupported CMake regeneration control rule')
+    end = lines.index('  outputs:')
+    inputs = []
+    for line in lines[2:end]:
+        if not line.startswith('    ') or line.startswith('    || '):
+            raise RealizationError('unsupported CMake regeneration control input')
+        value = line[4:].removeprefix('| ')
+        inputs.append(str(Path(os.path.abspath(build / value))))
+    verifier = build / 'CMakeFiles/VerifyGlobs.cmake'
+    stamp = build / 'CMakeFiles/cmake.verify_globs'
+    has_globs = str(stamp) in inputs
+    expected = [[cmake, '--regenerate-during-build', '-S' + realization['source_dir'], '-B' + str(build)]]
+    if has_globs:
+        expected.insert(0, [cmake, '-P', str(verifier)])
+        glob_query = _command([ninja, '-t', 'query', str(stamp)], cwd=build, env=env)
+        if glob_query.split('  outputs:', 1)[0] != (str(stamp) + ':\n  input: VERIFY_GLOBS\n    | '
+                + str(build / 'CMakeFiles/VerifyGlobs.cmake_force') + '\n'):
+            raise RealizationError('unsupported CMake glob control rule')
+    commands = _command([ninja, '-t', 'commands', 'build.ninja'], cwd=build, env=env)
+    parsed = [shlex.split(line) for line in commands.splitlines()]
+    for argv in parsed:
+        if argv and Path(argv[0]).is_absolute() and Path(argv[0]).resolve() == Path(cmake):
+            argv[0] = cmake
+    if parsed != expected:
+        raise RealizationError(f'unsupported CMake regeneration control command: {parsed}')
+    if has_globs and str(verifier) not in inputs:
+        raise RealizationError('unbound CMake glob verifier')
+    files = {}
+    for name in inputs:
+        path = Path(name)
+        if not path.is_file() or (name == str(verifier) and path.resolve() != path):
+            raise RealizationError(f'unbound CMake regeneration input: {name}')
+        files[name] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                       'resolved': str(path.resolve()), 'mtime_ns': path.stat().st_mtime_ns}
+    return {'query': query, 'commands': commands, 'files': files,
+            'verifier': str(verifier) if has_globs else None,
+            'tools': tools}
+
+
+def _ninja_freshness(realization, targets):
+    """Query the unchanged graph without Ninja's manifest-regeneration prepass.
+
+    The private entry is not an output in the original graph. Its sole include
+    preserves native evaluation of defaults, dependencies, depfiles and tools.
+    Regeneration is independently checked against configure-bound identities.
+    Callers hold the build lock; this is query evidence, not physical coverage.
+    """
+    binding = realization['default_build_binding']
+    snapshot = binding['snapshot']
+    control = snapshot['generation_control']
+    build = Path(realization['build_dir'])
+    env = phase_environment(realization['profile'], realization['repo_root'], 'build')
+    tools = snapshot['build_tools']
+    def validate():
+        _validate_generation_files(realization)
+        if _ninja_manifests(build) != snapshot['manifests']:
+            raise RealizationError('Ninja generation changed during freshness query')
+        for name, tool in tools.items():
+            actual = shutil.which(name, path=env.get('PATH'))
+            if not actual or str(Path(actual).resolve()) != tool['path']:
+                raise RealizationError('configured/PATH build tool identity changed')
+        if _generation_control(realization, tools) != control:
+            raise RealizationError('CMake regeneration needed; configure and audit again')
+        if control['verifier']:
+            # CMake reports a mismatch before TOUCH_NOCREATE. Empty combined
+            # output is mandatory even when the stamp cannot be touched.
+            output = _command([tools['cmake']['path'], '-P', control['verifier']], cwd=build, env=env)
+            if output != '':
+                raise RealizationError('CMake glob membership changed; configure and audit again: ' + repr(output))
+            if _generation_control(realization, tools) != control:
+                raise RealizationError('CMake glob control changed during verification')
+    validate()
+    with tempfile.TemporaryDirectory(prefix='nostrc-ninja-query-', dir=build) as directory:
+        entry = Path(directory) / 'query.ninja'
+        original = str(build / 'build.ninja')
+        if any(char in original for char in '\r\n\x00'):
+            raise RealizationError('unsupported Ninja query path')
+        escaped = original.replace('$', '$$').replace(' ', '$ ').replace(':', '$:')
+        entry.write_text('include ' + escaped + '\n')
+        argv = [tools['ninja']['path'], '-f', str(entry), '-n', '-v', *targets]
+        output = _command(argv, cwd=build, env=env)
+        if output != 'ninja: no work to do.\n':
+            raise RealizationError(('selected targets are' if targets else 'native default is')
+                                   + ' not up to date; build and re-audit before execution')
+        validate()
+        return {'argv': argv, 'entry_text': entry.read_text(),
+                'entry_sha256': hashlib.sha256(entry.read_bytes()).hexdigest(),
+                'generation_control_hash': _hash(control), 'output': output,
+                'physical_coverage': False}
+
+
 def _default_snapshot(realization):
     """Let Ninja resolve the graph; retain typed producer/input categories.
 
@@ -925,6 +1024,7 @@ def _default_snapshot(realization):
     if manifests != current_manifests:
         raise RealizationError("Ninja manifests changed during default introspection")
     return {"manifests": manifests, "build_tools": tools,
+            "generation_control": _generation_control(realization, tools),
             "cache_sha256": hashlib.sha256(cache_path.read_bytes()).hexdigest(), "edges": edges, "paths": paths,
             "commands_sha256": hashlib.sha256(commands.encode()).hexdigest()}, raw
 
@@ -1214,11 +1314,22 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     if "default_build_binding" in realization:
         bound += [default_evidence, build / 'CMakeCache.txt', *map(Path, binding["snapshot"]["manifests"]["files"])]
         bound += [Path(tool['path']) for tool in binding['snapshot']['build_tools'].values()]
+        bound += list(map(Path, binding['snapshot']['generation_control']['files']))
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
     _validate_source_identity(root, identity, build)
     _validate_phase_context(realization)
     _atomic(record, realization)
     return realization
+
+
+def _validate_generation_files(realization):
+    for name, digest in realization.get("generation_files", {}).items():
+        p = Path(name)
+        if (not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest
+                or (name in realization.get("configure_outputs", {}) and p.resolve() != p)):
+            raise RealizationError(f"stale realization metadata: {name}")
+    if not realization.get("generation_files"):
+        raise RealizationError("unbound generation metadata")
 
 
 def load_realization(build_dir, expected_identity=None):
@@ -1228,13 +1339,7 @@ def load_realization(build_dir, expected_identity=None):
     if expected_identity is not None and realization["source_identity"] != _identity(expected_identity):
         raise RealizationError("execution source identity changed (including dirty snapshot digest)")
     _validate_source_identity(realization["repo_root"], realization["source_identity"], build_dir)
-    for name, digest in realization.get("generation_files", {}).items():
-        p = Path(name)
-        if (not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest
-                or (name in realization.get("configure_outputs", {}) and p.resolve() != p)):
-            raise RealizationError(f"stale realization metadata: {name}")
-    if not realization.get("generation_files"):
-        raise RealizationError("unbound generation metadata")
+    _validate_generation_files(realization)
     if Path(realization["build_dir"]).resolve() != Path(build_dir).resolve():
         raise RealizationError("realization build directory mismatch")
     if realization.get("realization_kind") == "command":
@@ -2815,16 +2920,20 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         receipt["build_seconds"] = time.monotonic() - begin
     _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     query = ["ctest", "--test-dir", str(build_dir), *config, "--show-only=json-v1"]
+    freshness = []
     if resolved.get("default_build_required"):
-        default_dry_run = _command(["ninja", "-C", str(build_dir), "-n"], env=build_env)
-        if "ninja: no work to do." not in default_dry_run:
-            raise RealizationError("native default is not up to date; build and re-audit before execution")
+        freshness.append(_ninja_freshness(realization, []))
     if resolved["build_targets"]:
         if realization["cmake"].get("generator", {}).get("name") != "Ninja":
             raise RealizationError("execution build-freshness proof requires the existing Ninja profile")
-        dry_run = _command(["ninja", "-C", str(build_dir), "-n", *resolved["build_targets"]], env=build_env)
-        if "ninja: no work to do." not in dry_run:
-            raise RealizationError("selected targets are not up to date; build and re-audit before execution")
+        if 'default_build_binding' in realization:
+            freshness.append(_ninja_freshness(realization, resolved['build_targets']))
+        else:
+            dry_run = _command(["ninja", "-C", str(build_dir), "-n", *resolved["build_targets"]], env=build_env)
+            if "ninja: no work to do." not in dry_run:
+                raise RealizationError("selected targets are not up to date; build and re-audit before execution")
+    if freshness:
+        _atomic(directory / 'ninja-freshness-query.json', freshness)
     fresh = [] if realization.get("realization_kind") == "command" else json.loads(_command(query, env=env))["tests"]
     if _registration_hash(fresh) != resolved["registration_hash"]:
         raise RealizationError("CTest registrations/properties changed after resolution")

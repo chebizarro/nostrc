@@ -46,6 +46,133 @@ target_include_directories(app PRIVATE "${CMAKE_BINARY_DIR}")
         self.assertTrue(audit['passed'], audit['gaps'])
         return realized, audit
 
+    def test_public_engine_holds_build_lock_and_releases_on_failure(self):
+        import fcntl
+        import hashlib
+        import importlib.util
+        import os
+        from types import SimpleNamespace
+        spec = importlib.util.spec_from_file_location('freshness_cli', ROOT / 'scripts/test-plan.py')
+        cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cli)
+        key = hashlib.sha256(os.fsencode(self.build.resolve())).hexdigest()
+        lock_path = Path('/tmp') / f'nostrc-test-gate-{os.getuid()}' / ('build-' + key + '.lock')
+        def owned(*args, **kwargs):
+            with lock_path.open('a') as probe:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            raise r.RealizationError('owned transaction failure')
+        with mock.patch.object(cli, '_realization_command_owned', side_effect=owned):
+            with self.assertRaisesRegex(r.RealizationError, 'owned transaction failure'):
+                cli._realization_command(SimpleNamespace(build_dir=self.build), {}, r)
+        with lock_path.open('a') as probe:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def glob_ready(self):
+        self.default_contract('file(GLOB fixture_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/*.c")\n')
+        realized, audit = self.build_audit()
+        control = realized['default_build_binding']['snapshot']['generation_control']
+        self.assertIn(control['verifier'], realized['generation_files'])
+        self.assertEqual(control['files'][control['verifier']]['sha256'],
+                         realized['generation_files'][control['verifier']])
+        return realized, audit
+
+    def test_glob_default_and_named_freshness_real_execution(self):
+        realized, audit = self.glob_ready()
+        # The ordinary manifest prepass is not a payload-freshness proof.
+        raw = r._command(['ninja', '-n'], cwd=self.build)
+        self.assertIn('Re-checking globbed directories', raw)
+        for targets in ([], ['app']):
+            proof = r._ninja_freshness(realized, targets)
+            self.assertEqual(proof['output'], 'ninja: no work to do.\n')
+            self.assertFalse(proof['physical_coverage'])
+            self.assertEqual(proof['argv'][0], realized['default_build_binding']['snapshot']['build_tools']['ninja']['path'])
+        resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+        receipt = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        self.assertEqual(receipt['outcome'], 'passed')
+        self.assertFalse(list(self.build.glob('nostrc-ninja-query-*')))
+
+    def test_glob_missing_executable_is_not_hidden_by_manifest_prepass(self):
+        realized, _ = self.glob_ready()
+        (self.build / 'app').unlink()
+        for targets in ([], ['app']):
+            with self.subTest(targets=targets), self.assertRaisesRegex(r.RealizationError, 'not up to date'):
+                r._ninja_freshness(realized, targets)
+
+    def test_glob_stale_source_same_bytes_refuses(self):
+        import os
+        import time
+        realized, _ = self.glob_ready()
+        stamp = max(time.time_ns(), (self.build / 'app').stat().st_mtime_ns + 1000000000)
+        os.utime(self.root / 'app.c', ns=(stamp, stamp))
+        with self.assertRaisesRegex(r.RealizationError, 'not up to date'):
+            r._ninja_freshness(realized, [])
+
+    def test_glob_new_ignored_member_refuses_without_stamp_dependency(self):
+        realized, _ = self.glob_ready()
+        with (self.root / '.git/info/exclude').open('a') as stream:
+            stream.write('\nnew-untracked.c\n')
+        (self.root / 'new-untracked.c').write_text('int new_member;\n')
+        with self.assertRaisesRegex(r.RealizationError, 'glob membership changed'):
+            r._ninja_freshness(realized, [])
+
+    def test_glob_changed_verifier_refuses_before_execution(self):
+        realized, _ = self.glob_ready()
+        verifier = Path(realized['default_build_binding']['snapshot']['generation_control']['verifier'])
+        marker = self.build / 'must-not-execute'
+        with verifier.open('a') as stream:
+            stream.write('file(WRITE "' + str(marker) + '" "executed")\n')
+        with self.assertRaisesRegex(r.RealizationError, 'stale realization'):
+            r._ninja_freshness(realized, [])
+        self.assertFalse(marker.exists())
+
+    def test_glob_changed_manifest_refuses(self):
+        realized, _ = self.glob_ready()
+        with (self.build / 'build.ninja').open('a') as stream:
+            stream.write('\n# changed generation\n')
+        with self.assertRaisesRegex(r.RealizationError, 'stale realization'):
+            r._ninja_freshness(realized, [])
+
+    def test_glob_touched_configure_input_requires_regeneration(self):
+        import os
+        realized, _ = self.glob_ready()
+        source = self.root / 'CMakeLists.txt'
+        stamp = source.stat().st_mtime_ns + 1000000000
+        os.utime(source, ns=(stamp, stamp))
+        with self.assertRaisesRegex(r.RealizationError, 'CMake regeneration needed'):
+            r._ninja_freshness(realized, [])
+
+    def test_glob_unknown_control_command_refuses_fresh_capture(self):
+        realized, _ = self.glob_ready()
+        rules = self.build / 'CMakeFiles/rules.ninja'
+        rules.write_text(rules.read_text().replace(' -P ', ' --unknown-control -P '))
+        with self.assertRaisesRegex(r.RealizationError, 'unsupported CMake regeneration control command'):
+            r._default_snapshot(realized)
+
+    def test_glob_verifier_output_refuses_even_without_stamp_change(self):
+        realized, _ = self.glob_ready()
+        original = r._command
+        def command(argv, *args, **kwargs):
+            if '-P' in argv:
+                return '-- GLOB mismatch!\n'
+            return original(argv, *args, **kwargs)
+        with mock.patch.object(r, '_command', side_effect=command):
+            with self.assertRaisesRegex(r.RealizationError, 'glob membership changed'):
+                r._ninja_freshness(realized, [])
+
+    def test_glob_generation_changed_during_query_refuses(self):
+        realized, _ = self.glob_ready()
+        original = r._command
+        def command(argv, *args, **kwargs):
+            result = original(argv, *args, **kwargs)
+            if '-f' in argv and '-n' in argv:
+                with (self.build / 'build.ninja').open('a') as stream:
+                    stream.write('\n# concurrent generation\n')
+            return result
+        with mock.patch.object(r, '_command', side_effect=command):
+            with self.assertRaisesRegex(r.RealizationError, 'stale realization'):
+                r._ninja_freshness(realized, [])
+
     def test_real_copy_header_command_free_target_dependencies_full_audit(self):
         self.copy_contract()
         realized, audit = self.build_audit()
