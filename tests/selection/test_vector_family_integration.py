@@ -94,6 +94,11 @@ class VectorFamilyIntegration(unittest.TestCase):
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
                          self.witness['physical_proof']['canonical_witness_sha256'])
         self.assertEqual(sum(json.loads(path.read_bytes())['executed_cases'].values()), 128)
+        changed = self.witness['changed_test_source_input']
+        self.assertEqual(changed['path'], 'nips/nip44/tests/test_nip44_vectors.c')
+        old = s.git(ROOT, 'show', self.witness['base'] + ':' + changed['path']).stdout
+        self.assertEqual(hashlib.sha256(old).hexdigest(), changed['before'])
+        self.assertEqual(hashlib.sha256((ROOT / changed['path']).read_bytes()).hexdigest(), changed['after'])
 
     def test_all_base_history_and_original_sanitizer_authority_remain_exact(self):
         paths = s.git(ROOT, 'ls-tree', '-r', '--name-only', self.witness['base'], '--',

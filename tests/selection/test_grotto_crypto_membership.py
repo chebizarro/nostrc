@@ -196,11 +196,15 @@ class GrottoCryptoMembership(unittest.TestCase):
         from nip44_vector_projection import before_nip44_vector_renewal
         current = self.policy['diagnostic_nonmember_subsets'][PROFILE]
         historical = before_nip44_vector_renewal(current, PROFILE)['review']['source_inputs']
-        from nip44_vector_projection import SOURCES
+        from nip44_vector_projection import SOURCES, renewal_witness
+        changed_test = renewal_witness()['changed_test_source_input']
         for path, digest in self.export['reviewed_source_sha256'].items():
             if path in SOURCES:
                 self.assertEqual(historical[path], digest, path)
                 digest = current['review']['source_inputs'][path]
+            elif path == changed_test['path']:
+                self.assertEqual(digest, changed_test['before'], path)
+                digest = changed_test['after']
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
 
     def test_physical_evidence_is_raw_headless_diagnostic_not_acceptance(self):

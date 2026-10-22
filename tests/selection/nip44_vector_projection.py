@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 RENEWAL = 'tests/selection/fixtures/nip44_vector_renewal_20261022.json'
-RENEWAL_SHA256 = 'db156f9d41ade629e6dbdf082eee79534ee64a03a619122ef2575a37e01002ae'
+RENEWAL_SHA256 = '9db76242db20e27b8063814d62ace6fc20147c04ac580f6189aeb85c3f0be087'
 CHECK = 'grotto.nip44_vectors'
 REGISTRATION = 'test_nip44_vectors'
 SOURCES = {'nips/nip44/CMakeLists.txt', 'nips/nip44/TestInventory.cmake'}
