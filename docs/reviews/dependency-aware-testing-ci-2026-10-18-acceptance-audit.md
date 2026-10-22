@@ -2310,3 +2310,163 @@ Structured handoff: `/tmp/nostrc-ci-profile-final-20261022/checkpoint-final.json
 It distinguishes the fresh admission-proof source, frozen tested-code source and
 later documentation/export commit, with hashes for raw gate logs, native XML and
 cleanup receipts, original failure evidence, review and authoritative export.
+
+## Bounded media/crypto integration — 2026-10-22
+
+**Final tested code: `a787dd1948bb2f59fde5276c8156822e9fbe4431`**, based on
+master `b7aede8166cc52a6ec55faafd755a1fa4a9121d1`. Preserving merge `7b097191f`
+contains exact Groundhog commit `1a98aed50cebb0da99fc02a4bfd777906668a996`;
+merge `a2a1201a6` contains exact Grotto commit
+`3dc1944cbb93cd4cee916902a8fa0d467ffc433f`. Neither moving tip was merged before
+parent approval. All **90 / 119** child manifest artifact hashes are independently
+verified. Child checkpoint SHA-256 values are respectively
+`ac9c13cd88e0674243faa5aa43879b8500c28326f2a523cbd4e6e9b4648dae24` and
+`58a5b110d3bd2f869e6821c69e1beeb1e866af1fd437cba4e84f356cfb1f0778`.
+
+### Narrow composition, not renewed authority
+
+Only three new Groundhog ordinary media registrations and six self-contained
+Grotto crypto registrations are enrolled. Selected primary/CTest arrays become
+**27/29 → 30/32** and **58/61 → 64/67** respectively. The existing media check
+adds the exact `test-groundhog-media` build target. The integrator's inventory
+delta adds **nine `selection.contract` command input files**: four per family and
+one shared regression file. These are not canonical CTest runtime declarations;
+all **13 existing nonempty check-local CTest constraints remain unchanged**.
+
+All **18 old JSON fixtures plus the original golden** are byte-identical to
+`b7aede816`. Both ordinary records retain their entire prior non-selection
+fields: exact **33 omissions / 29 required omitted-target closures**, the same
+**193 reviewed source hashes per profile**, candidate/profile/toolchain/registration
+universe and review authority. Sanitizer authority, graph, path rules, profiles,
+capabilities, defaults and workflows are unchanged. **No source renewal** or
+blanket golden/hash refresh occurs in this wave.
+
+The shared historical entry first reverses only the approved latest family,
+then retains the pinned NIP-49 descriptor and older whole-record guards. The media
+witness bytes are additionally pinned as
+`fa30aa40a5598dfafdb070215481bbf617e395e33ad431d6c2ce8c9e8aed4228`.
+Workflow composition preserves the exact old all-profile golden entries, splits
+out authored ordinary-profile checks, validates their pinned crypto witness hash,
+then adds the six new checks. Non-ordinary entries are retained, never filtered
+away. A profile-repartition mutation refuses. The single crypto cross-family
+assertion reverse-projects the approved media delta before comparing its unchanged
+base Groundhog digest; neither sibling witness is refreshed.
+
+Final seam commit `a787dd194` corrects the preliminary `3bd8a7e03` helper's
+ordinary-versus-all-profile workflow mismatch, the missed old Grotto target-list
+assertion, and adds the explicit retention/repartition regression. No production
+`apps/`, `lib*/`, `nips/`, MDK, CMake or descriptor code changes occur.
+**Version assessment: no bump**, internal CI metadata/tests/docs only.
+
+### Fresh combined full audits and admission
+
+Fresh authored Linux/x86_64 GNU exports run in the reviewed Linux/amd64 Rosetta
+image `sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+nonroot UID 1001, source read-only and network disabled. Actual base checkout
+`b7aede816` before exports and final-code `a787dd194` after exports are retained.
+Full finding **multisets**, not additive arithmetic, match exactly the independent
+child removals:
+
+| Profile | Full findings before → after | Exact removals | Added | Result |
+|---|---:|---|---:|---|
+| `groundhog.linux` | 7,895 → 7,327 | 3 unclaimed + 565 missing-impact | 0 | **FAIL**, incomplete |
+| `grotto.linux` | 9,137 → 9,131 | 6 unclaimed | 0 | **FAIL**, incomplete |
+
+All **1,317 / 1,701 input byte hashes** agree; no new runtime input is invented.
+Full target/test/descriptor exports agree after independent source/build-root
+prefix substitution. Runtime path collections are compared as multisets with
+multiplicity preserved: raw lexicographically sorted absolute paths change order
+when independent prefixes are substituted. Hash maps are compared as maps, not
+serialized pre-substitution key order. Raw differences/order witnesses remain
+retained; **no entry or hash value is removed or rewritten**. Both full audits
+retain `complete=false` and `complete_gate_eligible=false`; omission accounting
+and all required omitted closures remain present. No selected-only fallback.
+
+Actual CLI whole/family resolution equals in-process resolution; `admit` and
+`validate_resolved` succeed for both profiles. Whole Groundhog is **30 primaries /
+32 CTests**; whole Grotto is **64 / 67**, plus three existing command checks
+(**70 logical executions, not physical runs**). Focused media is four primaries /
+six CTests including setup fixtures, focused crypto is six/six, no required
+capabilities. This is admission proof, **not selected-profile backend execution**.
+
+### Final gates, one bounded review, and retained failures
+
+At clean frozen **`a787dd194`**, installed **Python 3.14.8** with empty
+`PYTHONPATH`, explicit `XPC_SERVICE_NAME=0` and bytecode disabled runs:
+
+- **583/583 selector PASS, zero skips**, 300.230s unittest time.
+- Independent new files **7/7 media, 10/10 crypto, 5/5 shared composition PASS**,
+  each in a separate process.
+- All six shell regressions (`test-pre-push`, `test-full-gate`,
+  `test-linux-gate-lifecycle`, `test-linux-gate-smoke`, `test-sanitizer-gate`,
+  `test-test-gate`), four mandatory statics, inventory validation,
+  actionlint/ShellCheck and range whitespace PASS: **18 recorded phases, exit 0**.
+- Fresh safe native configure **11.348s** and default-all build **65.066s PASS**.
+  Temporary HOME/XDG, private bus/throwaway Secret Service, loopback/Unix-only
+  sandbox, libsecret/secret-service flags and Groundhog default-OFF are retained.
+  Read-only keychain pre/post guards pass; service/bus reaped and socket absent.
+  **Native CTest NOT RUN** for this metadata/test-only wave.
+
+One bounded review, chat `untitled-chat-500B2F`, finds **no blockers within the
+supplied inline integration delta** at preliminary `3bd8a7e03`. Packaging did not
+deliver the patch artifact; raw generated fixtures and reported gates were not
+independently reviewed. Raw report SHA-256:
+`2d52f43165279802a4cac0c093bc6d6a42fad43b37dee0073a33f12fd16d829b`.
+The subsequent narrow test-discovered corrections are tested above, not claimed
+as independently re-reviewed; no extra review loop occurs.
+
+The first combined **582-case run (12 failures / 6 errors / zero skips,
+399.449s)** remains failed. Three integration issues are fixed as described;
+the other **15 unchanged MDK failures/errors** used Apple Python 3.9 without
+`os.waitid`. A captured unchanged-test diagnostic fails under 3.9 with that exact
+exception and passes under 3.14 with the expected **`cleanup_unverified`** receipt.
+No MDK implementation, lifecycle refusal, timeout, assertion or coverage is
+changed/skipped. Three early exit-133 invocations without test output, shallow
+reference-clone refusal, and the initial native preparation failure (Apple Python
+missing PyGObject; no build launched) are retained. The corrected private-service
+runner uses the interpreter with installed PyGObject, not a weakened readiness
+condition.
+
+Evidence-driver failures also remain retained: raw runtime-path order assertion,
+serialized hash-map key-order assertion, and actual CLI phase-environment refusal.
+The latter is diagnosed exactly: Bash last-command exec produces `SHLVL=0`;
+changing only that candidate to `1` reproduces the retained environment hash.
+Keeping the invoking shell alive restores the original environment, after which
+CLI admission passes. No fingerprint, guard or retained realization is edited.
+
+Child physical proofs remain separate: media **6/6 including two setup fixtures
+at `1a98aed50`**, crypto **6/6 at base `b7aede816`**. They are raw headless
+diagnostics, not executions at final integration code or full-profile acceptance.
+Their failed intermediate suites (**568: one failure/seven errors**, **571:
+eight errors**) remain source-specific history, not combined green receipts.
+
+### Tracker, deferred vector, and handoff
+
+`test_nip44_vectors` remains **unclaimed**. `nips/nip44/TestInventory.cmake:13–15`
+does not declare the JSON input; `CMakeLists.txt:50–56` makes Jansson optional,
+and `tests/test_nip44_vectors.c:432–445` can use the builtin fallback if the JSON
+is unavailable. **`nostrc-3lofk` OPEN** requires canonical ownership/hashing of
+`tests/nip44.vectors.json`, observable official-JSON execution, refusal/failure of
+missing capability/file or builtin-only credit, and appropriate exact ordinary
+source renewal for any eventual descriptor change. No automatic sanitizer
+renewal; `test_interop` remains excluded. This follow-up is not implemented or
+credited by the current six-check enrollment.
+
+At **2026-10-22T09:01:03Z**, official `bd export --all` retains **1,552 records
+(1,515 issues + 37 memories)** and **486 comments**. Every identity/comment in
+both the tracked base export (475 comments) and initial DB snapshot (483
+comments), and every memory value, is verified preserved. No manual semantic
+`.beads` edit. `bd dolt pull` returns **Error 1105: no remote**, not successful sync.
+`.2` remains **OPEN**, `.9`/`.31` **in progress**. No broad task is closed.
+
+Production authored-profile postbuild/header audits, all-29 omitted-target builds
+and physical selected-profile execution remain **NOT RUN**. W11 **NOT MET** /
+W12 **NOT RUN**; hosted ledger is not refreshed. No complete/release/default/
+workflow/protection/custody/operator-approval credit or shipped version bump.
+Commits remain local: parent owns push/merge and worktree cleanup. The later
+docs/export commit does not relabel `a787dd194` as a new execution source.
+
+Structured final handoff and verified artifact manifest:
+`/tmp/nostrc-media-crypto-integration-20261022/checkpoint-final.json`.
+The extra baseline checkout `/private/tmp/nostrc-media-crypto-baseline-20261022`
+is retained for parent verification, not silently pruned before review.

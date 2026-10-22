@@ -1378,3 +1378,33 @@ The owning migration session must refresh the ledger and `.5` before reporting
 progress or proposing acceptance. W11 NOT MET / W12 NOT RUN; no approval,
 requirement, trigger/schedule, default or release-mode cutover. This pass changes
 only evidence/documentation/tracker state; no component bump.
+
+## 18. Bounded media/crypto membership integration — 2026-10-22
+
+[Source-bound receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#bounded-mediacrypto-integration--2026-10-22):
+code **`a787dd1948bb2f59fde5276c8156822e9fbe4431`** preserves approved media
+`1a98aed50` and crypto `3dc1944cb` merges from `b7aede816`. Groundhog **27/29 →
+30/32**, Grotto **58/61 → 64/67** selected primary/fixture arrays only; original
+33 omissions / 29 required omitted-target closures, all 193 source controls per
+profile, sanitizer authority and all old fixture/golden bytes remain unchanged.
+No source renewal, graph/default/workflow or shipped version change.
+
+Final **583/583 selector PASS, zero skips**, independent new files **7/10/5 PASS**,
+six shell regressions/four statics/inventory/actionlint/ShellCheck and safe native
+configure/default-all build pass at the exact code SHA. Full native CTest is
+**NOT RUN**, not borrowed from an older receipt. The preliminary **582-case
+12-failure/6-error** run, interpreter diagnosis and failed evidence-driver
+comparisons remain retained; no MDK edits or skipped failing coverage.
+
+Fresh full x86 preaudits **FAIL**: Groundhog **7,895 → 7,327** (3 unclaimed + 565
+missing-impact removed), Grotto **9,137 → 9,131** (6 unclaimed removed), **zero
+added**; all **1,317/1,701** input byte hashes agree. Actual CLI resolve/admit/
+validation is not selected-profile execution. `complete=false` and
+`complete_gate_eligible=false` remain; production postbuild/header audits and
+physical all-29 builds are **NOT RUN**.
+`nostrc-3lofk` separately tracks the unclaimed NIP-44 canonical JSON/fallback gap;
+`test_interop` remains excluded. `.2` OPEN, `.9`/`.31` in progress. No broad
+closure, hosted-ledger refresh, W11 credit (**NOT MET**), W12 (**NOT RUN**),
+complete/release/default/custody/protection or operator-approval credit. Parent
+owns landing and worktree cleanup; later docs/official tracker export do not
+change tested-code identity.
