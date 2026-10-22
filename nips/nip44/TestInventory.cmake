@@ -11,5 +11,8 @@ if(TEST "test_nip44_roundtrip")
   nostrc_add_test_owners("test_nip44_roundtrip" OWNER nip44.test_inputs)
 endif()
 if(TEST "test_nip44_vectors")
-  nostrc_add_test_owners("test_nip44_vectors" OWNER nip44.test_inputs)
+  nostrc_describe_test("test_nip44_vectors"
+    OWNER nip44 nip44.test_inputs
+    TARGETS test_nip44_vectors
+    INPUTS tests/nip44.vectors.json)
 endif()

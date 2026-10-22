@@ -1,10 +1,8 @@
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
-#include <unistd.h>
 #include <openssl/crypto.h>
 #include <openssl/sha.h>
 
@@ -33,7 +31,9 @@ static void hex_to_bytes(const char *hex, uint8_t *out, size_t outlen) {
   for (size_t i=0;i<outlen;i++){ unsigned int b=0; sscanf(hex+2*i, "%2x", &b); out[i]=(uint8_t)b; }
 }
 
-#ifdef VECTORS_PATH
+#if !defined(VECTORS_PATH) || !defined(VECTORS_SHA256)
+#error "Official NIP-44 JSON vectors require VECTORS_PATH and VECTORS_SHA256; no builtin fallback"
+#endif
 #include <jansson.h>
 
 static int run_conversation_key_vectors(json_t *v2_valid) {
@@ -123,12 +123,11 @@ static int run_invalid_vectors(json_t *v2) {
  * NOTE (nostrc-3nj): jansson is retained here for loading external JSON test
  * vector files from disk. The NostrJsonInterface is specifically for Nostr
  * protocol JSON (events, envelopes, filters), not arbitrary JSON file loading.
- * The test still works without VECTORS_PATH via the single-case fallback below.
  */
 static int run_get_message_keys_vectors(json_t *v2_valid) {
   int failures = 0;
   json_t *gmk = json_object_get(v2_valid, "get_message_keys");
-  if (!gmk) return 0; /* optional section */
+  if (!json_is_object(gmk)) return -1;
 
   const char *conv_hex = json_string_value(json_object_get(gmk, "conversation_key"));
   json_t *keys = json_object_get(gmk, "keys");
@@ -366,9 +365,33 @@ static int run_vector_case(const char *sec1_hex,
 }
 
 static int run_json_vectors(const char *path) {
+  /* Read once: the bytes hashed here are exactly the bytes parsed and executed. */
+  FILE *file = fopen(path, "rb");
+  if (!file) {
+    fprintf(stderr, "official NIP-44 JSON vectors unreadable: %s: %s\n",
+            path, strerror(errno));
+    return -1;
+  }
+  unsigned char bytes[37631]; /* pinned 37630-byte input, plus one to detect growth */
+  const size_t len = fread(bytes, 1, sizeof(bytes), file);
+  const int read_failed = ferror(file);
+  const int close_failed = fclose(file);
+  if (read_failed || close_failed) {
+    fprintf(stderr, "official NIP-44 JSON vectors read failed: %s\n", path);
+    return -1;
+  }
   json_error_t err;
-  json_t *root = json_load_file(path, 0, &err);
-  if (!root) return -1;
+  json_t *root = json_loadb((const char *)bytes, len, JSON_REJECT_DUPLICATES, &err);
+  if (!root) {
+    fprintf(stderr, "official NIP-44 JSON vectors malformed: line %d: %s\n",
+            err.line, err.text);
+    return -1;
+  }
+  if (len != 37630 || !digest_matches(bytes, len, VECTORS_SHA256)) {
+    fprintf(stderr, "official NIP-44 JSON vectors SHA256 mismatch: %s\n", path);
+    json_decref(root);
+    return -1;
+  }
   int failures = 0; int total = 0;
 
   /* Navigate: root object -> v2 -> valid -> encrypt_decrypt (array) */
@@ -420,103 +443,38 @@ static int run_json_vectors(const char *path) {
     if (rc != 0) failures++;
     free(derived_pub2);
   }
-  json_decref(root);
   if (failures) {
     fprintf(stderr, "NIP-44 JSON vectors: %d/%d failed\n", failures, total);
+    json_decref(root);
     return -4;
   }
+  json_t *invalid = json_object_get(v2, "invalid");
+  printf("official NIP-44 JSON vectors: sha256=%s "
+         "conversation_keys=%zu message_keys=%zu padding=%zu encrypt_decrypt=%d "
+         "long_messages=%zu invalid_lengths=%zu invalid_keys=%zu invalid_decrypt=%zu\n",
+         VECTORS_SHA256,
+         json_array_size(json_object_get(valid, "get_conversation_key")),
+         json_array_size(json_object_get(json_object_get(valid, "get_message_keys"), "keys")),
+         json_array_size(json_object_get(valid, "calc_padded_len")), total,
+         json_array_size(json_object_get(valid, "encrypt_decrypt_long_msg")),
+         json_array_size(json_object_get(invalid, "encrypt_msg_lengths")),
+         json_array_size(json_object_get(invalid, "get_conversation_key")),
+         json_array_size(json_object_get(invalid, "decrypt")));
+  json_decref(root);
   return 0;
 }
-#endif /* VECTORS_PATH */
 
-int main(void) {
-#ifdef VECTORS_PATH
-  /* Try JSON vectors first */
-  if (access(VECTORS_PATH, R_OK) == 0) {
-    int r = run_json_vectors(VECTORS_PATH);
-    if (r == 0) {
-      printf("test_nip44_vectors (official json): OK\n");
-      return 0;
-    }
-    fprintf(stderr, "official NIP-44 vector conformance failed: %d\n", r);
+int main(int argc, char **argv) {
+  /* An alternate file is only for refusal diagnostics; the same hash is required. */
+  if (argc > 2) {
+    fprintf(stderr, "usage: %s [official-vector-file]\n", argv[0]);
     return 1;
   }
-#endif
-  /* Example vector from docs/nips/44.md */
-  const char *sec1_hex = "0000000000000000000000000000000000000000000000000000000000000001";
-  const char *sec2_hex = "0000000000000000000000000000000000000000000000000000000000000002";
-  const char *conv_hex = "c41c775356fd92eadc63ff5a0dc1da211b268cbea22316767095b2871ea1412d";
-  const char *nonce_hex= "0000000000000000000000000000000000000000000000000000000000000001";
-  const char *plaintext = "a";
-  const char *want_payload = "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb";
-
-  /* Derive pub2 (x-only hex) from sec2 */
-  char *pub2_hex = nostr_key_get_public(sec2_hex);
-  assert(pub2_hex && strlen(pub2_hex)==64);
-
-  /* convkey(sec1, pub2) must equal conv_hex */
-  uint8_t sk1[32], pk2x[32], conv[32], conv_expected[32];
-  hex_to_bytes(sec1_hex, sk1, 32);
-  hex_to_bytes(pub2_hex, pk2x, 32);
-  hex_to_bytes(conv_hex, conv_expected, 32);
-  int rc = nostr_nip44_convkey(sk1, pk2x, conv);
-  assert(rc==0);
-  assert(memcmp(conv, conv_expected, 32)==0);
-
-  /* Build payload deterministically per spec steps using provided nonce */
-  uint8_t nonce[32]; hex_to_bytes(nonce_hex, nonce, 32);
-  /* HKDF-Expand(PRK=conv, info=nonce, L=76) */
-  uint8_t okm[76];
-  assert(nip44_hkdf_expand(conv, nonce, 32, okm, sizeof(okm)) == 0);
-  const uint8_t *chacha_key = okm + 0;
-  const uint8_t *chacha_nonce = okm + 32; /* 12 bytes */
-  const uint8_t *hmac_key = okm + 44;     /* 32 bytes */
-
-  /* pad */
-  uint8_t *padded=NULL; size_t padded_len=0;
-  rc = nip44_pad((const uint8_t*)plaintext, strlen(plaintext), &padded, &padded_len);
-  assert(rc==0 && padded && padded_len>=32);
-
-  /* encrypt */
-  uint8_t *cipher = (uint8_t*)malloc(padded_len);
-  assert(cipher);
-  rc = nip44_chacha20_xor(chacha_key, chacha_nonce, padded, cipher, padded_len);
-  assert(rc==0);
-
-  /* mac over nonce||cipher */
-  uint8_t mac[32];
-  assert(nip44_hmac_sha256(hmac_key, 32, nonce, 32, cipher, padded_len, mac) == 0);
-
-  /* assemble version(1)||nonce(32)||cipher||mac(32) */
-  size_t payload_len = 1 + 32 + padded_len + 32;
-  uint8_t *payload = (uint8_t*)malloc(payload_len);
-  assert(payload);
-  size_t off=0; payload[off++] = (uint8_t)NOSTR_NIP44_V2;
-  memcpy(payload+off, nonce, 32); off+=32;
-  memcpy(payload+off, cipher, padded_len); off+=padded_len;
-  memcpy(payload+off, mac, 32); off+=32;
-  assert(off==payload_len);
-
-  /* base64 encode */
-  char *b64=NULL; rc = nip44_base64_encode(payload, payload_len, &b64);
-  assert(rc==0 && b64);
-
-  /* compare */
-  if (strcmp(b64, want_payload) != 0) {
-    fprintf(stderr, "\nVector mismatch\n got:  %s\n want: %s\n", b64, want_payload);
-    assert(0);
+  const int rc = run_json_vectors(argc == 2 ? argv[1] : VECTORS_PATH);
+  if (rc != 0) {
+    fprintf(stderr, "official NIP-44 vector conformance failed: %d\n", rc);
+    return 1;
   }
-
-  free(pub2_hex);
-  free(b64);
-  free(payload);
-  free(cipher);
-  free(padded);
-  memset(okm, 0, sizeof(okm));
-  memset(conv, 0, sizeof(conv));
-  memset(sk1, 0, sizeof(sk1));
-  memset(pk2x, 0, sizeof(pk2x));
-
-  printf("test_nip44_vectors: OK\n");
+  printf("test_nip44_vectors (official json): OK\n");
   return 0;
 }
