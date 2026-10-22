@@ -56,6 +56,58 @@ source identities. The membership checkpoint below retains its dated receipt;
 only its pending custody/integration status is superseded here. No source-authority
 renewal, hosted/W11/release/default credit, closure or shipped version bump.
 
+## Canonical NIP-44 vectors and account policy — 2026-10-22
+
+**Tested code: `dbdad11356f16bbde37bc523978f725636ffc435`**, from master
+`f646db033`, preserving approved Groundhog `e766b928b` and NIP-44 `4e563f4a6`.
+[Source-bound receipt](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#canonical-nip-44-vectors-and-account-policy-integration--2026-10-22)
+records exact hashes, retained failures and limits. This supersedes only the
+older unclaimed NIP-44 vector status below, not historical gate results.
+
+`test_nip44_vectors` now requires Jansson and the pinned **37,630-byte official
+JSON**, SHA-256 `269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040`,
+owned by its canonical descriptor. Execution visibly reports **128 official JSON
+cases**, with no builtin-only credit. Grotto enrolls only this vector check;
+`test_interop` remains excluded. Groundhog adds exactly account, account-relays,
+auth-policy and identity. Ordinary primary/fixture arrays become **34/36** and
+**65/68**. The same 193 source-control keys retain 191 values unchanged; only the
+two NIP-44 CMake/descriptor values renew. All 23 baseline fixtures/goldens,
+original sanitizer authority and exact33/29 omission/build obligations remain.
+Both incomplete flags stay false; omissions are `not_executed`.
+
+At that frozen source: **599/599 selector PASS, zero skips, 299.587s**, under
+Python **3.14.8**, explicit `XPC_SERVICE_NAME=0`, empty `PYTHONPATH`, no user site
+or bytecode. Independent account/vector/crypto/composition files pass **9/6/10/6**;
+all six shell suites, four statics, inventory validation, actionlint/ShellCheck
+and whitespace pass (**19 recorded phases**, including selector/independent files).
+Fresh safe native configure/default-all build and **18 canonical regressions**
+pass, followed by full native CTest **434 pass / 5 existing skips / 0 failures**.
+Private HOME/XDG/bus/throwaway Secret Service, loopback/Unix sandbox, libsecret/
+secret-service flags and Groundhog-OFF apply; read-only keychain checks pass,
+services are reaped and socket absent. A fresh raw Linux/x86 vector CTest also
+passes **1/1**, reporting all 128 cases, not profile-backend execution.
+
+Fresh full authored x86 preaudits still **FAIL**: Groundhog **7,327 → 6,641**
+(exactly 4 unclaimed + 682 missing-impact removed), Grotto **9,131 → 9,130**
+(the vector unclaimed finding only), **zero added**. Canonical JSON adds one
+hashed input per profile; only the vector test C source changes an existing hash.
+Actual CLI admission succeeds; each old source hash, both old selected closures
+and unchanged original sanitizer partition refuse. A missing JSON overlay
+refuses dirty tracked inputs before admission; actual runtime/configure negatives
+are separately covered by the canonical regressions, not inferred from that guard.
+
+The first combined 599-case run at `9aa21f296` retains its one stale Grotto
+expectation failure; the exact-name correction and all final gates are bound to
+`dbdad1135`. No skipped/removed assertion or blind retry. Full production
+postbuild/header audits, all-29 omitted-target builds and physical selected-profile
+backend execution remain **NOT RUN**. `.9`/`.31` in progress, `.2` OPEN.
+**`3lofk` CLOSED for its finite vector criteria** after final checkpoint/gates and
+explicit parent verification/approval (including independent integration 6/6).
+W11 NOT MET / W12 NOT RUN,
+no hosted-ledger refresh, default/workflow/release/protection or broad acceptance.
+**No shipped component version bump.** Later docs/official full tracker export
+are not another tested-code identity; parent owns landing and cleanup.
+
 ## Bounded media/crypto integration — 2026-10-22
 
 **Tested code: `a787dd1948bb2f59fde5276c8156822e9fbe4431`**, from master

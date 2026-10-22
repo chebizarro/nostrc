@@ -2470,3 +2470,170 @@ Structured final handoff and verified artifact manifest:
 `/tmp/nostrc-media-crypto-integration-20261022/checkpoint-final.json`.
 The extra baseline checkout `/private/tmp/nostrc-media-crypto-baseline-20261022`
 is retained for parent verification, not silently pruned before review.
+
+## Canonical NIP-44 vectors and account-policy integration — 2026-10-22
+
+**Final tested code: `dbdad11356f16bbde37bc523978f725636ffc435`**, from master
+`f646db033031a32ad0f6283f881d8506eafbcc4b`. Preserving merges `0f5ea9653`
+and `ef34631a5` contain only parent-approved exact tips
+`e766b928be7a9815eb55f78e84f31b308d44fe23` (Groundhog) and
+`4e563f4a6120f45d81a32793577e0ef1a5b43622` (NIP-44). Both checkpoint hashes and
+all **110 / 630 child artifact hashes** were independently verified. Checkpoints:
+
+- `/tmp/nostrc-groundhog-account-family-20261022/checkpoint-final.json`, SHA-256
+  `d8cfb4a4bdaec6b3daab8890cd2390262524395adee05707f422882887ca007e`.
+- `/tmp/nostrc-nip44-canonical-20261022/checkpoint-final.json`, SHA-256
+  `a727ac6ccf4677751a46f7c97c21830f923df3cab2aff9cf7404d0ccf6dbfe5c`.
+
+### Exact renewal and enrollment, not broader authority
+
+The NIP-44 registration now requires Jansson and the pinned official JSON;
+missing capability/file, unreadable/changed JSON and builtin-only credit fail.
+The canonical descriptor owns `tests/nip44.vectors.json` and explicitly maps
+`test_nip44_vectors`. The **37,630-byte** JSON hash is
+`269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040`.
+Physical execution reports **128 cases**: conversation keys 35, message keys 32,
+padding 24, encrypt/decrypt 10, long messages 3, invalid lengths 4, invalid keys 8,
+invalid decrypt 12. This supersedes only the earlier unclaimed-vector status;
+`test_interop` remains unclaimed/excluded.
+
+Ordinary membership changes **Groundhog 30/32 → 34/36** for exactly account,
+account-relays, auth-policy and identity, and **Grotto 64/67 → 65/68** for the one
+vector registration. Both ordinary source-control maps retain the same **193
+keys**, with exactly **191 values unchanged**. Only
+`nips/nip44/CMakeLists.txt` and `nips/nip44/TestInventory.cmake` hashes renew.
+Original review identities/evidence remain historical; the new pinned
+[NIP-44 renewal witness](../../tests/selection/fixtures/nip44_vector_renewal_20261022.json)
+and fresh integration receipts carry the new bounded evidence. No blanket review,
+source-hash, candidate, toolchain, profile or workflow renewal occurs.
+
+The new witness separately pins the changed vector **test C source** before/after
+bytes; that file is not added to the 193-control map. Historical tests compare
+both old witnessed bytes and new live bytes, not a fallback expected hash.
+The source/control and enrollment reversals precede the exact account → media →
+older record checks and crypto → older NIP-49 checks. Whole-record/selection
+hashes and raw witness pins remain strict; old nonordinary workflow entries are
+retained. All **23 baseline fixture/golden files**, including the original 19,
+are byte-identical. Exactly **eight** command-source files are added to
+`selection.contract`; all 13 existing nonempty check-local CTest declarations
+remain unchanged. The new vector check has empty check-local `runtime_inputs`:
+its JSON authority comes from the canonical descriptor, not inventory duplication.
+
+The same **33 omissions / 29 required omitted-target closures** remain; omitted
+registrations stay `not_executed`. Both incomplete flags remain mandatory.
+The original sanitizer authority is byte-equivalent and its actual fresh CLI
+still refuses **`diagnostic nonmember fresh registration partition differs`**.
+No sanitizer renewal, selected-only fallback, architecture alias, or relaxation.
+**Version assessment: no bump**—test dependency/execution/descriptor and internal
+CI metadata/tests/docs only, no shipped API or artifact change.
+
+### Fresh full x86 audits, admission and refusals
+
+Fresh authored GNU Linux/x86_64 configurations use the reviewed Linux/amd64 image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+UID/GID 1001, source read-only and network disabled. Independent baseline
+`f646db033` and final `dbdad1135` full prebuild audits remain **FAILED**:
+
+| Profile | Registrations / targets | Before → after | Removed / added | Final findings |
+|---|---:|---:|---:|---|
+| `groundhog.linux` | 422 / 552 | **7,327 → 6,641** | **686 / 0** | 352 unclaimed + 6,289 missing-impact |
+| `grotto.linux` | 461 / 603 | **9,131 → 9,130** | **1 / 0** | 357 unclaimed + 8,773 missing-impact |
+
+Complete finding multisets match the independent Groundhog child's **4 unclaimed
++ 682 missing-impact** removals and Grotto's exact vector-unclaimed removal.
+Full input maps become **1,317/1,701 → 1,318/1,702**: only the canonical JSON is
+added; only the reviewed vector C source changes an existing byte hash. Every
+other input byte hash is identical. Target/source/dependency exports agree.
+Registration comparison admits only the vector's added `selection:nip44` label;
+descriptor comparison admits only its explicit target and JSON input. Other
+registrations/descriptors/runtime paths and fixture multiplicities are unchanged;
+only independent source/build prefixes are normalized. Raw deltas are retained.
+
+Actual CLI whole/family resolve, in-process `admit` and `validate_resolved` PASS
+at final code: Groundhog **34 primaries / 36 CTests**, Grotto **65 / 68** plus
+three command checks (**71 logical executions, not physical runs**). Focused
+account policy resolves four primaries + two setups; focused vector is one test
+with exactly the canonical JSON runtime input, no required capabilities.
+
+Separate fresh configurations make each old NIP-44 source-control hash refuse
+independently, and old Grotto and Groundhog selected closures refuse
+`authored primary/fixture closure changed`. All four actual CLI invocations exit
+1 with no resolved output; independent admission also refuses. A canonical-JSON
+missing-file overlay makes actual CLI refuse **dirty tracked inputs before
+admission**, again with no output. This is checkout-level fail-closed proof, not
+claimed as a descriptor-specific runtime failure. Actual runtime/configure
+JSON/capability/fallback negatives are covered by the separate component evidence
+and the **18 final native canonical regressions**.
+
+A fresh raw Linux/x86 vector target build and direct CTest **1/1 PASS, zero skips**
+at `dbdad1135` again prints all **128 official JSON cases**. It is not admitted
+profile-backend execution. Production full postbuild/header audits, physical
+all-29 omitted-target builds and selected-profile backend execution remain
+**NOT RUN**; neither full failed preaudit is converted into successful coverage.
+
+### Frozen final gates and preserved failure history
+
+At clean `dbdad1135`, installed **Python 3.14.8**, explicit `XPC_SERVICE_NAME=0`,
+empty `PYTHONPATH`, no user site/bytecode:
+
+- **599/599 selector PASS, zero skips, 299.587s**; independent account/vector/
+  crypto/composition files **9/6/10/6 PASS** in separate processes.
+- All **19 recorded phases PASS**: those four independent files, full selector,
+  six shell regressions, four mandatory statics, inventory validation,
+  actionlint/ShellCheck, explicit gate ShellCheck and range whitespace.
+- Fresh safe native configure **12.131s**, all-default build **63.813s**, canonical
+  regressions **18/18**, and full serial CTest **434 pass / 5 existing skips /
+  0 failures, 457.836s**. Skips remain `test_nip5f_tcp`, `signer/qr-scanner`,
+  `signer/onboarding`, `signer/ui-layout`, `signer/ui-accessibility`.
+- Private HOME/XDG, private bus/throwaway Secret Service, loopback/Unix-only
+  sandbox, libsecret/secret-service flags and Groundhog default-OFF are retained.
+  Read-only keychain pre/post guards PASS; service/bus reaped and socket absent.
+  This default native result is not full Linux-profile, sanitizer or hosted proof.
+
+The first combined **599-case run at `9aa21f296` retains one failure**: an old
+Grotto expectation omitted the new vector name. Exact correction `dbdad1135`
+adds only that name; no assertion or test is removed. Full final gates and native
+CTest are freshly rerun at the corrected commit. Earlier focused stale-count,
+source-control-versus-candidate-input and changed-vector-source failures remain
+retained, along with child **592: 1 failure / 12 errors** and **583: 3 failures /
+1 error** suites. No blind retry, coverage skip, MDK, timeout or guard change.
+
+Evidence-driver failures also remain: Zsh's unbraced `$PWD:ro` parsed a path
+modifier and mounted the wrong destination; explicit `--mount` corrected it.
+The first export comparison incorrectly assumed unchanged vector registration
+labels/target declaration; raw differences support only the exact authored delta
+above. Independent container ambient environments also refused the unchanged
+phase fingerprint. Fresh configure and CLI now run in the same fixed environment;
+no retained receipt/fingerprint is rewritten or rebound to hide that refusal.
+
+One bounded review, chat `untitled-chat-75480F`, found **no concrete blockers in
+delivered integration excerpts**. Initial packaging supplied only AGENTS; the same
+review continued with literal seam code/data. Full raw files, test outcomes and
+physical artifacts were not independently reviewed. Subsequent narrow historical
+C-source and old Grotto expectation corrections are tested above, not claimed as
+re-reviewed. No component or broader CI re-review.
+
+Final receipts: `/tmp/nostrc-vector-family-integration-20261022/final-dbdad1135/`;
+comparison summary SHA-256
+`696e50ea7327e2bca58e4ec258aa6baf1ea5f6d711cd8bda5e7367f1b5659803`.
+Final handoff/manifest: `/tmp/nostrc-vector-family-integration-20261022/checkpoint-final.json`.
+The independent baseline checkout
+`/private/tmp/nostrc-vector-family-baseline-20261022` is retained for parent
+verification and cleanup, not silently removed.
+
+Parent independently verified both child manifests, reviewed the NIP-44 diff and
+47-line renewal helper/125-line integration test, and reports **6/6 independent
+integration tests PASS at `dbdad1135`**. With that explicit bounded approval and
+the complete final checkpoint/gates/positive-negative evidence, **`nostrc-3lofk`
+is CLOSED for its finite canonical-vector criteria only**. `.9` / `.31` remain
+in progress and `.2` remains OPEN; no broad scope closes. Official
+`bd export --all` only: snapshot **2026-10-22T10:37:46Z** retains **1,552
+records (1,515 issues + 37 memories)** and **492 comments**. All baseline and
+initial-export identities/comments (486/489 comments respectively) and every
+memory value are verified preserved; only `.9`, `.31` and `3lofk` differ from
+the initial issue snapshot. No manual semantic JSONL edit. Dolt pull still refuses
+**Error 1105: no remote**, not successful sync. The dated hosted ledger and `.5`
+are not refreshed; W11 **NOT MET**, W12 **NOT RUN**. No complete/release/default/
+workflow/protection/custody/operator-approval credit. Local commits only; parent
+owns push/merge and worktree cleanup. Later docs/export do not change the tested
+code identity above.
