@@ -331,11 +331,14 @@ def host_guard(profile, checks, policy, profile_id):
                                               for check in profile_checks)
     caps = set(profile.get("capabilities", []))
     caps.update(cap for ident in checks for cap in policy["checks"][ident].get("requires", []))
-    if "gnome_keyring" in caps:
-        raise RuntimeError("gnome_keyring requires attested private HOME/private bus/throwaway Secret Service custody; adapter not implemented; lane not launched")
+    if 'gnome_keyring' in caps:
+        if any(policy['checks'][ident]['kind'] != 'ctest' for ident in checks):
+            raise RuntimeError('gnome_keyring commands require live contained private HOME/private bus/throwaway Secret Service custody; native adapter not implemented; lane not launched')
+        if not shutil.which('gnome-keyring-daemon'):
+            raise RuntimeError('selected gnome_keyring capability requires the actual gnome-keyring-daemon executable; lane not launched')
     if "nak" in caps and not shutil.which("nak"):
         raise RuntimeError("selected nak capability requires the actual nak executable; lane not launched")
-    unsupported = caps - {"display", "private_bus", "nak"}
+    unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
     wrapped = caps & {"display", "private_bus"}

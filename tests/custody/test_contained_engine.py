@@ -25,7 +25,7 @@ class ActualContainedEngine(unittest.TestCase):
         (self.source / 'app').mkdir()
         (self.source / 'tests/selection').mkdir(parents=True)
         for name in ('test-plan.py', 'test_selection.py', 'test_selection_realization.py',
-                     'test_selection_subset.py', 'test_selection_custody.py', 'contained-runner.py'):
+                     'test_selection_subset.py', 'test_selection_custody.py', 'test_selection_keyring.py', 'contained-runner.py'):
             shutil.copyfile(ROOT / 'scripts' / name, self.source / 'scripts' / name)
         (self.source / '.gitignore').write_text('__pycache__/\n')
         (self.source / 'app/check.py').write_text("""import os, pathlib, subprocess, sys

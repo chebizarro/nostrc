@@ -627,10 +627,12 @@ print('command executed', flush=True)
                 with self.assertRaisesRegex(r.RealizationError, 'setup receipt source/profile/plan/workflow/run identity'):
                     r._runtime_capability_evidence(realized, ['nak'], 'a' * 64)
             r._atomic(receipt_path, setup)
-            with self.assertRaisesRegex(r.RealizationError, 'adapter not implemented'):
-                r._runtime_capability_evidence(realized, ['gnome_keyring'], 'a' * 64)
+            with mock.patch.object(r.shutil, 'which', return_value=None):
+                with self.assertRaisesRegex(r.RealizationError, 'actual gnome-keyring-daemon executable'):
+                    r._runtime_capability_evidence(realized, ['gnome_keyring'], 'a' * 64)
 
-    def test_ctest_tools_are_required_and_keyring_declaration_is_not_setup(self):
+    def test_ctest_tool_capability_does_not_grant_command_service_or_implicit_bus(self):
+        from unittest import mock
         path = self.root / 'CMakeLists.txt'
         original = path.read_text()
         path.write_text(original.replace('TARGETS shared INPUTS vector.txt)', 'TARGETS shared INPUTS vector.txt REQUIRES nak)'))
@@ -638,10 +640,17 @@ print('command executed', flush=True)
         with self.assertRaisesRegex(r.RealizationError, "unavailable selected capabilities.*nak"):
             r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
         path.write_text(original.replace('TARGETS shared INPUTS vector.txt)', 'TARGETS shared INPUTS vector.txt REQUIRES gnome_keyring)'))
-        self.profile['capabilities'] += ['gnome_keyring', 'private_bus']
+        self.profile['capabilities'] += ['gnome_keyring']
         realized = self.configure()
-        with self.assertRaisesRegex(r.RealizationError, 'attested private HOME/private bus/throwaway Secret Service'):
-            r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+        with mock.patch.object(r.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(r.RealizationError, 'actual gnome-keyring-daemon executable'):
+                r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+        # Validator-only mock: real daemon and fixture lifecycle are exercised in
+        # tests/custody/test_keyring_runtime.py, not inferred from this tool proof.
+        with mock.patch.object(r.shutil, 'which', return_value=sys.executable):
+            resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+        self.assertEqual(resolved['required_capabilities'], ['gnome_keyring'])
+        self.assertNotIn('keyring_runtime', resolved)
         self.command(requires=['gnome_keyring'])
         realized = self.configure()
         with self.assertRaisesRegex(r.RealizationError, 'adapter not implemented'):

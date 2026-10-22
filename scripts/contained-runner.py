@@ -16,7 +16,7 @@ from test_selection_custody import PreparedContext, CustodyError, canonical, dig
 
 def provision(capabilities, state):
     """Read actual service readiness, never sleep and infer availability."""
-    unsupported = set(capabilities) - {'display', 'private_bus', 'external_peer', 'prepared_peer'}
+    unsupported = set(capabilities) - {'display', 'private_bus', 'gnome_keyring', 'nak', 'external_peer', 'prepared_peer'}
     if unsupported:
         raise RuntimeError('unsupported contained capabilities: ' + repr(sorted(unsupported)))
     if 'private_bus' in capabilities:
@@ -61,8 +61,19 @@ def main():
         for check in plan['lanes']:
             if check['profile'] == control['binding']['profile_id']:
                 for ident in check['checks']:
-                    capabilities.update(policy['checks'][ident].get('requires', []))
+                    required = set(policy['checks'][ident].get('requires', []))
+                    if not required.issubset(profile['capabilities']):
+                        raise CustodyError('selected capabilities are not declared by the contained profile')
+                    capabilities.update(required)
         provision(capabilities, state)
+        command_keyring = [policy['checks'][ident] for lane in plan['lanes']
+            if lane['profile'] == control['binding']['profile_id'] for ident in lane['checks']
+            if policy['checks'][ident]['kind'] != 'ctest' and 'gnome_keyring' in policy['checks'][ident].get('requires', [])]
+        if command_keyring:
+            if any('private_bus' not in check.get('requires', []) for check in command_keyring):
+                raise CustodyError('contained keyring commands must separately require private_bus')
+            import test_selection_keyring
+            test_selection_keyring.provision(context, state)
         write_json('/work/phase-state.json', state)
         spec = importlib.util.spec_from_file_location('contained_plan_cli', '/source/scripts/test-plan.py')
         cli = importlib.util.module_from_spec(spec)
@@ -98,6 +109,16 @@ def main():
         state.update(status='failed', error=type(exc).__name__ + ': ' + str(exc))
         print(state['error'], file=sys.stderr, flush=True)
     finally:
+        if state.get('keyring_runtime'):
+            try:
+                import test_selection_keyring
+                proof = state['keyring_runtime']
+                test_selection_keyring.validate_directories(proof['home_root'], proof['environment'])
+                state['keyring_home_final'] = {'verified': True}
+            except Exception as exc:
+                state['keyring_home_final'] = {'verified': False, 'error': str(exc)}
+                state['status'] = 'failed'
+                code = code or 1
         # Services/escaped descendants stay inside this PID namespace. Returning
         # terminates its init; only the host can attest exit/drain/removal.
         write_json('/work/phase-state.json', state)
