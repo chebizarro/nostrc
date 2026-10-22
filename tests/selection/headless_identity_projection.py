@@ -3,6 +3,7 @@ import copy
 import json
 
 from selector_support import ROOT, s
+from headless_transport_projection import before_transport_family
 
 RENEWAL = 'tests/selection/fixtures/headless_identity_subset_renewal_20261022.json'
 FAMILY = [
@@ -15,6 +16,7 @@ FAMILY = [
 
 
 def before_identity_family(contract):
+    contract = before_transport_family(contract)
     witness = json.loads((ROOT / RENEWAL).read_text())
     s.require(witness['added_primary'] == FAMILY, 'identity renewal family changed')
     previous = copy.deepcopy(contract)

@@ -1,5 +1,197 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Combined transport/custody integration — 2026-10-22
+
+**Final code tested:** `a4cfd1420aae7380f61c8318beec4a3753a6fcd8`.
+Merge `17ce32afb45f8eabfab747af029327bb306a062c` preserves custody commits
+`8d87fff95d0c1f5a4b3f3cc6577f8b56dd390efb` and
+`5b20780d33d9a08861c0c3ae3130e704e7f4517e` on the verified membership branch.
+`5553c793597c6471c71475c4f8aa90ea9caca4ac` adds **only**
+`{source}/scripts/adapter_custody.py` and
+`{source}/tests/selection/test_adapter_custody.py` to
+`selection.contract.runtime_inputs`; existing global routing is unchanged.
+All other inventory fields, exact33 source controls/authority hashes and historical
+fixtures remain identical to `1ed8f087e`. No source-authority renewal or shipped
+component version bump. This supersedes only the pending integration status in
+the dated membership receipt below, not its source-specific results.
+
+### Opt-in custody scope; separate component evidence
+
+The [outer adapter](../../scripts/test-gate.sh) retains
+`--linux-custody legacy` as its default. Explicit `--linux-custody ptrace` is an
+**unwrapped, non-instrumented Linux diagnostic only**. Instrumented profiles
+(including sanitizers) and display/private-bus wrapped lanes refuse before lane
+target launch; prepared routes retain their separate contained adapter. No
+untraced profile parity: ptrace receipts retain `complete=false`,
+`complete_gate_eligible=false`, `untraced_profile_parity=false`. There is no
+unsupported-host/pidfd fallback, hostile-code sandbox or remote/service-created
+work custody claim. Legacy cleanup/command bodies, macOS legacy behavior and
+MDK cleanup policy remain unchanged; `.23` remains OPEN/in progress for full
+safe cross-platform arbitrary descendant custody.
+
+Custody's **given, independently hash-verified tip evidence** remains at
+`5b20780d3`: **18 native macOS / 32 Linux-arm64 tests**, zero skips, with Linux
+running as UID/GID 1001 in immutable Docker image
+`sha256:e965b342b0aa8c9c2fb9b1cd5b96230e711f630ac5bae90923df4619fa30ca5c`.
+This is not a new Linux run at the integration SHA or native-host/x86/hosted
+acceptance. All four custody source hashes match the reviewed tip. Primary
+receipt `/tmp/nostrc-023-evidence/final-5b20780d3/receipt.json`, SHA-256
+**`3974a25e84cd2c9f49f20b029f418e139173ea1f1ade0cc48eee2a600c1e31d4`**;
+all **7,105** files in `/tmp/nostrc-023-evidence/SHA256SUMS.json` verified,
+manifest SHA-256 **`974c04cd4d0b4461920e056953a7c2c77b6cbffd1cd2ad81edc8390d0b16ef08`**.
+The component's four correctness findings were fixed before that tip; earlier
+failed attempts remain retained. No new Oracle re-review.
+
+### Failed integration attempt retained; diagnosed corrections
+
+The first full combined suite at `5553c7935` remains **FAILED: 523 tests,
+11 failures / 13 errors, 214.346s**, retained without overwrite in
+`/tmp/nostrc-ci-wave-integration-20261022/combined/selector.log`.
+The authorized test-only correction at `a4cfd1420` adds the exact helper to the
+strict command-source enumerator and supplies `args.linux_custody='legacy'` to
+the isolated `host_guard` namespace. All refusal assertions are preserved.
+Three missing-source failures instead required initializing pinned `nostrdb`
+`2d459e8fa9ba0af5af091c37920e5d2078d881ca`; no gitlink changes.
+
+Phase/readiness failures were early environment-guard refusals, **not a new
+readiness timeout cause**: app-launched macOS parent `XPC_SERVICE_NAME` differs
+from child Python's `0`. A retained actual CLI/configure/build/load reproduction
+refuses with that sole mismatch and passes when only the parent variable is
+normalized to `0`, under the unchanged full-environment fingerprint guard.
+New custody tests leave the parent's environment, signal handlers and signal mask
+unchanged. The focused corrected harness/cancellation set passes **15/15**, zero
+skips. Diagnostic proof and original readiness fixtures are retained under
+`combined/diagnosis`; no sleeps, blind retries or guard/authority relaxation.
+
+### Fresh combined gates and unchanged acceptance limits
+
+At clean committed **`a4cfd1420`**, with explicit `XPC_SERVICE_NAME=0`,
+`PYTHONDONTWRITEBYTECODE=1`, `PYTHONNOUSERSITE=1`, `PYTHONPATH=''`:
+
+- **523/523 selector PASS, zero skips, 214.535s**, one fresh full run after diagnosis.
+- All six shell suites PASS: pre-push, full-gate, Linux lifecycle, Linux smoke,
+  sanitizer-gate and test-gate regressions.
+- Four mandatory statics, inventory validation, actionlint including ShellCheck,
+  explicit `shellcheck scripts/test-gate.sh` and range whitespace PASS.
+- Fresh native macOS/arm64 configure/default-all build PASS, parallelism 4,
+  Groundhog OFF, libsecret/secret-service flags; read-only keychain checks PASS
+  before/after. **Full native CTest NOT RUN**: no production apps/lib/nips code
+  changed. This is a native build, not production-profile execution.
+
+Exact commands/logs/results live in
+`/tmp/nostrc-ci-wave-integration-20261022/combined/final-a4cfd1420/`;
+`integration-source-proof.json` binds unchanged reviewed custody bytes and parents.
+The later documentation/export commit does not renew these gates to another SHA.
+Membership audit counts below remain bound to `1ed8f087e`; no integration-source
+production pre/postbuild audit, all-target Linux/all-29-omitted-target build or
+selected-profile backend execution is claimed. `.2` OPEN / `.9` in progress /
+`.23` in progress; no complete/profile-union, hosted/W11, release or default
+cutover credit. `.5` and the dated hosted ledger are not refreshed. Official
+`bd export --all` only; preserve all existing DB rows/comments/memories. Dolt pull
+still refuses `no remote`, with no sync-success claim. Local commits only;
+parent owns landing and all three worktree/branch cleanups.
+
+## Headless relay/network transport membership — 2026-10-22
+
+**Base:** master `53f2e822d04bd32e243a9cf969396f2f241af83e`.
+**Implementation/tested commit:** `1ed8f087e6571207c132ae885dbe7ede43f18dfd`.
+Checkpoint snapshot **2026-10-22T03:12:58Z**; integration independently verified
+its SHA-256 and all **132 retained artifact hashes**. This is bounded membership
+progress, not a hosted ledger refresh. **No shipped component version bump:**
+internal inventory/tests/documentation only.
+
+| Exact registration | Exact build target | Ordinary check (`groundhog.` prefix) | File API target closure |
+|---|---|---|---:|
+| `groundhog-relay` | `test-groundhog-relay` | `transport_scope` | 18 |
+| `groundhog-relay-publish` | `test-groundhog-relay-publish` | `transport_publish` | 18 |
+| `groundhog-relay-wire` | `test-groundhog-relay-wire` | `transport_wire` | 21 |
+| `groundhog-relay-publish-wire` | `test-groundhog-relay-publish-wire` | `transport_publish_wire` | 24 |
+| `groundhog-net` | `test-groundhog-net` | `transport_net` | 22 |
+| `groundhog-tls-resumption` | `test-groundhog-tls-resumption` | `transport_tls` | 22 |
+
+The [export witness](../../tests/selection/fixtures/headless_transport_exports.json)
+and [eight focused regressions](../../tests/selection/test_headless_transport_membership.py)
+retain actual command/artifact, compiled/transitive source, descriptor, schema,
+runtime and fixture closure—not guessed name membership. Both existing setups
+remain `groundhog-test-homes` and `groundhog-test-gst-registry`. Authored isolation,
+G_DEBUG presence/absence, timeouts and TLS skip-77 behavior remain intact. The
+[publish-wire dependency](../../gnome/groundhog/CMakeLists.txt#L349) builds
+`nostrc-relayd` without enrolling daemon-only `groundhog-relayd-publish`.
+Private-bus/display/live/MDK registrations remain outside this family. No graph
+or catchall edges, product/CMake, profile, capability, engine, adapter, workflow
+or default changes.
+
+### Exact authority-array delta and fresh full audits
+
+Only Groundhog's selected `primary_registrations` **21 → 27** and
+`required_closure` **23 → 29** change in the ordinary subset authority. The
+same **33 omissions**, mandatory **29 omitted-target closures**, candidate,
+universe, profile/toolchain fields and all **193 reviewed source hashes** remain
+unchanged; Grotto and sanitizer authorities are unchanged. The
+[new renewal witness](../../tests/selection/fixtures/headless_transport_subset_renewal_20261022.json)
+and composed historical projection retain the exact prior-record digest and all
+**13 older fixtures byte-identically**, rather than renewing source authority.
+
+Fresh authored x86 exports pass actual CLI `resolve`, `admit` and
+`validate_resolved` for **six primaries + two setups**, no required capabilities;
+all-ordinary resolution is **27 primaries / 29 expected executions**. An
+independently configured new-check/old-21/23-array contract makes both actual CLI
+and admission refuse **`authored primary/fixture closure changed`**. No identity
+rebinding or selected-only audit substitutes for these guards.
+
+Independent before/after full configurations use base/implementation respectively;
+only build-root prefixes are normalized. Full target, test, descriptor, runtime
+and input-hash sets agree per pair.
+
+| Profile | Registrations / targets | Before → after, both FAIL | Exact removed / added | Identical full input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **8,905 → 7,900** | **1,005 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,146 → 9,146** | **0 / 0** | 1,700 |
+
+Groundhog removes exactly **six unclaimed + 999 source missing-impact findings**;
+remaining **359 unclaimed + 7,541 missing-impact**. Grotto retains **369 unclaimed
++ 8,777 missing-impact**. Both full preaudits still block execution. Omitted
+registrations remain `not_executed`, `complete=false`,
+`complete_gate_eligible=false`; their full input audit obligations are unchanged.
+
+### Separate physical diagnostics and source-specific gates
+
+At **base `53f2e822d`**, all six targets build and six ELF x86-64 binaries are
+confirmed. Raw CTest **8/8 PASS, zero skips, 6.492s** includes both setups under
+nonroot Linux/amd64 Rosetta, reviewed image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+network disabled and display/Wayland/session-bus/daemon/interop variables unset.
+Build/test parallelism 2 and timeout 3600 match authored options, but this is
+**raw diagnostic CTest, NOT admitted profile/backend execution**. All 199
+product/fixture source hashes agree at implementation; that comparison is not a
+new physical run at the later SHA.
+
+At **`1ed8f087e`**: **521/521 selector PASS, zero skips, 252.368s**;
+**37/37 focused headless/subset PASS**, including eight new membership cases.
+Safe native default-all configure/build, read-only keychain guards, four statics,
+actionlint, inventory validation and whitespace **PASS**. Native Groundhog is
+OFF with libsecret/secret-service safety flags. The component's scoped actual
+inline review found no concrete blockers after rejecting stale packaged context;
+no new integration Oracle review was requested or run.
+
+Evidence: `/tmp/nostrc-headless-next-20261022/checkpoint-final.json`, SHA-256
+**`6b62a5da5c5decdaef06468403a0b99f9da5b499d72b2c3f19eb4e1354bf525e`**;
+`comparison-summary.json`, SHA-256
+**`c1f54b36d28a008bf3402068f790b2e231f899384d7a244214fcd5052b48d131`**;
+`focused-proof.json`, SHA-256
+**`cc714af01eb1455d586bc64c46a245784065083eb0e71dcb0056af6d3189822e`**.
+Initial submodule refusal, diagnostic ELF-parser/development-test errors, static
+PATH harness failure, stale-review rejection and no-remote Dolt refusal remain
+retained; no guard relaxation or erased failed attempt.
+
+**NOT RUN:** full native CTest, Linux all-target/all-29-omitted-target builds,
+production postbuild/header audits and selected-profile backend execution. No
+full-profile/union, hosted/W11, complete-gate, release or cutover credit. `.2`
+remains OPEN and `.9` in progress; `.5`/historical ledger are not refreshed here.
+Custody sibling integration, its two confirmed `selection.contract` runtime
+inputs and final combined selector/native/static gates are **pending a separately
+verified custody commit**; no sibling files or review are preempted by this receipt.
+
 ## Ordinary media ownership disagreement — 2026-10-22
 
 **Base:** `93970ed48fb5711193bc73bd0b304b9e81e6f25f`.

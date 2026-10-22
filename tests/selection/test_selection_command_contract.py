@@ -49,6 +49,7 @@ SUPPORT_INPUTS = {
     "scripts/mdk-gate.py",
     "scripts/sanitizer-gate-ci.py",
     "scripts/test-gate.sh",
+    "scripts/adapter_custody.py",
     "scripts/test-plan.py",
     "scripts/test_selection.py",
     "scripts/test_selection_realization.py",

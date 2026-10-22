@@ -28,6 +28,8 @@ parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--broad", action="store_true")
+parser.add_argument("--linux-custody", choices=("legacy", "ptrace"), default="legacy",
+                    help="explicit unwrapped Linux diagnostic fork tracing; not untraced profile parity; instrumentation/wrappers refuse")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -41,6 +43,10 @@ receipt = {"schema_version": 1, "adapter": "test-gate", "execution_api": "test-p
 receipt["bypasses"] = {name: os.environ[name] for name in
     ("NOSTRC_SKIP_PRE_PUSH", "NOSTRC_SKIP_LINUX_GATE", "NOSTRC_SKIP_SANITIZER_GATE", "NOSTRC_GATE_LINUX_TESTS")
     if os.environ.get(name) == ("0" if name == "NOSTRC_GATE_LINUX_TESTS" else "1")}
+receipt["custody_mode"] = args.linux_custody
+receipt["complete_gate_eligible"] = False
+if args.linux_custody == "ptrace":
+    receipt["untraced_profile_parity"] = False
 run_dir = None
 
 
@@ -78,8 +84,88 @@ def stop_descendants(parent, captured=None):
             pass
 
 
+def linux_command(argv, *, cwd=None, env=None, log=None):
+    """A gated ptrace supervisor owns Linux descendants before target exec."""
+    global active
+    stream = open(log, "xb") if log else subprocess.DEVNULL
+    handle = None
+    read_fd, write_fd = os.pipe()
+    try:
+        try:
+            # The supervisor inherits blocked cancellation before Python starts.
+            # It cannot launch a target until our pidfd reservation releases it.
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+            try:
+                active = subprocess.Popen([sys.executable, str(adapter.parent / "adapter_custody.py"),
+                                           "--parent-ready-fd", str(read_fd), "--parent-pid", str(os.getpid()),
+                                           *map(str, argv)],
+                                          cwd=cwd, env=env, pass_fds=(read_fd,),
+                                          stdout=stream, stderr=subprocess.STDOUT)
+                handle = os.pidfd_open(active.pid)
+                # Signal zero validates the actual signaling syscall/authority
+                # while the target launch gate is still closed.
+                signal.pidfd_send_signal(handle, 0)
+                if signal.sigpending() & {signal.SIGTERM, signal.SIGINT}:
+                    raise KeyboardInterrupt()
+                os.write(write_fd, b"1")
+            finally:
+                os.close(read_fd)
+                read_fd = -1
+                os.close(write_fd)
+                write_fd = -1
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            code = active.wait()
+        except BaseException:
+            # Repeated cancellation must not interrupt the final evidence drain.
+            handlers = {sig: signal.signal(sig, signal.SIG_IGN)
+                        for sig in (signal.SIGTERM, signal.SIGINT)}
+            try:
+                signaling_error = None
+                if handle is not None:
+                    try:
+                        signal.pidfd_send_signal(handle, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as exc:
+                        signaling_error = exc
+                # Without a pidfd the unopened gate already saw EOF: no target
+                # was authorized. Never substitute a numeric-PID signal.
+                if active is not None:
+                    try:
+                        active.wait(timeout=20 if signaling_error else None)
+                    except subprocess.TimeoutExpired as exc:
+                        raise RuntimeError("pidfd cancellation refused; cleanup_unverified: "
+                                           + str(signaling_error)) from exc
+                if signaling_error:
+                    raise RuntimeError("pidfd cancellation refused; cleanup_unverified: "
+                                       + str(signaling_error)) from signaling_error
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
+            raise
+        if code:
+            raise RuntimeError(f"command exited {code}: {Path(str(argv[0])).name}; log={log}")
+    finally:
+        for fd in (read_fd, write_fd):
+            if fd != -1:
+                os.close(fd)
+        if handle is not None:
+            os.close(handle)
+        active = None
+        if log:
+            stream.close()
+
+
 def command(argv, *, cwd=None, env=None, log=None):
-    """Own only our child group, including configure/build grandchildren."""
+    # macOS remains the inherited legacy compatibility path, NOT safe unified
+    # arbitrary-descendant custody. Do not substitute a reserved-group-only path.
+    if args.linux_custody == "ptrace":
+        if platform.system() != "Linux":
+            raise RuntimeError("ptrace custody is an explicit Linux-only diagnostic")
+        if (not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal")
+                or signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL):
+            raise RuntimeError("Linux ptrace/pidfd custody unavailable before command launch")
+        return linux_command(argv, cwd=cwd, env=env, log=log)
     global active
     stream = open(log, "xb") if log else subprocess.DEVNULL
     try:
@@ -228,6 +314,9 @@ def materialize_submodules(source, directory, profile, initialized):
 
 
 def host_guard(profile, checks, policy, profile_id):
+    if args.linux_custody == "ptrace" and profile.get("instrumentation") != "none":
+        raise RuntimeError("unsupported ptrace custody instrumentation: "
+                           + str(profile.get("instrumentation")) + "; lane not launched")
     if profile.get("execution_domain") == "prepared_peer_linux_v1":
         raise RuntimeError("prepared profile requires scripts/contained-gate.py; legacy outer custody is unchanged")
     host = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
@@ -248,6 +337,10 @@ def host_guard(profile, checks, policy, profile_id):
     wrapped = caps & {"display", "private_bus"}
     if wrapped and any(policy["checks"][ident]["kind"] != "ctest" for ident in checks):
         raise RuntimeError(f"unsupported cancellation custody: selected command/build_contract lane requires wrappers {sorted(wrapped)}; not launched")
+    if wrapped and args.linux_custody == "ptrace":
+        # Root wrapper death need not leave the backend alive for final receipts.
+        # No wrapped proof is admitted by this bounded, unwrapped diagnostic.
+        raise RuntimeError(f"unsupported ptrace custody wrappers: {sorted(wrapped)}; lane not launched")
     # Never reuse the developer's display/session bus as proof of isolation.
     prefix = []
     if "private_bus" in caps:
@@ -441,7 +534,9 @@ try:
     receipt["status"] = "failed" if "failed" in statuses else ("planned" if args.explain else "partial")
 except KeyboardInterrupt:
     receipt["status"] = "cancelled"
-    receipt["errors"].append("interrupted; owned child groups stopped; no coverage claimed")
+    receipt["errors"].append("interrupted; owned child groups stopped; no coverage claimed"
+                             if args.linux_custody == "legacy" else
+                             "interrupted; ptrace diagnostic cleanup attempted; no untraced parity or coverage claimed")
 except (RuntimeError, OSError, ValueError, KeyError, shared.ContractError, subprocess.SubprocessError) as exc:
     receipt["errors"].append(str(exc))
 finally:
