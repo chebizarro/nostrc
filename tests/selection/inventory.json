@@ -4674,6 +4674,72 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "grotto.nip04_error_uniformity": {
+      "build_targets": ["test_nip04_error_uniformity"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip04_error_uniformity"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_secure_roundtrip": {
+      "build_targets": ["test_nip04_secure_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip04_secure_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_strict": {
+      "build_targets": ["test_nip04_strict"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip04_strict"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_roundtrip": {
+      "build_targets": ["test_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip44_convkey": {
+      "build_targets": ["test_nip44_convkey"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip44_convkey"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip44", "nip44.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip44_roundtrip": {
+      "build_targets": ["test_nip44_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip44_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip44", "nip44.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "grotto.nip49_vectors": {
       "build_targets": ["test_nip49_vectors"],
       "cost": "ordinary",
@@ -14680,11 +14746,17 @@
         "signer/ui",
         "signer/ui-accessibility",
         "signer/ui-layout",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
         "test_nip49_spec_source",
-        "test_nip49_vectors"
+        "test_nip49_vectors",
+        "test_roundtrip"
       ],
       "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
       "registration_universe": [
@@ -15242,11 +15314,17 @@
         "signer/ui",
         "signer/ui-accessibility",
         "signer/ui-layout",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
         "test_nip49_spec_source",
-        "test_nip49_vectors"
+        "test_nip49_vectors",
+        "test_roundtrip"
       ],
       "review": {
         "approval_document": "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
