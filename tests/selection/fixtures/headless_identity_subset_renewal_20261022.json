@@ -1,0 +1,162 @@
+{
+  "added_primary": [
+    "groundhog-account-backends",
+    "groundhog-account-remote-switch",
+    "groundhog-nip46-credentials-list",
+    "groundhog-nip46-session",
+    "groundhog-signer-nip46"
+  ],
+  "build": {
+    "argv": [
+      "cmake",
+      "--build",
+      "/evidence/baseline-focused/build",
+      "--parallel",
+      "2",
+      "--target",
+      "test-groundhog-account-backends",
+      "test-groundhog-account-remote-switch",
+      "test-groundhog-nip46-credentials-list",
+      "test-groundhog-nip46-session",
+      "test-groundhog-signer-nip46"
+    ],
+    "exit_code": 0,
+    "log_sha256": "684e7067c1e37311d0e6b104003f73284efb4aca37f29cd43f916d70d6c87470",
+    "seconds": 64.105179028993
+  },
+  "candidate_contract_hash": "1b388f407707962875055bb166ba8d01b295330621469e5f6527d5c218b4e402",
+  "elf": {
+    "groundhog-account-backends": "/evidence/baseline-focused/build/gnome/groundhog/test-groundhog-account-backends: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=9e1a2b60872421a1296eba10ac69eac2a9404760, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "groundhog-account-remote-switch": "/evidence/baseline-focused/build/gnome/groundhog/test-groundhog-account-remote-switch: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=df3b95f767b6ebf65c4cbda49bca4c775a40cfee, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "groundhog-nip46-credentials-list": "/evidence/baseline-focused/build/gnome/groundhog/test-groundhog-nip46-credentials-list: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=79b27dcc47f8927ce6bd80077687f14ab948b4c0, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "groundhog-nip46-session": "/evidence/baseline-focused/build/gnome/groundhog/test-groundhog-nip46-session: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=3cdb0db13f9980ab472e7e6386b717e03950d961, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "groundhog-signer-nip46": "/evidence/baseline-focused/build/gnome/groundhog/test-groundhog-signer-nip46: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=c1b6b36ee59aa984c60d9390e42f907a69aeb53d, for GNU/Linux 3.2.0, with debug_info, not stripped"
+  },
+  "execution_kind": "diagnostic raw build/CTest, not profile/backend execution",
+  "focused_proof_sha256": "922b6f5d8faacd7ba3817493862a9dbe0dcbfa777952b732227539ccde0be4ad",
+  "fresh_realization_sha256": "4e8cdfeedc14d23d86b60a6ff54ed0b051a77efc3ccc31a6f653c59389236a52",
+  "headless_environment": {
+    "DBUS_SESSION_BUS_ADDRESS": null,
+    "DISPLAY": null,
+    "WAYLAND_DISPLAY": null
+  },
+  "limits": {
+    "complete": false,
+    "complete_gate_eligible": false,
+    "full_profile_audit_pass": false,
+    "hosted_acceptance": false,
+    "w11_credit": false
+  },
+  "previous": {
+    "primary_registrations": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-conversations",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-store",
+      "groundhog-store-conversations",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring"
+    ],
+    "required_closure": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-conversations",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-store",
+      "groundhog-store-conversations",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring",
+      "groundhog-test-gst-registry",
+      "groundhog-test-homes"
+    ]
+  },
+  "previous_record_hash": "af947e52e7f62d48c459dee4528f0c4cbaf77612735be5493c699be4bec9d1e1",
+  "renewed": {
+    "primary_registrations": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-account-backends",
+      "groundhog-account-remote-switch",
+      "groundhog-conversations",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-nip46-credentials-list",
+      "groundhog-nip46-session",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-signer-nip46",
+      "groundhog-store",
+      "groundhog-store-conversations",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring"
+    ],
+    "required_closure": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-account-backends",
+      "groundhog-account-remote-switch",
+      "groundhog-conversations",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-nip46-credentials-list",
+      "groundhog-nip46-session",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-signer-nip46",
+      "groundhog-store",
+      "groundhog-store-conversations",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring",
+      "groundhog-test-gst-registry",
+      "groundhog-test-homes"
+    ]
+  },
+  "schema_version": 1,
+  "scope": "Selected coverage expansion ONLY under user authorization; exact33 omissions and omitted-candidate/source/profile/toolchain authority unchanged.",
+  "source_identity": {
+    "kind": "committed",
+    "sha": "3c7c42c08cf1fade80da1355e4392847060abdb2"
+  },
+  "test": {
+    "argv": [
+      "ctest",
+      "--test-dir",
+      "/evidence/baseline-focused/build",
+      "--output-on-failure",
+      "-R",
+      "^(groundhog-account-backends|groundhog-account-remote-switch|groundhog-nip46-credentials-list|groundhog-nip46-session|groundhog-signer-nip46)$",
+      "--parallel",
+      "1"
+    ],
+    "exit_code": 0,
+    "log_sha256": "b34382290a36d52e6a84e15533d17d85421561edef0182d78b74a4843939ff78",
+    "seconds": 7.958447878016159
+  }
+}
