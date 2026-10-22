@@ -162,9 +162,41 @@ class HeadlessModelMembership(unittest.TestCase):
         self.assertFalse(any('mdk' in lane for lane in plan['expected_lane_ids']))
         self.assertTrue(set(CHECKS).isdisjoint(plan['selected_checks']))
 
+    def test_reviewed_subset_expands_selected_closure_not_omissions(self):
+        import test_selection_subset as subset
+        path = 'tests/selection/fixtures/headless_model_subset_renewal_20261022.json'
+        renewal = json.loads((ROOT / path).read_text())
+        contract = subset.contracts(self.policy)[PROFILE]
+        family = sorted(CHECKS.values())
+        self.assertEqual(renewal['added_primary'], family)
+        authored = sorted(name for check in self.policy['checks'].values()
+                          if check.get('kind') == 'ctest'
+                          for name in check.get('ctest_tests', {}).get(PROFILE, []))
+        self.assertEqual(contract['primary_registrations'], authored)
+        previous = copy.deepcopy(contract)
+        for key in ('primary_registrations', 'required_closure'):
+            self.assertEqual(contract[key], sorted(renewal['previous'][key] + family))
+            self.assertEqual(contract[key], renewal['renewed'][key])
+            previous[key] = renewal['previous'][key]
+        # Historical authority/source/profile/candidate hashes remain intact.
+        self.assertEqual(s.digest(previous), renewal['previous_record_hash'])
+        self.assertEqual(contract['registrations'], list(subset.REGISTRATIONS))
+        self.assertEqual(len(contract['registrations']), 33)
+        self.assertEqual(contract['candidate_contract_hash'], renewal['candidate_contract_hash'])
+        executions = r._fixture_closure(family, self.tests, self.descriptors)
+        self.assertTrue(set(executions) <= set(contract['required_closure']))
+        self.assertFalse(set(executions) <= set(previous['required_closure']))
+        self.assertTrue(set(executions).isdisjoint(contract['registrations']))
+        self.assertEqual(renewal['build']['exit_code'], 0)
+        self.assertEqual(renewal['test']['exit_code'], 0)
+        self.assertEqual(renewal['headless_environment'], {
+            'DISPLAY': None, 'WAYLAND_DISPLAY': None, 'DBUS_SESSION_BUS_ADDRESS': None})
+        self.assertFalse(any(renewal['limits'].values()))
+
     def test_test_sources_are_selection_contract_inputs(self):
         inputs = self.policy['checks']['selection.contract']['runtime_inputs']
-        for path in (FIXTURE, 'tests/selection/test_headless_model_membership.py'):
+        for path in (FIXTURE, 'tests/selection/test_headless_model_membership.py',
+                     'tests/selection/fixtures/headless_model_subset_renewal_20261022.json'):
             self.assertIn('{source}/' + path, inputs)
 
 

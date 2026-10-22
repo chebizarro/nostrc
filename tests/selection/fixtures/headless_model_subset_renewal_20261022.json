@@ -1,0 +1,139 @@
+{
+  "added_primary": [
+    "groundhog-conversations",
+    "groundhog-store",
+    "groundhog-store-conversations"
+  ],
+  "build": {
+    "argv": [
+      "cmake",
+      "--build",
+      "/evidence/focused-fresh-context/build",
+      "--parallel",
+      "4",
+      "--target",
+      "test-groundhog-conversations",
+      "test-groundhog-store",
+      "test-groundhog-store-conversations"
+    ],
+    "exit_code": 0,
+    "log_sha256": "ac2380530326d8a3ad7ba1c00b1570ebdb8133975517a14bfe8414683a28fa2b",
+    "seconds": 79.49366599501809
+  },
+  "candidate_contract_hash": "1b388f407707962875055bb166ba8d01b295330621469e5f6527d5c218b4e402",
+  "elf": {
+    "groundhog-conversations": "/evidence/focused-fresh-context/build/gnome/groundhog/test-groundhog-conversations: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=7e7db07468eebae8223f38ad35eefb4f7bb8e64a, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "groundhog-store": "/evidence/focused-fresh-context/build/gnome/groundhog/test-groundhog-store: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=d4c1d0c8fa7c45ab7aab67410eab7dba742b868e, for GNU/Linux 3.2.0, with debug_info, not stripped",
+    "groundhog-store-conversations": "/evidence/focused-fresh-context/build/gnome/groundhog/test-groundhog-store-conversations: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=cca1d41a310fb558e00dba1cae8f4102d0c084ed, for GNU/Linux 3.2.0, with debug_info, not stripped"
+  },
+  "focused_proof_sha256": "050bfc64929fc4644b3aae7852840b1bc8bb66eb4463db91ec4059df1309ab43",
+  "fresh_realization_sha256": "c9c88a21aee4f6668a9f7060fcd868e71776bc43a51e9b3abfc05c2e4e1a78d4",
+  "headless_environment": {
+    "DBUS_SESSION_BUS_ADDRESS": null,
+    "DISPLAY": null,
+    "WAYLAND_DISPLAY": null
+  },
+  "limits": {
+    "complete": false,
+    "complete_gate_eligible": false,
+    "full_profile_audit_pass": false,
+    "hosted_acceptance": false,
+    "w11_credit": false
+  },
+  "previous": {
+    "primary_registrations": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring"
+    ],
+    "required_closure": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring",
+      "groundhog-test-gst-registry",
+      "groundhog-test-homes"
+    ]
+  },
+  "previous_record_hash": "c4b82fdd3fe9e633bea37294802df073933a0b0df1cc0ad5c913970156453eac",
+  "renewed": {
+    "primary_registrations": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-conversations",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-store",
+      "groundhog-store-conversations",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring"
+    ],
+    "required_closure": [
+      "groundhog-about",
+      "groundhog-about-gui",
+      "groundhog-conversations",
+      "groundhog-media",
+      "groundhog-mls-files",
+      "groundhog-mls-media",
+      "groundhog-mls-service",
+      "groundhog-mls-ui",
+      "groundhog-mls-ui-gui",
+      "groundhog-packaging-version",
+      "groundhog-poll-ui",
+      "groundhog-shell",
+      "groundhog-store",
+      "groundhog-store-conversations",
+      "groundhog-store-key",
+      "groundhog-store-key-keyring",
+      "groundhog-test-gst-registry",
+      "groundhog-test-homes"
+    ]
+  },
+  "schema_version": 1,
+  "scope": "Parent-authorized expansion of selected coverage ONLY; same approved exact33 omissions and unchanged omitted-candidate/source/profile/toolchain contract.",
+  "source_identity": {
+    "kind": "committed",
+    "sha": "c70951f30a39386dd967ebe60c8a445d8b3eb25d"
+  },
+  "test": {
+    "argv": [
+      "ctest",
+      "--test-dir",
+      "/evidence/focused-fresh-context/build",
+      "--output-on-failure",
+      "-R",
+      "^(groundhog-conversations|groundhog-store|groundhog-store-conversations)$",
+      "--parallel",
+      "1"
+    ],
+    "exit_code": 0,
+    "log_sha256": "03e7dfe3dc7b8416f3276ac546ee69faec95de7fbb9b50a2a2e6dea331754e12",
+    "seconds": 23.19851330202073
+  }
+}
