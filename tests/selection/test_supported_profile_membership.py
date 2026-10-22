@@ -94,7 +94,9 @@ class SupportedProfileMembership(unittest.TestCase):
             self.assertEqual(s.digest(previous[field]), expected, field)
         structural = self.data['structural_changes']
         self.assertEqual(set(structural['nodes']), {'testing.common_inputs', 'mdk08.peer_inputs',
-                                                  'mdk09.peer_inputs', 'mdk011.peer_inputs'})
+                                                  'mdk09.peer_inputs', 'mdk011.peer_inputs',
+                                                  'gnostr.schema_inputs', 'groundhog.schema_inputs',
+                                                  'relayd.async_storage_api', 'nip55l.dbus_contract'})
         for ident, node in structural['nodes'].items():
             self.assertEqual(node['depends_on'], [])
             self.assertEqual(self.p['nodes'][ident], node)
@@ -136,6 +138,35 @@ class SupportedProfileMembership(unittest.TestCase):
         with self.assertRaisesRegex(s.ContractError, 'census check changed'):
             before_supported_batch_policy(bad)
 
+    def test_postbuild_families_have_exact_input_owners_and_removal_negatives(self):
+        repair = self.data['postbuild_repair']
+        for path, family in repair['families'].items():
+            owners = set(s.classify(self.p, path)['nodes'])
+            for ident in family['checks']:
+                self.assertTrue(owners & r._impact_prerequisites(
+                    self.p, self.p['checks'][ident]['nodes']), (path, ident))
+        for ident in repair['canonical_input_nodes']:
+            node = self.p['nodes'][ident]
+            self.assertEqual(node['depends_on'], [])
+            self.assertEqual(len(node['owner_paths']), 1)
+            path = node['owner_paths'][0]
+            self.assertEqual(s.classify(self.p, path)['nodes'], [ident])
+            consumers = [key for key, check in self.p['checks'].items() if ident in check['nodes']]
+            self.assertTrue(consumers, path)
+            consumer = consumers[0]
+            selected = lambda policy: s.make_plan(policy, [change(path)], head=self.data['base_sha'])['selected_checks']
+            self.assertIn(consumer, selected(self.p))
+            bad = copy.deepcopy(self.p)
+            bad['checks'][consumer]['nodes'].remove(ident)
+            self.assertNotIn(consumer, selected(bad))
+        core = self.p['checks']['root.asan.nip5f']
+        self.assertNotIn('signer_endpoint', core.get('requires', []))
+        for profile in ('core.linux.asan', 'core.macos.asan'):
+            self.assertEqual(core['ctest_tests'][profile],
+                             ['test_nip5f_loopback', 'test_nip5f_negative_env'])
+            self.assertEqual(self.p['checks']['supported.nips.nip5f.signer_endpoint']
+                             ['ctest_tests'][profile], ['test_nip5f_tcp'])
+
     def test_graphics_tools_and_headless_aliases_remain_separate(self):
         record = self.data['profiles']['groundhog.linux']['primary']
         for base in ('groundhog-about', 'groundhog-group-ui', 'groundhog-mls-ui',
@@ -156,7 +187,8 @@ class SupportedProfileMembership(unittest.TestCase):
     def test_semantic_selection_savings_no_new_live_peer_or_unrelated_standalone_work(self):
         historical = before_supported_batch_policy(self.p)
         for path in ('apps/gnostr/src/main_app.c', 'nostr-gtk/data/nostr-gtk.gresource.xml',
-                     'tests/test_json_filter.c'):
+                     'tests/test_json_filter.c',
+                     'gnome/groundhog/data/org.nostr.Groundhog-autostart.desktop.in'):
             self.assertTrue((ROOT / path).is_file())
             plan = s.make_plan(self.p, [change(path)], head=self.data['base_sha'])
             old = s.make_plan(historical, [change(path)], head=self.data['base_sha'])

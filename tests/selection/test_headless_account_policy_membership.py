@@ -26,7 +26,8 @@ COUNTS = {'groundhog-account': (27, 176), 'groundhog-account-relays': (26, 173),
 class HeadlessAccountPolicyMembership(unittest.TestCase):
     def setUp(self):
         from supported_profile_support import before_supported_batch_policy
-        self.p = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
+        self.current_policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.p = before_supported_batch_policy(self.current_policy)
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.real = self.export['realization']
         self.tests, self.ds = r._test_maps(self.real)
@@ -200,7 +201,7 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
         self.assertEqual(self.export['profile'], self.p['profiles'][PROFILE])
         self.assertEqual(self.witness['added_primary'], FAMILY)
         verify_historical_account_policy_fixtures()
-        for path, expected in self.p['diagnostic_nonmember_subsets'][PROFILE]['review']['source_inputs'].items():
+        for path, expected in self.current_policy['diagnostic_nonmember_subsets'][PROFILE]['review']['source_inputs'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
 
 

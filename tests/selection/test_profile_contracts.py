@@ -138,7 +138,8 @@ class RootProfileContracts(unittest.TestCase):
 
 class ConfiguredMembershipContracts(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(INVENTORY)
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(s.load_inventory(INVENTORY))
         self.exports = json.loads(EXPORTS.read_text())["exports"]
 
     def test_root_membership_comes_from_actual_source_owner_exports(self):
@@ -345,8 +346,10 @@ class OrdinaryLiveProfileContracts(unittest.TestCase):
                 self.assertEqual(plan['effective_mode'], 'affected')
                 self.assertFalse(any(ident.startswith(('mdk011.', 'mdk08.', 'prepared011.'))
                                      for ident in plan['selected_checks']))
-                self.assertNotIn('groundhog.mdk011', plan['expected_lane_ids'])
-                self.assertNotIn('groundhog.mdk08', plan['expected_lane_ids'])
+                # Ancillary registrations can share an MDK configure profile;
+                # they must never acquire a Docker peer/fixture requirement.
+                for ident in plan['selected_checks']:
+                    self.assertNotIn('docker', policy['checks'][ident].get('requires', []))
         for path in ('gnome/groundhog/src/mls/gh-mls-service.c',
                      'gnome/groundhog/src/ui/gh-mls-copy.c'):
             with self.subTest(path=path):

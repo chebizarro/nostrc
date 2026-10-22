@@ -17,7 +17,9 @@ FIXTURE = 'tests/selection/fixtures/store_key_membership_exports.json'
 
 class StoreKeyMembership(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.current_policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.policy = before_supported_batch_policy(self.current_policy)
         self.export = json.loads((ROOT / FIXTURE).read_text())
 
     def names(self, profile, checks=None):
@@ -146,6 +148,11 @@ class StoreKeyMembership(unittest.TestCase):
             if path in historical_tooling:
                 self.assertEqual(expected, historical_tooling[path], path)
             else:
+                from supported_profile_support import witness
+                renewal = witness()['contracts'][PROFILE]['source_changes'].get(path)
+                if renewal is not None:
+                    self.assertEqual(expected, renewal['before'], path)
+                    expected = renewal['after']
                 self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
 
     def test_selection_contract_tracks_the_new_test_and_export(self):

@@ -17,7 +17,8 @@ from grotto_nip49_projection import (DESCRIPTOR_RENEWAL,
 
 class MediaCryptoIntegration(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         self.contracts = self.policy['diagnostic_nonmember_subsets']
 
     def test_disjoint_wave_reversals_recover_exact_prior_records(self):

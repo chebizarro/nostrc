@@ -10,7 +10,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/supported_profile_membership.json'
-WITNESS_SHA256 = 'da5ea1284c4dfd05495a558376939c34873a5820d1da936d8e7114f0aed9fb45'
+WITNESS_SHA256 = '4949d85023ee86529abcef2dc5425338bb9db317cce12ca0f896e217f41f7a1b'
 NEW_INPUTS = [
     '{source}/tests/selection/supported_profile_support.py',
     '{source}/tests/selection/test_supported_profile_membership.py',
@@ -32,7 +32,7 @@ def before_supported_batch_contract(contract, profile):
     if digest == record['before_hash']:
         return copy.deepcopy(contract)
     s.require(digest == record['after_hash'],
-              'supported profile census non-selection authority changed')
+              'supported profile census selected closure changed or non-selection authority changed')
     previous = copy.deepcopy(contract)
     for key, value in record['after_selection'].items():
         s.require(previous[key] == value, 'supported profile census selected closure changed')
@@ -67,7 +67,7 @@ def before_supported_batch_policy(policy):
     previous['coverage_gaps'].remove(gap)
     for ident, node in data.get('structural_changes', {}).get('nodes', {}).items():
         s.require(previous['nodes'].get(ident) == node,
-                  'supported profile census fixture node changed: ' + ident)
+                  'supported profile census input node changed: ' + ident)
         del previous['nodes'][ident]
     for rule in data.get('structural_changes', {}).get('path_rules', []):
         s.require(previous['path_rules'].count(rule) == 1,

@@ -116,6 +116,8 @@ class GrottoProfiles(unittest.TestCase):
         self.assertEqual(len(exports['variants']['asan-ubsan']['primary_names']), 13)
 
     def test_each_added_check_node_has_a_configured_source_or_descriptor_witness(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         exports = json.loads(EXPORT.read_text())
         for mode, suffix in (('native', 'native'), ('asan-ubsan', 'asan_ubsan')):
             exported = exports['variants'][mode]
