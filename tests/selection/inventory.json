@@ -6762,13 +6762,14 @@
     },
     "grelay": {
       "depends_on": [
-        "nostr.gobject"
+        "nostr.gobject",
+        "relayd"
       ],
       "id": "grelay",
       "owner_paths": [
         "apps/grelay"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "grelay and grelay_ingress_security link relay_security, whose relay_policy.c, rate_limit.c and relay_ingress.c sources and public headers belong to apps/relayd (apps/grelay/CMakeLists.txt; apps/grelay/tests/CMakeLists.txt)."
     },
     "grotto.daemon": {
       "depends_on": [
@@ -8202,13 +8203,14 @@
     },
     "relayd": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "libjson"
       ],
       "id": "relayd",
       "owner_paths": [
         "apps/relayd"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "nostr-relay-server PRIVATE-links nostr_json; nostrc-relayd and the registered ingress/REQ/storage consumers also link nostr_json (apps/relayd/CMakeLists.txt; apps/relayd/tests/CMakeLists.txt). Its libjson source/header inputs must reach relay consumers."
     },
     "schema": {
       "depends_on": [
@@ -8242,13 +8244,14 @@
     },
     "shared.tests": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "libjson"
       ],
       "id": "shared.tests",
       "owner_paths": [
         "tests"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Root shared tests, including test_connection_recv_drain, explicitly link nostr_json (tests/CMakeLists.txt); libjson/src/json.c and its public header are build inputs, not optional external JSON providers."
     },
     "signet": {
       "depends_on": [
