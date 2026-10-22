@@ -558,6 +558,8 @@ def _profile_fingerprint(realization):
     keys = ("profile_id", "profile", "source_identity", "inventory_hash", "cmake", "toolchains",
             "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context",
             "configure_outputs")
+    if "override_inventory" in realization:
+        keys += ("override_inventory",)
     return _hash({k: realization.get(k) for k in keys})
 
 
@@ -722,7 +724,7 @@ def _configure_file_outputs(trace, manifest, token, cmake_files, directories, so
 
 
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
-                      inventory_hash, *, log_path=None):
+                      inventory_hash, *, log_path=None, inventory=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
 
     profile: source_dir (repo-relative), configure_args (argv), environment (map),
@@ -851,6 +853,10 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         "commands": [cmd, ctest_cmd], "generation_token": token,
         "configure_seconds": time.monotonic() - started,
     }
+    if inventory is not None and inventory.get("test_overrides"):
+        if _hash(inventory) != inventory_hash:
+            raise RealizationError("configured override inventory content identity mismatch")
+        realization["override_inventory"] = inventory
     realization["profile_fingerprint"] = _profile_fingerprint(realization)
     compat = profile.get("sanitizer_compatibility")
     if compat:
@@ -923,6 +929,8 @@ def _eligible(check, profile_id):
 
 def _metadata(inventory, realization):
     tests, descriptors = _test_maps(realization)
+    descriptors = {name: dict(desc) for name, desc in descriptors.items()}
+    applied = False
     for override in inventory.get("test_overrides", []):
         if override.get("profile") not in (None, realization["profile_id"]):
             continue
@@ -935,6 +943,11 @@ def _metadata(inventory, realization):
                 if existing.get(key):
                     raise RealizationError(f"duplicate descriptor/override authority: {name}.{key}")
                 existing[key] = _list(override[key])
+                applied = True
+    if applied:
+        bound = realization.get("override_inventory")
+        if bound != inventory or _hash(bound) != realization["inventory_hash"]:
+            raise RealizationError("legacy overrides require content-bound configured inventory; configure again")
     return tests, descriptors
 
 
@@ -1389,6 +1402,42 @@ def _audit_commands(inventory, realization, specs, after_build):
     return gaps, hashes
 
 
+def _ctest_runtime_constraints(inventory, realization, tests, descriptors):
+    """Legacy check declarations assert canonical runtime closure, never extend it."""
+    constraints, gaps = {}, []
+    root, build = Path(realization["repo_root"]), Path(realization["build_dir"])
+    for ident, check in inventory["checks"].items():
+        if check.get("kind") != "ctest" or not _eligible(check, realization["profile_id"]) or not check.get("runtime_inputs"):
+            continue
+        paths = set()
+        try:
+            names = _fixture_closure(_membership(check, realization["profile_id"]), tests, descriptors)
+            canonical = {p for n in names for p in descriptors.get(n, {}).get("inputs", [])}
+            canonical.update(p for n in names for p in realization.get("runtime_file_manifest", {}).get(n, []))
+        except RealizationError as exc:
+            gaps.append({"kind": "ctest_runtime_input_consistency", "check": ident, "reason": str(exc)})
+            continue
+        for value in check["runtime_inputs"]:
+            try:
+                path = Path(_substitute(value, realization))
+                if ".." in path.parts:
+                    raise RealizationError("runtime constraint must not traverse parent directories")
+                if not path.is_absolute():
+                    path = root / path  # historical CTest declarations are repository-relative
+                admitted = build if path.is_relative_to(build) else root if path.is_relative_to(root) else None
+                if admitted is None or not path.resolve().is_relative_to(admitted):
+                    raise RealizationError("runtime constraint escapes source/build root")
+                paths.add(str(path))
+                if str(path) not in canonical and not any(Path(p).is_dir() and path.is_relative_to(Path(p)) for p in canonical):
+                    raise RealizationError("runtime constraint is absent from authoritative descriptor/fixture closure")
+                if admitted == root and not (path.is_file() or path.is_dir()):
+                    raise RealizationError("runtime constraint source input is missing or not a regular file/directory")
+            except (RealizationError, OSError, ValueError) as exc:
+                gaps.append({"kind": "ctest_runtime_input_consistency", "check": ident, "input": value, "reason": str(exc)})
+        constraints[ident] = sorted(paths)
+    return constraints, gaps
+
+
 def resolve_checks(inventory, plan, realization, profile_id):
     """Resolve exact check membership plus fixture/order/runtime/build closure.
 
@@ -1409,6 +1458,7 @@ def resolve_checks(inventory, plan, realization, profile_id):
     if plan.get("inventory_hash", realization["inventory_hash"]) != realization["inventory_hash"]:
         raise RealizationError("plan/realization inventory mismatch")
     tests, descriptors = _metadata(inventory, realization)
+    constraints, constraint_gaps = _ctest_runtime_constraints(inventory, realization, tests, descriptors)
     exclusions = _baseline_exclusions(inventory, realization, tests, descriptors)
     excluded_names = {n for exclusion in exclusions for n in exclusion["registrations"]}
     claims = {}
@@ -1418,6 +1468,8 @@ def resolve_checks(inventory, plan, realization, profile_id):
                 if name in claims:
                     raise RealizationError(f"multiply claimed primary execution: {name}")
                 claims[name] = ident
+    if constraint_gaps:
+        raise RealizationError(f"CTest runtime input consistency failed: {constraint_gaps}")
     command_specs = _command_specs(inventory, realization)
     selected_commands = {}
     checks, primary = {}, set()
@@ -1480,7 +1532,8 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
         "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
-        "runtime_inputs": sorted(inputs), "required_capabilities": sorted(capabilities),
+        "runtime_inputs": sorted(inputs), "ctest_runtime_constraints": constraints,
+        "required_capabilities": sorted(capabilities),
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
         "registered_commands": {t["name"]: t["command"] for t in realization["tests"] if "command" in t}}
@@ -1553,9 +1606,10 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             raise RealizationError('prepared audit requires live contained context')
         prepared_inputs = custody.audit_inputs(realization)
     tests, descriptors = _metadata(inventory, realization)
+    constraints, constraint_gaps = _ctest_runtime_constraints(inventory, realization, tests, descriptors)
     exclusions = _baseline_exclusions(inventory, realization, tests, descriptors)
     excluded_names = {n for exclusion in exclusions for n in exclusion["registrations"]}
-    gaps, fingerprints = [], {}
+    gaps, fingerprints = list(constraint_gaps), {}
     def gap(kind, **detail):
         gaps.append({"kind": kind, **detail})
     root = Path(realization["repo_root"])
@@ -1760,17 +1814,59 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "gaps": gaps, "input_hashes": fingerprints, "header_entries": header_count,
         "command_specs_hash": _hash(specs),
+        "descriptor_inputs": {name: sorted(desc.get("inputs", [])) for name, desc in descriptors.items()},
+        "ctest_runtime_constraints": constraints,
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
     if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
         result["complete"] = False
     if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in exclusions):
         result["nonmember_binding"] = _nonmember_binding(realization, descriptors)
+    if "override_inventory" in realization:
+        result["override_inventory_hash"] = _hash(realization["override_inventory"])
     if prepared_inputs:
         result['prepared_inputs'] = prepared_inputs
         result['complete_gate_eligible'] = False
     result["audit_hash"] = _hash(result)
     return result
+
+
+def _validate_runtime_closure(resolved, realization, audit):
+    """Compare selected runtime paths with the full, effective descriptor audit.
+
+    Overrides remain audit-owned legacy metadata, never check-local authority.
+    Repository descriptors must agree independently with the fresh realization.
+    """
+    if resolved.get("ctest_runtime_constraints") != audit.get("ctest_runtime_constraints"):
+        raise RealizationError("resolved CTest runtime consistency constraints differ from full audit")
+    audited = audit.get("descriptor_inputs")
+    if not isinstance(audited, dict):
+        raise RealizationError("input audit missing descriptor runtime closure")
+    policy = realization.get("override_inventory", {})
+    expected_policy_hash = _hash(policy) if "override_inventory" in realization else None
+    if audit.get("override_inventory_hash") != expected_policy_hash:
+        raise RealizationError("input audit override inventory content identity mismatch")
+    _, descriptors = _metadata(policy, realization)
+    expected = set()
+    for name in resolved["tests"]:
+        inputs = audited.get(name)
+        authored = descriptors.get(name, {}).get("inputs", [])
+        if not isinstance(inputs, list) or inputs != sorted(authored):
+            raise RealizationError(f"input audit descriptor runtime closure differs: {name}")
+        expected.update(inputs)
+        for value in inputs:
+            path = Path(value)
+            if (_relative(value, realization["build_dir"]) is not None
+                    or _relative(value, realization["repo_root"]) is None):
+                continue  # generated/prepared inputs retain their existing provenance rules
+            files = [p for p in path.rglob("*") if p.is_file() or p.is_symlink()] if path.is_dir() else [path]
+            for file in files:
+                if str(file) not in audit.get("input_hashes", {}):
+                    raise RealizationError(f"descriptor runtime input missing from full audit: {file}")
+    for spec in resolved.get("command_executions", {}).values():
+        expected.update(spec["inputs"])
+    if resolved.get("runtime_inputs") != sorted(expected):
+        raise RealizationError("resolved descriptor runtime closure differs from full input audit")
 
 
 def _execution_outcomes(junit, names, expected_outcomes):
@@ -1872,7 +1968,7 @@ def cli(args, policy):
                 if status:
                     raise RealizationError("dirty configure requires an explicit snapshot plan/source identity")
                 identity = {"kind": "committed", "sha": _command(["git", "-C", args.repo, "rev-parse", "HEAD"]).strip()}
-            realized = configure_profile(args.repo, args.build_dir, profile_id, profile, identity, _hash(policy))
+            realized = configure_profile(args.repo, args.build_dir, profile_id, profile, identity, _hash(policy), inventory=policy)
         else:
             realized = load_realization(args.build_dir, identity)
         if realized["inventory_hash"] != _hash(policy) or realized["profile_id"] != profile_id or realized["profile"] != profile:
@@ -2083,6 +2179,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         raise RealizationError("input audit content hash mismatch")
     if input_audit.get("command_specs_hash") != resolved.get("command_specs_hash"):
         raise RealizationError("input audit command contract mismatch")
+    _validate_runtime_closure(resolved, realization, input_audit)
     receipt["input_audit"] = input_audit
     receipt["input_audit_status"] = "passed"
     env = phase_environment(realization["profile"], realization["repo_root"], "test")

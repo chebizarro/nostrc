@@ -215,6 +215,9 @@ def validate_inventory(policy):
         expected = check.get("expected_outcome", "pass")
         require(expected == "pass" or (isinstance(expected, dict) and expected.get("case") == "mdk09_incompatibility" and expected.get("exit_code") == 77), f"{ident}: unsupported expected exception")
         if check["kind"] == "ctest":
+            inputs = check.get("runtime_inputs", [])
+            require(isinstance(inputs, list) and all(isinstance(x, str) and x and "\x00" not in x for x in inputs)
+                    and len(inputs) == len(set(inputs)), f"{ident}: invalid runtime_inputs")
             membership = check.get("ctest_tests")
             require(isinstance(membership, dict) and set(membership) == set(check["profiles"]), f"{ident}: exact per-profile CTest membership required")
             for profile, names in membership.items():
