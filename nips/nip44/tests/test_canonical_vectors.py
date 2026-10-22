@@ -167,7 +167,9 @@ class CanonicalVectors(unittest.TestCase):
     def test_configure_unreadable_json_refuses(self):
         self.assertNotEqual(os.geteuid(), 0, "Run as nonroot to prove permission denial, not a skip")
         try:
-            self.refuse(self.configure(lambda p: p.chmod(0)), "SHA256")
+            # CMake EXISTS treats unreadable files as absent on newer versions;
+            # older versions instead fail while hashing. Both must refuse JSON.
+            self.refuse(self.configure(lambda p: p.chmod(0)), "Official NIP-44 JSON vectors")
         finally:
             (self.work / "source/nips/nip44/tests/nip44.vectors.json").chmod(0o600)
 
