@@ -23,6 +23,7 @@ if (DEFINED GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW)
 endif()
 
 include(GNUInstallDirs)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcConfigureProvenance.cmake)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   include(CTest)
 endif()
@@ -127,6 +128,16 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/256x256/apps/org.nostr.Groundhog.png
           ${GROUNDHOG_DATA}/relay-suggestions.json
           ${GROUNDHOG_DATA}/blossom-media-suggestions.txt
+          ${GROUNDHOG_DATA}/agents/connectors.ini
+          ${GROUNDHOG_DATA}/icons/scalable/actions/microphone-sensitivity-high-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/contact-new-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/system-users-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/media-playback-stop-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/folder-remote-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/process-stop-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/media-playback-pause-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/folder-download-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/media-playback-start-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic-rtl.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/avatar-default-symbolic.svg
@@ -785,6 +796,9 @@ set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
 # merged with the catalogs; the metainfo is merged from the source template.
 configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog.desktop.in
                ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop.in @ONLY)
+nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+  "${GROUNDHOG_DATA}/org.nostr.Groundhog.desktop.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop.in")
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcGettext.cmake)
 nostrc_gettext(DOMAIN groundhog INSTALL REQUIRED
   PODIR ${CMAKE_CURRENT_SOURCE_DIR}/po
@@ -1504,16 +1518,19 @@ endif()
 set(GROUNDHOG_AUTOSTART_DESKTOP ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog-autostart.desktop)
 configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog-autostart.desktop.in
                ${GROUNDHOG_AUTOSTART_DESKTOP} @ONLY)
+nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+  "${GROUNDHOG_DATA}/org.nostr.Groundhog-autostart.desktop.in"
+  "${GROUNDHOG_AUTOSTART_DESKTOP}")
 file(READ ${GROUNDHOG_AUTOSTART_DESKTOP} GROUNDHOG_AUTOSTART_TEMPLATE)
 string(REPLACE "\\" "\\\\" GROUNDHOG_AUTOSTART_TEMPLATE "${GROUNDHOG_AUTOSTART_TEMPLATE}")
 string(REPLACE "\"" "\\\"" GROUNDHOG_AUTOSTART_TEMPLATE "${GROUNDHOG_AUTOSTART_TEMPLATE}")
 string(REPLACE "\n" "\\n\" \\\n  \"" GROUNDHOG_AUTOSTART_TEMPLATE "${GROUNDHOG_AUTOSTART_TEMPLATE}")
 set(GROUNDHOG_BACKGROUND_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/background)
-file(CONFIGURE OUTPUT ${GROUNDHOG_BACKGROUND_GENERATED}/gh-background-autostart.h
-  CONTENT "/* Generated from data/org.nostr.Groundhog-autostart.desktop.in. */
-#define GH_BACKGROUND_AUTOSTART_TEMPLATE \\
-  \"@GROUNDHOG_AUTOSTART_TEMPLATE@\"
-" @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/app/gh-background-autostart.h.in
+               ${GROUNDHOG_BACKGROUND_GENERATED}/gh-background-autostart.h @ONLY)
+nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gh-background-autostart.h.in"
+  "${GROUNDHOG_BACKGROUND_GENERATED}/gh-background-autostart.h")
 add_library(groundhog-background STATIC src/app/gh-background.c)
 target_include_directories(groundhog-background PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
                            PRIVATE ${GROUNDHOG_BACKGROUND_GENERATED})

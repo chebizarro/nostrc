@@ -5692,7 +5692,8 @@
         "testkit",
         "tools",
         "vendor.nostrdb",
-        "version.contract"
+        "version.contract",
+        "benchmarks"
       ],
       "profiles": [
         "core.linux"
@@ -5844,7 +5845,8 @@
         "testing.framework",
         "testkit",
         "tools",
-        "vendor.nostrdb"
+        "vendor.nostrdb",
+        "benchmarks"
       ],
       "profiles": [
         "groundhog.linux"
@@ -6002,7 +6004,8 @@
         "testing.framework",
         "testkit",
         "tools",
-        "vendor.nostrdb"
+        "vendor.nostrdb",
+        "benchmarks"
       ],
       "profiles": [
         "grotto.linux"
@@ -7580,7 +7583,10 @@
         "version.contract",
         "gnome.nostr_homed",
         "gnome.nostr_homed.test_inputs",
-        "shared.tests"
+        "shared.tests",
+        "groundhog.gresource_inputs",
+        "groundhog.resources",
+        "groundhog.unclassified"
       ],
       "profiles": [
         "static.policy"
@@ -7839,7 +7845,13 @@
         "{source}/tests/custody/test_keyring_runtime.py",
         "{source}/tests/selection/closeout_support.py",
         "{source}/tests/selection/test_closeout_interfaces.py",
-        "{source}/tests/selection/fixtures/closeout_interfaces.json"
+        "{source}/tests/selection/fixtures/closeout_interfaces.json",
+        "{source}/scripts/test_selection_producers.py",
+        "{source}/tests/selection/test_default_producers.py",
+        "{source}/tests/selection/test_closeout_producers.py",
+        "{source}/gnome/groundhog/src/app/gh-background-autostart.h.in",
+        "{source}/gnome/groundhog/data/groundhog.gresource.xml",
+        "{source}/gnome/groundhog/data/org.nostr.Groundhog-autostart.desktop.in"
       ],
       "working_directory": "{source}"
     },

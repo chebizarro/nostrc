@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/closeout_interfaces.json'
-WITNESS_SHA256 = 'f67b49bf22c5ac2f6c1d8311a6627c3db0244b6d79750316ccf2b03415329fe1'
+WITNESS_SHA256 = 'e59e753d720ed718466371d4585200bdcce3ebd5b0e0585c61bf646b5ac7d219'
 
 
 def witness():

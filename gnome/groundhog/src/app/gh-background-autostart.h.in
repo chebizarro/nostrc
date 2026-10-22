@@ -1,0 +1,3 @@
+/* Generated from data/org.nostr.Groundhog-autostart.desktop.in. */
+#define GH_BACKGROUND_AUTOSTART_TEMPLATE \
+  "@GROUNDHOG_AUTOSTART_TEMPLATE@"
