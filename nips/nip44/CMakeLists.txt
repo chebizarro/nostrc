@@ -47,14 +47,21 @@ add_executable(test_nip44_vectors ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip44_v
 target_include_directories(test_nip44_vectors PRIVATE ${NIP44_INC})
 target_link_libraries(test_nip44_vectors PRIVATE nostr nostr_nip44_core OpenSSL::Crypto)
 
-# Optional JSON vectors support via Jansson
-pkg_check_modules(JANSSON QUIET IMPORTED_TARGET jansson)
-if (JANSSON_FOUND)
-  target_link_libraries(test_nip44_vectors PRIVATE PkgConfig::JANSSON)
-  target_compile_definitions(test_nip44_vectors PRIVATE VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/nip44.vectors.json")
-else()
-  message(STATUS "Jansson not found; test_nip44_vectors will run built-in single vector only")
+# This registration means official JSON conformance, never builtin-only smoke.
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+set(NIP44_VECTORS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/nip44.vectors.json")
+set(NIP44_VECTORS_SHA256 "269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040")
+if(NOT EXISTS "${NIP44_VECTORS_PATH}" OR IS_DIRECTORY "${NIP44_VECTORS_PATH}")
+  message(FATAL_ERROR "Official NIP-44 JSON vectors missing: ${NIP44_VECTORS_PATH}")
 endif()
+file(SHA256 "${NIP44_VECTORS_PATH}" _nip44_vectors_sha256)
+if(NOT _nip44_vectors_sha256 STREQUAL NIP44_VECTORS_SHA256)
+  message(FATAL_ERROR "Official NIP-44 JSON vectors SHA256 mismatch: ${NIP44_VECTORS_PATH}")
+endif()
+target_link_libraries(test_nip44_vectors PRIVATE PkgConfig::JANSSON)
+target_compile_definitions(test_nip44_vectors PRIVATE
+  VECTORS_PATH="${NIP44_VECTORS_PATH}"
+  VECTORS_SHA256="${NIP44_VECTORS_SHA256}")
 
 add_test(NAME test_nip44_vectors COMMAND test_nip44_vectors)
 
