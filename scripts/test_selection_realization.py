@@ -558,10 +558,21 @@ def _phase_context(profile, root, source, configuration):
             **({"execution_parallelism": authored} if authored is not None else {})}
 
 
+def _diagnostic_boundary(realization):
+    boundary = realization.get('diagnostic_boundary')
+    if boundary not in (None, 'linux_pidns_v1', 'linux_ptrace_v1'):
+        raise RealizationError('unknown diagnostic execution boundary')
+    return ({'diagnostic_boundary': boundary, 'complete': False, 'complete_gate_eligible': False,
+             'untraced_profile_parity': False} if boundary else {})
+
+
 def _profile_fingerprint(realization):
     keys = ("profile_id", "profile", "source_identity", "inventory_hash", "cmake", "toolchains",
             "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context",
             "configure_outputs")
+    if 'diagnostic_boundary' in realization:
+        _diagnostic_boundary(realization)
+        keys += ('diagnostic_boundary',)
     if "override_inventory" in realization:
         keys += ("override_inventory",)
     if "default_build_binding" in realization:
@@ -585,6 +596,8 @@ def _validate_phase_context(realization):
 
 
 def _validate_resolved_phase(resolved, realization):
+    if _diagnostic_boundary(resolved) != _diagnostic_boundary(realization):
+        raise RealizationError('diagnostic execution boundary mismatch')
     if _hash(resolved.get("phase_context")) != resolved.get("phase_context_hash"):
         raise RealizationError("resolved phase identity mismatch: phase context content hash")
     for key in ("profile_hash", "configuration", "phase_context", "phase_context_hash"):
@@ -1151,7 +1164,7 @@ def _validate_default_binding(realization):
 
 
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
-                      inventory_hash, *, log_path=None, inventory=None):
+                      inventory_hash, *, log_path=None, inventory=None, diagnostic_boundary=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
 
     profile: source_dir (repo-relative), configure_args (argv), environment (map),
@@ -1298,6 +1311,9 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         realization["default_build_binding"] = binding
         default_evidence = build / f"nostrc-default-generator-{token}.json"
         _atomic(default_evidence, raw)
+    if diagnostic_boundary is not None:
+        realization['diagnostic_boundary'] = diagnostic_boundary
+        _diagnostic_boundary(realization)
     realization["profile_fingerprint"] = _profile_fingerprint(realization)
     compat = profile.get("sanitizer_compatibility")
     if compat:
@@ -1619,7 +1635,7 @@ def _fixture_closure(names, tests, descriptors):
     return sorted(selected)
 
 
-def configure_command_profile(repo_root, build_dir, profile_id, profile, source_identity, inventory_hash):
+def configure_command_profile(repo_root, build_dir, profile_id, profile, source_identity, inventory_hash, *, diagnostic_boundary=None):
     """Source-only command realization; no compiler/build/CTest success claim."""
     root, build = Path(repo_root).resolve(), Path(build_dir).resolve()
     identity = _identity(source_identity)
@@ -1644,6 +1660,9 @@ def configure_command_profile(repo_root, build_dir, profile_id, profile, source_
         raise RealizationError("source-only commands cannot attest configure/build phase overlays")
     result["phase_context"] = _phase_context(profile, root, source, "")
     result["phase_context_hash"] = _hash(result["phase_context"])
+    if diagnostic_boundary is not None:
+        result['diagnostic_boundary'] = diagnostic_boundary
+        _diagnostic_boundary(result)
     result["profile_fingerprint"] = _profile_fingerprint(result)
     _validate_phase_context(result)
     _atomic(build / "nostrc-test-realization.json", result)
@@ -2165,6 +2184,7 @@ def resolve_checks(inventory, plan, realization, profile_id):
     authored = authored_phase_parallelism(realization["profile"])
     if authored is not None:
         result["execution_parallelism"] = authored
+    result.update(_diagnostic_boundary(realization))
     result["resolved_hash"] = _hash(result)
     return result
 
@@ -2480,6 +2500,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     if prepared_inputs:
         result['prepared_inputs'] = prepared_inputs
         result['complete_gate_eligible'] = False
+    result.update(_diagnostic_boundary(realization))
     result["audit_hash"] = _hash(result)
     return result
 
@@ -2859,6 +2880,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
         "coverage_gaps": resolved.get("coverage_gaps", []),
         "complete_gate_eligible": resolved.get("complete_gate_eligible", True),
+        **_diagnostic_boundary(resolved),
         "audit_build_targets": resolved.get("audit_build_targets", []),
         "compatibility_build_targets": resolved.get("compatibility_build_targets", []),
         "required_capabilities": resolved["required_capabilities"],

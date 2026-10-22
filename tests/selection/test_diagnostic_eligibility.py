@@ -94,6 +94,28 @@ class DiagnosticEligibilityTests(unittest.TestCase):
         legacy = receipt(p, selected)
         self.assertFalse(s.aggregate(p, selected, [legacy])["passed"])
 
+    def test_kernel_boundary_marker_cannot_be_promoted_by_optimistic_flags(self):
+        for boundary in ('linux_pidns_v1', 'linux_ptrace_v1'):
+            with self.subTest(boundary=boundary):
+                p = policy()
+                selected = plan(p)
+                result = receipt(p, selected)
+                result.update(diagnostic_boundary=boundary, complete=False, complete_gate_eligible=False)
+                result['backend_receipt'] = dict(diagnostic_boundary=boundary, complete=False,
+                                                complete_gate_eligible=False, diagnostic_eligible=True)
+                partial = s.aggregate(p, selected, [result], complete=False)
+                if boundary == 'linux_pidns_v1':
+                    self.assertFalse(partial['passed'])
+                    self.assertTrue(any('native kernel custody final evidence refused' in e for e in partial['errors']))
+                else:
+                    self.assertTrue(partial['passed'])
+                for node in (result, result['backend_receipt']):
+                    node.update(complete=True, complete_gate_eligible=True)
+                complete = s.aggregate(p, selected, [result])
+                self.assertFalse(complete['passed'])
+                self.assertTrue(any('diagnostic/incomplete' in e for e in complete['errors']))
+                self.assertTrue(s._nested_incomplete({'passed': True, 'nested': [result]}))
+
     def test_release_cannot_accept_partial_diagnostic_validation(self):
         p, selected, result = self.native_shape()
         partial = s.aggregate(p, selected, [result], complete=False)

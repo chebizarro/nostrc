@@ -9,6 +9,7 @@ owned builder. No prepared peer, dependency patch, default builder or registry
 publication. Derived context/cache provenance and negative receipts are retained.
 """
 import argparse
+import contextlib
 import gzip
 import hashlib
 import importlib.util
@@ -17,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -33,6 +35,79 @@ def sha(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(block)
     return value.hexdigest()
+
+
+@contextlib.contextmanager
+def export_container(call, image_id, run_id, result, save):
+    """Reserve exact Docker identity before create; cancellation never skips cleanup.
+
+    A failed/indeterminate create is retained as negative even if its name is
+    absent on reconciliation. No global prune or unverified name deletion.
+    """
+    name = 'nostrc-mdk-cache-' + uuid.uuid4().hex
+    label = 'org.nostrc.mdk.cache'
+    token = uuid.uuid4().hex
+    result['cache_export_reservation'] = {'name': name, 'label': label, 'token': token,
+                                           'producer_run_id': run_id, 'image_id': image_id}
+    result['cache_export_container_removed'] = False
+    cancelled = []
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    def stop(signum, frame):
+        cancelled.append(signum)
+    for sig in handlers:
+        signal.signal(sig, stop)
+    try:
+        save()
+        raw = call(['create', '--network', 'none', '--name', name,
+                    '--label', label + '=' + token, image_id]).decode().strip()
+        if not re.fullmatch(r'[0-9a-f]{64}', raw):
+            raise ValueError('cache export did not return an immutable CID')
+        result['cache_export_cid'] = raw
+        save()
+        if cancelled:
+            raise InterruptedError('cache export cancelled after ownership acquisition')
+        yield raw
+        if cancelled:
+            raise InterruptedError('cache export cancelled during export')
+    except BaseException as exc:
+        result['cache_export_error'] = type(exc).__name__ + ': ' + str(exc)
+        raise
+    finally:
+        try:
+            observed = json.loads(call(['container', 'inspect', name]))[0]
+            cid = observed['Id']
+            if (not re.fullmatch(r'[0-9a-f]{64}', cid) or observed['Name'] != '/' + name or
+                observed['Image'] != image_id or observed['Config'].get('Labels', {}).get(label) != token or
+                observed.get('State', {}).get('Running') or observed.get('Mounts')):
+                raise ValueError('cache export reserved identity changed; removal refused')
+            if result.get('cache_export_cid', cid) != cid:
+                raise ValueError('cache export returned and reserved CID differ')
+            result['cache_export_cid'] = cid
+            result['cache_export_owned_inspection'] = observed
+            save()
+            call(['rm', '-v', cid])
+            try:
+                call(['container', 'inspect', cid])
+            except subprocess.CalledProcessError as absent:
+                stderr = (absent.stderr or b'').decode('utf-8', 'replace')
+                result['cache_export_final_inspection'] = {'exit_code': absent.returncode, 'stderr': stderr}
+                if absent.returncode != 1 or ('no such container: ' + cid) not in stderr.lower():
+                    raise ValueError('cache export CID absence unverified') from absent
+            else:
+                raise ValueError('cache export CID still exists')
+            result['cache_export_container_removed'] = True
+        except BaseException as exc:
+            result['cache_export_cleanup_error'] = type(exc).__name__ + ': ' + str(exc)
+            raise
+        finally:
+            result['cache_export_cancel_signals'] = cancelled
+            try:
+                save()
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
+        if cancelled and 'cache_export_error' not in result:
+            raise InterruptedError('cache export cancelled during cleanup')
 
 
 def main():
@@ -70,7 +145,8 @@ def main():
     docker = receipt["docker"]
     env = dict(os.environ, DOCKER_HOST=receipt["docker_endpoint"])
     def call(argv, **kwargs):
-        return subprocess.check_output([docker, *argv], env=env, timeout=300, **kwargs)
+        return subprocess.check_output([docker, *argv], env=env, timeout=300,
+                                       stderr=subprocess.PIPE, start_new_session=True, **kwargs)
     if (sha(docker) != receipt["docker_executable"]["sha256"] or
         call(["info", "--format", "{{.ID}}"]).decode().strip() != receipt["daemon_id"]):
         raise ValueError("cache producer Docker executable/daemon identity changed")
@@ -92,16 +168,10 @@ def main():
               "original_context_digest": gate.digest(original),
               "complete": False, "complete_gate_eligible": False,
               "cache_export_container_removed": False}
-    cid = None
     def save():
         (out / "receipt.json").write_text(json.dumps(result, indent=2) + "\n")
     save()
-    try:
-        cid = call(["create", "--network", "none", "--name", "nostrc-mdk-cache-" + uuid.uuid4().hex,
-                    "--label", "org.nostrc.mdk.cache=" + receipt["run_id"], image_id]).decode().strip()
-        if not re.fullmatch(r"[0-9a-f]{64}", cid):
-            raise ValueError("cache export did not return an immutable CID")
-        result["cache_export_cid"] = cid; save()
+    with export_container(call, image_id, receipt['run_id'], result, save) as cid:
         raw = out / "rootfs.tar"
         call(["export", "--output", str(raw), cid])
         result["uncompressed_cache_sha256"] = sha(raw)
@@ -118,18 +188,6 @@ def main():
             with gzip.GzipFile(filename="", mode="wb", fileobj=dst, compresslevel=1, mtime=0) as zipped:
                 shutil.copyfileobj(src, zipped)
         result["cache_sha256"] = sha(cache); raw.unlink()
-    finally:
-        if cid:
-            call(["rm", "-v", cid])
-            absent = subprocess.run([docker, "inspect", cid], env=env, capture_output=True, timeout=30)
-            result["cache_export_final_inspection"] = {"exit_code": absent.returncode,
-                "stdout": absent.stdout.decode("utf-8", "replace"),
-                "stderr": absent.stderr.decode("utf-8", "replace")}
-            save()
-            if absent.returncode != 1 or ("no such object: " + cid) not in absent.stderr.decode("utf-8", "replace").lower():
-                raise ValueError("cache export CID removal was not verified")
-            result["cache_export_container_removed"] = True
-        save()
     body = text[body_start:]
     body = body.replace("RUN mkdir src", "RUN --network=none mkdir src").replace(
         "cargo fetch --locked --verbose", "cargo fetch --frozen --verbose")

@@ -46,7 +46,7 @@ def arm_parent_death(libc, handle):
         raise CustodyError('custody parent exited; target not launched')
 
 
-def init_namespace(libc, parent_handle, gate, argv, old_mask):
+def init_namespace(libc, parent_handle, gate, argv, old_mask, resource_root=None, private_display=False):
     arm_parent_death(libc, parent_handle)
     os.close(parent_handle)
     if os.read(gate, 1) != b'1':
@@ -59,6 +59,9 @@ def init_namespace(libc, parent_handle, gate, argv, old_mask):
     if int(next(row.split()[1] for row in Path('/proc/self/status').read_text().splitlines()
                 if row.startswith('Tgid:'))) != 1:
         raise CustodyError('procfs namespace mismatch; target not launched')
+    if resource_root is not None:
+        from test_selection_services import prepare_resources
+        prepare_resources(resource_root, private_display)
     # Retain the actual procfs directory, not a re-resolved mutable /proc path.
     proc = os.open('/proc', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     read_fd, write_fd = os.pipe()
@@ -80,6 +83,9 @@ def init_namespace(libc, parent_handle, gate, argv, old_mask):
             os.write(2, ('namespace custody exec: ' + str(exc) + '\n').encode())
             os._exit(125)
     os.close(read_fd)
+    seal_copy = os.environ.pop('NOSTRC_NATIVE_SEAL_FD', None)
+    if seal_copy is not None:
+        os.close(int(seal_copy))
     handle = None
     cancelled, deadline = False, None
     try:
@@ -137,7 +143,7 @@ def init_namespace(libc, parent_handle, gate, argv, old_mask):
         os.close(proc)
 
 
-def supervise(argv, adapter_parent=None):
+def supervise(argv, adapter_parent=None, resource_root=None, private_display=False):
     if sys.platform != 'linux':
         raise CustodyError('native kernel custody unavailable on macOS: EndpointSecurity descendant client requires '
                            'com.apple.developer.endpoint-security.client (not provisioned); '
@@ -179,7 +185,7 @@ def supervise(argv, adapter_parent=None):
             if adapter_parent is not None:
                 os.close(adapter_parent)
             try:
-                code = init_namespace(libc, parent_handle, read_fd, argv, old_mask)
+                code = init_namespace(libc, parent_handle, read_fd, argv, old_mask, resource_root, private_display)
             except BaseException as exc:
                 os.write(2, ('namespace custody setup/cleanup failed: ' + str(exc) + '\n').encode())
                 code = 125
@@ -187,6 +193,9 @@ def supervise(argv, adapter_parent=None):
             os._exit(code)
         os.close(read_fd)
         read_fd = -1
+        seal_copy = os.environ.pop('NOSTRC_NATIVE_SEAL_FD', None)
+        if seal_copy is not None:
+            os.close(int(seal_copy))
         child_handle = os.pidfd_open(child)
         signal.pidfd_send_signal(child_handle, 0)
         cancelled = bool(signal.sigpending() & {signal.SIGTERM, signal.SIGINT})
@@ -239,8 +248,17 @@ def main():
                 raise CustodyError('parent pidfd reservation missing; target not launched')
         finally:
             os.close(gate)
+    resource_root, private_display = None, False
+    if sys.argv[1:2] == ['--private-resource-root']:
+        if len(sys.argv) < 4:
+            raise CustodyError('missing private resource root/command')
+        resource_root = sys.argv[2]
+        del sys.argv[1:3]
+        if sys.argv[1:2] == ['--private-display']:
+            private_display = True
+            del sys.argv[1]
     try:
-        return supervise(sys.argv[1:], parent_handle)
+        return supervise(sys.argv[1:], parent_handle, resource_root, private_display)
     finally:
         if parent_handle is not None:
             os.close(parent_handle)
