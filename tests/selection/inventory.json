@@ -11331,26 +11331,58 @@
       "ctest_tests": {
         "groundhog.linux": [
           "test_nip5f_loopback",
-          "test_nip5f_negative_env",
-          "test_nip5f_tcp"
+          "test_nip5f_negative_env"
         ],
         "grotto.linux": [
           "test_nip5f_loopback",
-          "test_nip5f_negative_env",
-          "test_nip5f_tcp"
+          "test_nip5f_negative_env"
         ],
         "core.linux": [
           "test_nip5f_loopback",
-          "test_nip5f_negative_env",
-          "test_nip5f_tcp"
+          "test_nip5f_negative_env"
         ]
       },
       "build_targets": [
         "test_nip5f_loopback",
-        "test_nip5f_negative_env",
-        "test_nip5f_tcp"
+        "test_nip5f_negative_env"
       ],
       "runtime_inputs": []
+    },
+    "supported.nips.nip5f.signer_endpoint": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "nip5f",
+        "nip5f.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "groundhog.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "test_nip5f_tcp"
+        ],
+        "grotto.linux": [
+          "test_nip5f_tcp"
+        ],
+        "core.linux": [
+          "test_nip5f_tcp"
+        ]
+      },
+      "build_targets": [
+        "test_nip5f_tcp"
+      ],
+      "runtime_inputs": [],
+      "requires": [
+        "signer_endpoint"
+      ]
     },
     "supported.nips.nip60": {
       "nodes": [
@@ -14680,21 +14712,24 @@
         "groundhog.linux": {
           "unsupported_capabilities": [
             "nak",
-            "gnome_keyring"
+            "gnome_keyring",
+            "signer_endpoint"
           ],
           "reason": "Existing display/private_bus declarations do not attest external tool availability or safe wrapper/default-all custody."
         },
         "grotto.linux": {
           "unsupported_capabilities": [
             "nak",
-            "gnome_keyring"
+            "gnome_keyring",
+            "signer_endpoint"
           ],
           "reason": "Full configured universe includes Groundhog diagnostics as well as exact signer workflow regex; ancillary source coverage is not legacy whole-job parity."
         },
         "core.linux": {
           "unsupported_capabilities": [
             "display",
-            "private_bus"
+            "private_bus",
+            "signer_endpoint"
           ],
           "reason": "Generic native diagnostic has no graphical/private-bus job setup contract."
         },
@@ -23408,7 +23443,7 @@
           "nips/nip59/CMakeLists.txt": "d93715985b717092467c506ffe0c0505346f086af88643c4e8112c8280072056",
           "nips/nip59/TestInventory.cmake": "606c9562d722a4f24a540b04f0b679e6125d352fb51af5d44e7a92e69ab89d44",
           "nips/nip5f/CMakeLists.txt": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4",
-          "nips/nip5f/TestInventory.cmake": "da1770b54d784bccdcce92b0d9e705fc8cdbe1631879e729aa4eda423fb1e6fa",
+          "nips/nip5f/TestInventory.cmake": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da",
           "nips/nip60/CMakeLists.txt": "07a1dd2b4772611853ae3cf0d246b874f8a1a432ee1d4183f975846408fcd704",
           "nips/nip60/TestInventory.cmake": "02652d7a70caaf3169b891236cd8ee17ae73a68d5a6ffe85c2b1c18da1267731",
           "nips/nip61/CMakeLists.txt": "a0267b1154af85b40056197245bf70bc5a0b4e04b643ed5f7e7b1f6c6f73890c",
@@ -24986,7 +25021,7 @@
           "nips/nip59/CMakeLists.txt": "d93715985b717092467c506ffe0c0505346f086af88643c4e8112c8280072056",
           "nips/nip59/TestInventory.cmake": "606c9562d722a4f24a540b04f0b679e6125d352fb51af5d44e7a92e69ab89d44",
           "nips/nip5f/CMakeLists.txt": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4",
-          "nips/nip5f/TestInventory.cmake": "da1770b54d784bccdcce92b0d9e705fc8cdbe1631879e729aa4eda423fb1e6fa",
+          "nips/nip5f/TestInventory.cmake": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da",
           "nips/nip60/CMakeLists.txt": "07a1dd2b4772611853ae3cf0d246b874f8a1a432ee1d4183f975846408fcd704",
           "nips/nip60/TestInventory.cmake": "02652d7a70caaf3169b891236cd8ee17ae73a68d5a6ffe85c2b1c18da1267731",
           "nips/nip61/CMakeLists.txt": "a0267b1154af85b40056197245bf70bc5a0b4e04b643ed5f7e7b1f6c6f73890c",

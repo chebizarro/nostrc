@@ -79,7 +79,8 @@ class SupportedProfileMembership(unittest.TestCase):
             current = self.p['diagnostic_nonmember_subsets'][profile]
             old = before_supported_batch_contract(current, profile)
             self.assertEqual(s.digest(old), record['before_hash'])
-            self.assertEqual(set(record['source_changes']), {'gnome/groundhog/TestInventory.cmake'})
+            self.assertEqual(set(record['source_changes']),
+                             {'gnome/groundhog/TestInventory.cmake', 'nips/nip5f/TestInventory.cmake'})
             self.assertEqual(current['registrations'], old['registrations'])
             self.assertEqual(len(current['registrations']), 33)
             self.assertEqual(set(current['review']['source_inputs']), set(old['review']['source_inputs']))
@@ -117,8 +118,11 @@ class SupportedProfileMembership(unittest.TestCase):
         for name in ('groundhog-store-key-keyring', 'groundhog-nip46-credentials-keyring',
                      'groundhog-nip46-pair-nak'):
             self.assertIn('gnome_keyring', record[name]['requires'])
+        self.assertEqual(record['test_nip5f_tcp']['requires'], ['signer_endpoint'])
+        self.assertNotIn('signer_endpoint', record['test_nip5f_loopback']['requires'])
         for profile in ('groundhog.linux', 'grotto.linux'):
-            self.assertFalse({'nak', 'gnome_keyring'} & set(self.p['profiles'][profile]['capabilities']))
+            self.assertFalse({'nak', 'gnome_keyring', 'signer_endpoint'} &
+                             set(self.p['profiles'][profile]['capabilities']))
 
     def test_semantic_selection_savings_no_new_live_peer_or_unrelated_standalone_work(self):
         historical = before_supported_batch_policy(self.p)

@@ -35,7 +35,7 @@ class VectorFamilyIntegration(unittest.TestCase):
                 self.assertEqual({p for p in before if before[p] != after[p]}, SOURCES)
                 current = self.current_policy['diagnostic_nonmember_subsets'][profile]['review']['source_inputs']
                 self.assertEqual({path for path in after if after[path] != current[path]},
-                                 {'gnome/groundhog/TestInventory.cmake'})
+                                 {'gnome/groundhog/TestInventory.cmake', 'nips/nip5f/TestInventory.cmake'})
                 for path, expected in current.items():
                     self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected)
                 for key in contract.keys() - {'review', 'primary_registrations', 'required_closure'}:

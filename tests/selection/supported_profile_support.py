@@ -10,7 +10,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/supported_profile_membership.json'
-WITNESS_SHA256 = '60c4d9eae7bdb7f8d8366912be9579581a1180e984e8c12668775bf90c0f1301'
+WITNESS_SHA256 = '9e2b70b3688a766858af8f507cc6bf7e0c87ccdbd961141848f918db476f149d'
 NEW_INPUTS = [
     '{source}/tests/selection/supported_profile_support.py',
     '{source}/tests/selection/test_supported_profile_membership.py',
@@ -26,7 +26,7 @@ def witness():
 
 
 def before_supported_batch_contract(contract, profile):
-    """Reverse only exact selected closure and one descriptor source hash."""
+    """Reverse only exact selected closure and the two descriptor source hashes."""
     record = witness()['contracts'][profile]
     digest = s.digest(contract)
     if digest == record['before_hash']:
