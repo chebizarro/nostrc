@@ -14,7 +14,7 @@ FAMILY = ['test_nip49_negative', 'test_nip49_payload', 'test_nip49_roundtrip',
 
 
 DESCRIPTOR_RENEWAL = 'tests/selection/fixtures/nip49_descriptor_renewal_20261022.json'
-DESCRIPTOR_RENEWAL_SHA256 = 'ceed1de11213de308552fb42ee7ef97d6f1a1060364cd887f9e1efaec357984a'
+DESCRIPTOR_RENEWAL_SHA256 = '78e6c2fed93894ad0f71e37207af28c642f425d57ddba7b21df47b5fb42bfcd7'
 
 
 def before_nip49_descriptor_renewal(contract, profile):

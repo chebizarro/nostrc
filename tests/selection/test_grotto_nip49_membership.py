@@ -179,6 +179,36 @@ class GrottoNip49Membership(unittest.TestCase):
         self.assertIn('raw diagnostic', proof['execution'])
         self.assertFalse(any(self.renewal['limits'].values()))
 
+    def test_fresh_fifth_admission_witness_is_canonical_and_incomplete(self):
+        witness = json.loads((ROOT / DESCRIPTOR_RENEWAL).read_text())
+        proof = witness['admission_proof']
+        self.assertEqual(proof['source_identity']['kind'], 'committed')
+        self.assertFalse(proof['full_profile_execution'])
+        admission = proof['admission']
+        self.assertEqual((admission['primary'], admission['fixture_closure']), (58, 61))
+        self.assertEqual((admission['old_primary'], admission['old_fixture_closure']), (57, 60))
+        self.assertEqual(admission['all_cli']['exit_code'], 0)
+        self.assertEqual(admission['fifth_cli']['exit_code'], 0)
+        self.assertEqual((admission['admit'], admission['validate_resolved']), ('PASS', 'PASS'))
+        self.assertNotEqual(admission['old_independent_cli']['exit_code'], 0)
+        self.assertIn('authored primary/fixture closure changed', admission['old_independent_refusal'])
+        self.assertEqual(admission['required_capabilities'], [])
+        self.assertEqual(admission['fifth_runtime_inputs'], [SPEC])
+        self.assertFalse(admission['physical_selected_execution'])
+        descriptor = proof['canonical_fifth_descriptor']
+        self.assertEqual(descriptor['inputs'], [SPEC])
+        self.assertEqual(descriptor['owner'], ['nip49', 'nip49.test_inputs'])
+        self.assertEqual(descriptor['requires'], [])
+        digest = hashlib.sha256((ROOT / 'nips/nip49/SPEC_SOURCE').read_bytes()).hexdigest()
+        for profile, record in proof['profiles'].items():
+            self.assertEqual(record['spec_source_sha256'], digest)
+            self.assertFalse(record['passed'])
+            self.assertFalse(record['complete'])
+            self.assertFalse(record['complete_gate_eligible'])
+            self.assertEqual((record['omissions'], record['required_omitted_target_closures']), (33, 29))
+            self.assertEqual(proof['comparison'][profile]['added_input_hashes'], {SPEC: digest})
+            self.assertEqual(proof['comparison'][profile]['added'], [])
+
     def test_exact_descriptor_source_renewal_and_mutations_refuse(self):
         witness = json.loads((ROOT / DESCRIPTOR_RENEWAL).read_text())
         self.assertEqual(witness['source_path'], 'nips/nip49/TestInventory.cmake')
