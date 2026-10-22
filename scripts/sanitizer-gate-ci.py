@@ -51,6 +51,7 @@ import os
 import re
 import runpy
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -593,7 +594,11 @@ def run_shared(args):
         raise WorkflowError("shared phase-aware core API is unsupported; no legacy Ninja fallback")
     policy = shared.load_inventory(root / args.inventory)
     profile = policy["profiles"][args.shared_profile]
-    unsupported = set(profile.get("capabilities", [])) - {"display", "private_bus"}
+    if "gnome_keyring" in profile.get("capabilities", []):
+        raise WorkflowError("gnome_keyring requires attested private HOME/private bus/throwaway Secret Service custody; shared adapter not implemented")
+    if "nak" in profile.get("capabilities", []) and not shutil.which("nak"):
+        raise WorkflowError("selected nak capability requires the actual nak executable")
+    unsupported = set(profile.get("capabilities", [])) - {"display", "private_bus", "nak"}
     if unsupported:
         raise WorkflowError("shared diagnostic requires an unimplemented guarded capability: " + str(sorted(unsupported)))
     for cap, variable in (("display", "DISPLAY"), ("private_bus", "DBUS_SESSION_BUS_ADDRESS")):

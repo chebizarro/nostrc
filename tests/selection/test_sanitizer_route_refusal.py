@@ -23,6 +23,22 @@ class SharedSanitizerRouteTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'unimplemented guarded adapter'):
             namespace['host_guard'](profile,[],{'checks':{}},'fixture')
 
+    def test_outer_tool_capabilities_refuse_missing_nak_and_unattested_keyring(self):
+        script=(ROOT/'scripts/test-gate.sh').read_text().split("<<'PY'\n",1)[1].rsplit('\nPY',1)[0]
+        function=next(n for n in ast.parse(script).body if isinstance(n,ast.FunctionDef) and n.name=='host_guard')
+        namespace=dict(platform=platform, os=os, shutil=SimpleNamespace(which=lambda name: None),
+                       args=SimpleNamespace(linux_custody='legacy'))
+        exec(compile(ast.Module(body=[function],type_ignores=[]),'<host tool guard>','exec'),namespace)
+        host={'Darwin':'macos','Linux':'linux','Windows':'windows'}[platform.system()]
+        check=dict(kind='command',profiles=['fixture'],build_targets=[],requires=['nak'])
+        profile=dict(platform=host,architecture='native',capabilities=['nak'])
+        with self.assertRaisesRegex(RuntimeError,'actual nak executable; lane not launched'):
+            namespace['host_guard'](profile,['tool'],{'checks':{'tool':check}},'fixture')
+        check['requires']=['gnome_keyring']
+        profile['capabilities']=['gnome_keyring','private_bus']
+        with self.assertRaisesRegex(RuntimeError,'attested private HOME/private bus/throwaway Secret Service'):
+            namespace['host_guard'](profile,['tool'],{'checks':{'tool':check}},'fixture')
+
     def test_unknown_shared_profile_stops_before_docker_or_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             tools=Path(tmp);trace=tools/'called'
