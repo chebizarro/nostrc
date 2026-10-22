@@ -4761,8 +4761,10 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
-    "groundhog.media": {
-      "build_targets": [],
+  "groundhog.media": {
+    "build_targets": [
+      "test-groundhog-media"
+    ],
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux": [
@@ -4802,8 +4804,81 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
-    "groundhog.mls_media": {
-      "build_targets": [],
+  "groundhog.blossom": {
+    "build_targets": [
+      "groundhog-test-schemas",
+      "test-groundhog-blossom"
+    ],
+    "cost": "ordinary",
+    "ctest_tests": {
+      "groundhog.linux": [
+        "groundhog-blossom"
+      ]
+    },
+    "expected_outcome": "pass",
+    "kind": "ctest",
+    "nodes": [
+      "groundhog.media",
+      "groundhog.resources",
+      "execution.groundhog",
+      "groundhog.unclassified"
+    ],
+    "profiles": [
+      "groundhog.linux"
+    ],
+    "requirement": "blocking",
+    "runtime_inputs": []
+  },
+  "groundhog.media_cache_binding": {
+    "build_targets": [
+      "groundhog-test-schemas",
+      "test-groundhog-media-cache-binding"
+    ],
+    "cost": "ordinary",
+    "ctest_tests": {
+      "groundhog.linux": [
+        "groundhog-media-cache-binding"
+      ]
+    },
+    "expected_outcome": "pass",
+    "kind": "ctest",
+    "nodes": [
+      "groundhog.media",
+      "groundhog.resources",
+      "execution.groundhog",
+      "groundhog.unclassified"
+    ],
+    "profiles": [
+      "groundhog.linux"
+    ],
+    "requirement": "blocking",
+    "runtime_inputs": []
+  },
+  "groundhog.media_purge": {
+    "build_targets": [
+      "test-groundhog-media-purge"
+    ],
+    "cost": "ordinary",
+    "ctest_tests": {
+      "groundhog.linux": [
+        "groundhog-media-purge"
+      ]
+    },
+    "expected_outcome": "pass",
+    "kind": "ctest",
+    "nodes": [
+      "groundhog.media",
+      "execution.groundhog",
+      "groundhog.unclassified"
+    ],
+    "profiles": [
+      "groundhog.linux"
+    ],
+    "requirement": "blocking",
+    "runtime_inputs": []
+  },
+  "groundhog.mls_media": {
+    "build_targets": [],
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux": [
@@ -13805,8 +13880,11 @@
         "groundhog-about-gui",
         "groundhog-account-backends",
         "groundhog-account-remote-switch",
+        "groundhog-blossom",
         "groundhog-conversations",
         "groundhog-media",
+        "groundhog-media-cache-binding",
+        "groundhog-media-purge",
         "groundhog-mls-files",
         "groundhog-mls-media",
         "groundhog-mls-service",
@@ -14294,8 +14372,11 @@
         "groundhog-about-gui",
         "groundhog-account-backends",
         "groundhog-account-remote-switch",
+        "groundhog-blossom",
         "groundhog-conversations",
         "groundhog-media",
+        "groundhog-media-cache-binding",
+        "groundhog-media-purge",
         "groundhog-mls-files",
         "groundhog-mls-media",
         "groundhog-mls-service",
