@@ -72,7 +72,13 @@ def before_closeout_contract(contract, profile):
     return previous
 
 
-NATIVE_RUNTIME_NODES = ['grotto.gui', 'mdk011.peer_inputs']
+RUNTIME_SOURCE_RULES = [
+    {'effect': 'impact', 'exact': path, 'nodes': [owner, 'selection.contract'],
+     'reason': 'Standalone runtime diagnostic source closure; preserve product ownership without profile admission.'}
+    for owner, path in [('grotto.gui', 'apps/grotto/data/org.nostr.Grotto.gschema.xml')] +
+    [('mdk011.peer_inputs', 'tests/interop/mdk/driver-0.11/' + name)
+     for name in ('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'src/main.rs')]
+]
 NATIVE_RUNTIME_INPUTS = [
     '{source}/scripts/adapter_namespace_custody.py',
     '{source}/tests/selection/test_namespace_custody.py',
@@ -104,8 +110,11 @@ def before_native_custody_policy(policy):
         before = witness()['checks']['selection.contract']['after']
         after = copy.deepcopy(before)
         after['runtime_inputs'] += NATIVE_RUNTIME_INPUTS
-        after['nodes'] += NATIVE_RUNTIME_NODES
         s.require(check == after, 'native custody command input enrollment changed')
+        for rule in RUNTIME_SOURCE_RULES:
+            s.require(previous['path_rules'].count(rule) == 1,
+                      'native custody runtime source ownership changed')
+            previous['path_rules'].remove(rule)
         previous['checks']['selection.contract'] = copy.deepcopy(before)
     return previous
 

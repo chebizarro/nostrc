@@ -3,6 +3,7 @@
 These are not live Docker/TCP acceptance or a new selector capability. The live
 standalone runners require the separately retained operator/provisioning proof.
 """
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 from selector_support import ROOT, s
 
@@ -74,6 +76,16 @@ class RuntimeDiagnosticInputs(unittest.TestCase):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         for profile in policy['profiles'].values():
             self.assertNotIn('signer_endpoint', profile.get('capabilities', []))
+        schema = ROOT / 'apps/grotto/data/org.nostr.Grotto.gschema.xml'
+        self.assertTrue(ET.parse(schema).getroot().findall('schema'))
+        for runner in ('test_provisioned_nip5f.py', 'test_mdk011_cache_contract.py',
+                       'test_mdk011_export_custody.py'):
+            path = ROOT / 'tests/runtime' / runner
+            ast.parse(path.read_bytes(), filename=str(path))
+        for path, owner in [('apps/grotto/data/org.nostr.Grotto.gschema.xml', 'grotto.gui'),
+                            ('tests/interop/mdk/driver-0.11/src/main.rs', 'mdk011.peer_inputs')]:
+            self.assertEqual(set(s.classify(policy, path)['nodes']), {owner, 'selection.contract'})
+        self.assertNotIn('selection.contract', s.classify(policy, 'apps/grotto/src/main.c')['nodes'])
         # Their CLI runners are intentionally not auto-discovered as selector tests.
         check = policy['checks']['selection.contract']
         self.assertNotIn('tests/runtime', check['command'])

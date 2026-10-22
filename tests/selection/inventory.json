@@ -7594,9 +7594,7 @@
         "shared.tests",
         "groundhog.gresource_inputs",
         "groundhog.resources",
-        "groundhog.unclassified",
-        "grotto.gui",
-        "mdk011.peer_inputs"
+        "groundhog.unclassified"
       ],
       "profiles": [
         "static.policy"
@@ -21178,6 +21176,12 @@
     }
   },
   "path_rules": [
+    {"effect": "impact", "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml", "nodes": ["grotto.gui", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Dockerfile", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.lock", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/rust-toolchain.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/src/main.rs", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
     {
       "effect": "impact",
       "exact": "apps/grotto/data/org.nostr.Grotto.service.in",
