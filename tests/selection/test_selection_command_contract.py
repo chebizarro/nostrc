@@ -62,10 +62,12 @@ SUPPORT_INPUTS = {
     "scripts/contained-gate.py",
     "scripts/contained-runner.py",
     "scripts/test_selection_custody.py",
+    "scripts/test_selection_keyring.py",
     "tests/selection/test_contained_custody_contract.py",
     "tests/custody/workload.py",
     "tests/custody/test_contained_linux.py",
     "tests/custody/test_contained_engine.py",
+    "tests/custody/test_keyring_runtime.py",
 }
 
 

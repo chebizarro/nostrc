@@ -95,7 +95,7 @@ jobs:
         if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')
         run: |
           set -euo pipefail
-          go install github.com/fiatjaf/nak@v0.19.7
+          go install -ldflags='-X main.version=v0.19.7' github.com/fiatjaf/nak@v0.19.7
           tool_bin="$(go env GOPATH)/bin"
           test -x "$tool_bin/nak"
           "$tool_bin/nak" --version

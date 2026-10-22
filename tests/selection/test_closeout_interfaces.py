@@ -1,6 +1,12 @@
 """Pinned sibling reconciliation without renewing historical source authorities."""
 import copy
+import hashlib
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -38,6 +44,39 @@ class CloseoutInterfaces(unittest.TestCase):
                     self.assertEqual(before.get(field), after.get(field), (ident, field))
             for field in ('source_sha256', 'workflow_sha256', 'matrix_source'):
                 self.assertEqual(after[field], observed[ident][field], (ident, field))
+
+    def test_actual_install_script_pins_module_and_reported_version_in_one_argument(self):
+        repair = self.data['workflow_install_repair']
+        raw = (ROOT / repair['workflow']).read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), repair['after_sha256'])
+        self.assertEqual(raw.count(repair['after_command'].encode()), 1)
+        prior = raw.replace(repair['after_command'].encode(), repair['before_command'].encode())
+        self.assertEqual(hashlib.sha256(prior).hexdigest(), repair['before_sha256'])
+        block = raw.decode().split('- name: Install pinned nak for ordinary runtime peers', 1)[1]
+        script = textwrap.dedent(block.split('- name:', 1)[0].split('run: |\n', 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'bin').mkdir()
+            nak = root / 'gopath/bin/nak'
+            nak.parent.mkdir(parents=True)
+            nak.touch(); nak.chmod(0o755)
+            go = root / 'bin/go'
+            go.write_text('#!' + sys.executable + '\nimport json, os, sys\n'
+                          'with open(os.environ["GO_CAPTURE"], "a") as f: '
+                          'f.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                          'if sys.argv[1:] == ["env", "GOPATH"]: '
+                          'print(os.environ["TEST_GOPATH"])\n')
+            go.chmod(0o755)
+            capture = root / 'capture.jsonl'
+            env = dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'],
+                       GO_CAPTURE=str(capture), TEST_GOPATH=str(root / 'gopath'),
+                       GITHUB_PATH=str(root / 'github-path'))
+            result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([json.loads(line) for line in capture.read_text().splitlines()],
+                             [['install', '-ldflags=-X main.version=v0.19.7', repair['upstream_module']],
+                              ['env', 'GOPATH']])
+            self.assertEqual((root / 'github-path').read_text(), str(nak.parent) + '\n')
 
     def test_executable_capabilities_do_not_attest_signer_or_live_docker_setup(self):
         for profile in self.data['profiles']:

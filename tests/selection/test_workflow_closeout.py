@@ -118,9 +118,10 @@ class OrdinaryToolSetupTests(unittest.TestCase):
                 with patch.dict(os.environ, PROFILE='grotto.linux.asan_ubsan'):
                     with self.assertRaisesRegex(fixtures.s.ContractError, 'not this profile'):
                         ci.ordinary_tool_setup(sha)
-                (root / 'nak').write_text('#!/bin/sh\necho "nak version v0.19.8"\n')
-                with self.assertRaisesRegex(fixtures.s.ContractError, 'does not match pinned'):
-                    ci.ordinary_tool_setup(sha)
+                for version in ('debug', 'v0.19.8'):
+                    (root / 'nak').write_text('#!/bin/sh\necho "nak version ' + version + '"\n')
+                    with self.assertRaisesRegex(fixtures.s.ContractError, 'does not match pinned'):
+                        ci.ordinary_tool_setup(sha)
                 (root / 'nak').write_text('#!/bin/sh\necho "nak version v0.19.7"\n')
                 (root / 'gnome-keyring-daemon').unlink()
                 with self.assertRaisesRegex(fixtures.s.ContractError, 'unavailable: gnome-keyring-daemon'):
@@ -139,7 +140,7 @@ class OrdinaryToolSetupTests(unittest.TestCase):
             self.assertLess(text.index('- name: ' + step), text.index('- name: Resolve, audit, build and execute exact selected checks'))
             self.assertNotIn('continue-on-error', block)
             self.assertNotIn('|| true', block)
-        self.assertIn('go install github.com/fiatjaf/nak@v0.19.7', text)
+        self.assertIn("go install -ldflags='-X main.version=v0.19.7' github.com/fiatjaf/nak@v0.19.7", text)
         self.assertIn('dependency_contract.py ordinary-tools --sha "$REQUESTED_SHA"', text)
         self.assertIn('${{ runner.temp }}/dependency/ordinary-tool-setup.json', text)
         setup = text.split('- name: Install Linux profile prerequisites', 1)[1].split('- name:', 1)[0]

@@ -26482,9 +26482,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "d6bd9bb290f026e27a051db3b49ff11a00fb3e2fe90288d2fbc20cffe20a240e",
+      "source_sha256": "6126abd637fccb72dc977c615b7357d6cbc7a39f239bdf53833698c3886c2476",
       "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
-      "workflow_sha256": "931ddacffa97db567110ae19dd2d2eaa3bfc7c804da4f85483a30e78e6d1979a"
+      "workflow_sha256": "4afc30d9ae625160c7f763a35df255cdc6ce015dc4924b6edb35cd91e3eb2aa0"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
