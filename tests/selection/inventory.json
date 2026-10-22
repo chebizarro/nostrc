@@ -4812,7 +4812,9 @@
       "command": [
         "cmake",
         "--build",
-        "{build}"
+        "{build}",
+        "--config",
+        "Debug"
       ],
       "cost": "ordinary",
       "environment": {},
@@ -4834,7 +4836,9 @@
       "command": [
         "cmake",
         "--build",
-        "{build}"
+        "{build}",
+        "--config",
+        "Debug"
       ],
       "cost": "ordinary",
       "environment": {},
@@ -4856,7 +4860,9 @@
       "command": [
         "cmake",
         "--build",
-        "{build}"
+        "{build}",
+        "--config",
+        "Debug"
       ],
       "cost": "ordinary",
       "environment": {},
@@ -4878,7 +4884,9 @@
       "command": [
         "cmake",
         "--build",
-        "{build}"
+        "{build}",
+        "--config",
+        "Debug"
       ],
       "cost": "ordinary",
       "environment": {},
