@@ -1,0 +1,2629 @@
+{
+  "primary": {
+    "groundhog-conversations": {
+      "closure_names": [
+        "groundhog-conversations",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "gn_content_parser",
+        "gn_issue_model",
+        "groundhog-conversations",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nostr",
+        "nostr-gtk-i18n",
+        "nostr_gobject",
+        "nostr_gtk_portable",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-conversations"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-agent-event.c",
+        "{source}/gnome/groundhog/src/app/gh-attachment-transfer.c",
+        "{source}/gnome/groundhog/src/app/gh-conversation-store.c",
+        "{source}/gnome/groundhog/src/app/gh-conversation.c",
+        "{source}/gnome/groundhog/src/app/gh-display-name.c",
+        "{source}/gnome/groundhog/src/app/gh-message-status.c",
+        "{source}/gnome/groundhog/src/app/gh-message.c",
+        "{source}/gnome/groundhog/src/app/gh-nip17-file.c",
+        "{source}/gnome/groundhog/src/app/gh-reaction-store.c",
+        "{source}/gnome/groundhog/src/app/gh-reaction.c",
+        "{source}/gnome/groundhog/tests/app/test_conversation_store.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip34/src/nip34.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/nostr-gtk/src/content_renderer.c",
+        "{source}/nostr-gtk/src/gn-animated-image.c",
+        "{source}/nostr-gtk/src/gn-markdown-pango.c",
+        "{source}/nostr-gtk/src/gn-markdown.c",
+        "{source}/nostr-gtk/src/gn-media-decode.c",
+        "{source}/nostr-gtk/src/gn-media-source.c",
+        "{source}/nostr-gtk/src/gn-media-viewer.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue-fields.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue-iface.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue-view.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue.c",
+        "{source}/nostr-gtk/src/gn-nostr-reference-card.c",
+        "{source}/nostr-gtk/src/gn-nostr-reference-resolver.c",
+        "{source}/nostr-gtk/src/gn-nostr-reference.c",
+        "{source}/nostr-gtk/src/gn-og-metadata.c",
+        "{source}/nostr-gtk/src/gn-og-preview-card.c",
+        "{source}/nostr-gtk/src/gn-og-preview-provider.c",
+        "{source}/nostr-gtk/src/gn-portable-i18n.c",
+        "{source}/nostr-gtk/src/gn-video-player.c",
+        "{source}/nostr-gtk/src/nostr-gtk-error.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "groundhog-store": {
+      "closure_names": [
+        "groundhog-store",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "groundhog-store-testhooks",
+        "test-groundhog-store"
+      ],
+      "source_inputs": [
+        "{source}/gnome/groundhog/src/store/gh-clock.c",
+        "{source}/gnome/groundhog/src/store/gh-store-schema.c",
+        "{source}/gnome/groundhog/src/store/gh-store.c",
+        "{source}/gnome/groundhog/tests/store/crash-harness.c",
+        "{source}/gnome/groundhog/tests/store/test_store.c"
+      ]
+    },
+    "groundhog-store-conversations": {
+      "closure_names": [
+        "groundhog-store-conversations",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes"
+      ],
+      "closure_targets": [
+        "gn_content_parser",
+        "gn_issue_model",
+        "groundhog-conversations",
+        "groundhog-store-testhooks",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nostr",
+        "nostr-gtk-i18n",
+        "nostr_gobject",
+        "nostr_gtk_portable",
+        "nostr_json",
+        "nostr_nip44_core",
+        "nostr_nip46_core",
+        "nostr_nip49_core",
+        "nostr_nip49_glib",
+        "nostrdb",
+        "nostrdb_storage",
+        "nostrdb_vendored",
+        "nostrgo",
+        "test-groundhog-store-conversations"
+      ],
+      "source_inputs": [
+        "{source}/components/nostrdb/src/nostrdb_storage.c",
+        "{source}/gnome/groundhog/src/app/gh-agent-event.c",
+        "{source}/gnome/groundhog/src/app/gh-attachment-transfer.c",
+        "{source}/gnome/groundhog/src/app/gh-conversation-store.c",
+        "{source}/gnome/groundhog/src/app/gh-conversation.c",
+        "{source}/gnome/groundhog/src/app/gh-display-name.c",
+        "{source}/gnome/groundhog/src/app/gh-message-status.c",
+        "{source}/gnome/groundhog/src/app/gh-message.c",
+        "{source}/gnome/groundhog/src/app/gh-nip17-file.c",
+        "{source}/gnome/groundhog/src/app/gh-reaction-store.c",
+        "{source}/gnome/groundhog/src/app/gh-reaction.c",
+        "{source}/gnome/groundhog/src/store/gh-clock.c",
+        "{source}/gnome/groundhog/src/store/gh-store-conversations.c",
+        "{source}/gnome/groundhog/src/store/gh-store-reactions.c",
+        "{source}/gnome/groundhog/src/store/gh-store-schema.c",
+        "{source}/gnome/groundhog/src/store/gh-store.c",
+        "{source}/gnome/groundhog/tests/store/crash-harness.c",
+        "{source}/gnome/groundhog/tests/store/test_store_conversations.c",
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libjson/src/json.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip06/src/nip06.c",
+        "{source}/nips/nip11/src/nip11.c",
+        "{source}/nips/nip19/src/bech32.c",
+        "{source}/nips/nip19/src/nip19.c",
+        "{source}/nips/nip19/src/pointer.c",
+        "{source}/nips/nip19/src/pointer_api.c",
+        "{source}/nips/nip19/src/tlv.c",
+        "{source}/nips/nip34/src/nip34.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip46/src/core/nip46_envelope.c",
+        "{source}/nips/nip46/src/core/nip46_msg.c",
+        "{source}/nips/nip46/src/core/nip46_session.c",
+        "{source}/nips/nip46/src/core/nip46_uri.c",
+        "{source}/nips/nip49/src/core/nip49.c",
+        "{source}/nips/nip49/src/core/nip49_aead.c",
+        "{source}/nips/nip49/src/core/nip49_bech.c",
+        "{source}/nips/nip49/src/core/nip49_kdf.c",
+        "{source}/nips/nip49/src/glib/nip49_g.c",
+        "{source}/nostr-gobject/src/crypto_utils.c",
+        "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c",
+        "{source}/nostr-gobject/src/gn-nostr-profile.c",
+        "{source}/nostr-gobject/src/gn-timeline-query.c",
+        "{source}/nostr-gobject/src/gnostr-app-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-identity.c",
+        "{source}/nostr-gobject/src/gnostr-mute-list.c",
+        "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c",
+        "{source}/nostr-gobject/src/gnostr-relays.c",
+        "{source}/nostr-gobject/src/gnostr-signer-bridge.c",
+        "{source}/nostr-gobject/src/gnostr-sync-service.c",
+        "{source}/nostr-gobject/src/gnostr-thread-graph-model.c",
+        "{source}/nostr-gobject/src/gnostr-thread-subscription.c",
+        "{source}/nostr-gobject/src/nostr-enums.c",
+        "{source}/nostr-gobject/src/nostr-error.c",
+        "{source}/nostr-gobject/src/nostr_async.c",
+        "{source}/nostr-gobject/src/nostr_bip39.c",
+        "{source}/nostr-gobject/src/nostr_event.c",
+        "{source}/nostr-gobject/src/nostr_event_bus.c",
+        "{source}/nostr-gobject/src/nostr_filter.c",
+        "{source}/nostr-gobject/src/nostr_json.c",
+        "{source}/nostr-gobject/src/nostr_keys.c",
+        "{source}/nostr-gobject/src/nostr_ndb_store.c",
+        "{source}/nostr-gobject/src/nostr_nip19.c",
+        "{source}/nostr-gobject/src/nostr_nip46_bunker.c",
+        "{source}/nostr-gobject/src/nostr_nip46_client.c",
+        "{source}/nostr-gobject/src/nostr_nip49.c",
+        "{source}/nostr-gobject/src/nostr_pointer.c",
+        "{source}/nostr-gobject/src/nostr_pool.c",
+        "{source}/nostr-gobject/src/nostr_profile_provider.c",
+        "{source}/nostr-gobject/src/nostr_profile_service.c",
+        "{source}/nostr-gobject/src/nostr_query_batcher.c",
+        "{source}/nostr-gobject/src/nostr_relay.c",
+        "{source}/nostr-gobject/src/nostr_relay_store.c",
+        "{source}/nostr-gobject/src/nostr_simple_pool.c",
+        "{source}/nostr-gobject/src/nostr_store.c",
+        "{source}/nostr-gobject/src/nostr_subscription.c",
+        "{source}/nostr-gobject/src/nostr_subscription_registry.c",
+        "{source}/nostr-gobject/src/nostr_tag_list.c",
+        "{source}/nostr-gobject/src/nostr_utils.c",
+        "{source}/nostr-gobject/src/storage_ndb.c",
+        "{source}/nostr-gtk/src/content_renderer.c",
+        "{source}/nostr-gtk/src/gn-animated-image.c",
+        "{source}/nostr-gtk/src/gn-markdown-pango.c",
+        "{source}/nostr-gtk/src/gn-markdown.c",
+        "{source}/nostr-gtk/src/gn-media-decode.c",
+        "{source}/nostr-gtk/src/gn-media-source.c",
+        "{source}/nostr-gtk/src/gn-media-viewer.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue-fields.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue-iface.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue-view.c",
+        "{source}/nostr-gtk/src/gn-nip34-issue.c",
+        "{source}/nostr-gtk/src/gn-nostr-reference-card.c",
+        "{source}/nostr-gtk/src/gn-nostr-reference-resolver.c",
+        "{source}/nostr-gtk/src/gn-nostr-reference.c",
+        "{source}/nostr-gtk/src/gn-og-metadata.c",
+        "{source}/nostr-gtk/src/gn-og-preview-card.c",
+        "{source}/nostr-gtk/src/gn-og-preview-provider.c",
+        "{source}/nostr-gtk/src/gn-portable-i18n.c",
+        "{source}/nostr-gtk/src/gn-video-player.c",
+        "{source}/nostr-gtk/src/nostr-gtk-error.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    }
+  },
+  "profile": {
+    "architecture": "x86_64",
+    "build_type": "Debug",
+    "capabilities": [
+      "display",
+      "private_bus"
+    ],
+    "compiler": "gcc",
+    "configure_args": [
+      "-G",
+      "Ninja",
+      "-DCMAKE_BUILD_TYPE=Debug",
+      "-DBUILD_TESTING=ON",
+      "-DBUILD_GROUNDHOG=ON",
+      "-DBUILD_NOSTR_GOBJECT=ON",
+      "-DBUILD_NOSTR_GTK=ON",
+      "-DBUILD_APPS=OFF",
+      "-DBUILD_RELAYD=ON",
+      "-DSIGNET_ENABLE=OFF",
+      "-DBUILD_MDK011_INTEROP=OFF",
+      "-DBUILD_MDK_INTEROP=OFF"
+    ],
+    "environment": {},
+    "feature_variants": [],
+    "instrumentation": "none",
+    "local_availability": "host_or_container",
+    "parallelism": 2,
+    "platform": "linux",
+    "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+    "source_dir": ".",
+    "timeout_seconds": 3600
+  },
+  "provenance": "Retained actual authored Linux/x86_64 full preaudit export; not fresh execution or complete-gate acceptance.",
+  "realization": {
+    "descriptors": [
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-conversations",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-store",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "pass"
+        ],
+        "inputs": [],
+        "name": "groundhog-store-conversations",
+        "owner": [
+          "groundhog.unclassified"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "fixture"
+        ],
+        "inputs": [],
+        "name": "groundhog-test-gst-registry",
+        "owner": [
+          "testing.framework"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/gnome/groundhog",
+        "declared_depends": [],
+        "expected": [
+          "fixture"
+        ],
+        "inputs": [
+          "{build}/gnome/groundhog/groundhog-test-homes.cmake",
+          "{source}/cmake/NostrcTestIsolation.cmake"
+        ],
+        "name": "groundhog-test-homes",
+        "owner": [
+          "testing.framework"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/gnome/groundhog",
+        "targets": []
+      }
+    ],
+    "targets": {
+      "gn_content_parser::@6386df3009bfd7f4463a": {
+        "artifacts": [
+          "{build}/nostr-gtk/CMakeFiles/gn_content_parser.dir/src/content_renderer.c.o",
+          "{build}/nostr-gtk/CMakeFiles/gn_content_parser.dir/src/nostr-gtk-error.c.o"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-pthread"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0"
+        ],
+        "id": "gn_content_parser::@6386df3009bfd7f4463a",
+        "name": "gn_content_parser",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/content_renderer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/nostr-gtk-error.c"
+          }
+        ],
+        "type": "OBJECT_LIBRARY"
+      },
+      "gn_issue_model::@6386df3009bfd7f4463a": {
+        "artifacts": [
+          "{build}/nostr-gtk/CMakeFiles/gn_issue_model.dir/src/gn-nip34-issue.c.o",
+          "{build}/nostr-gtk/CMakeFiles/gn_issue_model.dir/src/gn-nip34-issue-iface.c.o",
+          "{build}/nostr-gtk/CMakeFiles/gn_issue_model.dir/src/gn-portable-i18n.c.o"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-pthread"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip34::@ebf86b00a95111ed0d35"
+        ],
+        "id": "gn_issue_model::@6386df3009bfd7f4463a",
+        "name": "gn_issue_model",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nip34-issue.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nip34-issue-iface.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-portable-i18n.c"
+          }
+        ],
+        "type": "OBJECT_LIBRARY"
+      },
+      "groundhog-conversations::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-conversations.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nip34::@ebf86b00a95111ed0d35",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "nostr_gtk_portable::@6386df3009bfd7f4463a"
+        ],
+        "id": "groundhog-conversations::@264a94c6b18579f76d51",
+        "name": "groundhog-conversations",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-agent-event.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-message.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-conversation.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-conversation-store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-message-status.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-reaction.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-reaction-store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-display-name.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-nip17-file.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/app/gh-attachment-transfer.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "groundhog-store-testhooks::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/libgroundhog-store-testhooks.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-pthread"
+        ],
+        "dependencies": [],
+        "id": "groundhog-store-testhooks::@264a94c6b18579f76d51",
+        "name": "groundhog-store-testhooks",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/store/gh-store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/store/gh-store-schema.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/store/gh-clock.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip04::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/libnip04.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip04::@6027616dcf59074a386e",
+        "name": "nip04",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/src/nip04.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip06::@c7b4c7b933bb53d4442b": {
+        "artifacts": [
+          "{build}/nips/nip06/libnip06.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip06::@c7b4c7b933bb53d4442b",
+        "name": "nip06",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip06/src/nip06.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip11::@20bc37d91fa2bcdc8615": {
+        "artifacts": [
+          "{build}/nips/nip11/libnip11.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37"
+        ],
+        "id": "nip11::@20bc37d91fa2bcdc8615",
+        "name": "nip11",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip11/src/nip11.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip19::@c476aefc5d4177e752ee": {
+        "artifacts": [
+          "{build}/nips/nip19/libnip19.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip19::@c476aefc5d4177e752ee",
+        "name": "nip19",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/nip19.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/pointer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/pointer_api.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip19/src/tlv.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nip34::@ebf86b00a95111ed0d35": {
+        "artifacts": [
+          "{build}/nips/nip34/libnip34.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip34::@ebf86b00a95111ed0d35",
+        "name": "nip34",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip34/src/nip34.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr-gtk-i18n::@6386df3009bfd7f4463a": {
+        "artifacts": [],
+        "compile_fragments": [],
+        "dependencies": [],
+        "id": "nostr-gtk-i18n::@6386df3009bfd7f4463a",
+        "name": "nostr-gtk-i18n",
+        "sources": [
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/nostr-gtk-i18n"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/nostr-gtk-i18n.rule"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/locale/en@pseudo/LC_MESSAGES/nostr-gtk.mo.rule"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/po/en@pseudo.po.rule"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/po/nostr-gtk.pot.rule"
+          }
+        ],
+        "type": "UTILITY"
+      },
+      "nostr::@458585523a3aea9bfd6f": {
+        "artifacts": [
+          "{build}/libnostr/libnostr.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostr::@458585523a3aea9bfd6f",
+        "name": "nostr",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/timestamp.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/tag.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/event.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/envelope.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/init.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/filter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/connection.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/keys.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/json.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_json_parse.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/simplepool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/brown_list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/secure_buf.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/rate_limiter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_log.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/security_limits_runtime.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/storage_registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_core.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_limits.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip39_wordlist_en.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip39.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/metrics.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/metrics_collector.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_json_glib.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_event_boxed.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_filter_boxed.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/nostrdb/ndb_backend.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_gobject::@fe10a9cbaf9890d616d0": {
+        "artifacts": [
+          "{build}/nostr-gobject/libnostr-gobject-1.0.so"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-pthread"
+        ],
+        "dependencies": [],
+        "id": "nostr_gobject::@fe10a9cbaf9890d616d0",
+        "name": "nostr_gobject",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr-error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr-enums.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_event.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_event_bus.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_keys.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_relay.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_simple_pool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_pool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_relay_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_ndb_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/crypto_utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_async.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_query_batcher.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_subscription_registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_filter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_json.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_pointer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip19.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_tag_list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip46_client.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip46_bunker.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_nip49.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_bip39.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_profile_provider.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/nostr_profile_service.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/storage_ndb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gn-timeline-query.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gn-nostr-profile.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gn-ndb-sub-dispatcher.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-nip10-thread-manager.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-thread-graph-model.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-thread-subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-identity.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-relays.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-mute-list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-sync-service.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-signer-bridge.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gobject/src/gnostr-app-bridge.c"
+          },
+          {
+            "compiled": true,
+            "generated": true,
+            "path": "{build}/nostr-gobject/signer_proxy.c"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gobject/signer_proxy.c.rule"
+          }
+        ],
+        "type": "SHARED_LIBRARY"
+      },
+      "nostr_gtk_portable::@6386df3009bfd7f4463a": {
+        "artifacts": [
+          "{build}/nostr-gtk/libnostr-gtk-portable-1.0.so"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2",
+          "-pthread"
+        ],
+        "dependencies": [
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "nostr-gtk-i18n::@6386df3009bfd7f4463a",
+          "gn_content_parser::@6386df3009bfd7f4463a",
+          "gn_issue_model::@6386df3009bfd7f4463a"
+        ],
+        "id": "nostr_gtk_portable::@6386df3009bfd7f4463a",
+        "name": "nostr_gtk_portable",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-markdown.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-markdown-pango.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nostr-reference.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nostr-reference-resolver.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nostr-reference-card.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-og-preview-card.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-og-metadata.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-og-preview-provider.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-media-viewer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-animated-image.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-media-source.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-media-decode.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-video-player.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nip34-issue-fields.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nostr-gtk/src/gn-nip34-issue-view.c"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/gn_content_parser.dir/src/content_renderer.c.o"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/gn_content_parser.dir/src/nostr-gtk-error.c.o"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/gn_issue_model.dir/src/gn-nip34-issue.c.o"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/gn_issue_model.dir/src/gn-nip34-issue-iface.c.o"
+          },
+          {
+            "compiled": false,
+            "generated": true,
+            "path": "{build}/nostr-gtk/CMakeFiles/gn_issue_model.dir/src/gn-portable-i18n.c.o"
+          }
+        ],
+        "type": "SHARED_LIBRARY"
+      },
+      "nostr_json::@e17704836e43f277fe37": {
+        "artifacts": [
+          "{build}/libjson/libnostr-json.so"
+        ],
+        "compile_fragments": [
+          "-g -std=gnu11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNOSTR_ENABLE_LEGACY_ALIASES",
+          "-Werror"
+        ],
+        "dependencies": [],
+        "id": "nostr_json::@e17704836e43f277fe37",
+        "name": "nostr_json",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libjson/src/json.c"
+          }
+        ],
+        "type": "SHARED_LIBRARY"
+      },
+      "nostr_nip44_core::@eba61e620492a073b8b9": {
+        "artifacts": [
+          "{build}/nips/nip44/libnostr_nip44_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostr_nip44_core::@eba61e620492a073b8b9",
+        "name": "nostr_nip44_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_convkey.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_padding.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_chacha.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_base64.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip46_core::@b661c98b3f3661245af9": {
+        "artifacts": [
+          "{build}/nips/nip46/libnostr_nip46_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nostr_nip44_core::@eba61e620492a073b8b9"
+        ],
+        "id": "nostr_nip46_core::@b661c98b3f3661245af9",
+        "name": "nostr_nip46_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_session.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_uri.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_envelope.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip46/src/core/nip46_msg.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip49_core::@fe397a1d206baae8ca7f": {
+        "artifacts": [
+          "{build}/nips/nip49/libnostr_nip49_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip19::@c476aefc5d4177e752ee"
+        ],
+        "id": "nostr_nip49_core::@fe397a1d206baae8ca7f",
+        "name": "nostr_nip49_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49_kdf.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49_aead.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/core/nip49_bech.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip49_glib::@fe397a1d206baae8ca7f": {
+        "artifacts": [
+          "{build}/nips/nip49/libnostr_nip49_glib.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip19::@c476aefc5d4177e752ee",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f"
+        ],
+        "id": "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+        "name": "nostr_nip49_glib",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip49/src/glib/nip49_g.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrdb::@458585523a3aea9bfd6f": {
+        "artifacts": [
+          "{build}/libnostr/libnostrdb.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-include",
+          "{build}/libnostr/nostrdb_compat/hex_compat.h"
+        ],
+        "dependencies": [],
+        "id": "nostrdb::@458585523a3aea9bfd6f",
+        "name": "nostrdb",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/base64.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/binmoji.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/block.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/configurator.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/content_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hkdf_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hmac_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/invoice.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/metadata.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostr_bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostrdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/mdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/midl.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/amount.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32_util.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bolt11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/hash_u5.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/node_id.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/list/list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/debug.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/take/take.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrdb_storage::@7c93004a91abd73fa0d4": {
+        "artifacts": [
+          "{build}/components/nostrdb/libnostrdb_storage.a"
+        ],
+        "compile_fragments": [
+          "-g"
+        ],
+        "dependencies": [
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostrdb_storage::@7c93004a91abd73fa0d4",
+        "name": "nostrdb_storage",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/components/nostrdb/src/nostrdb_storage.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrdb_vendored::@7c93004a91abd73fa0d4": {
+        "artifacts": [
+          "{build}/components/nostrdb/libnostrdb_vendored.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-include",
+          "{build}/components/nostrdb/nostrdb_vendored_compat/hex_compat.h"
+        ],
+        "dependencies": [],
+        "id": "nostrdb_vendored::@7c93004a91abd73fa0d4",
+        "name": "nostrdb_vendored",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/base64.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/binmoji.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/block.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/configurator.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/content_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hkdf_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hmac_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/invoice.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/metadata.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostr_bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostrdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/amount.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32_util.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bolt11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/hash_u5.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/node_id.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/list/list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/debug.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/take/take.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/mdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/midl.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrgo::@01832e3469ab35a56bce": {
+        "artifacts": [
+          "{build}/libgo/libnostrgo.a"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [],
+        "id": "nostrgo::@01832e3469ab35a56bce",
+        "name": "nostrgo",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/go.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/context.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/channel.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/wait_group.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/hash_map.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/counter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/select.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/string_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/int_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/ticker.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/metrics_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/fiber_hooks_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/blocking_executor.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "test-groundhog-conversations::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-conversations"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nip34::@ebf86b00a95111ed0d35",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "nostr_gtk_portable::@6386df3009bfd7f4463a",
+          "groundhog-conversations::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-conversations::@264a94c6b18579f76d51",
+        "name": "test-groundhog-conversations",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/app/test_conversation_store.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-store-conversations::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-store-conversations"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread",
+          "-mfpmath=sse",
+          "-msse",
+          "-msse2"
+        ],
+        "dependencies": [
+          "nostrdb_storage::@7c93004a91abd73fa0d4",
+          "nostrdb_vendored::@7c93004a91abd73fa0d4",
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_json::@e17704836e43f277fe37",
+          "nip04::@6027616dcf59074a386e",
+          "nip06::@c7b4c7b933bb53d4442b",
+          "nip11::@20bc37d91fa2bcdc8615",
+          "nip19::@c476aefc5d4177e752ee",
+          "nip34::@ebf86b00a95111ed0d35",
+          "nostr_nip44_core::@eba61e620492a073b8b9",
+          "nostr_nip46_core::@b661c98b3f3661245af9",
+          "nostr_nip49_core::@fe397a1d206baae8ca7f",
+          "nostr_nip49_glib::@fe397a1d206baae8ca7f",
+          "nostr_gobject::@fe10a9cbaf9890d616d0",
+          "nostr_gtk_portable::@6386df3009bfd7f4463a",
+          "groundhog-conversations::@264a94c6b18579f76d51",
+          "groundhog-store-testhooks::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-store-conversations::@264a94c6b18579f76d51",
+        "name": "test-groundhog-store-conversations",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/store/test_store_conversations.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/store/crash-harness.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/store/gh-store-conversations.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/src/store/gh-store-reactions.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test-groundhog-store::@264a94c6b18579f76d51": {
+        "artifacts": [
+          "{build}/gnome/groundhog/test-groundhog-store"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-UNDEBUG",
+          "-pthread"
+        ],
+        "dependencies": [
+          "groundhog-store-testhooks::@264a94c6b18579f76d51"
+        ],
+        "id": "test-groundhog-store::@264a94c6b18579f76d51",
+        "name": "test-groundhog-store",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/store/test_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/gnome/groundhog/tests/store/crash-harness.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      }
+    },
+    "tests": [
+      {
+        "backtrace": 1596,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-conversations"
+        ],
+        "config": "Debug",
+        "name": "groundhog-conversations",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "G_DEBUG=fatal-criticals,fatal-warnings",
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-conversations/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-conversations/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-conversations/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-conversations/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-conversations/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 20.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 1776,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-store"
+        ],
+        "config": "Debug",
+        "name": "groundhog-store",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "G_DEBUG=fatal-criticals",
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-store/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-store/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-store/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-store/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-store/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 120.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 1796,
+        "command": [
+          "{build}/gnome/groundhog/test-groundhog-store-conversations"
+        ],
+        "config": "Debug",
+        "name": "groundhog-store-conversations",
+        "properties": [
+          {
+            "name": "DEPENDS",
+            "value": [
+              "groundhog-test-homes",
+              "groundhog-test-gst-registry"
+            ]
+          },
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "G_DEBUG=fatal-criticals",
+              "GSETTINGS_BACKEND=memory",
+              "NOSTRC_TEST_ISOLATION=1",
+              "HOME={build}/gnome/groundhog/test-homes/groundhog-store-conversations/home",
+              "XDG_DATA_HOME={build}/gnome/groundhog/test-homes/groundhog-store-conversations/data",
+              "XDG_CONFIG_HOME={build}/gnome/groundhog/test-homes/groundhog-store-conversations/config",
+              "XDG_CACHE_HOME={build}/gnome/groundhog/test-homes/groundhog-store-conversations/cache",
+              "XDG_STATE_HOME={build}/gnome/groundhog/test-homes/groundhog-store-conversations/state",
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin"
+            ]
+          },
+          {
+            "name": "FIXTURES_REQUIRED",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:groundhog.unclassified"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 120.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 2137,
+        "command": [
+          "/usr/bin/gst-inspect-1.0",
+          "coreelements"
+        ],
+        "config": "Debug",
+        "name": "groundhog-test-gst-registry",
+        "properties": [
+          {
+            "name": "ENVIRONMENT",
+            "value": [
+              "GST_REGISTRY={build}/gnome/groundhog/gst-registry.bin",
+              "NOSTRC_TEST_ISOLATION=1"
+            ]
+          },
+          {
+            "name": "FIXTURES_SETUP",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:testing.framework"
+            ]
+          },
+          {
+            "name": "TIMEOUT",
+            "value": 600.0
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      },
+      {
+        "backtrace": 2132,
+        "command": [
+          "/usr/bin/cmake",
+          "-P",
+          "{build}/gnome/groundhog/groundhog-test-homes.cmake"
+        ],
+        "config": "Debug",
+        "name": "groundhog-test-homes",
+        "properties": [
+          {
+            "name": "FIXTURES_SETUP",
+            "value": [
+              "groundhog-test-homes"
+            ]
+          },
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:testing.framework"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/gnome/groundhog"
+          }
+        ]
+      }
+    ]
+  },
+  "realization_sha256": "f8c049cd52d531ef0577b5955c0aef32b394aec14c0d0244905f9bc131f80aab",
+  "schema_version": 1,
+  "source_identity": {
+    "kind": "committed",
+    "sha": "693d76795260aa148edf47937be2459701e4f0d5"
+  }
+}

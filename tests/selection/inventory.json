@@ -2642,6 +2642,39 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "groundhog.model_store": {
+      "build_targets": ["test-groundhog-store"],
+      "cost": "ordinary",
+      "ctest_tests": {"groundhog.linux": ["groundhog-store"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.groundhog", "groundhog.store", "groundhog.unclassified"],
+      "profiles": ["groundhog.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.model_conversations": {
+      "build_targets": ["test-groundhog-conversations"],
+      "cost": "ordinary",
+      "ctest_tests": {"groundhog.linux": ["groundhog-conversations"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.groundhog", "groundhog.conversations", "groundhog.unclassified"],
+      "profiles": ["groundhog.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.model_store_conversations": {
+      "build_targets": ["test-groundhog-store-conversations"],
+      "cost": "ordinary",
+      "ctest_tests": {"groundhog.linux": ["groundhog-store-conversations"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.groundhog", "groundhog.conversations", "groundhog.store", "groundhog.unclassified"],
+      "profiles": ["groundhog.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "sanitizer.groundhog_store": {
       "build_targets": [
         "test-groundhog-store"
@@ -5661,6 +5694,9 @@
         "{source}/tests/selection/test_shared_dependency_edges.py",
         "{source}/tests/selection/test_shared_sanitizer_execution.py",
         "{source}/tests/selection/test_store_key_membership.py",
+        "{source}/tests/selection/test_headless_model_membership.py",
+        "{source}/tests/selection/fixtures/headless_model_exports.json",
+        "{source}/tests/selection/fixtures/headless_model_subset_renewal_20261022.json",
         "{source}/tests/selection/test_workflow_contracts.py"
       ],
       "working_directory": "{source}"
@@ -13413,6 +13449,7 @@
       "primary_registrations": [
         "groundhog-about",
         "groundhog-about-gui",
+        "groundhog-conversations",
         "groundhog-media",
         "groundhog-mls-files",
         "groundhog-mls-media",
@@ -13422,6 +13459,8 @@
         "groundhog-packaging-version",
         "groundhog-poll-ui",
         "groundhog-shell",
+        "groundhog-store",
+        "groundhog-store-conversations",
         "groundhog-store-key",
         "groundhog-store-key-keyring"
       ],
@@ -13888,6 +13927,7 @@
       "required_closure": [
         "groundhog-about",
         "groundhog-about-gui",
+        "groundhog-conversations",
         "groundhog-media",
         "groundhog-mls-files",
         "groundhog-mls-media",
@@ -13897,6 +13937,8 @@
         "groundhog-packaging-version",
         "groundhog-poll-ui",
         "groundhog-shell",
+        "groundhog-store",
+        "groundhog-store-conversations",
         "groundhog-store-key",
         "groundhog-store-key-keyring",
         "groundhog-test-gst-registry",
