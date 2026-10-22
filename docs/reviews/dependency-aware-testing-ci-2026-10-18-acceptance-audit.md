@@ -1,5 +1,96 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Combined transport/custody integration — 2026-10-22
+
+**Final code tested:** `a4cfd1420aae7380f61c8318beec4a3753a6fcd8`.
+Merge `17ce32afb45f8eabfab747af029327bb306a062c` preserves custody commits
+`8d87fff95d0c1f5a4b3f3cc6577f8b56dd390efb` and
+`5b20780d33d9a08861c0c3ae3130e704e7f4517e` on the verified membership branch.
+`5553c793597c6471c71475c4f8aa90ea9caca4ac` adds **only**
+`{source}/scripts/adapter_custody.py` and
+`{source}/tests/selection/test_adapter_custody.py` to
+`selection.contract.runtime_inputs`; existing global routing is unchanged.
+All other inventory fields, exact33 source controls/authority hashes and historical
+fixtures remain identical to `1ed8f087e`. No source-authority renewal or shipped
+component version bump. This supersedes only the pending integration status in
+the dated membership receipt below, not its source-specific results.
+
+### Opt-in custody scope; separate component evidence
+
+The [outer adapter](../../scripts/test-gate.sh) retains
+`--linux-custody legacy` as its default. Explicit `--linux-custody ptrace` is an
+**unwrapped, non-instrumented Linux diagnostic only**. Instrumented profiles
+(including sanitizers) and display/private-bus wrapped lanes refuse before lane
+target launch; prepared routes retain their separate contained adapter. No
+untraced profile parity: ptrace receipts retain `complete=false`,
+`complete_gate_eligible=false`, `untraced_profile_parity=false`. There is no
+unsupported-host/pidfd fallback, hostile-code sandbox or remote/service-created
+work custody claim. Legacy cleanup/command bodies, macOS legacy behavior and
+MDK cleanup policy remain unchanged; `.23` remains OPEN/in progress for full
+safe cross-platform arbitrary descendant custody.
+
+Custody's **given, independently hash-verified tip evidence** remains at
+`5b20780d3`: **18 native macOS / 32 Linux-arm64 tests**, zero skips, with Linux
+running as UID/GID 1001 in immutable Docker image
+`sha256:e965b342b0aa8c9c2fb9b1cd5b96230e711f630ac5bae90923df4619fa30ca5c`.
+This is not a new Linux run at the integration SHA or native-host/x86/hosted
+acceptance. All four custody source hashes match the reviewed tip. Primary
+receipt `/tmp/nostrc-023-evidence/final-5b20780d3/receipt.json`, SHA-256
+**`3974a25e84cd2c9f49f20b029f418e139173ea1f1ade0cc48eee2a600c1e31d4`**;
+all **7,105** files in `/tmp/nostrc-023-evidence/SHA256SUMS.json` verified,
+manifest SHA-256 **`974c04cd4d0b4461920e056953a7c2c77b6cbffd1cd2ad81edc8390d0b16ef08`**.
+The component's four correctness findings were fixed before that tip; earlier
+failed attempts remain retained. No new Oracle re-review.
+
+### Failed integration attempt retained; diagnosed corrections
+
+The first full combined suite at `5553c7935` remains **FAILED: 523 tests,
+11 failures / 13 errors, 214.346s**, retained without overwrite in
+`/tmp/nostrc-ci-wave-integration-20261022/combined/selector.log`.
+The authorized test-only correction at `a4cfd1420` adds the exact helper to the
+strict command-source enumerator and supplies `args.linux_custody='legacy'` to
+the isolated `host_guard` namespace. All refusal assertions are preserved.
+Three missing-source failures instead required initializing pinned `nostrdb`
+`2d459e8fa9ba0af5af091c37920e5d2078d881ca`; no gitlink changes.
+
+Phase/readiness failures were early environment-guard refusals, **not a new
+readiness timeout cause**: app-launched macOS parent `XPC_SERVICE_NAME` differs
+from child Python's `0`. A retained actual CLI/configure/build/load reproduction
+refuses with that sole mismatch and passes when only the parent variable is
+normalized to `0`, under the unchanged full-environment fingerprint guard.
+New custody tests leave the parent's environment, signal handlers and signal mask
+unchanged. The focused corrected harness/cancellation set passes **15/15**, zero
+skips. Diagnostic proof and original readiness fixtures are retained under
+`combined/diagnosis`; no sleeps, blind retries or guard/authority relaxation.
+
+### Fresh combined gates and unchanged acceptance limits
+
+At clean committed **`a4cfd1420`**, with explicit `XPC_SERVICE_NAME=0`,
+`PYTHONDONTWRITEBYTECODE=1`, `PYTHONNOUSERSITE=1`, `PYTHONPATH=''`:
+
+- **523/523 selector PASS, zero skips, 214.535s**, one fresh full run after diagnosis.
+- All six shell suites PASS: pre-push, full-gate, Linux lifecycle, Linux smoke,
+  sanitizer-gate and test-gate regressions.
+- Four mandatory statics, inventory validation, actionlint including ShellCheck,
+  explicit `shellcheck scripts/test-gate.sh` and range whitespace PASS.
+- Fresh native macOS/arm64 configure/default-all build PASS, parallelism 4,
+  Groundhog OFF, libsecret/secret-service flags; read-only keychain checks PASS
+  before/after. **Full native CTest NOT RUN**: no production apps/lib/nips code
+  changed. This is a native build, not production-profile execution.
+
+Exact commands/logs/results live in
+`/tmp/nostrc-ci-wave-integration-20261022/combined/final-a4cfd1420/`;
+`integration-source-proof.json` binds unchanged reviewed custody bytes and parents.
+The later documentation/export commit does not renew these gates to another SHA.
+Membership audit counts below remain bound to `1ed8f087e`; no integration-source
+production pre/postbuild audit, all-target Linux/all-29-omitted-target build or
+selected-profile backend execution is claimed. `.2` OPEN / `.9` in progress /
+`.23` in progress; no complete/profile-union, hosted/W11, release or default
+cutover credit. `.5` and the dated hosted ledger are not refreshed. Official
+`bd export --all` only; preserve all existing DB rows/comments/memories. Dolt pull
+still refuses `no remote`, with no sync-success claim. Local commits only;
+parent owns landing and all three worktree/branch cleanups.
+
 ## Headless relay/network transport membership — 2026-10-22
 
 **Base:** master `53f2e822d04bd32e243a9cf969396f2f241af83e`.

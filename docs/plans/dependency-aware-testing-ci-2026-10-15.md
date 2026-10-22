@@ -980,6 +980,22 @@ integration/two-path input listing and final combined gates await a verified
 sibling commit. `.2` OPEN / `.9` in progress; no closure, source-authority renewal,
 W11/hosted/release/default claim, ledger refresh or shipped version bump.
 
+**Later W5–W6 integration checkpoint (2026-10-22):**
+[Combined transport/custody receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#combined-transportcustody-integration--2026-10-22)
+records preserved custody commits `8d87fff95` / `5b20780d3`, exact two-path
+`selection.contract` input integration and authorized test-harness corrections.
+Final code **`a4cfd1420`** passes **523/523 selector tests, zero skips**, six shell
+suites, four statics, inventory validation, actionlint/ShellCheck and safe fresh
+native default-all configure/build/keychain guards. First failed combined run and
+source-proven XPC environment diagnosis remain retained; no fingerprint/refusal
+relaxation. Custody's Linux-arm64 proof stays at `5b20780d3`, not refreshed here.
+`--linux-custody legacy` remains default; explicit ptrace is unwrapped,
+non-instrumented Linux diagnostic only, refusing instrumented/wrapped lanes before
+launch, with complete/eligible/parity false. `.23` remains in progress; full native
+CTest, production profile/input/header/omitted-build acceptance and W11/release
+remain unclaimed. Earlier pending integration wording is historical; no authority
+renewal, default/ledger change, new Oracle review or shipped version bump.
+
 Sizes describe reviewable implementation slices, not time estimates: S = focused adapter or tests, M = one substantial seam, L = cross-family integration. Split L items into beads before implementation; this index is not a replacement for `bd` tracking.
 
 | Item | Goal | Done when | Key files | Dependencies | Size |

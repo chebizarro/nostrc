@@ -19,6 +19,43 @@
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
 
+## Opt-in Linux custody diagnostic — 2026-10-22
+
+The outer adapter keeps **`--linux-custody legacy` as the default**. On a matching
+Linux host, an existing non-instrumented, unwrapped profile may explicitly request:
+
+```sh
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" \
+  --profile "$PROFILE" --linux-custody ptrace --evidence-dir "$EVIDENCE"
+# Omitting --linux-custody, or using --linux-custody legacy, retains legacy behavior.
+```
+
+`PROFILE` must have `instrumentation=none` and no selected display/private-bus
+wrappers. Instrumented/sanitizer profiles and wrapped CTest refuse **before lane
+target launch**; ordinary Groundhog/Grotto profiles still require wrappers and
+therefore cannot use this diagnostic. Host/architecture, capabilities, compiler,
+source and full input-audit admission remain enforced; this flag is not a bypass.
+Prepared routes still require `contained-gate.py`. No unavailable-pidfd fallback,
+untraced-profile parity, hostile-code sandbox or remote/service-work custody.
+Ptrace receipts retain `complete=false`, `complete_gate_eligible=false` and
+`untraced_profile_parity=false`. macOS/legacy cleanup and MDK policy are unchanged;
+`.23` remains OPEN/in progress for full safe cross-platform descendant custody.
+
+[Combined integration receipt](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#combined-transportcustody-integration--2026-10-22):
+code **`a4cfd1420`** passes **523/523 selector tests, zero skips**, six shell suites,
+four statics, inventory validation, actionlint/ShellCheck and fresh safe native
+configure/default-all build. Read-only keychain checks pass before/after; native
+Groundhog OFF and libsecret/secret-service flags remain required. **Full native
+CTest NOT RUN**, with no production apps/lib/nips changes. The first failed
+combined run is retained; two authorized test-harness fixes, pinned `nostrdb`
+initialization and source-proven `XPC_SERVICE_NAME=0` normalization precede the
+single fresh full run. Full environment fingerprint/refusal guards are unchanged.
+Custody's given **18 macOS / 32 Linux-arm64** results remain at **`5b20780d3`**, not
+a fresh Linux run at the integration SHA. Later docs/export do not renew those
+source identities. The membership checkpoint below retains its dated receipt;
+only its pending custody/integration status is superseded here. No source-authority
+renewal, hosted/W11/release/default credit, closure or shipped version bump.
+
 ## Bounded transport membership checkpoint — 2026-10-22
 
 At `1ed8f087e6571207c132ae885dbe7ede43f18dfd` (base `53f2e822d`), six
