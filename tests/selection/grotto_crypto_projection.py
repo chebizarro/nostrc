@@ -30,6 +30,8 @@ def renewal_witness():
 
 def before_grotto_crypto_family(contract):
     """Project only reviewed selection fields; never renew production authority."""
+    from nip44_vector_projection import before_nip44_vector_renewal
+    contract = before_nip44_vector_renewal(contract, PROFILE)
     witness = renewal_witness()
     for key in ('primary_registrations', 'required_closure'):
         s.require(contract[key] == witness['renewed'][key] ==
@@ -50,4 +52,5 @@ def grotto_crypto_current_workflow_checks(previous_checks, contract):
     witness = renewal_witness()
     s.require(s.digest(previous_checks) == witness['previous_workflow_checks_hash'],
               'Grotto crypto historical workflow checks changed')
-    return sorted(previous_checks + list(CHECKS))
+    from nip44_vector_projection import CHECK
+    return sorted(previous_checks + list(CHECKS) + [CHECK])

@@ -32,8 +32,10 @@ class MediaCryptoIntegration(unittest.TestCase):
                 self.assertEqual(current, snapshot)
                 self.assertEqual(s.digest(previous), witness['previous_record_hash'])
                 self.assertEqual(current.keys(), previous.keys())
+                from nip44_vector_projection import before_nip44_vector_renewal
+                previous_wave = before_nip44_vector_renewal(current, profile)
                 for key in current.keys() - {'primary_registrations', 'required_closure'}:
-                    self.assertEqual(current[key], previous[key], key)
+                    self.assertEqual(previous_wave[key], previous[key], key)
                 self.assertEqual(len(current['registrations']), 33)
                 self.assertEqual(len(current['review']['source_inputs']), 193)
         crypto = json.loads((ROOT / CRYPTO_RENEWAL).read_text())
@@ -82,7 +84,7 @@ class MediaCryptoIntegration(unittest.TestCase):
         old = next(case['checks'] for case in cases if case['name'] == 'grotto_workflow_only')
         current = self.contracts['grotto.linux']
         expected = sorted(old + ['grotto.' + name.removeprefix('test_') for name in
-                                 FAMILY + ['test_nip49_spec_source']] + list(CRYPTO_CHECKS))
+                                 FAMILY + ['test_nip49_spec_source']] + list(CRYPTO_CHECKS) + ['grotto.nip44_vectors'])
         self.assertEqual(grotto_nip49_current_workflow_checks(old, current), expected)
         bad_policy = copy.deepcopy(self.policy)
         bad_policy['checks']['grotto.signer.native']['profiles'].remove('grotto.linux')

@@ -1,0 +1,57 @@
+{
+  "base": "f646db033031a32ad0f6283f881d8506eafbcc4b",
+  "canonical_input": {
+    "bytes": 37630,
+    "path": "nips/nip44/tests/nip44.vectors.json",
+    "sha256": "269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040"
+  },
+  "changed_source_inputs": {
+    "nips/nip44/CMakeLists.txt": {
+      "after": "6cc29bdd5246feeffd15ab7a45e5d02d5696a7192fe1e53713e4cd36b2ccc92e",
+      "before": "a27498a889af525c7da31fd6a6c536dfa8df1ae90c2d2d2ac09187d5d02d0385"
+    },
+    "nips/nip44/TestInventory.cmake": {
+      "after": "4868e942c9c57442fddbb1fdc1d1c2ea66efac0c02587b4a8d64f61ad9b19ad7",
+      "before": "53d4198a5c6fd1e8a32a0000d41c1b45b52b79d31b7976da906c851243e9c77e"
+    }
+  },
+  "complete": false,
+  "complete_gate_eligible": false,
+  "historical_file_count": 23,
+  "historical_hash_map_digest": "e8beb15624ae8652b63173fefffcd339e51d73c6aa0ef0c7304d49901ce58ded",
+  "physical_proof": {
+    "canonical_witness_sha256": "17c4eb8164abdc7d54ebc708f3fcdd747900a7af685e188367894a7ccb24939f",
+    "checkpoint_sha256": "a727ac6ccf4677751a46f7c97c21830f923df3cab2aff9cf7404d0ccf6dbfe5c",
+    "manifest_sha256": "29036a3ab2c0503c73fb31e2e7d419a759e0e89699c0fd65798f63c166804475",
+    "official_ctest_log_sha256": "575e0c04bb066323ff13db238eddd97ae03f76706660fb1f54bbc82f1c2f116c",
+    "official_json_cases": 128
+  },
+  "previous_inventory_source": "ef34631a5bc06787bcb51d9fa69d967a87024116",
+  "profiles": {
+    "grotto.linux": {
+      "added_primary": [
+        "test_nip44_vectors"
+      ],
+      "previous_record_hash": "e152f87baf1cce33aa1c622665c82f692781cade3de7ecf4b83c801d5538c61e",
+      "renewed_record_hash": "e13f63f8f25d8e4d81521a234b57758588e0b02a38e570f49d1066a0094073ef",
+      "renewed_selection_hash": "12be2c077081039c62a160711c1a9611f66b37a3d0f4dcb5d8bb14ad125bbe17",
+      "source_input_count": 193,
+      "unchanged_source_input_count": 191
+    },
+    "groundhog.linux": {
+      "added_primary": [],
+      "previous_record_hash": "84cee64123893ede2844b1f9a083224126e61d9dd2ea5fe1ce02be7a909bdc2f",
+      "renewed_record_hash": "b04c320c8c629bbeb04e10cf4b2e18232e6c9ec2013a43aaa1d614f6a96c3d9f",
+      "renewed_selection_hash": "2e034ee6044becce68f452a9ddf7cc956b5a263019850a428d44bb15a3780a5c",
+      "source_input_count": 193,
+      "unchanged_source_input_count": 191
+    }
+  },
+  "sanitizer_authority_hash": "b8f7de593bad6947ae73e2e5eacaf91e5e44814e3a24ed9906776a2d0343034b",
+  "schema_version": 1,
+  "scope": "Only two source-control values and one ordinary Grotto selected primary/fixture; original review provenance remains historical. No sanitizer renewal or production acceptance.",
+  "source_identity": {
+    "kind": "committed",
+    "sha": "4e563f4a6120f45d81a32793577e0ef1a5b43622"
+  }
+}

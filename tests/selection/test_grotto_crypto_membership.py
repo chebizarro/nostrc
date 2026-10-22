@@ -102,14 +102,16 @@ class GrottoCryptoMembership(unittest.TestCase):
         authored = sorted(n for c in self.policy['checks'].values()
                           for n in c.get('ctest_tests', {}).get(PROFILE, []))
         self.assertEqual(contract['primary_registrations'], authored)
-        self.assertEqual((len(authored), len(contract['required_closure'])), (64, 67))
+        self.assertEqual((len(authored), len(contract['required_closure'])), (65, 68))
         self.assertEqual((len(before['primary_registrations']), len(before['required_closure'])), (58, 61))
         self.assertEqual(len(contract['registrations']), 33)
         self.assertEqual(len(contract['review']['source_inputs']), 193)
         self.assertTrue(set(FAMILY).isdisjoint(contract['registrations']))
         self.assertEqual(s.digest(before), self.witness['previous_record_hash'])
+        from nip44_vector_projection import before_nip44_vector_renewal
+        previous_wave = before_nip44_vector_renewal(contract, PROFILE)
         for key in contract.keys() - {'primary_registrations', 'required_closure'}:
-            self.assertEqual(contract[key], before[key], key)
+            self.assertEqual(previous_wave[key], before[key], key)
         for key in ('candidate_contract_hash', 'profile_hash', 'review', 'registration_universe',
                     'toolchain_contract_hash', 'registrations'):
             bad = copy.deepcopy(contract)
@@ -132,7 +134,8 @@ class GrottoCryptoMembership(unittest.TestCase):
 
     def test_workflow_projection_requires_exact_prior_check_list(self):
         previous = copy.deepcopy(self.policy)
-        for ident in CHECKS:
+        from nip44_vector_projection import CHECK
+        for ident in list(CHECKS) + [CHECK]:
             del previous['checks'][ident]
         contract = self.policy['diagnostic_nonmember_subsets'][PROFILE]
         previous['diagnostic_nonmember_subsets'][PROFILE] = before_grotto_crypto_family(contract)
@@ -143,11 +146,12 @@ class GrottoCryptoMembership(unittest.TestCase):
         with self.assertRaisesRegex(s.ContractError, 'historical workflow checks changed'):
             grotto_crypto_current_workflow_checks(old + ['unexpected.check'], contract)
 
-    def test_vector_and_interop_remain_unclaimed_without_fallback_credit(self):
-        contract = self.policy['diagnostic_nonmember_subsets'][PROFILE]
+    def test_historical_vector_gap_and_interop_exclusion_remain_recorded(self):
+        from nip44_vector_projection import CHECK, before_nip44_vector_renewal
+        contract = before_nip44_vector_renewal(self.policy['diagnostic_nonmember_subsets'][PROFILE], PROFILE)
         for name in ('test_nip44_vectors', 'test_interop'):
             self.assertFalse(any(name in c.get('ctest_tests', {}).get(PROFILE, [])
-                                 for c in self.policy['checks'].values()))
+                                 for ident, c in self.policy['checks'].items() if ident != CHECK))
             self.assertNotIn(name, contract['primary_registrations'])
             self.assertNotIn(name, contract['required_closure'])
             self.assertIn(name, self.witness['deferred'])
@@ -189,7 +193,14 @@ class GrottoCryptoMembership(unittest.TestCase):
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
         self.assertEqual(hashlib.sha256((ROOT / 'tests/selection/golden/selection.json').read_bytes()).hexdigest(),
                          self.witness['historical_golden_sha256'])
+        from nip44_vector_projection import before_nip44_vector_renewal
+        current = self.policy['diagnostic_nonmember_subsets'][PROFILE]
+        historical = before_nip44_vector_renewal(current, PROFILE)['review']['source_inputs']
+        from nip44_vector_projection import SOURCES
         for path, digest in self.export['reviewed_source_sha256'].items():
+            if path in SOURCES:
+                self.assertEqual(historical[path], digest, path)
+                digest = current['review']['source_inputs'][path]
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
 
     def test_physical_evidence_is_raw_headless_diagnostic_not_acceptance(self):

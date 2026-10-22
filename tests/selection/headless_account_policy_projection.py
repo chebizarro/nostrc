@@ -13,6 +13,8 @@ FAMILY = ['groundhog-account', 'groundhog-account-relays',
 
 
 def before_account_policy_family(contract):
+    from nip44_vector_projection import before_nip44_vector_renewal
+    contract = before_nip44_vector_renewal(contract, 'groundhog.linux')
     witness = json.loads((ROOT / RENEWAL).read_text())
     s.require(witness['source_identity'] == {'kind': 'committed', 'sha': BASE},
               'account policy renewal source witness changed')
