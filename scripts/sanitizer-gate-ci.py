@@ -594,11 +594,14 @@ def run_shared(args):
         raise WorkflowError("shared phase-aware core API is unsupported; no legacy Ninja fallback")
     policy = shared.load_inventory(root / args.inventory)
     profile = policy["profiles"][args.shared_profile]
-    if "gnome_keyring" in profile.get("capabilities", []):
-        raise WorkflowError("gnome_keyring requires attested private HOME/private bus/throwaway Secret Service custody; shared adapter not implemented")
+    if 'gnome_keyring' in profile.get('capabilities', []) and not shutil.which('gnome-keyring-daemon'):
+        raise WorkflowError('selected gnome_keyring capability requires the actual gnome-keyring-daemon executable')
     if "nak" in profile.get("capabilities", []) and not shutil.which("nak"):
         raise WorkflowError("selected nak capability requires the actual nak executable")
-    unsupported = set(profile.get("capabilities", [])) - {"display", "private_bus", "nak"}
+    if any(check['kind'] != 'ctest' and args.shared_profile in check['profiles']
+           and 'gnome_keyring' in check.get('requires', []) for check in policy['checks'].values()):
+        raise WorkflowError('gnome_keyring commands require contained private HOME/bus/service custody; native shared adapter not implemented')
+    unsupported = set(profile.get("capabilities", [])) - {"display", "private_bus", "nak", "gnome_keyring"}
     if unsupported:
         raise WorkflowError("shared diagnostic requires an unimplemented guarded capability: " + str(sorted(unsupported)))
     for cap, variable in (("display", "DISPLAY"), ("private_bus", "DBUS_SESSION_BUS_ADDRESS")):

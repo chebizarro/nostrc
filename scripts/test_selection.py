@@ -724,8 +724,21 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             if complete:
                 errors.append(f"{lane_id}: prepared contained route is diagnostic only; original image builds unexecuted")
         required_caps = set(backend.get("required_capabilities", []))
-        if "gnome_keyring" in required_caps:
-            errors.append(f"{lane_id}: gnome_keyring setup/custody is not implemented")
+        keyring_commands = [ident for ident in lane['checks'] if policy['checks'][ident]['kind'] != 'ctest'
+                            and 'gnome_keyring' in policy['checks'][ident].get('requires', [])]
+        if 'gnome_keyring' in required_caps or keyring_commands:
+            keyring = backend.get('runtime_capability_evidence', {}).get('gnome_keyring', {})
+            if ('gnome_keyring' not in profile.get('capabilities', [])
+                    or keyring.get('executable') != 'gnome-keyring-daemon'
+                    or not isinstance(keyring.get('path'), str) or not Path(keyring['path']).is_absolute()
+                    or not isinstance(keyring.get('sha256'), str) or not re.fullmatch(r'[a-f0-9]{64}', keyring['sha256'])):
+                errors.append(f'{lane_id}: gnome_keyring runtime executable evidence missing')
+        if backend.get('keyring_runtime') is not None and profile.get('execution_domain') != 'prepared_peer_linux_v1':
+            errors.append(f'{lane_id}: contained keyring setup cannot authorize an original native profile')
+        if keyring_commands and (profile.get('execution_domain') != 'prepared_peer_linux_v1'
+                or not isinstance(backend.get('keyring_runtime'), dict)
+                or any('private_bus' not in policy['checks'][ident].get('requires', []) for ident in keyring_commands)):
+            errors.append(f'{lane_id}: keyring command private bus/service contained custody missing')
         if "nak" in required_caps:
             nak = backend.get("runtime_capability_evidence", {}).get("nak", {})
             if ("nak" not in profile.get("capabilities", []) or nak.get('executable') != 'nak'

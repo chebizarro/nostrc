@@ -1829,8 +1829,14 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
     if not required.issubset(realization["profile"].get("capabilities", [])):
         raise RealizationError("selected runtime capability is not declared by the authored profile")
     if "gnome_keyring" in required:
-        raise RealizationError("gnome_keyring requires attested private HOME/private bus/throwaway Secret Service custody; adapter not implemented")
-    unknown = required - {"nak", "display", "private_bus", "docker", "external_peer", "prepared_peer"}
+        env = phase_environment(realization['profile'], realization['repo_root'], 'test')
+        executable = shutil.which('gnome-keyring-daemon', path=env.get('PATH'))
+        if not executable or not Path(executable).is_file():
+            raise RealizationError('selected gnome_keyring capability requires the actual gnome-keyring-daemon executable')
+        path = Path(executable).resolve()
+        evidence['gnome_keyring'] = {'executable': 'gnome-keyring-daemon', 'path': str(path),
+                                    'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer"}
     if unknown:
         raise RealizationError(f"unsupported runtime capabilities: {sorted(unknown)}")
     if "nak" in required:
@@ -1874,6 +1880,22 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
                 'sha256': hashlib.sha256(receipt_path.read_bytes()).hexdigest(), 'record': setup})
         evidence['nak'] = tool
     return evidence
+
+
+def _command_keyring_runtime(realization, resolved, custody):
+    commands = [spec for spec in resolved.get('command_executions', {}).values()
+                if 'gnome_keyring' in spec['requires']]
+    if not commands:
+        return None  # CTest fixtures retain their own private HOME/bus/service ownership.
+    from test_selection_custody import PreparedContext, CustodyError
+    if not isinstance(custody, PreparedContext):
+        raise RealizationError('gnome_keyring commands require live contained private HOME/bus/service custody; native adapter not implemented')
+    if any('private_bus' not in spec['requires'] for spec in commands):
+        raise RealizationError('contained keyring commands must separately require private_bus')
+    try:
+        return custody.keyring_evidence(realization, resolved)
+    except CustodyError as exc:
+        raise RealizationError(str(exc)) from exc
 
 
 def resolve_checks(inventory, plan, realization, profile_id):
@@ -1930,6 +1952,12 @@ def resolve_checks(inventory, plan, realization, profile_id):
                 raise RealizationError(f"fixture claimed as primary execution: {name}")
         checks[ident] = {"tests": sorted(names), "requirement": check.get("requirement", "blocking")}
         primary.update(names)
+    if any('gnome_keyring' in spec['requires'] for spec in selected_commands.values()):
+        if realization['profile'].get('execution_domain') != 'prepared_peer_linux_v1':
+            raise RealizationError('gnome_keyring commands require live contained private HOME/bus/service custody; native adapter not implemented')
+        if any('gnome_keyring' in spec['requires'] and 'private_bus' not in spec['requires']
+               for spec in selected_commands.values()):
+            raise RealizationError('contained keyring commands must separately require private_bus')
     selected = _fixture_closure(primary, tests, descriptors)
     if excluded_names.intersection(selected):
         raise RealizationError("baseline-excluded registration is required by selected execution closure")
@@ -2245,17 +2273,20 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     gaps.extend(command_gaps)
     fingerprints.update(command_hashes)
     runtime_tools = {}
-    if "nak" in realization["profile"].get("capabilities", []) and (
-            any("nak" in desc.get("requires", []) for desc in descriptors.values())
-            or any("nak" in spec["requires"] for spec in specs.values())):
+    for capability in ('nak', 'gnome_keyring'):
+        if capability not in realization['profile'].get('capabilities', []) or not (
+                any(capability in desc.get('requires', []) for desc in descriptors.values())
+                or any(capability in spec['requires'] for spec in specs.values())):
+            continue
         try:
-            runtime_tools = _runtime_capability_evidence(realization, ["nak"])
-            tool = runtime_tools["nak"]
+            proof = _runtime_capability_evidence(realization, [capability])
+            runtime_tools.update(proof)
+            tool = proof[capability]
             fingerprints[tool['path']] = tool['sha256']
             if 'setup_receipt' in tool:
                 fingerprints[tool['setup_receipt']['path']] = tool['setup_receipt']['sha256']
         except RealizationError as exc:
-            gap("missing_runtime_capability", capability="nak", reason=str(exc))
+            gap('missing_runtime_capability', capability=capability, reason=str(exc))
     compatibility_gaps, compatibility_hashes = _audit_compatibility_targets(inventory, realization, after_build)
     gaps.extend(compatibility_gaps)
     fingerprints.update(compatibility_hashes)
@@ -2644,7 +2675,10 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         custody.validate(resolved)
     elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer", "prepared_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
+    keyring_runtime = _command_keyring_runtime(realization, resolved, custody)
     runtime_capabilities = _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id'])
+    if keyring_runtime is not None and keyring_runtime['executable'] != runtime_capabilities.get('gnome_keyring'):
+        raise RealizationError('contained keyring executable differs from effective runtime capability')
     if runtime_capabilities != resolved.get("runtime_capability_evidence", {}):
         raise RealizationError("selected runtime capability executable changed after resolution")
     directory = _attempt_directory(resolved, evidence_dir, attempt)
@@ -2683,6 +2717,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "command_specs_hash": resolved.get("command_specs_hash")}
     if runtime_capabilities:
         receipt["runtime_capability_evidence"] = runtime_capabilities
+    if keyring_runtime is not None:
+        receipt['keyring_runtime'] = keyring_runtime
     if resolved.get("default_build_required"):
         receipt.update(default_build_required=True, default_build_hash=resolved["default_build_hash"])
     if authored_phase_parallelism(realization["profile"]) is not None:
@@ -2885,6 +2921,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     for name, digest in input_audit.get("input_hashes", {}).items():
         if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
             raise RealizationError(f"input changed during execution: {name}")
+    if keyring_runtime != _command_keyring_runtime(realization, resolved, custody):
+        raise RealizationError('contained command keyring runtime changed during execution')
     if runtime_capabilities != _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id']):
         raise RealizationError("selected runtime capability executable changed during execution")
     receipt["execution_outcome"] = receipt["outcome"]
