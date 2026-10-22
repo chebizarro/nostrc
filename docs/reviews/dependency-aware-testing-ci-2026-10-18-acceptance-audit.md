@@ -1,5 +1,124 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Exact ordinary headless store/conversation family — 2026-10-22
+
+**Base:** master `d953c37fb`. Enrollment `c70951f30a39386dd967ebe60c8a445d8b3eb25d`;
+parent-authorized selected-closure renewal
+**`51fcfc5ffdf6ff1a272703b59f12bd3330893e6a`**. Internal inventory/tests only:
+**no shipped component version bump**. No product, CMake, images, gitlinks,
+profile, workflow, capability, engine-guard or default changes.
+
+Three separate ordinary checks enroll exactly `groundhog-store`,
+`groundhog-conversations` and `groundhog-store-conversations`: the G02 encrypted
+store/testhooks, pure conversation model and G05 persistence delegate. Actual
+[CMake definitions](../../gnome/groundhog/CMakeLists.txt#L441),
+[store target](../../gnome/groundhog/CMakeLists.txt#L1166) and
+[delegate target](../../gnome/groundhog/CMakeLists.txt#L1297) establish this family.
+`groundhog-store-sqlite` is deliberately excluded: its application loader/link-set
+contract is not a pure-model test. Identity, UI, MLS and other registrations are
+not enrolled. Existing sanitizer checks remain byte-identical. Existing
+conservative unclassified descriptors/path ownership remain explicit; no
+`depends_on` edges are attached to unclassified or execution catchalls.
+
+The [tracked export witness](../../tests/selection/fixtures/headless_model_exports.json)
+retains real command-artifact mappings, File API sources/transitive targets,
+properties and descriptors from the earlier authored x86 export, not a new
+execution claim. Fresh exports independently reproduce its three family closures.
+Their target closures contain 2/22/23 targets, respectively for store/model/delegate;
+none includes the application, identity, legacy GTK resource archive or Marmot.
+Portable GTK remains a real linked prerequisite, not a display requirement.
+Both required setup registrations remain `groundhog-test-homes` and
+`groundhog-test-gst-registry`; original environments, timeouts and fatal guards
+are unchanged. All new regression/witness files are explicit `selection.contract`
+inputs. UI/resource-only no-MDK selection remains covered; genuine shared-store
+consumers and existing unknown failures are not hidden.
+
+### Admission correction: more selected coverage, not more omissions
+
+The first fresh current-profile preaudit at `c70951f30` correctly **refuses**:
+`ordinary nonmember subset: authored primary/fixture closure changed`.
+The initial 503-case selector pass and raw CTest alone were insufficient.
+Following explicit parent authorization, only the Groundhog record's
+`primary_registrations` (**13 → 16**) and `required_closure` (**15 → 18**) add
+these exact three names. The approved **33 omitted libgo names**, 422-name
+universe, candidate/toolchain/profile/workflow hashes, all 193 reviewed source
+inputs and their history remain unchanged. The candidate hash covers the omitted
+libgo family, not these selected tests; fresh actual x86 recomputation confirms
+it without a hash refresh. Grotto and sanitizer authorities are unchanged.
+
+The [bounded renewal witness](../../tests/selection/fixtures/headless_model_subset_renewal_20261022.json)
+preserves the prior arrays/record digest and physical proof. Original historical
+witnesses are unmodified. Their regression projects only the two exact added-name
+arrays before checking every earlier source-review hash; unknown changes still
+refuse. On fresh `51fcfc5ff` exports, production `resolve_checks`, ordinary-subset
+`admit` and `validate_resolved` **PASS** with exactly three primaries plus two
+fixtures, no required capabilities, the same 33 omissions and 29 mandatory
+omitted-build targets. All five `expected_executions` fit the renewed closure;
+substituting the old contract still refuses. This is actual admission/resolution,
+**not** a passing full input audit, backend execution receipt or release eligibility.
+
+### Fresh full audits and focused physical execution
+
+Before/master and after/renewed inventories each have independently configured,
+source/inventory/phase-bound contexts on committed `51fcfc5ff`, for both authored
+Linux/x86_64 profiles. Only independent build-root prefixes are normalized;
+source roots and node labels are unchanged. Full target, registration, descriptor,
+runtime and input-hash sets agree within each pair.
+
+| Profile | Registrations / targets | Before → after, both FAIL | Removed / added | Identical full input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **9,280 → 8,923** | **357 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,146 → 9,146** | **0 / 0** | 1,700 |
+
+Groundhog removes three unclaimed registrations and 354 emitted missing-impact
+findings for those same three tests—not 357 distinct root-cause repairs. It still
+has **370 unclaimed + 8,552 missing-impact + one owner disagreement**; Grotto retains
+**369 unclaimed + 8,777 missing-impact**. All omitted-target source/runtime audits
+remain full, not selected-only. Omissions remain `not_executed`, `complete=false`,
+`complete_gate_eligible=false`.
+
+Separately, at **`c70951f30`**, a fresh authored x86 configure and physical target
+build pass; all three binaries are ELF x86-64. Direct CTest passes **5/5, zero
+skips, 23.10s** (three primaries and both setups), with no display, Wayland or
+session-bus variables. This is nonroot Linux/amd64 under Rosetta, original reviewed
+image `sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+read-only source/Git and network disabled, not a new image build or hosted run.
+No product bytes changed in the later metadata renewal; that execution is not
+relabeled as a new `51fcfc5ff` build/test.
+
+Local proof `/tmp/nostrc-headless-family-20261022/renewed-authored-pairs/summary.json`,
+SHA-256 **`8cca9d82e933d3073df9058407ede5bd2eeac261d8e358e6f4e747148438b6d7`**,
+binds raw failed full audits, exports, exact removed sets, admission/resolution
+and old-contract refusal. `focused-proof.json` and raw build/CTest logs retain the
+physical execution. The initial stale-contract refusal, development negative-test
+mistakes, bind/import and setup failures, and a comparison-driver assertion that
+incorrectly expected the intentionally enlarged arrays to be equal are retained.
+The independently configured Groundhog contexts were strictly reloaded under their
+original phase environment (Docker hostname restored from retained events), not
+rebound by changing hashes; Grotto contexts were separately configured afterward.
+No failed attempt is counted as coverage or silently erased.
+
+### Gates and limits
+
+- Final code `51fcfc5ff`: **504/504 selector PASS, zero skips, 236.227s**;
+  focused family **8/8** and ordinary-subset **14/14 PASS**. Earlier `c70951f30`
+  **503/503 PASS, 241.150s** remains a separate pre-renewal result.
+- Fresh clean native macOS/arm64 default-all configure/build **PASS at c70951f30**,
+  with libsecret/secret-service safety flags and parallelism 4; Groundhog stays
+  default-off. This is not the Linux family execution. **Full native CTest NOT RUN**
+  for metadata-only work; no earlier native test pass is borrowed.
+- Four final statics, actionlint and whitespace PASS. The bounded inline diff
+  review and parent-requested admission-delta review find no concrete blockers;
+  stale packaged review context was rejected in favor of actual current inline code.
+- Production backend selected-profile execution, full all-target Linux build,
+  physical completion of all 29 omitted-target closures and production postbuild
+  header audits remain **NOT RUN**. The still-failing full preaudits block gated
+  execution. No hosted/W11, complete-gate, release or migration-completion credit.
+- `.9` remains in progress; `.2` remains open. Official `bd export --all` preserves
+  all issue/memory rows. `bd dolt pull` refused `no remote`; no sync success.
+  No `.5`/ledger refresh, defaults, release/protection cutover, push or merge.
+  Parent owns independent verification, landing and cleanup.
+
 ## Bounded shared-target edges and resource-history projection — 2026-10-22
 
 **Base:** master `37e144cab898e942d2875d903670ccaf4335158b`.
