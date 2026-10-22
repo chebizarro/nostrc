@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/closeout_interfaces.json'
-WITNESS_SHA256 = 'a800ffcb7f8475c3b0369a5b07e61de1988fc4e680de230331aa300cc535c423'
+WITNESS_SHA256 = 'bf8c8b60fa1bf50dd854038e45b67c96a0b324f5ebf452fcee1bda8e4e9f0b86'
 
 
 def witness():
@@ -14,6 +14,36 @@ def witness():
     s.require(hashlib.sha256(raw).hexdigest() == WITNESS_SHA256,
               'closeout interface witness bytes changed')
     return json.loads(raw)
+
+
+CORE_SOURCE_WITNESS = 'tests/selection/fixtures/core_source_producers_20261023.json'
+CORE_SOURCE_WITNESS_SHA256 = '07b9c7a5c875fe2b608d5b1a9e83c0184e2bda6fdf4315856ee93bc97d762576'
+
+
+def core_source_witness():
+    raw = (ROOT / CORE_SOURCE_WITNESS).read_bytes()
+    s.require(hashlib.sha256(raw).hexdigest() == CORE_SOURCE_WITNESS_SHA256,
+              'core source producer witness bytes changed')
+    return json.loads(raw)
+
+
+def before_core_producer_source(path, content):
+    """Reverse only exact root producer edits for immutable historical tests."""
+    record = core_source_witness()['source_edits'].get(path)
+    if record is None:
+        return content
+    digest = hashlib.sha256(content).hexdigest()
+    if digest == record['before_sha256']:
+        return content
+    s.require(digest == record['after_sha256'], 'core producer source changed: ' + path)
+    previous = content
+    for edit in record['edits']:
+        after, before = edit['after'].encode(), edit['before'].encode()
+        s.require(previous.count(after) == 1, 'core producer edit is not unique: ' + path)
+        previous = previous.replace(after, before, 1)
+    s.require(hashlib.sha256(previous).hexdigest() == record['before_sha256'],
+              'historical core producer source changed: ' + path)
+    return previous
 
 
 def before_closeout_contract(contract, profile):

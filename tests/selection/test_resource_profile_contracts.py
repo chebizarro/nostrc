@@ -5,6 +5,7 @@ import unittest
 
 from selector_support import ROOT, change, s
 from resource_export_projection import project_resource_helper
+from closeout_support import before_core_producer_source
 
 
 class ResourceProfileContracts(unittest.TestCase):
@@ -75,6 +76,7 @@ class ResourceProfileContracts(unittest.TestCase):
         for relative, expected in self.export['source_sha256'].items():
             self.assertIn('{source}/' + relative, inputs)
             content = (ROOT / relative).read_bytes()
+            content = before_core_producer_source(relative, content)
             if relative == 'tests/common/test_blueprint_resources.py':
                 with self.assertRaises(AssertionError):
                     project_resource_helper(self, content + b'\n', expected)

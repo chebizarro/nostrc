@@ -11,6 +11,7 @@ import unittest
 
 from selector_support import ROOT, s
 from resource_export_projection import project_resource_helper
+from closeout_support import before_core_producer_source
 from profile_contract_support import step_script
 
 INVENTORY = ROOT / 'tests/selection/inventory.json'
@@ -155,14 +156,18 @@ class GrottoProfiles(unittest.TestCase):
             self.assertIn('{source}/' + relative,
                           self.policy['checks']['selection.contract']['runtime_inputs'])
             content = (ROOT / relative).read_bytes()
+            if relative != 'apps/grotto/CMakeLists.txt':
+                content = before_core_producer_source(relative, content)
             if relative == 'apps/grotto/CMakeLists.txt':
                 # Preserve the historical exports, including ASan; only these two
                 # token-guarded metadata blocks differ, not registration logic.
+                current = hashlib.sha256(content).hexdigest()
+                self.assertEqual(self.policy['diagnostic_nonmember_subsets']['grotto.linux']
+                                 ['review']['source_inputs'][relative], current)
+                content = before_core_producer_source(relative, content)
                 actual = hashlib.sha256(content).hexdigest()
                 change = renewal['profiles']['grotto.linux']['source_input_changes'][relative]
                 self.assertEqual(change, {'before': expected, 'after': actual})
-                self.assertEqual(self.policy['diagnostic_nonmember_subsets']['grotto.linux']
-                                 ['review']['source_inputs'][relative], actual)
                 for name in ('org.nostr.Signer', 'org.nostr.Grotto'):
                     call = (f'configure_file(data/{name}.service.in\n'
                             f'               ${{CMAKE_CURRENT_BINARY_DIR}}/{name}.service @ONLY)\n').encode()

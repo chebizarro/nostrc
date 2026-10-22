@@ -7858,7 +7858,12 @@
         "{source}/tests/selection/fixtures/core_source_producers_20261023.json",
         "{source}/cmake/nostrdb-hex-compat.h.in",
         "{source}/cmake/nostrdb-talstr.h.in",
-        "{source}/apps/gnostr/src/nostr-config.h.in"
+        "{source}/apps/gnostr/src/nostr-config.h.in",
+        "{source}/apps/gnostr/src/gnostr-build-info.h.in",
+        "{source}/apps/grotto/daemon/grotto_control_xml.h.in",
+        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml",
+        "{source}/libnostr/include/nostr-config.h.in",
+        "{source}/nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in"
       ],
       "working_directory": "{source}"
     },
@@ -25053,6 +25058,60 @@
       ],
       "effect": "impact",
       "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "apps/gnostr/src/nostr-config.h.in",
+      "nodes": [
+        "gnostr",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "apps/gnostr/src/gnostr-build-info.h.in",
+      "nodes": [
+        "gnostr",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "apps/grotto/daemon/grotto_control_xml.h.in",
+      "nodes": [
+        "grotto.daemon",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "libnostr/include/nostr-config.h.in",
+      "nodes": [
+        "libnostr",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
+      "nodes": [
+        "nostr.gtk.portable",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
     }
   ],
   "profiles": {
@@ -28703,7 +28762,7 @@
           "Testing/TestInventory.cmake": "51e557a9f57fa6edc0b027c37f4e0674cffc0026ee51f7f30e1328fd15397f43",
           "apps/CMakeLists.txt": "e0b8c4fa10173178a08a1700572c655e70053c62eb49b3f07c3ee7ffc9b9e839",
           "apps/blossom-cache/CMakeLists.txt": "27a9e4e813a513d3091ea4f3de70f415b26a87fedf8ac6c0c4831ef5441da69e",
-          "apps/gnostr/CMakeLists.txt": "b67b19a75be585ab8cc209bd1331b3426d21a17c6959e4bb0a8e243ee0055940",
+          "apps/gnostr/CMakeLists.txt": "51f7faeccb78182a5aa159d833e557beb70711c44dd8d167e75f953486cbfcd7",
           "apps/gnostr/TestInventory.cmake": "8e4a340dd44ce303d2287b5263ba9b2330ad2ee9e455c8962f1001473cbe1b75",
           "apps/gnostr/plugins/communikeys-communities/CMakeLists.txt": "d3cdce023e9c0b4cf07dee90aaa85907ecff32f926453eae1bc2ae3adf520bd2",
           "apps/gnostr/plugins/concord-communities/CMakeLists.txt": "08a64a176755d98493a079b4264cec4f15f8c8f40f2a89859dbbb1ce3e0b2425",
@@ -30281,7 +30340,7 @@
           "Testing/TestInventory.cmake": "51e557a9f57fa6edc0b027c37f4e0674cffc0026ee51f7f30e1328fd15397f43",
           "apps/CMakeLists.txt": "e0b8c4fa10173178a08a1700572c655e70053c62eb49b3f07c3ee7ffc9b9e839",
           "apps/blossom-cache/CMakeLists.txt": "27a9e4e813a513d3091ea4f3de70f415b26a87fedf8ac6c0c4831ef5441da69e",
-          "apps/gnostr/CMakeLists.txt": "b67b19a75be585ab8cc209bd1331b3426d21a17c6959e4bb0a8e243ee0055940",
+          "apps/gnostr/CMakeLists.txt": "51f7faeccb78182a5aa159d833e557beb70711c44dd8d167e75f953486cbfcd7",
           "apps/gnostr/TestInventory.cmake": "8e4a340dd44ce303d2287b5263ba9b2330ad2ee9e455c8962f1001473cbe1b75",
           "apps/gnostr/plugins/communikeys-communities/CMakeLists.txt": "d3cdce023e9c0b4cf07dee90aaa85907ecff32f926453eae1bc2ae3adf520bd2",
           "apps/gnostr/plugins/concord-communities/CMakeLists.txt": "08a64a176755d98493a079b4264cec4f15f8c8f40f2a89859dbbb1ce3e0b2425",
