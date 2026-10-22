@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/closeout_interfaces.json'
-WITNESS_SHA256 = 'e59e753d720ed718466371d4585200bdcce3ebd5b0e0585c61bf646b5ac7d219'
+WITNESS_SHA256 = 'a682559f8f12d4f96fe74b5b8e0ab3f58bd02634f4fb617b5360b383ee626052'
 
 
 def witness():
@@ -29,6 +29,14 @@ def before_closeout_contract(contract, profile):
     s.require(previous['profile_hash'] == record['after_profile_hash'],
               'closeout profile binding changed: ' + profile)
     previous['profile_hash'] = record['before_profile_hash']
+    for path, values in record.get('source_changes', {}).items():
+        s.require(previous['review']['source_inputs'][path] == values['after'],
+                  'closeout source control changed: ' + path)
+        previous['review']['source_inputs'][path] = values['before']
+    if 'after_candidate_contract_hash' in record:
+        s.require(previous['candidate_contract_hash'] == record['after_candidate_contract_hash'],
+                  'closeout derived target metadata changed: ' + profile)
+        previous['candidate_contract_hash'] = record['before_candidate_contract_hash']
     s.require(s.digest(previous) == record['before_hash'],
               'closeout historical contract changed: ' + profile)
     return previous

@@ -1,5 +1,7 @@
 """Production source dependency/template repairs; miniatures are not profile proof."""
+import copy
 import hashlib
+import json
 from pathlib import Path
 import re
 import shutil
@@ -70,6 +72,35 @@ class ProductionSourceRepairs(unittest.TestCase):
                 self.assertEqual(outputs[0], outputs[1])
                 if prefix == '/usr/local/bin':
                     self.assertEqual(hashlib.sha256(outputs[1]).hexdigest(), data['before_header_sha256'])
+
+    def test_candidate_hash_adds_only_exact_derived_metadata_to_immutable_contract(self):
+        metadata = witness()['source_producer_repair']['candidate_target_metadata']
+        fixture = json.loads((ROOT / metadata['packed_fixture']).read_text())
+        packed, legacy = fixture['candidate_contract'], {}
+        for name, record in packed['registrations'].items():
+            legacy[name] = {k: copy.deepcopy(v) for k, v in record.items()
+                            if k not in ('target_names', 'input_names')}
+            legacy[name]['targets'] = [copy.deepcopy(packed['targets'][n])
+                                       for n in record['target_names']]
+            legacy[name]['input_hashes'] = {n: packed['source_hashes'][n]
+                                            for n in record['input_names']}
+        self.assertEqual(s.digest(legacy), metadata['before_hash'])
+        current, count = copy.deepcopy(legacy), 0
+        for entry in current.values():
+            for target in entry['targets']:
+                self.assertNotIn(metadata['field'], target)
+                target[metadata['field']] = metadata['value']
+                count += 1
+        self.assertEqual(count, metadata['entries'])
+        self.assertEqual(s.digest(current), metadata['after_hash'])
+        recovered = copy.deepcopy(current)
+        for entry in recovered.values():
+            for target in entry['targets']:
+                self.assertEqual(target.pop(metadata['field']), metadata['value'])
+        self.assertEqual(recovered, legacy)
+        self.assertEqual(s.digest(recovered), metadata['before_hash'])
+        next(iter(current.values()))['targets'][0][metadata['field']] = '{build}/unreviewed'
+        self.assertNotEqual(s.digest(current), metadata['after_hash'])
 
     def test_benchmark_configure_input_selects_each_actual_root_default_check(self):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')

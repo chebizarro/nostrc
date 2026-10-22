@@ -90,15 +90,24 @@ class CloseoutInterfaces(unittest.TestCase):
             self.assertFalse({'docker', 'signer_endpoint'} &
                              set(self.p['profiles'][profile]['capabilities']))
 
-    def test_contract_projection_preserves_all_193_controls_and_exact_33_omissions(self):
+    def test_contract_projection_preserves_193_keys_and_exact_33_omissions(self):
         for profile in self.data['contracts']:
             current = self.p['diagnostic_nonmember_subsets'][profile]
             previous = c.before_closeout_contract(current, profile)
-            self.assertEqual(current['review'], previous['review'])
+            self.assertEqual(set(current['review']['source_inputs']),
+                             set(previous['review']['source_inputs']))
             self.assertEqual(len(current['review']['source_inputs']), 193)
             self.assertEqual(current['registrations'], previous['registrations'])
             self.assertEqual(len(current['registrations']), 33)
+            record = self.data['contracts'][profile]
             a, b = copy.deepcopy(current), copy.deepcopy(previous)
+            for path, values in record.get('source_changes', {}).items():
+                self.assertEqual(a['review']['source_inputs'][path], values['after'])
+                self.assertEqual(b['review']['source_inputs'][path], values['before'])
+                self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), values['after'])
+                a['review']['source_inputs'][path] = values['before']
+            self.assertEqual(a['candidate_contract_hash'], record['after_candidate_contract_hash'])
+            a['candidate_contract_hash'] = record['before_candidate_contract_hash']
             a.pop('profile_hash'); b.pop('profile_hash')
             self.assertEqual(a, b)
 
@@ -157,6 +166,12 @@ class CloseoutInterfaces(unittest.TestCase):
             for mutate in (
                 lambda x: x['registrations'].pop(),
                 lambda x: x['review']['source_inputs'].update({'unknown.cmake': '0' * 64}),
+                lambda x: x['review']['source_inputs'].update(
+                    {'gnome/groundhog/CMakeLists.txt': '0' * 64}),
+                lambda x: x['review'].update(architecture='aarch64'),
+                lambda x: x['registration_universe'].pop(),
+                lambda x: x['required_closure'].pop(),
+                lambda x: x.update(toolchain_contract_hash='0' * 64),
                 lambda x: x.update(candidate_contract_hash='0' * 64),
                 lambda x: x.update(profile_hash='0' * 64),
             ):

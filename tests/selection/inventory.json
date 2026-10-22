@@ -27435,7 +27435,7 @@
   },
   "diagnostic_nonmember_subsets": {
     "groundhog.linux": {
-      "candidate_contract_hash": "1b388f407707962875055bb166ba8d01b295330621469e5f6527d5c218b4e402",
+      "candidate_contract_hash": "2f4632d4d10aaa65e3236516dd0b1f567408347604bd13fdda2b5ab841daa932",
       "primary_registrations": [
         "GoChannelIncremental",
         "MockRelayIntegration",
@@ -28739,7 +28739,7 @@
           "cmake/NostrdbVendored.cmake": "4cd0852adc11f90b6c116bfc6020267d1b010bf8610e82713f62276005b6eed2",
           "cmake/VersionHelpers.cmake": "2a934e9f410ec8892bcb6a8899ed31d567984eb62163a563f2c8fc43d8d8f5e2",
           "components/nostrdb/CMakeLists.txt": "bc5a256fd03e6b30131ce006d45426718dd0cb5edb0399479f2f53a5c5de2e05",
-          "gnome/groundhog/CMakeLists.txt": "e9ec66371ad955063bd4cbe1e442c39fedec122040c9a18503adddb3afc667a7",
+          "gnome/groundhog/CMakeLists.txt": "0310724b36c40157385555e032a02519c13530edf5774f031176f92bb8e72d39",
           "gnome/groundhog/TestInventory.cmake": "7b2c1fb43e68b35359e03e502b999078b26f648ffb681a78c012873c24f49ec7",
           "gnome/groundhog/cmake/CheckPackagingVersion.cmake": "f65376cc252961543fb3ddd8252421e686049e2b3d5f37405671f41bc84f91d1",
           "gnome/libnostr-publish/CMakeLists.txt": "3f61e3195cbd29285798bbce391bf32a239545c7e8a9f40e2ecd93c014397eeb",
@@ -28899,7 +28899,7 @@
       "toolchain_contract_hash": "2d86386b4a2357328c8353e51f2ef527dcff33693163efd433818ac1c0e0ebc3"
     },
     "grotto.linux": {
-      "candidate_contract_hash": "1b388f407707962875055bb166ba8d01b295330621469e5f6527d5c218b4e402",
+      "candidate_contract_hash": "2f4632d4d10aaa65e3236516dd0b1f567408347604bd13fdda2b5ab841daa932",
       "primary_registrations": [
         "GoChannelIncremental",
         "MockRelayIntegration",
@@ -30317,7 +30317,7 @@
           "cmake/NostrdbVendored.cmake": "4cd0852adc11f90b6c116bfc6020267d1b010bf8610e82713f62276005b6eed2",
           "cmake/VersionHelpers.cmake": "2a934e9f410ec8892bcb6a8899ed31d567984eb62163a563f2c8fc43d8d8f5e2",
           "components/nostrdb/CMakeLists.txt": "bc5a256fd03e6b30131ce006d45426718dd0cb5edb0399479f2f53a5c5de2e05",
-          "gnome/groundhog/CMakeLists.txt": "e9ec66371ad955063bd4cbe1e442c39fedec122040c9a18503adddb3afc667a7",
+          "gnome/groundhog/CMakeLists.txt": "0310724b36c40157385555e032a02519c13530edf5774f031176f92bb8e72d39",
           "gnome/groundhog/TestInventory.cmake": "7b2c1fb43e68b35359e03e502b999078b26f648ffb681a78c012873c24f49ec7",
           "gnome/groundhog/cmake/CheckPackagingVersion.cmake": "f65376cc252961543fb3ddd8252421e686049e2b3d5f37405671f41bc84f91d1",
           "gnome/libnostr-publish/CMakeLists.txt": "3f61e3195cbd29285798bbce391bf32a239545c7e8a9f40e2ecd93c014397eeb",
