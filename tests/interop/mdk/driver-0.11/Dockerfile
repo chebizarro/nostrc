@@ -20,16 +20,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates perl make pkg-config \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+# Fetch pinned dependencies in a separate content-addressed layer, using Cargo's
+# default Git transport. Compile/test without network or dependency resolution.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-# Dependencies first (their layer survives edits of the driver).
 RUN mkdir src && echo 'fn main() {}' > src/main.rs \
- && cargo build --release --locked && rm -rf src
+ && sha256sum Cargo.toml Cargo.lock rust-toolchain.toml > /tmp/mdk-pinned-inputs.sha256 \
+ && cargo --version --verbose && rustc --version --verbose \
+ && cargo fetch --locked --verbose \
+ && sha256sum -c /tmp/mdk-pinned-inputs.sha256
+# The fetched source cache is a normal content-addressed layer in this owned
+# builder, not a host Cargo cache, prepared peer, or dependency-source override.
+RUN --network=none cargo build --release --frozen \
+ && sha256sum -c /tmp/mdk-pinned-inputs.sha256 && rm -rf src
 COPY src ./src
-RUN touch src/main.rs && cargo build --release --locked
+RUN --network=none touch src/main.rs && cargo build --release --frozen \
+ && sha256sum -c /tmp/mdk-pinned-inputs.sha256
 # The parity tests: the driver's feature registry, component set and session
 # configuration are marmot-app's at the pinned MDK commit (read from Cargo's
 # git checkout of it). A drift fails the image build, and so every case.
-RUN cargo test --release --locked
+RUN --network=none cargo test --release --frozen \
+ && sha256sum -c /tmp/mdk-pinned-inputs.sha256
 
 FROM docker.io/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 COPY --from=build /src/target/release/mdk011-interop-driver /usr/local/bin/mdk011-interop-driver

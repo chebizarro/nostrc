@@ -1,5 +1,21 @@
 # Dependency-aware CI: finite closeout criterion register
 
+> **2026-10-23 runtime follow-through (base `0ce430299`):** original MDK08/09
+> builds/private hello peers PASS. MDK011 now passes all five original Cargo tests
+> and private hello using a newly compiled original-source, explicitly hashed
+> **source-only cache** context; unchanged cold Dockerfile success is not claimed.
+> All three scoped builder/CID cleanups PASS,`complete=false`. Failed/cancelled
+> cold attempts remain. The two NIP55L cells have actual hosted native-x86 PASS at
+> `0ce430299`; explicit-approval TCP fixtures pass six real local Linux/arm64 cases.
+> No shared engine/profile/capability admission follows. See the
+> [source-bound follow-through receipt](dependency-aware-testing-runtime-hosted-2026-10-23.md).
+> Historical `3ef5cbf9c` tables below retain their original scope/dispositions.
+> Bounded hosted listing `2026-10-22T22:15:24.573824Z`:48 roots,45 failed,
+> 1 cancelled,1 queued,1 in_progress; fresh jobs/artifacts for the two nonterminal
+> roots, matched earlier identities for46 completed roots, not all re-fetched.
+> 0/20 qualifying PR comparisons,0/2 complete broad; W11 NOT MET/W12 NOT RUN.
+> `.5` stays closed; `.8` retains broader obligations; finite runtime `.35` is closed.
+
 ## Source and disposition rules
 
 **Finite implementation closeout is verified; rollout is not accepted.** Tested code freeze:
