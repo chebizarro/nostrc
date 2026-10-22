@@ -5,6 +5,7 @@ import platform
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -14,7 +15,7 @@ class SharedSanitizerRouteTests(unittest.TestCase):
     def test_phase_metadata_does_not_bypass_dangerous_capability_guard(self):
         script=(ROOT/'scripts/test-gate.sh').read_text().split("<<'PY'\n",1)[1].rsplit('\nPY',1)[0]
         function=next(n for n in ast.parse(script).body if isinstance(n,ast.FunctionDef) and n.name=='host_guard')
-        namespace=dict(platform=platform)
+        namespace=dict(platform=platform, args=SimpleNamespace(linux_custody='legacy'))
         exec(compile(ast.Module(body=[function],type_ignores=[]),'<host phase guard>','exec'),namespace)
         host={'Darwin':'macos','Linux':'linux','Windows':'windows'}[platform.system()]
         profile=dict(platform=host,architecture='native',capabilities=['docker'],
