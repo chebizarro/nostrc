@@ -39,6 +39,8 @@ class NonmemberOwnership(unittest.TestCase):
         return found
 
     def test_all_1923_frozen_relationships_have_registration_local_coverage(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         evidence = self.evidence
         self.assertEqual(evidence['source_sha'], 'ab5cdbf053f67508cb0da219bbd75a11b5d6719b')
         self.assertEqual(evidence['audit_file_sha256'], '010f0a424c7c4715f3fc30c8c1873790022122ee1adfcc6ea0aad00a26543680')

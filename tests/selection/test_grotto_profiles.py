@@ -73,7 +73,10 @@ class GrottoProfiles(unittest.TestCase):
             profile = self.policy['profiles'][ident]
             exported = exports['variants'][mode]
             primary = exported['primary_names']
-            actual = [name for check in self.policy['checks'].values()
+            # This frozen regex receipt is distinct from the newly enrolled
+            # ancillary root families, which do not attest legacy job execution.
+            actual = [name for check_id, check in self.policy['checks'].items()
+                      if not check_id.startswith('supported.')
                       for name in check.get('ctest_tests', {}).get(ident, [])]
             if ident == 'grotto.linux':
                 from grotto_nip49_projection import FAMILY, before_grotto_nip49_family
@@ -113,6 +116,8 @@ class GrottoProfiles(unittest.TestCase):
         self.assertEqual(len(exports['variants']['asan-ubsan']['primary_names']), 13)
 
     def test_each_added_check_node_has_a_configured_source_or_descriptor_witness(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         exports = json.loads(EXPORT.read_text())
         for mode, suffix in (('native', 'native'), ('asan-ubsan', 'asan_ubsan')):
             exported = exports['variants'][mode]

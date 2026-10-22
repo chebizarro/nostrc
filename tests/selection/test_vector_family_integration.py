@@ -14,7 +14,9 @@ from nip44_vector_projection import (CHECK, REGISTRATION, RENEWAL, SOURCES,
 
 class VectorFamilyIntegration(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.current_policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.policy = before_supported_batch_policy(self.current_policy)
         self.witness = renewal_witness()
         self.contracts = self.policy['diagnostic_nonmember_subsets']
 
@@ -31,7 +33,10 @@ class VectorFamilyIntegration(unittest.TestCase):
                 self.assertEqual(before.keys(), after.keys())
                 self.assertEqual(len(after), 193)
                 self.assertEqual({p for p in before if before[p] != after[p]}, SOURCES)
-                for path, expected in after.items():
+                current = self.current_policy['diagnostic_nonmember_subsets'][profile]['review']['source_inputs']
+                self.assertEqual({path for path in after if after[path] != current[path]},
+                                 {'gnome/groundhog/TestInventory.cmake', 'nips/nip5f/TestInventory.cmake'})
+                for path, expected in current.items():
                     self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected)
                 for key in contract.keys() - {'review', 'primary_registrations', 'required_closure'}:
                     self.assertEqual(contract[key], previous[key], key)

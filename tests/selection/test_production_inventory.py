@@ -25,6 +25,8 @@ class ProductionInventory(unittest.TestCase):
         return result
 
     def test_all_observed_failed_hosted_source_edges_reach_their_checks(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())
         self.assertEqual(len(evidence["audits"]), 5)
         for audit in evidence["audits"]:
@@ -85,7 +87,7 @@ class ProductionInventory(unittest.TestCase):
         policy = copy.deepcopy(self.policy)
         check = "sanitizer.groundhog_account"
         schema = "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml"
-        policy["checks"][check]["nodes"].remove("gnostr")
+        policy["checks"][check]["nodes"].remove("gnostr.schema_inputs")
         bad = s.make_plan(policy, [change(schema)], head="a" * 40, base="b" * 40, context="ci")
         self.assertNotIn(check, bad["selected_checks"])
         good = s.make_plan(self.policy, [change(schema)], head="a" * 40, base="b" * 40, context="ci")

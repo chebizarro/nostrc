@@ -23,6 +23,8 @@ def renewal_witness():
 
 
 def before_nip44_vector_renewal(contract, profile):
+    from supported_profile_support import before_supported_batch_contract
+    contract = before_supported_batch_contract(contract, profile)
     witness = renewal_witness()
     s.require(profile in witness['profiles'], 'NIP-44 renewal profile changed')
     record = witness['profiles'][profile]
