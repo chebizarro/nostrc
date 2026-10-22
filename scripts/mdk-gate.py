@@ -452,12 +452,26 @@ class OwnedBuilder:
                     current["Config"]["Labels"] != entry.get("labels") or any(
                         current["Config"]["Labels"].get(k) != v for k, v in expected.items())):
                     raise ValueError("peer CID/image/labels mismatch; refusing cleanup")
-                cli(config, ["rm", "-f", cid])
+                mounts = peer_mounts(config, current, entry.get("volume_requests", []))
+                if "mounts" in entry and entry["mounts"] != mounts:
+                    raise ValueError("peer mount/volume identity changed; refusing cleanup")
+                entry["mounts"] = mounts
+                write(path, entry)
+                # Docker removes only anonymous volumes with -v, never named ones.
+                cli(config, ["rm", "-f", "-v", cid])
+                for mount in mounts:
+                    if mount["kind"] == "anonymous":
+                        name = mount["volume"]["Name"]
+                        if cli(config, ["volume", "ls", "-q", "--filter", "name=^" + name + "$"]).strip():
+                            raise ValueError("owned anonymous peer volume remains")
+                    elif mount["kind"] == "named":
+                        if volume_identity(config, mount["source"]) != mount["existing_volume"]:
+                            raise ValueError("pre-existing named peer volume was removed/changed")
                 with lock(path.with_suffix(".client.lock"), timeout=30):
                     entry = json.loads(path.read_text())
                     if not entry.get("logs_drained"):
                         raise ValueError("peer output writers did not drain")
-                    write(path, preserve_artifact(self.state, dict(entry, removed=True)))
+                    write(path, preserve_artifact(self.state, dict(entry, removed=True, mounts=mounts)))
                 if self.list_container(entry["name"]):
                     raise ValueError("owned peer name remains after removal")
             attempt(remove_peer)
@@ -508,6 +522,75 @@ class OwnedBuilder:
         write(self.state / "phase.json", {"run_id": config["run_id"], "phase": "closed"})
         write(self.state / "builder.json", self.result)
         return self.result
+
+
+def volume_identity(config, name):
+    data = json.loads(cli(config, ["volume", "inspect", name]))[0]
+    return {key: data.get(key) for key in ("Name", "CreatedAt", "Driver", "Labels", "Options", "Scope")}
+
+
+def peer_volume_requests(config, options):
+    requests = []
+    for i, option in enumerate(options):
+        if option != "-v":
+            continue
+        parts = options[i + 1].split(":")
+        if len(parts) == 1 or (len(parts) == 2 and parts[1] in {"ro", "rw"}):
+            source, destination = None, parts[0]
+            mode = parts[1] if len(parts) == 2 else "rw"
+            kind = "anonymous"
+        elif len(parts) in {2, 3}:
+            source, destination = parts[:2]
+            mode = parts[2] if len(parts) == 3 else "rw"
+            kind = "bind" if source.startswith("/") else "named"
+        else:
+            raise ValueError("unsupported MDK volume allocation")
+        if (not destination.startswith("/") or str(Path(destination)) != destination or
+            mode not in {"ro", "rw"} or any(r["destination"] == destination for r in requests)):
+            raise ValueError("unsupported MDK volume destination/options")
+        record = dict(kind=kind, source=source, destination=destination, writable=mode == "rw")
+        if kind == "bind":
+            if not Path(source).exists():
+                raise ValueError("MDK bind source must already exist; refusing host allocation")
+        elif kind == "named":
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", source):
+                raise ValueError("unsupported MDK named volume")
+            # Named allocations are not owned: only an existing volume may be used.
+            record["existing_volume"] = volume_identity(config, source)
+        requests.append(record)
+    return requests
+
+
+def peer_mounts(config, current, requests):
+    mounts = current.get("Mounts", [])
+    if len(mounts) != len(requests):
+        raise ValueError("peer mount allocation differs from admitted request")
+    result = []
+    for request in requests:
+        matches = [m for m in mounts if m.get("Destination") == request["destination"]]
+        if len(matches) != 1 or matches[0].get("RW") != request["writable"]:
+            raise ValueError("peer mount destination/access mismatch")
+        mount = matches[0]
+        record = dict(request, mount=mount)
+        if request["kind"] == "bind":
+            if mount.get("Type") != "bind" or mount.get("Source") != request["source"]:
+                raise ValueError("peer bind source/type mismatch")
+        else:
+            name = mount.get("Name", "")
+            if mount.get("Type") != "volume" or mount.get("Driver") != "local":
+                raise ValueError("unsupported peer volume driver/type")
+            if request["kind"] == "anonymous" and not re.fullmatch(r"[0-9a-f]{64}", name):
+                raise ValueError("anonymous peer volume identity mismatch")
+            if request["kind"] == "named" and name != request["source"]:
+                raise ValueError("named peer volume identity mismatch")
+            record["volume"] = volume_identity(config, name)
+            if (record["volume"]["Name"] != name or record["volume"]["Driver"] != "local" or
+                record["volume"].get("Options")):
+                raise ValueError("unsupported peer volume allocation")
+            if request["kind"] == "named" and record["volume"] != request["existing_volume"]:
+                raise ValueError("pre-existing named volume identity changed")
+        result.append(record)
+    return result
 
 
 def docker(argv):
@@ -600,6 +683,7 @@ def docker(argv):
     # Retain exited peers until scoped cleanup so PID namespace, labels, logs and
     # CID absence can be checked; never infer removal from --rm/client exit.
     options = [arg for arg in argv[1:i] if arg != "--rm"]
+    record["volume_requests"] = peer_volume_requests(config, options)
     with lock(target.with_suffix(".client.lock")):
         try:
             with lock(state / "admission.lock"):
@@ -623,7 +707,8 @@ def docker(argv):
                 inspection = state / (name + ".inspect.json")
                 write(inspection, current)
                 record.update(container_id=cid, create_argv=command, labels=current["Config"]["Labels"],
-                              inspection=file_identity(inspection))
+                              inspection=file_identity(inspection),
+                              mounts=peer_mounts(config, current, record["volume_requests"]))
                 write(target, record)
             command = ["start", "--attach", *( ["--interactive"] if "-i" in options else []), cid]
             code = stream_cli(config, command, target.with_suffix(""))

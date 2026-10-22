@@ -263,11 +263,13 @@ class RealDockerLifecycleTests(unittest.TestCase):
         (context / 'Dockerfile').write_text(text)
         return source
 
-    def start(self, source, env=None):
+    def start(self, source, env=None, command=None):
         evidence = source / 'evidence'
         log = source / 'lifecycle.log'
-        proc = subprocess.Popen([sys.executable, str(ROOT / 'scripts/mdk-gate.py'), 'images',
-            '--source-root', str(source), '--evidence-dir', str(evidence), '--version', '011', '--probe'],
+        argv = [sys.executable, str(ROOT / 'scripts/mdk-gate.py'), 'run' if command else 'images',
+                '--source-root', str(source), '--evidence-dir', str(evidence), '--version', '011']
+        argv += ['--', *command] if command else ['--probe']
+        proc = subprocess.Popen(argv,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
         condition, output = threading.Condition(), bytearray()
         def drain():
@@ -337,6 +339,42 @@ class RealDockerLifecycleTests(unittest.TestCase):
                 self.assertEqual(identity['sha256'], hashlib.sha256(Path(identity['path']).read_bytes()).hexdigest())
         self.assertEqual(self.call('buildx', 'inspect').splitlines()[0], self.selected_builder,
                          'global builder selection changed')
+
+    def test_actual_anonymous_volume_removed_existing_named_preserved_and_new_named_refused(self):
+        source = self.source('peer-volumes')
+        name = 'nostrc-mdk-volume-' + source.name + '-' + str(os.getpid())
+        self.call('volume', 'create', '--label', 'org.nostrc.mdk.fixture=' + name, name)
+        original = json.loads(self.call('volume', 'inspect', name))[0]
+        def remove_fixture_volume():
+            self.assertEqual(json.loads(self.call('volume', 'inspect', name))[0], original)
+            self.call('volume', 'rm', name)
+        self.addCleanup(remove_fixture_volume)
+        missing = name + '-not-created'
+        driver = source / 'volumes.py'
+        driver.write_text('import json,os,pathlib,subprocess,sys\n'
+            'cfg=json.loads((pathlib.Path(os.environ["NOSTRC_MDK_STATE"])/"config.json").read_text())\n'
+            'd=cfg["images"]["011"]; wrapper=os.environ["NOSTRC_MDK_DOCKER"]\n'
+            'subprocess.run([wrapper,"build","-t",d["tag"],d["context"]],check=True)\n'
+            'for mount in ("/artifacts",sys.argv[1]+":/existing"):\n'
+            ' subprocess.run([wrapper,"run","--rm","-i","-v",mount,d["tag"]],input=b"volume-proof\\n",check=True)\n'
+            'assert subprocess.run([wrapper,"run","--rm","-v",sys.argv[2]+":/new",d["tag"]]).returncode != 0\n')
+        receipt = self.finish(self.start(source, command=[sys.executable, str(driver), name, missing]), 1)
+        self.assertEqual(receipt['status'], 'cleanup_unverified')
+        self.assertFalse(receipt['cleanup_complete'])  # legacy native run stays unverified
+        self.assertTrue(receipt['docker_lifecycle']['cleanup_complete'], receipt)
+        self.assertFalse(receipt['complete'])
+        self.assertEqual(len(receipt['containers']), 2)
+        mounts = [mount for peer in receipt['containers'] for mount in peer['mounts']]
+        anonymous = next(m for m in mounts if m['kind'] == 'anonymous')
+        self.assertEqual(self.call('volume', 'ls', '-q', '--filter',
+                                  'name=^' + anonymous['volume']['Name'] + '$').strip(), '')
+        self.assertEqual(json.loads(self.call('volume', 'inspect', name))[0], original)
+        self.assertEqual(self.call('volume', 'ls', '-q', '--filter', 'name=^' + missing + '$').strip(), '')
+        for peer in receipt['containers']:
+            self.assertTrue(peer['removed'])
+            self.assertTrue(peer['logs_drained'])
+            self.assertEqual(self.call('ps', '-aq', '--no-trunc', '--filter', 'id=' + peer['container_id']).strip(), '')
+        self.assertEqual(self.call('buildx', 'inspect').splitlines()[0], self.selected_builder)
 
     def test_actual_build_run_and_exact_metadata(self):
         receipt = self.finish(self.start(self.source('positive')), 0)

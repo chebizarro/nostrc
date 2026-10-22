@@ -77,7 +77,7 @@ fixtures, review identities and failed attempts remain retained.
 | Actual production libgo backend default route | **PASS at `38c942c64`**: public plan/run `--configure --phase all --parallel 2`, actual prerequisites/default 42-target closure, full registration/input audits and all 33 selected CTests. Physical default argv includes `--config Debug --parallel 2`. `diagnostic_eligible=true`, `complete_gate_eligible=false`; not native x86/hosted or root/core parity. |
 | Current combined fresh authored Linux full audits and actual supported core/default execution | **NOT RUN at final source**. A's source-bound full audits and the actual libgo route above do not substitute for fresh integrated root/core producer/default/postbuild execution. |
 | C scoped original Docker-resource lifecycle | **PASS at `0c79eff77`**:30 focused tests including five real Docker cases, zero skips. Exact original matrix cancelled after1000s during MDK011 dependency fetch; cleanup took2.8s, owned builder/volume/registration absent and locks free. Final-tip original image acceptance **NOT MET**,08/09 **NOT RUN**; earlier three-version positives retain the pre-review helper identity. Legacy run/selector/native arbitrary-tree refusal unchanged; `.8` remains open. |
-| One bounded review of novel integrated seams | **NOT RUN**; parent C review found no immediate blocker, but is not the final integrated review. |
+| One bounded review of novel integrated seams | **PASS / completed once**, chat `untitled-chat-C7641C`, actual frozen current source/diffs/new witnesses. One P1 anonymous peer-volume cleanup regression identified and corrected: journal/verify mounts and volume identity, `rm -f -v` plus anonymous absence, preserve existing named volumes and refuse new named/host allocation. Actual private Docker regression and36 focused cases **PASS**, zero skips. No second review or whole MDK matrix run. |
 
 B component proof SHA-256:
 `da9fe52856ca88b41a7ed9fe6ed23a5ae5d918c53c04b8269de07d8dd237908e`.
@@ -126,6 +126,23 @@ negative-message/source-enrollment mismatches and a host XPC marker differing
 from the fixture CLI's safety environment. Matching that environment makes the
 phase cases pass without relaxing source/environment identity guards. All
 original failed logs remain; the 111 focused fixes are not a full-suite pass.
+At frozen `fa884617b`, all701 selector cases executed with zero skips, including
+five real Docker cases; **four historical assertions failed** (one old inline
+header-generation literal, one unprojected CMake source hash, two ordinary
+source-map comparisons). The exact approved template/whole-contract projection
+repairs retain the immutable fixtures and unrelated-mutation refusals. All14
+other combined gates passed. This failed full checkpoint remains retained under
+`final-combined-fa884617b/`; it is not final-source acceptance. The review-volume
+fix/historical focused confirmation is36/36 PASS, zero skips. Its initial syntax
+and fixture-directory failures are retained separately, not erased.
+
+The integrated review is text-only, scoped to selected current diffs/source;
+omitted workflow callers/full inventory limit independent end-to-end claims.
+Runtime/full-input/production proofs are still independent required gates. Review
+export: `prompt-exports/oracle-review-2026-10-23-021100-untitled-chat-c7641c-a39c.md`
+in the main checkout. C's own earlier component review is not counted as this
+integrated review.
+
 Receipts and comparison manifests:
 `/tmp/nostrc-closeout-integration-20261022/`.
 

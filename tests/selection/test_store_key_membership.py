@@ -153,6 +153,11 @@ class StoreKeyMembership(unittest.TestCase):
                 if renewal is not None:
                     self.assertEqual(expected, renewal['before'], path)
                     expected = renewal['after']
+                from closeout_support import witness as closeout_witness
+                producer_renewal = closeout_witness()['contracts'][PROFILE]['source_changes'].get(path)
+                if producer_renewal is not None:
+                    self.assertEqual(expected, producer_renewal['before'], path)
+                    expected = producer_renewal['after']
                 self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
 
     def test_selection_contract_tracks_the_new_test_and_export(self):

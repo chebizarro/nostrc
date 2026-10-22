@@ -100,7 +100,9 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   errors separate. The additive `images [--probe]` route owns a unique explicit
   BuildKit builder, its volume/registration and recorded immutable peer CIDs;
   `cleanup_complete=true` applies only to those Docker resources, with
-  `complete=false`. No default builder selection/global prune, prepared-route
+  `complete=false`. Peer mounts/volume identities are journaled and rechecked;
+  owned anonymous volumes must disappear, pre-existing named volumes must remain,
+  and unowned new named/host allocations refuse. No default builder selection/global prune, prepared-route
   alias, native arbitrary-tree or selector admission follows. Exact-tip original
   image acceptance remains NOT MET after the retained MDK011 fetch cancellation;
   08/09 were not started. Do not promote earlier helper smokes or scoped cleanup

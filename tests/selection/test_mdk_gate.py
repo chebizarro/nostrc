@@ -95,7 +95,12 @@ if args[0]=='stop':
 if args[0]=='logs':print('simulated BuildKit logs');sys.exit(0)
 if args[0]=='create':
  name=value('--name');image=args[-1];ls=dict(read('images',image.replace(':','-'))['Config']['Labels'],**labels())
- d={'Id':cid(name),'Name':'/'+name,'Image':image,'Config':{'Labels':ls},'State':{'Running':False,'Pid':0}}
+ mounts=[]
+ for i,a in enumerate(args):
+  if a=='-v':
+   source,destination=args[i+1].split(':')[:2]
+   mounts.append({'Type':'bind','Source':source,'Destination':destination,'RW':True})
+ d={'Id':cid(name),'Name':'/'+name,'Image':image,'Config':{'Labels':ls},'State':{'Running':False,'Pid':0},'Mounts':mounts}
  if os.environ.get('MISMATCH_PEER'):d['Config']['Labels']['org.nostrc.mdk.run']='unrelated-owner'
  save('containers',cid(name),d);pathlib.Path(value('--cidfile')).write_text(cid(name))
  if '-v' in args:
@@ -243,6 +248,7 @@ class MDKGateTests(unittest.TestCase):
         self.assertFalse(any(x[0]=='create' for x in self.traces()))
 
     def test_vectors_preserved_before_later_fixture_reset(self):
+        (self.base / 'artifacts').mkdir()  # fixture, not Docker, owns the host directory
         child = self.start(self.root('vectors'),ARTIFACT_DIR=str(self.base/'artifacts'))
         self.assertEqual(child.wait(timeout=10),1)
         receipt = self.receipts()[0]
@@ -389,6 +395,37 @@ class MDKGateTests(unittest.TestCase):
         self.assertEqual(removed,[x['container_id'] for x in receipt['containers']])
         self.assertEqual(receipt['status'],'cancelled')
         self.assertNotIn('prune',str(self.traces()))
+
+
+class PeerVolumeAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location('mdk_volumes_under_test', HELPER)
+        self.helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.helper)
+
+    def test_unsupported_host_or_volume_allocations_refuse_before_create(self):
+        with mock.patch.object(self.helper, 'cli') as cli:
+            for options in (['-v', 'relative:/data:shared'], ['-v', '/data:ro:extra:invalid'],
+                            ['-v', '/data', '-v', '/data']):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    self.helper.peer_volume_requests({}, options)
+            cli.assert_not_called()
+        with mock.patch.object(self.helper, 'volume_identity', side_effect=ValueError('not found')):
+            with self.assertRaises(ValueError):
+                self.helper.peer_volume_requests({}, ['-v', 'not-created:/data'])
+
+    def test_unrequested_or_changed_mount_identity_refuses(self):
+        request = self.helper.peer_volume_requests({}, ['-v', '/data'])
+        volume = dict(Name='a' * 64, CreatedAt='reviewed', Driver='local', Labels=None, Options=None, Scope='local')
+        mount = dict(Type='volume', Driver='local', Name=volume['Name'], Destination='/data', RW=True)
+        with mock.patch.object(self.helper, 'volume_identity', return_value=volume):
+            admitted = self.helper.peer_mounts({}, {'Mounts': [mount]}, request)
+            self.assertEqual(admitted[0]['volume'], volume)
+            for bad in ({'Mounts': []}, {'Mounts': [dict(mount, Name='pre-existing')]},
+                        {'Mounts': [dict(mount, Driver='unsupported')]},
+                        {'Mounts': [dict(mount, RW=False)]}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    self.helper.peer_mounts({}, bad, request)
 
 
 if __name__=='__main__': unittest.main()
