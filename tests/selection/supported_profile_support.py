@@ -8,6 +8,9 @@ import hashlib
 import json
 
 from selector_support import ROOT, s
+from closeout_support import (
+    before_closeout_contract, before_closeout_policy, closeout_golden_checks,
+)
 
 WITNESS = 'tests/selection/fixtures/supported_profile_membership.json'
 WITNESS_SHA256 = '7de6670380ae17adc0512fb390f50ff1269fb0b4856d865716c0ea20580de875'
@@ -27,6 +30,7 @@ def witness():
 
 def before_supported_batch_contract(contract, profile):
     """Reverse only exact selected closure and the two descriptor source hashes."""
+    contract = before_closeout_contract(contract, profile)
     record = witness()['contracts'][profile]
     digest = s.digest(contract)
     if digest == record['before_hash']:
@@ -53,7 +57,7 @@ def before_supported_batch_policy(policy):
     independently checked against the whole census in the dedicated batch tests.
     """
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_closeout_policy(policy)
     for ident, change in data['inventory_changes']['checks'].items():
         s.require(previous['checks'].get(ident) == change['after'],
                   'supported profile census check changed: ' + ident)
@@ -83,11 +87,11 @@ def supported_golden_checks(name, previous_checks, policy):
     data = witness()
     before_supported_batch_policy(policy)
     record = data['golden_updates'].get(name)
-    if record is None:
-        return previous_checks
-    s.require(previous_checks == record['before'],
-              'supported profile census prior golden selection changed')
-    return record['after']
+    if record is not None:
+        s.require(previous_checks == record['before'],
+                  'supported profile census prior golden selection changed')
+        previous_checks = record['after']
+    return closeout_golden_checks(name, previous_checks, policy)
 
 
 def census_inputs(data, primary):

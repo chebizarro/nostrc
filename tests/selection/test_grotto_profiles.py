@@ -59,7 +59,8 @@ class GrottoProfiles(unittest.TestCase):
                 self.assertNotIn('build2/test1 API', profile['workflow_contract']['execution_gap'])
                 self.assertEqual(profile['setup'], '.github/workflows/grotto-ci.yml:signer')
                 self.assertEqual(profile['workflow_contract']['matrix']['runner'], 'ubuntu-24.04')
-                self.assertEqual(profile['capabilities'], ['display', 'private_bus'])
+                self.assertEqual(profile['capabilities'], ['display', 'private_bus'] +
+                                 (['nak', 'gnome_keyring'] if ident == 'grotto.linux' else []))
                 self.assertFalse(any('MDK' in flag for flag in profile['configure_args']))
                 for key, value in profile['environment'].items():
                     self.assertIn('      ' + key + ': ' + value + '\n', self.workflow)

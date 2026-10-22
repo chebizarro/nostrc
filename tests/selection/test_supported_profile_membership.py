@@ -6,6 +6,7 @@ import unittest
 
 from selector_support import ROOT, change, s
 from realization_support import Project, r
+from closeout_support import before_closeout_policy
 from supported_profile_support import (
     NEW_INPUTS, before_supported_batch_contract, before_supported_batch_policy,
     census_inputs, witness,
@@ -103,7 +104,7 @@ class SupportedProfileMembership(unittest.TestCase):
             self.assertEqual(self.p['nodes'][ident], node)
         self.assertEqual({k: v for k, v in self.p['nodes'].items() if k not in structural['nodes']},
                          previous['nodes'])
-        self.assertEqual(self.p['profiles'], previous['profiles'])
+        self.assertEqual(before_closeout_policy(self.p)['profiles'], previous['profiles'])
         self.assertEqual(self.p['diagnostic_nonmembers'], previous['diagnostic_nonmembers'])
         self.assertEqual(self.p['nodes']['groundhog.unclassified']['depends_on'], [])
         self.assertFalse(self.p['enforcement_ready'])
@@ -194,8 +195,9 @@ class SupportedProfileMembership(unittest.TestCase):
         self.assertEqual(record['test_nip5f_tcp']['requires'], ['signer_endpoint'])
         self.assertNotIn('signer_endpoint', record['test_nip5f_loopback']['requires'])
         for profile in ('groundhog.linux', 'grotto.linux'):
-            self.assertFalse({'nak', 'gnome_keyring', 'signer_endpoint'} &
-                             set(self.p['profiles'][profile]['capabilities']))
+            self.assertEqual(self.p['profiles'][profile]['capabilities'],
+                             ['display', 'private_bus', 'nak', 'gnome_keyring'])
+            self.assertNotIn('signer_endpoint', self.p['profiles'][profile]['capabilities'])
 
     def test_semantic_selection_savings_no_new_live_peer_or_unrelated_standalone_work(self):
         historical = before_supported_batch_policy(self.p)

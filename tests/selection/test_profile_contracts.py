@@ -323,7 +323,9 @@ class OrdinaryLiveProfileContracts(unittest.TestCase):
         policy = s.load_inventory(INVENTORY)
         ordinary = policy['profiles']['groundhog.linux']
         live = policy['profiles']['groundhog.mdk011']
-        self.assertEqual(ordinary['capabilities'], ['display', 'private_bus'])
+        self.assertEqual(ordinary['capabilities'], ['display', 'private_bus', 'nak', 'gnome_keyring'])
+        self.assertNotIn('signer_endpoint', ordinary['capabilities'])
+        self.assertNotIn('docker', ordinary['capabilities'])
         self.assertEqual(live['capabilities'], ['display', 'private_bus', 'docker'])
         self.assertIn('-DBUILD_MDK011_INTEROP=OFF', ordinary['configure_args'])
         self.assertIn('-DBUILD_MDK011_INTEROP=ON', live['configure_args'])
