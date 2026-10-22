@@ -2531,6 +2531,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -3197,6 +3198,7 @@
         "gnome.seahorse",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
         "groundhog.group_ui",
         "groundhog.identity_auth",
         "groundhog.legacy_harness_inputs",
@@ -3374,6 +3376,8 @@
         "gnostr.schema_inputs",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -3383,6 +3387,7 @@
         "groundhog.store",
         "groundhog.unclassified",
         "libjson",
+        "libmarmot",
         "nip04",
         "nip06",
         "nip11",
@@ -3473,6 +3478,7 @@
         "gnome.seahorse",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -3525,6 +3531,7 @@
         "gnostr.schema_inputs",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -3582,6 +3589,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.relay",
         "groundhog.resources",
@@ -3878,6 +3886,8 @@
         "gnostr.schema_inputs",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -3887,6 +3897,7 @@
         "groundhog.store",
         "groundhog.unclassified",
         "libjson",
+        "libmarmot",
         "nip04",
         "nip06",
         "nip11",
@@ -3965,6 +3976,7 @@
         "gnostr.schema_inputs",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -4042,6 +4054,7 @@
         "gnostr.schema_inputs",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -4426,6 +4439,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.group_ui",
         "groundhog.media",
         "groundhog.net",
@@ -4477,6 +4491,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
         "groundhog.mls_ui",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -4524,6 +4539,7 @@
         "gnostr.schema_inputs",
         "groundhog.account_relays",
         "groundhog.conversations",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -4868,6 +4884,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -5075,6 +5092,7 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.mls_ui",
         "groundhog.poll_ui",
@@ -5155,6 +5173,7 @@
         "gnome.seahorse",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.group_ui",
         "groundhog.legacy_harness_inputs",
         "groundhog.media",
@@ -5564,7 +5583,6 @@
         "grotto.daemon",
         "grotto.gui",
         "groundhog.identity_auth",
-        "groundhog.relay",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
         "nip17",
@@ -5597,6 +5615,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.media",
         "groundhog.net",
@@ -5843,6 +5862,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.mls_ui",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -5872,6 +5892,7 @@
         "gnome.seahorse",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.mls_ui",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -5944,6 +5965,7 @@
         "gnome.seahorse",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -5984,6 +6006,7 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.relay",
         "groundhog.resources",
         "groundhog.shell_ui",
@@ -6166,6 +6189,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6201,6 +6225,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6236,6 +6261,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6271,6 +6297,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6306,6 +6333,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6344,6 +6372,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6380,6 +6409,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6415,6 +6445,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6451,6 +6482,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6486,6 +6518,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6521,6 +6554,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6556,6 +6590,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6591,6 +6626,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6626,6 +6662,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6661,6 +6698,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -6696,6 +6734,7 @@
       "nodes": [
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.mls_service",
         "groundhog.mls_ui",
@@ -7461,10 +7500,12 @@
         "execution.grotto",
         "execution.groundhog",
         "gnostr.schema_inputs",
-        "groundhog.account_relays",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
+        "libmarmot",
         "nip17",
         "nip55l.dbus_contract",
         "nip59",
@@ -7508,11 +7549,13 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
-        "groundhog.account_relays",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
+        "libmarmot",
         "nip55l",
         "nip55l.dbus_contract",
         "nip59",
@@ -7562,6 +7605,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -7653,6 +7697,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.relay",
         "groundhog.resources",
         "groundhog.unclassified",
@@ -7698,6 +7743,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.mls_ui",
         "groundhog.resources",
@@ -7750,6 +7796,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -7794,6 +7841,7 @@
         "gnome.common",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -7847,6 +7895,7 @@
         "execution.groundhog",
         "gnome.common",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
         "groundhog.shell_ui",
@@ -7897,6 +7946,7 @@
         "gnome.common",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -7950,11 +8000,13 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
-        "groundhog.account_relays",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
+        "libmarmot",
         "nip55l",
         "nip55l.dbus_contract",
         "nip59",
@@ -8046,6 +8098,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
@@ -8085,6 +8138,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.resources",
         "groundhog.unclassified",
         "testing.framework"
@@ -8121,6 +8175,7 @@
         "execution.grotto",
         "execution.groundhog",
         "gnome.common",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -8166,6 +8221,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
@@ -8239,6 +8295,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
@@ -8278,6 +8335,8 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "gnome.common",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
@@ -8315,6 +8374,8 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "gnome.common",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -8392,6 +8453,7 @@
         "execution.groundhog",
         "gnome.common",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
         "groundhog.shell_ui",
@@ -8442,6 +8504,7 @@
         "gnome.common",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -8495,6 +8558,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -8540,6 +8604,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -8592,6 +8657,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -8643,6 +8709,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -8688,6 +8755,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -8740,6 +8808,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -8832,6 +8901,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -8924,11 +8994,13 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
-        "groundhog.account_relays",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
+        "libmarmot",
         "nip55l",
         "nip55l.dbus_contract",
         "nip59",
@@ -9060,6 +9132,7 @@
         "execution.grotto",
         "execution.groundhog",
         "gnome.common",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
@@ -9107,6 +9180,7 @@
         "gnome.common",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -9157,6 +9231,7 @@
         "execution.grotto",
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.group_ui",
         "groundhog.media",
         "groundhog.schema_inputs",
@@ -9202,6 +9277,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.group_ui",
         "groundhog.media",
         "groundhog.resources",
@@ -9252,6 +9328,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
@@ -9292,6 +9369,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
         "groundhog.unclassified",
@@ -9332,7 +9410,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
-        "groundhog.resources",
+        "groundhog.gresource_inputs",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
         "nip17",
@@ -10032,6 +10110,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.net",
         "groundhog.resources",
@@ -10084,6 +10163,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.identity_auth",
         "groundhog.net",
         "groundhog.resources",
@@ -10180,6 +10260,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -10225,6 +10306,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -10277,6 +10359,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -10416,6 +10499,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.relay",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -10466,10 +10550,12 @@
         "execution.grotto",
         "execution.groundhog",
         "gnostr.schema_inputs",
-        "groundhog.account_relays",
+        "groundhog.gresource_inputs",
+        "groundhog.group_ui",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
+        "libmarmot",
         "nip17",
         "nip55l.dbus_contract",
         "nip59",
@@ -10892,6 +10978,7 @@
         "execution.groundhog",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -10937,6 +11024,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -10986,6 +11074,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.relay",
         "groundhog.resources",
         "groundhog.unclassified",
@@ -11147,6 +11236,7 @@
         "execution.grotto",
         "execution.groundhog",
         "gnome.common",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.shell_ui",
         "groundhog.unclassified",
@@ -11190,6 +11280,7 @@
         "gnome.common",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.legacy_harness_inputs",
         "groundhog.poll_ui",
         "groundhog.schema_inputs",
@@ -11314,6 +11405,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.resources",
         "groundhog.unclassified",
         "groundhog.voice",
@@ -14541,7 +14633,7 @@
         "execution.core",
         "execution.grotto",
         "execution.groundhog",
-        "nostr.gtk"
+        "gnostr"
       ],
       "profiles": [
         "core.linux",
@@ -15787,6 +15879,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.shell_ui",
@@ -15832,6 +15925,7 @@
         "gnostr",
         "gnostr.schema_inputs",
         "groundhog.account_relays",
+        "groundhog.gresource_inputs",
         "groundhog.media",
         "groundhog.schema_inputs",
         "groundhog.shell_ui",
@@ -16449,6 +16543,7 @@
         "execution.grotto",
         "execution.groundhog",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.mls_ui",
         "groundhog.schema_inputs",
         "groundhog.unclassified",
@@ -16489,6 +16584,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.mls_ui",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -16649,6 +16745,7 @@
         "execution.groundhog",
         "gnostr",
         "gnostr.schema_inputs",
+        "groundhog.gresource_inputs",
         "groundhog.poll_ui",
         "groundhog.resources",
         "groundhog.schema_inputs",
@@ -16800,6 +16897,7 @@
       "nodes": [
         "execution.grotto",
         "execution.groundhog",
+        "groundhog.gresource_inputs",
         "groundhog.relay",
         "groundhog.resources",
         "groundhog.unclassified",
@@ -20429,6 +20527,113 @@
       ],
       "depends_on": [],
       "rationale": "Exact source XML used to generate shared NIP55L D-Bus bindings; not the entire daemon/client implementation."
+    },
+    "groundhog.gresource_inputs": {
+      "id": "groundhog.gresource_inputs",
+      "owner_paths": [
+        "gnome/groundhog/data/blossom-media-suggestions.txt",
+        "gnome/groundhog/data/groundhog.gresource.xml",
+        "gnome/groundhog/data/icons/256x256/apps/org.nostr.Groundhog.png",
+        "gnome/groundhog/data/icons/512x512/apps/org.nostr.Groundhog.png",
+        "gnome/groundhog/data/icons/scalable/actions/action-unavailable-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/alarm-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/audio-x-generic-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/avatar-default-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/changes-prevent-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/channel-secure-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/computer-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/content-loading-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/dialog-password-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/dialog-question-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/dialog-warning-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/document-open-recent-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/document-open-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/emblem-ok-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/emblem-synchronizing-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/go-bottom-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/go-down-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/go-next-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/go-previous-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/go-up-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/help-about-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/image-x-generic-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/mail-attachment-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/mail-read-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/mail-send-receive-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/mail-unread-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/network-offline-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/network-server-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/network-transmit-receive-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/network-workgroup-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/open-menu-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/package-x-generic-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/preferences-system-privacy-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/qr-code-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/send-symbolic-rtl.svg",
+        "gnome/groundhog/data/icons/scalable/actions/send-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/system-lock-screen-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/system-log-out-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/system-search-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/text-x-generic-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/user-bookmarks-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/video-x-generic-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/view-conceal-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/view-list-bullet-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/view-more-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/view-pin-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/view-refresh-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/x-office-document-symbolic.svg",
+        "gnome/groundhog/data/relay-suggestions.json",
+        "gnome/groundhog/data/style.css",
+        "gnome/groundhog/data/ui/gh-account-ui.blp",
+        "gnome/groundhog/data/ui/gh-add-contact-page.blp",
+        "gnome/groundhog/data/ui/gh-attachment-card.blp",
+        "gnome/groundhog/data/ui/gh-attachment-sheet.blp",
+        "gnome/groundhog/data/ui/gh-blocked-page.blp",
+        "gnome/groundhog/data/ui/gh-blocked-row.blp",
+        "gnome/groundhog/data/ui/gh-composer.blp",
+        "gnome/groundhog/data/ui/gh-content-page.blp",
+        "gnome/groundhog/data/ui/gh-conversation-info-dialog.blp",
+        "gnome/groundhog/data/ui/gh-conversation-info-person.blp",
+        "gnome/groundhog/data/ui/gh-conversation-menu.blp",
+        "gnome/groundhog/data/ui/gh-conversation-row.blp",
+        "gnome/groundhog/data/ui/gh-conversation-section.blp",
+        "gnome/groundhog/data/ui/gh-conversation-view.blp",
+        "gnome/groundhog/data/ui/gh-create-poll-dialog.blp",
+        "gnome/groundhog/data/ui/gh-day-separator.blp",
+        "gnome/groundhog/data/ui/gh-delivery-details.blp",
+        "gnome/groundhog/data/ui/gh-delivery-indicator.blp",
+        "gnome/groundhog/data/ui/gh-group-info-dialog.blp",
+        "gnome/groundhog/data/ui/gh-group-join-page.blp",
+        "gnome/groundhog/data/ui/gh-group-member-row.blp",
+        "gnome/groundhog/data/ui/gh-message-list-item.blp",
+        "gnome/groundhog/data/ui/gh-message-reference.blp",
+        "gnome/groundhog/data/ui/gh-message-row.blp",
+        "gnome/groundhog/data/ui/gh-mls-group-info-dialog.blp",
+        "gnome/groundhog/data/ui/gh-mls-invite-row.blp",
+        "gnome/groundhog/data/ui/gh-mls-invitee-picker.blp",
+        "gnome/groundhog/data/ui/gh-mls-invitee-row.blp",
+        "gnome/groundhog/data/ui/gh-mls-invites-page.blp",
+        "gnome/groundhog/data/ui/gh-mls-member-row.blp",
+        "gnome/groundhog/data/ui/gh-mls-new-group-page.blp",
+        "gnome/groundhog/data/ui/gh-mls-relay-row.blp",
+        "gnome/groundhog/data/ui/gh-new-group-page.blp",
+        "gnome/groundhog/data/ui/gh-new-message-page.blp",
+        "gnome/groundhog/data/ui/gh-new-message-row.blp",
+        "gnome/groundhog/data/ui/gh-nip46-pair-dialog.blp",
+        "gnome/groundhog/data/ui/gh-onboarding-row.blp",
+        "gnome/groundhog/data/ui/gh-onboarding-view.blp",
+        "gnome/groundhog/data/ui/gh-preferences-dialog.blp",
+        "gnome/groundhog/data/ui/gh-recipient-chip.blp",
+        "gnome/groundhog/data/ui/gh-requests-view.blp",
+        "gnome/groundhog/data/ui/gh-shortcuts-window.blp",
+        "gnome/groundhog/data/ui/gh-sidebar-page.blp",
+        "gnome/groundhog/data/ui/gh-timeline-row.blp",
+        "gnome/groundhog/data/ui/gh-voice-bubble.blp",
+        "gnome/groundhog/data/ui/gh-window.blp"
+      ],
+      "depends_on": [],
+      "rationale": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
     }
   },
   "path_rules": [
@@ -23542,6 +23747,806 @@
       ],
       "effect": "impact",
       "reason": "Exact source XML used to generate shared NIP55L D-Bus bindings; not the entire daemon/client implementation."
+    },
+    {
+      "exact": "gnome/groundhog/data/blossom-media-suggestions.txt",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/groundhog.gresource.xml",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/256x256/apps/org.nostr.Groundhog.png",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/512x512/apps/org.nostr.Groundhog.png",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/action-unavailable-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/alarm-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/audio-x-generic-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/avatar-default-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/changes-prevent-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/channel-secure-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/computer-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/content-loading-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/dialog-password-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/dialog-question-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/dialog-warning-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/document-open-recent-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/document-open-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/emblem-ok-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/emblem-synchronizing-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/go-bottom-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/go-down-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/go-next-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/go-previous-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/go-up-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/help-about-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/image-x-generic-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/mail-attachment-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/mail-read-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/mail-send-receive-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/mail-unread-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/network-offline-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/network-server-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/network-transmit-receive-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/network-workgroup-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/open-menu-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/package-x-generic-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/preferences-system-privacy-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/qr-code-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/send-symbolic-rtl.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/send-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/system-lock-screen-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/system-log-out-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/system-search-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/text-x-generic-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/user-bookmarks-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/video-x-generic-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/view-conceal-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/view-list-bullet-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/view-more-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/view-pin-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/view-refresh-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/x-office-document-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/relay-suggestions.json",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/style.css",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-account-ui.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-add-contact-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-attachment-card.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-attachment-sheet.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-blocked-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-blocked-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-composer.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-content-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-conversation-info-dialog.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-conversation-info-person.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-conversation-menu.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-conversation-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-conversation-section.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-conversation-view.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-create-poll-dialog.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-day-separator.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-delivery-details.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-delivery-indicator.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-group-info-dialog.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-group-join-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-group-member-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-message-list-item.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-message-reference.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-message-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-group-info-dialog.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-invite-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-invitee-picker.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-invitee-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-invites-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-member-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-new-group-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-mls-relay-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-new-group-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-new-message-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-new-message-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-nip46-pair-dialog.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-onboarding-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-onboarding-view.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-preferences-dialog.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-recipient-chip.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-requests-view.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-shortcuts-window.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-sidebar-page.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-timeline-row.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-voice-bubble.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
+    },
+    {
+      "exact": "gnome/groundhog/data/ui/gh-window.blp",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact monolithic Groundhog GResource XML/assets/Blueprint producer inputs observed in Ninja; excludes schemas and autostart template."
     }
   ],
   "profiles": {

@@ -10,7 +10,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/supported_profile_membership.json'
-WITNESS_SHA256 = '4949d85023ee86529abcef2dc5425338bb9db317cce12ca0f896e217f41f7a1b'
+WITNESS_SHA256 = '7de6670380ae17adc0512fb390f50ff1269fb0b4856d865716c0ea20580de875'
 NEW_INPUTS = [
     '{source}/tests/selection/supported_profile_support.py',
     '{source}/tests/selection/test_supported_profile_membership.py',

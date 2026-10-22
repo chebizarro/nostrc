@@ -96,7 +96,8 @@ class SupportedProfileMembership(unittest.TestCase):
         self.assertEqual(set(structural['nodes']), {'testing.common_inputs', 'mdk08.peer_inputs',
                                                   'mdk09.peer_inputs', 'mdk011.peer_inputs',
                                                   'gnostr.schema_inputs', 'groundhog.schema_inputs',
-                                                  'relayd.async_storage_api', 'nip55l.dbus_contract'})
+                                                  'relayd.async_storage_api', 'nip55l.dbus_contract',
+                                                  'groundhog.gresource_inputs'})
         for ident, node in structural['nodes'].items():
             self.assertEqual(node['depends_on'], [])
             self.assertEqual(self.p['nodes'][ident], node)
@@ -159,6 +160,18 @@ class SupportedProfileMembership(unittest.TestCase):
             bad = copy.deepcopy(self.p)
             bad['checks'][consumer]['nodes'].remove(ident)
             self.assertNotIn(consumer, selected(bad))
+        bundle = repair['resource_bundle']
+        self.assertEqual(len(bundle['inputs']), 100)
+        self.assertEqual(self.p['nodes'][bundle['node']]['owner_paths'], bundle['inputs'])
+        for path in bundle['inputs']:
+            self.assertEqual(s.classify(self.p, path)['nodes'], [bundle['node']])
+        self.assertNotIn('gnome/groundhog/data/org.nostr.Groundhog-autostart.desktop.in',
+                         bundle['inputs'])
+        self.assertNotIn('gnome/groundhog/data/org.nostr.Groundhog.gschema.xml', bundle['inputs'])
+        bundle_plan = s.make_plan(self.p, [change('gnome/groundhog/data/groundhog.gresource.xml')],
+                                  head=self.data['base_sha'])
+        self.assertIn('mdk011.control', bundle_plan['selected_checks'])
+        self.assertNotIn('mdk08.compatibility', bundle_plan['selected_checks'])
         core = self.p['checks']['root.asan.nip5f']
         self.assertNotIn('signer_endpoint', core.get('requires', []))
         for profile in ('core.linux.asan', 'core.macos.asan'):
