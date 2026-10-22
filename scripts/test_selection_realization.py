@@ -934,6 +934,17 @@ def _attest_default(realization):
     gaps = list(snapshot["manifests"]["gaps"])
     ids = set()
     targets = realization["targets"]
+    import test_selection_producers as producers
+    def native_command(argv):
+        return _command(argv, env=native_command.environment)
+    native_command.environment = phase_environment(realization['profile'], realization['repo_root'], 'build')
+    try:
+        generated = producers.attest(realization, snapshot, native_command)
+    except (producers.ProducerError, OSError, KeyError, ValueError) as exc:
+        generated = dict(producers={}, admitted=[], outputs=[], literal_outputs={}, utility_target_ids=[], inputs=[], tools={},
+                         gaps=[{'kind': 'default_generator_provenance', 'reason': str(exc)}])
+    gaps.extend(generated['gaps'])
+    ids.update(generated['utility_target_ids'])
     artifact_targets, object_targets = {}, {}
     for key, target in targets.items():
         for artifact in target['artifacts']:
@@ -967,8 +978,10 @@ def _attest_default(realization):
             if str(parent) in object_targets:
                 candidates.update(object_targets[str(parent)])
                 break
+        if rule == 'CUSTOM_COMMAND' and path in generated['admitted']:
+            continue  # exact source/native/tool/read/write-bound data producer
         if (len(candidates) != 1 or not re.fullmatch(
-                r"(?:(?:C|CXX|OBJC|OBJCXX|ASM)(?:_COMPILER|_EXECUTABLE_LINKER|_STATIC_LIBRARY_LINKER|_SHARED_LIBRARY_LINKER|_SHARED_MODULE_LINKER)__.+|CMAKE_SYMLINK_(?:LIBRARY|EXECUTABLE))", rule)):
+                r"(?:(?:C|CXX|OBJC|OBJCXX|ASM)(?:_COMPILER|_EXECUTABLE_LINKER|_STATIC_LIBRARY_LINKER|_SHARED_LIBRARY_LINKER|_SHARED_MODULE_LINKER|_MODULE_LIBRARY_LINKER)__.+|CMAKE_SYMLINK_(?:LIBRARY|EXECUTABLE))", rule)):
             gaps.append({"kind": "unproven_default_producer", "output": output, "rule": rule, "targets": sorted(candidates)})
         else:
             ids.update(candidates)
@@ -991,8 +1004,8 @@ def _attest_default(realization):
                 and any(source.get('compiled') for source in target['sources'])
                 and Path(directory).is_dir() and Path(directory).resolve() == Path(directory)):
             order_directories.add(directory)
-    leaves = []
-    tool_inputs = sorted({t["compiler"]["path"] for t in realization.get("toolchains", {}).get("toolchains", [])
+    leaves = list(generated['inputs'])
+    tool_inputs = sorted(set(generated['tools']) | {t["compiler"]["path"] for t in realization.get("toolchains", {}).get("toolchains", [])
                           if t.get("compiler", {}).get("path")} | {tool['path'] for tool in snapshot['build_tools'].values()})
     for value in snapshot["paths"]:
         if value in snapshot["edges"]:
@@ -1003,7 +1016,8 @@ def _attest_default(realization):
         if str(path) in order_directories:
             continue  # exact File API target directory, only a native order-only sentinel
         leaves.append(str(path))
-        if path.is_relative_to(Path(realization["build_dir"])) and str(path) not in realization["configure_outputs"]:
+        if (path.is_relative_to(Path(realization["build_dir"]))
+                and str(path) not in realization['configure_outputs'] and str(path) not in generated['literal_outputs']):
             gaps.append({"kind": "unproven_default_generated_leaf", "input": str(path)})
         elif not path.is_file():
             gaps.append({"kind": "missing_default_leaf", "input": str(path)})
@@ -1020,6 +1034,7 @@ def _attest_default(realization):
             gaps.append({"kind": "unsupported_default_rule_override", "file": entry["file"], "line": entry["line"]})
     return {"schema_version": 1, "snapshot": snapshot, "target_ids": closure,
             "inputs": sorted(set(leaves)), "tool_inputs": tool_inputs,
+            'generated_producers': generated,
             "order_directories": sorted(order_directories), "gaps": gaps}, raw
 
 
@@ -1172,6 +1187,13 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         realization["override_inventory"] = inventory
     if inventory is not None and any(c.get("build_scope") == "default" and _eligible(c, profile_id)
                                      for c in inventory["checks"].values()):
+        cmake_inputs = _read(cmake_files_path)['inputs']
+        realization['default_configure_context'] = {
+            'directories': configs[0].get('directories', []),
+            'source_inputs': {_path(source, item['path']): hashlib.sha256(Path(_path(source, item['path'])).read_bytes()).hexdigest()
+                              for item in cmake_inputs if not item.get('isGenerated') and not item.get('isExternal')},
+            'external_inputs': sorted({_path(source, item['path']) for item in cmake_inputs
+                                       if not item.get('isGenerated') and item.get('isExternal')})}
         binding, raw = _attest_default(realization)
         realization["default_build_binding"] = binding
         default_evidence = build / f"nostrc-default-generator-{token}.json"
@@ -1699,6 +1721,9 @@ def _audit_commands(inventory, realization, specs, after_build):
         if spec.get('build_scope') == 'default':
             edges = realization['default_build_binding']['snapshot']['edges']
             native_outputs = {_path(realization['build_dir'], p): edge for p, edge in edges.items() if edge['rule'] != 'phony'}
+            producer_proof = realization['default_build_binding']['generated_producers']
+            native_outputs.update({p: {'rule': 'attested_side_effect'} for p in producer_proof['outputs']})
+            native_outputs.update({p: {'rule': 'literal_configure_metadata'} for p in producer_proof['literal_outputs']})
             native_phony = {_path(realization['build_dir'], p) for p, edge in edges.items() if edge['rule'] == 'phony'}
             paths += [(p, 'native_output') for p in native_outputs]
         for key in spec["target_ids"]:
@@ -1746,8 +1771,28 @@ def _audit_commands(inventory, realization, specs, after_build):
                     if not path.is_dir() or path.resolve() != path:
                         gaps.append({'kind': 'changed_default_order_directory', 'check': ident, 'input': value})
                     continue
+                if kind == 'generated' and spec.get('build_scope') == 'default':
+                    # File API emits virtual .rule/utility sources as metadata,
+                    # never as physical outputs. Require their exact native and
+                    # source-bound producer rather than accepting every .rule.
+                    metadata = ((value.endswith('.rule') and value[:-5] in native_outputs)
+                                or ((value[:-5] if value.endswith('.rule') else value) in native_phony and any(
+                                    (value[:-5] if value.endswith('.rule') else value) == _path(realization['build_dir'], proof['native_alias'])
+                                    or (value[:-5] if value.endswith('.rule') else value) == str(Path(realization['targets'][key]['build_path']) / 'CMakeFiles' / realization['targets'][key]['name'])
+                                    for key, proof in producer_proof['utilities'].items())))
+                    if metadata:
+                        continue
+                    if value not in configured and value not in native_outputs:
+                        gaps.append({'kind': 'unproven_default_generated_source', 'check': ident, 'input': value})
+                    elif after_build:
+                        if not path.is_file() or path.resolve() != path:
+                            gaps.append({'kind': 'missing_default_generated_source', 'check': ident, 'input': value})
+                        else:
+                            hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
                 if kind == 'native_output' and after_build:
-                    if not path.is_file() or not path.resolve().is_relative_to(Path(realization['build_dir'])):
+                    native_symlink = (native_outputs[value]['rule'] in ('CMAKE_SYMLINK_LIBRARY', 'CMAKE_SYMLINK_EXECUTABLE')
+                                      and path.is_symlink() and path.resolve().is_relative_to(Path(realization['build_dir'])))
+                    if not path.is_file() or (path.resolve() != path and not native_symlink):
                         gaps.append({'kind': 'missing_default_build_output', 'check': ident, 'input': value})
                     else:
                         hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -1758,7 +1803,7 @@ def _audit_commands(inventory, realization, specs, after_build):
                         hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
                 if kind == "runtime":
                     if (not spec["target_ids"] or not path.resolve().is_relative_to(Path(realization["build_dir"]))
-                            or (spec.get("build_scope") == "default" and value not in artifacts and value not in configured)
+                            or (spec.get("build_scope") == "default" and value not in artifacts and value not in configured and value not in native_outputs)
                             or (after_build and not path.is_file())):
                         gaps.append({"kind": "generated_runtime_without_target_or_file", "check": ident, "input": value})
                     elif after_build:
