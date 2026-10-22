@@ -29,7 +29,7 @@ parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--broad", action="store_true")
 parser.add_argument("--linux-custody", choices=("legacy", "ptrace"), default="legacy",
-                    help="explicit Linux diagnostic fork-tracing custody; not untraced profile parity; instrumentation refuses")
+                    help="explicit unwrapped Linux diagnostic fork tracing; not untraced profile parity; instrumentation/wrappers refuse")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -337,6 +337,10 @@ def host_guard(profile, checks, policy, profile_id):
     wrapped = caps & {"display", "private_bus"}
     if wrapped and any(policy["checks"][ident]["kind"] != "ctest" for ident in checks):
         raise RuntimeError(f"unsupported cancellation custody: selected command/build_contract lane requires wrappers {sorted(wrapped)}; not launched")
+    if wrapped and args.linux_custody == "ptrace":
+        # Root wrapper death need not leave the backend alive for final receipts.
+        # No wrapped proof is admitted by this bounded, unwrapped diagnostic.
+        raise RuntimeError(f"unsupported ptrace custody wrappers: {sorted(wrapped)}; lane not launched")
     # Never reuse the developer's display/session bus as proof of isolation.
     prefix = []
     if "private_bus" in caps:

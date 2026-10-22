@@ -169,6 +169,22 @@ peer.recv(1)  # Test-owned emergency release, not a timer or numeric-PID kill.
         def test_ptrace_ctest_escaped_child_cancellation(self):
             self.cancel_tree(ctest=True, custody='ptrace')
 
+        def test_ptrace_wrapped_ctest_refuses_before_lane_launch(self):
+            self.configure_ctest()
+            for capabilities in (['display'], ['private_bus'], ['display', 'private_bus']):
+                with self.subTest(capabilities=capabilities):
+                    self.policy['profiles']['local.command']['capabilities'] = capabilities
+                    self.save_policy()
+                    head = self.commit()
+                    receipt, directory = self.gate('--head', head, '--linux-custody', 'ptrace', success=False)
+                    self.assertEqual(receipt['status'], 'failed')
+                    self.assertFalse(receipt['complete_gate_eligible'])
+                    self.assertFalse(receipt['untraced_profile_parity'])
+                    lane = receipt['executions'][0]['lanes'][0]
+                    self.assertEqual(lane['error'], f'unsupported ptrace custody wrappers: {sorted(capabilities)}; lane not launched')
+                    for artifact in ('lane.log', 'resolve.log', 'resolved.json', 'receipt.json', 'submodules.log', 'build'):
+                        self.assertFalse(any(directory.rglob(artifact)), artifact)
+
         def test_ptrace_instrumentation_refuses_before_lane_launch(self):
             self.policy['profiles']['local.command']['instrumentation'] = 'asan'
             self.save_policy()
