@@ -33,12 +33,16 @@ A `signer-tests` aggregate or fabricated File API `all` target is not equivalent
 Actual integrated authored-profile execution must be recorded separately from
 component miniature tests and historical native default builds.
 
-Capability declarations are not setup proof. The ordinary `nak` producer/consumer
-binds actual executable hash/version and source/profile/plan/workflow/run/attempt;
-it grants no display, private bus or keyring custody. Keyring private-fixture
-setup is active engineering follow-through, not an external excuse or completed
-capability. Do not declare an ordinary profile capable before a genuine supported
-private HOME/XDG/bus/throwaway Secret Service readiness and cleanup positive.
+Tool capability declarations are not resource setup proof. The ordinary `nak`
+producer/consumer binds actual executable hash/version and
+source/profile/plan/workflow/run/attempt; it grants no display or private bus.
+The keyring follow-through likewise treats `gnome_keyring` as actual executable
+fingerprint only. Existing CTests own private HOME/bus/supervised Secret Service
+and service-initially-absent negatives; an ambient/global service prerequisite
+would violate those fixtures. Selected contained commands requiring keyring plus
+private bus instead need an owned throwaway service, real secret roundtrip and
+namespace cleanup. This engineering follow-through still awaits its exact final
+B tip and positive proof before a profile tool declaration is credited.
 `nip5f_tcp` instead needs a provisioned signer endpoint/token, explicitly approved
 TCP-enabled configuration, isolated identity and unidentified-caller approval;
 loopback success or exit 77 cannot satisfy it. No approval bypass is authorized.

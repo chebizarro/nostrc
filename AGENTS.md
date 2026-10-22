@@ -44,10 +44,14 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   Preserve full non-test source/Ninja/header/runtime/artifact and named/omitted
   prerequisite audits, including eligible unselected defaults. Never substitute
   `signer-tests`, fabricate a File API `all` target or use selected-only audits.
-- Capability declarations are not setup: ordinary `nak` executable evidence is
-  distinct from display/private bus/keyring custody. Keyring fixture isolation is
-  active engineering follow-through; declare profile support only after genuine
-  private HOME/XDG/bus/throwaway-service readiness and cleanup proof. `nip5f_tcp`
+- Tool capabilities are not resource setup: `nak` and `gnome_keyring` require
+  actual executable fingerprints, distinct from display/private-bus evidence.
+  Existing keyring CTests own their private HOME/bus/supervised Secret Service,
+  including service-initially-absent negatives; do not require an ambient/global
+  service that defeats those fixtures. Selected contained commands requiring
+  keyring plus private bus need their own throwaway service, real secret roundtrip
+  and namespace cleanup proof. Declare profile tool support only after supported
+  executable evidence, not bus/display/setup inference. `nip5f_tcp`
   is a provisioned signer, not loopback: approved TCP-enabled configuration,
   isolated identity/token readiness and explicit unidentified-caller approval are
   required. No approval bypass or skip-as-success. See the finite
