@@ -56,6 +56,74 @@ source identities. The membership checkpoint below retains its dated receipt;
 only its pending custody/integration status is superseded here. No source-authority
 renewal, hosted/W11/release/default credit, closure or shipped version bump.
 
+## Final bounded runtime/renewal integration — 2026-10-22
+
+At tested code **`c346c598b2a205e9d1345efee37182b159da02a1`**, verified core
+`6aed3f89b` / `2be08b342` is preserved through merge `81eee35ae`, alongside the
+reviewed Grotto and semantic-edge commits. All **13 existing nonempty CTest
+runtime declarations remain unchanged** and constrain canonical descriptor
+closure only. Both ordinary records renew exactly the NIP-49 descriptor hash
+within their unchanged **193-file source sets**; no other source or sanitizer
+partition authority is renewed. Strict byte-bound historical projections preserve
+all 18 prior fixtures/goldens, original record digests and the frozen nodes guard.
+
+Fresh Linux/amd64 proof at **`bf0ffd1ea`** confirms canonical `SPEC_SOURCE` hashing
+and fifth enrollment: **58 Grotto primaries / 61 CTest executions**. Actual CLI
+resolve/admit/validation succeeds; an independently configured old **57/60**
+contract refuses before execution. Full prebuild audits still **FAIL**:
+Groundhog **7,900 → 7,895**, Grotto **9,146 → 9,137**, exact **5/9 removed**, zero
+added. The core sanitizer witness retains its **fresh partition refusal**, not an
+expanded authority. These are source-specific admission/audit proofs, not
+successful selected-profile execution.
+
+At frozen `c346c598b`: **561/561 selector PASS, zero skips**, independent new-file
+runs **23/23 and 1/1 PASS**, all six shell suites, four statics, inventory
+validation, actionlint/ShellCheck and range whitespace PASS. One fresh safe native
+configure/default-all build/full CTest run records **434 executed passes, 5 skips,
+0 failures** across 439 registrations. The five skips remain visible and are not
+executed coverage. Temporary HOME/XDG, private bus/Secret Service, loopback/Unix-only
+sandbox and libsecret/secret-service settings were used; read-only keychain guards
+passed before/after, services reaped and bus socket removed. Groundhog stays
+native default-OFF. No native rerun or test weakening was used.
+
+See the [source-specific final receipt](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#final-bounded-runtimerenewal-integration--2026-10-22)
+for skip names, preserved failures and proof/code source distinctions. The later
+docs/export commit does not relabel these executions. Production authored-profile
+postbuild/header audits and all-29-omitted-target builds remain **NOT RUN**;
+full-profile/hosted/W11/release/default acceptance is not claimed. `.2` OPEN,
+`.9`/`.31` in progress; W11 NOT MET / W12 NOT RUN, no hosted-ledger refresh, no
+shipped version bump, push or merge-back. Earlier pending sections remain dated
+history and are superseded only for the specific final gates recorded here.
+
+## Intermediate Grotto/semantic-edge integration — 2026-10-22
+
+At **`0eca9b226e5c62c5b93661f4c91e405dba160d16`**, the reviewed Grotto
+`4e0a63619` and semantic-edge `c3ce9235e` commits are preserved through merge
+`cbd0a36fc`. Four exact headless NIP-49 checks extend only Grotto's selected
+primary/fixture arrays **53/56 → 57/60**; `test_nip49_spec_source` remains
+unclaimed because its canonical descriptor lacks `SPEC_SOURCE`. Check-local
+CTest `runtime_inputs` do not establish runtime ownership. No source-authority
+renewal or fifth-check admission is made at this checkpoint.
+
+**52/52 focused integration tests PASS, zero skips**, with
+`/usr/bin/env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1` after exact pinned
+`nostrdb` initialization. The original nodes digest and historical fixtures/goldens
+are unchanged: strict reverse projection accepts only the three reviewed edges
+and exact rationales; unknown extra edges, missing reviewed edges and other node
+mutations still fail. Fresh combined full authored Linux/amd64 **prebuild** audits
+measure Groundhog **7,900 → 7,895** and Grotto **9,146 → 9,138**, removing exactly
+**5/8** findings with **zero added**; **both audits FAIL**, with incomplete flags
+retained. These measured comparisons are not assumed additive counts.
+
+[Source-specific receipt and retained failures](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#intermediate-grottosemantic-edge-integration--2026-10-22)
+separate Grotto's **532-case PASS** from the edge lane's **525-case FAIL with two
+expected historical-guard failures**; neither is a fresh combined full-suite run.
+The core-runtime lane is still pending. Final combined selector/six-shell/native
+build/static gates are **NOT RUN** here; full native CTest, production postbuild
+headers and all-29-omitted-target builds are **NOT RUN**. `.2` stays OPEN and
+`.9`/`.31` in progress; W11 NOT MET / W12 NOT RUN, with no hosted-ledger refresh,
+complete/release/default credit, policy cutover or shipped component bump.
+
 ## Bounded transport membership checkpoint — 2026-10-22
 
 At `1ed8f087e6571207c132ae885dbe7ede43f18dfd` (base `53f2e822d`), six

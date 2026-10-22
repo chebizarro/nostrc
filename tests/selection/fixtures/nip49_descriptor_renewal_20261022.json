@@ -1,0 +1,259 @@
+{
+  "added_primary": {
+    "grotto.linux": [
+      "test_nip49_spec_source"
+    ],
+    "groundhog.linux": []
+  },
+  "admission_proof": {
+    "admission": {
+      "admit": "PASS",
+      "all_cli": {
+        "argv": [
+          "/usr/bin/python3",
+          "{source}/scripts/test-plan.py",
+          "resolve",
+          "--repo",
+          "{source}",
+          "--build-dir",
+          "{build}",
+          "--profile",
+          "grotto.linux",
+          "--plan",
+          "/evidence/fresh/all-plan.json",
+          "--output",
+          "/evidence/fresh/all-resolved.json"
+        ],
+        "exit_code": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "fifth_cli": {
+        "argv": [
+          "/usr/bin/python3",
+          "{source}/scripts/test-plan.py",
+          "resolve",
+          "--repo",
+          "{source}",
+          "--build-dir",
+          "{build}",
+          "--profile",
+          "grotto.linux",
+          "--plan",
+          "/evidence/fresh/fifth-plan.json",
+          "--output",
+          "/evidence/fresh/fifth-resolved.json"
+        ],
+        "exit_code": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "fifth_runtime_inputs": [
+        "{source}/nips/nip49/SPEC_SOURCE"
+      ],
+      "fixture_closure": 61,
+      "old_fixture_closure": 60,
+      "old_independent_cli": {
+        "argv": [
+          "/usr/bin/python3",
+          "{source}/scripts/test-plan.py",
+          "resolve",
+          "--repo",
+          "{source}",
+          "--inventory",
+          "/evidence/fresh/old-57-60/inventory.json",
+          "--build-dir",
+          "/evidence/fresh/old-57-60/build",
+          "--profile",
+          "grotto.linux",
+          "--plan",
+          "/evidence/fresh/old-57-60/plan.json",
+          "--output",
+          "/evidence/fresh/old-57-60/refused.json"
+        ],
+        "exit_code": 1,
+        "log_sha256": "120051c02a3174e21f5f57192eb177e22d7d0f3fa3f718a003cd8551d4c6a589"
+      },
+      "old_independent_refusal": "ordinary nonmember subset: authored primary/fixture closure changed",
+      "old_primary": 57,
+      "physical_selected_execution": false,
+      "primary": 58,
+      "required_capabilities": [],
+      "validate_resolved": "PASS"
+    },
+    "artifacts": {
+      "fresh/all-cli.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "fresh/all-cli.log.process.json": "2fb07a140cc8c6029e082ede5bcc699ab5237d7d8c3638d40f105eeb00526d03",
+      "fresh/all-plan.json": "8239ac506342e1e62bf768dd85c67e0e23f88e5ebbbc811dd5c9b26742a0c2b1",
+      "fresh/all-resolved.json": "827d612c3c09158151a146e8f1f82eabd8fbfb8f7c6c63b6fa296a4be40f7a85",
+      "fresh/fifth-cli.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "fresh/fifth-cli.log.process.json": "5a0dfe23adf2e07596eef60ea035dbaa779dc8fed521ed99b255de11708ab0c4",
+      "fresh/fifth-plan.json": "6bc8dbb74de63fe742e7b6521478f6b6a24d67feed1c0942c4b3bffaed463f1e",
+      "fresh/fifth-resolved.json": "4403940929034fc27f397a807ae9c2d94565bd1aa485c33bed265dff286b6532",
+      "fresh/grotto.linux/configure.log": "c9b990e3504cc4201fb57bb069c0ec59a2c0b286ca018bbc62b8c1f515b7e948",
+      "fresh/grotto.linux/configure.log.process.json": "6503b8338a5dffe7a827a70a18ed980baf8c1089c81d0e052a114910c8571906",
+      "fresh/grotto.linux/preaudit.json": "39af3a03b8a1f6a787f8236933776e34a8b8e88cfc72321e5f271b1dd7cc03de",
+      "fresh/grotto.linux/realization.json": "478a1f9787a675cefa6bcfc9ea4fc345696589f1a59c59f1539fc19c68761e45",
+      "fresh/groundhog.linux/configure.log": "8f8b1bd522d2131a6103690ecff15032de1cbee7f287c69294e901409f1982ac",
+      "fresh/groundhog.linux/configure.log.process.json": "71ca1647729f2ff31dbd409a464207d8cc7d46fe4a177b087fd11b829fbe7b84",
+      "fresh/groundhog.linux/preaudit.json": "b97aa1d04729f0f2d676504f4e07f2ef198cb55a7111e11832a7897b28c057e2",
+      "fresh/groundhog.linux/realization.json": "01ce2c1b5e8ad0d9cb71dba60555cc13b2ee7812fbf9c6dbc81cb0348c873980",
+      "fresh/old-57-60/configure.log": "6e2fb09c7b55c29c18f1b21688eab741d671790a5f8538ef90ec303f9dc7d817",
+      "fresh/old-57-60/configure.log.process.json": "be406db3480c6e34d63a74a28aeabe5a55a385354b10a9cdf689aed08b0ed9df",
+      "fresh/old-57-60/inventory.json": "285e96535b5312385735f522edff303d7793f2c5adcde4eda9f506ff28afbd8c",
+      "fresh/old-57-60/plan.json": "00c89ce8d2386a1d9109cc5d531b3c7f5c30bd3ed6e5f97b82e0805af7ec4513",
+      "fresh/old-57-60/realization.json": "e0026d7e13c026d5e69ad7328062f58758a8f8b2348bebe00aa2f6796c61bee4",
+      "fresh/old-57-60/refusal.log": "120051c02a3174e21f5f57192eb177e22d7d0f3fa3f718a003cd8551d4c6a589",
+      "fresh/old-57-60/refusal.log.process.json": "db2685d6fd38c3bd511c831eb0c515824d9a2d2739f3a61193f7fbb8243a03be",
+      "fresh/proof.json": "feab575709730cd626b0d6283a5f12d7cef7532ed0c8c01cdfe88137880d5ba2"
+    },
+    "canonical_fifth_descriptor": {
+      "binary_dir": "{build}/nips/nip49",
+      "declared_depends": [],
+      "expected": [],
+      "inputs": [
+        "{source}/nips/nip49/SPEC_SOURCE"
+      ],
+      "name": "test_nip49_spec_source",
+      "owner": [
+        "nip49",
+        "nip49.test_inputs"
+      ],
+      "owner_authority": "descriptor",
+      "requires": [],
+      "source_dir": "{source}/nips/nip49",
+      "targets": []
+    },
+    "comparison": {
+      "grotto.linux": {
+        "added": [],
+        "added_input_hashes": {
+          "{source}/nips/nip49/SPEC_SOURCE": "a4bb8d9c4b85e566964383cc4dae37be29bf14a742127a4e28b766e2bf4841b0"
+        },
+        "after": 9137,
+        "before": 9138,
+        "complete": false,
+        "complete_gate_eligible": false,
+        "identical_prior_input_hashes": 1700,
+        "removed": [
+          {
+            "kind": "unclaimed_registration",
+            "test": "test_nip49_spec_source"
+          }
+        ]
+      },
+      "groundhog.linux": {
+        "added": [],
+        "added_input_hashes": {
+          "{source}/nips/nip49/SPEC_SOURCE": "a4bb8d9c4b85e566964383cc4dae37be29bf14a742127a4e28b766e2bf4841b0"
+        },
+        "after": 7895,
+        "before": 7895,
+        "complete": false,
+        "complete_gate_eligible": false,
+        "identical_prior_input_hashes": 1316,
+        "removed": []
+      }
+    },
+    "full_profile_execution": false,
+    "inventory_hash": "9615b438732015703a73a488df67b9698ce6cdc0f4d1c375050b682a395bdd63",
+    "profiles": {
+      "grotto.linux": {
+        "complete": false,
+        "complete_gate_eligible": false,
+        "fifth_target_closure": [
+          "nip19",
+          "nostr",
+          "nostr_nip49_core",
+          "nostrdb",
+          "nostrgo",
+          "test_nip49_spec_source"
+        ],
+        "findings": 9137,
+        "input_hashes": 1701,
+        "kinds": {
+          "missing_impact_edge": 8773,
+          "unclaimed_registration": 364
+        },
+        "omissions": 33,
+        "passed": false,
+        "registrations": 461,
+        "required_omitted_target_closures": 29,
+        "source_inputs": 193,
+        "spec_source_sha256": "a4bb8d9c4b85e566964383cc4dae37be29bf14a742127a4e28b766e2bf4841b0",
+        "targets": 603
+      },
+      "groundhog.linux": {
+        "complete": false,
+        "complete_gate_eligible": false,
+        "fifth_target_closure": [
+          "nip19",
+          "nostr",
+          "nostr_nip49_core",
+          "nostrdb",
+          "nostrgo",
+          "test_nip49_spec_source"
+        ],
+        "findings": 7895,
+        "input_hashes": 1317,
+        "kinds": {
+          "missing_impact_edge": 7536,
+          "unclaimed_registration": 359
+        },
+        "omissions": 33,
+        "passed": false,
+        "registrations": 422,
+        "required_omitted_target_closures": 29,
+        "source_inputs": 193,
+        "spec_source_sha256": "a4bb8d9c4b85e566964383cc4dae37be29bf14a742127a4e28b766e2bf4841b0",
+        "targets": 552
+      }
+    },
+    "snapshot_utc": "2026-10-22T06:52:47Z",
+    "source_identity": {
+      "kind": "committed",
+      "sha": "bf0ffd1ea6492de282d580b56d568575efb30511"
+    }
+  },
+  "after": "519cc03ec97e4110fb3212323fa5833cc8662b6135f3807c76cc3a109f4a549a",
+  "before": "3af683228f2e049ac7ac8f0394ea5b6b05710c29bcea1cc6d07cccce6b9e9d59",
+  "complete": false,
+  "complete_gate_eligible": false,
+  "core_witness_sha256": "36596c0c2663948c7f949ca9577b9ee8572ea3d61e0f7d1f2b66cfcd57840a6b",
+  "historical_fixture_sha256": {
+    "tests/selection/fixtures/grotto_nip49_exports.json": "4906dc39fae2ac220add4c9e0d3fb8a150c6b192c5ce7a2722e33b2cc46325a0",
+    "tests/selection/fixtures/grotto_nip49_subset_renewal_20261022.json": "4214ef00cbf5ef49e8ec6d5d3854f427c2992c47d3787250c63673e9e24b1253",
+    "tests/selection/fixtures/grotto_profile_exports.json": "7dcce9ca16e5cc55cd6502d1d2d4e4191f3c6f56be963a4892b19fd4d92d10cd",
+    "tests/selection/fixtures/headless_identity_exports.json": "5b099ae15d5c5e5f7081976b0e1fba5274f7774777b68678372b054952269bfa",
+    "tests/selection/fixtures/headless_identity_subset_renewal_20261022.json": "231cefbfe92944f564377cebe03b9558f325165ed3bbbced96ef794844e9b9cd",
+    "tests/selection/fixtures/headless_model_exports.json": "e42337295fa1ebe76d5c45f682b7abed9d0fa9df1c30a344b7f842ae37bdc7ca",
+    "tests/selection/fixtures/headless_model_subset_renewal_20261022.json": "351296afb01d4abf815cbd2f38669c6aa9886782911a6f0d59926908848773e2",
+    "tests/selection/fixtures/headless_transport_exports.json": "f4c07572c3f7ebaaa311dcc04134dd9050eddbdf8d42f1720b7aa298a01374e9",
+    "tests/selection/fixtures/headless_transport_subset_renewal_20261022.json": "50a4f28a5f3e5d36e932a7a08f4e4cc5536d109b2f904b91f8ea491c1c72c745",
+    "tests/selection/fixtures/hosted_audit_edges.json": "ed0b86935f411af0b129ead56d8f9c62167bcb85a7a0e535156433cbac62ed0a",
+    "tests/selection/fixtures/nonmember_audit_edges.json": "787717dfa59245b9c1f2d072808d1d37403a4fc31d2cafe197f7fb9addbd895b",
+    "tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json": "4809dbf3200ef8a0ddab3507c50e6ba08dc2f668d4cd9a8a366843a04aa9013a",
+    "tests/selection/fixtures/ordinary_subset_x86_exports.json": "74d4a310f945fe19d5f3c78487e692a07dd8afcd76172ab0b35f9e3a24653327",
+    "tests/selection/fixtures/profile_exports.json": "b35080e170a117bf680329d2d398c9dc54b1ee98525c06475182687f08608337",
+    "tests/selection/fixtures/resource_diagnostics_projection_20261022.json": "fe6caae1dacfcc5064f6f6018b5c4dce5b478ddf970d3082c51748a7220a8dc3",
+    "tests/selection/fixtures/resource_profile_exports.json": "74d2ddd36b0d3ea7ba49e358eea59de69aef151f11f73e5b17fccc0bb68fa160",
+    "tests/selection/fixtures/store_key_membership_exports.json": "f1c285da7bec291a13e650b0c9a809998a1a60309367eb018a53ee655a20134e",
+    "tests/selection/golden/selection.json": "5e8801bcc8506a9e3800848921118c44775baf7b4e8e46f17de89beab1125e83"
+  },
+  "profiles": {
+    "grotto.linux": {
+      "previous_record_hash": "41eb44b74d99291445c28471b92fe3e340383eca1d3e72e358ac0541129d4d11",
+      "renewed_record_hash": "505c70c6391d122af8a5121e120830ea3a36c235af3cffe4b58fb5767e219e6b",
+      "source_input_count": 193
+    },
+    "groundhog.linux": {
+      "previous_record_hash": "10ae5420ae2145248f66029281f807c46fb5d6b553d5dbd0a980bacc59017421",
+      "renewed_record_hash": "e4c9fe55c937db35ec1429dc3d6e26ac3eed061d7c73e47cfcf296b44debddc8",
+      "source_input_count": 193
+    }
+  },
+  "schema_version": 1,
+  "source_identity": {
+    "kind": "committed",
+    "sha": "2be08b3429b643ccb80b3c2a2b27aeac74a9cb7e"
+  },
+  "source_path": "nips/nip49/TestInventory.cmake"
+}

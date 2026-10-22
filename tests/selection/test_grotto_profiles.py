@@ -75,6 +75,11 @@ class GrottoProfiles(unittest.TestCase):
             primary = exported['primary_names']
             actual = [name for check in self.policy['checks'].values()
                       for name in check.get('ctest_tests', {}).get(ident, [])]
+            if ident == 'grotto.linux':
+                from grotto_nip49_projection import FAMILY, before_grotto_nip49_family
+                previous = before_grotto_nip49_family(self.policy['diagnostic_nonmember_subsets'][ident])
+                self.assertEqual(sorted(actual), sorted(previous['primary_registrations'] + FAMILY + ['test_nip49_spec_source']))
+                actual = previous['primary_registrations']
             self.assertEqual(sorted(actual), primary)
             self.assertEqual(len(actual), len(set(actual)))
             self.assertEqual(exported['configure_args'], profile['configure_args'])

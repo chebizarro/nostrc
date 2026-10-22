@@ -996,6 +996,43 @@ CTest, production profile/input/header/omitted-build acceptance and W11/release
 remain unclaimed. Earlier pending integration wording is historical; no authority
 renewal, default/ledger change, new Oracle review or shipped version bump.
 
+**Later W3–W5 intermediate Grotto/edge checkpoint (2026-10-22):**
+[Source-specific integration receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#intermediate-grottosemantic-edge-integration--2026-10-22)
+binds **`0eca9b226`**, preserving Grotto `4e0a63619` and semantic-edge `c3ce9235e`.
+Four exact headless NIP-49 checks extend only Grotto selected/fixture arrays
+**53/56 → 57/60**; the fifth SPEC_SOURCE case stays unclaimed. Strict three-edge
+reverse projection preserves the original nodes digest and rejects extra/missing
+edges; historical fixtures/goldens and all other authority fields are unchanged.
+**52/52 focused integration tests PASS**, zero skips. Measured fresh full x86
+prebuild audits: Groundhog **7,900 → 7,895**, Grotto **9,146 → 9,138**, exact
+**5/8 removed, zero added; both FAIL**, incomplete flags retained. Individual
+Grotto 532 PASS and edge 525 FAIL/two expected guard failures remain separate
+historical receipts. The third core-runtime lane and final combined full
+selector/six-shell/native-build/static gates are pending; full native CTest,
+production postbuild headers and all-29-omitted-target builds NOT RUN. `.2` OPEN,
+`.9`/`.31` in progress; no initial source-authority renewal, closure, ledger/W11
+credit, policy/default cutover, push or shipped version bump.
+
+**Final bounded W3–W5 runtime/renewal integration (2026-10-22):**
+[Final source-specific receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#final-bounded-runtimerenewal-integration--2026-10-22)
+binds tested code **`c346c598b`**, preserving reviewed core `6aed3f89b` /
+`2be08b342` through merge `81eee35ae`. Existing 13 CTest declarations remain
+canonical consistency constraints, unchanged. Exactly one descriptor hash in
+both unchanged 193-file ordinary sets renews, with pinned strict historical
+projection and all 18 prior fixture/golden bytes retained. Fresh source
+**`bf0ffd1ea`** proves fifth canonical input hashing, current **58/61** Grotto
+CLI resolve/admit/validation and independent old **57/60** refusal. Measured full
+prebuild audits **7,900 → 7,895 / 9,146 → 9,137**, exact **5/9 removed, zero
+added; both FAIL**. Original sanitizer partition authority/refusal stays intact.
+Final frozen gates: **561/561 selector**, independent **23/23 + 1/1**, six shell
+suites/four statics/inventory/actionlint/ShellCheck/whitespace PASS. One safe fresh
+native configure/default-all build and full CTest: **434 pass / 5 skip / 0 fail**;
+keychain/private-service cleanup guards pass. Skips are not executed coverage.
+Production profile postbuild/header and all-29-omitted-target builds NOT RUN;
+`.2` OPEN, `.9`/`.31` in progress; no W11/hosted/complete/release/default credit,
+ledger refresh, shipped bump, push or merge-back. Earlier pending receipts remain
+historical; final code and later docs/export commit are distinguished explicitly.
+
 Sizes describe reviewable implementation slices, not time estimates: S = focused adapter or tests, M = one substantial seam, L = cross-family integration. Split L items into beads before implementation; this index is not a replacement for `bd` tracking.
 
 | Item | Goal | Done when | Key files | Dependencies | Size |

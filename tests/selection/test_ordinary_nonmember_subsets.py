@@ -267,6 +267,9 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                     self.assertEqual(contract[key], sorted(membership["previous"][key] + membership["added_primary"]))
                     contract[key] = membership["previous"][key]
                 self.assertEqual(s.digest(contract), membership["previous_record_hash"])
+            if pid == "grotto.linux":
+                from grotto_nip49_projection import before_grotto_nip49_family
+                contract = before_grotto_nip49_family(contract)
             # Retain the original witness byte-for-byte; renew source provenance,
             # not its exact family/profile/candidate/fixture/toolchain authority.
             previous = dict(contract, review=current["previous_review"])
@@ -307,7 +310,7 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertFalse(witness["preaudit"]["passed"])
             self.assertFalse(witness["postaudit"]["passed"])
             self.assertEqual(witness["candidate_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
-            for name, expected in contract["review"]["source_inputs"].items():
+            for name, expected in records[pid]["review"]["source_inputs"].items():
                 self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
 
     def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):

@@ -2008,3 +2008,305 @@ requires separate source-linked comparison review before any counter can advance
 
 **Version assessment:** this audit, ledger, tracker reconciliation, internal CI
 profile authoring and test-only changes require no shipped component bump.
+
+## Intermediate Grotto/semantic-edge integration — 2026-10-22
+
+**This is a local intermediate receipt, not final acceptance or a hosted-ledger
+refresh.** Verified starting tip `4e0a636196f309fd52af3a5d133d059195da78b7`
+retains Grotto commits `c72598cdc` / `4e0a63619`. Merge
+`cbd0a36fcfb97c6f5aada43fa341194579763550` preserves reviewed semantic-edge tip
+`c3ce9235ece8f90a0e2c545a74299be5ff751e1c` and its commits without squashing.
+The merged inventory is verified as the exact union of Grotto checks/authority
+arrays and edge-lane nodes; no sibling core-runtime work is included.
+
+Individual immutable local checkpoints remain source-specific:
+
+- Grotto `/tmp/nostrc-grotto-membership-20261022/checkpoint-final.json`, SHA-256
+  `f66cef2a599bc3aa778bd8890e599167e508f1d7b91f67b6d576150e84a5ebfb`:
+  integration independently verifies **all 172 manifest files**. At `4e0a63619`,
+  four exact headless checks (`test_nip49_negative`, `test_nip49_payload`,
+  `test_nip49_roundtrip`, `test_nip49_vectors`) extend only ordinary Grotto's
+  selected primary/fixture arrays **53/56 → 57/60**. Its full **532-case suite
+  PASS**, zero skips, and standalone audit **9,146 → 9,142** (four unclaimed
+  findings removed; Groundhog **7,900 unchanged**) are not combined execution
+  results. `test_nip49_spec_source` stays unclaimed: the canonical descriptor
+  omits `SPEC_SOURCE`; check-local CTest `runtime_inputs` are not audited authority.
+  The provisional five-check attempt and raw execution/setup failures remain
+  retained. Separate raw four-case CTest proof is bound to base `ed7063170`,
+  not relabeled as authored gated execution at the integration source.
+- Edges `/tmp/nostrc-semantic-edges-20261022/checkpoint-final.json`, SHA-256
+  `aa9a662727e93186d676008d71d6725cca7380e4122eb7cdf59c91b5e85611f0`:
+  `c3ce9235e` adds only `libjson → relayd`, `libjson → shared.tests` and
+  `relayd → grelay` with source-grounded rationales. Standalone full audits
+  **7,900 → 7,895 / 9,146 → 9,142** remove exactly **5/4**, zero added;
+  **both FAIL**. Six focused regressions pass at that tip. The retained full
+  **525-case run at `9b27a94e6` FAILS with exactly two historical-guard failures**
+  (headless whole-nodes digest and shared.tests dependencies); it is not green
+  and was not rerun as a final-tip full suite. Individual native/static results
+  in either checkpoint retain their own SHAs, not a fresh combined gate claim.
+
+### Strict guard integration and focused verification
+
+Code **`0eca9b226e5c62c5b93661f4c91e405dba160d16`** repairs only those two
+integration guards. The headless test requires exact current fields for all three
+reviewed nodes, reverses only the reviewed dependencies and rationales, then
+compares the entire projected graph against the **original frozen nodes digest**.
+Mutations prove unknown extra edges (including an unrelated node), each missing
+required edge, changed rationale and extra fields still fail. No frozen hash,
+old fixture/golden byte, profile or other authority guard is refreshed or removed.
+The nonmember guard requires exact sorted shared.tests dependencies
+`['libjson', 'libnostr']`; all other omission/enforcement guards are preserved.
+
+At that exact source, **52/52 focused tests PASS, zero skips, 42.743 seconds**:
+
+```sh
+/usr/bin/env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tests/selection \
+  python3 -m unittest -v test_headless_transport_membership test_nonmember_ownership \
+  test_shared_dependency_edges test_grotto_nip49_membership test_grotto_profiles \
+  test_ordinary_nonmember_subsets
+```
+
+Two earlier 52-case attempts retain two missing-source failures each; remote
+pinned-submodule initialization failed with connection reset/early EOF. Exact
+`nostrdb` pin `2d459e8fa9ba0af5af091c37920e5d2078d881ca` was then fetched from
+the already initialized main-checkout submodule, checked out detached and its
+recursive pins initialized. Main-checkout source was not changed. Inventory
+validation also passes, retaining `enforcement_ready=false`. No test/refusal guard
+or environment fingerprint is weakened.
+
+### Measured combined full prebuild audits
+
+Fresh full authored Linux/amd64 configure/export/prebuild audits at `0eca9b226`
+use reviewed image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+user `1001:1001`, with source read-only and networking disabled. The retained
+comparison snapshot is **2026-10-22T06:09:46Z**, against the full baseline exports
+at `ed70631704778a7fbe31d45b24161570a91abb53`.
+
+| Profile | Full findings before → after | Exact removals | Added | Result |
+|---|---:|---|---:|---|
+| `groundhog.linux` | 7,900 → 7,895 | 5 missing-impact findings | 0 | **FAIL**, incomplete |
+| `grotto.linux` | 9,146 → 9,138 | 4 missing-impact + 4 unclaimed findings | 0 | **FAIL**, incomplete |
+
+The entire finding **multisets**, not just totals, match the exact union of the
+reviewed removals. Only independent source/build-root prefixes are normalized;
+no selected-only filtering is used. Full target/test/descriptor/runtime manifests
+are identical, with **422/461 registrations**, **552/603 targets** and all
+**1,316/1,700 input hashes** unchanged. Per-profile **193 source-review hashes**,
+**33 omissions** and **29 required omitted-target closures** remain unchanged.
+Both `complete=false` and `complete_gate_eligible=false` remain. This verifies
+combined counts rather than assuming additive improvements; it does not build or
+execute the omitted closures.
+
+Local evidence is retained under `/tmp/nostrc-ci-profile-integration-20261022/`:
+`verification.json`, `focused-first.log`, `focused-pinned.log`,
+`focused-pinned-local.log`, `combined/{profile}/{realization,preaudit}.json`,
+`comparison-combined.json` and exact removed/added finding lists.
+
+### Remaining boundary
+
+The third core-runtime validator/canonical-descriptor lane is **pending**. No
+initial source-authority renewal, fifth Grotto enrollment or core-file edit is
+authorized by this intermediate integration. Final combined full selector suite,
+six shell suites, native configure/build and static gates await that verified
+lane. **Full native CTest, production postbuild/header audits and all-29-omitted-
+target builds: NOT RUN.** No combined full-gate success is claimed from the focused
+run or either sibling's historical gates.
+
+If the verified core lane includes `nips/nip49/TestInventory.cmake`, the final
+frozen-code native gate must conservatively include **one full native CTest**
+after safe libsecret/secret-service configure/build, using throwaway HOME/XDG,
+private bus/Secret Service and read-only keychain guards. The existing
+`/tmp/nostrc-2omeg-20261022/safe-native.py` was inspected, not run here; any reuse
+must use a fresh output directory. Preserve every failure/skip, including the
+previously known five skips if present; skips are not executed green coverage.
+No login-keychain defaults may be changed. If no nips descriptor/code change
+lands, the normal final combined gate remains sufficient.
+
+The official `bd export --all` retains **1,551 records (1,514 issues + 37
+memories)**. All prior record identities, **464 prior comments** and every memory
+are verified preserved; the current snapshot contains 469 comments, including
+concurrent sibling updates. No semantic `.beads` record was hand-edited.
+`bd dolt pull` reports **no remote**, not successful sync. Main-checkout status
+and unstaged bytes are unchanged; the only observed concurrent staged change is
+the tracker export (`nostrc-0cfsg.2` semantically), with unrelated staged sections
+unchanged and no root dirt restored or discarded.
+
+`nostrc-0cfsg.2` remains **OPEN**; `.9` and `.31` remain **in progress**.
+W11 **NOT MET** / W12 **NOT RUN**; the hosted ledger is not refreshed and no
+hosted, complete/release, custody, default/workflow/protection or operator-approval
+credit is added. All old failures remain retained. Commits stay local: no push or
+merge-back. **Version assessment: no bump**, internal CI/tests/docs only.
+
+## Final bounded runtime/renewal integration — 2026-10-22
+
+**Tested code: `c346c598b2a205e9d1345efee37182b159da02a1`.** This supersedes
+only the intermediate checkpoint's pending integration/gates, not its historical
+failures or acceptance limits. Merge `81eee35ae` preserves core commits
+`6aed3f89b1de9a82e002d53b6dd6bd839def96f5` and
+`2be08b3429b643ccb80b3c2a2b27aeac74a9cb7e`; the reviewed Grotto and semantic
+commits remain preserved through `cbd0a36fc`. No rebase, squash, push or merge-back
+is performed. Later docs/tracker export is not relabeled as tested code.
+
+### Core handoff and exact ordinary renewal
+
+Core checkpoint `/tmp/nostrc-ctest-runtime-inputs-20261022/checkpoint-final.json`,
+SHA-256 `7e3a4107d351a2a6b596db62620187b14a53579ff6eef32aa2919c8b9f42cb9b`,
+is independently verified against **all 96 artifact hashes**; its manifest hash
+is `d08edfd56592a5a68fd60d5b4107662da67ef664edcfddd758f60973367d45af`.
+Source witness `source-control-and-physical-witness.json`, SHA-256
+`36596c0c2663948c7f949ca9577b9ee8572ea3d61e0f7d1f2b66cfcd57840a6b`, retains
+ordinary proof, raw fifth **1/1 at core `2be08b342`**, and sanitizer refusal.
+That raw pass is **not selected-profile execution**. Core's prior full suite is
+**545/547**, with one failure and one error for pending integration; not green.
+
+The canonical NIP-49 descriptor now lists `INPUTS SPEC_SOURCE`. All **13 existing
+nonempty CTest check-local runtime declarations remain byte-equivalent**, as
+strict consistency constraints against canonical descriptor/fixture closure,
+never independent or duplicate authority. Configure binds overrides to generation;
+no old blanket-rejection draft lands. The two core test paths are now explicit
+`selection.contract` inputs, together with the new renewal witness.
+
+Both ordinary records retain exactly the same **193 source paths**. Their sole
+source-control change is `nips/nip49/TestInventory.cmake`:
+
+- before: `3af683228f2e049ac7ac8f0394ea5b6b05710c29bcea1cc6d07cccce6b9e9d59`;
+- after: `519cc03ec97e4110fb3212323fa5833cc8662b6135f3807c76cc3a109f4a549a`.
+
+No other review field, candidate/profile/toolchain hash, registration universe,
+33 omissions or required omitted-target authority changes. Only Grotto's selected
+primary/fixture arrays additionally insert the exact fifth name, **57/60 → 58/61**.
+The new ordinary check has empty check-local `runtime_inputs`; its canonical
+runtime input is not fabricated in inventory.
+
+New witness `tests/selection/fixtures/nip49_descriptor_renewal_20261022.json`,
+SHA-256 `78e6c2fed93894ad0f71e37207af28c642f425d57ddba7b21df47b5fb42bfcd7`,
+is byte-bound by the test-only projection. It pins exact current/prior full-record
+digests, restores only the single source hash and exact fifth selected entry,
+then requires the entire old record digest. Existing family projections and
+original frozen nodes digest remain enforced. Mutations reject second-source or
+old-hash substitution, altered authority and missing primary/fixture entries;
+unknown/missing graph edges and changed rationales/fields still fail.
+**All 18 prior fixture/golden files remain byte-identical**, including the
+four-check fixture and its dated unclaimed SPEC_SOURCE gap witness. No historical
+source control, fixture or golden is refreshed to today's hash.
+
+The original sanitizer full-partition authority remains unchanged. At core
+`2be08b342`, a fresh sanitizer export proves **12 declaration/descriptor parity
+checks**, then the original partition guard **REFUSES** with
+`diagnostic nonmember fresh registration partition differs`. Ordinary packaging
+is the unchanged thirteenth consistency declaration. No sanitizer partition or
+authority renewal, sanitizer build/test, or new acceptance is inferred; that
+refusal remains retained and is not presented as a successful audit.
+
+### Actual fresh fifth admission and full prebuild audits
+
+Fresh proof is bound to **`bf0ffd1ea6492de282d580b56d568575efb30511`**, before
+later evidence/test-only additions; it is not relabeled as a run at `c346c598b`.
+Actual Linux/amd64 GNU execution uses the same reviewed image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+user 1001, source read-only and networking disabled. Current full exports and
+preaudits, actual CLI argv/results, and separate stale-configure refusal are in
+`/tmp/nostrc-ci-profile-final-20261022/fresh/`.
+
+Whole ordinary Grotto CLI resolve exits **0**, equals in-process resolution,
+and passes `admit` and `validate_resolved`: **58 primaries / 61 CTest executions**.
+Fifth-only CLI resolution also exits **0**, with exactly one expected test,
+canonical `SPEC_SOURCE`, and no required capabilities. A **separate fresh
+configure** retains old **57/60** arrays while binding current checks, canonical
+descriptor and renewed source controls. Its CLI exits **1**, and independent
+admission refuses exactly `ordinary nonmember subset: authored primary/fixture
+closure changed`, before any test launch. This is actual stale-contract refusal,
+not a forged source/inventory binding error.
+
+Full input audits actually hash `nips/nip49/SPEC_SOURCE` as
+`a4bb8d9c4b85e566964383cc4dae37be29bf14a742127a4e28b766e2bf4841b0`.
+Every prior **1,316/1,700** input hash is identical; the canonical file is the
+only added input, making **1,317/1,701**. Both profiles retain **33 omissions /
+29 required omitted-target closures** and the full **422/461 registrations**.
+Measured entire finding multisets against original `ed7063170` exports, with
+only independent source/build-root prefixes normalized, are:
+
+| Profile | Full findings before → after | Exact removals | Added | Result |
+|---|---:|---|---:|---|
+| `groundhog.linux` | 7,900 → 7,895 | 5 missing-impact findings | 0 | **FAIL**, incomplete |
+| `grotto.linux` | 9,146 → 9,137 | 4 missing-impact + 5 unclaimed findings | 0 | **FAIL**, incomplete |
+
+Compared with the preceding combined `0eca9b226` audit, Groundhog is unchanged
+and Grotto removes **only** the fifth unclaimed finding. The comparison is measured,
+not inferred additive arithmetic; no selected-only audit is substituted.
+Both `complete=false` and `complete_gate_eligible=false` remain. Successful
+resolution/admission is **not successful selected backend/profile execution**;
+full preaudits still block that execution.
+
+### One bounded review and frozen-source gates
+
+One bounded review of the **new** one-source renewal, strict projections and
+fifth admission proof receives the exact small delta inline and source-witness
+references, excluding already reviewed core/edges/four-check work and stale root
+diffs. Chat `untitled-chat-F772DB` finds **no concrete blockers within supplied
+scope**. Local report `review.md`, SHA-256
+`a9e31a4347800cfc732ffa98ba572d8f75d9eeb1d577bb26d85b762d9cab8508`, remains
+under `/tmp/nostrc-ci-profile-final-20261022/`. No repeated broad review loop or
+claim of unperformed final-freeze acceptance is made.
+
+Parent's isolated descriptor failure is reproduced once before the fix and
+retained in `descriptor-isolated-before.log`: `ModuleNotFoundError:
+test_selection_subset` from `_baseline_exclusions` at line 1138. The minimal
+integration-only bootstrap imports `ROOT` from existing `selector_support`;
+no production guard changes. Both files pass in **separate fresh processes**,
+without hidden PYTHONPATH dependence. The first Grotto expected-count mismatch
+and its exact 58-entry correction are retained, with no assertion weakening.
+
+All final gates run once at clean frozen **`c346c598b`**, with
+`XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1`, pinned nostrdb, and awake-host
+execution. `PYTHONPATH` is empty, not a bootstrap workaround:
+
+- **561/561 selector PASS, zero skips**, 260.514 seconds.
+- Independent core files **23/23** and **1/1 PASS** in separate processes.
+- All **six shell suites**, four mandatory statics, inventory validation,
+  actionlint/ShellCheck and range whitespace PASS; 17 recorded non-native phases,
+  all exit 0.
+- Fresh native configure **10.510s**, default-all build **58.501s**, full CTest
+  **131.402s**, all exit 0. **434 executed passes / 5 skips / 0 failures**,
+  439 registrations. Skips: `test_nip5f_tcp`, `signer/qr-scanner`,
+  `signer/onboarding`, `signer/ui-layout`, `signer/ui-accessibility`.
+- The inspected `safe-native.py` uses a **fresh output directory**, temporary
+  HOME/XDG, private bus/throwaway Secret Service, loopback/Unix-only sandbox,
+  `NIP55L_SECRET_BACKEND=libsecret` and
+  `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`. Groundhog is default-OFF.
+  Read-only keychain guards pass before/after; bus/service are reaped and socket
+  absent. **One full native CTest invocation, no retries or weakened tests.**
+
+Native XML, complete logs, phase records and cleanup result remain in the same
+local evidence directory. Five skips are visibly **not executed coverage**.
+The native default macOS run does not establish authored x86-profile acceptance,
+production sanitizer/GUI/live proof or complete/release eligibility. The raw
+core fifth pass remains source-separated from both admission and native proof.
+
+### Unchanged acceptance and handoff boundary
+
+Production authored-profile postbuild/header audits and all-29-omitted-target
+builds remain **NOT RUN**. `.2` stays **OPEN**; `.9`/`.31` stay **in progress**.
+W11 **NOT MET** / W12 **NOT RUN**; no hosted-ledger refresh, default/workflow/
+protection/publisher cutover, arbitrary-tree custody, operator approval or release
+credit. Historic failures, old receipts and five native skips remain preserved.
+**No shipped component bump**: internal CI, descriptor metadata, tests and docs.
+The final docs/official tracker export commit is a handoff, not a new execution
+source. Parent owns landing and cleanup of the four worktrees/branches; no push,
+merge-back or ancestry-flattening pull is performed here.
+
+At **2026-10-22T07:14:16Z**, official `bd export --all` retains **1,551 records
+(1,514 issues + 37 memories)** and **475 comments**. Every prior record identity,
+all 472 comments in the pre-final snapshot, and every memory are verified
+preserved; no semantic `.beads` editing. `bd dolt pull` still reports **no remote**,
+not successful sync. Main-checkout status and unstaged bytes are unchanged;
+unrelated staged sections are unchanged, with only the concurrently updated
+tracker-export section observed different. No root dirt is restored or discarded.
+Reviewed core production/nips bytes are verified identical to `2be08b342`; the
+explicitly permitted bootstrap correction is test-only.
+
+Structured handoff: `/tmp/nostrc-ci-profile-final-20261022/checkpoint-final.json`.
+It distinguishes the fresh admission-proof source, frozen tested-code source and
+later documentation/export commit, with hashes for raw gate logs, native XML and
+cleanup receipts, original failure evidence, review and authoritative export.

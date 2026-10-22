@@ -18,6 +18,8 @@ FAMILY = [
 
 
 def before_transport_family(contract):
+    from grotto_nip49_projection import before_nip49_descriptor_renewal
+    contract = before_nip49_descriptor_renewal(contract, 'groundhog.linux')
     witness = json.loads((ROOT / RENEWAL).read_text())
     s.require(witness['source_identity'] == {'kind': 'committed', 'sha': BASE},
               'transport renewal source witness changed')

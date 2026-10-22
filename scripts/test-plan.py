@@ -275,11 +275,11 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
         profile_checks = [c for c in policy["checks"].values() if args.profile in c["profiles"]]
         source_only = profile_checks and all(c["kind"] == "command" and not c.get("build_targets") for c in profile_checks)
         configure = backend.configure_command_profile if source_only else backend.configure_profile
-        options = {}
+        options = {} if source_only else {"inventory": policy}
         if state is not None and not source_only:
             logfile = state["directory"] / "configure.log"
             state["evidence_paths"].append(logfile)
-            options = {"log_path": logfile}
+            options["log_path"] = logfile
         realized = configure(args.repo, args.build_dir, args.profile, profile, identity, selection.digest(policy), **options)
         if state is not None:
             state["work_status"]["configure"] = "passed"

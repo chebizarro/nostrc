@@ -75,7 +75,7 @@ class NonmemberOwnership(unittest.TestCase):
         self.assertTrue(selected.isdisjoint(gap['not_selected_registrations']))
         self.assertFalse(self.policy['enforcement_ready'])
         self.assertEqual(self.policy['nodes']['groundhog.unclassified']['depends_on'], [])
-        self.assertEqual(self.policy['nodes']['shared.tests']['depends_on'], ['libnostr'])
+        self.assertEqual(sorted(self.policy['nodes']['shared.tests']['depends_on']), ['libjson', 'libnostr'])
 
     def test_component_links_do_not_import_test_fixtures_or_hanami_test_linkage(self):
         for component, prerequisites in self.evidence['production_prerequisites'].items():
