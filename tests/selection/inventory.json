@@ -7870,7 +7870,26 @@
         "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml",
         "{source}/libnostr/include/nostr-config.h.in",
         "{source}/nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
-        "{source}/libmarmot/include/marmot/marmot-version.h.in"
+        "{source}/libmarmot/include/marmot/marmot-version.h.in",
+        "{source}/scripts/adapter_namespace_custody.py",
+        "{source}/tests/selection/test_namespace_custody.py",
+        "{source}/scripts/test_selection_services.py",
+        "{source}/tests/selection/test_native_services.py",
+        "{source}/tests/selection/test_namespace_wrapper_adapter.py",
+      "{source}/tests/selection/test_runtime_diagnostic_inputs.py",
+      "{source}/scripts/mdk011-cache-build.py",
+      "{source}/tests/runtime/mdk011-fetch.Dockerfile",
+        "{source}/tests/runtime/test_mdk011_cache_contract.py",
+        "{source}/tests/runtime/test_mdk011_export_custody.py",
+      "{source}/tests/runtime/test_provisioned_nip5f.py",
+      "{source}/tests/runtime/nip5f_approver.c",
+      "{source}/gnome/groundhog/tests/app/test_secret_service.py",
+      "{source}/apps/grotto/data/org.nostr.Grotto.gschema.xml",
+      "{source}/tests/interop/mdk/driver-0.11/Dockerfile",
+      "{source}/tests/interop/mdk/driver-0.11/Cargo.toml",
+      "{source}/tests/interop/mdk/driver-0.11/Cargo.lock",
+      "{source}/tests/interop/mdk/driver-0.11/rust-toolchain.toml",
+      "{source}/tests/interop/mdk/driver-0.11/src/main.rs"
       ],
       "working_directory": "{source}"
     },
@@ -21157,6 +21176,12 @@
     }
   },
   "path_rules": [
+    {"effect": "impact", "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml", "nodes": ["grotto.gui", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Dockerfile", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.lock", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/rust-toolchain.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/src/main.rs", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
     {
       "effect": "impact",
       "exact": "apps/grotto/data/org.nostr.Grotto.service.in",

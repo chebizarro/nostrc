@@ -24,7 +24,7 @@ class LocalCommandAdapterTests(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "user.name", "Adapter fixture")
         self.git("config", "user.email", "adapter@example.invalid")
-        for name in ("test-gate.sh", "adapter_custody.py", "test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py",
+        for name in ("test-gate.sh", "adapter_custody.py", "adapter_namespace_custody.py", "test_selection_services.py", "test_selection_custody.py", "test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py",
                      "check-macos-keychain.sh"):
             target = self.repo / "scripts" / name
             target.parent.mkdir(exist_ok=True)
@@ -279,6 +279,42 @@ signal.pause()
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+    def test_diagnostic_boundary_is_configure_bound_and_nested_incomplete(self):
+        plan, resolved, output = [self.work / name for name in ('plan.json', 'resolved.json', 'run.json')]
+        cli = ['python3', '-B', str(self.repo / 'scripts/test-plan.py')]
+        common = ['--repo', str(self.repo), '--profile', 'local.command', '--plan', str(plan),
+                  '--build-dir', str(self.work / 'bound-build'), '--evidence-dir', str(self.work / 'bound-evidence')]
+        subprocess.run(cli + ['plan', '--repo', str(self.repo), '--head', self.head, '--context', 'local',
+                             '--mode', 'broad', '--output', str(plan)], check=True, capture_output=True)
+        # This flag is a conservative accounting constraint, not kernel proof.
+        boundary = ['--diagnostic-boundary', 'linux_pidns_v1']
+        subprocess.run(cli + ['resolve', *common, '--configure', *boundary, '--output', str(resolved)],
+                       check=True, capture_output=True)
+        expected = json.loads(resolved.read_text())
+        self.assertFalse(expected['complete_gate_eligible'])
+        self.assertFalse(expected['complete'])
+        run = subprocess.run(cli + ['run', *common, '--resolved', str(resolved), *boundary, '--output', str(output)],
+                             capture_output=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        receipt = json.loads(output.read_text())
+        for record in (receipt, receipt['backend_receipt'], receipt['backend_receipt']['input_audit']):
+            self.assertFalse(record['complete_gate_eligible'])
+            self.assertFalse(record['complete'])
+        self.assertEqual(receipt['diagnostic_boundary'], 'linux_pidns_v1')
+        before = (self.work / 'bound-build/proof.txt').stat().st_mtime_ns
+        omitted = subprocess.run(cli + ['run', *common, '--resolved', str(resolved), '--attempt', '2',
+                                        '--output', str(self.work / 'omitted.json')], capture_output=True)
+        self.assertNotEqual(omitted.returncode, 0)
+        self.assertIn(b'diagnostic execution boundary', omitted.stderr)
+        self.assertEqual((self.work / 'bound-build/proof.txt').stat().st_mtime_ns, before)
+        forged = dict(expected, complete_gate_eligible=True, complete=True)
+        resolved.write_text(json.dumps(forged))
+        rejected = subprocess.run(cli + ['run', *common, '--resolved', str(resolved), *boundary, '--attempt', '3',
+                                         '--output', str(self.work / 'forged.json')], capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn(b'supplied resolved plan differs', rejected.stderr)
+        self.assertEqual((self.work / 'bound-build/proof.txt').stat().st_mtime_ns, before)
 
 
 if __name__ == "__main__":

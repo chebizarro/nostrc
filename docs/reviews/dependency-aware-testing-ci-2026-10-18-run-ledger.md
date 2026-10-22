@@ -4119,3 +4119,33 @@ The data is a reviewed backfill, not an implemented CI auto-updater. Refresh is 
 }
 ```
 <!-- acceptance-ledger-json:end -->
+
+## Bounded runtime refresh — 2026-10-22T22:15:24.573824Z
+
+This is the retained C snapshot, not a live counter or a replacement for older
+failed attempts above. Fresh workflow listing covers48 roots:45 failure,
+one cancelled, one queued, one in progress. Attempt-specific jobs/artifact
+metadata was freshly captured for only the two nonterminal roots:
+
+| Source root / attempt1 | Exact head | Snapshot disposition | Fresh jobs | Terminal gate/broad jobs |
+|---|---|---|---:|---|
+| [39851489448](https://github.com/chebizarro/nostrc/actions/runs/39851489448) | `0ce430299060a09e4a2db250be1a2cac4df2c212` | queued |58|none|
+| [39851463581](https://github.com/chebizarro/nostrc/actions/runs/39851463581) | `88d36526af2c913d9d7a93dce6078d7ce5259418` | in_progress |59|none|
+
+The46 historical completed head/attempt/conclusion identities match the prior
+complete capture; their job/artifact bodies were **not** freshly refetched.
+Two TLS-handshake refresh failures remain retained. Raw metadata and per-file
+hashes: `/tmp/nostrc-runtime-hosted-20261023/hosted-current-bounded-summary.json`,
+SHA256 `571e130dbf51f23b46e05fe89dcf5bd97fb0a2db7c4fcb93a817c8b482091862`.
+
+The distinct [native-x86 Grotto job120078575663](https://github.com/chebizarro/nostrc/actions/runs/39851489265/job/120078575663),
+artifact12459041813, actually passes the two NIP55L registrations at base0ce430299.
+It supports the finite `.35` disposition together with C's six real ARM64 TCP
+cases, not a successful complete root/broad integration or new shared capability.
+See [runtime source/provenance](dependency-aware-testing-runtime-hosted-2026-10-23.md).
+
+Counters remain **0/20 qualifying reviewed PR comparisons,0/2 successful complete
+broad integrations; W11 NOT MET/W12 NOT RUN**. Unit cases, partial/nested jobs,
+retries and local wrapped-custody proof advance neither counter. `.5` remains
+closed with this measurement refresh only; root/`.8` remain open. No default,
+protection, schedule, publisher or release-mode cutover is approved.

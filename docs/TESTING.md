@@ -7,12 +7,15 @@
 > and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). The
 > [finite closeout register](reviews/dependency-aware-testing-ci-2026-10-22-closeout.md)
 > distinguishes implemented membership, runnable capabilities and actual final-source
-> execution. Tested code freeze `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a` passes the finite gates below; earlier source-specific receipts remain historical.
+> execution. Latest bounded integration code is `df8fb86ff329fffc72064a4ea255322ef3e955a0`;
+> split verification and limitations are recorded below. The older production
+> baseline keeps its own source and is not new-source execution credit.
 > Acceptance decisions and run counts: [criterion audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
 > and [timestamped run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md).
-> The reviewed ledger snapshot at **2026-10-22T19:03:24.712764Z** retains **0/20 PR
-> comparisons / 0/2 successful complete broad integrations**:46 roots/attempts,
-> 45 failed, one cancelled, zero pending. Earlier pending/failed observations remain. These are dated reviewed counts, not
+> The bounded snapshot at **2026-10-22T22:15:24.573824Z** retains **0/20 PR
+> comparisons / 0/2 successful complete broad integrations**:48 roots/attempts,
+> 45 failed, one cancelled, one queued, one in progress. Historical46 job/artifact
+> identities were matched, not freshly refetched. These are dated reviewed counts, not
 > live counters or unit-test totals. W11 **NOT MET** / W12 **NOT RUN**; no local
 > implementation, component proof or nested job advances those counters.
 > Parent reviewed the original criteria and approved finite closure of
@@ -23,7 +26,41 @@
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
 
-## Finite integration contracts — 2026-10-23
+## Remaining acceptance integration — 2026-10-23
+
+[Exact source, commands, failures and criterion boundaries](reviews/dependency-aware-testing-integration-2026-10-23.md)
+are recorded at code `df8fb86ff329fffc72064a4ea255322ef3e955a0`.
+The retained full selector invocation reports777 cases:733 pass,44 explicit
+Linux-only skips and one setup error preventing six Docker cases (wrong fixture
+image lacked musl). Those six actual lifecycle cases separately pass against
+immutable cached ARM64 Alpine with **identical code/source bindings**. This is
+split verification, **not one full-green invocation or skip-as-success**.
+
+Final supported Linux tests pass79/79, zero skips:40 whole-wrapper cases,
+30 existing custody cases and9 service/contracts. Explicit
+`bash scripts/test-gate.sh --native-custody pidns ...` keeps the backend finalizer
+and actual private bus/display services in a kernel-owned namespace; original
+in-memory receipts and retained bytes are verified after namespace exit. Command,
+CTest, build-contract and mixed lanes are diagnostic/incomplete. `legacy` stays
+default; ptrace wrappers, keyring commands, native macOS positive custody and
+shared signer capability remain unsupported. The Linux test host is provisioned
+ARM64/nonroot Docker, not authored x86/hosted/bare metal. Native Mac cases remain
+compatibility/refusal only; `.23` stays open.
+
+Fresh safe native default build, six shell suites, four statics,27 focused input/
+ownership/golden checks, three actual cache-export ownership cases and five
+cache-admission negatives pass. Private HOME/XDG/bus/Secret Service cleanup and
+actual read-only developer-context keychain guards pass. No keychain mutation,
+production cold/full-audit rerun, sanitizer task retry or release/default cutover.
+
+C's original08/09 and source-only-cache original011 finite cells pass at C's
+source; the changed cache export helper has distinct current ownership proof.
+TCP6 ARM64 cases and hosted native-x86 NIP55L2 cases close finite `.35`, not shared
+profile acceptance. `.8` broader obligations, `.11/.29` technical problems and
+B's separate provider failure remain explicit in the register. No component bump
+for this internal tooling/tests/docs integration.
+
+## Preserved finite integration baseline — 2026-10-23
 
 At code freeze `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`: **725 selector
 cases PASS, zero skips; all15 combined gates PASS** (six shells, four statics,

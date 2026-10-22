@@ -24,7 +24,18 @@ class CloseoutInterfaces(unittest.TestCase):
         cls.data = c.witness()
 
     def test_lossless_exact_policy_projection_and_input_enrollment(self):
-        self.assertEqual(s.digest(self.p), self.data['after_policy_hash'])
+        current = c.before_native_custody_policy(self.p)
+        self.assertEqual(s.digest(current), self.data['after_policy_hash'])
+        self.assertEqual(c.before_native_custody_policy(current), current)
+        self.assertEqual(set(self.p['checks']['selection.contract']['runtime_inputs']) -
+                         set(current['checks']['selection.contract']['runtime_inputs']),
+                         set(c.NATIVE_RUNTIME_INPUTS))
+        for path in c.NATIVE_RUNTIME_INPUTS:
+            self.assertTrue((ROOT / path.removeprefix('{source}/')).is_file())
+        changed = copy.deepcopy(self.p)
+        changed['checks']['selection.contract']['runtime_inputs'].pop()
+        with self.assertRaisesRegex(s.ContractError, 'native custody'):
+            c.before_native_custody_policy(changed)
         previous = c.before_closeout_policy(self.p)
         self.assertEqual(s.digest(previous), self.data['before_policy_hash'])
         self.assertEqual(c.before_closeout_policy(previous), previous)

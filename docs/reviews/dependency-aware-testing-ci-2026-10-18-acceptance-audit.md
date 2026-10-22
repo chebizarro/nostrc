@@ -1,5 +1,44 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Remaining acceptance integration — 2026-10-23
+
+[Source-bound report](dependency-aware-testing-integration-2026-10-23.md), tested
+code `df8fb86ff329fffc72064a4ea255322ef3e955a0`:79/79 supported Linux custody/
+service/contract tests pass, zero skips, including40 real whole-wrapper cases.
+This is provisioned ARM64/nonroot Docker kernel evidence, not authored x86,
+hosted, bare-metal or native Mac cleanup. The internal wrapped-finalizer seam is
+resolved; `.23` remains open for the actual macOS entitlement/positive boundary.
+
+Retained selector invocation:777 reported,733 pass,44 explicit Linux-only skips,
+one class-setup error preventing six Docker lifecycle cases because its fixture
+image lacked musl. Those six actual cases pass in a separate immutable cached
+Alpine invocation with identical source bindings. **No single full-green claim.**
+Fresh safe native default build, six shells/four statics,27 focused contracts,
+three actual cache-export ownership cases and five cache-admission negatives pass.
+The one review's four findings were repaired; no second review or task retry.
+Prior failures and the historical production baseline below keep their sources.
+
+Approved A/C ancestry is preserved. C's original08/09 and source-only-cache
+original011 rebuild/five tests/hello/scoped cleanup remain finite source-specific
+proof, complete=false; unchanged cold011 completion is not claimed. `.35` is
+closed from TCP6 ARM64 cases plus native-x86 NIP55L2 hosted cells at base0ce430299,
+not new shared signer/profile admission. The changed cache helper has separate
+current ownership/cancellation proof, not a repeated original matrix.
+
+Latest retained **bounded** hosted observation is22:15:24.573824Z on2026-10-22:
+48 roots,45 failures/one cancellation/one queued/one in progress; historical46
+identities matched, not freshly refetched. [Dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#bounded-runtime-refresh--2026-10-22t221524573824z)
+retains scope and source links.0/20 reviewed PR comparisons,0/2 complete broad
+integrations; W11 NOT MET/W12 NOT RUN. `.5` stays closed; root/`.8` remain open.
+No local evidence advances these counters or authorizes cutover.
+
+`.11` heartbeat causality and `.29` JSON-GLib remedy are technically unresolved,
+separate from B's provider security-filter failure during history retrieval.
+Original archive `/tmp/nostrc-remaining-acceptance-20261023/provider-blocked-sanitizer.xml`,
+SHA256 `4780d5c74e3c169775968d18eb68b9551c2aa4461eaa34edcc603b6bd5986f36`;
+no retry/reroute, dependency fix, suppression or closure is claimed. Internal
+integration tooling/tests/docs require no tracked component version bump.
+
 ## Final finite integration reconciliation — 2026-10-23 local date
 
 Tested code `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a` has725 selector cases
@@ -23,7 +62,7 @@ unreleased versions; byte-equivalent provenance/ownership and internal validator
 work need no additional bump. Official all-record tracker/event preservation is
 recorded in the register, not a direct semantic database edit.
 
-Latest reviewed hosted snapshot **2026-10-22T19:03:24.712764Z**:45 failed/one
+Earlier complete hosted snapshot **2026-10-22T19:03:24.712764Z**:45 failed/one
 cancelled/zero pending of46 root attempts; **0/20** qualifying comparisons,
 **0/2** complete broad integrations. [New dated ledger and source-linked terminal
 artifact review](dependency-aware-testing-ci-2026-10-18-run-ledger.md#integration-refresh--2026-10-22t190324712764z)
@@ -2860,3 +2899,69 @@ are not refreshed; W11 **NOT MET**, W12 **NOT RUN**. No complete/release/default
 workflow/protection/custody/operator-approval credit. Local commits only; parent
 owns push/merge and worktree cleanup. Later docs/export do not change the tested
 code identity above.
+
+## 2026-10-23 finite runtime follow-through and refreshed hosted roots
+
+Base `0ce430299060a09e4a2db250be1a2cac4df2c212`; full bounded evidence and
+commands are in the [runtime follow-through receipt](dependency-aware-testing-runtime-hosted-2026-10-23.md).
+New runtime child `.35` was created before code; existing `.8` retains original
+MDK. Completed baseline-document criterion `.5` is not reopened.
+
+Fresh API window **2026-10-22T21:31:07.535453Z–21:33:25.691930Z**, retained at
+`/tmp/nostrc-runtime-hosted-20261023/hosted-api-second/summary.json` and its
+SHA256 manifest: all48 dependency roots have attempt-specific jobs and artifact
+metadata. Dispositions: **45 failure /1 cancelled /2 queued**; no successful
+terminal `Dependency gate`. The first capture's HTTP502 is retained separately.
+The new roots are [PR18 run39851463581](https://github.com/chebizarro/nostrc/actions/runs/39851463581)
+(`88d36526af2c913d9d7a93dce6078d7ce5259418`) and
+[master run39851489448](https://github.com/chebizarro/nostrc/actions/runs/39851489448)
+(`0ce430299060a09e4a2db250be1a2cac4df2c212`). Both were queued/incomplete,
+with partial artifacts but no terminal gate or broad-accounting job at capture.
+They earn no acceptance credit. Direct reusable broad/worker/release workflow
+histories have zero roots; nested jobs are not extra runs. All46 historical
+failed/cancelled roots remain in the census.
+
+**W11 NOT MET:0/20 qualifying reviewed distinct PR comparisons and0/2 successful
+complete broad integrations. W12 NOT RUN.** No manufactured samples, retries,
+partial/nested/local successes, queued jobs or old snapshots advance counters.
+No W11/operator/default/protection/schedule/publisher cutover is authorized.
+
+Separately, [Grotto native job120078575663](https://github.com/chebizarro/nostrc/actions/runs/39851489265/job/120078575663),
+attempt1, really checked out `0ce430299` on GitHub-hosted native Ubuntu24.04 x86.
+Artifact12459041813 CTest XML records56 passed/zero skipped, including
+`nip55l_dbus_contract`16.3378s and `nip55l_fake_secret_service_contract`0.730736s.
+This satisfies those two finite native caller-identity cells, not complete-root
+or W11 acceptance. No Rosetta identity waiver or ARM inference occurs.
+
+Original MDK08/09 builds plus network-disabled private hello peers and exact
+owned builder/volume/CID cleanup PASS at clean base0ce430299 (499.629s).
+The subsequent MDK011 investigation actually completed a bounded pinned default
+Cargo fetch (190.6s), retained the slower external-Git comparison cancellation,
+and isolated a new cold-builder external Rust-base layer transfer bottleneck
+(115.34/250.66MB at678.8s,cancel902.372s). A supported source-only cache transfer
+now **rebuilds the original driver**, passes **all five original Cargo tests**
+and private hello in a new owned builder, with network-disabled frozen Cargo,
+unchanged pins/driver and exact cache/context provenance. Image
+`sha256:3edd31ecf60c98b5788fa8bf2bef9ecb76a7be15e8b0895f6aaa26737d986705`;
+scoped cleanup true,complete=false. This is not unchanged cold Dockerfile success,
+prepared011, an old-image smoke or native arbitrary-tree custody. All cancellations
+and the first failed cache-cleanup diagnostic remain; five real cache refusal
+cases pass. `.8` remains open for broader integration/sanitizer obligations.
+New real TCP/libsecret/explicit-public-approval fixtures pass **six** local
+Linux/arm64 cases including deliberate owned-approver crash refusal,
+without shared-engine/profile/capability edits or new hosted-TCP credit.
+`.35` closes its finite criteria at `dad32d7976e8921093f61099acfb41bacd727b02`.
+
+Later bounded workflow listing retained **2026-10-22T22:15:24.573824Z**:
+**48 roots:45 failure,1 cancelled,1 queued,1 in_progress**. Fresh attempt-specific
+jobs/artifact metadata was captured for both nonterminal roots (master58jobs,
+PR18 59jobs), neither with terminal gate/broad job. The46 completed historical
+heads/attempts/conclusions match the earlier complete capture; their job/artifact
+bodies are not falsely reported freshly fetched. Attempted full refresh failed
+on two retained TLS handshake timeouts. Exact scope/raw hashes:
+`/tmp/nostrc-runtime-hosted-20261023/hosted-current-bounded-summary.json`.
+Counters remain0/20 and0/2,W11 NOT MET/W12 NOT RUN; `.5` remains closed.
+Internal fixture/tooling/docs-only changes: **no version bump**. Parent owns final
+inventory,engine integration,landing and cleanup; local commits only. Provider
+security-filter termination of sibling sanitizer work is distinct from technical
+cause; `.11`/`.29` remain unresolved,not retried or absorbed here.

@@ -1,8 +1,40 @@
 # Dependency-aware CI: finite closeout criterion register
 
+> **Final bounded integration, tested code `df8fb86ff329fffc72064a4ea255322ef3e955a0`:**
+> approved A9bb00d07a/Ccceaddb38 ancestry is preserved. The internal Linux
+> wrapped-finalizer/services seam passes40 wrapper cases within79 custody/service/
+> contract cases, zero skips, on provisioned ARM64 nonroot Docker kernel—not
+> authored x86/hosted/bare metal. Mac positive custody remains missing; `.23` open.
+> The retained777-case selector invocation has733 passing cases,44 explicit
+> Linux-only skips and one fixture-image setup error preventing six Docker cases.
+> Those six actual lifecycle cases separately pass on immutable cached Alpine
+> with identical source bindings. **No single full-green invocation is claimed.**
+> Safe native default build, six shells/four statics,27 focused contracts,
+> three real cache-export ownership cases and five admission negatives pass.
+> The one review's four blockers were fixed; failed receipts remain. The old
+> 725/434/three-production-full-audit baseline below keeps its own source.
+> [Integration report and preserved evidence](dependency-aware-testing-integration-2026-10-23.md)
+> distinguish local proof, B's unretried provider failure and unmet acceptance.
+
+> **2026-10-23 runtime follow-through (base `0ce430299`):** original MDK08/09
+> builds/private hello peers PASS. MDK011 now passes all five original Cargo tests
+> and private hello using a newly compiled original-source, explicitly hashed
+> **source-only cache** context; unchanged cold Dockerfile success is not claimed.
+> All three scoped builder/CID cleanups PASS,`complete=false`. Failed/cancelled
+> cold attempts remain. The two NIP55L cells have actual hosted native-x86 PASS at
+> `0ce430299`; explicit-approval TCP fixtures pass six real local Linux/arm64 cases.
+> No shared engine/profile/capability admission follows. See the
+> [source-bound follow-through receipt](dependency-aware-testing-runtime-hosted-2026-10-23.md).
+> Historical `3ef5cbf9c` tables below retain their original scope/dispositions.
+> Bounded hosted listing `2026-10-22T22:15:24.573824Z`:48 roots,45 failed,
+> 1 cancelled,1 queued,1 in_progress; fresh jobs/artifacts for the two nonterminal
+> roots, matched earlier identities for46 completed roots, not all re-fetched.
+> 0/20 qualifying PR comparisons,0/2 complete broad; W11 NOT MET/W12 NOT RUN.
+> `.5` stays closed; `.8` retains broader obligations; finite runtime `.35` is closed.
+
 ## Source and disposition rules
 
-**Finite implementation closeout is verified; rollout is not accepted.** Tested code freeze:
+**Earlier finite implementation closeout remains verified; rollout is not accepted.** Its tested code freeze:
 `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`, based on
 `dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`. Preserving merges contain exactly:
 
@@ -355,63 +387,70 @@ No criterion is erased, no partial bead closed and no broad acceptance promoted.
 | `nostrc-0cfsg` | Execute W1-W12 with affected/premerge, broad master/release/manual, fail-broad unknowns, exact-SHA safety/advisory policy. | **OPEN / acceptance incomplete**. Finite implementation criteria below are individually proved; original-image `.8`, heartbeat `.11`, native custody `.23`, dependency leak `.29`, explicit runtime/whole-job cells and W11/W12 remain tracked. W11 **NOT MET**, W12 **NOT RUN**. |
 | `.1` | Schema/range/golden/aggregation: rename/delete/gitlink/shallow/newline, selected skip/cancel/stale identity, release applicability, explicit unsupported roots; real module delegation. | **PASS / CLOSED** finite logical scope; final725-case regressions pass. No hosted acceptance inferred. |
 | `.2` | Fresh/stale/failed configure; standalone/root export; fixtures/reset/model-GUI split; skip/dirty-cache/missing-edge negatives; actual focused build/test; no silently unowned supported registrations. | **PASS / CLOSED — parent-approved finite criteria**. Final real root and standalone configure/build/full input/header/registration audit/selected execution now pass;725 regressions cover fresh/stale/failed generation, fixture/reset/skip/dirty/missing-edge refusal. No silently unowned supported registration; unsupported cells are explicit below/root. Version decisions recorded, no target refactor or invented platform. |
-| `.3` | Shell regressions; actual shared plan/resolve/run; unknown broadening; selected capability refusal; cross-checkout locks/cancellation; sanitizer configuration parity. | **PASS / CLOSED — parent-approved finite criteria** finite gate contract. All six shell suites, real shared plan/resolve/run, split/shared parallelism, locks/cancel/capability-refusal and sanitizer phase/configuration regressions pass. Native wrapped custody remains a visible prelaunch refusal owned by `.23`, not a waived positive criterion here. |
+| `.3` | Shell regressions; actual shared plan/resolve/run; unknown broadening; selected capability refusal; cross-checkout locks/cancellation; sanitizer configuration parity. | **PASS / CLOSED — parent-approved finite criteria** finite gate contract. All six shell suites, real shared plan/resolve/run, split/shared parallelism, locks/cancel/capability-refusal and sanitizer phase/configuration regressions pass. Default/ptrace wrapper refusals remain; explicit Linux pidns wrapper diagnostics are now proved under still-open `.23`, not a native Mac waiver here. |
 | `.4` | Workflow lint/static and PR/merge-group/tag/dry-run/result routing; no publication from partial validation; executable broad replacement; duplicate triggers explicit. | **PASS / CLOSED — parent-approved finite criteria** finite workflow contract. Full lint and event/result/merge-group/tag/dry-run/partial-publisher negatives pass; all17 broad families are authored/executable, temporary duplicate triggers explicit. Successful hosted broad/release publication is not claimed and remains root W11/W12 work. |
-| `.5` | Source-grounded baseline/commands; accurate plan/AGENTS/TESTING; combined gates/review; explicit external rollout prerequisites. | **PASS / CLOSED — parent-approved finite criteria**. Exact commands/source/receipts and all15 gates, native/production results, review disposition, version policy and this35-bead register are recorded. Updated19:03 UTC hosted evidence remains0/20 and0/2, explicitly open under root; no rollout acceptance requirement is silently dropped. |
+| `.5` | Source-grounded baseline/commands; accurate plan/AGENTS/TESTING; combined gates/review; explicit external rollout prerequisites. | **PASS / CLOSED — parent-approved finite criteria**. Exact commands/source/receipts and all15 gates, native/production results, review disposition, version policy and this finite criterion register are recorded. The bounded22:15 UTC hosted refresh remains0/20 and0/2, explicitly open under root; no rollout acceptance requirement is silently dropped. |
 | `.6` | Full actionlint with ShellCheck, unchanged workloads/artifacts/profiles/advisory behavior. | **PASS / CLOSED**; final actionlint including ShellCheck and all statics pass; workloads/artifact ownership/policy unchanged. |
 | `.7` | Truthful libgo32 diagnostic; no stress/complete promotion; real command/build-contract absent/wrong-source/input/capability/cancel/nonzero/evidence negatives; full regressions. | **PASS / officially CLOSED**. Final actual macOS32/Linux33 plus default/full postbuild routes and725 regressions pass, stress not executed/ineligible; three root routes now also prove public normalization. No complete promotion. |
-| `.8` | Full sanitizer phase/config/environment parity; concurrent roots; cancelled/partial MDK images and sibling cleanup; real safe evidence distinguished from simulation. | **OPEN / FAIL-incomplete**. Final sanitizer diagnostic routes and real scoped lifecycle positives/negatives pass. Original exact-tip matrix stopped in011 dependency fetch;08/09 NOT RUN, full original-image acceptance NOT MET. Scoped cleanup2.8s passed, not native arbitrary-tree proof. Next: resolve actual image fetch/build prerequisites and obtain source-bound original-route proof, separately; no second matrix here. |
+| `.8` | Full sanitizer phase/config/environment parity; concurrent roots; cancelled/partial MDK images and sibling cleanup; real safe evidence distinguished from simulation. | **OPEN / broader obligations incomplete**. C's exact-source original08/09 builds/hello and source-only-cache original011 rebuild/five original tests/hello/scoped cleanup pass, complete=false. Not unchanged cold011/prepared/native-tree/profile acceptance; all failures remain. The changed cache-export cancellation/reply-loss step has3 real current ownership cases and5 admission negatives. Broader sanitizer/integration obligations remain open; no original matrix rerun. |
 | `.9` | Every job/matrix/check mapped or explicitly tracked unsupported; exact native/Linux registrations/semantic edges; isolation goldens; no unexplained omissions or fake enforcement readiness. | **PASS / CLOSED — parent-approved finite criteria** inventory criteria, not runtime acceptance. Every job/matrix/check is mapped or a tracked unsupported gap; native/available Linux exports, semantic edges, final three full pre/postaudits and isolation/savings goldens pass. Root explicitly owns remaining execution cells, all coverage gaps stay visible/enforcement-not-ready; hosted quotas remain separate. |
 | `.10` | Actual CMake 3.22/3.25 nested/root/standalone metadata and fixture/DEPENDS parity, current suite, no fallback. | **PASS / CLOSED**; final metadata regressions pass. Historical actual3.22/3.25 runs retain their own sources; no invented new old-tool rerun. |
-| `.11` | Source-grounded historical heartbeat cause; deterministic verification where established; unresolved scheduling evidence explicit; original guard retained. | **FAIL / unresolved cause**, not a proved external-toolchain excuse. Later passing samples do not establish causality; no threshold/exclusion/retry waiver. |
+| `.11` | Source-grounded historical heartbeat cause; deterministic verification where established; unresolved scheduling evidence explicit; original guard retained. | **FAIL / technically unresolved cause**. B's provider security-filter failure while retrieving history is separately archived, not a causal/toolchain diagnosis or remedy. No retry/reroute, threshold/exclusion waiver or closure; later passing samples establish no causality. |
 | `.12` | Truthful MDK descendant cleanup after setsid, or stop claiming complete cleanup. | Historical finite refusal correction **PASS / CLOSED**. Legacy `cleanup_complete=false` is preserved, not arbitrary-tree success; wider `.8` remains open. |
 | `.13` | Nested negative diagnostic eligibility cannot be hidden by omitted outer field. | **PASS / CLOSED**; final nested eligibility/aggregation regressions pass. |
 | `.14` | Non-UTF8/raw output survives; decoding failure finalizes negative receipt/log. | **PASS / CLOSED**; final raw-byte/failure finalization regressions pass, with prior failed traces retained. |
 | `.15` | Actual split configure/build/test environments; drift/unknown/malformed/template/cache negatives; test-only vars absent earlier. | **PASS / CLOSED**; final fresh supported root/standalone routes and phase/environment drift negatives pass. |
-| `.16` | Actual exact-tree/dirty command outer route; source/input/capability/cancel/evidence negatives; shared sanitizer route; six shell/statics/lint; no bypass. | **PASS / CLOSED** bounded route; final shared/unwrapped routes and all combined gates pass. Unsafe wrappers remain refused under `.23`. |
+| `.16` | Actual exact-tree/dirty command outer route; source/input/capability/cancel/evidence negatives; shared sanitizer route; six shell/statics/lint; no bypass. | **PASS / CLOSED** bounded route; final shared/unwrapped routes and all combined gates pass. Default/ptrace unsupported wrappers remain refused; explicit Linux wrapper diagnostics and remaining Mac restriction are recorded under `.23`. |
 | `.17` | Production selection command has truthful full inputs/source; missing/moved/new helper/drift/wrong-source negatives; no skip masking; normal versus strict inventory honesty. | **PASS / CLOSED**. Final full725-case selector workload and complete input preaudit pass (actual argv retained, not relabelled as a public static-lane receipt); missing/moved/new-helper/identity negatives remain. Actual input enrollment includes A/B/C, keyring and custody helpers; no skip or false strict-enforcement claim. |
 | `.18` | Absolute fixture paths cannot collide with a real `/source`; omitted stress and unknown registrations stay audited. | **PASS / CLOSED**; final absolute-path collision/unknown registration/omitted-source fixture regressions pass. |
 | `.19` | Diagnose actual SIGTERM lost output without invented readiness cause or weakened raw-byte assertions. | **PASS / CLOSED**, distinct original failure retained; final lifecycle/byte regressions pass without inventing readiness causality. |
 | `.20` | Real deterministic ready/emit handshake before cancellation/timeout; retain raw bytes and final negative receipt; no sleep/retry substitute. | **PASS / CLOSED**; final deterministic handshake/cancel/raw-byte regressions pass; no sleep/retry substitute. |
 | `.21` | Every authored profile maps to independent worker/needs/conclusion; honored native/sanitizer setup or named refusal; supported lanes still dispatch; no cutover. | **PASS / CLOSED** finite worker census; final workflow/inventory/refusal tests pass. Independent conclusions/setup gaps remain explicit; no hosted execution or cutover inferred. |
 | `.22` | Before-launch refusal for selected non-CTest display/private-bus and mixed lanes; preserve legacy CTest; no dropping/receipts/unwrap; supported unwrapped/shared cases and shell/statics. | **PASS / CLOSED** bounded prelaunch refusal; final mixed/display/private-bus negatives and supported cases pass. This does not close safe custody `.23`. |
-| `.23` | Real macOS/Linux command+CTest custody, escaped TERM-ignoring children, unrelated sibling survival, raw evidence; no numeric/name/sleep substitute. | B truthfulness/component negatives **PASS**. Native arbitrary-tree custody without a real kernel primitive is **EXTERNAL BLOCKER / platform restriction**; mixed wrappers remain unsupported and refuse. Do not close from contained/ptrace diagnostics or substitute unsafe numeric PID cleanup. |
+| `.23` | Real macOS/Linux command+CTest custody, escaped TERM-ignoring children, unrelated sibling survival, raw evidence; no numeric/name/sleep substitute. | **OPEN**. A's30 real Linux custody/kernel tests and5 Mac compatibility/refusal cases retain their exact source. Integrated code df8fb86ff passes79 supported ARM64 Linux cases, including40 whole-wrapper command/CTest/build/mixed/late-writer/sibling/death/raw-byte cases, zero skips. Wrapper finalizer/services integration is resolved internally, not externally deferred. Mac positive custody remains missing: actual Apple entitlement probe/primary sources document the restriction. No native Mac success or authored-x86/hosted/bare-metal promotion. |
 | `.24` | Identify or faithfully retain failing full-gate command/trace on recurrence; deterministic fix only if warranted; distinguish later diagnostics. | Historical finite retention **PASS / CLOSED**; no invented original cause or new full-gate success. |
 | `.25` | Correct visible `snprintf` declaration; build all three fuzz targets and retain actual corpus guards. | **PASS / CLOSED** historical finite compile repair; final source builds/regressions pass, not a new hosted fuzz/corpus run. JSON corpus failure remains `.29`. |
 | `.26` | Actual regular BP metrics/emission/parser workload with original parameters, not shortened or missing metrics. | **PASS / CLOSED** finite workload contract; final regressions pass. Actual final hosted broad BP workload is NOT RUN/success not established. |
 | `.27` | Homed mandatory unit registrations and original filter, explicit test opt-in, no empty-match success. | **PASS / CLOSED** opt-in/exact-list/no-empty-match repair; final workflow guards preserve full homed call. No fresh hosted homed execution claim. |
 | `.28` | Compatible default UI widget/build with behavior preserved, approved shipped fix and version assessment, no target suppression. | **PASS / CLOSED** finite shipped repair; final safe native configure/default build and current regressions pass. No new product change here. |
-| `.29` | Verified JSON-GLib remedy for real malformed-input leak; original corpus, leak detection and duration intact. | **OPEN / FAIL**, verified real JSON-GLib leak retained; dependency remedy is outside this integration's authorized scope, not a successful skip. Next: compatible upstream/source remedy and exact original corpus/duration/leak-detection proof. No suppression or corpus reduction. |
+| `.29` | Verified JSON-GLib remedy for real malformed-input leak; original corpus, leak detection and duration intact. | **OPEN / FAIL**, real leak and missing compatible remedy remain technically unresolved. B's separately archived provider failure is not a dependency fix or a successful skip. No task retry/reroute, suppression, corpus reduction or closure; unchanged original corpus/duration/leak detection still required. |
 | `.30` | Positive and pre/postaudit/build/capability/source/cancel CLI receipts preserve valid lane identity/raw bytes; invalid plans invent none; aggregation retains failure and rejects promotion. | **PASS / CLOSED**; final CLI negative receipts/identity/raw-byte/partial aggregation/promotion regressions pass. |
 | `.31` | Real setup/build probes and worker routing; fresh Grotto registrations/target/input mapping and supported actual cases; isolation/MLS selection; every unsupported step explicit. | **PASS / CLOSED — parent-approved finite criteria** finite setup/routing/membership criteria. Actual final Grotto fresh export/full input/default/NIP14 route, real Nak/keyring producers, existing fixture isolation and MLS/non-MLS savings tests pass. Unsupported variants/whole jobs remain explicit root gaps; native x86 NIP55L and provisioned signer approval are not silently counted as passing cases. |
 | `.32` | Reproduce tracked generated-source mutation; actual build-tree outputs/install paths; source stays byte-clean; no fake platform claim. | **PASS / CLOSED**; final native and production defaults leave source clean. Root-owned templates/witnesses preserve artifacts/install paths; pinned dirty vendor/submodule untouched. |
 | `.33` | Physical CLI build2/test1 and target-only contract; fallback/legacy; type/override/resolved/receipt/argv contradictions; source/capability/failure/cancel negatives. | **PASS / CLOSED**; final Grotto build2/test1 physical evidence, fallback/split/override/forged-argv negatives and shared routes pass. |
 | `.34` | Authorized bounded default-generator contract; exact fresh provenance; unknown custom/default refusal; full non-test audits and negative lifecycle proof before admission. | **PASS / CLOSED — parent-approved finite criteria** separately authorized finite default-production wave. Parent explicitly approved B/root implementation after the earlier criterion's no-implementation wave; this is not retroactive authorization. Final actual three root and two standalone default/full audits/postbuild/selected executions pass, along with known-producer and unknown/refusal/lifecycle negatives. Exact provenance/source/template repairs are proved; no invented `all` target, source-refusal laundering or selected-only audit. |
+| `.35` | Actual provisioned TCP signer with explicit approval, isolated identity/token and negative cases; distinct native-x86 NIP55L caller identity cells. | **OFFICIALLY CLOSED / finite runtime criteria** at `dad32d7976e8921093f61099acfb41bacd727b02`, preserved by Ccceaddb38. Six real ARM64 TCP cases and two hosted native-x86 NIP55L registrations (job120078575663/artifact12459041813 at base0ce430299) pass. No shared engine/profile capability, hosted TCP, whole-root or W11 acceptance follows. |
 
 ## Finite remaining execution queue
 
-1. **Root / native Linux x86:** run the two exact NIP55L RPC cases on a native
-   x86 kernel/executable identity. Retain Rosetta failures and ARM64 diagnostics;
-   never authorize the shim or weaken caller approval.
-2. **Root / provisioned signer:** approved `ENABLE_TCP_IPC=ON`, private identity,
-   runtime token and explicit unidentified-caller approval before the real TCP
-   test. Exit77/loopback cannot satisfy it.
-3. **`.8` original MDK:** resolve actual011 dependency fetch/build prerequisites,
-   then obtain exact-source original08/09/011 acceptance and scoped cleanup.
-   Current cancellation/08-09 NOT RUN remain; no second whole matrix in this session.
-4. **`.23` native/mixed custody:** identify a genuine kernel-supported ownership
-   primitive before escaped-child/sibling-survival positive proof. Current
-   platform restriction and prelaunch refusals remain; no unsafe PID workaround.
-5. **`.11` / `.29`:** reproduce the original heartbeat failure with a causal
-   trace; separately deliver a compatible JSON-GLib remedy and unchanged corpus
-   proof. Later passes, timeouts or dependency suppressions are not remedies.
-6. **Root / explicit whole-job cells:** core ASan's three legacy registrations;
+1. **Finite native-x86 NIP55L / provisioned TCP cells answered:** `.35` officially
+   closed at `dad32d7976e8921093f61099acfb41bacd727b02`. Hosted job120078575663 /
+   artifact12459041813 proves the two native-x86 cases at base0ce430299; six
+   actual ARM64 TCP cases use approved configuration, private identity/token and
+   explicit approval. No Rosetta waiver, skip-as-success or shared profile
+   capability follows. Future shared admission needs that actual setup contract.
+2. **`.8` broader integration:** C's exact-source original08/09 and source-only-
+   cache original011 rebuild/five tests/hello/scoped cleanup pass, incomplete.
+   Unchanged cold011 completion is not claimed; failed attempts remain. The
+   changed cache export helper has separate current ownership/cancel proof.
+   Remaining sanitizer/profile/whole-job obligations are not closed by these cells.
+3. **`.23` native macOS / remaining authored hosts:** the real Linux kernel
+   wrapper/finalizer/services seam now has40 positive/negative wrapper cases in
+   the79-case supported ARM64 suite, zero skips. It is no longer an external
+   engineering deferral. Native Mac entitlement/provisioning and actual positive
+   proof remain missing; no authored-x86/hosted/bare-metal alias or unsafe PID
+   workaround is allowed.
+4. **`.11` / `.29`:** heartbeat causality and a compatible JSON-GLib remedy with
+   unchanged corpus proof remain technically unresolved. B's separate provider
+   failure retrieving history is archived with its hash in the integration report;
+   no retry/reroute or claimed fix. Later passes/timeouts/suppressions are not remedies.
+5. **Root / explicit whole-job cells:** core ASan's three legacy registrations;
    fresh separately approved Groundhog sanitizer partition; actual native macOS
    root ASan/GUI/media/perf; Grotto Meson/deb/Shell/TSan; libgo TSan/MPMC/fiber/fuzz;
    remaining17-family broad setup/install/Windows/homed contracts. Each remains a
    named inventory gap/worker cell, not an unexplained omitted test or proof from
    the supported NIP14 routes. Prepared ARM64 requires its actual architecture.
-7. **Root W11/W12 / operator:** parent lands the exact local changes, collect20
+6. **Root W11/W12 / operator:** parent lands the exact local changes, collect20
    qualifying reviewed comparisons and two complete broad integrations, then
    obtain explicit operator approval before any default/protection/schedule or
    publication-mode cutover. No local proof advances those counters.
@@ -429,17 +468,36 @@ refuse before dispatch. Annotated source tag objects peel; workflow identity
 must be a commit, not the tag object. This is documented-contract/local regression
 proof, not a hosted run or arbitrary external reusable-workflow attestation.
 
-The latest reviewed hosted snapshot is **2026-10-22T19:03:24.712764Z**, not a live
-counter: **0/20** distinct qualifying reviewed PR comparisons, **0/2** successful
-complete broad integrations; **45 failed / 1 cancelled / zero pending of46 roots**.
-See the [dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#integration-refresh--2026-10-22t190324712764z).
+The latest retained bounded hosted snapshot is **2026-10-22T22:15:24.573824Z**,
+not a live counter: **0/20** distinct qualifying reviewed PR comparisons, **0/2**
+successful complete broad integrations; **45 failed /1 cancelled /1 queued /
+1 in_progress of48 roots**. Historical46 identities were matched, not freshly
+refetched; fresh attempt-specific metadata covers the two nonterminal roots.
+See the [dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#bounded-runtime-refresh--2026-10-22t221524573824z).
 All earlier43/1/2 and44/1/1 observations remain historical, not erased.
 No local component tests, nested jobs, retries, parent colors or omitted/partial
 receipts advance those counters. **W11 NOT MET / W12 NOT RUN.**
 
 ## Tracker and ownership
 
-Final approved-closure official `bd export --all`, captured
+Final integration official `bd export --all` preservation captured
+**2026-10-22T23:24:58.217225Z**: **1,553 records (1,516 issues +37 memories),
+599 comments,1,161 interactions**. All earlier root HEAD/index/worktree and initial
+exports were compared: zero lost IDs/comments, zero changed memory records.
+The root event stream is an exact byte prefix and was copied whole, byte-for-byte;
+no semantic JSONL merge/edit. Official exports differ in serialization ordering
+but are semantically identical. The local generated issue file SHA256 is
+`f48b669baa4835ac2206ece8f2d1a729e7656d036ddc99c6fc73feaf34f02dc3`;
+events `353648eebc52d2d9c78dbefc74c47b982e756d5f74e694111d4b1d2a4ce5344a`.
+Snapshots, full comparisons and original index bytes are retained under
+`/tmp/nostrc-remaining-integration-20261023/tracker-final/preservation.json`.
+This preserves parent's latest provider comments, root/.5 measurements and closed
+`.35`. `.5/.35` stay closed; root/.8/.11/.23/.29 stay in_progress. Root staged
+issues/modified events are retained for parent landing. `bd dolt pull` returned
+`Error1105: no remote`; that failure is retained, not retried or confused with B's
+provider failure. Local integration commits only; parent owns push/merge/cleanup.
+
+Earlier approved-closure official `bd export --all`, captured
 **2026-10-22T20:36:01.323941Z**: **1,552 records (1,515 issues +37 full memories),
 576 comments,1,157 generated interactions**, including19 root comments and six
 root interactions. All prior

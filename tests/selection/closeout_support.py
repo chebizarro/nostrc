@@ -72,10 +72,57 @@ def before_closeout_contract(contract, profile):
     return previous
 
 
+RUNTIME_SOURCE_RULES = [
+    {'effect': 'impact', 'exact': path, 'nodes': [owner, 'selection.contract'],
+     'reason': 'Standalone runtime diagnostic source closure; preserve product ownership without profile admission.'}
+    for owner, path in [('grotto.gui', 'apps/grotto/data/org.nostr.Grotto.gschema.xml')] +
+    [('mdk011.peer_inputs', 'tests/interop/mdk/driver-0.11/' + name)
+     for name in ('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'src/main.rs')]
+]
+NATIVE_RUNTIME_INPUTS = [
+    '{source}/scripts/adapter_namespace_custody.py',
+    '{source}/tests/selection/test_namespace_custody.py',
+    '{source}/scripts/test_selection_services.py',
+    '{source}/tests/selection/test_native_services.py',
+    '{source}/tests/selection/test_namespace_wrapper_adapter.py',
+    '{source}/tests/selection/test_runtime_diagnostic_inputs.py',
+    '{source}/scripts/mdk011-cache-build.py',
+    '{source}/tests/runtime/mdk011-fetch.Dockerfile',
+    '{source}/tests/runtime/test_mdk011_cache_contract.py',
+    '{source}/tests/runtime/test_mdk011_export_custody.py',
+    '{source}/tests/runtime/test_provisioned_nip5f.py',
+    '{source}/tests/runtime/nip5f_approver.c',
+    '{source}/gnome/groundhog/tests/app/test_secret_service.py',
+    '{source}/apps/grotto/data/org.nostr.Grotto.gschema.xml',
+    '{source}/tests/interop/mdk/driver-0.11/Dockerfile',
+    '{source}/tests/interop/mdk/driver-0.11/Cargo.toml',
+    '{source}/tests/interop/mdk/driver-0.11/Cargo.lock',
+    '{source}/tests/interop/mdk/driver-0.11/rust-toolchain.toml',
+    '{source}/tests/interop/mdk/driver-0.11/src/main.rs',
+]
+
+
+def before_native_custody_policy(policy):
+    """Reverse only the exact additive input record, never renew old authority."""
+    previous = copy.deepcopy(policy)
+    check = previous['checks']['selection.contract']
+    if set(NATIVE_RUNTIME_INPUTS) & set(check.get('runtime_inputs', [])):
+        before = witness()['checks']['selection.contract']['after']
+        after = copy.deepcopy(before)
+        after['runtime_inputs'] += NATIVE_RUNTIME_INPUTS
+        s.require(check == after, 'native custody command input enrollment changed')
+        for rule in RUNTIME_SOURCE_RULES:
+            s.require(previous['path_rules'].count(rule) == 1,
+                      'native custody runtime source ownership changed')
+            previous['path_rules'].remove(rule)
+        previous['checks']['selection.contract'] = copy.deepcopy(before)
+    return previous
+
+
 def before_closeout_policy(policy):
     """Reverse exact B/C interfaces and explicit default builds, not unknown edits."""
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_native_custody_policy(policy)
     if s.digest(previous) == data['before_policy_hash']:
         return previous
     for field in ('profiles', 'checks', 'workflow_jobs', 'nodes'):

@@ -59,11 +59,13 @@ def context_hash(root):
     return digest(entries)
 
 
-def retained_files(work):
+def retained_files(work, roots=('build', 'execution')):
     """Snapshot retained build/provenance and execution evidence, not live services."""
     work = Path(work).resolve(strict=True)
+    if not roots or any(not isinstance(name, str) or name in ('.', '..') or Path(name).parts != (name,) for name in roots):
+        raise CustodyError('unsafe retained evidence roots')
     entries = {}
-    for name in ('build', 'execution'):
+    for name in roots:
         root = work / name
         if not root.exists():
             continue
@@ -74,7 +76,7 @@ def retained_files(work):
             if path.is_symlink():
                 target = path.resolve(strict=True)
                 parts = target.relative_to(work).parts if target.is_relative_to(work) else ()
-                if not parts or parts[0] not in {'build', 'execution'}:
+                if not parts or parts[0] not in roots:
                     raise CustodyError('retained evidence link escapes sealed roots: ' + relative)
                 entries[relative] = {'kind': 'symlink', 'target': os.readlink(path)}
             elif path.is_file():
@@ -84,12 +86,13 @@ def retained_files(work):
     return entries
 
 
-def retained_claims(result):
+def retained_claims(result, work='/work', roots=('build', 'execution')):
     """Original hashes consumed by command/CTest receipts; never refresh them."""
     claims = {}
+    work = Path(work)
     def claim(path, expected):
-        relative = Path(path).relative_to('/work')
-        if '..' in relative.parts or not relative.parts or relative.parts[0] not in {'build', 'execution'}:
+        relative = Path(path).relative_to(work)
+        if '..' in relative.parts or not relative.parts or relative.parts[0] not in roots:
             raise CustodyError('receipt evidence outside retained roots: ' + str(path))
         if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
             raise CustodyError('receipt evidence hash missing: ' + str(path))
@@ -110,17 +113,17 @@ def retained_claims(result):
         audit = record.get('input_audit')
         if isinstance(audit, dict):
             for path, expected in audit.get('input_hashes', {}).items():
-                if Path(path).is_relative_to('/work'):
+                if Path(path).is_relative_to(work):
                     claim(path, expected)
     return claims
 
 
-def attest_retained_evidence(work, result, state):
+def attest_retained_evidence(work, result, state, *, roots=('build', 'execution'), claim_root='/work'):
     expected = state['retained_evidence']
     if state['retained_evidence_hash'] != digest(expected):
         raise CustodyError('retained evidence seal hash differs')
-    actual = retained_files(work)
-    claims = retained_claims(result)
+    actual = retained_files(work, roots)
+    claims = retained_claims(result, claim_root, roots)
     errors = []
     for path in sorted(set(expected) | set(actual)):
         if expected.get(path) != actual.get(path):

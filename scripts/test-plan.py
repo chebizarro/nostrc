@@ -45,6 +45,8 @@ def parser():
             cmd.add_argument("--test-parallel", type=int, help="must match authored test_parallelism (or parallelism fallback)")
             cmd.add_argument("--timeout", type=int)
             cmd.add_argument("--evidence-path", action="append", default=[])
+            cmd.add_argument("--diagnostic-boundary", choices=('linux_pidns_v1', 'linux_ptrace_v1'),
+                             help="bind an incomplete kernel diagnostic; never profile parity or complete acceptance")
         elif name == "aggregate":
             cmd.add_argument("--plan", required=True)
             cmd.add_argument("--receipt", action="append", default=[])
@@ -294,6 +296,8 @@ def _realization_command_owned(args, policy, backend, *, custody=None, state=Non
         source_only = profile_checks and all(c["kind"] == "command" and not c.get("build_targets") for c in profile_checks)
         configure = backend.configure_command_profile if source_only else backend.configure_profile
         options = {} if source_only else {"inventory": policy}
+        if getattr(args, 'diagnostic_boundary', None) is not None:
+            options['diagnostic_boundary'] = args.diagnostic_boundary
         if state is not None and not source_only:
             logfile = state["directory"] / "configure.log"
             state["evidence_paths"].append(logfile)
@@ -303,6 +307,8 @@ def _realization_command_owned(args, policy, backend, *, custody=None, state=Non
             state["work_status"]["configure"] = "passed"
     else:
         realized = backend.load_realization(args.build_dir, identity)
+    selection.require(realized.get('diagnostic_boundary') == getattr(args, 'diagnostic_boundary', None),
+                      'diagnostic execution boundary differs from configured realization')
     if state is not None:
         state["realized"] = realized
         state["stage"] = "realization_validation"
@@ -491,7 +497,9 @@ def normalize_receipt(policy, plan, resolved, raw):
             "complete_gate_eligible": raw.get("complete_gate_eligible", False),
             "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", []),
             **({"execution_parallelism": raw["execution_parallelism"]} if "execution_parallelism" in resolved else {}),
-            **({"complete": False} if raw.get("complete") is False else {})}
+            **({"complete": False} if raw.get("complete") is False else {}),
+            **({'diagnostic_boundary': raw['diagnostic_boundary'], 'untraced_profile_parity': False}
+               if 'diagnostic_boundary' in raw else {})}
     import test_selection_subset as subset
     contract = subset.contracts(policy).get(profile_id)
     if contract is not None:
@@ -504,7 +512,7 @@ def normalize_receipt(policy, plan, resolved, raw):
     return result
 
 
-def main(argv=None):
+def main(argv=None, *, result_observer=None):
     args = parser().parse_args(argv)
     try:
         args.repo = str(Path(args.repo).resolve())
@@ -528,6 +536,8 @@ def main(argv=None):
             except ImportError as exc:
                 raise selection.ContractError("real realization module unavailable; no execution/validation was performed") from exc
             def report(result):
+                if result_observer is not None:
+                    result_observer(result)
                 if args.output:
                     selection.write_json(args.output, result)
                 else:

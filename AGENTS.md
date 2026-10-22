@@ -33,10 +33,15 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   `lane_failure_v1` receipts retain failures, never successful coverage; invalid
   admission still refuses before authorizing a lane.
 - The outer adapter supports ordinary unwrapped `command`/`build_contract` checks
-  and legacy CTest lanes. Missing/unsupported capabilities fail visibly. Selected
-  non-CTest checks needing `display`/`private_bus`, including mixed lanes, refuse
-  **before launch**. Never drop capabilities or fabricate receipts. Safe arbitrary
-  native-tree/wrapped custody is unimplemented; legacy CTest cancellation is unchanged.
+  and legacy CTest lanes. Default/ptrace non-CTest display/private-bus and mixed
+  refusals remain. Explicit `--native-custody pidns` supports whole-wrapper Linux
+  diagnostics: the backend owns actual private services inside kernel custody,
+  seals original receipts/retained source bytes, and requires post-namespace-exit
+  evidence before aggregation. Unsupported kernel/setup/tool combinations refuse;
+  no dropped capabilities, host numeric-PID cleanup, native macOS success or
+  complete/profile parity is inferred. Default custody stays `legacy`; keyring
+  commands and shared signer capability remain unsupported. See the
+  [source-bound integration report](docs/reviews/dependency-aware-testing-integration-2026-10-23.md).
 - Native default-generator build contracts use `build_scope=default`, empty
   `build_targets`, and exact `cmake --build {build}` with realized configuration
   and authored build parallelism. Only attested single-config Ninja closures are
@@ -114,10 +119,12 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   `complete=false`. Peer mounts/volume identities are journaled and rechecked;
   owned anonymous volumes must disappear, pre-existing named volumes must remain,
   and unowned new named/host allocations refuse. No default builder selection/global prune, prepared-route
-  alias, native arbitrary-tree or selector admission follows. Exact-tip original
-  image acceptance remains NOT MET after the retained MDK011 fetch cancellation;
-  08/09 were not started. Do not promote earlier helper smokes or scoped cleanup
-  into full MDK interoperability or complete-gate acceptance.
+  alias, native arbitrary-tree or selector admission follows. C's exact-source original08/09 builds/hello and source-only-cache original011
+  rebuild/five tests/hello now pass with scoped cleanup, complete=false. The
+  unchanged cold011 recipe is not claimed; failed fetch/transfer attempts remain.
+  The cache-export cancellation/reply-loss seam has separately bound actual
+  ownership regressions. These are not prepared aliases, shared selector/profile
+  admission, native-tree cleanup or complete-gate acceptance; broader `.8` stays open.
 - Before reporting W11 progress or closing acceptance scope, refresh the
   [acceptance audit and run ledger](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
   from source-linked GitHub jobs/artifacts and update `.5`. Count reviewed distinct

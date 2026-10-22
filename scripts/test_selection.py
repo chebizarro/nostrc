@@ -109,7 +109,8 @@ def _nested_incomplete(value):
     if isinstance(value, dict):
         if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
                 or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY
-                or subset.marked(value) or value.get("receipt_kind") == "lane_failure_v1"):
+                or subset.marked(value) or value.get("receipt_kind") == "lane_failure_v1"
+                or value.get('diagnostic_boundary') is not None):
             return True
         return any(_nested_incomplete(v) for v in value.values())
     return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
@@ -798,14 +799,21 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                     or not isinstance(exclusion.get("target_ids"), list) or len(exclusion["target_ids"]) != 1
                     or any("GoChannelStressTest" in c.get("ctest_tests", {}).get(lane["profile"], []) for c in policy["checks"].values())):
                 errors.append(f"{lane_id}: unknown/mismatched baseline exclusion")
-        for field in ("baseline_exclusions", "coverage_gaps", "complete_gate_eligible", "diagnostic_eligible"):
+        for field in ("baseline_exclusions", "coverage_gaps", "complete_gate_eligible", "diagnostic_eligible", "diagnostic_boundary"):
             if field in receipt and field in backend and receipt[field] != backend[field]:
                 errors.append(f"{lane_id}: contradictory backend {field}")
         if "coverage_gaps" in receipt and receipt["coverage_gaps"] != plan.get("coverage_gaps", []):
             errors.append(f"{lane_id}: stale coverage gap accounting")
+        if receipt.get('diagnostic_boundary') == 'linux_pidns_v1' or backend.get('diagnostic_boundary') == 'linux_pidns_v1':
+            try:
+                from test_selection_services import verify_native_public_receipt
+                verify_native_public_receipt(receipt)
+            except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+                errors.append(f'{lane_id}: native kernel custody final evidence refused: {exc}')
         incomplete = (receipt.get("complete_gate_eligible") is False or backend.get("complete_gate_eligible") is False
                       or receipt.get("baseline_exclusions") or backend.get("baseline_exclusions")
-                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps") or subset.nested(receipt))
+                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps") or subset.nested(receipt)
+                      or receipt.get('diagnostic_boundary') or backend.get('diagnostic_boundary'))
         if incomplete:
             incomplete_lanes.append(lane_id)
             if complete:

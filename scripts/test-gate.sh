@@ -28,8 +28,8 @@ parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--broad", action="store_true")
-parser.add_argument("--linux-custody", choices=("legacy", "ptrace"), default="legacy",
-                    help="explicit unwrapped Linux diagnostic fork tracing; not untraced profile parity; instrumentation/wrappers refuse")
+parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
+                    help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -45,7 +45,7 @@ receipt["bypasses"] = {name: os.environ[name] for name in
     if os.environ.get(name) == ("0" if name == "NOSTRC_GATE_LINUX_TESTS" else "1")}
 receipt["custody_mode"] = args.linux_custody
 receipt["complete_gate_eligible"] = False
-if args.linux_custody == "ptrace":
+if args.linux_custody != "legacy":
     receipt["untraced_profile_parity"] = False
 run_dir = None
 
@@ -84,23 +84,34 @@ def stop_descendants(parent, captured=None):
             pass
 
 
-def linux_command(argv, *, cwd=None, env=None, log=None):
-    """A gated ptrace supervisor owns Linux descendants before target exec."""
+def linux_command(argv, *, cwd=None, env=None, log=None, resource_root=None, private_display=False, native_lane=None):
+    """A gated kernel-backed supervisor owns descendants before target exec."""
     global active
     stream = open(log, "xb") if log else subprocess.DEVNULL
     handle = None
     read_fd, write_fd = os.pipe()
+    seal_read, seal_write = os.pipe() if native_lane else (-1, -1)
+    waited = False
     try:
         try:
             # The supervisor inherits blocked cancellation before Python starts.
             # It cannot launch a target until our pidfd reservation releases it.
             mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
             try:
-                active = subprocess.Popen([sys.executable, str(adapter.parent / "adapter_custody.py"),
+                helper = "adapter_namespace_custody.py" if args.linux_custody == "pidns" else "adapter_custody.py"
+                resources = (["--private-resource-root", str(resource_root)] +
+                             (["--private-display"] if private_display else [])) if resource_root else []
+                active = subprocess.Popen([sys.executable, str(adapter.parent / helper),
                                            "--parent-ready-fd", str(read_fd), "--parent-pid", str(os.getpid()),
-                                           *map(str, argv)],
-                                          cwd=cwd, env=env, pass_fds=(read_fd,),
+                                           *resources, *map(str, argv)],
+                                           cwd=cwd,
+                                           env=dict(os.environ if env is None else env,
+                                                    **({'NOSTRC_NATIVE_SEAL_FD': str(seal_write)} if native_lane else {})),
+                                           pass_fds=(read_fd, seal_write) if native_lane else (read_fd,),
                                           stdout=stream, stderr=subprocess.STDOUT)
+                if seal_write != -1:
+                    os.close(seal_write)
+                    seal_write = -1
                 handle = os.pidfd_open(active.pid)
                 # Signal zero validates the actual signaling syscall/authority
                 # while the target launch gate is still closed.
@@ -115,10 +126,13 @@ def linux_command(argv, *, cwd=None, env=None, log=None):
                 write_fd = -1
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             code = active.wait()
+            waited = True
         except BaseException:
             # Repeated cancellation must not interrupt the final evidence drain.
+            cancellation_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
             handlers = {sig: signal.signal(sig, signal.SIG_IGN)
                         for sig in (signal.SIGTERM, signal.SIGINT)}
+            signal.pthread_sigmask(signal.SIG_SETMASK, cancellation_mask)
             try:
                 signaling_error = None
                 if handle is not None:
@@ -133,6 +147,7 @@ def linux_command(argv, *, cwd=None, env=None, log=None):
                 if active is not None:
                     try:
                         active.wait(timeout=20 if signaling_error else None)
+                        waited = True
                     except subprocess.TimeoutExpired as exc:
                         raise RuntimeError("pidfd cancellation refused; cleanup_unverified: "
                                            + str(signaling_error)) from exc
@@ -154,18 +169,46 @@ def linux_command(argv, *, cwd=None, env=None, log=None):
         active = None
         if log:
             stream.close()
+        if seal_write != -1:
+            os.close(seal_write)
+        if seal_read != -1:
+            original = sys.exc_info()[1]
+            try:
+                if not waited:
+                    raise RuntimeError('native namespace barrier was not observed')
+                from test_selection_services import attest_native_lane
+                anchor = os.read(seal_read, 65).decode('ascii')
+                final = attest_native_lane(native_lane, anchor)
+                with (native_lane / 'native-final.json').open('x') as output:
+                    json.dump(final, output, sort_keys=True, indent=2)
+                    output.write('\n')
+            except Exception as exc:
+                try:
+                    with (native_lane / 'native-final.json').open('x') as output:
+                        json.dump({'status': 'failed', 'error': str(exc), 'complete': False,
+                                   'complete_gate_eligible': False}, output, sort_keys=True)
+                        output.write('\n')
+                except FileExistsError:
+                    pass  # Retain unexpected bytes; never overwrite child artifacts.
+                if original is None:
+                    raise RuntimeError('native final evidence refused: ' + str(exc)) from exc
+                receipt['errors'].append('native final evidence refused: ' + str(exc))
+            finally:
+                os.close(seal_read)
 
 
-def command(argv, *, cwd=None, env=None, log=None):
+def command(argv, *, cwd=None, env=None, log=None, resource_root=None, private_display=False, native_lane=None):
     # macOS remains the inherited legacy compatibility path, NOT safe unified
     # arbitrary-descendant custody. Do not substitute a reserved-group-only path.
-    if args.linux_custody == "ptrace":
+    if args.linux_custody != "legacy":
         if platform.system() != "Linux":
-            raise RuntimeError("ptrace custody is an explicit Linux-only diagnostic")
+            raise RuntimeError("native kernel custody unavailable on macOS: EndpointSecurity descendant client requires com.apple.developer.endpoint-security.client (not provisioned); kqueue NOTE_TRACK is ENOTSUP; target not launched"
+                               if args.linux_custody == "pidns" else "ptrace custody is an explicit Linux-only diagnostic")
         if (not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal")
                 or signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL):
             raise RuntimeError("Linux ptrace/pidfd custody unavailable before command launch")
-        return linux_command(argv, cwd=cwd, env=env, log=log)
+        return linux_command(argv, cwd=cwd, env=env, log=log,
+                             resource_root=resource_root, private_display=private_display, native_lane=native_lane)
     global active
     stream = open(log, "xb") if log else subprocess.DEVNULL
     try:
@@ -342,19 +385,25 @@ def host_guard(profile, checks, policy, profile_id):
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
     wrapped = caps & {"display", "private_bus"}
-    if wrapped and any(policy["checks"][ident]["kind"] != "ctest" for ident in checks):
+    if wrapped and args.linux_custody != "pidns" and any(policy["checks"][ident]["kind"] != "ctest" for ident in checks):
         raise RuntimeError(f"unsupported cancellation custody: selected command/build_contract lane requires wrappers {sorted(wrapped)}; not launched")
     if wrapped and args.linux_custody == "ptrace":
         # Root wrapper death need not leave the backend alive for final receipts.
         # No wrapped proof is admitted by this bounded, unwrapped diagnostic.
-        raise RuntimeError(f"unsupported ptrace custody wrappers: {sorted(wrapped)}; lane not launched")
+        raise RuntimeError(f"unsupported {args.linux_custody} custody wrappers: {sorted(wrapped)}; lane not launched")
     # Never reuse the developer's display/session bus as proof of isolation.
     prefix = []
-    if "private_bus" in caps:
+    if args.linux_custody == "pidns" and wrapped:
+        # The backend itself is the namespace's retained root, not the child
+        # of a bus/display wrapper that could die before receipt finalization.
+        for executable in (["dbus-daemon", "dbus-send"] if "private_bus" in caps else []) + (["Xvfb", "xauth"] if "display" in caps else []):
+            if not shutil.which(executable):
+                raise RuntimeError(f"selected private resources require {executable}; lane not launched")
+    elif "private_bus" in caps:
         if not shutil.which("dbus-run-session"):
             raise RuntimeError("selected private_bus requires dbus-run-session")
         prefix += ["dbus-run-session", "--"]
-    if "display" in caps:
+    if "display" in caps and args.linux_custody != "pidns":
         if not shutil.which("xvfb-run"):
             raise RuntimeError("selected display requires xvfb-run")
         prefix += ["xvfb-run", "-a", "-s", "-screen 0 1280x800x24"]
@@ -450,16 +499,34 @@ def execute(head, events, number, dirty=False):
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 common = ["--repo", source, "--profile", profile_id, "--plan", directory / "plan.json",
                           "--build-dir", lane_dir / "build", "--evidence-dir", lane_dir / "evidence"]
+                if args.linux_custody != 'legacy':
+                    common += ['--diagnostic-boundary', 'linux_' + args.linux_custody + '_v1']
                 resolved = lane_dir / "resolved.json"
                 result = lane_dir / "receipt.json"
                 # One private display/bus spans configure and execution: their
                 # addresses are part of the backend environment fingerprint.
                 # TERM must raise so the backend cleans its command groups.
-                run_api = '''import contextlib, pathlib, runpy, signal, sys
+                run_api = '''import contextlib, json, os, pathlib, runpy, signal, sys
 def stop(signum, frame):
     raise KeyboardInterrupt()
 signal.signal(signal.SIGTERM, stop)
 scripts = sys.argv.pop(1)
+service_scripts, service_caps, service_evidence = sys.argv[1:4]
+del sys.argv[1:4]
+seal_fd = os.environ.pop('NOSTRC_NATIVE_SEAL_FD', None)
+if seal_fd is not None:
+    seal_fd = int(seal_fd)
+    os.set_inheritable(seal_fd, False)
+    # Same-UID workers must not reopen this private pipe through procfs.
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(3, 0, 0, 0, 0) != 0:
+        raise RuntimeError('native finalizer nondumpable boundary unavailable')
+observed, original_resolution = [], []
+def observe(result):
+    observed.append(json.loads(json.dumps(result)))
+def observe_resolution(result):
+    original_resolution.append(json.loads(json.dumps(result)))
 sys.path.insert(0, scripts)
 cli = runpy.run_path(str(pathlib.Path(scripts) / "test-plan.py"))
 args = cli["parser"]().parse_args(sys.argv[1:])
@@ -467,17 +534,74 @@ directory = pathlib.Path(args.output).parent
 resolve = ["resolve", "--repo", args.repo, "--inventory", args.inventory, "--profile", args.profile,
            "--plan", args.plan, "--build-dir", args.build_dir, "--evidence-dir", args.evidence_dir,
            "--configure", "--output", args.resolved]
-with (directory / "resolve.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-    status = cli["main"](resolve)
-if status:
-    sys.exit(status)
-with (directory / "run.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-    sys.exit(cli["main"](sys.argv[1:]))
+if getattr(args, 'diagnostic_boundary', None):
+    resolve += ['--diagnostic-boundary', args.diagnostic_boundary]
+try:
+    with contextlib.ExitStack() as resources:
+        if service_caps:
+            sys.path.insert(0, service_scripts)
+            from test_selection_services import namespace_services
+            resources.enter_context(namespace_services(service_caps.split(','), service_evidence,
+                                    pathlib.Path(service_evidence).parent / 'resources', finalizer_fd=seal_fd))
+        with (directory / "resolve.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            status = cli["main"](resolve, **({'result_observer': observe_resolution} if seal_fd is not None else {}))
+        if status:
+            sys.exit(status)
+        with (directory / "run.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            status = cli["main"](sys.argv[1:], **({'result_observer': observe} if seal_fd is not None else {}))
+        if status:
+            sys.exit(status)
+    sys.exit(0)
+finally:
+    if seal_fd is not None:
+        # Only this trusted root retains the FD. Popen closes it in services
+        # and workloads; the original in-memory receipt cannot be replaced by
+        # a late filesystem writer before we anchor the seal to the parent.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, signal.SIG_IGN)
+        try:
+            if observed:
+                sys.path.insert(0, service_scripts)
+                from test_selection_services import seal_native_lane
+                sys.stdout.flush(); sys.stderr.flush()
+                digest = seal_native_lane(directory, args.repo, observed[-1], original_resolution[-1])
+                os.write(seal_fd, digest.encode('ascii'))
+        finally:
+            os.close(seal_fd)
 '''
-                command(prefix + [sys.executable, "-c", run_api, source / "scripts", "run", *common,
-                                  "--resolved", resolved, "--phase", "all", "--timeout", str(profile["timeout_seconds"]),
-                                  "--output", result],
-                        env=env, log=lane_dir / "lane.log")
+                service_caps = set(profile.get("capabilities", []))
+                service_caps.update(cap for ident in lane["checks"] for cap in policy["checks"][ident].get("requires", []))
+                service_caps = service_caps & {"display", "private_bus"} if args.linux_custody == "pidns" else set()
+                if service_caps:
+                    state["private_services"] = str(lane_dir / "services/services.json")
+                resource_root = lane_dir / "resources" if service_caps else None
+                if resource_root:
+                    resource_root.mkdir(mode=0o700)
+                try:
+                    command(prefix + [sys.executable, "-c", run_api, source / "scripts", adapter.parent,
+                                      ','.join(sorted(service_caps)), lane_dir / "services", "run", *common,
+                                      "--resolved", resolved, "--phase", "all", "--timeout", str(profile["timeout_seconds"]),
+                                      "--output", result],
+                            env=env, log=lane_dir / "lane.log", resource_root=resource_root,
+                            private_display="display" in service_caps,
+                            native_lane=lane_dir if args.linux_custody == 'pidns' else None)
+                finally:
+                    # After the helper's wait barrier only the empty host
+                    # mountpoint remains; private HOME/socket bytes were tmpfs.
+                    if resource_root:
+                        resource_root.rmdir()
+                if args.linux_custody == 'pidns':
+                    import test_selection_realization as realization_backend
+                    realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')
+                    state['retained_evidence'] = str(lane_dir / 'native-final.json')
+                    from test_selection_services import native_public_receipt
+                    public = native_public_receipt(lane_dir)
+                    result = lane_dir / 'native-receipt.json'
+                    with result.open('x') as output:
+                        json.dump(public, output, sort_keys=True, indent=2)
+                        output.write('\n')
+                    state['normalized_receipt'] = str(result)
                 receipts.append(result)
             state["status"] = "passed"
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -543,7 +667,7 @@ except KeyboardInterrupt:
     receipt["status"] = "cancelled"
     receipt["errors"].append("interrupted; owned child groups stopped; no coverage claimed"
                              if args.linux_custody == "legacy" else
-                             "interrupted; ptrace diagnostic cleanup attempted; no untraced parity or coverage claimed")
+                             f"interrupted; {args.linux_custody} diagnostic cleanup attempted; no profile parity or coverage claimed")
 except (RuntimeError, OSError, ValueError, KeyError, shared.ContractError, subprocess.SubprocessError) as exc:
     receipt["errors"].append(str(exc))
 finally:
