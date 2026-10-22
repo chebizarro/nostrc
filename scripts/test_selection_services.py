@@ -7,6 +7,7 @@ This is resource setup, not tool capability or complete-profile attestation.
 """
 import contextlib
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -132,16 +133,16 @@ def _namespace_resources(resource_root, display):
 
 
 @contextlib.contextmanager
-def namespace_services(capabilities, evidence_dir, resource_root):
+def namespace_services(capabilities, evidence_dir, resource_root, finalizer_fd=None):
     root = _namespace_resources(resource_root, 'display' in capabilities)
-    with private_services(capabilities, evidence_dir, resource_root=root) as state:
+    with private_services(capabilities, evidence_dir, resource_root=root, finalizer_fd=finalizer_fd) as state:
         state['resource_mount'] = {'root': str(root), 'filesystem': 'tmpfs',
                                    'private_x11': 'display' in capabilities}
         yield state
 
 
 @contextlib.contextmanager
-def private_services(capabilities, evidence_dir, resource_root=None):
+def private_services(capabilities, evidence_dir, resource_root=None, finalizer_fd=None):
     """Called in-process by the pidns backend, spanning resolve and run."""
     caps = set(capabilities)
     if caps - {'private_bus', 'display'}:
@@ -178,6 +179,14 @@ def private_services(capabilities, evidence_dir, resource_root=None):
             if ready:
                 command = [part.replace('{ready_fd}', str(write_fd)) for part in command]
             def child_setup():
+                # preexec_fn can run before close_fds. Close the protected pipe
+                # explicitly before permitting this child's UID-map setup.
+                if finalizer_fd is not None:
+                    try:
+                        os.close(finalizer_fd)
+                    except OSError as exc:
+                        if exc.errno != errno.EBADF:
+                            raise
                 signal.pthread_sigmask(signal.SIG_SETMASK, mask)
                 if name == 'Xvfb' and os.geteuid() != 0:
                     # Xserver ignores -nolock for a nonzero namespace UID.
@@ -185,6 +194,8 @@ def private_services(capabilities, evidence_dir, resource_root=None):
                     # never gain host root or change backend/worker identity.
                     uid, gid = os.geteuid(), os.getegid()
                     libc = ctypes.CDLL(None, use_errno=True)
+                    if libc.prctl(4, 1, 0, 0, 0) != 0:
+                        raise ServiceError('private display child mapping ownership unavailable')
                     if libc.unshare(0x10000000) == -1:
                         raise ServiceError('private display user namespace unavailable')
                     Path('/proc/self/setgroups').write_text('deny')

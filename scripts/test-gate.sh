@@ -542,7 +542,7 @@ try:
             sys.path.insert(0, service_scripts)
             from test_selection_services import namespace_services
             resources.enter_context(namespace_services(service_caps.split(','), service_evidence,
-                                    pathlib.Path(service_evidence).parent / 'resources'))
+                                    pathlib.Path(service_evidence).parent / 'resources', finalizer_fd=seal_fd))
         with (directory / "resolve.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             status = cli["main"](resolve, **({'result_observer': observe_resolution} if seal_fd is not None else {}))
         if status:

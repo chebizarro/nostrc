@@ -198,8 +198,25 @@ peer.recv(1)  # Test-owned emergency release, not a timer or numeric-PID kill.
         def test_ptrace_wrapped_ctest_refuses_before_lane_launch(self):
             self.wrapped_ctest_refuses_before_lane_launch('ptrace')
 
-        def test_pidns_wrapped_ctest_refuses_before_lane_launch(self):
-            self.wrapped_ctest_refuses_before_lane_launch('pidns')
+        def test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete(self):
+            self.configure_ctest()
+            self.write('app/check.py', "import os\nos.write(1, b'actual wrapped CTest \\xff\\n')\n")
+            for capabilities in (['display'], ['private_bus'], ['display', 'private_bus']):
+                with self.subTest(capabilities=capabilities):
+                    self.policy['profiles']['local.command']['capabilities'] = capabilities
+                    self.save_policy()
+                    head = self.commit()
+                    receipt, directory = self.gate('--head', head, '--linux-custody', 'pidns')
+                    self.assertEqual(receipt['status'], 'partial')
+                    self.assertFalse(receipt['complete_gate_eligible'])
+                    self.assertFalse(receipt['untraced_profile_parity'])
+                    service = json.loads(next(directory.rglob('services.json')).read_text())
+                    self.assertEqual(service['status'], 'passed')
+                    self.assertTrue(service['private_home_removed'])
+                    self.assertTrue(all(row['reaped'] for row in service['services']))
+                    self.assertTrue(any(b'actual wrapped CTest \xff\n' in path.read_bytes()
+                                        for path in directory.rglob('LastTest.log')))
+                    self.assertTrue(list(directory.rglob('native-receipt.json')))
 
         def wrapped_ctest_refuses_before_lane_launch(self, custody):
             self.configure_ctest()
