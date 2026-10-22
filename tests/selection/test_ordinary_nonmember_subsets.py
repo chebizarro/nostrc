@@ -267,6 +267,9 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
                     self.assertEqual(contract[key], sorted(membership["previous"][key] + membership["added_primary"]))
                     contract[key] = membership["previous"][key]
                 self.assertEqual(s.digest(contract), membership["previous_record_hash"])
+            if pid == "grotto.linux":
+                from grotto_nip49_projection import before_grotto_nip49_family
+                contract = before_grotto_nip49_family(contract)
             # Retain the original witness byte-for-byte; renew source provenance,
             # not its exact family/profile/candidate/fixture/toolchain authority.
             previous = dict(contract, review=current["previous_review"])

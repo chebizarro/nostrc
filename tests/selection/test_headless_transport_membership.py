@@ -5,6 +5,7 @@ import json
 import unittest
 
 from headless_transport_projection import BASE, EXPORT, FAMILY, RENEWAL, before_transport_family
+from grotto_nip49_projection import before_grotto_nip49_family
 from selector_support import ROOT, change, s
 from realization_support import r
 
@@ -150,7 +151,8 @@ class HeadlessTransportMembership(unittest.TestCase):
         self.assertEqual(self.policy['profiles'][PROFILE], self.export['profile'])
         for key in ('nodes', 'profiles', 'diagnostic_nonmembers'):
             self.assertEqual(s.digest(self.policy[key]), self.renewal['unchanged_contract_hashes'][key])
-        self.assertEqual(s.digest(self.policy['diagnostic_nonmember_subsets']['grotto.linux']),
+        self.assertEqual(s.digest(before_grotto_nip49_family(
+                             self.policy['diagnostic_nonmember_subsets']['grotto.linux'])),
                          self.renewal['unchanged_contract_hashes']['grotto_subset'])
         for path, expected in self.renewal['historical_fixture_sha256'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)

@@ -4630,6 +4630,61 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "grotto.nip49_negative": {
+      "build_targets": ["test_nip49_negative"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip49_negative"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip49_payload": {
+      "build_targets": ["test_nip49_payload"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip49_payload"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip49_roundtrip": {
+      "build_targets": ["test_nip49_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip49_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip49_spec_source": {
+      "build_targets": ["test_nip49_spec_source"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip49_spec_source"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": ["{source}/nips/nip49/SPEC_SOURCE"]
+    },
+    "grotto.nip49_vectors": {
+      "build_targets": ["test_nip49_vectors"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip49_vectors"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "grotto.build_contract": {
       "build_targets": [
         "signer-tests"
@@ -5924,6 +5979,10 @@
         "{source}/tests/selection/fixtures/resource_profile_exports.json",
         "{source}/tests/selection/fixtures/store_key_membership_exports.json",
         "{source}/tests/selection/golden/selection.json",
+        "{source}/tests/selection/grotto_nip49_projection.py",
+        "{source}/tests/selection/test_grotto_nip49_membership.py",
+        "{source}/tests/selection/fixtures/grotto_nip49_exports.json",
+        "{source}/tests/selection/fixtures/grotto_nip49_subset_renewal_20261022.json",
         "{source}/tests/selection/headless_transport_projection.py",
         "{source}/tests/selection/test_headless_transport_membership.py",
         "{source}/tests/selection/fixtures/headless_transport_exports.json",
@@ -14533,7 +14592,12 @@
         "signer/trust-tiers",
         "signer/ui",
         "signer/ui-accessibility",
-        "signer/ui-layout"
+        "signer/ui-layout",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors"
       ],
       "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
       "registration_universe": [
@@ -15090,7 +15154,12 @@
         "signer/trust-tiers",
         "signer/ui",
         "signer/ui-accessibility",
-        "signer/ui-layout"
+        "signer/ui-layout",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors"
       ],
       "review": {
         "approval_document": "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
