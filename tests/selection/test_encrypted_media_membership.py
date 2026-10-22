@@ -142,7 +142,7 @@ class EncryptedMediaMembership(unittest.TestCase):
         current = self.p['diagnostic_nonmember_subsets'][PROFILE]
         old = before_encrypted_media_family(current)
         self.assertEqual((len(current['primary_registrations']), len(current['required_closure'])),
-                         (30, 32))
+                         (34, 36))
         self.assertEqual((len(old['primary_registrations']), len(old['required_closure'])), (27, 29))
         self.assertEqual(len(current['registrations']), 33)
         self.assertEqual(len(current['review']['source_inputs']), 193)
@@ -150,8 +150,10 @@ class EncryptedMediaMembership(unittest.TestCase):
         authored = sorted(n for c in self.p['checks'].values()
                           for n in c.get('ctest_tests', {}).get(PROFILE, []))
         self.assertEqual(current['primary_registrations'], authored)
+        from nip44_vector_projection import before_nip44_vector_renewal
+        previous_wave = before_nip44_vector_renewal(current, PROFILE)
         for key in current.keys() - {'primary_registrations', 'required_closure'}:
-            self.assertEqual(current[key], old[key], key)
+            self.assertEqual(previous_wave[key], old[key], key)
         for key in ('candidate_contract_hash', 'profile_hash', 'review', 'registration_universe'):
             bad = copy.deepcopy(current)
             bad[key] = 'changed'

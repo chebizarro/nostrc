@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "base_commit": "f646db033031a32ad0f6283f881d8506eafbcc4b",
+  "tracking": "nostrc-3lofk",
+  "registration": "test_nip44_vectors",
+  "input": "nips/nip44/tests/nip44.vectors.json",
+  "input_bytes": 37630,
+  "input_sha256": "269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040",
+  "executed_cases": {
+    "conversation_keys": 35,
+    "message_keys": 32,
+    "padding": 24,
+    "encrypt_decrypt": 10,
+    "long_messages": 3,
+    "invalid_lengths": 4,
+    "invalid_keys": 8,
+    "invalid_decrypt": 12
+  },
+  "affected_193_controls_before": {
+    "nips/nip44/CMakeLists.txt": "a27498a889af525c7da31fd6a6c536dfa8df1ae90c2d2d2ac09187d5d02d0385",
+    "nips/nip44/TestInventory.cmake": "53d4198a5c6fd1e8a32a0000d41c1b45b52b79d31b7976da906c851243e9c77e"
+  },
+  "authority": "Immutable test-input witness only; no source-authority renewal or membership admission",
+  "complete": false,
+  "complete_gate_eligible": false,
+  "test_interop_enrolled": false,
+  "version_impact": "No bump: test source, test dependency checks and test-only input descriptor; no shipped artifact or public API change"
+}

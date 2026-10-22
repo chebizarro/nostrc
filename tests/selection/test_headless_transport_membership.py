@@ -128,7 +128,7 @@ class HeadlessTransportMembership(unittest.TestCase):
         authored = sorted(n for v in self.policy['checks'].values()
                           for n in v.get('ctest_tests', {}).get(PROFILE, []))
         self.assertEqual(contract['primary_registrations'], authored)
-        self.assertEqual((len(authored), len(contract['required_closure'])), (30, 32))
+        self.assertEqual((len(authored), len(contract['required_closure'])), (34, 36))
         self.assertEqual((len(previous['primary_registrations']), len(previous['required_closure'])), (21, 23))
         self.assertEqual(len(contract['registrations']), 33)
         self.assertTrue(set(FAMILY).isdisjoint(contract['registrations']))

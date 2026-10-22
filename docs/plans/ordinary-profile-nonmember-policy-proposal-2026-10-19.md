@@ -9,6 +9,22 @@ support that narrow renewal; exact33/profile/closure/toolchain policy is unchang
 The original witness remains historical. No omitted-target physical build or
 postbuild audit was refreshed; both full preaudits still fail. See the
 [bounded byte-provenance receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#bounded-configured-service-byte-provenance--2026-10-22).
+**2026-10-22 bounded canonical-vector renewal:** final tested code
+`dbdad11356f16bbde37bc523978f725636ffc435` changes only the two reviewed NIP-44
+CMake/descriptor source-control values in each ordinary profile. The same 193
+keys retain 191 values unchanged; original review identity/evidence remains
+historical, with a separately pinned new witness and source-bound full x86
+preaudits/CLI receipts. Groundhog's exact four account-policy additions produce
+34/36 selected primary/fixture names; Grotto's single canonical vector addition
+produces 65/68. Original exact33 omissions,29 required omitted-target closures,
+profile/toolchain/candidate/workflow fields and sanitizer authority are unchanged.
+Actual old-source and old-closure CLI/admission negatives refuse; original
+sanitizer full partition still refuses, not renewed. Both full preaudits remain
+failed and incomplete; no physical all-29 build or production full postbuild/
+header/backend acceptance is refreshed. See the
+[canonical vector/account-policy receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#canonical-nip-44-vectors-and-account-policy-integration--2026-10-22).
+This is not a new omission family, cutover, hosted/release approval or version bump.
+
 **Date:** 2026-10-19. **Repository baseline:** `6ce261c4234c35d5f6c95822edeab83fdae48b60`.
 **Tracking:** `nostrc-0cfsg.9` (profile accounting), `.2` (backend acceptance), `.5` (rollout evidence).
 

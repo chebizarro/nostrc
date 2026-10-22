@@ -1408,3 +1408,48 @@ closure, hosted-ledger refresh, W11 credit (**NOT MET**), W12 (**NOT RUN**),
 complete/release/default/custody/protection or operator-approval credit. Parent
 owns landing and worktree cleanup; later docs/official tracker export do not
 change tested-code identity.
+
+## 19. Canonical NIP-44 vectors and account policy — 2026-10-22
+
+[Bounded source receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#canonical-nip-44-vectors-and-account-policy-integration--2026-10-22):
+final code **`dbdad11356f16bbde37bc523978f725636ffc435`**, base master
+`f646db033`, preserves exact approved Groundhog `e766b928b` and NIP-44 `4e563f4a6`.
+All **110/630** child artifact hashes are independently verified. Parent also
+verified both manifests, reviewed the NIP-44 diff and renewal/test seams, and ran
+the six integration tests independently at final code.
+
+The canonical vector requires Jansson and pinned official JSON; physical output
+reports **128 cases**, with missing/unreadable/changed/capability/builtin-only
+negatives. Only `grotto.nip44_vectors` is enrolled, not `test_interop`. Groundhog
+adds four exact account-policy registrations. Ordinary primary/fixture arrays are
+**34/36** and **65/68**. Source renewal changes exactly two NIP-44 values in each
+193-key map; **191 values**, original review provenance, exact33/29 and sanitizer
+authority stay unchanged. All **23 baseline fixture/golden bytes** remain exact;
+strict pinned reverse projections preserve older records and nonordinary goldens.
+No shipped component version bump.
+
+Final **599/599 selector PASS, zero skips**, independent files **9/6/10/6**,
+18 canonical regressions, all six shell suites/four statics/inventory/actionlint/
+ShellCheck/whitespace PASS. Fresh safe native configure/all-default build and
+full CTest **434 pass / 5 existing skips / 0 failure** pass at final code; private
+bus/throwaway Secret Service/loopback isolation, cleanup and keychain guards pass.
+
+Fresh full authored x86 preaudits still **FAIL**: Groundhog **7,327 → 6,641**,
+Grotto **9,131 → 9,130**, exact reviewed removals and **zero added**. Only the
+canonical JSON adds a hashed input and only the reviewed vector test C source
+changes an existing input hash. Actual CLI resolve/admit/validation passes;
+each old source hash and both old selected closures refuse, as does the unchanged
+original sanitizer partition. Missing JSON refuses dirty-source CLI admission;
+runtime-specific failures are proven separately, not inferred from that refusal.
+Both incomplete flags and all omitted `not_executed` accounting remain.
+
+The initial 599-case one-failure run, earlier focused/child failures, incorrect
+mount/registration comparison assumptions and ambient-environment refusal remain
+retained; the one old Grotto expectation is corrected by its exact new name.
+One bounded delivered-excerpt review, no component/broader re-review; later
+narrow test corrections are tested, not claimed re-reviewed. Parent approves
+only the finite `3lofk` closure after final checkpoint/gate evidence; it is now
+**CLOSED for those criteria**, not broad acceptance. `.2` OPEN, `.9`/`.31` in progress. Production full postbuild/header
+and all-29 omitted-target build/backend execution remain **NOT RUN**; W11
+**NOT MET** / W12 **NOT RUN**, no ledger/default/workflow/release/protection credit.
+Local commits only; parent lands and cleans up.
