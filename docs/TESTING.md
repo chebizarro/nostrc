@@ -44,8 +44,12 @@ would violate those fixtures. Selected contained commands requiring keyring plus
 private bus instead need an owned throwaway service, real secret roundtrip and
 namespace cleanup. These tool/contained contracts landed at exact B `82f79ae75`;
 only the ordinary Groundhog/Grotto tool declarations are reconciled at `012d0fcd8`.
-Production default-producer follow-through still awaits its exact next B tip.
-Component keyring positives are not final ordinary-profile execution.
+Production default producers are merged at exact B `0b9feea6d`, preserving ancestry:
+actual libgo macOS/Linux default/full postbuild/command proofs cover553/455 input
+hashes at B's proof source, not final combined execution. Component keyring
+positives are not final ordinary-profile execution. C's additive Docker-resource
+`images [--probe]` lifecycle awaits its exact tip; it does not change the legacy
+run API or establish complete arbitrary-tree cleanup.
 
 A metadata `c419d2ac6` and connectivity fixture `dfb15c893` are merged. The
 fixture owns in-process offline-to-online state and retains its original deadline;
@@ -53,8 +57,11 @@ it does not alter product connectivity. Actual Linux NIP55L failures under Roset
 are executable-identity mismatches (`/run/rosetta/rosetta` versus the authorized
 fixture executable): preserve the approval wait/failure and require native Linux
 x86 proof, never weaken caller attestation. ARM64 diagnostic passes do not satisfy
-that cell. The exact-33 omission authorities and all historical source controls
-remain unchanged.
+that cell. Exact33 omissions/29 omitted producer closures, universe and all193
+source-control keys remain unchanged. `eb799dbd7` renews only the reviewed
+Groundhog CMake value and candidate hash for80 derived `build_path` entries;
+byte-exact reversal recovers the immutable old candidate hash. All other fields,
+toolchain and architectures remain unchanged; old refusals remain retained.
 
 The actual public-CLI libgo production route at `38c942c64` passed prerequisite
 and default builds, full audits, and 33 CTests with authored parallelism two and
@@ -65,7 +72,15 @@ passing, not a successful final full suite. Real Nak setup exposed upstream's
 `debug` version default; the same pinned module now receives the exact link flag
 `-ldflags='-X main.version=v0.19.7'`. Actual executable-only producer positives and
 the pre-fix refusal are both retained; version verification is unchanged. See the
-register for exact SHAs/manifests and final B/core/gate requirements.
+register for exact SHAs/manifests and final core/gate requirements.
+
+The root benchmark ownership edge, ten Groundhog static resource dependencies and
+immediate source-template configure witnesses land at `e47b52946`. Generated
+header bytes are unchanged. Resource dependencies are PATCH-class shipped build
+correctness folded into the existing unreleased Groundhog0.12.0, not a blanket
+no-bump decision or second numeric bump. Fresh core full preaudit and all three
+root producer bindings have zero findings/gaps; ordinary full audits and physical
+production builds/execution remain final-gate requirements after C freezes.
 
 `nip5f_tcp` instead needs a provisioned signer endpoint/token, explicitly approved
 TCP-enabled configuration, isolated identity and unidentified-caller approval;
