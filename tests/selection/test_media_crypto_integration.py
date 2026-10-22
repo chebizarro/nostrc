@@ -75,6 +75,21 @@ class MediaCryptoIntegration(unittest.TestCase):
                     with self.assertRaises(s.ContractError):
                         before_nip49_descriptor_renewal(bad, profile)
 
+    def test_workflow_composition_preserves_other_profiles_and_refuses_repartition(self):
+        from grotto_crypto_projection import CHECKS as CRYPTO_CHECKS
+        from grotto_nip49_projection import FAMILY, grotto_nip49_current_workflow_checks
+        cases = json.loads((ROOT / 'tests/selection/golden/selection.json').read_text())
+        old = next(case['checks'] for case in cases if case['name'] == 'grotto_workflow_only')
+        current = self.contracts['grotto.linux']
+        expected = sorted(old + ['grotto.' + name.removeprefix('test_') for name in
+                                 FAMILY + ['test_nip49_spec_source']] + list(CRYPTO_CHECKS))
+        self.assertEqual(grotto_nip49_current_workflow_checks(old, current), expected)
+        bad_policy = copy.deepcopy(self.policy)
+        bad_policy['checks']['grotto.signer.native']['profiles'].remove('grotto.linux')
+        with mock.patch.object(s, 'load_inventory', return_value=bad_policy):
+            with self.assertRaisesRegex(s.ContractError, 'historical workflow checks changed'):
+                grotto_nip49_current_workflow_checks(old, current)
+
     def test_media_witness_bytes_remain_pinned_by_shared_composition(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

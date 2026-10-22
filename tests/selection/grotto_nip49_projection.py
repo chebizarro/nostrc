@@ -76,4 +76,7 @@ def grotto_nip49_current_workflow_checks(previous_checks, contract):
     from grotto_crypto_projection import grotto_crypto_current_workflow_checks
     previous_wave = sorted(previous_checks + ['grotto.' + name.removeprefix('test_') for name in
                                              FAMILY + ['test_nip49_spec_source']])
-    return grotto_crypto_current_workflow_checks(previous_wave, contract)
+    checks = s.load_inventory(ROOT / 'tests/selection/inventory.json')['checks']
+    ordinary = [ident for ident in previous_wave if PROFILE in checks[ident]['profiles']]
+    retained = [ident for ident in previous_wave if ident not in ordinary]
+    return sorted(retained + grotto_crypto_current_workflow_checks(ordinary, contract))

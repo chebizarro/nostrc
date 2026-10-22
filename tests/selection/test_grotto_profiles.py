@@ -78,7 +78,9 @@ class GrottoProfiles(unittest.TestCase):
             if ident == 'grotto.linux':
                 from grotto_nip49_projection import FAMILY, before_grotto_nip49_family
                 previous = before_grotto_nip49_family(self.policy['diagnostic_nonmember_subsets'][ident])
-                self.assertEqual(sorted(actual), sorted(previous['primary_registrations'] + FAMILY + ['test_nip49_spec_source']))
+                from grotto_crypto_projection import FAMILY as CRYPTO_FAMILY
+                self.assertEqual(sorted(actual), sorted(previous['primary_registrations'] + FAMILY +
+                                                        ['test_nip49_spec_source'] + CRYPTO_FAMILY))
                 actual = previous['primary_registrations']
             self.assertEqual(sorted(actual), primary)
             self.assertEqual(len(actual), len(set(actual)))
