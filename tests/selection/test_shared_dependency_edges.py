@@ -160,6 +160,159 @@ class SharedDependencyEdges(Project):
         self.assertIn("groundhog.mls_service", plan["selected_checks"])
 
 
+class RelayJsonDependencyEdges(Project):
+    """Replay current authored links; fixture bodies do not prove relay behavior."""
+
+    edges = (("relayd", "libjson", "test_relay_req_contract", "libjson/src/json.c",
+              "libjson/include/nostr_jansson.h"),
+             ("shared.tests", "libjson", "test_connection_recv_drain", "libjson/src/json.c",
+              "libjson/include/nostr_jansson.h"),
+             ("grelay", "relayd", "grelay_ingress_security", "apps/relayd/src/relay_ingress.c",
+              "apps/relayd/include/relay_ingress.h"))
+
+    def setUp(self):
+        super().setUp()
+        self.policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+
+        def statement(path, command, target, required=()):
+            source = (ROOT / path).read_text()
+            matches = re.findall(r"\b" + command + r"\(" + re.escape(target) + r"\s+[^()]*\)", source)
+            matches = [value for value in matches if set(required) <= set(value[:-1].split()[1:])]
+            self.assertEqual(len(matches), 1, (path, command, target, required))
+            return matches[0]
+
+        relay = "apps/relayd/CMakeLists.txt"
+        self.security = statement(relay, "add_library", "relay_security")
+        server = statement(relay, "add_library", "nostr-relay-server")
+        json_target = statement("libjson/CMakeLists.txt", "add_library", "nostr_json")
+        self.assertEqual(json_target, "add_library(nostr_json SHARED src/json.c)")
+        # grelay's fallback must retain the same three relay-owned source inputs.
+        fallback = statement("apps/grelay/CMakeLists.txt", "add_library", "relay_security")
+        self.assertEqual(set(re.findall(r"src/[\w.-]+\.c", self.security)),
+                         set(re.findall(r"src/[\w.-]+\.c", fallback)))
+        self.assertIn('#include "nostr_jansson.h"', (ROOT / self.edges[0][3]).read_text())
+        self.assertIn('#include "relay_ingress.h"', (ROOT / self.edges[2][3]).read_text())
+        libraries = ["add_library(nostr INTERFACE)", "add_library(libnostr INTERFACE)"]
+        libraries += [f"add_library({name} INTERFACE IMPORTED)" for name in
+                      ("OpenSSL::SSL", "OpenSSL::Crypto", "Threads::Threads")]
+        (self.root / "libjson/src").mkdir(parents=True)
+        (self.root / "libjson/CMakeLists.txt").write_text(json_target + "\n")
+        relay_dir = self.root / "apps/relayd"
+        relay_dir.mkdir(parents=True)
+        (relay_dir / "CMakeLists.txt").write_text("\n".join([
+            self.security, server,
+            statement(relay, "target_link_libraries", "relay_security"),
+            statement(relay, "target_link_libraries", "nostr-relay-server", ["nostr_json"]),
+        ]) + "\n")
+        sources = {"libjson/src/json.c"}
+        sources.update("apps/relayd/" + path for path in
+                       re.findall(r"src/[\w.-]+\.c", self.security + server))
+        for path in sorted(sources):
+            source = self.root / path
+            source.parent.mkdir(parents=True, exist_ok=True)
+            header = (self.root / "libjson/include/nostr_jansson.h" if path.startswith("libjson/")
+                      else self.root / "apps/relayd/include/relay_ingress.h")
+            header.parent.mkdir(parents=True, exist_ok=True)
+            header.write_text("#define FIXTURE_VALUE 1\n")
+            source.write_text(f'#include "{header}"\nstatic int unused_fixture_body;\n')
+        consumers = (
+            ("test_relay_req_contract", "apps/relayd/tests/CMakeLists.txt", "relayd"),
+            ("test_connection_recv_drain", "tests/CMakeLists.txt", "shared.tests"),
+            ("grelay_ingress_security", "apps/grelay/tests/CMakeLists.txt", "grelay"),
+        )
+        commands = ["cmake_minimum_required(VERSION 3.22)", "project(relay_json_edges C)",
+                    "enable_testing()", "include(cmake/NostrcTestInventory.cmake)",
+                    *libraries, "add_subdirectory(libjson)", "add_subdirectory(apps/relayd)"]
+        for name, path, owner in consumers:
+            commands += [f"add_executable({name} main.c)",
+                         statement(path, "target_link_libraries", name),
+                         f"add_test(NAME {name} COMMAND {name})",
+                         f"nostrc_describe_test({name} OWNER {owner} TARGETS {name} INPUTS vector.txt)"]
+        commands += ["add_test(NAME omitted COMMAND test_relay_req_contract)",
+                     "nostrc_describe_test(omitted OWNER relayd TARGETS test_relay_req_contract INPUTS vector.txt)",
+                     "nostrc_finalize_test_inventory()"]
+        (self.root / "CMakeLists.txt").write_text("\n".join(commands) + "\n")
+        self.inventory = {
+            "nodes": copy.deepcopy(self.policy["nodes"]),
+            "path_rules": copy.deepcopy(self.policy["path_rules"]) + [
+                {"exact": path, "nodes": [], "effect": "global"} for path in ("main.c", "shared.h")
+            ] + [{"exact": "vector.txt", "nodes": ["vectors"]}],
+            "checks": {name: {"kind": "ctest", "profiles": ["synthetic"],
+                              "ctest_tests": {"synthetic": [name]}, "nodes": [owner, "vectors"]}
+                       for name, _, owner in consumers},
+        }
+        self.inventory["nodes"]["vectors"] = {"depends_on": []}
+
+    def test_authored_link_closures_and_full_source_header_mutations(self):
+        realized = self.configure()
+        by_name = {target["name"]: target for target in realized["targets"].values()}
+        for _, _, consumer, source, _ in self.edges:
+            closure = r._target_closure([by_name[consumer]["id"]], realized)
+            inputs = {v["path"] for key in closure for v in realized["targets"][key]["sources"]}
+            self.assertIn(str(self.root / source), inputs)
+        pre = r.check_inputs(self.inventory, realized)
+        self.build_all()
+        post = self.audit(realized)
+        expected = [{"kind": "unclaimed_registration", "test": "omitted"},
+                    {"kind": "missing_impact_edge", "test": "omitted", "input": "vector.txt",
+                     "input_kind": "runtime", "owners": ["relayd"], "missing_nodes": ["vectors"]}]
+        self.assertEqual(pre["gaps"], expected)
+        self.assertEqual(post["gaps"], expected)
+        self.assertFalse(post["passed"])
+        self.assertGreater(post["header_entries"], 0)
+        for owner, dependency, consumer, source, header in self.edges:
+            broken = copy.deepcopy(self.inventory)
+            broken["nodes"][owner]["depends_on"].remove(dependency)
+            for after_build, good in ((False, pre), (True, post)):
+                with self.subTest(owner=owner, dependency=dependency, after_build=after_build):
+                    bad = r.check_inputs(broken, realized, after_build=after_build)
+                    self.assertEqual(bad["input_hashes"], good["input_hashes"])
+                    self.assertEqual(bad["header_entries"], good["header_entries"])
+                    lost_sources = (("apps/relayd/src/rate_limit.c", "apps/relayd/src/relay_ingress.c",
+                                     "apps/relayd/src/relay_policy.c") if owner == "grelay" else (source,))
+                    lost_inputs = [(path, "source") for path in lost_sources]
+                    if after_build:
+                        lost_inputs += [(path, kind) for path in lost_sources for kind in ("header", "ninja")]
+                        lost_inputs.append((header, "header"))
+                    mutation_expected = copy.deepcopy(expected)
+                    for path, kind in lost_inputs:
+                        for test in ([consumer, "omitted"] if owner == "relayd" else [consumer]):
+                            mutation_expected.append({"kind": "missing_impact_edge", "test": test,
+                                                      "input": path, "input_kind": kind, "owners": [owner],
+                                                      "missing_nodes": [dependency]})
+                        mutation_expected.append({"kind": "missing_impact_edge", "check": consumer,
+                                                  "test": consumer, "support_test": consumer, "input": path,
+                                                  "input_kind": kind, "owners": [owner, "vectors"],
+                                                  "missing_nodes": [dependency]})
+                    self.assertCountEqual(bad["gaps"], mutation_expected)
+                    self.assertFalse(bad["passed"])
+        self.assertEqual(r.load_realization(self.build, self.identity), realized)
+
+    def test_actual_selector_plan_deltas_and_ui_mdk_isolation(self):
+        previous = copy.deepcopy(self.policy)
+        for owner, dependency, _, _, _ in self.edges:
+            previous["nodes"][owner]["depends_on"].remove(dependency)
+        for path, additions in (
+            ("libjson/src/json.c", {"sanitizer.groundhog_store_key_keyring"}),
+            ("libjson/include/nostr_jansson.h", {"sanitizer.groundhog_store_key_keyring"}),
+            ("apps/relayd/src/relay_ingress.c", set()),
+            ("apps/relayd/include/relay_ingress.h", set()),
+            ("nostr-gtk/data/ui/gnostr-composer.blp", set()),
+            ("nostr-gtk/src/note-card-binding-ctx.h", set()),
+        ):
+            with self.subTest(path=path):
+                before, after = [s.make_plan(policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
+                                 for policy in (previous, self.policy)]
+                self.assertEqual(after["effective_mode"], "affected")
+                self.assertEqual(after["effective_mode"], before["effective_mode"])
+                self.assertEqual(set(after["selected_checks"]) - set(before["selected_checks"]), additions)
+                self.assertEqual(set(before["selected_checks"]) - set(after["selected_checks"]), set())
+                if path.startswith("nostr-gtk/"):
+                    self.assertFalse(any(name.startswith(("mdk08.", "mdk011.")) for name in after["selected_checks"]))
+        for owner in ("groundhog.unclassified", "execution.groundhog"):
+            self.assertEqual(self.policy["nodes"][owner]["depends_on"], [])
+
+
 class OrdinaryMediaOwnership(Project):
     """Replay authored target/descriptor metadata; stub bodies are not product proof."""
 
