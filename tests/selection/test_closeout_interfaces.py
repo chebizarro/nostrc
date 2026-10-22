@@ -28,7 +28,7 @@ class CloseoutInterfaces(unittest.TestCase):
         previous = c.before_closeout_policy(self.p)
         self.assertEqual(s.digest(previous), self.data['before_policy_hash'])
         self.assertEqual(c.before_closeout_policy(previous), previous)
-        self.assertEqual(len(self.data['checks']), 5)
+        self.assertEqual(len(self.data['checks']), 6)
         self.assertEqual(len(self.data['profiles']), 2)
         self.assertEqual(len(self.data['workflow_jobs']), 37)
         for path in self.data['new_inputs']:

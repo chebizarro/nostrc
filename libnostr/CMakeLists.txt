@@ -115,8 +115,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
 # Configure public headers.
+get_filename_component(_nostrc_cmake_dir "${CMAKE_CURRENT_LIST_DIR}/../cmake" ABSOLUTE)
+include("${_nostrc_cmake_dir}/NostrcConfigureProvenance.cmake")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-config.h.in
-  ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h @ONLY)
+               ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h @ONLY)
+nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-config.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h")
 set(NOSTR_PUBLIC_VERSION_HEADER
   ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-version.h)
 configure_file(
@@ -267,7 +272,10 @@ if(LIBNOSTR_WITH_NOSTRDB)
     file(MAKE_DIRECTORY ${NDB_COMPAT_DIR})
     set(NDB_TALSTR_HEADER "${NDB_COMPAT_DIR}/talstr.h")
     if(NOT EXISTS "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11/talstr.h")
-      file(WRITE ${NDB_TALSTR_HEADER} "#ifndef NOSTRDB_TALSTR_COMPAT_H\n#define NOSTRDB_TALSTR_COMPAT_H\n#include <ccan/tal/str/str.h>\n#endif\n")
+      configure_file("${_nostrc_cmake_dir}/nostrdb-talstr.h.in"
+        "${NDB_TALSTR_HEADER}" COPYONLY)
+      nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+        "${_nostrc_cmake_dir}/nostrdb-talstr.h.in" "${NDB_TALSTR_HEADER}")
     endif()
 
     add_library(nostrdb STATIC ${NDB_CORE_SOURCES} ${NDB_LMDB_SOURCES} ${NDB_BOLT11_SOURCES} ${NDB_CCAN_SOURCES})
@@ -308,7 +316,13 @@ if(LIBNOSTR_WITH_NOSTRDB)
     endif()
     # Provide a forced include header to reconcile hex API differences between vendored trees
     set(NDB_HEX_COMPAT "${NDB_COMPAT_DIR}/hex_compat.h")
-    file(WRITE ${NDB_HEX_COMPAT} "#ifndef NOSTRDB_HEX_COMPAT\n#define NOSTRDB_HEX_COMPAT\n#include \"hex.h\"\n#ifndef hex_str_size\n#define hex_str_size(len) ((size_t)((len) * 2 + 1))\n#endif\n/* Preserve original 3-arg function under a new name, then macro-dispatch. */\nstatic inline int nostrdb_hex_encode3(const void *buf, size_t bufsize, char *dest) { return hex_encode(buf, bufsize, dest); }\n#undef hex_encode\n#define __NDB_HEX_DISPATCH(_1,_2,_3,_4,NAME,...) NAME\n#define nostrdb_hex_encode4(_buf,_len,_dest,_dsize) nostrdb_hex_encode3(_buf,_len,_dest)\n#define hex_encode(...) __NDB_HEX_DISPATCH(__VA_ARGS__, nostrdb_hex_encode4, nostrdb_hex_encode3)(__VA_ARGS__)\n#endif\n")
+    set(NOSTRDB_HEX_COMPAT_COMMENT
+      "/* Preserve original 3-arg function under a new name, then macro-dispatch. */\n")
+    configure_file("${_nostrc_cmake_dir}/nostrdb-hex-compat.h.in"
+      "${NDB_HEX_COMPAT}" @ONLY)
+    nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+      "${_nostrc_cmake_dir}/nostrdb-hex-compat.h.in" "${NDB_HEX_COMPAT}")
+    unset(NOSTRDB_HEX_COMPAT_COMMENT)
     # Force-include the compatibility header for all nostrdb compilation units
     target_compile_options(nostrdb PRIVATE -include ${NDB_HEX_COMPAT})
     # On Apple SDKs, sprintf is hard-deprecated and triggers warnings in vendored LMDB.

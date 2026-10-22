@@ -347,7 +347,12 @@ file(READ "${GROTTO_CONTROL_XML}" GROTTO_CONTROL_XML_C)
 string(REPLACE "\\" "\\\\" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
 string(REPLACE "\"" "\\\"" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
 string(REPLACE "\n" "\\n\"\n\"" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
+get_filename_component(_nostrc_cmake_dir "${CMAKE_CURRENT_LIST_DIR}/../../cmake" ABSOLUTE)
+include("${_nostrc_cmake_dir}/NostrcConfigureProvenance.cmake")
 configure_file(daemon/grotto_control_xml.h.in grotto_control_xml.h @ONLY)
+nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/daemon/grotto_control_xml.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/grotto_control_xml.h")
 install(FILES "${GROTTO_CONTROL_XML}" DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
 add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_clients.c
     src/key-migration-event.c daemon/session-lock.c)
