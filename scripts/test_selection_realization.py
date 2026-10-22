@@ -904,12 +904,13 @@ def _default_snapshot(realization):
         if set(blocks) != set(chunk) or any(blocks[p]["rule"] != table[p] for p in chunk):
             raise RealizationError("native producer query disagrees with target table")
         edges.update(blocks)
-        # Ninja's inputs tool intentionally flattens phony nodes. Recover their
-        # typed edges through the loaded native parser, never a guessed alias.
-        missing_phony = sorted({value for edge in blocks.values() for _, value in edge["inputs"]
-                                if value not in paths and table.get(value) == "phony"})
-        outputs.extend(missing_phony)
-        paths.extend(missing_phony)
+        # Ninja versions omit different produced/phony nodes from `inputs`.
+        # Traverse EVERY dependency with a native producer through query; never
+        # equate an inputs-tool listing with complete generator membership.
+        missing_producers = sorted({value for edge in blocks.values() for _, value in edge["inputs"]
+                                    if value not in paths and value in table})
+        outputs.extend(missing_producers)
+        paths.extend(missing_producers)
         # Native inputs also omits command-free phony leaves. The query still
         # binds them; audit their bytes/provenance just like all other leaves.
         paths.extend(sorted({value for edge in blocks.values() for _, value in edge["inputs"]
@@ -933,10 +934,12 @@ def _attest_default(realization):
     gaps = list(snapshot["manifests"]["gaps"])
     ids = set()
     targets = realization["targets"]
-    artifact_targets = {}
+    artifact_targets, object_targets = {}, {}
     for key, target in targets.items():
         for artifact in target['artifacts']:
             artifact_targets.setdefault(artifact, set()).add(key)
+        object_dir = str(Path(target['build_path']) / 'CMakeFiles' / (target['name'] + '.dir'))
+        object_targets.setdefault(object_dir, set()).add(key)
     # File API may report the public library symlink, not the versioned link
     # output. Attribute it through native symlink edges, never filename suffixes.
     changed = True
@@ -957,7 +960,13 @@ def _attest_default(realization):
         if rule == "phony":
             continue
         path = _path(realization["build_dir"], output)
-        candidates = set(artifact_targets.get(path, set())) | {key for key, target in targets.items() if (path.startswith(str(Path(target["build_path"]) / "CMakeFiles" / (target["name"] + ".dir")) + "/"))}
+        if not Path(path).is_relative_to(Path(realization['build_dir'])):
+            gaps.append({'kind': 'default_output_escapes_build', 'output': path})
+        candidates = set(artifact_targets.get(path, set()))
+        for parent in Path(path).parents:
+            if str(parent) in object_targets:
+                candidates.update(object_targets[str(parent)])
+                break
         if (len(candidates) != 1 or not re.fullmatch(
                 r"(?:(?:C|CXX|OBJC|OBJCXX|ASM)(?:_COMPILER|_EXECUTABLE_LINKER|_STATIC_LIBRARY_LINKER|_SHARED_LIBRARY_LINKER|_SHARED_MODULE_LINKER)__.+|CMAKE_SYMLINK_(?:LIBRARY|EXECUTABLE))", rule)):
             gaps.append({"kind": "unproven_default_producer", "output": output, "rule": rule, "targets": sorted(candidates)})
@@ -970,6 +979,18 @@ def _attest_default(realization):
         target = targets[key]
         if key not in ids:
             gaps.append({"kind": "unobserved_default_target_dependency", "target": target["name"]})
+    order_directories, consumers_by_path = set(), {}
+    for output, edge in snapshot['edges'].items():
+        for kind, value in edge['inputs']:
+            consumers_by_path.setdefault(_path(realization['build_dir'], value), []).append((output, kind))
+    for target in targets.values():
+        directory = str(Path(target['build_path']) / 'CMakeFiles' / (target['name'] + '.dir'))
+        alias = 'cmake_object_order_depends_target_' + target['name']
+        consumers = consumers_by_path.get(directory, [])
+        if (consumers == [(alias, 'order_only')] and snapshot['edges'][alias]['rule'] == 'phony'
+                and any(source.get('compiled') for source in target['sources'])
+                and Path(directory).is_dir() and Path(directory).resolve() == Path(directory)):
+            order_directories.add(directory)
     leaves = []
     tool_inputs = sorted({t["compiler"]["path"] for t in realization.get("toolchains", {}).get("toolchains", [])
                           if t.get("compiler", {}).get("path")} | {tool['path'] for tool in snapshot['build_tools'].values()})
@@ -979,6 +1000,8 @@ def _attest_default(realization):
         if value == ".":  # CMake's empty object-order phony sentinel
             continue
         path = Path(_path(realization["build_dir"], value))
+        if str(path) in order_directories:
+            continue  # exact File API target directory, only a native order-only sentinel
         leaves.append(str(path))
         if path.is_relative_to(Path(realization["build_dir"])) and str(path) not in realization["configure_outputs"]:
             gaps.append({"kind": "unproven_default_generated_leaf", "input": str(path)})
@@ -996,7 +1019,8 @@ def _attest_default(realization):
                 for arg in args):
             gaps.append({"kind": "unsupported_default_rule_override", "file": entry["file"], "line": entry["line"]})
     return {"schema_version": 1, "snapshot": snapshot, "target_ids": closure,
-            "inputs": sorted(set(leaves)), "tool_inputs": tool_inputs, "gaps": gaps}, raw
+            "inputs": sorted(set(leaves)), "tool_inputs": tool_inputs,
+            "order_directories": sorted(order_directories), "gaps": gaps}, raw
 
 
 def _validate_default_binding(realization):
@@ -1670,6 +1694,13 @@ def _audit_commands(inventory, realization, specs, after_build):
         paths = ([(p, "runtime") for p in spec["inputs"]]
                  + [(p, "ninja") for p in spec.get("default_inputs", [])]
                  + [(p, "toolchain") for p in spec.get("tool_inputs", [])])
+        native_outputs = {}
+        native_phony = set()
+        if spec.get('build_scope') == 'default':
+            edges = realization['default_build_binding']['snapshot']['edges']
+            native_outputs = {_path(realization['build_dir'], p): edge for p, edge in edges.items() if edge['rule'] != 'phony'}
+            native_phony = {_path(realization['build_dir'], p) for p, edge in edges.items() if edge['rule'] == 'phony'}
+            paths += [(p, 'native_output') for p in native_outputs]
         for key in spec["target_ids"]:
             target = realization["targets"][key]
             paths += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
@@ -1709,8 +1740,18 @@ def _audit_commands(inventory, realization, specs, after_build):
             if path.is_relative_to(Path(realization["build_dir"])):
                 if kind == "ninja" and path == Path(realization["build_dir"]):
                     continue  # CMake's empty object-order phony sentinel
+                if kind == 'ninja' and value in native_phony and not path.is_file():
+                    continue  # actual command-free producer, not a runtime file
+                if kind == 'ninja' and value in realization.get('default_build_binding', {}).get('order_directories', []):
+                    if not path.is_dir() or path.resolve() != path:
+                        gaps.append({'kind': 'changed_default_order_directory', 'check': ident, 'input': value})
+                    continue
+                if kind == 'native_output' and after_build:
+                    if not path.is_file() or not path.resolve().is_relative_to(Path(realization['build_dir'])):
+                        gaps.append({'kind': 'missing_default_build_output', 'check': ident, 'input': value})
+                    else:
+                        hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
                 if spec.get("build_scope") == "default" and kind in ("header", "ninja"):
-                    native_outputs = {_path(realization["build_dir"], p) for p, edge in realization["default_build_binding"]["snapshot"]["edges"].items() if edge["rule"] != "phony"}
                     if value not in configured and value not in native_outputs:
                         gaps.append({"kind": "unproven_default_generated_input", "check": ident, "input": value, "input_kind": kind})
                     if after_build and path.is_file():
@@ -2593,9 +2634,6 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         timeout = realization["profile"].get("timeout_seconds")
     if timeout is not None and (type(timeout) not in (int, float) or timeout <= 0):
         raise RealizationError("execution timeout must be positive")
-    runtime_capabilities = _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id'])
-    if runtime_capabilities != resolved.get("runtime_capability_evidence", {}):
-        raise RealizationError("selected runtime capability executable changed after resolution")
     execution_options = _diagnostic_execution_options(resolved, realization, jobs["test"], timeout)
     if build:
         _diagnostic_execution_options(resolved, realization, jobs["build"], timeout, phase="build")
@@ -2606,6 +2644,9 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         custody.validate(resolved)
     elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer", "prepared_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
+    runtime_capabilities = _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id'])
+    if runtime_capabilities != resolved.get("runtime_capability_evidence", {}):
+        raise RealizationError("selected runtime capability executable changed after resolution")
     directory = _attempt_directory(resolved, evidence_dir, attempt)
     previous_attempts = []
     for previous in range(1, attempt):
