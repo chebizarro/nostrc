@@ -188,6 +188,31 @@ def validate_lifecycle(lifecycle, plan, profile_id, profile, fingerprint, *, evi
             or state['effective_configure_args'] != profile['configure_args']
             or state['phase_context_hash'] != digest(state['phase_context'])):
         raise CustodyError('contained runtime/cache/profile execution did not finalize')
+    backend = (evidence or {}).get('backend_receipt', evidence or {})
+    runtime = backend.get('keyring_runtime')
+    if runtime is not None or state.get('keyring_runtime') is not None:
+        cleanup = lifecycle.get('keyring_cleanup', {})
+        if (runtime != state.get('keyring_runtime') or not isinstance(runtime, dict)
+                or runtime.get('kind') != 'contained_keyring_runtime_v1'
+                or runtime.get('binding') != binding or runtime.get('container_id') != receipt['container_id']
+                or runtime.get('run_id') != receipt['run_id'] or runtime.get('setup_verified') is not True
+                or state.get('keyring_home_final') != {'verified': True}
+                or receipt['initial_inspect']['HostConfig'].get('Tmpfs') != {'/tmp': 'rw,nosuid,nodev,size=1g'}
+                or receipt['cleanup_inspect']['HostConfig'].get('Tmpfs') != {'/tmp': 'rw,nosuid,nodev,size=1g'}
+                or runtime.get('home_scope') != 'private_tmpfs:/tmp'
+                or not runtime.get('home_root', '').startswith('/tmp/nostrc-keyring-')
+                or runtime.get('probe', {}).get('create_read_delete') is not True
+                or runtime.get('probe', {}).get('session_closed') is not True
+                or not re.fullmatch(r'[0-9a-f]{64}', runtime.get('probe', {}).get('secret_sha256', ''))
+                or type(runtime.get('service_pid')) is not int or runtime['service_pid'] <= 1
+                or cleanup.get('status') != 'verified' or cleanup.get('container_id') != receipt['container_id']
+                or cleanup.get('scope') != 'private_pid_mount_namespace_exit_drain_removal'
+                or cleanup.get('home_tmpfs_destroyed') is not True
+                or not re.fullmatch(r'[0-9a-f]{64}', cleanup.get('daemon_log_sha256', ''))
+                or state['retained_evidence'].get('execution/keyring-setup.json') !=
+                    {'kind': 'file', 'sha256': hashlib.sha256(canonical(runtime) + b'\n').hexdigest()}
+                or runtime.get('executable') != backend.get('runtime_capability_evidence', {}).get('gnome_keyring')):
+            raise CustodyError('contained keyring setup/namespace cleanup evidence differs or is incomplete')
 
 
 class PreparedContext:
@@ -211,11 +236,21 @@ class PreparedContext:
         owner.validate_isolation(owner.receipt["initial_inspect"])
         self.control = json.loads(canonical(control))
         self.namespace = os.readlink('/proc/self/ns/pid')
+        self.keyring_runtime = None
+        self.keyring_daemon = None
+
+    def validate_namespace(self):
+        if os.readlink('/proc/self/ns/pid') != self.namespace:
+            raise CustodyError("runtime PID namespace changed")
+
+    def keyring_evidence(self, realization, resolved):
+        self.validate(resolved)
+        from test_selection_keyring import validate
+        return validate(self, realization, resolved)
 
     def validate(self, resolved):
         binding = self.control["binding"]
-        if os.readlink('/proc/self/ns/pid') != self.namespace:
-            raise CustodyError("runtime PID namespace changed")
+        self.validate_namespace()
         for key in ("source_identity", "inventory_hash", "profile_id", "plan_id"):
             if resolved[key] != binding[key]:
                 raise CustodyError("runtime resolved binding differs: " + key)

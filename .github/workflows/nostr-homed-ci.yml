@@ -180,7 +180,9 @@ jobs:
 
   systemd-opensession:
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request' || startsWith(github.ref, 'refs/heads/')
+    # Explicit broad calls run on disposable hosted runners, including fork PRs.
+    # Legacy PR entrypoints retain their original restriction; advisory steps stay advisory.
+    if: inputs.sha != '' || github.event_name != 'pull_request' || startsWith(github.ref, 'refs/heads/')
     steps:
       - name: Checkout
         uses: actions/checkout@v4

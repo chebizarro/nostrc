@@ -71,7 +71,9 @@ class CommandOutputBytesTests(Project):
         self.assertTrue(receipt["checks"])
         self.assertNotEqual(receipt["observed_executions"]["command.actual"], "passed")
         self.assertTrue(status["error"].startswith("TimeoutExpired:"), status)
-        self.assertTrue(status["cleanup_complete"], status)
+        self.assertTrue(status["direct_child_reaped"], status)
+        self.assertFalse(status["cleanup_complete"], status)
+        self.assertEqual(status["arbitrary_process_tree"], "unverified")
         self.assertEqual(receipt["process_error"], status)
         self.assert_reaped(status)
 

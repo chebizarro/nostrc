@@ -1,23 +1,140 @@
 # Test Strategy & Suite Documentation
 
-> **Staged dependency-aware tooling (updated 2026-10-19): implemented, not cut over.**
+> **Staged dependency-aware tooling (updated 2026-10-23): finite integration verified, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,
 > push requirements and schedules remain authoritative through W11. See the
 > [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
-> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). Current bounded
-> source-specific results: [6299f003 checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
+> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). The
+> [finite closeout register](reviews/dependency-aware-testing-ci-2026-10-22-closeout.md)
+> distinguishes implemented membership, runnable capabilities and actual final-source
+> execution. Tested code freeze `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a` passes the finite gates below; earlier source-specific receipts remain historical.
 > Acceptance decisions and run counts: [criterion audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
 > and [timestamped run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md).
-> The ledger snapshot at **2026-10-19T04:10:01.512997Z** verifies **0/20 PR
-> comparisons / 0/2 successful broad integrations**: nine roots/attempts, seven
-> failed nested broad accounting jobs, one unlaunched and one incomplete call.
-> These are dated reviewed counts, not live counters or unit-test totals. Refresh
-> before reporting later progress; subsequent pushes/PRs are outside that snapshot.
-> `.1` is closed for the proven logical contract; `.2`–`.5` remain open for the
-> audit's specific root, custody, CI/release and operational gaps.
+> The reviewed ledger snapshot at **2026-10-22T19:03:24.712764Z** retains **0/20 PR
+> comparisons / 0/2 successful complete broad integrations**:46 roots/attempts,
+> 45 failed, one cancelled, zero pending. Earlier pending/failed observations remain. These are dated reviewed counts, not
+> live counters or unit-test totals. W11 **NOT MET** / W12 **NOT RUN**; no local
+> implementation, component proof or nested job advances those counters.
+> Parent reviewed the original criteria and approved finite closure of
+> `.2`–`.5`, `.9`, `.31`, `.34`; all seven are now officially closed, alongside
+> the already closed `.7`. These are not broad rollout acceptance:
+> root, `.8`, `.11`, `.23`, `.29` and the explicit runtime/whole-job cells remain open.
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
+
+## Finite integration contracts — 2026-10-23
+
+At code freeze `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`: **725 selector
+cases PASS, zero skips; all15 combined gates PASS** (six shells, four statics,
+inventory, actionlint, ShellCheck and whitespace). Safe native configure/default
+build,18 canonical cases and full439 CTests: **434 pass, zero fail, five visible
+skips**; private HOME/bus/Secret Service cleanup and read-only keychain guards pass.
+Groundhog OFF/non-instrumented is not authored root ASan/native Groundhog proof.
+
+Actual public engine `run --phase all` production core/Groundhog/Grotto default
+and mapped/omitted prerequisite builds, full pre/postbuild audits and selected
+NIP14 pass, respectively **6,834/5,818/6,704 input hashes**, zero audit gaps.
+These are local explicit hypothetical-impact diagnostics under x86 emulation,
+not PR comparisons or whole profiles. Each normalized receipt passes partial
+aggregation and refuses complete-gate promotion; ordinary33 omissions/incomplete
+flags remain exact. Five affected Groundhog NIP29 registrations pass without
+skips. Standalone libgo macOS32/Linux33 plus default contracts/full postaudits
+also pass (553/467 hashes), ineligible, macOS stress not executed.
+
+Production artifact reuse was incremental in existing owned source/build roots;
+configure, source identity, generation/control, phase, prerequisite and execution
+receipts were all fresh. Actual argv/timestamps and381 verified artifacts are
+indexed by `/tmp/nostrc-closeout-integration-20261022/final-handoff/checkpoint.json`
+and `SHA256SUMS.gates`; see the register for hashes, remaining cells and preserved
+failed84e/96ad/1795 checkpoints. Later documentation/export is not tested-code credit.
+
+B's native default-generator route uses a `build_contract` with
+`build_scope=default`, empty `build_targets`, and exact `cmake --build {build}`
+plus the realized configuration and authored build parallelism. It attests only
+supported single-config Ninja closures. Custom/generated work needs explicit
+source/tool/argv/input/output producer attestation; unknown utility/dyndep/launcher
+or generated shapes refuse. Full non-test source/Ninja/header/runtime/artifact
+and prerequisite audits remain required, even for eligible unselected defaults.
+A `signer-tests` aggregate or fabricated File API `all` target is not equivalent.
+Actual supported integrated routes are recorded above, separately from component
+miniature tests, historical native builds and still-unproved whole profiles.
+Fresh configure binds original generation manifests/control inputs, verifier bytes
+and configured CMake/Ninja identities. Bound VerifyGlobs must return0 with empty
+output; an owned temporary Ninja entry only includes the original graph, from the
+original cwd, and must report exact no work. Pre/post bindings and the engine build
+lock remain required; query evidence never counts as physical coverage. Missing
+executables/stale source/glob additions/changed generation or verifier/unknown
+controls refuse. No graph filtering or nonexistent `-d norebuild` shortcut.
+
+Ordinary subset normalization discriminates selected authored inventory
+`command`/`build_contract` IDs from CTest registrations, with per-kind physical
+argv/cwd/process/environment/output/evidence and fresh resolved identity checks.
+Forged kinds, unknown IDs or relabelled CTests refuse; no broad string whitelist
+or expansion of the exact33 authority.
+
+Tool capability declarations are not resource setup proof. The ordinary `nak`
+producer/consumer binds actual executable hash/version and
+source/profile/plan/workflow/run/attempt; it grants no display or private bus.
+The keyring follow-through likewise treats `gnome_keyring` as actual executable
+fingerprint only. Existing CTests own private HOME/bus/supervised Secret Service
+and service-initially-absent negatives; an ambient/global service prerequisite
+would violate those fixtures. Selected contained commands requiring keyring plus
+private bus instead need an owned throwaway service, real secret roundtrip and
+namespace cleanup. These tool/contained contracts landed at exact B `82f79ae75`;
+only the ordinary Groundhog/Grotto tool declarations are reconciled at `012d0fcd8`.
+Production default producers are merged at exact B `0b9feea6d`, preserving ancestry:
+actual libgo macOS/Linux default/full postbuild/command proofs cover553/455 input
+hashes at B's proof source, not final combined execution. Component keyring
+positives are not final ordinary-profile execution. C's additive Docker-resource
+`images [--probe]` lifecycle is merged at exact `0c79eff77` via `e6134fb1b`:
+30 component cases including five real Docker cases pass, zero skips. It does
+not change the legacy run API or establish complete arbitrary-tree cleanup.
+The final-tip original image matrix cancelled during MDK011 dependency fetch at
+1000s; scoped cleanup passed in2.8s, but original image acceptance is NOT MET
+and08/09 were not started. Earlier three-version positives retain their old
+helper identity. No second whole matrix run, `.8` closure or hosted credit.
+
+A metadata `c419d2ac6` and connectivity fixture `dfb15c893` are merged. The
+fixture owns in-process offline-to-online state and retains its original deadline;
+it does not alter product connectivity. Actual Linux NIP55L failures under Rosetta
+are executable-identity mismatches (`/run/rosetta/rosetta` versus the authorized
+fixture executable): preserve the approval wait/failure and require native Linux
+x86 proof, never weaken caller attestation. ARM64 diagnostic passes do not satisfy
+that cell. Exact33 omissions/29 omitted producer closures, universe and all193
+source-control keys remain unchanged. `eb799dbd7` renews only the reviewed
+Groundhog CMake value and candidate hash for80 derived `build_path` entries;
+byte-exact reversal recovers the immutable old candidate hash. All other fields,
+toolchain and architectures remain unchanged; old refusals remain retained.
+
+The actual public-CLI libgo production route at `38c942c64` passed prerequisite
+and default builds, full audits, and 33 CTests with authored parallelism two and
+`--config Debug`. It remains diagnostic/not complete-gate eligible and does not
+prove root/core default producers. Strict sibling projections/source ownership
+are integrated at `98dac8acb`; follow-up `126e29b65` has 111 focused seam tests
+passing, not a successful final full suite. Real Nak setup exposed upstream's
+`debug` version default; the same pinned module now receives the exact link flag
+`-ldflags='-X main.version=v0.19.7'`. Actual executable-only producer positives and
+the pre-fix refusal are both retained; version verification is unchanged. See the
+register for exact SHAs/manifests and final core/gate requirements.
+
+The root benchmark ownership edge, ten Groundhog static resource dependencies and
+immediate source-template configure witnesses land at `e47b52946`. Generated
+header bytes are unchanged. Resource dependencies are PATCH-class shipped build
+correctness folded into the existing unreleased Groundhog0.12.0, not a blanket
+no-bump decision or second numeric bump. Fresh core full preaudit and all three
+root producer bindings have zero findings/gaps. Subsequent exact root-owned
+header witnesses/reconfigure and combined default non-test consumer repairs are
+proved at the final source above; old failed runs remain retained. GNostr's
+unconditional constant COPYONLY producer is PATCH-class folded into intended
+unreleased final0.1.0. Other byte-equivalent witness/ownership and Python-only
+validator repairs need no additional bump; pinned/user-dirty vendor is untouched.
+
+`nip5f_tcp` instead needs a provisioned signer endpoint/token, explicitly approved
+TCP-enabled configuration, isolated identity and unidentified-caller approval;
+loopback success or exit 77 cannot satisfy it. No approval bypass is authorized.
+See the [separate execution cells](reviews/dependency-aware-testing-ci-2026-10-22-closeout.md#runnable-capability-and-build-cells)
+for engineering gaps versus fixture/operator and hosted requirements.
 
 ## Opt-in Linux custody diagnostic — 2026-10-22
 

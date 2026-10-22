@@ -269,8 +269,8 @@ def validate_resolved(resolved, realization):
                 "resolved diagnostic incomplete flags missing or contradictory")
 
 
-def validate_receipt(receipt, backend, exclusions, contract, plan, lane, profile):
-    from test_selection import digest, validate_phase_parallelism_evidence
+def validate_receipt(receipt, backend, exclusions, contract, plan, lane, profile, *, checks=None):
+    from test_selection import digest, validate_phase_parallelism_evidence, validate_default_build_evidence
     require(len(exclusions) == 1 and receipt.get("baseline_exclusions") == exclusions, "exact accounting required")
     evidence = backend if backend else receipt
     expected = {"source_identity": plan["source_identity"], "inventory_hash": plan["inventory_hash"],
@@ -300,8 +300,60 @@ def validate_receipt(receipt, backend, exclusions, contract, plan, lane, profile
     require(set(exclusions[0]["target_ids"]) <= set(evidence.get("target_ids", []))
             and set(exclusions[0]["audit_build_targets"]) <= set(evidence.get("build_targets", [])), "audit target custody missing")
     executed = evidence.get("expected_executions", [])
-    require(isinstance(executed, list) and set(executed) <= set(contract["required_closure"])
-            and not set(REGISTRATIONS) & set(evidence.get("observed_executions", {})), "omission executed/relabelled")
+    require(isinstance(executed, list) and len(executed) == len(set(executed))
+            and set(executed) == set(evidence.get('observed_executions', {}))
+            and not set(REGISTRATIONS) & set(executed), "omission executed/relabelled")
+    # Authored command IDs and CTest registrations are separate namespaces.
+    selected = {ident: check for ident, check in (checks or {}).items()
+                if ident in lane['checks'] and lane['profile'] in check.get('profiles', [])}
+    commands_by_id = {ident: check for ident, check in selected.items()
+                      if check.get('kind') in ('command', 'build_contract')}
+    extra = set(executed) - set(contract['required_closure'])
+    require(extra == set(commands_by_id) and not set(commands_by_id) & set(contract['required_closure'])
+            and not set(commands_by_id) & set(REGISTRATIONS), 'execution outside typed CTest/command closure')
+    for ident, check in selected.items():
+        record = evidence.get('checks', {}).get(ident, {})
+        names = check.get('ctest_tests', {}).get(lane['profile'], []) if check.get('kind') == 'ctest' else [ident]
+        require(check.get('kind') in ('ctest', 'command', 'build_contract') and names
+                and record.get('executions') == names and record.get('expected_executions') == names
+                and record.get('observed_executions') == names, 'inventory kind/execution membership differs')
+        if check.get('kind') == 'ctest':
+            require(set(names) <= set(contract['required_closure']), 'CTest registration outside reviewed closure')
+            continue
+        status = record.get('process', {})
+        argv = record.get('argv', [])
+        source, build = phase.get('source_root'), evidence.get('build_dir')
+        require(isinstance(source, str) and isinstance(build, str), 'command source/build roots missing')
+        expand = lambda value: value.replace('{source}', source).replace('{build}', build)
+        expected_argv = [expand(value) for value in check['command']]
+        require(bool(argv) and Path(argv[0]).is_absolute(), 'physical command executable missing')
+        require((argv[0] == expected_argv[0] if Path(expected_argv[0]).is_absolute()
+                 else Path(argv[0]).name == expected_argv[0]), 'command executable differs from inventory')
+        expected_argv[0] = argv[0]
+        command_phase = 'build' if check['kind'] == 'build_contract' else 'test'
+        if not check.get('environment'):
+            require(record.get('environment_hash') == phase.get('environment_hashes', {}).get(command_phase),
+                    'command environment differs from authored phase')
+        if check['kind'] == 'build_contract' and (any(k in profile for k in ('build_parallelism', 'test_parallelism'))
+                                                or check.get('build_scope') == 'default'):
+            expected_argv += ['--parallel', str(profile.get('build_parallelism', profile.get('parallelism', 1)))]
+        require(argv == expected_argv and argv in evidence.get('commands', [])
+                and record.get('cwd') == expand(check['working_directory'])
+                and record.get('requires') == sorted(check.get('requires', []))
+                and record.get('missing_evidence') == []
+                and set(record.get('artifacts', {})) == set(check.get('required_evidence', []))
+                and all(isinstance(v.get('sha256'), str) and re.fullmatch(r'[a-f0-9]{64}', v['sha256'])
+                        for v in record.get('artifacts', {}).values())
+                and record.get('outcome') == status.get('outcome') == 'passed'
+                and type(record.get('exit_code')) is int and record['exit_code'] == 0
+                and type(status.get('exit_code')) is int and status['exit_code'] == 0
+                and status.get('argv') == argv and status.get('environment_hash') == record.get('environment_hash')
+                and isinstance(record.get('environment_hash'), str) and re.fullmatch(r'[a-f0-9]{64}', record['environment_hash'])
+                and status.get('output_sha256') == record.get('log_sha256')
+                and isinstance(record.get('log_sha256'), str) and re.fullmatch(r'[a-f0-9]{64}', record['log_sha256'])
+                and evidence.get('observed_executions', {}).get(ident) == 'passed', 'physical typed command evidence differs')
+    if any(check.get('build_scope') == 'default' for check in commands_by_id.values()):
+        validate_default_build_evidence(profile, evidence, commands_by_id)
     import test_selection_realization as realization
     jobs = realization.authored_phase_parallelism(profile) or dict.fromkeys(("build", "test"), profile.get("parallelism", 1))
     if realization.authored_phase_parallelism(profile) is not None:

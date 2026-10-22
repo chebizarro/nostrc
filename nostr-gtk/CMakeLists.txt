@@ -6,6 +6,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 include(GNUInstallDirs)
+get_filename_component(_nostrc_cmake_dir "${CMAKE_CURRENT_LIST_DIR}/../cmake" ABSOLUTE)
+include("${_nostrc_cmake_dir}/NostrcConfigureProvenance.cmake")
 
 if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
@@ -55,6 +57,9 @@ configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0/nostr-gtk-version.h.in
   ${NOSTR_GTK_PUBLIC_VERSION_HEADER}
   @ONLY)
+nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0/nostr-gtk-version.h.in"
+  "${NOSTR_GTK_PUBLIC_VERSION_HEADER}")
 
 # ── Blueprint compilation ────────────────────────────────────────────
 set(NOSTR_GTK_BLUEPRINT_SOURCES

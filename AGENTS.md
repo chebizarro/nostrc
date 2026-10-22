@@ -37,6 +37,36 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   non-CTest checks needing `display`/`private_bus`, including mixed lanes, refuse
   **before launch**. Never drop capabilities or fabricate receipts. Safe arbitrary
   native-tree/wrapped custody is unimplemented; legacy CTest cancellation is unchanged.
+- Native default-generator build contracts use `build_scope=default`, empty
+  `build_targets`, and exact `cmake --build {build}` with realized configuration
+  and authored build parallelism. Only attested single-config Ninja closures are
+  supported. Custom/generated work needs explicit source/tool/argv/input/output
+  producer attestation; unknown utility/dyndep/launcher or generated shapes refuse.
+  Raw default-build success is not attested selector execution. Preserve full
+  non-test source/Ninja/header/runtime/artifact and named/omitted
+  prerequisite audits, including eligible unselected defaults. Never substitute
+  `signer-tests`, fabricate a File API `all` target or use selected-only audits.
+  Fresh configure binds canonical generation-control inputs, verifier bytes and
+  configured CMake/Ninja identities. Freshness uses the bound VerifyGlobs command
+  (exit0, empty output) and an engine-owned Ninja entry that only includes the
+  original graph from its original cwd; exact no-work and pre/post binding checks
+  are required under the build lock. Query evidence is not physical coverage.
+  No graph filtering, execution-time-only verifier trust or `-d norebuild` flag.
+- Tool capabilities are not resource setup: `nak` and `gnome_keyring` require
+  actual executable fingerprints, distinct from display/private-bus evidence.
+  Existing keyring CTests own their private HOME/bus/supervised Secret Service,
+  including service-initially-absent negatives; do not require an ambient/global
+  service that defeats those fixtures. Selected contained commands requiring
+  keyring plus private bus need their own throwaway service, real secret roundtrip
+  and namespace cleanup proof. Declare profile tool support only after supported
+  executable evidence, not bus/display/setup inference. Pinned Nak installation
+  must stamp its actual module version; upstream's `debug` default is not accepted
+  by the executable-version check. Emulation-specific executable identity mismatch
+  does not authorize weaker caller attestation or a passing runtime receipt.
+  `nip5f_tcp` is a provisioned signer, not loopback: approved TCP-enabled configuration,
+  isolated identity/token readiness and explicit unidentified-caller approval are
+  required. No approval bypass or skip-as-success. See the finite
+  [criterion and runnable-cell register](docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).
 - `NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers` explicitly selects
   separate configure/build/test environments, fingerprints and full input audits.
   Enforce authored execution options and independent profile/resolved/phase
@@ -63,7 +93,12 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   and no architecture alias, sanitizer-policy relaxation or rollout cutover is
   authorized by this subset. Ordinary-subset `--phase test` refuses before CTest;
   use `--phase all` to retain physical prerequisite-build proof. Standalone build
-  results also retain both incomplete flags and omission accounting. See the
+  results also retain both incomplete flags and omission accounting. Selected
+  inventory `command`/`build_contract` IDs are not CTest registration names:
+  normalization requires exact kind/selected-ID membership and per-kind physical
+  process/argv/environment/evidence, never a broad string whitelist. Neither
+  commands nor forged CTest labels can expand the reviewed33-registration authority.
+  See the
   source-bound admission receipt in TESTING.
 - `scripts/contained-gate.py prepare` / `run` provide attested locked 08/09/011
   preparation and verified CID lifecycle/final retained bytes. The distinct
@@ -71,9 +106,18 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   not native arbitrary-tree custody or original Docker image-build execution.
   Raw peer consumers do not establish selector/profile acceptance; full audits
   remain required. The optional prepared selected-closure diagnostic is deferred.
-- Legacy `mdk-gate.py` always reports `cleanup_complete=false`; otherwise successful
-  commands return nonzero `cleanup_unverified`, with scoped cleanup errors separate.
-  Do not promote historical smoke into successful arbitrary-tree lifecycle proof.
+- Legacy `mdk-gate.py run` always reports `cleanup_complete=false`; otherwise
+  successful commands return nonzero `cleanup_unverified`, with scoped cleanup
+  errors separate. The additive `images [--probe]` route owns a unique explicit
+  BuildKit builder, its volume/registration and recorded immutable peer CIDs;
+  `cleanup_complete=true` applies only to those Docker resources, with
+  `complete=false`. Peer mounts/volume identities are journaled and rechecked;
+  owned anonymous volumes must disappear, pre-existing named volumes must remain,
+  and unowned new named/host allocations refuse. No default builder selection/global prune, prepared-route
+  alias, native arbitrary-tree or selector admission follows. Exact-tip original
+  image acceptance remains NOT MET after the retained MDK011 fetch cancellation;
+  08/09 were not started. Do not promote earlier helper smokes or scoped cleanup
+  into full MDK interoperability or complete-gate acceptance.
 - Before reporting W11 progress or closing acceptance scope, refresh the
   [acceptance audit and run ledger](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
   from source-linked GitHub jobs/artifacts and update `.5`. Count reviewed distinct

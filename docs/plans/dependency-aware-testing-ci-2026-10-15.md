@@ -1,10 +1,27 @@
 # Dependency-aware testing and CI/CD
 
-> **Current acceptance accounting: [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18).**
-> The status summary immediately below and earlier progress sections are
-> **HISTORICAL / superseded snapshots**. Their pending statements and failed
-> audits retain their original source identities; §16 records compiled gates and
-> §17 records the independently backfilled acceptance snapshot.
+> **Current finite integration accounting: [closeout criterion register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).**
+> All exact A/B/C tips are merged preserving ancestry. Tested code freeze
+> `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`:725 selector tests/zero skips,
+> all15 combined gates, safe native default build/18 canonical cases/434pass+5visible
+> skips, actual public standalone macOS32/Linux33 plus defaults, and all three
+> supported core/Groundhog/Grotto public default/full-audit/NIP14 routes **PASS**.
+> Five focused NIP29 registrations pass. Fresh source/generation/phase/prerequisite
+> receipts bind incremental owned-root artifacts; no old receipt credit.
+> Exact33 omissions/29 required omitted producers/193 source-control keys and
+> immutable histories remain. All three partial aggregates pass; complete requests
+> refuse. Source producer/freshness/typed-normalization failures and fixes are retained.
+> Parent approved the original finite criteria; `.2`–`.5`, `.9`, `.31`, `.34`
+> are now officially closed, alongside `.7`. Root, `.8`, `.11`, `.23`, `.29` and explicit runtime/
+> whole-job cells remain open. Scoped original Docker cleanup passes, but the
+> cancelled original image matrix is NOT MET; no second whole matrix here.
+> Membership, runnable capabilities, selected execution and acceptance are separate.
+> The status summary below and earlier sections are **HISTORICAL snapshots**,
+> retaining exact source identities and failures; [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
+> remains the original reconciliation. Latest reviewed hosted snapshot:
+> **2026-10-22T19:03:24.712764Z**,45failed/1cancelled/zero pending of46 roots,
+> **0/20** qualifying comparisons and **0/2** complete broad integrations.
+> W11 **NOT MET**, W12 **NOT RUN**. No default/protection/schedule/publisher cutover.
 
 **Status (2026-10-16):** Integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` implements actual separate phase environments/fingerprints/audits, ordinary outer command/build contracts, an explicit shared sanitizer phase route, 98 exact command inputs/87-job accounting and independent workers for all ten authored profiles. This is not production/hosted or W11 acceptance. Review R1 / `.22` is CLOSED **by prelaunch guard/refusal only** at `8179275b2`: selected command/build-contract lanes needing display/private bus, including mixed lanes, are refused without dropping capabilities or fabricating receipts. No drain fix or wrapped positive acceptance; full custody `.23` and unknown full-gate fixture failure/lost-trace `.24` stay OPEN. Parent final combined at `2d64a7ac2`: **307/307 passed, 0 skips, 125.303s**; subsequent changes are docs/failure forensics only. Parent confirms at `97e393cba`: **all six shell suites, four static checkers, full actionlint including ShellCheck and range whitespace passed** (`/tmp/nostrc-phase-final-test-*.log`); no rereview/full-slice acceptance is claimed. Parent native combined **306/306 passed, 0 skips, 146.958s** at `90a1b675f`; production Linux/x86_64 command **306 passed, 0 skips, 405.309s** at `7e3745463` with 99 audited hashes/no gaps. These do not invalidate the wrapped-cancellation adversary or confer full-slice acceptance. Fresh native root build at `7fdadd251` passed, BUILD ONLY/Groundhog OFF. MDK always refuses full lifecycle success; `.11` cause, full union and W11/W12 remain open. No default/enforce/threshold/schedule/protection cutover. Current progress is §13; §§8–12 and earlier review/verification receipts retain their dated SHAs and limits.
 
@@ -957,9 +974,13 @@ Rollback restores old broad required jobs before removing the new requirement. K
 
 ### Execution index
 
-**Latest acceptance accounting (2026-10-18):** [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
-links the criterion audit and source-linked run ledger. [§16](#16-migration-progress--2026-10-18-6299f003)
-retains the compiled-source gates; earlier checkpoints remain historical.
+**Current finite criterion accounting (2026-10-22):** the
+[closeout register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md)
+maps every existing bead and separates membership, supported setup, actual
+execution and engineering versus fixture/operator blockers. Final integration
+is not yet accepted. [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
+retains original reconciliation and [§16](#16-migration-progress--2026-10-18-6299f003)
+the earlier compiled-source gates; source-specific checkpoints remain historical.
 W2–W10 progress is not full acceptance;
 **W11 NOT MET / W12 NOT RUN**. The index's “Done when” column remains the required
 acceptance contract, not a claim that those conditions have passed.

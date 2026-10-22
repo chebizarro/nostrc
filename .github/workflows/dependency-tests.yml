@@ -196,8 +196,13 @@ jobs:
         with:
           pattern: dependency-receipt-${{ needs.select.outputs.plan_id }}-*-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dependency/receipts
+      - uses: actions/download-artifact@v4
+        if: always() && needs.select.outputs.broad == 'true'
+        with:
+          name: dependency-broad-${{ needs.select.outputs.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency
       - name: Account for every expected lane and actual worker conclusion
-        if: needs.select.outputs.run == 'true'
+        if: always() && needs.select.outputs.run == 'true'
         env:
           RESULTS: ${{ toJSON(needs) }}
           REQUESTED_SHA: ${{ needs.select.outputs.sha }}

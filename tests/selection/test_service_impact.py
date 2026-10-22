@@ -119,7 +119,11 @@ class ServiceImpact(Project):
         source = (ROOT / "gnome/groundhog/src/app/gh-background.c").read_text()
         self.assertIn("configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog-autostart.desktop.in", cmake)
         self.assertIn("file(READ ${GROUNDHOG_AUTOSTART_DESKTOP} GROUNDHOG_AUTOSTART_TEMPLATE)", cmake)
-        self.assertIn("file(CONFIGURE OUTPUT ${GROUNDHOG_BACKGROUND_GENERATED}/gh-background-autostart.h", cmake)
+        self.assertIn("configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/app/gh-background-autostart.h.in", cmake)
+        self.assertIn('  "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gh-background-autostart.h.in"\n'
+                      '  "${GROUNDHOG_BACKGROUND_GENERATED}/gh-background-autostart.h")', cmake)
+        self.assertIn('@GROUNDHOG_AUTOSTART_TEMPLATE@',
+                      (ROOT / 'gnome/groundhog/src/app/gh-background-autostart.h.in').read_text())
         self.assertIn("add_library(groundhog-background STATIC src/app/gh-background.c)", cmake)
         self.assertIn('#include "gh-background-autostart.h"', source)
         self.assertIn("GH_BACKGROUND_AUTOSTART_TEMPLATE", source)

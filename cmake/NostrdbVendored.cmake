@@ -34,6 +34,16 @@ function(nostrc_add_vendored_nostrdb target vendor_path)
   set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
   set(_compat "${CMAKE_CURRENT_BINARY_DIR}/${target}_compat")
+  if(ARGC EQUAL 3)
+    # The in-tree caller configures these exact shims in directory scope so
+    # configure provenance is attached to the real source command, not a replay.
+    if(NOT "${ARGV2}" STREQUAL "${_compat}" OR
+        NOT EXISTS "${_compat}/hex_compat.h" OR
+        (NOT EXISTS "${vendor_path}/src/bolt11/talstr.h" AND
+         NOT EXISTS "${_compat}/talstr.h"))
+      message(FATAL_ERROR "invalid preconfigured nostrdb compatibility headers")
+    endif()
+  elseif(ARGC EQUAL 2)
   file(MAKE_DIRECTORY "${_compat}")
   if(NOT EXISTS "${vendor_path}/src/bolt11/talstr.h")
     file(WRITE "${_compat}/talstr.h"
@@ -51,6 +61,9 @@ function(nostrc_add_vendored_nostrdb target vendor_path)
     "#define nostrdb_hex_encode4(_buf,_len,_dest,_dsize) nostrdb_hex_encode3(_buf,_len,_dest)\n"
     "#define hex_encode(...) __NDB_HEX_DISPATCH(__VA_ARGS__, nostrdb_hex_encode4, nostrdb_hex_encode3)(__VA_ARGS__)\n"
     "#endif\n")
+  else()
+    message(FATAL_ERROR "nostrc_add_vendored_nostrdb expects two or three arguments")
+  endif()
   target_compile_options(${target} PRIVATE -include "${_compat}/hex_compat.h")
 
   target_include_directories(${target} PUBLIC

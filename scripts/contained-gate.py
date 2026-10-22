@@ -343,6 +343,16 @@ def run_lane(args):
             if not owner.receipt['cleanup_complete']:
                 raise CustodyError('cannot attest retained evidence before verified namespace exit')
             runtime_state = normalized['contained_lifecycle']['runtime_state']
+            if runtime_state.get('keyring_runtime') is not None:
+                if work_json(work, 'execution/keyring-setup.json') != runtime_state['keyring_runtime']:
+                    raise CustodyError('keyring setup bytes changed before final namespace exit')
+                if owner.receipt['cleanup_inspect']['HostConfig'].get('Tmpfs') != {'/tmp': 'rw,nosuid,nodev,size=1g'}:
+                    raise CustodyError('keyring private HOME tmpfs isolation differs')
+                home_verified = runtime_state.get('keyring_home_final') == {'verified': True}
+                normalized['contained_lifecycle']['keyring_cleanup'] = {
+                    'status': 'verified' if home_verified else 'namespace_only', 'container_id': owner.cid,
+                    'scope': 'private_pid_mount_namespace_exit_drain_removal', 'home_tmpfs_destroyed': home_verified,
+                    'daemon_log_sha256': file_hash(work_file(work, 'private-keyring.raw'))}
             if runtime_state['backend_sha256'] != file_hash(work_file(work, 'backend.json')):
                 raise CustodyError('runtime backend changed before final namespace exit')
             if runtime_state['cache_sha256'] is not None and runtime_state['cache_sha256'] != file_hash(work_file(work, 'build/CMakeCache.txt')):

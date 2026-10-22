@@ -16,7 +16,8 @@ SPEC = '{source}/nips/nip49/SPEC_SOURCE'
 
 class GrottoNip49Membership(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.renewal = json.loads((ROOT / RENEWAL).read_text())
         self.real = self.export['realization']

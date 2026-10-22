@@ -120,6 +120,8 @@ class PolicyTests(unittest.TestCase):
                         from grotto_nip49_projection import grotto_nip49_current_workflow_checks
                         expected_checks = grotto_nip49_current_workflow_checks(
                             expected_checks, p["diagnostic_nonmember_subsets"]["grotto.linux"])
+                    from supported_profile_support import supported_golden_checks
+                    expected_checks = supported_golden_checks(case['name'], expected_checks, p)
                     self.assertEqual(result["selected_checks"], expected_checks)
                 for prefix in case.get("required_prefixes", []):
                     self.assertTrue(any(x.startswith(prefix) for x in result["selected_checks"]))

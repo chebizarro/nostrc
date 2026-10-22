@@ -289,6 +289,8 @@ class RelayJsonDependencyEdges(Project):
         self.assertEqual(r.load_realization(self.build, self.identity), realized)
 
     def test_actual_selector_plan_deltas_and_ui_mdk_isolation(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         previous = copy.deepcopy(self.policy)
         for owner, dependency, _, _, _ in self.edges:
             previous["nodes"][owner]["depends_on"].remove(dependency)
@@ -422,6 +424,8 @@ nostrc_finalize_test_inventory()
         self.assertEqual(r.load_realization(self.build, self.identity), realized)
 
     def test_exact_check_owner_and_existing_selector_boundaries(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         check = self.policy["checks"]["groundhog.media"]
         self.assertEqual(check["nodes"], ["groundhog.media", "execution.groundhog", "groundhog.unclassified"])
         self.assertEqual(check["profiles"], ["groundhog.linux"])

@@ -172,14 +172,15 @@ _gh_describe(groundhog-mdk011-interop-mdk09-probe test-groundhog-mdk011-interop
     "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.9-probe" ${_mdk011_inputs} ${_mdk09_inputs}
   REQUIRES ${_mdk011_requires} ${_mdk09_requires} EXPECTED mdk09_incompatibility)
 foreach(_pair
-    "groundhog-mdk-interop-image|driver"
-    "groundhog-mdk011-interop-image|driver-0.11"
-    "groundhog-mdk011-interop-image-mdk09|driver-0.9-probe")
+    "groundhog-mdk-interop-image|driver|mdk08.peer_inputs"
+    "groundhog-mdk011-interop-image|driver-0.11|mdk011.peer_inputs"
+    "groundhog-mdk011-interop-image-mdk09|driver-0.9-probe|mdk09.peer_inputs")
   string(REPLACE "|" ";" _pair "${_pair}")
   list(GET _pair 0 _name)
   list(GET _pair 1 _driver)
+  list(GET _pair 2 _peer_owner)
   if(TEST "${_name}")
-    nostrc_describe_test("${_name}" OWNER groundhog.mls_service EXPECTED fixture
+    nostrc_describe_test("${_name}" OWNER groundhog.mls_service "${_peer_owner}" EXPECTED fixture
       INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/${_driver}" REQUIRES docker)
   endif()
 endforeach()
@@ -255,6 +256,34 @@ foreach(_test IN LISTS _gh_tests)
       endif()
     endforeach()
     _gh_describe("${_test}" "${_target}" groundhog.unclassified)
+  endif()
+endforeach()
+
+# Requirements of the exact registered command, not of a similarly named alias.
+# The base model commands of --gui aliases remain headless. Self-hosted test
+# buses are not an ambient session-bus requirement. External tools are separate
+# capabilities: a display/private_bus profile does not imply nak or a keyring.
+foreach(_test
+    groundhog-shell groundhog-account-ui groundhog-conversation-list
+    groundhog-conversation-view groundhog-preferences groundhog-onboarding
+    groundhog-composer groundhog-e2e-dm groundhog-attachment-ui
+    groundhog-nip46-pair-dialog groundhog-poll-ui
+    groundhog-account-store-gui groundhog-notifier-gui groundhog-requests-gui
+    groundhog-conversation-info-gui groundhog-conversation-menu-gui
+    groundhog-nip46-pair-nak)
+  if(TEST "${_test}")
+    set_property(TEST "${_test}" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES display)
+  endif()
+endforeach()
+foreach(_test groundhog-nip46-nak groundhog-nip46-inbox-nak groundhog-nip46-pair-nak)
+  if(TEST "${_test}")
+    set_property(TEST "${_test}" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES nak)
+  endif()
+endforeach()
+foreach(_test groundhog-store-key-keyring groundhog-nip46-credentials-keyring
+    groundhog-nip46-pair-nak)
+  if(TEST "${_test}")
+    set_property(TEST "${_test}" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES gnome_keyring)
   endif()
 endforeach()
 

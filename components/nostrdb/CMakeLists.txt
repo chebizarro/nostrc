@@ -48,7 +48,22 @@ if (TARGET nostrdb)
 elseif (NOT ALLOW_STUB_NOSTRDB)
   list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
   include(NostrdbVendored)
-  nostrc_add_vendored_nostrdb(nostrdb_vendored "${NDB_VENDOR_PATH}")
+  get_filename_component(_nostrc_cmake_dir "${CMAKE_CURRENT_LIST_DIR}/../../cmake" ABSOLUTE)
+  include("${_nostrc_cmake_dir}/NostrcConfigureProvenance.cmake")
+  set(_nostrdb_compat "${CMAKE_CURRENT_BINARY_DIR}/nostrdb_vendored_compat")
+  if(NOT EXISTS "${NDB_VENDOR_PATH}/src/bolt11/talstr.h")
+    configure_file("${_nostrc_cmake_dir}/nostrdb-talstr.h.in"
+      "${_nostrdb_compat}/talstr.h" COPYONLY)
+    nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+      "${_nostrc_cmake_dir}/nostrdb-talstr.h.in" "${_nostrdb_compat}/talstr.h")
+  endif()
+  set(NOSTRDB_HEX_COMPAT_COMMENT "")
+  configure_file("${_nostrc_cmake_dir}/nostrdb-hex-compat.h.in"
+    "${_nostrdb_compat}/hex_compat.h" @ONLY)
+  nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+    "${_nostrc_cmake_dir}/nostrdb-hex-compat.h.in" "${_nostrdb_compat}/hex_compat.h")
+  unset(NOSTRDB_HEX_COMPAT_COMMENT)
+  nostrc_add_vendored_nostrdb(nostrdb_vendored "${NDB_VENDOR_PATH}" "${_nostrdb_compat}")
   target_link_libraries(nostrdb_storage PUBLIC nostrdb_vendored)
   message(STATUS "components/nostrdb: libnostr has no nostrdb backend; linking a private static nostrdb (nostrdb_vendored)")
 endif()
