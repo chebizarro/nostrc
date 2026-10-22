@@ -1,5 +1,133 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Pure remote identity/account configuration family — 2026-10-22
+
+**Base:** master `3c7c42c08cf1fade80da1355e4392847060abdb2`.
+Enrollment/selected-closure renewal **`5d616c6543d6bfc8f97ab85d2b9395c56bcd29a6`**.
+Internal inventory/tests only: **no shipped component version bump**. No product,
+CMake, profile, capability, engine, images, gitlinks, workflow or default changes.
+
+The next coherent pure family is the remote-identity/account configuration stack:
+
+| Exact registration | Exact build target | Ordinary check (`groundhog.` prefix) | File API target closure |
+|---|---|---|---:|
+| `groundhog-account-backends` | `test-groundhog-account-backends` | `identity_account_backends` | 24 |
+| `groundhog-account-remote-switch` | `test-groundhog-account-remote-switch` | `identity_account_remote_switch` | 24 |
+| `groundhog-nip46-credentials-list` | `test-groundhog-nip46-credentials-list` | `identity_credentials_list` | 22 |
+| `groundhog-nip46-session` | `test-groundhog-nip46-session` | `identity_nip46_session` | 19 |
+| `groundhog-signer-nip46` | `test-groundhog-signer-nip46` | `identity_signer_nip46` | 21 |
+
+Actual [session/signer targets](../../gnome/groundhog/CMakeLists.txt#L373),
+[account targets](../../gnome/groundhog/CMakeLists.txt#L678) and
+[credential-list target](../../gnome/groundhog/CMakeLists.txt#L1098), plus the
+[recording transport](../../gnome/groundhog/tests/app/gh-test-bunker.h#L4),
+[injected account discovery](../../gnome/groundhog/tests/app/test_account_backends.c#L56),
+[injected session factory](../../gnome/groundhog/tests/app/test_account_remote_switch.c#L185)
+and [credential backend](../../gnome/groundhog/tests/store/test_nip46_credentials_list.c#L109)
+establish the scope—not name-based enrollment. Private-bus identity/account/auth,
+wire/live-signer, account-relay/store, keyring/keychain and display/UI registrations
+remain excluded. No fake capabilities or new nonmember omissions are admitted.
+
+The [new export witness](../../tests/selection/fixtures/headless_identity_exports.json)
+retains actual command/artifact, source/transitive-target, descriptor, runtime and
+fixture relationships. None of these closures contains the application, legacy
+GTK resource archive, Groundhog UI or Marmot. Both existing setup registrations
+remain exactly `groundhog-test-homes` and `groundhog-test-gst-registry`. Account
+checks retain `groundhog-test-schemas` and declared schema inputs; isolation,
+timeouts, memory settings and original fatal-guard presence/absence are unchanged.
+Existing conservative descriptor owners remain explicit, including
+`groundhog.unclassified`; three command/artifact-resolved fallback descriptors
+retain empty explicit target lists. Check nodes cover actual source/descriptor
+owners, without adding dependencies to unclassified/execution catchalls. All four
+new test/witness/helper files immediately enter `selection.contract` inputs.
+UI/resource-only no-MDK behavior remains covered.
+
+### Exact selected-coverage renewal; immutable older receipts
+
+Only Groundhog's `primary_registrations` **16 → 21** and `required_closure`
+**18 → 23** add the exact five names. The same **33 omitted libgo registrations**,
+candidate hash, full universe, all **193 source-review inputs**, profile/toolchain
+and workflow fields, Grotto authority and sanitizer authority are unchanged.
+The [new renewal witness](../../tests/selection/fixtures/headless_identity_subset_renewal_20261022.json)
+owns only this five-name delta. All eleven earlier export/renewal fixtures are
+byte-identical to master, including the prior headless-model **16/18** receipt.
+Historical tests first project out only this exact later delta and check the full
+prior-record digest, then retain their original three-name/source-review guards.
+This does not freeze old historical arrays as current authority or loosen them to
+an arbitrary subset. The actual current all-ordinary resolution has exactly
+**21 primaries / 23 expected executions**, including the old three-test family
+and both setups.
+
+On fresh current authored x86 exports, production `admit`, actual CLI `resolve`
+and `validate_resolved` **PASS** for the five-check plan with exactly **seven
+expected executions**, no required capabilities, the same 33 omissions and 29
+mandatory omitted-build targets. An additional independently configured inventory
+with the new checks but old selected arrays makes actual CLI resolution and
+`admit` refuse **`authored primary/fixture closure changed`**. No hash/context
+rebinding substitutes for that negative proof.
+
+### Fresh full audits and physical diagnostics
+
+Master/current inventories are independently configured for each authored profile
+on committed `5d616c654`. Only independent build-root prefixes are normalized;
+source roots and node labels remain identical. Full target, registration,
+descriptor, runtime and input-hash sets agree within each pair.
+
+| Profile | Registrations / targets | Before → after, both FAIL | Removed / added | Identical full input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **8,923 → 8,918** | **5 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,146 → 9,146** | **0 / 0** | 1,700 |
+
+Exactly five unclaimed registrations disappear; no source/target audit failure is
+removed or reclassified. Groundhog still has **365 unclaimed + 8,552 missing-impact
++ one owner disagreement**. Grotto retains **369 unclaimed + 8,777 missing-impact**.
+Omitted-target audits remain full, not selected-only. Omissions stay
+`not_executed`, `complete=false`, `complete_gate_eligible=false`.
+
+Separately, a fresh authored x86 configure at base `3c7c42c08` and physical build
+of all five targets **PASS**; all five binaries are ELF x86-64. Direct CTest passes
+**7/7, zero skips, 7.90s**, with networking disabled and no display, Wayland or
+session-bus variables, under nonroot Linux/amd64 Rosetta using the original image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`.
+Read-only source/Git; no image build or hosted run. This is explicitly **raw
+diagnostic execution**, not profile/backend execution: build parallelism is 2,
+but CTest parallelism 1 differs from authored 2. Later metadata changes are not
+relabeled as a new physical family build/test.
+
+Evidence `/tmp/nostrc-headless-identity-20261022/comparison-summary.json`, SHA-256
+**`0699253e7ca576aec87ab873f24587631a9e9dc4423aedaa78cf14dda1e34e9e`**,
+binds full failed audits, exact deltas, exports, current/old CLI guard results and
+authority proof. `focused-proof.json`, SHA-256
+**`922b6f5d8faacd7ba3817493862a9dbe0dcbfa777952b732227539ccde0be4ad`**,
+binds physical build/CTest logs and ELF evidence. Initial missing/in-progress
+submodule setup refusals, development negative-test errors and the first negative
+admission hitting inventory identity before the closure guard are retained.
+The first Grotto configure correctly refused PATH-selected Blueprint 0.12.0;
+separate fresh Grotto contexts select the existing pinned 0.22.2 in
+`/usr/local/bin`. Groundhog contexts retain their original `/usr/bin:/bin` phase
+environment and strict reload checks. No stale export overwrite, blind rehash,
+profile/toolchain relaxation or failed-attempt erasure.
+
+### Gates and remaining acceptance
+
+- At `5d616c654`: **511/511 selector PASS, zero skips, 276.574s**, including
+  **15/15** combined headless-family and **14/14** ordinary-subset regressions.
+- Fresh clean safe native macOS/arm64 default-all configure/build **PASS at
+  `5d616c654`**, using libsecret/secret-service safety flags, parallelism 4 and
+  default-off Groundhog. **Full native CTest NOT RUN** for inventory-only work;
+  no previous native test pass is claimed current.
+- Four statics, actionlint and whitespace **PASS**. One bounded actual inline
+  metadata/projection review reports no concrete blockers after discarding an
+  app-supplied stale review package; it does not attest full-profile acceptance.
+- Full selected-profile backend execution, all-target Linux build, physical
+  completion of all 29 omitted-target closures and production postbuild header
+  audits remain **NOT RUN**. Full preaudits still block gated execution. No
+  profile-union, hosted/W11, complete-gate, release or migration-completion credit.
+- `.2` remains open; `.9` remains in progress. Official `bd export --all` preserves
+  all issue/memory rows. `bd dolt pull` refuses `no remote`; no sync success.
+  No `.5`/ledger/counter refresh, default/release/protection cutover, push or merge.
+  Parent owns verification, landing and cleanup.
+
 ## Exact ordinary headless store/conversation family — 2026-10-22
 
 **Base:** master `d953c37fb`. Enrollment `c70951f30a39386dd967ebe60c8a445d8b3eb25d`;

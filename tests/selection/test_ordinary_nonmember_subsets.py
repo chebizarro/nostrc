@@ -255,6 +255,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             witness = fixture["profiles"][pid]
             current = renewal["profiles"][pid]
             if pid == "groundhog.linux":
+                from headless_identity_projection import before_identity_family
+                contract = before_identity_family(contract)
                 # The later selected-family renewal adds coverage, not omissions.
                 # Project only those exact arrays to inspect this older receipt.
                 path = "tests/selection/fixtures/headless_model_subset_renewal_20261022.json"

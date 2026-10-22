@@ -166,13 +166,14 @@ class HeadlessModelMembership(unittest.TestCase):
         import test_selection_subset as subset
         path = 'tests/selection/fixtures/headless_model_subset_renewal_20261022.json'
         renewal = json.loads((ROOT / path).read_text())
-        contract = subset.contracts(self.policy)[PROFILE]
+        from headless_identity_projection import before_identity_family
+        contract = before_identity_family(subset.contracts(self.policy)[PROFILE])
         family = sorted(CHECKS.values())
         self.assertEqual(renewal['added_primary'], family)
         authored = sorted(name for check in self.policy['checks'].values()
                           if check.get('kind') == 'ctest'
                           for name in check.get('ctest_tests', {}).get(PROFILE, []))
-        self.assertEqual(contract['primary_registrations'], authored)
+        self.assertEqual(subset.contracts(self.policy)[PROFILE]['primary_registrations'], authored)
         previous = copy.deepcopy(contract)
         for key in ('primary_registrations', 'required_closure'):
             self.assertEqual(contract[key], sorted(renewal['previous'][key] + family))
