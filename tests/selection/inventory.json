@@ -4718,7 +4718,8 @@
       "kind": "ctest",
       "nodes": [
         "groundhog.media",
-        "execution.groundhog"
+        "execution.groundhog",
+        "groundhog.unclassified"
       ],
       "profiles": [
         "groundhog.linux"

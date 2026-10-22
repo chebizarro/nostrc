@@ -1,5 +1,68 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Ordinary media ownership disagreement — 2026-10-22
+
+**Base:** `93970ed48fb5711193bc73bd0b304b9e81e6f25f`.
+**Implementation/tested commit:** `ccdbd77a2bf6210bc99c8f57f7077801b6c00f0c`.
+Only the ordinary `groundhog.media` check gains the existing
+`groundhog.unclassified` owner. No graph edges, source reclassification,
+descriptor, membership, profile, authority/source-review renewal, workflow,
+default or release-mode changes. **No component version bump:** internal
+metadata/tests/docs only.
+
+The unchanged [fallback descriptor](../../gnome/groundhog/TestInventory.cmake#L191)
+assigns `groundhog-media` to `groundhog.unclassified`, with empty explicit targets;
+CTest command/artifact mapping resolves `test-groundhog-media`. Its actual
+[media/conversation links](../../gnome/groundhog/CMakeLists.txt#L3142) and
+[net → recipient link](../../gnome/groundhog/CMakeLists.txt#L1986) compile twelve
+inputs with that existing owner: ten conversation sources (including later
+`gh-nip17-file.c` and `gh-attachment-transfer.c` additions), `gh-recipient.c`
+and `tests/media/test_media.c`. The check omitted this owner; neither a blanket
+graph edge nor a descriptor/source-authority rewrite is needed.
+
+Fresh independent nonroot Linux/amd64 Rosetta configurations/preaudits ran at
+base and implementation commits respectively, in the unchanged reviewed image
+`sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724`,
+with networking disabled and pinned Blueprint 0.22.2 available. Only independent
+build-root prefixes are normalized; source roots/node labels are identical.
+Full target, test, descriptor, runtime and input-hash sets agree per pair.
+
+| Profile | Registrations / targets | Before → after, both FAIL | Exact removed / added | Identical input hashes |
+|---|---:|---:|---:|---:|
+| `groundhog.linux` | 422 / 552 | **8,918 → 8,905** | **13 / 0** | 1,316 |
+| `grotto.linux` | 461 / 603 | **9,146 → 9,146** | **0 / 0** | 1,700 |
+
+Removed: exactly one `check_descriptor_owner_disagreement` and twelve
+`missing_impact_edge` source findings, all for `groundhog-media`, missing only
+`groundhog.unclassified`. Remaining Groundhog: **365 unclaimed + 8,540
+missing-impact**. Remaining Grotto: **369 unclaimed + 8,777 missing-impact**.
+Both full audits still block execution. Exact33 omission records, selected/fixture
+arrays and all 193 reviewed source hashes per profile are unchanged. All 29
+omitted-target closures remain required but **NOT freshly built**; omissions
+remain `not_executed`, `complete=false`, `complete_gate_eligible=false`.
+
+Evidence: `/tmp/nostrc-owner-disagreement-20261022/comparison-summary.json`, SHA-256
+**`6ea373e019973a62cd804275c4a78024b26a1deeb0b475281c2b58d163bcb35f`**,
+binds raw full failed preaudits/exports and exact removed/added finding sets.
+`media-source-witness.json`, SHA-256
+**`e2ed80d5ea828a19c06137cc8e177be510a485c545e7205e9c72c9bc8ae54ec4`**,
+retains actual compiled-target/source ownership and source hashes. The earlier
+headless-identity receipt was inspected/hash-checked, not relabeled as fresh proof.
+
+At `ccdbd77a2`: **513/513 selector PASS, zero skips, 240.064s**; focused shared-edge
+suite **4/4 PASS**. New miniature replays authored CMake statements and unchanged
+descriptor with stub bodies; remove-owner negatives restore descriptor/source and
+postbuild-header gaps while preserving unrelated unclaimed/runtime failures and
+full input hashes. It is metadata regression proof, **not product execution**.
+Clean safe native default-all configure/build, read-only keychain guards, inventory
+validation, four statics, actionlint and whitespace **PASS**. Native Groundhog stays
+OFF; libsecret/secret-service safety flags remain set. **Full native CTest, actual
+selected-profile execution, all-target Linux/omitted builds and production postbuild
+header audits NOT RUN.** One bounded actual inline review found no blockers after
+rejecting stale packaged context. Development test/harness failures remain retained.
+No full-profile, hosted/W11, release, cutover or acceptance completion is claimed;
+`.2` remains open and `.9` in progress. Historical receipts/ledger remain unchanged.
+
 ## Pure remote identity/account configuration family — 2026-10-22
 
 **Base:** master `3c7c42c08cf1fade80da1355e4392847060abdb2`.

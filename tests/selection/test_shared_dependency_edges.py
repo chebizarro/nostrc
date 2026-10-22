@@ -158,3 +158,128 @@ class SharedDependencyEdges(Project):
             self.assertFalse(any(name.startswith(("mdk08.", "mdk011.")) for name in plan["selected_checks"]))
         plan = s.make_plan(self.policy, [change(EDGES[0][2])], head="a" * 40, base="b" * 40, context="ci")
         self.assertIn("groundhog.mls_service", plan["selected_checks"])
+
+
+class OrdinaryMediaOwnership(Project):
+    """Replay authored target/descriptor metadata; stub bodies are not product proof."""
+
+    def setUp(self):
+        super().setUp()
+        self.policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        source = (ROOT / "gnome/groundhog/CMakeLists.txt").read_text()
+
+        def statement(command, target):
+            matches = re.findall(r"\b" + command + r"\(" + re.escape(target) + r"\s+[^()]*\)", source)
+            self.assertEqual(len(matches), 1, (command, target))
+            return matches[0]
+
+        statements = [
+            statement("add_library", "groundhog-conversations"),
+            *re.findall(r"\btarget_sources\(groundhog-conversations\s+[^()]*\)", source),
+            statement("add_library", "groundhog-media"),
+            statement("target_sources", "groundhog-media"),
+            statement("target_link_libraries", "groundhog-media"),
+            statement("add_executable", "test-groundhog-media"),
+            statement("target_link_libraries", "test-groundhog-media"),
+            statement("add_test", "NAME groundhog-media"),
+            statement("set_tests_properties", "groundhog-media"),
+        ]
+        self.assertEqual(len(statements), 10)
+        gh = self.root / "gnome/groundhog"
+        gh.mkdir(parents=True)
+        (gh / "TestInventory.cmake").write_bytes((ROOT / "gnome/groundhog/TestInventory.cmake").read_bytes())
+        self.inputs = sorted(set(re.findall(r"(?:src|tests)/[\w/.-]+\.c", "\n".join(statements))))
+        self.unclassified = []
+        for path in self.inputs:
+            relative = "gnome/groundhog/" + path
+            if s.classify(self.policy, relative)["nodes"] == ["groundhog.unclassified"]:
+                self.unclassified.append(relative)
+            target = gh / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if path == "tests/media/test_media.c":
+                target.write_text("int main(void) { return 0; }\n")
+            elif path == "src/app/gh-agent-event.c":
+                target.with_suffix(".h").write_text("#define FIXTURE_VALUE 1\n")
+                target.write_text('#include "gh-agent-event.h"\nint fixture_value = FIXTURE_VALUE;\n')
+            else:
+                target.write_text("static int unused_fixture_body;\n")
+        (gh / "CMakeLists.txt").write_text("\n".join([
+            "add_library(groundhog-net INTERFACE)", "add_library(groundhog-store INTERFACE)",
+            "add_library(OpenSSL::Crypto INTERFACE IMPORTED)", *statements,
+            "include(TestInventory.cmake)",
+        ]) + "\n")
+        (self.root / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.22)
+project(ordinary_media_ownership C)
+enable_testing()
+include(cmake/NostrcTestInventory.cmake)
+add_subdirectory(gnome/groundhog)
+add_executable(omitted main.c)
+add_test(NAME omitted COMMAND omitted)
+nostrc_describe_test(omitted OWNER groundhog.unclassified TARGETS omitted INPUTS vector.txt)
+nostrc_finalize_test_inventory()
+''')
+        check = copy.deepcopy(self.policy["checks"]["groundhog.media"])
+        check.update(profiles=["synthetic"], ctest_tests={"synthetic": ["groundhog-media"]})
+        self.inventory = {
+            "nodes": copy.deepcopy(self.policy["nodes"]),
+            "path_rules": copy.deepcopy(self.policy["path_rules"]) + [
+                {"exact": path, "nodes": [], "effect": "global"}
+                for path in ("main.c", "shared.h", "CMakeLists.txt")
+            ] + [{"exact": "vector.txt", "nodes": ["vectors"]}],
+            "checks": {"groundhog.media": check},
+        }
+        self.inventory["nodes"]["vectors"] = {"depends_on": []}
+
+    def test_authored_descriptor_and_transitive_source_header_audits(self):
+        realized = self.configure()
+        tests, descriptors = r._test_maps(realized)
+        descriptor = descriptors["groundhog-media"]
+        self.assertEqual(descriptor["owner"], ["groundhog.unclassified"])
+        self.assertEqual(descriptor["targets"], [])
+        closure = r._target_closure(r._mapped_targets(tests["groundhog-media"], descriptor, realized), realized)
+        actual = {v["path"] for key in closure for v in realized["targets"][key]["sources"]}
+        self.assertEqual(actual, {str(self.root / "gnome/groundhog" / path) for path in self.inputs})
+        self.assertEqual(len(self.unclassified), 11)
+        before_build = r.check_inputs(self.inventory, realized)
+        self.assertEqual({g["kind"] for g in before_build["gaps"]},
+                         {"unclaimed_registration", "missing_impact_edge"})
+        self.assertTrue(all(g.get("test") == "omitted" for g in before_build["gaps"]))
+        self.build_all()
+        good = self.audit(realized)
+        self.assertGreater(good["header_entries"], 0)
+        self.assertEqual(good["gaps"], before_build["gaps"])
+        self.assertFalse(good["passed"])
+        broken = copy.deepcopy(self.inventory)
+        broken["checks"]["groundhog.media"]["nodes"].remove("groundhog.unclassified")
+        for after_build in (False, True):
+            with self.subTest(after_build=after_build):
+                bad = r.check_inputs(broken, realized, after_build=after_build)
+                reference = good if after_build else before_build
+                self.assertEqual(bad["input_hashes"], reference["input_hashes"])
+                self.assertEqual(bad["header_entries"], reference["header_entries"])
+                self.assertEqual([g for g in bad["gaps"] if g.get("test") == "omitted"], good["gaps"])
+                media = [g for g in bad["gaps"] if g.get("test") == "groundhog-media"]
+                self.assertEqual([g for g in media if g["kind"] == "check_descriptor_owner_disagreement"], [
+                    {"kind": "check_descriptor_owner_disagreement", "test": "groundhog-media",
+                     "owners": ["groundhog.unclassified"]}])
+                self.assertEqual({g["input"] for g in media if g.get("input_kind") == "source"}, set(self.unclassified))
+                headers = {g["input"] for g in media if g.get("input_kind") == "header"}
+                self.assertEqual(headers, set(self.unclassified) | {"gnome/groundhog/src/app/gh-agent-event.h"}
+                                 if after_build else set())
+        self.assertEqual(r.load_realization(self.build, self.identity), realized)
+
+    def test_exact_check_owner_and_existing_selector_boundaries(self):
+        check = self.policy["checks"]["groundhog.media"]
+        self.assertEqual(check["nodes"], ["groundhog.media", "execution.groundhog", "groundhog.unclassified"])
+        self.assertEqual(check["profiles"], ["groundhog.linux"])
+        self.assertEqual(check["ctest_tests"], {"groundhog.linux": ["groundhog-media"]})
+        self.assertEqual(check["build_targets"], [])
+        for owner in ("groundhog.unclassified", "execution.groundhog"):
+            self.assertEqual(self.policy["nodes"][owner]["depends_on"], [])
+        for path in self.unclassified + ["gnome/groundhog/src/ui/gh-recipient.c"]:
+            impacted = set(s.impact_closure(self.policy, s.classify(self.policy, path)["nodes"]))
+            self.assertTrue(set(check["nodes"]) & impacted)
+            self.assertFalse((set(check["nodes"]) - {"groundhog.unclassified"}) & impacted)
+        for path in ("nostr-gtk/data/ui/gnostr-composer.blp", "nostr-gtk/src/note-card-binding-ctx.h"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
+            self.assertFalse(any(name.startswith(("mdk08.", "mdk011.")) for name in plan["selected_checks"]))
