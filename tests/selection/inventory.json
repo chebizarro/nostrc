@@ -4806,6 +4806,95 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "core.default_build": {
+      "build_scope": "default",
+      "build_targets": [],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "build_contract",
+      "nodes": [
+        "execution.core"
+      ],
+      "profiles": [
+        "core.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "working_directory": "{source}"
+    },
+    "groundhog.default_build": {
+      "build_scope": "default",
+      "build_targets": [],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "build_contract",
+      "nodes": [
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "working_directory": "{source}"
+    },
+    "grotto.default_build": {
+      "build_scope": "default",
+      "build_targets": [],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "build_contract",
+      "nodes": [
+        "execution.grotto"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "working_directory": "{source}"
+    },
+    "libgo.default_build": {
+      "build_scope": "default",
+      "build_targets": [],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "build_contract",
+      "nodes": [
+        "execution.libgo"
+      ],
+      "profiles": [
+        "libgo.linux.asan",
+        "libgo.macos.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "working_directory": "{source}"
+    },
     "grotto.build_contract": {
       "build_targets": [
         "signer-tests"
@@ -6261,7 +6350,10 @@
         "{source}/tests/selection/headless_identity_projection.py",
         "{source}/tests/selection/fixtures/headless_identity_exports.json",
         "{source}/tests/selection/fixtures/headless_identity_subset_renewal_20261022.json",
-        "{source}/tests/selection/test_workflow_contracts.py"
+        "{source}/tests/selection/test_workflow_contracts.py",
+        "{source}/tests/selection/test_workflow_closeout.py",
+        "{source}/scripts/test_selection_keyring.py",
+        "{source}/tests/custody/test_keyring_runtime.py"
       ],
       "working_directory": "{source}"
     },
@@ -11212,6 +11304,14 @@
       "nodes": [
         "build.global"
       ],
+      "prefix": "docs/reviews/dependency-aware-testing-ci-2026-10-22-hosted-evidence.json",
+      "reason": "Source-linked hosted evidence data added by exact batch C; conservative broad coverage, not prose-only exclusion."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
       "prefix": "docs/reviews/nostr-profile-avatar-2026-09-22-greeter-session.png",
       "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
     },
@@ -12183,7 +12283,9 @@
       "build_type": "Debug",
       "capabilities": [
         "display",
-        "private_bus"
+        "private_bus",
+        "nak",
+        "gnome_keyring"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -12277,7 +12379,9 @@
       "build_type": "Debug",
       "capabilities": [
         "display",
-        "private_bus"
+        "private_bus",
+        "nak",
+        "gnome_keyring"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -12790,7 +12894,7 @@
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
       "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15",
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
@@ -12798,7 +12902,7 @@
     ".github/workflows/dependency-tests.yml:mdk011": {
       "matrix_source": "",
       "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15",
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
@@ -12825,7 +12929,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "0dcd991324ca0c9834458c71cdd2403b4b539e88f494c4a9b3e09452cc30680a",
       "unsupported_reason": "Reusable broad core call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:libgo": {
       "matrix_source": "",
@@ -12833,7 +12937,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "98525fcfd49150135b70cc75144268f68091db184fc365bc3a0cc1d8191df281",
       "unsupported_reason": "Reusable broad libgo call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:hanami": {
       "matrix_source": "",
@@ -12841,7 +12945,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "cbd05c97a115341e7a8d23ece98e04d479feae5f3daaa8815c71b9975cb199d5",
       "unsupported_reason": "Reusable broad hanami call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:gi": {
       "matrix_source": "",
@@ -12849,7 +12953,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "c17a6372be52ac077f2c2f0b01e834e0a44e1e38ef5a340a9235c9318cea962a",
       "unsupported_reason": "Reusable broad gi call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:groundhog": {
       "matrix_source": "",
@@ -12857,7 +12961,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e19910063a80b07dc663d6c991eabc15deba70176d8d97058f56abeba6d98de7",
       "unsupported_reason": "Reusable broad groundhog call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:grotto": {
       "matrix_source": "",
@@ -12865,7 +12969,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "2692fb15aa3047e6682e528ec600b622a9155806623774a03f5f16cc991290d0",
       "unsupported_reason": "Reusable broad grotto call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:nip55l": {
       "matrix_source": "",
@@ -12873,7 +12977,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "c62d6a39d23049556fa29439a95160a4a954a1e1878203d8cb5ef6454b30dd48",
       "unsupported_reason": "Reusable broad nip55l call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:homed": {
       "matrix_source": "",
@@ -12881,7 +12985,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6fe402347dd6de6f071c7525670ff2f7c2f068b252a712cd9ce82c1b1a16e47f",
       "unsupported_reason": "Reusable broad homed call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:signet": {
       "matrix_source": "",
@@ -12889,7 +12993,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "338abe5f46730202699b8a593b75f642a625c5891798bc96f25fa19add1be28a",
       "unsupported_reason": "Reusable broad signet call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:static": {
       "matrix_source": "",
@@ -12897,7 +13001,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "482e7dece7406a0ffd28ba84d940ad3fa1907f32842fb8da91bb02402cc1e913",
       "unsupported_reason": "Reusable broad static call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:appimage": {
       "matrix_source": "",
@@ -12905,7 +13009,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "228d1aac3314e7782fbab0f73dff3309c9cea759cd5ef0c581d1860ba69e6174",
       "unsupported_reason": "Reusable broad appimage call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:windows": {
       "matrix_source": "",
@@ -12913,7 +13017,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "a1bb05cc88bc760a4b11a19996c8a78a2862ada511281e17ac36ff182134c73e",
       "unsupported_reason": "Reusable broad windows call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:bp": {
       "matrix_source": "",
@@ -12921,7 +13025,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "357ce9ed8fbc0dfd17a722301604402ad043f498d7dc89adafcffbf40f16d48c",
       "unsupported_reason": "Reusable broad bp call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:bp_extended": {
       "matrix_source": "",
@@ -12929,7 +13033,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "d376286ba8df8852ffbf71105a6e15ff2557558534f9004103a70da1d383346b",
       "unsupported_reason": "Reusable broad bp_extended call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:fuzz": {
       "matrix_source": "",
@@ -12937,7 +13041,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "14b9e8ec0e294129f03ee5b8cb6c3d6878a31576147dbcffa1b284afdbceac98",
       "unsupported_reason": "Reusable broad fuzz call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:mdk08": {
       "matrix_source": "",
@@ -12945,7 +13049,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "7738defce96ac43486ef2c617e430eb01fbb85b66f4bb9561dada27e4e8735c7",
       "unsupported_reason": "Reusable broad mdk08 call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:mdk011": {
       "matrix_source": "",
@@ -12953,15 +13057,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "33ebffc435a52aef630982d95d81cf743ad64517dc1ddc5e78f07a6a69775bf5",
       "unsupported_reason": "Reusable broad mdk011 call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-broad.yml:broad_gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "a972cdd2b0d1802fa232d4775cbb5a25eef12d84c407b2bcefae3e0715523d9e",
+      "source_sha256": "b272752a5abd1d36645496aeb41566adfcbc63a40f4ee2791d9f7517f39ca565",
       "unsupported_reason": "Reusable broad broad_gate call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
-      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
+      "workflow_sha256": "310039a15580519bf4669f8418d9b98610c7a08baadfb4fedfb1dce6a252e497"
     },
     ".github/workflows/dependency-tests.yml:core_asan": {
       "coverage_gap": "workflow_profile_union",
@@ -12969,7 +13073,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -12977,7 +13081,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -12985,7 +13089,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -12993,7 +13097,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -13001,7 +13105,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -13009,7 +13113,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -13017,7 +13121,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -13025,7 +13129,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -13033,7 +13137,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -13041,7 +13145,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -13049,7 +13153,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "208e3031a4863b5758aeb0843e73a1f16495c1f40359c099e03b37e16e0404ac",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -13057,23 +13161,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "e108e2dd6f31a94f39602d5a9159c3f0884cd0cd7d38268e607f2ede140dd070",
+      "source_sha256": "0d66cb4e7558d91115a9d3a61a55d7378bbfc85a3ca02304bc812f1789007ab3",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "a18010ceab7be2d96632ef8266c24fcb2e71e970dbdb4c09905ad17265f45f15"
+      "workflow_sha256": "5cfd917146d47858642b20a3050a411dad4b7e55f46e6f3fd1389c64f2ee3a41"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "ff0da0aa44a202566b405dceea900d039c7ca15ada8c2dc0589b70ed8308d345",
+      "source_sha256": "d6bd9bb290f026e27a051db3b49ff11a00fb3e2fe90288d2fbc20cffe20a240e",
       "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
-      "workflow_sha256": "2e22c9bdf8f1a01e5ce88cd3529fe863e490549812d5939e3d56c9fb56e12ebd"
+      "workflow_sha256": "931ddacffa97db567110ae19dd2d2eaa3bfc7c804da4f85483a30e78e6d1979a"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -13360,15 +13464,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "58314920e2fb6bb5770f179d956a0b351b26d5d14d354af87f9ab98a8cc5e626"
+      "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "91b074efcb6d38fc9648815b070f8815c4449c81b302c65069b93baa6e7e02d6",
+      "source_sha256": "748c9202eba36b36e2468a6f773380b8928d0b24dba4db9a7360e289f9f9bada",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "58314920e2fb6bb5770f179d956a0b351b26d5d14d354af87f9ab98a8cc5e626"
+      "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
     },
     ".github/workflows/nostrc-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
@@ -13529,9 +13633,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "cf81f0ac0c449c16ac22813a02accc041e759b3eb4440342c49947f98e83d9d9",
+      "source_sha256": "b559612b864c18579f98b4bafbaaa26cc65783d08ddae23e02ab37e20a3d035a",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "2ca79e510d276305b55cfa2e6f58505390c671a4147495d5c651992df4be63ed"
+      "workflow_sha256": "1514feb9fac686f18bb07cc20dd5c5c2ba5d2a1f6fc1c983aae7ade3bc8de2f0"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
@@ -14049,7 +14153,7 @@
         "groundhog-store-key-keyring",
         "groundhog-tls-resumption"
       ],
-      "profile_hash": "f024669154f7c94561f96174c2b0a35ae2713cb138d1efeabbc64e3497e0b63e",
+      "profile_hash": "a08935a71aaa3686635c38f23589ed57b72a1e185b8ce9edc3ed1554e3f1cd53",
       "registration_universe": [
         "GoChannelCloseTest",
         "GoChannelIncremental",
@@ -14839,7 +14943,7 @@
         "test_nip49_vectors",
         "test_roundtrip"
       ],
-      "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
+      "profile_hash": "dfc396b5015213ca6a7c2706341afe8ec7310eaab8a5b5edbef7dfec09171ab0",
       "registration_universe": [
         "GoChannelCloseTest",
         "GoChannelIncremental",
