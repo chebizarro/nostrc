@@ -389,6 +389,74 @@ test_remote_permissions_queue_and_cancel(void)
 }
 
 #ifdef GH_REMOTE_MATRIX_NIP29
+/* The transport is entirely in-process; host connectivity must not decide
+ * whether its outbox runs. Start offline to prove the queued-to-online edge. */
+#define MATRIX_TYPE_NETWORK (matrix_network_get_type())
+G_DECLARE_FINAL_TYPE(MatrixNetwork, matrix_network, MATRIX, NETWORK, GObject)
+
+struct _MatrixNetwork {
+  GObject parent_instance;
+  gboolean available;
+};
+
+enum { NETWORK_PROP_0, NETWORK_PROP_AVAILABLE, NETWORK_PROP_METERED,
+       NETWORK_PROP_CONNECTIVITY };
+
+static gboolean
+matrix_network_initable_init(GInitable *initable, GCancellable *cancel, GError **error)
+{
+  (void)initable; (void)cancel; (void)error;
+  return TRUE;
+}
+
+static void
+matrix_network_initable_iface_init(GInitableIface *iface)
+{
+  iface->init = matrix_network_initable_init;
+}
+
+static void
+matrix_network_iface_init(GNetworkMonitorInterface *iface)
+{
+  (void)iface;
+}
+
+G_DEFINE_FINAL_TYPE_WITH_CODE(MatrixNetwork, matrix_network, G_TYPE_OBJECT,
+  G_IMPLEMENT_INTERFACE(G_TYPE_INITABLE, matrix_network_initable_iface_init)
+  G_IMPLEMENT_INTERFACE(G_TYPE_NETWORK_MONITOR, matrix_network_iface_init))
+
+static void
+matrix_network_get_property(GObject *object, guint prop_id, GValue *value,
+                            GParamSpec *pspec)
+{
+  MatrixNetwork *self = MATRIX_NETWORK(object);
+  switch (prop_id) {
+  case NETWORK_PROP_AVAILABLE: g_value_set_boolean(value, self->available); break;
+  case NETWORK_PROP_METERED: g_value_set_boolean(value, FALSE); break;
+  case NETWORK_PROP_CONNECTIVITY:
+    g_value_set_enum(value, self->available ? G_NETWORK_CONNECTIVITY_FULL
+                                          : G_NETWORK_CONNECTIVITY_LOCAL);
+    break;
+  default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+  }
+}
+
+static void
+matrix_network_class_init(MatrixNetworkClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  object_class->get_property = matrix_network_get_property;
+  g_object_class_override_property(object_class, NETWORK_PROP_AVAILABLE, "network-available");
+  g_object_class_override_property(object_class, NETWORK_PROP_METERED, "network-metered");
+  g_object_class_override_property(object_class, NETWORK_PROP_CONNECTIVITY, "connectivity");
+}
+
+static void
+matrix_network_init(MatrixNetwork *self)
+{
+  self->available = FALSE;
+}
+
 static gpointer
 group_publish_open(GhRelayPublish *publish, const gchar *url,
                    const gchar *event_json, gpointer data, GError **error)
@@ -448,8 +516,10 @@ test_remote_nip29_outbox(void)
   g_assert_true(gh_store_nip29_save_group(store, RELAY, "matrix", "", NULL,
     "Matrix", &conversation_id, &error));
   g_assert_no_error(error);
+  g_autoptr(MatrixNetwork) network = g_object_new(MATRIX_TYPE_NETWORK, NULL);
   GhNip29OutboxConfig config = {
     .store = store, .accounts = f.accounts,
+    .network = G_NETWORK_MONITOR(network),
     .transport = &group_publish_transport, .transport_data = &f,
   };
   g_autoptr(GhNip29Outbox) outbox = gh_nip29_outbox_new(&config, &error);
@@ -469,6 +539,14 @@ test_remote_nip29_outbox(void)
     unsigned_json, &error);
   g_assert_no_error(error);
   g_assert_nonnull(op);
+  while (g_main_context_iteration(NULL, FALSE))
+    ;
+  g_assert_cmpint(gh_nip29_op_get_result(op), ==, GH_NIP29_OP_QUEUED);
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 0);
+  g_assert_cmpuint(f.group_publishes->len, ==, 0);
+  network->available = TRUE;
+  g_object_notify(G_OBJECT(network), "network-available");
+  g_signal_emit_by_name(network, "network-changed", TRUE);
   gboolean expired = FALSE;
   guint timer = g_timeout_add_seconds(10, deadline, &expired);
   while (gh_nip29_op_get_result(op) != GH_NIP29_OP_ACCEPTED && !expired) {
