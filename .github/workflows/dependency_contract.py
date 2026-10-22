@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Same-run Actions orchestration; selection and receipt policy stay in test_selection."""
 import argparse
+import hashlib
 import json
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 
@@ -16,10 +20,15 @@ LANES = {"core.linux": "core", "core.linux.asan": "core_asan", "core.macos.asan"
          "groundhog.linux.sanitizers": "groundhog_sanitizers", "groundhog.mdk08": "mdk08",
          "groundhog.mdk011": "mdk011",
          "libgo.linux.asan": "libgo", "libgo.macos.asan": "libgo_native", "static.policy": "policy"}
-FAMILIES = ("nostrc-ci", "libgo-ci", "libhanami-ci", "libnostr-gi", "groundhog-ci", "grotto-ci",
-            "nip55l-libsecret-ci", "nostr-homed-ci", "signet-ci", "static-checks", "gnostr-appimage",
-            "windows-validation", "bp-matrix", "bp-matrix-nightly", "grotto-fuzz", "marmot-mdk-interop",
-            "marmot-mdk011-interop")
+BROAD_FAMILIES = {
+    "core": "nostrc-ci", "libgo": "libgo-ci", "hanami": "libhanami-ci", "gi": "libnostr-gi",
+    "groundhog": "groundhog-ci", "grotto": "grotto-ci", "nip55l": "nip55l-libsecret-ci",
+    "homed": "nostr-homed-ci", "signet": "signet-ci", "static": "static-checks",
+    "appimage": "gnostr-appimage", "windows": "windows-validation", "bp": "bp-matrix",
+    "bp_extended": "bp-matrix-nightly", "fuzz": "grotto-fuzz", "mdk08": "marmot-mdk-interop",
+    "mdk011": "marmot-mdk011-interop",
+}
+FAMILIES = tuple(BROAD_FAMILIES.values())
 PUBLISHER_JOBS = {
     "main": ("build-source", "build-linux", "build-linux-daemon-tcp", "build-appimage-gnostr",
              "build-snap-gnostr", "build-snap-signer", "build-snap-daemon", "build-flatpak",
@@ -69,6 +78,12 @@ def verify_checkout(repo, sha):
     selection.require(selection.commit_sha(repo, "HEAD") == sha, "checkout is not requested SHA")
 
 
+def verify_workflow_revision(sha):
+    workflow_sha = os.environ.get("GITHUB_WORKFLOW_SHA")
+    selection.require(workflow_sha == sha, "executing workflow revision differs from requested source SHA")
+    return workflow_sha
+
+
 def check_jobs(plan, needs):
     expected = set(plan["expected_lane_ids"])
     selection.require(expected <= LANES.keys(), "profile has no Actions worker; coverage incomplete")
@@ -83,16 +98,76 @@ def check_jobs(plan, needs):
     return errors, {lane: needs.get(LANES[lane], {}).get("result", "missing") for lane in expected}
 
 
-def aggregate(repo, policy, plan, needs, receipts):
+def ordinary_tool_setup(sha):
+    profile = os.environ["PROFILE"]
+    selection.require(profile in {"groundhog.linux", "grotto.linux"}, "ordinary tool setup is not this profile's authority")
+    tools = {}
+    for capability, executable in {"nak": "nak", "gnome_keyring": "gnome-keyring-daemon"}.items():
+        path = shutil.which(executable)
+        selection.require(path is not None, f"required ordinary tool is unavailable: {executable}")
+        resolved = Path(path).resolve()
+        version = subprocess.run([str(resolved), "--version"], capture_output=True, text=True, timeout=15)
+        selection.require(version.returncode == 0, f"required ordinary tool version failed: {executable}")
+        if capability == "nak":
+            selection.require(re.search(r"(?:^|\s)v?0\.19\.7(?:\s|$)", version.stdout + version.stderr),
+                              "ordinary nak does not match pinned v0.19.7")
+        tools[capability] = {"executable": executable, "path": str(resolved),
+                             "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+                             "version_stdout": version.stdout, "version_stderr": version.stderr}
+    return {"schema_version": 1, "kind": "ordinary_tool_setup_v1", "profile": profile,
+            "source_identity": {"kind": "committed", "sha": sha}, "workflow_sha": verify_workflow_revision(sha),
+            "plan_id": os.environ["PLAN_ID"], "run_id": os.environ["GITHUB_RUN_ID"],
+            "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "setup_verified": True, "tools": tools,
+            "scope": "executables_only_not_bus_display_or_profile_acceptance"}
+
+
+def broad_aggregate(repo, sha, needs):
+    """Retain family conclusions, not an attestation of individual registrations/advisories."""
+    paths = [f".github/workflows/{name}.yml" for name in (*FAMILIES, "dependency-broad")]
+    paths.append(".github/workflows/dependency_contract.py")
+    conclusions = {job: needs.get(job, {}).get("result", "missing") for job in BROAD_FAMILIES}
+    errors = [f"{job}: expected success, observed {result}"
+              for job, result in conclusions.items() if result != "success"]
+    if set(needs) != set(BROAD_FAMILIES):
+        errors.append("broad family set differs from the required union")
+    return {"schema_version": 1, "kind": "broad_family_conclusions_v1",
+            "scope": "family_conclusions_not_registration_coverage",
+            "source_identity": {"kind": "committed", "sha": sha},
+            "workflow_sha": verify_workflow_revision(sha),
+            "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+            "workflow_sha256": {path: hashlib.sha256((Path(repo) / path).read_bytes()).hexdigest() for path in paths},
+            "family_conclusions": conclusions, "passed": not errors, "errors": errors}
+
+
+def broad_receipt_errors(repo, plan, broad_receipt):
+    if plan["effective_mode"] != "broad":
+        return ["unexpected broad family receipt for affected plan"] if broad_receipt is not None else []
+    if not isinstance(broad_receipt, dict):
+        return ["required same-run broad family receipt is missing"]
+    conclusions = broad_receipt.get("family_conclusions")
+    if not isinstance(conclusions, dict):
+        return ["invalid broad family conclusions"]
+    needs = {job: {"result": result} for job, result in conclusions.items()}
+    expected = broad_aggregate(repo, plan["tested_sha"], needs)
+    errors = list(expected["errors"])
+    if broad_receipt != expected:
+        errors.append("broad family receipt does not match exact source/run/attempt/workflows")
+    return errors
+
+
+def aggregate(repo, policy, plan, needs, receipts, broad_receipt=None):
     selection.validate_plan(plan, policy)
     errors, jobs = check_jobs(plan, needs)
     result = selection.aggregate(policy, plan, receipts, selection_conclusion=needs.get("select", {}).get("result"),
                                  job_conclusions=jobs, repo=repo)
     result["errors"].extend(errors)
+    result["errors"].extend(broad_receipt_errors(repo, plan, broad_receipt))
+    result["broad_family_receipt"] = broad_receipt
     # A partial policy can give useful shadow evidence, never a complete coverage attestation.
     if not plan.get("enforcement_ready") or plan.get("coverage_gaps"):
         result["errors"].append("inventory/profile coverage is incomplete; W4/W11 acceptance not established")
     result["passed"] = not result["errors"]
+    result["complete_gate_eligible"] = bool(result.get("complete_gate_eligible")) and result["passed"]
     return result
 
 
@@ -147,7 +222,7 @@ def package_artifacts(release, publisher, artifacts):
     return [found[name] for name in sorted(names)]
 
 
-def publish_gate(release, publisher, validation, needs, release_mode="enforce"):
+def publish_gate(release, publisher, validation, needs, release_mode="enforce", repo=ROOT):
     selection.require(release_mode in {"disabled", "shadow", "enforce"}, "invalid release rollout mode")
     packages = package_conclusions(release, publisher, needs)
     if release_mode != "enforce":
@@ -161,6 +236,9 @@ def publish_gate(release, publisher, validation, needs, release_mode="enforce"):
     selection.require(isinstance(validation, dict), "required release validation receipt is missing")
     selection.require(validation.get("passed") and validation.get("complete") and validation.get("enforcement_ready")
                       and not validation.get("coverage_gaps"), "required release coverage is incomplete")
+    broad_errors = broad_receipt_errors(repo, {"effective_mode": "broad", "tested_sha": release["tested_sha"]},
+                                         validation.get("broad_family_receipt"))
+    selection.require(not broad_errors, "required release broad family evidence: " + "; ".join(broad_errors))
     # Legacy owners attest independently in the same run, never borrow each other's artifacts.
     scoped = dict(release, required_package_jobs=sorted(packages))
     result = selection.aggregate_release(scoped, validation, packages)
@@ -179,7 +257,7 @@ def outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("select", "aggregate", "release-identity", "publish-gate", "verify", "fuzz"))
+    parser.add_argument("command", choices=("select", "aggregate", "broad-aggregate", "ordinary-tools", "release-identity", "publish-gate", "verify", "fuzz"))
     parser.add_argument("--sha", default=os.environ.get("GITHUB_SHA"))
     parser.add_argument("--mode", choices=("affected", "broad"), default="affected")
     parser.add_argument("--tag", default="")
@@ -200,12 +278,23 @@ def main():
             # GITHUB_SHA can name an annotated tag object. Workers receive only its peeled commit.
             args.sha = selection.commit_sha(ROOT, args.sha)
         verify_checkout(ROOT, args.sha)
+        verify_workflow_revision(args.sha)
         if args.command == "verify":
             return 0
         if args.command == "fuzz":
             targets, duration = fuzz_selection(args.fuzz_target, args.duration or None, args.mode == "broad")
             outputs({"targets": targets, "duration": str(duration)})
             return 0
+        if args.command == "ordinary-tools":
+            result = ordinary_tool_setup(args.sha)
+            selection.write_json(directory / "ordinary-tool-setup.json", result)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command == "broad-aggregate":
+            result = broad_aggregate(ROOT, args.sha, selection.read_json(args.needs))
+            selection.write_json(directory / "broad.json", result)
+            print(json.dumps(result, indent=2))
+            return 0 if result["passed"] else 1
         policy = selection.load_inventory(ROOT / "tests/selection/inventory.json")
         if args.command in {"select", "release-identity"}:
             ref = os.environ.get("GITHUB_REF", "")
@@ -238,7 +327,9 @@ def main():
         if args.command == "aggregate":
             plan = selection.read_json(directory / "plan.json")
             receipts = [selection.read_json(p) for p in sorted((directory / "receipts").glob("**/receipt.json"))]
-            result = aggregate(ROOT, policy, plan, needs, receipts)
+            broad_path = directory / "broad.json"
+            broad_receipt = selection.read_json(broad_path) if broad_path.exists() else None
+            result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)
             selection.write_json(directory / "validation.json", result)
         else:
             release = selection.read_json(directory / "release.json")
@@ -262,7 +353,7 @@ def main():
                     stream.write(f"Publication gate: {result['validation_status']}; validation required: {result['validation_required']}\\n")
         print(json.dumps(result, indent=2))
         return 0 if result["passed"] else 1
-    except (selection.ContractError, selection.CheckFailure, OSError, ValueError, KeyError) as exc:
+    except (selection.ContractError, selection.CheckFailure, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(f"dependency-workflows: {exc}", file=sys.stderr)
         return 1
 

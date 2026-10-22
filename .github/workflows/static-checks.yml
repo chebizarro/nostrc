@@ -36,6 +36,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
+          # Source-membership regressions hash the pinned nostrdb sources; no build is needed.
+          submodules: recursive
           persist-credentials: false
       - name: Verify requested checkout
         if: inputs.sha != ''

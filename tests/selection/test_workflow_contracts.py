@@ -134,14 +134,15 @@ class EventToWorkerTests(GitCase):
         self.evidence = tempfile.TemporaryDirectory()
         self.addCleanup(self.evidence.cleanup)
 
-    def invoke(self, event_name, event, *, ref="refs/heads/master", command="select", args=()):
+    def invoke(self, event_name, event, *, ref="refs/heads/master", command="select", args=(), sha=None, workflow_sha=None):
         directory = Path(self.evidence.name)
         (directory / "event.json").write_text(json.dumps(event))
         (directory / "outputs").write_text("")
         env = dict(os.environ, GITHUB_EVENT_NAME=event_name, GITHUB_EVENT_PATH=str(directory / "event.json"),
-                   GITHUB_SHA=self.head, GITHUB_REF=ref, GITHUB_OUTPUT=str(directory / "outputs"), GITHUB_RUN_ID="42")
+                   GITHUB_SHA=sha or self.head, GITHUB_REF=ref, GITHUB_OUTPUT=str(directory / "outputs"), GITHUB_RUN_ID="42",
+                   GITHUB_RUN_ATTEMPT="1", GITHUB_WORKFLOW_SHA=workflow_sha or self.git('rev-parse', (sha or self.head) + '^{commit}'))
         result = subprocess.run([sys.executable, str(self.repo / ".github/workflows/dependency_contract.py"), command,
-                                 "--sha", self.head, "--directory", str(directory), *args], env=env, capture_output=True, text=True)
+                                 "--sha", sha or self.head, "--directory", str(directory), *args], env=env, capture_output=True, text=True)
         outputs = dict(line.split("=", 1) for line in (directory / "outputs").read_text().splitlines())
         return result, outputs, directory
 
@@ -155,6 +156,44 @@ class EventToWorkerTests(GitCase):
         self.assertEqual(plan["tested_sha"], outputs["sha"])
         self.assertEqual(json.loads(outputs["lanes"]), ["core.linux"])
         self.assertEqual(outputs["run"], "true")
+
+    def test_fork_pr_uses_actual_merge_commit_not_api_head(self):
+        pr_head = self.head
+        self.git('checkout', '-b', 'integration', self.base)
+        self.write('integration.txt', 'independent base change\n')
+        base = self.commit()
+        self.git('merge', '--no-ff', '-m', 'synthetic PR merge', pr_head)
+        merge = self.git('rev-parse', 'HEAD')
+        event = {'pull_request': {'head': {'sha': pr_head, 'repo': {'fork': True}}, 'base': {'sha': base}}}
+        result, outputs, directory = self.invoke('pull_request', event, ref='refs/pull/3/merge', sha=merge)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads((directory / 'plan.json').read_text())
+        self.assertNotEqual(pr_head, merge)
+        self.assertEqual(plan['tested_sha'], merge)
+        self.assertEqual(plan['event']['pr_head_sha'], pr_head)
+        self.assertEqual(outputs['sha'], merge)
+        self.assertEqual(plan['source_identity'], {'kind': 'committed', 'sha': merge})
+
+    def test_dispatch_refuses_different_executing_workflow_revision_before_plan_or_workers(self):
+        result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, workflow_sha=self.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('executing workflow revision differs from requested source SHA', result.stderr)
+        self.assertEqual(outputs, {})
+        self.assertFalse((directory / 'plan.json').exists())
+        self.assertFalse((directory / 'release.json').exists())
+        result, outputs, _ = self.invoke('workflow_dispatch', {'inputs': {}})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outputs['sha'], self.head)
+
+    def test_annotated_tag_object_is_peeled_before_worker_dispatch(self):
+        self.git('tag', '-am', 'annotated', 'library-v4.5.6')
+        tag_object = self.git('rev-parse', 'library-v4.5.6')
+        self.assertNotEqual(tag_object, self.head)
+        result, outputs, directory = self.invoke('push', {'before': '0' * 40}, ref='refs/tags/library-v4.5.6', sha=tag_object)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outputs['sha'], self.head)
+        self.assertEqual(outputs['broad'], 'true')
+        self.assertEqual(json.loads((directory / 'release.json').read_text())['tested_sha'], self.head)
 
     def test_merge_group_and_mismatched_group_identity(self):
         event = {"merge_group": {"base_sha": self.base, "head_sha": self.head}}
@@ -263,6 +302,13 @@ class EventToWorkerTests(GitCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        env = patch.dict(os.environ, GITHUB_RUN_ID='synthetic', GITHUB_RUN_ATTEMPT='1',
+                         GITHUB_WORKFLOW_SHA=s.commit_sha(ROOT, 'HEAD'))
+        env.start()
+        self.addCleanup(env.stop)
+
     def release(self, component):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         return s.release_plan(ROOT, p, head="HEAD", component=component, dry_run=True, run_id="synthetic")
@@ -279,7 +325,9 @@ class PublicationTests(unittest.TestCase):
     def validation(self, release):
         return dict(passed=True, complete=True, enforcement_ready=True, coverage_gaps=[],
                     source_identity=release["source_identity"], tested_sha=release["tested_sha"],
-                    inventory_hash=release["inventory_hash"], mode="broad", tag=release["tag"], partial_profiles=[])
+                    inventory_hash=release["inventory_hash"], mode="broad", tag=release["tag"], partial_profiles=[],
+                    broad_family_receipt=ci.broad_aggregate(ROOT, release['tested_sha'],
+                        {job: {'result': 'success'} for job in ci.BROAD_FAMILIES}))
 
     def test_all_existing_routes_and_intentionally_inapplicable_jobs(self):
         for component, publisher in (("libgo", "main"), ("gnostr", "main"), ("grotto", "main"),
@@ -328,6 +376,21 @@ class PublicationTests(unittest.TestCase):
             validation[key] = value
             with self.subTest(key=key), self.assertRaises(s.ContractError):
                 ci.publish_gate(release, "main", validation, self.needs(release, "main"))
+
+    def test_enforce_refuses_missing_stale_or_failed_same_run_broad_evidence(self):
+        release = self.release('gnostr')
+        needs = self.needs(release, 'main')
+        valid = self.validation(release)
+        self.assertTrue(ci.publish_gate(release, 'main', valid, needs)['passed'])
+        for field, value in [('run_id', 'other'), ('run_attempt', '2'), ('workflow_sha256', {}),
+                             ('family_conclusions', {'core': 'skipped'})]:
+            invalid = copy.deepcopy(valid)
+            invalid['broad_family_receipt'][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(s.ContractError, 'required release broad family evidence'):
+                ci.publish_gate(release, 'main', invalid, needs)
+        del valid['broad_family_receipt']
+        with self.assertRaisesRegex(s.ContractError, 'required release broad family evidence'):
+            ci.publish_gate(release, 'main', valid, needs)
 
     def test_inapplicable_success_and_unowned_publisher_fail_closed(self):
         release = self.release("libgo")
