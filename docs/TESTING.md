@@ -56,6 +56,35 @@ source identities. The membership checkpoint below retains its dated receipt;
 only its pending custody/integration status is superseded here. No source-authority
 renewal, hosted/W11/release/default credit, closure or shipped version bump.
 
+## Intermediate Grotto/semantic-edge integration — 2026-10-22
+
+At **`0eca9b226e5c62c5b93661f4c91e405dba160d16`**, the reviewed Grotto
+`4e0a63619` and semantic-edge `c3ce9235e` commits are preserved through merge
+`cbd0a36fc`. Four exact headless NIP-49 checks extend only Grotto's selected
+primary/fixture arrays **53/56 → 57/60**; `test_nip49_spec_source` remains
+unclaimed because its canonical descriptor lacks `SPEC_SOURCE`. Check-local
+CTest `runtime_inputs` do not establish runtime ownership. No source-authority
+renewal or fifth-check admission is made at this checkpoint.
+
+**52/52 focused integration tests PASS, zero skips**, with
+`/usr/bin/env XPC_SERVICE_NAME=0 PYTHONDONTWRITEBYTECODE=1` after exact pinned
+`nostrdb` initialization. The original nodes digest and historical fixtures/goldens
+are unchanged: strict reverse projection accepts only the three reviewed edges
+and exact rationales; unknown extra edges, missing reviewed edges and other node
+mutations still fail. Fresh combined full authored Linux/amd64 **prebuild** audits
+measure Groundhog **7,900 → 7,895** and Grotto **9,146 → 9,138**, removing exactly
+**5/8** findings with **zero added**; **both audits FAIL**, with incomplete flags
+retained. These measured comparisons are not assumed additive counts.
+
+[Source-specific receipt and retained failures](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#intermediate-grottosemantic-edge-integration--2026-10-22)
+separate Grotto's **532-case PASS** from the edge lane's **525-case FAIL with two
+expected historical-guard failures**; neither is a fresh combined full-suite run.
+The core-runtime lane is still pending. Final combined selector/six-shell/native
+build/static gates are **NOT RUN** here; full native CTest, production postbuild
+headers and all-29-omitted-target builds are **NOT RUN**. `.2` stays OPEN and
+`.9`/`.31` in progress; W11 NOT MET / W12 NOT RUN, with no hosted-ledger refresh,
+complete/release/default credit, policy cutover or shipped component bump.
+
 ## Bounded transport membership checkpoint — 2026-10-22
 
 At `1ed8f087e6571207c132ae885dbe7ede43f18dfd` (base `53f2e822d`), six
