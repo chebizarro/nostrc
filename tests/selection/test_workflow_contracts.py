@@ -173,6 +173,13 @@ class EventToWorkerTests(GitCase):
         self.assertEqual(plan['event']['pr_head_sha'], pr_head)
         self.assertEqual(outputs['sha'], merge)
         self.assertEqual(plan['source_identity'], {'kind': 'committed', 'sha': merge})
+        (directory / 'plan.json').unlink()
+        result, outputs, directory = self.invoke('pull_request', event, ref='refs/pull/3/merge',
+                                                 sha=merge, workflow_sha=pr_head)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('executing workflow revision differs from requested source SHA', result.stderr)
+        self.assertEqual(outputs, {})
+        self.assertFalse((directory / 'plan.json').exists())
 
     def test_dispatch_refuses_different_executing_workflow_revision_before_plan_or_workers(self):
         result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, workflow_sha=self.base)
@@ -189,11 +196,23 @@ class EventToWorkerTests(GitCase):
         self.git('tag', '-am', 'annotated', 'library-v4.5.6')
         tag_object = self.git('rev-parse', 'library-v4.5.6')
         self.assertNotEqual(tag_object, self.head)
-        result, outputs, directory = self.invoke('push', {'before': '0' * 40}, ref='refs/tags/library-v4.5.6', sha=tag_object)
+        result, outputs, directory = self.invoke('push', {'before': '0' * 40},
+                                                 ref='refs/tags/library-v4.5.6', sha=tag_object,
+                                                 workflow_sha=self.head)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(outputs['sha'], self.head)
         self.assertEqual(outputs['broad'], 'true')
         self.assertEqual(json.loads((directory / 'release.json').read_text())['tested_sha'], self.head)
+        (directory / 'plan.json').unlink()
+        (directory / 'release.json').unlink()
+        result, outputs, directory = self.invoke('push', {'before': '0' * 40},
+                                                 ref='refs/tags/library-v4.5.6', sha=tag_object,
+                                                 workflow_sha=tag_object)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('executing workflow revision differs from requested source SHA', result.stderr)
+        self.assertEqual(outputs, {})
+        self.assertFalse((directory / 'plan.json').exists())
+        self.assertFalse((directory / 'release.json').exists())
 
     def test_merge_group_and_mismatched_group_identity(self):
         event = {"merge_group": {"base_sha": self.base, "head_sha": self.head}}
