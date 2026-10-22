@@ -1,4 +1,5 @@
 """Exact root-owned producer repairs; fragment checks are not profile acceptance."""
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -10,7 +11,8 @@ import shutil
 from realization_support import Project
 
 from closeout_support import (before_closeout_contract, before_core_producer_source,
-                              core_source_witness, CORE_SOURCE_WITNESS)
+                              core_source_witness, CORE_SOURCE_WITNESS,
+                              before_closeout_policy, witness)
 from selector_support import ROOT, change, s
 
 FIXTURE = CORE_SOURCE_WITNESS
@@ -40,6 +42,25 @@ def fragments():
 
 
 class CoreSourceProducers(unittest.TestCase):
+    def test_full_postbuild_resource_and_default_consumers_are_exact(self):
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        record = witness()['postbuild_input_repair']
+        import xml.etree.ElementTree as ET
+        xml = ET.parse(ROOT / 'gnome/groundhog/data/groundhog.gresource.xml')
+        resources = {x.text.strip() for x in xml.findall('.//file')}
+        self.assertEqual(len(record['resource_inputs']), 10)
+        for path in record['resource_inputs']:
+            self.assertIn(path.removeprefix('gnome/groundhog/data/'), resources)
+            self.assertEqual(s.classify(policy, path)['nodes'], ['groundhog.gresource_inputs'])
+            self.assertIn(path, policy['nodes']['groundhog.gresource_inputs']['owner_paths'])
+        for check in ('groundhog.default_build', 'grotto.default_build'):
+            self.assertTrue(set(record['default_consumer_nodes']) <= set(policy['checks'][check]['nodes']))
+        before_closeout_policy(policy)
+        changed = copy.deepcopy(policy)
+        changed['nodes']['groundhog.gresource_inputs']['owner_paths'].append('unrelated/input.h')
+        with self.assertRaisesRegex(ValueError, 'closeout nodes changed'):
+            before_closeout_policy(changed)
+
     @classmethod
     def setUpClass(cls):
         cls.data = core_source_witness()
@@ -152,6 +173,34 @@ class CoreSourceProducers(unittest.TestCase):
 
 
 class CoreConfigureWitnesses(Project):
+    def test_marmot_version_bytes_and_fresh_direct_witness_on_two_configures(self):
+        source = (ROOT / 'libmarmot/CMakeLists.txt').read_text()
+        fragment = between(source, 'set(MARMOT_PUBLIC_VERSION_HEADER', '# ─── Dependencies')
+        old = core_source_witness()['marmot_version_fragment_before']
+        directory = self.root / 'libmarmot'
+        (directory / 'include/marmot').mkdir(parents=True)
+        shutil.copyfile(ROOT / 'libmarmot/include/marmot/marmot-version.h.in',
+                        directory / 'include/marmot/marmot-version.h.in')
+        shutil.copyfile(ROOT / 'cmake/NostrcConfigureProvenance.cmake', self.root / 'cmake/NostrcConfigureProvenance.cmake')
+        variables = 'set(MARMOT_VERSION_MAJOR 0)\nset(MARMOT_VERSION_MINOR 12)\nset(MARMOT_VERSION_PATCH 0)\nset(MARMOT_VERSION_STRING 0.12.0)\n'
+        producer = directory / 'CMakeLists.txt'
+        producer.write_text(variables + old)
+        cmake = self.root / 'CMakeLists.txt'
+        cmake.write_text(cmake.read_text() + '\ninclude(cmake/NostrcConfigureProvenance.cmake)\nadd_subdirectory(libmarmot)\n')
+        before = self.configure()
+        header = self.build / 'libmarmot/include/marmot/marmot-version.h'
+        original, timestamp = header.read_bytes(), header.stat().st_mtime_ns
+        self.assertNotIn(str(header), before['configure_outputs'])
+        producer.write_text(variables + fragment)
+        first = self.configure()
+        second = self.configure()
+        self.assertEqual(header.read_bytes(), original)
+        self.assertEqual(header.stat().st_mtime_ns, timestamp)
+        self.assertEqual(hashlib.sha256(original).hexdigest(), witness()['postbuild_input_repair']['marmot_header_sha256'])
+        for realized in (first, second):
+            self.assertEqual(realized['configure_outputs'][str(header)]['producer'], str(producer))
+        self.assertNotEqual(first['generation_token'], second['generation_token'])
+
     def prepare_producers(self, omit_grotto_witness=False):
         for path in ('cmake/NostrcConfigureProvenance.cmake',
                      'cmake/nostrdb-talstr.h.in', 'cmake/nostrdb-hex-compat.h.in',

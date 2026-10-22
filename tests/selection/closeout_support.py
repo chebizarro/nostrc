@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/closeout_interfaces.json'
-WITNESS_SHA256 = 'bf8c8b60fa1bf50dd854038e45b67c96a0b324f5ebf452fcee1bda8e4e9f0b86'
+WITNESS_SHA256 = '7b991c3f48a93d71e268b3a278cbb2d6f31f0641ac14141c5138a9c599e6c6c8'
 
 
 def witness():
@@ -17,7 +17,7 @@ def witness():
 
 
 CORE_SOURCE_WITNESS = 'tests/selection/fixtures/core_source_producers_20261023.json'
-CORE_SOURCE_WITNESS_SHA256 = '07b9c7a5c875fe2b608d5b1a9e83c0184e2bda6fdf4315856ee93bc97d762576'
+CORE_SOURCE_WITNESS_SHA256 = 'a2f936b3c00f90ae4c8a7b4e94bf468a17aa6c997d1d98e7ca7bda955ba61d8a'
 
 
 def core_source_witness():
@@ -78,7 +78,7 @@ def before_closeout_policy(policy):
     previous = copy.deepcopy(policy)
     if s.digest(previous) == data['before_policy_hash']:
         return previous
-    for field in ('profiles', 'checks', 'workflow_jobs'):
+    for field in ('profiles', 'checks', 'workflow_jobs', 'nodes'):
         for ident, record in data[field].items():
             s.require(previous[field].get(ident) == record['after'],
                       'closeout ' + field + ' changed: ' + ident)

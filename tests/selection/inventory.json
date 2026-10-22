@@ -5848,7 +5848,10 @@
         "testkit",
         "tools",
         "vendor.nostrdb",
-        "benchmarks"
+        "benchmarks",
+        "gnostr",
+        "marmot.vector_inputs",
+        "relayd.async_storage_api"
       ],
       "profiles": [
         "groundhog.linux"
@@ -6007,7 +6010,10 @@
         "testkit",
         "tools",
         "vendor.nostrdb",
-        "benchmarks"
+        "benchmarks",
+        "gnostr",
+        "marmot.vector_inputs",
+        "relayd.async_storage_api"
       ],
       "profiles": [
         "grotto.linux"
@@ -7863,7 +7869,8 @@
         "{source}/apps/grotto/daemon/grotto_control_xml.h.in",
         "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml",
         "{source}/libnostr/include/nostr-config.h.in",
-        "{source}/nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in"
+        "{source}/nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
+        "{source}/libmarmot/include/marmot/marmot-version.h.in"
       ],
       "working_directory": "{source}"
     },
@@ -21034,6 +21041,7 @@
     "groundhog.gresource_inputs": {
       "id": "groundhog.gresource_inputs",
       "owner_paths": [
+        "gnome/groundhog/data/agents/connectors.ini",
         "gnome/groundhog/data/blossom-media-suggestions.txt",
         "gnome/groundhog/data/groundhog.gresource.xml",
         "gnome/groundhog/data/icons/256x256/apps/org.nostr.Groundhog.png",
@@ -21045,6 +21053,7 @@
         "gnome/groundhog/data/icons/scalable/actions/changes-prevent-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/channel-secure-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/computer-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/contact-new-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/content-loading-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/dialog-password-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/dialog-question-symbolic.svg",
@@ -21053,6 +21062,8 @@
         "gnome/groundhog/data/icons/scalable/actions/document-open-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/emblem-ok-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/emblem-synchronizing-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/folder-download-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/folder-remote-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/go-bottom-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/go-down-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/go-next-symbolic.svg",
@@ -21064,6 +21075,10 @@
         "gnome/groundhog/data/icons/scalable/actions/mail-read-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/mail-send-receive-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/mail-unread-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/media-playback-pause-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/media-playback-start-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/media-playback-stop-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/microphone-sensitivity-high-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/network-offline-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/network-server-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/network-transmit-receive-symbolic.svg",
@@ -21071,12 +21086,14 @@
         "gnome/groundhog/data/icons/scalable/actions/open-menu-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/package-x-generic-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/preferences-system-privacy-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/process-stop-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/qr-code-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/send-symbolic-rtl.svg",
         "gnome/groundhog/data/icons/scalable/actions/send-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/system-lock-screen-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/system-log-out-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/system-search-symbolic.svg",
+        "gnome/groundhog/data/icons/scalable/actions/system-users-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/text-x-generic-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/user-bookmarks-symbolic.svg",
         "gnome/groundhog/data/icons/scalable/actions/video-x-generic-symbolic.svg",
@@ -25112,6 +25129,95 @@
       ],
       "effect": "impact",
       "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "gnome/groundhog/data/agents/connectors.ini",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/contact-new-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/folder-download-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/folder-remote-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/media-playback-pause-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/media-playback-start-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/media-playback-stop-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/microphone-sensitivity-high-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/process-stop-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "gnome/groundhog/data/icons/scalable/actions/system-users-symbolic.svg",
+      "nodes": [
+        "groundhog.gresource_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Exact Groundhog GResource bundle input exposed by full postbuild Ninja closure."
+    },
+    {
+      "exact": "libmarmot/include/marmot/marmot-version.h.in",
+      "nodes": [
+        "libmarmot",
+        "selection.contract"
+      ],
+      "effect": "impact",
+      "reason": "Exact configure template read by production producer regressions; preserve component ownership and select the actual contract consumer."
     }
   ],
   "profiles": {
@@ -28830,7 +28936,7 @@
           "libhanami/CMakeLists.txt": "71212d9874c5e088704582f3bb820e622c8306a022527f7a5fdde694a947ada2",
           "libhanami/TestInventory.cmake": "20c8297252561908c7eb07df228eee57f967cf136251b87758931ff14f3aab33",
           "libjson/CMakeLists.txt": "2cc333b517877b0ba7667503844c417d2a8d189c412059f4fc178737174bc38c",
-          "libmarmot/CMakeLists.txt": "8dc364d5e2e67e0a9b70f165a4d4f656dc84ca652c4f2e16b2990c6f79abe7ab",
+          "libmarmot/CMakeLists.txt": "9705cec346399f25d7a8fe196e2fdc8f87283d189320ab41641b1a5897296a33",
           "libmarmot/TestInventory.cmake": "66343d3ec2154fbdd22c54c07237e6e55f91a0a6bd1b37f3cba1fee7f2fc369f",
           "libnostr/CMakeLists.txt": "215817d30bb636a5bd28a64ceba631d82fe60f527a0e4e52b77498ea943a22a3",
           "marmot-gobject/CMakeLists.txt": "f65c26821bc6216fb586ca5e30e469d00cdde6668e9ddb1416ac9a0e126afd7d",
@@ -30408,7 +30514,7 @@
           "libhanami/CMakeLists.txt": "71212d9874c5e088704582f3bb820e622c8306a022527f7a5fdde694a947ada2",
           "libhanami/TestInventory.cmake": "20c8297252561908c7eb07df228eee57f967cf136251b87758931ff14f3aab33",
           "libjson/CMakeLists.txt": "2cc333b517877b0ba7667503844c417d2a8d189c412059f4fc178737174bc38c",
-          "libmarmot/CMakeLists.txt": "8dc364d5e2e67e0a9b70f165a4d4f656dc84ca652c4f2e16b2990c6f79abe7ab",
+          "libmarmot/CMakeLists.txt": "9705cec346399f25d7a8fe196e2fdc8f87283d189320ab41641b1a5897296a33",
           "libmarmot/TestInventory.cmake": "66343d3ec2154fbdd22c54c07237e6e55f91a0a6bd1b37f3cba1fee7f2fc369f",
           "libnostr/CMakeLists.txt": "215817d30bb636a5bd28a64ceba631d82fe60f527a0e4e52b77498ea943a22a3",
           "marmot-gobject/CMakeLists.txt": "f65c26821bc6216fb586ca5e30e469d00cdde6668e9ddb1416ac9a0e126afd7d",

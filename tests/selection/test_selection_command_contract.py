@@ -30,6 +30,7 @@ SUPPORT_INPUTS = {
     "apps/grotto/daemon/grotto_control_xml.h.in",
     "apps/grotto/data/org.nostr.Grotto.Control1.xml",
     "libnostr/include/nostr-config.h.in",
+    "libmarmot/include/marmot/marmot-version.h.in",
     "nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
     "cmake/CheckDbusServiceFile.cmake",
     "apps/grotto/data/org.nostr.Grotto.service.in",

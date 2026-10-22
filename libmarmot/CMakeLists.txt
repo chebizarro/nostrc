@@ -49,6 +49,11 @@ configure_file(
   ${MARMOT_PUBLIC_VERSION_HEADER}
   @ONLY
 )
+if(COMMAND nostrc_record_configure_output)
+  nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-version.h.in"
+    "${MARMOT_PUBLIC_VERSION_HEADER}")
+endif()
 
 # ─── Dependencies ─────────────────────────────────────────────────────────
 find_package(OpenSSL REQUIRED)
