@@ -28,8 +28,8 @@ parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--broad", action="store_true")
-parser.add_argument("--linux-custody", choices=("legacy", "ptrace"), default="legacy",
-                    help="explicit unwrapped Linux diagnostic fork tracing; not untraced profile parity; instrumentation/wrappers refuse")
+parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
+                    help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -45,7 +45,7 @@ receipt["bypasses"] = {name: os.environ[name] for name in
     if os.environ.get(name) == ("0" if name == "NOSTRC_GATE_LINUX_TESTS" else "1")}
 receipt["custody_mode"] = args.linux_custody
 receipt["complete_gate_eligible"] = False
-if args.linux_custody == "ptrace":
+if args.linux_custody != "legacy":
     receipt["untraced_profile_parity"] = False
 run_dir = None
 
@@ -85,7 +85,7 @@ def stop_descendants(parent, captured=None):
 
 
 def linux_command(argv, *, cwd=None, env=None, log=None):
-    """A gated ptrace supervisor owns Linux descendants before target exec."""
+    """A gated kernel-backed supervisor owns descendants before target exec."""
     global active
     stream = open(log, "xb") if log else subprocess.DEVNULL
     handle = None
@@ -96,7 +96,8 @@ def linux_command(argv, *, cwd=None, env=None, log=None):
             # It cannot launch a target until our pidfd reservation releases it.
             mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
             try:
-                active = subprocess.Popen([sys.executable, str(adapter.parent / "adapter_custody.py"),
+                helper = "adapter_namespace_custody.py" if args.linux_custody == "pidns" else "adapter_custody.py"
+                active = subprocess.Popen([sys.executable, str(adapter.parent / helper),
                                            "--parent-ready-fd", str(read_fd), "--parent-pid", str(os.getpid()),
                                            *map(str, argv)],
                                           cwd=cwd, env=env, pass_fds=(read_fd,),
@@ -159,9 +160,10 @@ def linux_command(argv, *, cwd=None, env=None, log=None):
 def command(argv, *, cwd=None, env=None, log=None):
     # macOS remains the inherited legacy compatibility path, NOT safe unified
     # arbitrary-descendant custody. Do not substitute a reserved-group-only path.
-    if args.linux_custody == "ptrace":
+    if args.linux_custody != "legacy":
         if platform.system() != "Linux":
-            raise RuntimeError("ptrace custody is an explicit Linux-only diagnostic")
+            raise RuntimeError("native kernel custody unavailable on macOS: EndpointSecurity descendant client requires com.apple.developer.endpoint-security.client (not provisioned); kqueue NOTE_TRACK is ENOTSUP; target not launched"
+                               if args.linux_custody == "pidns" else "ptrace custody is an explicit Linux-only diagnostic")
         if (not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal")
                 or signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL):
             raise RuntimeError("Linux ptrace/pidfd custody unavailable before command launch")
@@ -344,10 +346,10 @@ def host_guard(profile, checks, policy, profile_id):
     wrapped = caps & {"display", "private_bus"}
     if wrapped and any(policy["checks"][ident]["kind"] != "ctest" for ident in checks):
         raise RuntimeError(f"unsupported cancellation custody: selected command/build_contract lane requires wrappers {sorted(wrapped)}; not launched")
-    if wrapped and args.linux_custody == "ptrace":
+    if wrapped and args.linux_custody != "legacy":
         # Root wrapper death need not leave the backend alive for final receipts.
         # No wrapped proof is admitted by this bounded, unwrapped diagnostic.
-        raise RuntimeError(f"unsupported ptrace custody wrappers: {sorted(wrapped)}; lane not launched")
+        raise RuntimeError(f"unsupported {args.linux_custody} custody wrappers: {sorted(wrapped)}; lane not launched")
     # Never reuse the developer's display/session bus as proof of isolation.
     prefix = []
     if "private_bus" in caps:
@@ -543,7 +545,7 @@ except KeyboardInterrupt:
     receipt["status"] = "cancelled"
     receipt["errors"].append("interrupted; owned child groups stopped; no coverage claimed"
                              if args.linux_custody == "legacy" else
-                             "interrupted; ptrace diagnostic cleanup attempted; no untraced parity or coverage claimed")
+                             f"interrupted; {args.linux_custody} diagnostic cleanup attempted; no profile parity or coverage claimed")
 except (RuntimeError, OSError, ValueError, KeyError, shared.ContractError, subprocess.SubprocessError) as exc:
     receipt["errors"].append(str(exc))
 finally:
