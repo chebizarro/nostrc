@@ -346,33 +346,33 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
     if args.phase == "configure":
         return {"schema_version": 1, "phase": "configure", "resolved": resolved, "input_audit": audit, "execution_complete": False, **incomplete}, 0
     build_seconds, build_commands, build_evidence = 0.0, [], []
-    if args.phase in {"all", "build"} and resolved["build_targets"]:
+    if args.phase in {"all", "build"} and (resolved["build_targets"] or resolved.get("default_build_required")):
         if state is not None:
             state["stage"] = "build"
             state["work_status"]["build"] = "started"
-        command = ["cmake", "--build", args.build_dir, "--parallel", str(jobs["build"])]
-        if resolved.get("configuration"):
-            command += ["--config", resolved["configuration"]]
-        command += ["--target", *resolved["build_targets"]]
         directory = Path(args.evidence_dir) / identity["sha"] / args.profile / plan["plan_id"]
         directory.mkdir(parents=True, exist_ok=True)
-        logfile = directory / f"build-attempt-{args.attempt}.log"
         started = time.monotonic()
-        if state is not None:
-            state["evidence_paths"].append(logfile)
-        with logfile.open("x"):
-            pass  # reserve this exact attempt; never overwrite previous evidence
-        try:
-            process = backend._execute(command, cwd=args.repo, env=backend.phase_environment(profile, repo_root, "build"),
-                                       log_path=logfile, timeout=args.timeout)
-            returncode = process.returncode
-        except (subprocess.TimeoutExpired, KeyboardInterrupt, backend.RealizationError) as exc:
-            raise selection.CheckFailure(f"selected build interrupted/failed; retained {logfile} and process status: {exc}") from exc
+        for index, command in enumerate(backend._build_commands(resolved, realized, jobs["build"])):
+            suffix = "" if index == 0 else f"-{index}"
+            logfile = directory / f"build-attempt-{args.attempt}{suffix}.log"
+            if state is not None:
+                state["evidence_paths"].append(logfile)
+            with logfile.open("x"):
+                pass  # reserve this exact attempt; never overwrite previous evidence
+            try:
+                process = backend._execute(command, cwd=args.repo, env=backend.phase_environment(profile, repo_root, "build"),
+                                           log_path=logfile, timeout=args.timeout)
+                returncode = process.returncode
+            except (subprocess.TimeoutExpired, KeyboardInterrupt, backend.RealizationError) as exc:
+                raise selection.CheckFailure(f"selected build interrupted/failed; retained {logfile} and process status: {exc}") from exc
+            build_commands.append(command)
+            build_evidence.append(str(logfile))
+            if returncode:
+                raise selection.CheckFailure(f"selected prerequisite build failed: {returncode}; retained {logfile}")
+            if resolved.get("default_build_required") and "--target" not in command:
+                backend._record_default_build(realized, command, logfile)
         build_seconds = time.monotonic() - started
-        build_commands.append(command)
-        build_evidence.append(str(logfile))
-        if returncode:
-            raise selection.CheckFailure(f"selected prerequisite build failed: {returncode}; retained {logfile}")
         if state is not None:
             state["work_status"]["build"] = "passed"
     if state is not None:
@@ -391,7 +391,8 @@ def _realization_command(args, policy, backend, *, custody=None, state=None):
         raise selection.CheckFailure("post-build input audit failed; original findings retained")
     if args.phase in {"configure", "build"}:
         return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False, **incomplete,
-                **({"execution_parallelism": jobs, "commands": build_commands} if "execution_parallelism" in resolved else {})}, 0
+                **({"execution_parallelism": jobs} if "execution_parallelism" in resolved else {}),
+                "commands": build_commands, "build_evidence": build_evidence}, 0
     if state is not None:
         state["stage"] = "test"
         state["work_status"]["test"] = "started"
@@ -440,6 +441,12 @@ def normalize_receipt(policy, plan, resolved, raw):
     selection.require(set(raw.get("checks", {})) == set(lane["checks"]), "backend receipt check accounting mismatch")
     observed = raw.get("observed_executions", {})
     selection.require(isinstance(observed, dict) and set(observed) == set(resolved.get("expected_executions", resolved["tests"])), "backend receipt execution accounting mismatch")
+    selection.validate_default_build_evidence(phase_profile, raw,
+        {ident: check for ident, check in policy["checks"].items() if profile_id in check["profiles"]}, resolved=resolved)
+    selection.require(raw.get("runtime_capability_evidence", {}) == resolved.get("runtime_capability_evidence", {}),
+                      "backend runtime capability evidence differs from resolution")
+    selection.require(raw.get("required_capabilities") == resolved.get("required_capabilities"),
+                      "backend required capabilities differ from resolution")
     post = raw.get("input_audit", {})
     selection.require(post.get("passed") and post.get("after_build"), "backend did not retain passing post-build audit")
     for key in ("phase_context", "phase_context_hash"):

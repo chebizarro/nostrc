@@ -212,6 +212,9 @@ def validate_inventory(policy):
         require(check.get("nodes") and check.get("profiles"), f"{ident}: empty ownership/profiles")
         require(check.get("kind") in {"ctest", "command", "build_contract"}, f"{ident}: invalid kind")
         require(check.get("cost") in {"ordinary", "expensive"} and check.get("requirement") in {"blocking", "advisory"}, f"{ident}: invalid gating")
+        if "build_scope" in check:
+            require(check["kind"] == "build_contract" and check["build_scope"] == "default"
+                    and check.get("build_targets") == [], f"{ident}: invalid default build scope")
         expected = check.get("expected_outcome", "pass")
         require(expected == "pass" or (isinstance(expected, dict) and expected.get("case") == "mdk09_incompatibility" and expected.get("exit_code") == 77), f"{ident}: unsupported expected exception")
         if check["kind"] == "ctest":
@@ -578,6 +581,64 @@ def validate_phase_parallelism_evidence(profile, evidence, *, require_test=False
     return expected
 
 
+def default_build_argv(profile, build, configuration):
+    jobs = profile.get('build_parallelism', profile.get('parallelism', 1))
+    require(type(jobs) is int and jobs > 0, 'invalid default build parallelism')
+    command = ['cmake', '--build', build, '--parallel', str(jobs)]
+    if configuration:
+        command += ['--config', configuration]
+    return command
+
+
+def validate_default_build_evidence(profile, backend, checks, *, resolved=None):
+    defaults = {ident: check for ident, check in checks.items() if check.get("build_scope") == "default"}
+    if not defaults:
+        require(not backend.get("default_build_required") and not backend.get("default_build_hash"), "unexpected default build evidence")
+        return
+    binding = backend.get("default_build_hash")
+    require(backend.get("default_build_required") is True and isinstance(binding, str)
+            and re.fullmatch(r"[a-f0-9]{64}", binding), "missing default build binding")
+    audit = backend.get("input_audit", {})
+    require(audit.get("default_build_required") is True and audit.get("default_build_hash") == binding,
+            "default build audit identity mismatch")
+    if resolved is not None:
+        require(resolved.get("default_build_required") is True and resolved.get("default_build_hash") == binding,
+                "default build resolved identity mismatch")
+    prerequisite = audit.get("default_build_execution", {})
+    process = prerequisite.get("process", {})
+    build = backend.get("build_dir")
+    require(backend.get('configuration') == backend.get('phase_context', {}).get('configuration')
+            and ('build_type' not in profile or backend.get('configuration') == profile['build_type']),
+            'default build configuration differs from authored profile/phase')
+    require(isinstance(build, str) and Path(build).is_absolute(), "default build directory missing")
+    command = process.get("argv", [])
+    require(prerequisite.get("default_build_hash") == binding
+            and prerequisite.get("profile_fingerprint") == backend.get("profile_fingerprint")
+            and process.get("outcome") == "passed" and type(process.get("exit_code")) is int and process["exit_code"] == 0
+            and process.get("environment_hash") == backend.get("phase_context", {}).get("environment_hashes", {}).get("build")
+            and process.get("output_sha256") == prerequisite.get("log_sha256")
+            and command == default_build_argv(profile, build, backend.get('configuration', '')),
+            "physical default prerequisite build did not qualify")
+    for ident, check in defaults.items():
+        record = backend.get("checks", {}).get(ident)
+        if record is None:  # eligible but unselected contracts still had full audits
+            continue
+        argv = record.get("argv", [])
+        require(bool(argv) and Path(argv[0]).is_absolute() and Path(argv[0]).name == "cmake", "default build executable missing")
+        expected = [arg.replace("{build}", build) for arg in check["command"]]
+        expected[0] = argv[0]
+        expected += ["--parallel", str(profile.get("build_parallelism", profile.get("parallelism", 1)))]
+        status = record.get("process", {})
+        require(record.get("build_scope") == "default" and record.get("default_build_hash") == binding
+                and argv == expected and argv in backend.get("commands", [])
+                and status.get("argv") == argv and status.get("environment_hash") == record.get("environment_hash")
+                and status.get("output_sha256") == record.get("log_sha256")
+                and type(status.get("exit_code")) is int and status["exit_code"] == record.get("exit_code")
+                and status.get("outcome") == record.get("outcome"), "physical default build execution mismatch: " + ident)
+        if resolved is not None:
+            require(argv == resolved.get("command_executions", {}).get(ident, {}).get("argv"), "default build resolved argv changed")
+
+
 def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=None, job_conclusions=None, repo=None):
     validate_plan(plan, policy)
     errors, visible, incomplete_lanes = [], [], []
@@ -644,6 +705,15 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                         "receipt phase parallelism differs from authored profile")
             except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 errors.append(f"{lane_id}: phase parallelism did not qualify: {exc}")
+        try:
+            validate_default_build_evidence(profile, backend, {ident: check for ident, check in policy["checks"].items()
+                if lane["profile"] in check["profiles"]})
+            for ident in lane["checks"]:
+                if policy["checks"][ident].get("build_scope") == "default":
+                    require(receipt.get("checks", {}).get(ident) == backend.get("checks", {}).get(ident),
+                            "default build outer/backend execution contradiction")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            errors.append(f"{lane_id}: default build did not qualify: {exc}")
         if profile.get("execution_domain") == "prepared_peer_linux_v1":
             from test_selection_custody import CustodyError, validate_lifecycle
             try:
@@ -653,6 +723,24 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: contained lifecycle did not qualify: {exc}")
             if complete:
                 errors.append(f"{lane_id}: prepared contained route is diagnostic only; original image builds unexecuted")
+        required_caps = set(backend.get("required_capabilities", []))
+        if "gnome_keyring" in required_caps:
+            errors.append(f"{lane_id}: gnome_keyring setup/custody is not implemented")
+        if "nak" in required_caps:
+            nak = backend.get("runtime_capability_evidence", {}).get("nak", {})
+            if ("nak" not in profile.get("capabilities", []) or nak.get('executable') != 'nak'
+                    or not isinstance(nak.get('path'), str) or not Path(nak['path']).is_absolute()
+                    or not isinstance(nak.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", nak["sha256"])):
+                errors.append(f"{lane_id}: nak runtime executable evidence missing")
+            if lane['profile'] in {'groundhog.linux', 'grotto.linux'}:
+                setup = nak.get('setup_receipt', {}).get('record', {})
+                if (setup.get('kind') != 'ordinary_tool_setup_v1' or setup.get('setup_verified') is not True
+                        or setup.get('scope') != 'executables_only_not_bus_display_or_profile_acceptance'
+                        or setup.get('source_identity') != plan['source_identity']
+                        or setup.get('workflow_sha') != plan['source_identity'].get('sha')
+                        or setup.get('profile') != lane['profile'] or setup.get('plan_id') != plan['plan_id']
+                        or setup.get('tools', {}).get('nak') != {k: v for k, v in nak.items() if k != 'setup_receipt'}):
+                    errors.append(f'{lane_id}: ordinary nak setup receipt identity missing/mismatched')
         exclusions = receipt.get("baseline_exclusions", backend.get("baseline_exclusions", []))
         if not isinstance(exclusions, list):
             errors.append(f"{lane_id}: malformed baseline exclusions")

@@ -25,7 +25,7 @@ class ActualContainedEngine(unittest.TestCase):
         (self.source / 'app').mkdir()
         (self.source / 'tests/selection').mkdir(parents=True)
         for name in ('test-plan.py', 'test_selection.py', 'test_selection_realization.py',
-                     'test_selection_custody.py', 'contained-runner.py'):
+                     'test_selection_subset.py', 'test_selection_custody.py', 'contained-runner.py'):
             shutil.copyfile(ROOT / 'scripts' / name, self.source / 'scripts' / name)
         (self.source / '.gitignore').write_text('__pycache__/\n')
         (self.source / 'app/check.py').write_text("""import os, pathlib, subprocess, sys
@@ -206,6 +206,10 @@ os.write(1,b'engine ready \\xff\\n')
         self.assertFalse(receipt['complete_gate_eligible'])
         self.assertTrue(receipt['contained_lifecycle']['receipt']['cleanup_complete'])
         self.assertEqual(receipt['contained_lifecycle']['receipt']['status'], 'failed')
+        self.assertEqual(receipt['backend_receipt']['checks']['actual']['exit_code'], 19)
+        receipt_path = Path(process.stdout.decode().strip().splitlines()[-1])
+        self.assertTrue(any(b'engine ready \xff\n' in path.read_bytes()
+                            for path in receipt_path.parent.rglob('command-actual.log')))
         self.assertFalse(selection.aggregate(self.policy, self.plan, [receipt], complete=False)['passed'])
 
     def test_actual_engine_cancellation_retains_final_negative_attempt_and_raw_bytes(self):

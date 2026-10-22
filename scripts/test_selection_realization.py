@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -182,7 +183,10 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
             except Exception as poll_error:
                 cleanup_error("poll", poll_error)
                 reaped = False
-            status["cleanup_complete"] = reaped and not status.get("cleanup_errors")
+            status["direct_child_reaped"] = reaped
+            status["cleanup_scope"] = "original_process_group_only"
+            status["arbitrary_process_tree"] = "unverified"
+            status["cleanup_complete"] = False
         else:
             output = f"cannot execute {argv[0]}: {exc}\n".encode("utf-8", errors="surrogateescape")
         status["exit_code"] = process.returncode if process is not None else None
@@ -560,6 +564,8 @@ def _profile_fingerprint(realization):
             "configure_outputs")
     if "override_inventory" in realization:
         keys += ("override_inventory",)
+    if "default_build_binding" in realization:
+        keys += ("default_build_binding",)
     return _hash({k: realization.get(k) for k in keys})
 
 
@@ -591,6 +597,15 @@ def _validate_resolved_phase(resolved, realization):
     if (resolved.get("compatibility_build_targets", []) != compatibility_targets
             or not set(compatibility_targets).issubset(resolved["build_targets"])):
         raise RealizationError("resolved sanitizer_compatibility build targets changed")
+    binding = realization.get("default_build_binding")
+    if binding is not None:
+        if resolved.get("default_build_hash") != _hash(_validate_default_binding(realization)) or resolved.get("default_build_required") is not True:
+            raise RealizationError("resolved default build binding changed")
+        names = {realization["targets"][key]["name"] for key in binding["target_ids"]}
+        if not names.issubset(resolved["build_targets"]):
+            raise RealizationError("resolved default build target closure omitted")
+    elif resolved.get("default_build_required") or resolved.get("default_build_hash"):
+        raise RealizationError("unattested resolved default build")
     import test_selection_subset as subset
     try:
         subset.validate_resolved(resolved, realization)
@@ -723,6 +738,303 @@ def _configure_file_outputs(trace, manifest, token, cmake_files, directories, so
                     for name, digest in spec["hashes"].items())}
 
 
+def _ninja_literal_words(value):
+    """Only literal Ninja paths; variable/scope evaluation belongs to Ninja."""
+    words, word, index = [], "", 0
+    while index < len(value):
+        char = value[index]
+        if char == "$":
+            index += 1
+            if index == len(value) or value[index] not in "$ :":
+                raise RealizationError("unsupported variable in default/include declaration")
+            word += value[index]
+        elif char in " \t":
+            if word:
+                words.append(word)
+                word = ""
+        elif char in "\r\n\x00":
+            raise RealizationError("unsupported multiline Ninja path")
+        else:
+            word += char
+        index += 1
+    return words + ([word] if word else [])
+
+
+def _ninja_manifests(build):
+    """Bind transitively loaded manifests, not a filename-extension glob.
+
+    CMake's single-config Ninja emits literal include/default paths. Other
+    syntax is a visible default-build refusal, never a guessed expansion.
+    """
+    build = Path(build)
+    files, includes, defaults, gaps = {}, [], [], []
+    def visit(path, stack):
+        if path in stack:
+            raise RealizationError("cyclic Ninja manifest include")
+        if not path.is_file() or path.resolve() != path or not path.resolve().is_relative_to(build):
+            raise RealizationError(f"unbound Ninja manifest: {path}")
+        raw = path.read_bytes()
+        if str(path) in files:
+            raise RealizationError("repeated/scoped Ninja include unsupported for default proof")
+        files[str(path)] = hashlib.sha256(raw).hexdigest()
+        text = raw.decode("utf-8").replace("$\r\n", "").replace("$\n", "")
+        for line in text.splitlines():
+            declaration = re.match(r'^(include|subninja|default)[ \t]+(.*)$', line)
+            if declaration:
+                kind, value = declaration.groups()
+                words = _ninja_literal_words(value)
+                if not words:
+                    raise RealizationError("empty Ninja include/default declaration")
+                if kind == "default":
+                    defaults.extend(words)
+                else:
+                    if len(words) != 1:
+                        raise RealizationError("ambiguous Ninja include")
+                    child = Path(os.path.abspath(build / words[0]))
+                    includes.append([str(path), kind, str(child)])
+                    visit(child, stack | {path})
+            stripped = line.strip()
+            if re.match(r"(?:dyndep|(?:CMAKE_)?RULE_LAUNCH_\w+|LAUNCHER|CODE_CHECK)\s*=\s*\S", stripped):
+                gaps.append({"kind": "unsupported_default_dynamic_or_launcher", "manifest": str(path), "line": stripped})
+            if re.match(r"(?:PRE_LINK|POST_BUILD)\s*=", stripped) and stripped.split("=", 1)[1].strip() not in ("", ":"):
+                gaps.append({"kind": "unsupported_default_custom_hook", "manifest": str(path), "line": stripped})
+            if line.startswith("build ") and " |@ " in line:
+                gaps.append({"kind": "unsupported_default_validation_edge", "manifest": str(path)})
+    visit(build / "build.ninja", set())
+    if not defaults:
+        raise RealizationError("default proof requires explicit generator default declarations")
+    return {"files": files, "includes": includes, "roots": sorted(set(defaults)), "gaps": gaps}
+
+
+def _ninja_input_paths(output):
+    paths = []
+    for line in output.splitlines():
+        values = shlex.split(line)
+        if len(values) != 1:
+            raise RealizationError("unsupported Ninja input path encoding")
+        paths.append(values[0])
+    return paths
+
+
+def _default_snapshot(realization):
+    """Let Ninja resolve the graph; retain typed producer/input categories.
+
+    No DOT pointer identifiers enter identity. Query every reachable producer,
+    using Ninja's no-target inputs/commands tools to cross-check actual defaults.
+    Discovery in .ninja_deps is independently audited by _ninja_headers.
+    """
+    if realization["cmake"].get("generator", {}).get("name") != "Ninja":
+        raise RealizationError("default build proof supports single-config Ninja only")
+    build = realization["build_dir"]
+    env = phase_environment(realization["profile"], realization["repo_root"], "build")
+    manifests = _ninja_manifests(build)
+    cache_path = Path(build) / 'CMakeCache.txt'
+    if not cache_path.is_file() or cache_path.resolve() != cache_path:
+        raise RealizationError('default build requires a bound native CMake cache')
+    cache = {}
+    for line in cache_path.read_text().splitlines():
+        match = re.match(r'([^:#=]+):[^=]+=(.*)$', line)
+        if match:
+            if match[1] in cache:
+                raise RealizationError('duplicate native CMake cache entry')
+            cache[match[1]] = match[2]
+    tools = {}
+    configured_tools = {'ninja': cache.get('CMAKE_MAKE_PROGRAM'),
+                        'cmake': realization['cmake'].get('paths', {}).get('cmake')}
+    for name, configured in configured_tools.items():
+        actual = shutil.which(name, path=env.get('PATH'))
+        if (not configured or not Path(configured).is_absolute() or not actual
+                or Path(configured).resolve() != Path(actual).resolve() or not Path(actual).is_file()):
+            raise RealizationError(f'default configured/PATH build tool identity mismatch: {name}')
+        path = Path(actual).resolve()
+        tools[name] = {'configured': configured, 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    for key, value in cache.items():
+        if value and (re.fullmatch(r'CMAKE_\w+_(?:COMPILER_LAUNCHER|LINKER_LAUNCHER|COMPILE_OBJECT|LINK_EXECUTABLE|CREATE_\w+)', key)
+                or re.fullmatch(r'(?:CMAKE_)?RULE_LAUNCH_\w+', key)
+                or key.startswith(('CMAKE_USER_MAKE_RULES_OVERRIDE', 'CMAKE_TOOLCHAIN_FILE'))
+                or re.fullmatch(r'CMAKE_PROJECT(?:_.+)?_(?:INCLUDE|INCLUDE_BEFORE|TOP_LEVEL_INCLUDES)', key)):
+            manifests['gaps'].append({'kind': 'unsupported_default_cache_rule_override', 'entry': key})
+    raw = {}
+    def tool(name, args):
+        raw[name] = _command(["ninja", "-C", build, "-t", *args], env=env)
+        return raw[name]
+    table = {}
+    for line in tool("targets", ["targets", "all"]).splitlines():
+        if ": " not in line:
+            raise RealizationError("unsupported Ninja target-table encoding")
+        path, rule = line.rsplit(": ", 1)
+        if path in table or not path or not rule:
+            raise RealizationError("ambiguous Ninja output producer")
+        table[path] = rule
+    # Ninja 1.11's inputs tool requires explicit roots (no-arg means empty),
+    # unlike its graph/commands tools. The roots come from every loaded literal
+    # default declaration; command equality independently checks native defaults.
+    inputs = _ninja_input_paths(tool("inputs", ["inputs", *manifests["roots"]]))
+    tool("graph", ["graph"])
+    commands = tool("commands", ["commands"])
+    if commands != tool("explicit-commands", ["commands", *manifests["roots"]]):
+        raise RealizationError("native default roots disagree with manifest proof")
+    paths = sorted(set(inputs) | set(manifests["roots"]))
+    outputs = [p for p in paths if p in table]
+    edges = {}
+    offset = 0
+    while offset < len(outputs):
+        chunk = outputs[offset:offset + 64]
+        lines = tool(f"query-{offset}", ["query", *chunk]).splitlines()
+        offset += len(chunk)
+        blocks = {}
+        current, section = None, None
+        for line in lines:
+            if line and not line.startswith(" ") and line.endswith(":"):
+                current, section = line[:-1], None
+                blocks[current] = {"rule": None, "inputs": []}
+            elif line.startswith("  input: "):
+                blocks[current]["rule"], section = line[len("  input: "):], "inputs"
+            elif line == "  outputs:":
+                section = "outputs"
+            elif line.startswith("    ") and section == "inputs":
+                value = line[4:]
+                kind = "order_only" if value.startswith("|| ") else "implicit" if value.startswith("| ") else "explicit"
+                value = value[3:] if kind == "order_only" else value[2:] if kind == "implicit" else value
+                blocks[current]["inputs"].append([kind, value])
+            elif line.startswith("    ") and section == "outputs":
+                pass
+            else:
+                raise RealizationError("unsupported Ninja query/dynamic edge encoding")
+        if set(blocks) != set(chunk) or any(blocks[p]["rule"] != table[p] for p in chunk):
+            raise RealizationError("native producer query disagrees with target table")
+        edges.update(blocks)
+        # Ninja versions omit different produced/phony nodes from `inputs`.
+        # Traverse EVERY dependency with a native producer through query; never
+        # equate an inputs-tool listing with complete generator membership.
+        missing_producers = sorted({value for edge in blocks.values() for _, value in edge["inputs"]
+                                    if value not in paths and value in table})
+        outputs.extend(missing_producers)
+        paths.extend(missing_producers)
+        # Native inputs also omits command-free phony leaves. The query still
+        # binds them; audit their bytes/provenance just like all other leaves.
+        paths.extend(sorted({value for edge in blocks.values() for _, value in edge["inputs"]
+                             if value not in paths and value not in table}))
+    paths.sort()
+    # Ensure query never reveals a non-phony dependency omitted by introspection.
+    missing = sorted({value for edge in edges.values() for _, value in edge["inputs"] if value not in paths})
+    if missing:
+        raise RealizationError(f"incomplete native default input closure: {missing}")
+    current_manifests = _ninja_manifests(build)
+    current_manifests['gaps'] += [gap for gap in manifests['gaps'] if gap['kind'] == 'unsupported_default_cache_rule_override']
+    if manifests != current_manifests:
+        raise RealizationError("Ninja manifests changed during default introspection")
+    return {"manifests": manifests, "build_tools": tools,
+            "cache_sha256": hashlib.sha256(cache_path.read_bytes()).hexdigest(), "edges": edges, "paths": paths,
+            "commands_sha256": hashlib.sha256(commands.encode()).hexdigest()}, raw
+
+
+def _attest_default(realization):
+    snapshot, raw = _default_snapshot(realization)
+    gaps = list(snapshot["manifests"]["gaps"])
+    ids = set()
+    targets = realization["targets"]
+    artifact_targets, object_targets = {}, {}
+    for key, target in targets.items():
+        for artifact in target['artifacts']:
+            artifact_targets.setdefault(artifact, set()).add(key)
+        object_dir = str(Path(target['build_path']) / 'CMakeFiles' / (target['name'] + '.dir'))
+        object_targets.setdefault(object_dir, set()).add(key)
+    # File API may report the public library symlink, not the versioned link
+    # output. Attribute it through native symlink edges, never filename suffixes.
+    changed = True
+    while changed:
+        changed = False
+        for output, edge in snapshot['edges'].items():
+            if edge['rule'] not in ('CMAKE_SYMLINK_LIBRARY', 'CMAKE_SYMLINK_EXECUTABLE'):
+                continue
+            paths = [_path(realization['build_dir'], output)] + [_path(realization['build_dir'], value) for _, value in edge['inputs']]
+            owners = set().union(*(artifact_targets.get(path, set()) for path in paths))
+            if len(owners) == 1:
+                for path in paths:
+                    if path not in artifact_targets:
+                        artifact_targets[path] = set(owners)
+                        changed = True
+    for output, edge in snapshot["edges"].items():
+        rule = edge["rule"]
+        if rule == "phony":
+            continue
+        path = _path(realization["build_dir"], output)
+        if not Path(path).is_relative_to(Path(realization['build_dir'])):
+            gaps.append({'kind': 'default_output_escapes_build', 'output': path})
+        candidates = set(artifact_targets.get(path, set()))
+        for parent in Path(path).parents:
+            if str(parent) in object_targets:
+                candidates.update(object_targets[str(parent)])
+                break
+        if (len(candidates) != 1 or not re.fullmatch(
+                r"(?:(?:C|CXX|OBJC|OBJCXX|ASM)(?:_COMPILER|_EXECUTABLE_LINKER|_STATIC_LIBRARY_LINKER|_SHARED_LIBRARY_LINKER|_SHARED_MODULE_LINKER)__.+|CMAKE_SYMLINK_(?:LIBRARY|EXECUTABLE))", rule)):
+            gaps.append({"kind": "unproven_default_producer", "output": output, "rule": rule, "targets": sorted(candidates)})
+        else:
+            ids.update(candidates)
+    closure = _target_closure(ids, realization)
+    # A File API prerequisite outside the observed native graph is not repaired
+    # by an unrelated named-target build. Require an actual native output.
+    for key in closure:
+        target = targets[key]
+        if key not in ids:
+            gaps.append({"kind": "unobserved_default_target_dependency", "target": target["name"]})
+    order_directories, consumers_by_path = set(), {}
+    for output, edge in snapshot['edges'].items():
+        for kind, value in edge['inputs']:
+            consumers_by_path.setdefault(_path(realization['build_dir'], value), []).append((output, kind))
+    for target in targets.values():
+        directory = str(Path(target['build_path']) / 'CMakeFiles' / (target['name'] + '.dir'))
+        alias = 'cmake_object_order_depends_target_' + target['name']
+        consumers = consumers_by_path.get(directory, [])
+        if (consumers == [(alias, 'order_only')] and snapshot['edges'][alias]['rule'] == 'phony'
+                and any(source.get('compiled') for source in target['sources'])
+                and Path(directory).is_dir() and Path(directory).resolve() == Path(directory)):
+            order_directories.add(directory)
+    leaves = []
+    tool_inputs = sorted({t["compiler"]["path"] for t in realization.get("toolchains", {}).get("toolchains", [])
+                          if t.get("compiler", {}).get("path")} | {tool['path'] for tool in snapshot['build_tools'].values()})
+    for value in snapshot["paths"]:
+        if value in snapshot["edges"]:
+            continue
+        if value == ".":  # CMake's empty object-order phony sentinel
+            continue
+        path = Path(_path(realization["build_dir"], value))
+        if str(path) in order_directories:
+            continue  # exact File API target directory, only a native order-only sentinel
+        leaves.append(str(path))
+        if path.is_relative_to(Path(realization["build_dir"])) and str(path) not in realization["configure_outputs"]:
+            gaps.append({"kind": "unproven_default_generated_leaf", "input": str(path)})
+        elif not path.is_file():
+            gaps.append({"kind": "missing_default_leaf", "input": str(path)})
+    # Custom rule/launcher overrides cannot inherit ordinary compile/link
+    # provenance merely by retaining CMake's generated rule name.
+    trace = Path(realization["build_dir"]) / "nostrc-configure-trace.jsonl"
+    for line in trace.read_text().splitlines():
+        entry = json.loads(line)
+        args = entry.get("args", [])
+        if (Path(entry.get("file", "/")).is_relative_to(Path(realization["repo_root"]))
+                and entry.get("cmd", "").lower() in ("set", "set_property", "set_target_properties")) and any(
+                re.fullmatch(r"(?:(?:CMAKE_)?RULE_LAUNCH_\w+|(?:CMAKE_)?(?:C|CXX|OBJC|OBJCXX|ASM)_(?:COMPILER_LAUNCHER|LINKER_LAUNCHER|COMPILE_OBJECT|LINK_EXECUTABLE|CREATE_\w+))", arg)
+                for arg in args):
+            gaps.append({"kind": "unsupported_default_rule_override", "file": entry["file"], "line": entry["line"]})
+    return {"schema_version": 1, "snapshot": snapshot, "target_ids": closure,
+            "inputs": sorted(set(leaves)), "tool_inputs": tool_inputs,
+            "order_directories": sorted(order_directories), "gaps": gaps}, raw
+
+
+def _validate_default_binding(realization):
+    binding = realization.get("default_build_binding")
+    if binding is None:
+        raise RealizationError("default build contract requires fresh default-generator attestation")
+    if binding.get("schema_version") != 1 or binding.get("gaps"):
+        raise RealizationError(f"unsupported default build closure: {binding.get('gaps')}")
+    current, _ = _attest_default(realization)
+    if current != binding:
+        raise RealizationError("native default graph changed; configure and audit again")
+    return binding
+
+
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
                       inventory_hash, *, log_path=None, inventory=None):
     """Query BEFORE configure; consume replies only AFTER successful generate.
@@ -809,6 +1121,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
             compiled_languages.add(language)
         targets[target["id"]] = {
             "id": target["id"], "name": target["name"], "type": target["type"],
+            "build_path": _path(build, target["paths"]["build"]),
             "artifacts": [_path(build, a["path"]) for a in target.get("artifacts", [])],
             "sources": [{"path": _path(build if s.get("isGenerated") else source, s["path"]),
                          "generated": s.get("isGenerated", False),
@@ -857,6 +1170,12 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         if _hash(inventory) != inventory_hash:
             raise RealizationError("configured override inventory content identity mismatch")
         realization["override_inventory"] = inventory
+    if inventory is not None and any(c.get("build_scope") == "default" and _eligible(c, profile_id)
+                                     for c in inventory["checks"].values()):
+        binding, raw = _attest_default(realization)
+        realization["default_build_binding"] = binding
+        default_evidence = build / f"nostrc-default-generator-{token}.json"
+        _atomic(default_evidence, raw)
     realization["profile_fingerprint"] = _profile_fingerprint(realization)
     compat = profile.get("sanitizer_compatibility")
     if compat:
@@ -870,6 +1189,9 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     bound += sorted({Path(spec["metadata_helper"]) for spec in configure_outputs.values()})
     bound += [reply_dir / t["jsonFile"] for t in configs[0].get("targets", [])]
     bound += list(build.rglob("CTestTestfile.cmake"))
+    if "default_build_binding" in realization:
+        bound += [default_evidence, build / 'CMakeCache.txt', *map(Path, binding["snapshot"]["manifests"]["files"])]
+        bound += [Path(tool['path']) for tool in binding['snapshot']['build_tools'].values()]
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
     _validate_source_identity(root, identity, build)
     _validate_phase_context(realization)
@@ -898,6 +1220,8 @@ def load_realization(build_dir, expected_identity=None):
     else:
         _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"], realization.get("compiled_languages"))
     _validate_phase_context(realization)
+    if "default_build_binding" in realization:
+        _validate_default_binding(realization)
     return realization
 
 
@@ -1236,23 +1560,39 @@ def _command_specs(inventory, realization):
         if not set(required).issubset(realization["profile"].get("capabilities", [])):
             raise RealizationError(f"unavailable command capabilities: {ident}")
         names = list(check.get("build_targets", []))
+        default = check.get("build_scope") == "default"
+        if "build_scope" in check and (not default or check["kind"] != "build_contract" or check.get("build_targets") != []):
+            raise RealizationError(f"invalid default build scope: {ident}")
+        if default and env != env_bases["build"]:
+            raise RealizationError(f"default build environment differs from configured build phase: {ident}")
+        if check["kind"] == "command" and Path(argv[0]).name == "cmake" and argv[1:2] == ["--build"]:
+            raise RealizationError(f"CMake build requires build_contract, not test-phase command: {ident}")
         if check["kind"] == "build_contract":
             # Build contracts must identify an exact codemodel target set. Keep
             # arbitrary commands in kind=command, never interpret shell flags.
             tail = argv[3:]
             if realization["configuration"] and tail[:2] == ["--config", realization["configuration"]]:
                 tail = tail[2:]
-            if (argv[:3] != ["cmake", "--build", realization["build_dir"]]
+            if default:
+                expected = ["cmake", "--build", realization["build_dir"]]
+                if realization["configuration"]:
+                    expected += ["--config", realization["configuration"]]
+                if argv != expected:
+                    raise RealizationError(f"default build_contract requires exact no-target build argv: {ident}")
+                binding = _validate_default_binding(realization)
+                names = [realization["targets"][key]["name"] for key in binding["target_ids"]]
+            elif (argv[:3] != ["cmake", "--build", realization["build_dir"]]
                     or not tail or tail[0] != "--target" or len(tail) < 2
                     or any(x.startswith("-") for x in tail[1:])):
                 raise RealizationError(f"build_contract requires exact cmake --build/--target contract: {ident}")
-            declared = tail[1:]
-            if len(declared) != len(set(declared)) or (names and sorted(names) != sorted(declared)):
-                raise RealizationError(f"build_contract target disagreement: {ident}")
-            names = declared
+            if not default:
+                declared = tail[1:]
+                if len(declared) != len(set(declared)) or (names and sorted(names) != sorted(declared)):
+                    raise RealizationError(f"build_contract target disagreement: {ident}")
+                names = declared
             authored = authored_phase_parallelism(realization["profile"])
-            if authored is not None:
-                argv += ["--parallel", str(authored["build"])]
+            if authored is not None or default:
+                argv += ["--parallel", str(authored["build"] if authored is not None else realization['profile'].get('parallelism', 1))]
         if any(n not in targets for n in names):
             raise RealizationError(f"unknown command build target: {ident}")
         target_ids = _target_closure([targets[n]["id"] for n in names], realization)
@@ -1290,7 +1630,9 @@ def _command_specs(inventory, realization):
         result[ident] = {"kind": check["kind"], "phase": phase, "argv": argv, "cwd": str(cwd.resolve()),
                          "environment": {k: env[k] for k in environment}, "environment_hash": _hash(env), "inputs": sorted(set(inputs)),
                          "target_ids": target_ids, "build_targets": sorted(names),
-                         "requires": sorted(required), "required_evidence": evidence}
+                         "requires": sorted(required), "required_evidence": evidence,
+                         **({"build_scope": "default", "default_build_hash": _hash(binding),
+                             "default_inputs": binding["inputs"], "tool_inputs": binding["tool_inputs"]} if default else {})}
     return result
 
 
@@ -1317,7 +1659,7 @@ def _audit_compatibility_targets(inventory, realization, after_build):
         if after_build:
             output = _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
                               env=phase_environment(realization["profile"], realization["repo_root"], "build"))
-            paths += [(_path(realization["build_dir"], p), "ninja") for p in output.splitlines()]
+            paths += [(_path(realization["build_dir"], p), "ninja") for p in _ninja_input_paths(output)]
             discovered = [p for obj, values in headers.items() if f"CMakeFiles/{target['name']}.dir/" in obj.replace("\\", "/") for p in values]
             paths += [(_path(realization["build_dir"], p), "header") for p in discovered]
             if not discovered and any(s.get("compiled") for s in target["sources"]):
@@ -1349,17 +1691,40 @@ def _audit_commands(inventory, realization, specs, after_build):
     for ident, spec in specs.items():
         check = inventory["checks"][ident]
         covered = _impact_prerequisites(inventory, check.get("nodes", []))
-        paths = [(p, "runtime") for p in spec["inputs"]]
+        paths = ([(p, "runtime") for p in spec["inputs"]]
+                 + [(p, "ninja") for p in spec.get("default_inputs", [])]
+                 + [(p, "toolchain") for p in spec.get("tool_inputs", [])])
+        native_outputs = {}
+        native_phony = set()
+        if spec.get('build_scope') == 'default':
+            edges = realization['default_build_binding']['snapshot']['edges']
+            native_outputs = {_path(realization['build_dir'], p): edge for p, edge in edges.items() if edge['rule'] != 'phony'}
+            native_phony = {_path(realization['build_dir'], p) for p, edge in edges.items() if edge['rule'] == 'phony'}
+            paths += [(p, 'native_output') for p in native_outputs]
         for key in spec["target_ids"]:
             target = realization["targets"][key]
             paths += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
             if after_build:
-                paths += [(_path(realization["build_dir"], p), "ninja") for p in _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
-                    env=phase_environment(realization["profile"], realization["repo_root"], "build")).splitlines()]
+                for artifact in target["artifacts"]:
+                    if not Path(artifact).is_file() or not Path(artifact).resolve().is_relative_to(Path(realization["build_dir"])):
+                        gaps.append({"kind": "missing_command_build_artifact", "check": ident, "target": target["name"], "input": artifact})
+                    else:
+                        hashes[artifact] = hashlib.sha256(Path(artifact).read_bytes()).hexdigest()
+                paths += [(_path(realization["build_dir"], p), "ninja") for p in _ninja_input_paths(_command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
+                    env=phase_environment(realization["profile"], realization["repo_root"], "build")))]
                 discovered = [p for obj, values in headers.items() if f"CMakeFiles/{target['name']}.dir/" in obj.replace("\\", "/") for p in values]
                 paths += [(_path(realization["build_dir"], p), "header") for p in discovered]
                 if not discovered and any(s.get("compiled") for s in target["sources"]):
                     gaps.append({"kind": "missing_discovered_header_index", "check": ident, "target": target["name"]})
+        configured = realization.get("configure_outputs", {})
+        for value, _ in list(paths):
+            if value in configured:
+                paths += [(configured[value][key], "source") for key in ("producer", "source", "metadata_helper")]
+                for dependency, expected in configured[value]["hashes"].items():
+                    file = Path(dependency)
+                    if not file.is_file() or file.resolve() != file or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
+                        gaps.append({"kind": "stale_configure_output", "check": ident, "input": value, "changed": dependency})
+        artifacts = {p for key in spec["target_ids"] for p in realization["targets"][key]["artifacts"]}
         expanded = []
         for value, kind in paths:
             path = Path(value)
@@ -1373,8 +1738,27 @@ def _audit_commands(inventory, realization, specs, after_build):
         for value, kind in sorted(set(expanded)):
             path = Path(value)
             if path.is_relative_to(Path(realization["build_dir"])):
+                if kind == "ninja" and path == Path(realization["build_dir"]):
+                    continue  # CMake's empty object-order phony sentinel
+                if kind == 'ninja' and value in native_phony and not path.is_file():
+                    continue  # actual command-free producer, not a runtime file
+                if kind == 'ninja' and value in realization.get('default_build_binding', {}).get('order_directories', []):
+                    if not path.is_dir() or path.resolve() != path:
+                        gaps.append({'kind': 'changed_default_order_directory', 'check': ident, 'input': value})
+                    continue
+                if kind == 'native_output' and after_build:
+                    if not path.is_file() or not path.resolve().is_relative_to(Path(realization['build_dir'])):
+                        gaps.append({'kind': 'missing_default_build_output', 'check': ident, 'input': value})
+                    else:
+                        hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+                if spec.get("build_scope") == "default" and kind in ("header", "ninja"):
+                    if value not in configured and value not in native_outputs:
+                        gaps.append({"kind": "unproven_default_generated_input", "check": ident, "input": value, "input_kind": kind})
+                    if after_build and path.is_file():
+                        hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
                 if kind == "runtime":
                     if (not spec["target_ids"] or not path.resolve().is_relative_to(Path(realization["build_dir"]))
+                            or (spec.get("build_scope") == "default" and value not in artifacts and value not in configured)
                             or (after_build and not path.is_file())):
                         gaps.append({"kind": "generated_runtime_without_target_or_file", "check": ident, "input": value})
                     elif after_build:
@@ -1385,7 +1769,7 @@ def _audit_commands(inventory, realization, specs, after_build):
                 continue
             relative = _relative(value, realization["repo_root"])
             if relative is None:
-                if kind not in ("header", "ninja"):
+                if kind not in ("header", "ninja", "toolchain"):
                     gaps.append({"kind": "external_input", "check": ident, "input": value})
             elif not path.resolve().is_relative_to(Path(realization["repo_root"])):
                 gaps.append({"kind": "external_symlink_input", "check": ident, "input": value})
@@ -1436,6 +1820,60 @@ def _ctest_runtime_constraints(inventory, realization, tests, descriptors):
                 gaps.append({"kind": "ctest_runtime_input_consistency", "check": ident, "input": value, "reason": str(exc)})
         constraints[ident] = sorted(paths)
     return constraints, gaps
+
+
+def _runtime_capability_evidence(realization, capabilities, plan_id=None):
+    """Declarations are not runtime setup; never contact an ambient keyring."""
+    evidence = {}
+    required = set(capabilities)
+    if not required.issubset(realization["profile"].get("capabilities", [])):
+        raise RealizationError("selected runtime capability is not declared by the authored profile")
+    if "gnome_keyring" in required:
+        raise RealizationError("gnome_keyring requires attested private HOME/private bus/throwaway Secret Service custody; adapter not implemented")
+    unknown = required - {"nak", "display", "private_bus", "docker", "external_peer", "prepared_peer"}
+    if unknown:
+        raise RealizationError(f"unsupported runtime capabilities: {sorted(unknown)}")
+    if "nak" in required:
+        env = phase_environment(realization["profile"], realization["repo_root"], "test")
+        executable = shutil.which("nak", path=env.get("PATH"))
+        if not executable or not Path(executable).is_file():
+            raise RealizationError("selected nak capability requires the actual nak executable")
+        path = Path(executable).resolve()
+        tool = {'executable': 'nak', 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+        if realization['profile_id'] in {'groundhog.linux', 'grotto.linux'}:
+            # C's ordinary-tools producer is executables-only authority. Its
+            # installed keyring record deliberately grants NO keyring custody.
+            directory = env.get('RUNNER_TEMP')
+            if not directory:
+                raise RealizationError('ordinary nak requires C ordinary_tool_setup_v1 receipt under RUNNER_TEMP/dependency')
+            receipt_path = Path(directory) / 'dependency/ordinary-tool-setup.json'
+            setup = _read(receipt_path)
+            if not isinstance(setup, dict) or not isinstance(setup.get('tools'), dict):
+                raise RealizationError('malformed ordinary nak setup receipt')
+            identity = realization['source_identity']
+            expected_identity = {'kind': 'committed', 'sha': identity.get('sha')}
+            if (receipt_path.is_symlink() or type(setup.get('schema_version')) is not int or setup['schema_version'] != 1
+                    or setup.get('kind') != 'ordinary_tool_setup_v1' or setup.get('setup_verified') is not True
+                    or setup.get('scope') != 'executables_only_not_bus_display_or_profile_acceptance'
+                    or identity.get('kind') != 'committed' or setup.get('source_identity') != expected_identity
+                    or setup.get('workflow_sha') != identity.get('sha') or env.get('GITHUB_WORKFLOW_SHA') != identity.get('sha')
+                    or setup.get('profile') != realization['profile_id']
+                    or not isinstance(setup.get('plan_id'), str) or not re.fullmatch(r'[a-f0-9]{64}', setup['plan_id'])
+                    or (plan_id is not None and setup['plan_id'] != plan_id)
+                    or not env.get('GITHUB_RUN_ID') or setup.get('run_id') != env.get('GITHUB_RUN_ID')
+                    or not env.get('GITHUB_RUN_ATTEMPT') or setup.get('run_attempt') != env.get('GITHUB_RUN_ATTEMPT')):
+                raise RealizationError('ordinary nak setup receipt source/profile/plan/workflow/run identity mismatch')
+            recorded = setup.get('tools', {}).get('nak', {})
+            if not isinstance(recorded, dict):
+                raise RealizationError('malformed ordinary nak executable fingerprint')
+            if (any(recorded.get(key) != value for key, value in tool.items())
+                    or any(not isinstance(recorded.get(key), str) for key in ('version_stdout', 'version_stderr'))
+                    or not re.search(r'(?:^|\s)v?0\.19\.7(?:\s|$)', recorded['version_stdout'] + recorded['version_stderr'])):
+                raise RealizationError('ordinary nak executable/version fingerprint differs from C setup receipt')
+            tool = dict(recorded, setup_receipt={'path': str(receipt_path),
+                'sha256': hashlib.sha256(receipt_path.read_bytes()).hexdigest(), 'record': setup})
+        evidence['nak'] = tool
+    return evidence
 
 
 def resolve_checks(inventory, plan, realization, profile_id):
@@ -1512,10 +1950,13 @@ def resolve_checks(inventory, plan, realization, profile_id):
     audit_ids = {ident for exclusion in exclusions for ident in exclusion["target_ids"]}
     compatibility_ids = _compatibility_target_ids(realization)
     audit_ids.update(compatibility_ids)
+    if "default_build_binding" in realization:
+        audit_ids.update(_validate_default_binding(realization)["target_ids"])
     closure = _target_closure(ids | audit_ids | contract_ids, realization)
     available = set(realization["profile"].get("capabilities", []))
     if not capabilities.issubset(available):
         raise RealizationError(f"unavailable selected capabilities: {sorted(capabilities - available)}")
+    runtime_capabilities = _runtime_capability_evidence(realization, capabilities, plan.get('plan_id', _hash(plan)))
     result = {"schema_version": 1, "profile_id": profile_id,
         "profile_fingerprint": realization["profile_fingerprint"],
         "source_identity": realization["source_identity"], "inventory_hash": realization["inventory_hash"],
@@ -1537,6 +1978,10 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
         "registered_commands": {t["name"]: t["command"] for t in realization["tests"] if "command" in t}}
+    if runtime_capabilities:
+        result["runtime_capability_evidence"] = runtime_capabilities
+    if "default_build_binding" in realization:
+        result.update(default_build_required=True, default_build_hash=_hash(realization["default_build_binding"]))
     if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
         result["complete"] = False
     authored = authored_phase_parallelism(realization["profile"])
@@ -1702,7 +2147,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 if ident not in ninja_inputs:
                     output = _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
                                       env=phase_environment(realization["profile"], realization["repo_root"], "build"))
-                    ninja_inputs[ident] = [(_path(realization["build_dir"], p), "ninja") for p in output.splitlines()]
+                    ninja_inputs[ident] = [(_path(realization["build_dir"], p), "ninja") for p in _ninja_input_paths(output)]
                 inputs += ninja_inputs[ident]
                 target_headers = 0
                 for obj, dependencies in headers.items():
@@ -1799,9 +2244,30 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     command_gaps, command_hashes = _audit_commands(inventory, realization, specs, after_build)
     gaps.extend(command_gaps)
     fingerprints.update(command_hashes)
+    runtime_tools = {}
+    if "nak" in realization["profile"].get("capabilities", []) and (
+            any("nak" in desc.get("requires", []) for desc in descriptors.values())
+            or any("nak" in spec["requires"] for spec in specs.values())):
+        try:
+            runtime_tools = _runtime_capability_evidence(realization, ["nak"])
+            tool = runtime_tools["nak"]
+            fingerprints[tool['path']] = tool['sha256']
+            if 'setup_receipt' in tool:
+                fingerprints[tool['setup_receipt']['path']] = tool['setup_receipt']['sha256']
+        except RealizationError as exc:
+            gap("missing_runtime_capability", capability="nak", reason=str(exc))
     compatibility_gaps, compatibility_hashes = _audit_compatibility_targets(inventory, realization, after_build)
     gaps.extend(compatibility_gaps)
     fingerprints.update(compatibility_hashes)
+    default_execution = None
+    if after_build and "default_build_binding" in realization:
+        try:
+            default_execution = _default_build_execution(realization)
+            for path in (Path(realization["build_dir"]) / "nostrc-default-build-execution.json",
+                         Path(default_execution["log"]), Path(default_execution["log"] + ".process.json")):
+                fingerprints[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except RealizationError as exc:
+            gap("default_build_execution", reason=str(exc))
     command_targets = {key for spec in specs.values() for key in spec["target_ids"]}
     if after_build and not header_count and not command_targets and any(t["type"] in ("EXECUTABLE", "STATIC_LIBRARY", "SHARED_LIBRARY") for t in realization["targets"].values()):
         gap("missing_discovered_header_index")
@@ -1818,12 +2284,18 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "ctest_runtime_constraints": constraints,
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
+    if "default_build_binding" in realization:
+        result.update(default_build_required=True, default_build_hash=_hash(realization["default_build_binding"]))
     if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
         result["complete"] = False
     if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in exclusions):
         result["nonmember_binding"] = _nonmember_binding(realization, descriptors)
     if "override_inventory" in realization:
         result["override_inventory_hash"] = _hash(realization["override_inventory"])
+    if runtime_tools:
+        result["runtime_capability_evidence"] = runtime_tools
+    if default_execution is not None:
+        result["default_build_execution"] = default_execution
     if prepared_inputs:
         result['prepared_inputs'] = prepared_inputs
         result['complete_gate_eligible'] = False
@@ -1924,6 +2396,58 @@ def _diagnostic_execution_options(resolved, realization, parallel, timeout=None,
     return expected
 
 
+def _build_commands(resolved, realization, jobs):
+    base = ["cmake", "--build", realization["build_dir"], "--parallel", str(jobs)]
+    if resolved["configuration"]:
+        base += ["--config", resolved["configuration"]]
+    if resolved.get('default_build_required'):
+        from test_selection import default_build_argv
+        if base != default_build_argv(realization['profile'], realization['build_dir'], resolved['configuration']):
+            raise RealizationError('default prerequisite build configuration/parallelism differs from authored profile')
+    commands = [base] if resolved.get("default_build_required") else []
+    defaults = {realization["targets"][key]["name"] for key in realization.get("default_build_binding", {}).get("target_ids", [])}
+    named = sorted(set(resolved["build_targets"]) - defaults)
+    if named:
+        commands.append([*base, "--target", *named])
+    return commands
+
+
+def _record_default_build(realization, command, logfile):
+    """A successful no-target build is prerequisite evidence, not check success."""
+    from test_selection import default_build_argv
+    status = _read(str(logfile) + ".process.json")
+    expected = default_build_argv(realization['profile'], realization['build_dir'], realization['configuration'])
+    if (status.get("outcome") != "passed" or type(status.get('exit_code')) is not int or status.get("exit_code") != 0
+            or status.get("argv") != command or command != expected
+            or status.get("environment_hash") != realization["phase_context"]["environment_hashes"]["build"]
+            or status.get("output_sha256") != hashlib.sha256(Path(logfile).read_bytes()).hexdigest()):
+        raise RealizationError("invalid physical default prerequisite build evidence")
+    _atomic(Path(realization["build_dir"]) / "nostrc-default-build-execution.json", {
+        "default_build_hash": _hash(realization["default_build_binding"]),
+        "profile_fingerprint": realization["profile_fingerprint"], "process": status,
+        "log": str(logfile), "log_sha256": status["output_sha256"]})
+
+
+def _default_build_execution(realization):
+    path = Path(realization["build_dir"]) / "nostrc-default-build-execution.json"
+    if not path.is_file():
+        raise RealizationError("physical default prerequisite build evidence missing")
+    from test_selection import default_build_argv
+    record = _read(path)
+    status = record.get("process", {})
+    logfile = Path(record.get("log", ""))
+    expected = default_build_argv(realization['profile'], realization['build_dir'], realization['configuration'])
+    if (record.get("default_build_hash") != _hash(realization["default_build_binding"])
+            or record.get("profile_fingerprint") != realization["profile_fingerprint"]
+            or not logfile.is_file() or hashlib.sha256(logfile.read_bytes()).hexdigest() != record.get("log_sha256")
+            or _read(str(logfile) + ".process.json") != status
+            or status.get("outcome") != "passed" or type(status.get("exit_code")) is not int or status["exit_code"] != 0
+            or status.get("environment_hash") != realization["phase_context"]["environment_hashes"]["build"]
+            or status.get("argv") != expected):
+        raise RealizationError("physical default prerequisite build evidence changed")
+    return record
+
+
 def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     """Build selected prerequisites before the mandatory post-build audit."""
     realization = load_realization(build_dir, resolved["source_identity"])
@@ -1932,16 +2456,16 @@ def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     _validate_resolved_phase(resolved, realization)
     jobs = effective_phase_parallelism(realization["profile"], parallel, build_parallel=build_parallel, phases=("build",))
     _diagnostic_execution_options(resolved, realization, jobs["build"], phase="build")
-    if not resolved["build_targets"]:
-        return {"commands": [], "build_seconds": 0}
-    cmd = ["cmake", "--build", str(build_dir), "--parallel", str(jobs["build"])]
-    if resolved["configuration"]:
-        cmd += ["--config", resolved["configuration"]]
-    cmd += ["--target", *resolved["build_targets"]]
+    commands, outputs = _build_commands(resolved, realization, jobs["build"]), []
     start = time.monotonic()
-    output = _command(cmd, env=phase_environment(realization["profile"], realization["repo_root"], "build"))
-    load_realization(build_dir, resolved["source_identity"])
-    return {"commands": [cmd], "build_seconds": time.monotonic() - start, "output": output,
+    for cmd in commands:
+        logfile = Path(build_dir) / f"nostrc-prerequisite-{uuid.uuid4().hex}.log"
+        outputs.append(_command(cmd, env=phase_environment(realization["profile"], realization["repo_root"], "build"), log_path=logfile))
+        load_realization(build_dir, resolved["source_identity"])
+        if resolved.get("default_build_required") and "--target" not in cmd:
+            _record_default_build(realization, cmd, logfile)
+    return {"commands": commands, "build_seconds": time.monotonic() - start, "output": "".join(outputs),
+            **({"default_build_hash": resolved["default_build_hash"]} if resolved.get("default_build_required") else {}),
             "phase_context_hash": realization["phase_context_hash"],
             **({"baseline_exclusions": resolved["baseline_exclusions"], "complete": False,
                 "complete_gate_eligible": False} if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1"
@@ -2120,6 +2644,9 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         custody.validate(resolved)
     elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer", "prepared_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
+    runtime_capabilities = _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id'])
+    if runtime_capabilities != resolved.get("runtime_capability_evidence", {}):
+        raise RealizationError("selected runtime capability executable changed after resolution")
     directory = _attempt_directory(resolved, evidence_dir, attempt)
     previous_attempts = []
     for previous in range(1, attempt):
@@ -2140,7 +2667,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "resolved_hash": resolved["resolved_hash"], "attempt": attempt,
         "lane_id": resolved["profile_id"], "profile": resolved["profile_id"],
         "plan_id": resolved["plan_id"], "profile_hash": resolved["profile_hash"],
-        "configuration": resolved["configuration"],
+        "configuration": resolved["configuration"], "build_dir": str(build_dir),
         "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "registration_audit": "passed", "job_conclusion": "running",
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
@@ -2154,6 +2681,10 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "available_capabilities": realization["profile"].get("capabilities", []),
         "target_ids": resolved["target_ids"], "build_targets": resolved["build_targets"],
         "command_specs_hash": resolved.get("command_specs_hash")}
+    if runtime_capabilities:
+        receipt["runtime_capability_evidence"] = runtime_capabilities
+    if resolved.get("default_build_required"):
+        receipt.update(default_build_required=True, default_build_hash=resolved["default_build_hash"])
     if authored_phase_parallelism(realization["profile"]) is not None:
         receipt["execution_parallelism"] = jobs
     if any(e.get("authority") in ("reviewed_diagnostic_nonmembers_v1", "reviewed_diagnostic_nonmember_subset_v1") for e in receipt["baseline_exclusions"]):
@@ -2179,26 +2710,34 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         raise RealizationError("input audit content hash mismatch")
     if input_audit.get("command_specs_hash") != resolved.get("command_specs_hash"):
         raise RealizationError("input audit command contract mismatch")
+    if (input_audit.get("default_build_hash") != resolved.get("default_build_hash")
+            or input_audit.get("default_build_required") != resolved.get("default_build_required")):
+        raise RealizationError("input audit default build binding mismatch")
+    if resolved.get("default_build_required") and input_audit.get("default_build_execution") != _default_build_execution(realization):
+        raise RealizationError("input audit physical default prerequisite build mismatch")
+    if any(input_audit.get("runtime_capability_evidence", {}).get(key) != proof for key, proof in runtime_capabilities.items()):
+        raise RealizationError("input audit runtime capability executable mismatch")
     _validate_runtime_closure(resolved, realization, input_audit)
     receipt["input_audit"] = input_audit
     receipt["input_audit_status"] = "passed"
     env = phase_environment(realization["profile"], realization["repo_root"], "test")
     build_env = phase_environment(realization["profile"], realization["repo_root"], "build")
     config = ["-C", resolved["configuration"]] if resolved["configuration"] else []
-    if build and resolved["build_targets"]:
-        cmd = ["cmake", "--build", str(build_dir), "--parallel", str(jobs["build"])]
-        if resolved["configuration"]:
-            cmd += ["--config", resolved["configuration"]]
-        cmd += ["--target", *resolved["build_targets"]]
-        commands.append(cmd)
-        _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
+    if build:
         begin = time.monotonic()
-        result = _execute(cmd, env=build_env, log_path=directory / "build.log", timeout=timeout)
-        if result.returncode:
-            raise RealizationError(f"selected prerequisite build failed: {result.returncode}")
+        for index, cmd in enumerate(_build_commands(resolved, realization, jobs["build"])):
+            commands.append(cmd)
+            _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
+            result = _execute(cmd, env=build_env, log_path=directory / ("build.log" if index == 0 else f"build-{index}.log"), timeout=timeout)
+            if result.returncode:
+                raise RealizationError(f"selected prerequisite build failed: {result.returncode}")
         receipt["build_seconds"] = time.monotonic() - begin
     _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     query = ["ctest", "--test-dir", str(build_dir), *config, "--show-only=json-v1"]
+    if resolved.get("default_build_required"):
+        default_dry_run = _command(["ninja", "-C", str(build_dir), "-n"], env=build_env)
+        if "ninja: no work to do." not in default_dry_run:
+            raise RealizationError("native default is not up to date; build and re-audit before execution")
     if resolved["build_targets"]:
         if realization["cmake"].get("generator", {}).get("name") != "Ninja":
             raise RealizationError("execution build-freshness proof requires the existing Ninja profile")
@@ -2333,7 +2872,9 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
             "observed_executions": [ident], "exit_code": process.returncode, "log": str(logfile),
             "log_sha256": hashlib.sha256(logfile.read_bytes()).hexdigest(), "argv": spec["argv"],
             "cwd": spec["cwd"], "environment_hash": spec["environment_hash"], "requires": spec["requires"],
-            "seconds": time.monotonic() - begin, "artifacts": artifacts, "missing_evidence": evidence_missing}
+            "process": _read(str(logfile) + ".process.json"),
+            "seconds": time.monotonic() - begin, "artifacts": artifacts, "missing_evidence": evidence_missing,
+            **({"build_scope": "default", "default_build_hash": spec["default_build_hash"]} if spec.get("build_scope") == "default" else {})}
         if receipt["outcome"] == "not_applicable":
             receipt["outcome"] = outcome
         elif outcome != "passed":
@@ -2344,6 +2885,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     for name, digest in input_audit.get("input_hashes", {}).items():
         if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
             raise RealizationError(f"input changed during execution: {name}")
+    if runtime_capabilities != _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id']):
+        raise RealizationError("selected runtime capability executable changed during execution")
     receipt["execution_outcome"] = receipt["outcome"]
     receipt["execution_clean_first_attempt"] = attempt == 1 and receipt["execution_outcome"] == "passed"
     if not receipt["complete_gate_eligible"]:
