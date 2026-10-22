@@ -28,7 +28,13 @@ class SupportedProfileMembership(unittest.TestCase):
 
     def test_complete_primary_census_without_fixture_or_omission_laundering(self):
         expected = {'groundhog.linux': (422, 386, 33),
-                    'grotto.linux': (461, 422, 33), 'core.linux': (441, 434, 0)}
+                    'grotto.linux': (461, 422, 33), 'core.linux': (441, 434, 0),
+                    'grotto.linux.asan_ubsan': (338, 334, 0),
+                    'groundhog.linux.sanitizers': (413, 62, 0),
+                    'groundhog.mdk08': (571, 560, 0), 'groundhog.mdk011': (441, 435, 0),
+                    'core.linux.asan': (272, 268, 0), 'core.macos.asan': (271, 267, 0),
+                    'libgo.linux.asan': (33, 33, 0), 'libgo.macos.asan': (33, 32, 0)}
+        self.assertEqual(set(self.data['profiles']), set(expected))
         for profile, record in self.data['profiles'].items():
             claims = {}
             for ident, check in self.p['checks'].items():
@@ -41,6 +47,7 @@ class SupportedProfileMembership(unittest.TestCase):
             self.assertEqual((record['registration_count'], len(claims), len(record['omissions'])),
                              expected[profile])
             self.assertFalse(set(claims) & set(record['omissions']))
+            self.assertFalse(set(claims) & set(record['unsupported_registrations']))
             for name, facts in record['primary'].items():
                 self.assertIn(name, facts['closure'])
                 self.assertFalse(set(facts['closure']) & set(record['omissions']))
@@ -66,13 +73,35 @@ class SupportedProfileMembership(unittest.TestCase):
                         self.assertEqual(classified['effect'], 'impact', path)
                         self.assertTrue(set(classified['nodes']) & covered, (profile, name, path))
 
+        for profile, checks in self.data['command_checks'].items():
+            for ident, facts in checks.items():
+                check = self.p['checks'][ident]
+                self.assertIn(profile, check['profiles'])
+                covered = r._impact_prerequisites(self.p, check['nodes'])
+                for path in census_inputs(self.data, facts):
+                    classified = s.classify(self.p, path)
+                    if classified['effect'] != 'global':
+                        self.assertEqual(classified['effect'], 'impact', path)
+                        self.assertTrue(set(classified['nodes']) & covered, (profile, ident, path))
+
     def test_no_invented_production_graph_profile_or_sanitizer_authority(self):
         frozen = {'nodes': '91dafbea554a51ec5e1eb3cf6658d1048e8eccfaa0fc52b9ed30136b95d4e6ff',
                   'path_rules': 'b97f07836ab765abcc51c445dc31081273bfe7232fcc458f26216fcba0679229',
                   'profiles': '88b5dae9f73c4957d3fe1232f6a7bd6b89d4dae5957d36d7b0a9decc27fe1599',
                   'diagnostic_nonmembers': 'b8f7de593bad6947ae73e2e5eacaf91e5e44814e3a24ed9906776a2d0343034b'}
+        previous = before_supported_batch_policy(self.p)
         for field, expected in frozen.items():
-            self.assertEqual(s.digest(self.p[field]), expected, field)
+            self.assertEqual(s.digest(previous[field]), expected, field)
+        structural = self.data['structural_changes']
+        self.assertEqual(set(structural['nodes']), {'testing.common_inputs', 'mdk08.peer_inputs',
+                                                  'mdk09.peer_inputs', 'mdk011.peer_inputs'})
+        for ident, node in structural['nodes'].items():
+            self.assertEqual(node['depends_on'], [])
+            self.assertEqual(self.p['nodes'][ident], node)
+        self.assertEqual({k: v for k, v in self.p['nodes'].items() if k not in structural['nodes']},
+                         previous['nodes'])
+        self.assertEqual(self.p['profiles'], previous['profiles'])
+        self.assertEqual(self.p['diagnostic_nonmembers'], previous['diagnostic_nonmembers'])
         self.assertEqual(self.p['nodes']['groundhog.unclassified']['depends_on'], [])
         self.assertFalse(self.p['enforcement_ready'])
         for profile, record in self.data['contracts'].items():
@@ -126,7 +155,8 @@ class SupportedProfileMembership(unittest.TestCase):
 
     def test_semantic_selection_savings_no_new_live_peer_or_unrelated_standalone_work(self):
         historical = before_supported_batch_policy(self.p)
-        for path in ('apps/gnostr/src/main_app.c', 'nostr-gtk/data/nostr-gtk.gresource.xml'):
+        for path in ('apps/gnostr/src/main_app.c', 'nostr-gtk/data/nostr-gtk.gresource.xml',
+                     'tests/test_json_filter.c'):
             self.assertTrue((ROOT / path).is_file())
             plan = s.make_plan(self.p, [change(path)], head=self.data['base_sha'])
             old = s.make_plan(historical, [change(path)], head=self.data['base_sha'])
@@ -177,6 +207,24 @@ nostrc_finalize_test_inventory()
                     r.resolve_checks(self.inventory, plan, real, 'synthetic')
             else:
                 self.assertEqual(r.resolve_checks(self.inventory, plan, real, 'synthetic')['tests'], [name])
+
+    def test_independent_build_contract_source_edge_negative(self):
+        (self.root / 'component.c').write_text('int component(void) { return 42; }\n')
+        cmake = self.root / 'CMakeLists.txt'
+        cmake.write_text(cmake.read_text() + '\nadd_library(aggregate STATIC component.c)\n')
+        self.inventory['path_rules'].append({'exact': 'component.c', 'nodes': ['other']})
+        self.inventory['checks']['aggregate'] = {
+            'kind': 'build_contract', 'profiles': ['synthetic'], 'nodes': ['other'],
+            'build_targets': ['aggregate'], 'working_directory': '{source}', 'environment': {},
+            'command': ['cmake', '--build', '{build}', '--target', 'aggregate']}
+        real = self.configure()
+        self.assertTrue(r.check_inputs(self.inventory, real)['passed'])
+        bad = copy.deepcopy(self.inventory)
+        bad['checks']['aggregate']['nodes'] = ['core']
+        gaps = r.check_inputs(bad, real)['gaps']
+        self.assertTrue(any(g['kind'] == 'missing_impact_edge' and
+                            g.get('check') == 'aggregate' and
+                            g.get('input') == 'component.c' for g in gaps))
 
     def test_independent_runtime_edge_and_unclaimed_registration_negatives(self):
         real = self.configure()

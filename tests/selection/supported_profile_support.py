@@ -10,7 +10,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/supported_profile_membership.json'
-WITNESS_SHA256 = '9e2b70b3688a766858af8f507cc6bf7e0c87ccdbd961141848f918db476f149d'
+WITNESS_SHA256 = 'da5ea1284c4dfd05495a558376939c34873a5820d1da936d8e7114f0aed9fb45'
 NEW_INPUTS = [
     '{source}/tests/selection/supported_profile_support.py',
     '{source}/tests/selection/test_supported_profile_membership.py',
@@ -65,6 +65,14 @@ def before_supported_batch_policy(policy):
     s.require(previous['coverage_gaps'].count(gap) == 1,
               'supported profile census remainder changed')
     previous['coverage_gaps'].remove(gap)
+    for ident, node in data.get('structural_changes', {}).get('nodes', {}).items():
+        s.require(previous['nodes'].get(ident) == node,
+                  'supported profile census fixture node changed: ' + ident)
+        del previous['nodes'][ident]
+    for rule in data.get('structural_changes', {}).get('path_rules', []):
+        s.require(previous['path_rules'].count(rule) == 1,
+                  'supported profile census fixture path rule changed')
+        previous['path_rules'].remove(rule)
     for profile in data['contracts']:
         previous['diagnostic_nonmember_subsets'][profile] = before_supported_batch_contract(
             previous['diagnostic_nonmember_subsets'][profile], profile)

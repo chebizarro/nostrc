@@ -25,6 +25,8 @@ class ProductionInventory(unittest.TestCase):
         return result
 
     def test_all_observed_failed_hosted_source_edges_reach_their_checks(self):
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(self.policy)
         evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())
         self.assertEqual(len(evidence["audits"]), 5)
         for audit in evidence["audits"]:

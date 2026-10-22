@@ -172,14 +172,15 @@ _gh_describe(groundhog-mdk011-interop-mdk09-probe test-groundhog-mdk011-interop
     "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.9-probe" ${_mdk011_inputs} ${_mdk09_inputs}
   REQUIRES ${_mdk011_requires} ${_mdk09_requires} EXPECTED mdk09_incompatibility)
 foreach(_pair
-    "groundhog-mdk-interop-image|driver"
-    "groundhog-mdk011-interop-image|driver-0.11"
-    "groundhog-mdk011-interop-image-mdk09|driver-0.9-probe")
+    "groundhog-mdk-interop-image|driver|mdk08.peer_inputs"
+    "groundhog-mdk011-interop-image|driver-0.11|mdk011.peer_inputs"
+    "groundhog-mdk011-interop-image-mdk09|driver-0.9-probe|mdk09.peer_inputs")
   string(REPLACE "|" ";" _pair "${_pair}")
   list(GET _pair 0 _name)
   list(GET _pair 1 _driver)
+  list(GET _pair 2 _peer_owner)
   if(TEST "${_name}")
-    nostrc_describe_test("${_name}" OWNER groundhog.mls_service EXPECTED fixture
+    nostrc_describe_test("${_name}" OWNER groundhog.mls_service "${_peer_owner}" EXPECTED fixture
       INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/${_driver}" REQUIRES docker)
   endif()
 endforeach()
