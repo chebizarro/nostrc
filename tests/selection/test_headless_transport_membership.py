@@ -144,12 +144,58 @@ class HeadlessTransportMembership(unittest.TestCase):
         with self.assertRaisesRegex(s.ContractError, 'selected closure changed'):
             before_transport_family(previous)
 
+    def assert_historical_nodes(self, nodes):
+        reviewed = {
+            'grelay': (
+                ['nostr.gobject', 'relayd'], ['nostr.gobject'], ['apps/grelay'],
+                'grelay and grelay_ingress_security link relay_security, whose relay_policy.c, rate_limit.c and relay_ingress.c sources and public headers belong to apps/relayd (apps/grelay/CMakeLists.txt; apps/grelay/tests/CMakeLists.txt).'),
+            'relayd': (
+                ['libnostr', 'libjson'], ['libnostr'], ['apps/relayd'],
+                'nostr-relay-server PRIVATE-links nostr_json; nostrc-relayd and the registered ingress/REQ/storage consumers also link nostr_json (apps/relayd/CMakeLists.txt; apps/relayd/tests/CMakeLists.txt). Its libjson source/header inputs must reach relay consumers.'),
+            'shared.tests': (
+                ['libnostr', 'libjson'], ['libnostr'], ['tests'],
+                'Root shared tests, including test_connection_recv_drain, explicitly link nostr_json (tests/CMakeLists.txt); libjson/src/json.c and its public header are build inputs, not optional external JSON providers.'),
+        }
+        previous = copy.deepcopy(nodes)
+        for ident, (current, old, paths, rationale) in reviewed.items():
+            self.assertEqual(nodes[ident], {
+                'id': ident, 'depends_on': current, 'owner_paths': paths, 'rationale': rationale,
+            })
+            previous[ident]['depends_on'] = old
+            previous[ident]['rationale'] = (
+                'Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure.')
+        self.assertEqual(s.digest(previous), self.renewal['unchanged_contract_hashes']['nodes'])
+
+    def test_historical_nodes_refuse_unknown_edges_and_missing_reviewed_edges(self):
+        self.assert_historical_nodes(self.policy['nodes'])
+        for ident, dependency in (('grelay', 'relayd'), ('relayd', 'libjson'),
+                                  ('shared.tests', 'libjson')):
+            for mutation in ('extra_edge', 'missing_edge', 'rationale', 'extra_field'):
+                with self.subTest(node=ident, mutation=mutation):
+                    nodes = copy.deepcopy(self.policy['nodes'])
+                    if mutation == 'extra_edge':
+                        nodes[ident]['depends_on'].append('nip49')
+                    elif mutation == 'missing_edge':
+                        nodes[ident]['depends_on'].remove(dependency)
+                    elif mutation == 'rationale':
+                        nodes[ident]['rationale'] += ' changed'
+                    else:
+                        nodes[ident]['unreviewed'] = True
+                    with self.assertRaises(AssertionError):
+                        self.assert_historical_nodes(nodes)
+        # Unreviewed nodes still flow unchanged into the original frozen digest.
+        nodes = copy.deepcopy(self.policy['nodes'])
+        nodes['libjson']['depends_on'].append('nip49')
+        with self.assertRaises(AssertionError):
+            self.assert_historical_nodes(nodes)
+
     def test_source_bound_immutable_history_graph_profiles_and_authorities(self):
         self.assertEqual(self.export['source_identity'], {'kind': 'committed', 'sha': BASE})
         self.assertEqual(self.renewal['source_identity'], self.export['source_identity'])
         self.assertEqual(self.export['realization_sha256'], self.renewal['fresh_realization_sha256'])
         self.assertEqual(self.policy['profiles'][PROFILE], self.export['profile'])
-        for key in ('nodes', 'profiles', 'diagnostic_nonmembers'):
+        self.assert_historical_nodes(self.policy['nodes'])
+        for key in ('profiles', 'diagnostic_nonmembers'):
             self.assertEqual(s.digest(self.policy[key]), self.renewal['unchanged_contract_hashes'][key])
         self.assertEqual(s.digest(before_grotto_nip49_family(
                              self.policy['diagnostic_nonmember_subsets']['grotto.linux'])),
