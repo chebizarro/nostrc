@@ -1,5 +1,104 @@
 # Dependency-aware testing acceptance run ledger
 
+## Batch C frozen snapshot — 2026-10-22T11:16:15.818726Z
+
+This section supersedes older **current** labels below without rewriting their
+historical observations. Sequential API capture:
+`2026-10-22T11:08:00.908125Z`–`2026-10-22T11:16:15.818726Z`; archive verification
+finished `2026-10-22T11:19:10.190794Z`. Base
+`dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`. This is **not a live counter**.
+
+**0/20 qualifying reviewed distinct PR comparisons; 0/2 successful complete
+broad integrations. W11 NOT MET / W12 NOT RUN.** No closure, savings,
+publication validation, protection/default/schedule cutover or operator approval
+is inferred. Pending observations are not silently converted to successes.
+
+The durable [source-linked evidence index](dependency-aware-testing-ci-2026-10-22-hosted-evidence.json)
+retains **every one of the 46 root/attempt dispositions**, exact API/tested source
+identities, attempt-specific job IDs/URLs, 257 archive/member hashes, PR merge
+parents, query windows and raw-capture hashes. All original ledger text remains
+below, including failed/cancelled/pending history.
+
+### Root dispositions, not nested-job credit
+
+- Four workflow histories were completely paginated: shadow **46 roots / 46
+  attempts**, standalone broad/worker/release **0/0/0**. All attempts are 1;
+  backend retries are not new GitHub attempts.
+- Shadow events: **28 push / 17 PR / 1 manual**. Attempt metadata records
+  **43 failures / 1 cancellation / 2 queued**. Of the 44 completed roots,
+  **42 broad-family accounting jobs failed**, one affected PR's gate failed
+  without broad selected, and one root failed selection before broad launch.
+  All 44 terminal `Dependency gate` jobs failed. No successful complete union.
+- The two pending roots are [PR 39765128286](https://github.com/chebizarro/nostrc/actions/runs/39765128286)
+  (API head `decef538f1b3cdddbffdb6695eae085b54c548fd`, tested merge
+  `385ae28e38e57c4d477b6766464e22431b28022b`) and
+  [push 39765146565](https://github.com/chebizarro/nostrc/actions/runs/39765146565)
+  (`dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`). Their selectors completed,
+  but no terminal gate/complete aggregate was captured. Queued root status is
+  not a claim that no nested work had started.
+- [Affected PR 39691347591](https://github.com/chebizarro/nostrc/actions/runs/39691347591)
+  tested `9a09e769f532c7759948e32913b564182ea59ff2`, distinct from API head
+  `e65063eb5c9dd42bf77395245d50b4b695c29b35`.
+  [Gate 119545031188](https://github.com/chebizarro/nostrc/actions/runs/39691347591/job/119545031188)
+  failed; aggregate artifact `12388923524` has `passed=false`, `complete=false`,
+  `complete_gate_eligible=false`, 210 errors. No PR-comparison credit.
+- Latest completed [push 39753293484](https://github.com/chebizarro/nostrc/actions/runs/39753293484)
+  tested `f646db033031a32ad0f6283f881d8506eafbcc4b`.
+  [Broad accounting 119772531425](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119772531425)
+  and [gate 119772583136](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119772583136)
+  failed. Aggregate `12419580444` ZIP SHA-256
+  `c22c7e1d504f24c43a700aa79f05ae451060009faf093669e532e5edc10bd1ec`
+  retains all three false flags above and 527 errors.
+- Repository history since October 15: **453 roots**, 303 push / 129 PR /
+  17 schedule / 4 manual. The PR events have **17 distinct API heads**, not
+  129 distinct comparisons. All 17 shadow PR source bindings were verified
+  against commit-API merge parents; 16 completed failed and one remains pending.
+- **2,064 nested broad job observations**: 1,808 success / 145 failure /
+  58 skipped / 30 queued / 15 in progress / 8 cancelled. They are not 2,064
+  integrations. Advisory rows, skips, partial lanes and parent colors are not
+  complete coverage. Forty-five tested-source broad workflow files have the
+  unchanged SHA-256 `79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6`.
+
+### Bounded archive verification and blockers
+
+**257/257** selected archives match API digest and byte size, pass ZIP CRC and
+member checks, and retain schema-aware source/plan/inventory/lane identity:
+45 plans, 43 failed aggregates, 140 normalized lane receipts, 20 historical
+log-only archives and 9 historical raw failed audits. **171** archives match
+previously verified bytes; **86** are additional. The bounded set covers all
+plans/aggregates, prior verified archives, and every normalized receipt for the
+latest completed PR/push. The **1,686** artifacts outside this index are not
+acceptance evidence; the latest fuzz archive was inspected separately. No
+binary/installer was executed. Raw files/scripts are under
+`/tmp/nostrc-batch-c-hosted-20261022/`; GitHub and temporary bytes can expire.
+
+- Latest selected workers still fail full preaudit (core Linux/macOS, ordinary
+  Groundhog/Grotto and Grotto sanitizers), reviewed sanitizer-partition admission,
+  or live MDK lifecycle refusal. Three successful standalone libgo/static lanes
+  are bounded diagnostics, not full profile-union coverage. See exact receipts
+  in the evidence index; no membership/default-all/lifecycle defect is waived.
+- [Static job 119739031051](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119739031051)
+  has six failures plus one error, all due to missing pinned nostrdb sources.
+  Its workflow checkout lacks submodules. Batch C adds recursive pinned checkout;
+  this local correction has **no hosted rerun proof** in this frozen snapshot.
+- `.29`: [JSON fuzz job 119749896717](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119749896717)
+  installs JSON-GLib `1.8.0-2build2`, reports **512 bytes / 15 allocations** via
+  `json_parser_load_from_data` → `fuzz_json_event.c:55`, and exits 77. The
+  27-byte reproducer `leak-d1b7841c38ac62a383b813664c77210893f0d750` is retained
+  in [artifact 12417316064](https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12417316064),
+  verified ZIP SHA-256 `58d59499b2b06853fd1f39198e91dd558fc602763c08b739c30c83c640f3ced2`.
+  No dependency patch, suppression, leak disabling, corpus reduction or rerun
+  was applied. The upstream/dependency remedy remains outside Batch C.
+- `.11`: the latest [legacy broad macOS ASan/UBSan job 119739031456](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119739031456)
+  passes `test_nostr_gobject_main_thread_latency` in 4.80 seconds. The selected
+  native worker fails **before execution** at preaudit. Neither observation
+  identifies the original heartbeat failure's cause or proves it harmless;
+  `.11` remains OPEN, with no threshold/workload relaxation or sanitizer retry.
+
+Current branch protections, operator approval, representative workload costs,
+full release/tag publisher executions and W12 were **not refreshed** here.
+
+
 ## Follow-up snapshot — 2026-10-20T23:44:45.035117Z
 
 **Current frozen snapshot**, captured sequentially

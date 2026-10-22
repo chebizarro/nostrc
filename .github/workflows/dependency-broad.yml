@@ -100,14 +100,22 @@ jobs:
     needs: [core, libgo, hanami, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require every broad family
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require every broad family and retain exact-source conclusions
         env:
           RESULTS: ${{ toJSON(needs) }}
+          REQUESTED_SHA: ${{ inputs.sha }}
         run: |
-          python3 - <<'PY'
-          import json, os
-          results = json.loads(os.environ['RESULTS'])
-          failures = {k: v['result'] for k, v in results.items() if v['result'] != 'success'}
-          if failures:
-              raise SystemExit(str(failures))
-          PY
+          printf '%s' "$RESULTS" > "$RUNNER_TEMP/dependency-broad-needs.json"
+          python3 .github/workflows/dependency_contract.py broad-aggregate \
+            --sha "$REQUESTED_SHA" --needs "$RUNNER_TEMP/dependency-broad-needs.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-broad-${{ inputs.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/broad.json
+          if-no-files-found: error

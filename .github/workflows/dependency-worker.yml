@@ -85,6 +85,24 @@ jobs:
           # Only these tools precede PATH: keep pinned Blueprint and other setup.
           # The selector still checks the full reviewed toolchain fingerprint.
           echo "$tool_bin" >> "$GITHUB_PATH"
+      - name: Go toolchain for ordinary runtime peers
+        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Install pinned nak for ordinary runtime peers
+        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')
+        run: |
+          set -euo pipefail
+          go install github.com/fiatjaf/nak@v0.19.7
+          tool_bin="$(go env GOPATH)/bin"
+          test -x "$tool_bin/nak"
+          "$tool_bin/nak" --version
+          echo "$tool_bin" >> "$GITHUB_PATH"
+      - name: Verify ordinary peer and keyring executable setup
+        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')
+        run: python3 .github/workflows/dependency_contract.py ordinary-tools --sha "$REQUESTED_SHA"
       - name: Install pinned Blueprint compiler for application profiles
         if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')
         run: |
@@ -190,6 +208,7 @@ jobs:
           name: dependency-evidence-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/dependency/evidence
+            ${{ runner.temp }}/dependency/ordinary-tool-setup.json
             ${{ runner.temp }}/dependency-build/nostrc-test-inventory*
             ${{ runner.temp }}/dependency-build/nostrc-test-descriptors*
           if-no-files-found: warn

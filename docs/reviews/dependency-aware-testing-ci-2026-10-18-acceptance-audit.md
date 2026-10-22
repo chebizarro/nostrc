@@ -1,5 +1,195 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Finite Batch C — workflow implementation and hosted snapshot, 2026-10-22
+
+Base `dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`; implementation commit
+`385a6cf2555756c3ccd46e13ff82bf8eb9a2c33d` (local only). Scope is workflows,
+dedicated workflow/release/event regressions and source-linked hosted evidence.
+Inventory/CMake/membership and core/local adapter/default-all/lifecycle work
+remain with the assigned siblings; final plan/TESTING/AGENTS remain parent-owned.
+**Internal CI/test/docs only: no component version bump.** No push/merge,
+new publisher/platform, enforcement/default/protection/trigger/schedule cutover,
+or broader bead closure is authorized by this batch.
+
+### `.4` finite workflow census and implemented gaps
+
+The [exact-source broad union at the integration base](https://github.com/chebizarro/nostrc/blob/dd949e4b7a2969e01ac5dea3f12bdde2cf22655b/.github/workflows/dependency-broad.yml)
+already calls all 17 validation families. The census below counts authored
+rows, not successful coverage; source-bound full audits and unsupported adapters
+remain independently blocking. Child matrices, required/advisory distinctions,
+artifact names, native environments and commands are unchanged in Batch C.
+
+| Family | Authored rows | Preserved contracts / remaining boundary |
+|---|---:|---|
+| Core | 2 | Linux + macOS ASan/UBSan, audits and original exclusions; Linux short fuzz commands |
+| libgo | 10 | Linux/macOS sanitizer, TSan/MPMC, Linux fiber variants and two fuzz drivers; existing restrictions |
+| libhanami | 2 | Linux/macOS focused configuration/tests |
+| libnostr GI | 2 | Linux/macOS GIR/typelib build contracts and artifacts |
+| Groundhog | 2 | Native GUI/private bus, media/keyring/lifetimes/perf and separate sanitizers; original artifacts |
+| Grotto | 4 | Two native distro rows, ASan/UBSan and **advisory TSan**, quarantine/LSan/build-contract evidence |
+| NIP55L | 1 | Pinned network-disabled refusing-session contract |
+| homed | 5 | Four distro rows plus systemd/OpenSession; FUSE/systemd best-effort steps remain advisory |
+| Signet | 5 | Passkeys/SQLCipher combinations, hooks, Release and CMake/Meson parity |
+| Static | 1 | Real selector/workflow/static/shell regressions, with pinned submodule sources now available |
+| AppImage | 2 | Native x86_64/aarch64, install-tree/bundling smoke and unchanged validation artifacts |
+| Windows | 1 | Read-only MSYS2/MinGW/NSIS installer + portable artifacts; legacy publisher stays separate |
+| BP regular / extended | 1 + 1 | Both full existing parameter/workload sweeps and report artifacts |
+| Grotto fuzz | 5 | Selector + three actual 300-second broad fuzz targets + diagnostic coverage job; failures remain blocking |
+| MDK08 / MDK011 | 1 + 1 | Distinct pinned real peer/relay/GUI/control workloads and retained artifacts, not mock lane parity |
+
+Total **46 child job/matrix rows + one broad-accounting job**, subject to visible
+failure-dependent skips. These rows are not registrations, representative PR
+comparisons or integrations. Validation entrypoints call this union on master,
+broad manual and exact-tag release routes; unaffected legacy triggers/schedules
+remain temporarily duplicated through W11/operator approval.
+
+Implemented owned gaps:
+
+1. An explicit exact-SHA broad homed call no longer inherits the legacy PR
+   event restriction and silently omits systemd/OpenSession. The legacy PR
+   entrypoint condition is preserved when `inputs.sha` is empty; execution stays
+   on disposable GitHub-hosted infrastructure with no secrets. Advisory steps
+   are not upgraded to required success.
+2. Broad accounting retains `broad.json` even for failed/skipped/cancelled/missing
+   family conclusions. The receipt binds peeled source SHA, run ID/attempt,
+   all 17 family conclusions and exact workflow/helper hashes. Its explicit
+   scope is **family conclusions, not registration coverage**.
+3. Stable `Dependency gate` downloads only the same-run/source/attempt broad
+   artifact, rejects absent/stale/failed/unexpected evidence, and runs accounting
+   even after an artifact-download failure. The existing registration/input/
+   profile checks remain required; failed results cannot be complete-gate eligible.
+4. Publication **enforce** mode independently revalidates this embedded broad
+   receipt alongside exact SHA/tag/inventory/complete/package requirements.
+   `disabled` remains the default and `shadow` remains staged: neither is a
+   validation attestation. No publisher ownership or artifact/platform sweep changes.
+5. A reproduced hosted static setup defect is fixed with recursive **pinned**
+   submodule checkout, not weaker source-membership assertions. No remote-tracking
+   submodule update or dependency patch is introduced.
+6. The bounded review identified that checkout SHA alone did not prove the
+   revision of the executing local reusable workflows. All Actions helper entrypoints
+   now require `GITHUB_WORKFLOW_SHA == peeled requested SHA` before planning,
+   execution dispatch or publication. Broad evidence retains that workflow SHA
+   separately; a real distinct-caller/requested dispatch regression refuses before
+   any plan/worker. See GitHub's [workflow identity variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)
+   and [local reusable workflow revision rules](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+   The first Oracle transport supplied stale AGENTS-only context and made no
+   review claim; the same bounded review was completed with the authoritative
+   delta supplied directly. Its P1 was fixed and regression-tested, not re-reviewed.
+7. Ordinary selected workers now install Go 1.24 and pinned `nak` v0.19.7, matching
+   existing native CI. Their existing `gnome-keyring` package is checked through
+   the actual daemon executable. Before lane launch, both binaries must resolve
+   and return successful version output; nak's version must match the pin.
+   `ordinary-tool-setup.json` records paths, executable hashes, versions and exact
+   source/workflow/plan/run/attempt. This is **executable setup only**, not proof
+   of a display, private bus, active Secret Service or accepted profile execution.
+   Missing/wrong tools refuse rather than being declared available.
+8. Permanent regressions exercise a real synthetic fork merge distinct from its
+   API head, actual annotated tag-object peeling, merge_group, unknown/legacy/
+   validation-only tags, branch/tag nonpublishing dry runs, selected missing/
+   skipped/cancelled/partial refusal, each broad family conclusion and publication
+   refusal from an all-success baseline. The real CLI retains negative broad
+   receipts before returning nonzero.
+
+**Integration interface, not permission to edit sibling files:** refresh the 37
+existing `workflow_jobs` records for `dependency-broad.yml` (18),
+`dependency-tests.yml` (15), `dependency-worker.yml` (1), `nostr-homed-ci.yml` (2)
+and `static-checks.yml` (1)
+using `profile_contract_support.source_job_blocks()`. Exact records are in
+`/tmp/nostrc-batch-c-workflow-fingerprints.json`; no matrix/profile/admission
+change is implied. Add `{source}/tests/selection/test_workflow_closeout.py` to
+`checks["selection.contract"].inputs`. After the scoped mandatory setup lands,
+A/parent may add **only `nak`**, after B consumes the actual executable
+fingerprint, to `profiles.groundhog.linux.capabilities` and
+`profiles.grotto.linux.capabilities`, retaining `display` and `private_bus`
+separately. **Do not declare `gnome_keyring` from daemon presence/version**:
+B requires attested private HOME/private bus/throwaway Secret Service and cleanup.
+That fixture interface has not been supplied/consumed by Batch C. Existing source/
+profile/capability-bound admission receipts must renew normally; no relaxation,
+other profile capability or hosted setup acceptance is implied. The corrected
+complete interface is `/tmp/nostrc-batch-c-interface.json` (SHA-256
+`6cbf4196253ae0f8a7e09268384f0fa434894592d3db1b09142a6b9b1d5315f9`).
+The earlier shared-bead suggestion to add `gnome_keyring` after executable setup
+is explicitly superseded; **no inventory capability edits were made here**.
+The additive workflow-owned interface is
+`dependency-broad-<peeled_sha>-<run_attempt>/broad.json`, embedded as
+`validation.broad_family_receipt`; adapters keep their existing plan/receipt APIs.
+
+At exact implementation commit `385a6cf2555756c3ccd46e13ff82bf8eb9a2c33d`:
+**52 workflow/event/tool/refusal regressions + 12 release tests + 11 broad setup
+tests pass**. Full selection run: **613 tests / three integration errors /
+zero skips, not a successful full suite** (316.924 seconds). Two errors are the
+existing workflow-fingerprint guards; the third correctly rejects the new
+undeclared discoverable test source. The earlier 609-case failed run remains in
+raw logs. Source-membership regressions pass with the pinned submodule; no test
+was weakened. These errors stay visible until the inventory owner integrates
+the interface above. Safe native default configure/build passes at the same
+commit, with libsecret/secret-service flags and read-only keychain guards before/
+after (0/0). Six shell suites, four static checks, all-workflow Actions syntax,
+changed-workflow full actionlint/ShellCheck and whitespace also pass at that code
+commit. No native CTest, sanitizer/full profile, hosted/tag/publisher or W11
+acceptance follows from those gates. Local logs are under
+`/tmp/nostrc-batch-c-gates/`; the implementation's one bounded review P1 is fixed
+and directly regression-tested, without an additional review claim.
+
+### `.5` refreshed source-linked hosted evidence
+
+Frozen sequential snapshot **2026-10-22T11:16:15.818726Z**; archive verification
+finished **11:19:10.190794Z**. See the
+[full run-ledger refresh](dependency-aware-testing-ci-2026-10-18-run-ledger.md#batch-c-frozen-snapshot--2026-10-22t111615818726z)
+and [durable evidence index](dependency-aware-testing-ci-2026-10-22-hosted-evidence.json).
+**0/20 qualifying distinct reviewed PR comparisons; 0/2 successful complete broad
+integrations. W11 NOT MET / W12 NOT RUN.** Forty-six roots/attempts: 43 failed,
+one cancelled, two queued at capture; 42 failed terminal broad-accounting jobs,
+one failed affected PR gate and one prelaunch selector failure. The 2,064 nested
+job observations and 129 repository PR workflow events are not integrations or
+129 distinct comparisons. All 17 shadow PR tested-merge/API-head bindings were
+checked against commit metadata.
+
+257 selected archives (171 historical bytes + 86 additional) match API digests,
+size, CRC and schema-aware identity; historical 20 log-only/9 raw-audit archives
+remain incomplete negative evidence. All 45 tested-source broad workflow hashes
+match the frozen original union. Failed/cancelled history below is retained.
+Pending runs are not resolved speculatively. The local fixes above have **not**
+run hosted in this snapshot; no current branch-protection/operator/cost/release
+execution refresh is claimed.
+
+### External/dependency limits versus sibling implementation blockers
+
+- `.29` remains **OPEN / dependency remedy required**: latest actual JSON fuzz
+  [job 119749896717](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119749896717)
+  uses JSON-GLib `1.8.0-2build2` and fails exit 77 with 512 bytes / 15 allocations
+  through `json_parser_load_from_data` → `fuzz_json_event.c:55`. The new retained
+  27-byte reproducer and ZIP/member hashes are in the ledger/index. No suppression,
+  corpus deletion, duration reduction, dependency-source patch or retry was used.
+- `.11` remains **OPEN / historical cause unresolved**, not a demonstrated
+  external-toolchain defect: latest legacy broad macOS ASan/UBSan
+  [job 119739031456](https://github.com/chebizarro/nostrc/actions/runs/39753293484/job/119739031456)
+  passes the latency registration (4.80 seconds), while the selected native lane
+  stops at preaudit. A passing later sample is not causal resolution or proof
+  that the original three missed heartbeats were harmless. No guard is weakened.
+- Additional fixture boundaries are **not generic tool capabilities**:
+  `nips/nip5f/tests/test_nip5f_tcp.c:25-31` needs a provisioned TCP endpoint and
+  nonempty token, otherwise it returns 77. Existing standalone sockd is Unix-only;
+  the real Grotto TCP daemon requires `ENABLE_TCP_IPC` (default OFF in
+  `apps/grotto/CMakeLists.txt:339-341,437-438`), an isolated identity and runtime
+  token. No existing turnkey disposable TCP fixture was found in the inspected
+  workflow/NIP-5F paths. Loopback alone is not that fixture. Enabling TCP in
+  ordinary authored profiles or inventing a responder would be a build/admission/
+  runtime-custody expansion, not a safe workflow setup fix. Leave `nip5f_tcp`
+  unavailable until A/B supplies a real post-build disposable fixture contract;
+  no public relay, real keychain or skip-as-success substitution was introduced.
+  Direct coordination with separate RepoPrompt session `EE98138E` is unsupported
+  by the available collaboration routing (only this agent is listed); the exact
+  boundary/request is recorded on `.4` and sent to the parent.
+- Current selected full preaudit/membership/partition and guarded live-MDK
+  lifecycle refusals are **implementation/admission boundaries**, not fabricated
+  external excuses. They remain sibling-owned and blocking; no fake receipts,
+  default-all claim, raw peer-to-selector promotion or cleanup waiver is added.
+- `.4` stays OPEN and `.5` in progress: workflow implementation is not complete
+  source/profile/capability, exact-tag publication or W11 acceptance. Dolt pull
+  still reports `no remote`; tracker updates use `bd`, not direct `.beads` edits.
+
+
 ## Combined transport/custody integration — 2026-10-22
 
 **Final code tested:** `a4cfd1420aae7380f61c8318beec4a3753a6fcd8`.
