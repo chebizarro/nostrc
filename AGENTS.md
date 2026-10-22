@@ -37,6 +37,21 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   non-CTest checks needing `display`/`private_bus`, including mixed lanes, refuse
   **before launch**. Never drop capabilities or fabricate receipts. Safe arbitrary
   native-tree/wrapped custody is unimplemented; legacy CTest cancellation is unchanged.
+- Native default-generator build contracts use `build_scope=default`, empty
+  `build_targets`, and exact `cmake --build {build}` with realized configuration
+  and authored build parallelism. Only attested single-config Ninja closures are
+  supported; custom/utility/dyndep/launcher/unknown generated producers refuse.
+  Preserve full non-test source/Ninja/header/runtime/artifact and named/omitted
+  prerequisite audits, including eligible unselected defaults. Never substitute
+  `signer-tests`, fabricate a File API `all` target or use selected-only audits.
+- Capability declarations are not setup: ordinary `nak` executable evidence is
+  distinct from display/private bus/keyring custody. Keyring fixture isolation is
+  active engineering follow-through; declare profile support only after genuine
+  private HOME/XDG/bus/throwaway-service readiness and cleanup proof. `nip5f_tcp`
+  is a provisioned signer, not loopback: approved TCP-enabled configuration,
+  isolated identity/token readiness and explicit unidentified-caller approval are
+  required. No approval bypass or skip-as-success. See the finite
+  [criterion and runnable-cell register](docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).
 - `NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers` explicitly selects
   separate configure/build/test environments, fingerprints and full input audits.
   Enforce authored execution options and independent profile/resolved/phase

@@ -1,23 +1,49 @@
 # Test Strategy & Suite Documentation
 
-> **Staged dependency-aware tooling (updated 2026-10-19): implemented, not cut over.**
+> **Staged dependency-aware tooling (updated 2026-10-22): implemented, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,
 > push requirements and schedules remain authoritative through W11. See the
 > [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
-> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). Current bounded
-> source-specific results: [6299f003 checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-18-migration-checkpoint--6299f003).
+> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). The
+> [finite closeout register](reviews/dependency-aware-testing-ci-2026-10-22-closeout.md)
+> distinguishes implemented membership, runnable capabilities and actual final-source
+> execution. Integration is still in progress; earlier source-specific receipts remain historical.
 > Acceptance decisions and run counts: [criterion audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
 > and [timestamped run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md).
-> The ledger snapshot at **2026-10-19T04:10:01.512997Z** verifies **0/20 PR
-> comparisons / 0/2 successful broad integrations**: nine roots/attempts, seven
-> failed nested broad accounting jobs, one unlaunched and one incomplete call.
-> These are dated reviewed counts, not live counters or unit-test totals. Refresh
-> before reporting later progress; subsequent pushes/PRs are outside that snapshot.
+> The reviewed ledger snapshot at **2026-10-22T11:16:15.818726Z** retains **0/20 PR
+> comparisons / 0/2 successful complete broad integrations**: 46 roots/attempts,
+> 43 failed, one cancelled and two queued. These are dated reviewed counts, not
+> live counters or unit-test totals. W11 **NOT MET** / W12 **NOT RUN**; no local
+> implementation, component proof or nested job advances those counters.
 > `.1` is closed for the proven logical contract; `.2`–`.5` remain open for the
 > audit's specific root, custody, CI/release and operational gaps.
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
+
+## Finite integration contracts — 2026-10-22
+
+B's native default-generator route uses a `build_contract` with
+`build_scope=default`, empty `build_targets`, and exact `cmake --build {build}`
+plus the realized configuration and authored build parallelism. It attests only
+supported single-config Ninja closures; unsupported custom/utility/dyndep/launcher
+or generated producers refuse. Full non-test source/Ninja/header/runtime/artifact
+and prerequisite audits remain required, even for eligible unselected defaults.
+A `signer-tests` aggregate or fabricated File API `all` target is not equivalent.
+Actual integrated authored-profile execution must be recorded separately from
+component miniature tests and historical native default builds.
+
+Capability declarations are not setup proof. The ordinary `nak` producer/consumer
+binds actual executable hash/version and source/profile/plan/workflow/run/attempt;
+it grants no display, private bus or keyring custody. Keyring private-fixture
+setup is active engineering follow-through, not an external excuse or completed
+capability. Do not declare an ordinary profile capable before a genuine supported
+private HOME/XDG/bus/throwaway Secret Service readiness and cleanup positive.
+`nip5f_tcp` instead needs a provisioned signer endpoint/token, explicitly approved
+TCP-enabled configuration, isolated identity and unidentified-caller approval;
+loopback success or exit 77 cannot satisfy it. No approval bypass is authorized.
+See the [separate execution cells](reviews/dependency-aware-testing-ci-2026-10-22-closeout.md#runnable-capability-and-build-cells)
+for engineering gaps versus fixture/operator and hosted requirements.
 
 ## Opt-in Linux custody diagnostic — 2026-10-22
 
