@@ -1,0 +1,1880 @@
+{
+  "excluded": {
+    "test_interop": {
+      "descriptor": {
+        "binary_dir": "{build}/nips/nip04",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_interop",
+        "owner": [
+          "nip04",
+          "nip04.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip04",
+        "targets": []
+      },
+      "status": "unclaimed_pending_independent_semantics",
+      "test": {
+        "backtrace": 274,
+        "command": [
+          "{build}/nips/nip04/test_interop"
+        ],
+        "config": "Debug",
+        "name": "test_interop",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip04.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip04"
+          }
+        ]
+      }
+    },
+    "test_nip44_vectors": {
+      "descriptor": {
+        "binary_dir": "{build}/nips/nip44",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_nip44_vectors",
+        "owner": [
+          "nip44",
+          "nip44.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip44",
+        "targets": []
+      },
+      "status": "unclaimed_canonical_json_and_fallback_gap",
+      "test": {
+        "backtrace": 429,
+        "command": [
+          "{build}/nips/nip44/test_nip44_vectors"
+        ],
+        "config": "Debug",
+        "name": "test_nip44_vectors",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip44.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip44"
+          }
+        ]
+      }
+    }
+  },
+  "primary": {
+    "test_nip04_error_uniformity": {
+      "closure_names": [
+        "test_nip04_error_uniformity"
+      ],
+      "closure_targets": [
+        "nip04",
+        "nostr",
+        "nostrdb",
+        "nostrgo",
+        "test_nip04_error_uniformity"
+      ],
+      "nip": "nip04",
+      "runtime_inputs": [],
+      "source_inputs": [
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip04/tests/test_nip04_error_uniformity.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "test_nip04_secure_roundtrip": {
+      "closure_names": [
+        "test_nip04_secure_roundtrip"
+      ],
+      "closure_targets": [
+        "nip04",
+        "nostr",
+        "nostrdb",
+        "nostrgo",
+        "test_nip04_secure_roundtrip"
+      ],
+      "nip": "nip04",
+      "runtime_inputs": [],
+      "source_inputs": [
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip04/tests/test_nip04_secure_roundtrip.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "test_nip04_strict": {
+      "closure_names": [
+        "test_nip04_strict"
+      ],
+      "closure_targets": [
+        "nip04",
+        "nostr",
+        "nostrdb",
+        "nostrgo",
+        "test_nip04_strict"
+      ],
+      "nip": "nip04",
+      "runtime_inputs": [],
+      "source_inputs": [
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip04/tests/test_nip04_strict.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "test_nip44_convkey": {
+      "closure_names": [
+        "test_nip44_convkey"
+      ],
+      "closure_targets": [
+        "nostr",
+        "nostr_nip44_core",
+        "nostrdb",
+        "nostrgo",
+        "test_nip44_convkey"
+      ],
+      "nip": "nip44",
+      "runtime_inputs": [],
+      "source_inputs": [
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip44/tests/test_nip44_convkey.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "test_nip44_roundtrip": {
+      "closure_names": [
+        "test_nip44_roundtrip"
+      ],
+      "closure_targets": [
+        "nostr",
+        "nostr_nip44_core",
+        "nostrdb",
+        "nostrgo",
+        "test_nip44_roundtrip"
+      ],
+      "nip": "nip44",
+      "runtime_inputs": [],
+      "source_inputs": [
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip44/src/core/nip44.c",
+        "{source}/nips/nip44/src/core/nip44_base64.c",
+        "{source}/nips/nip44/src/core/nip44_chacha.c",
+        "{source}/nips/nip44/src/core/nip44_convkey.c",
+        "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c",
+        "{source}/nips/nip44/src/core/nip44_padding.c",
+        "{source}/nips/nip44/tests/test_nip44_roundtrip.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    },
+    "test_roundtrip": {
+      "closure_names": [
+        "test_roundtrip"
+      ],
+      "closure_targets": [
+        "nip04",
+        "nostr",
+        "nostrdb",
+        "nostrgo",
+        "test_roundtrip"
+      ],
+      "nip": "nip04",
+      "runtime_inputs": [],
+      "source_inputs": [
+        "{source}/libgo/src/blocking_executor.c",
+        "{source}/libgo/src/channel.c",
+        "{source}/libgo/src/context.c",
+        "{source}/libgo/src/counter.c",
+        "{source}/libgo/src/error.c",
+        "{source}/libgo/src/fiber_hooks_stub.c",
+        "{source}/libgo/src/go.c",
+        "{source}/libgo/src/hash_map.c",
+        "{source}/libgo/src/int_array.c",
+        "{source}/libgo/src/metrics_stub.c",
+        "{source}/libgo/src/select.c",
+        "{source}/libgo/src/string_array.c",
+        "{source}/libgo/src/ticker.c",
+        "{source}/libgo/src/wait_group.c",
+        "{source}/libnostr/src/brown_list.c",
+        "{source}/libnostr/src/connection.c",
+        "{source}/libnostr/src/crypto/bip32.c",
+        "{source}/libnostr/src/crypto/bip39.c",
+        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
+        "{source}/libnostr/src/envelope.c",
+        "{source}/libnostr/src/event.c",
+        "{source}/libnostr/src/filter.c",
+        "{source}/libnostr/src/init.c",
+        "{source}/libnostr/src/json.c",
+        "{source}/libnostr/src/keys.c",
+        "{source}/libnostr/src/metrics.c",
+        "{source}/libnostr/src/metrics_collector.c",
+        "{source}/libnostr/src/nostr_event_boxed.c",
+        "{source}/libnostr/src/nostr_filter_boxed.c",
+        "{source}/libnostr/src/nostr_json_glib.c",
+        "{source}/libnostr/src/nostr_json_parse.c",
+        "{source}/libnostr/src/nostr_log.c",
+        "{source}/libnostr/src/rate_limiter.c",
+        "{source}/libnostr/src/relay.c",
+        "{source}/libnostr/src/relay_core.c",
+        "{source}/libnostr/src/relay_limits.c",
+        "{source}/libnostr/src/relay_store.c",
+        "{source}/libnostr/src/secure_buf.c",
+        "{source}/libnostr/src/security_limits_runtime.c",
+        "{source}/libnostr/src/simplepool.c",
+        "{source}/libnostr/src/storage_registry.c",
+        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
+        "{source}/libnostr/src/store/registry.c",
+        "{source}/libnostr/src/store/store.c",
+        "{source}/libnostr/src/subscription.c",
+        "{source}/libnostr/src/tag.c",
+        "{source}/libnostr/src/timestamp.c",
+        "{source}/libnostr/src/utils.c",
+        "{source}/nips/nip04/src/nip04.c",
+        "{source}/nips/nip04/tests/test_roundtrip.c",
+        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
+        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
+        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
+        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
+        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
+        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
+        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
+        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
+        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
+        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
+        "{source}/third_party/nostrdb/src/base64.c",
+        "{source}/third_party/nostrdb/src/binmoji.c",
+        "{source}/third_party/nostrdb/src/block.c",
+        "{source}/third_party/nostrdb/src/bolt11/amount.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
+        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
+        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
+        "{source}/third_party/nostrdb/src/bolt11/error.c",
+        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
+        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
+        "{source}/third_party/nostrdb/src/configurator.c",
+        "{source}/third_party/nostrdb/src/content_parser.c",
+        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
+        "{source}/third_party/nostrdb/src/hmac_sha256.c",
+        "{source}/third_party/nostrdb/src/invoice.c",
+        "{source}/third_party/nostrdb/src/metadata.c",
+        "{source}/third_party/nostrdb/src/nip44.c",
+        "{source}/third_party/nostrdb/src/nostr_bech32.c",
+        "{source}/third_party/nostrdb/src/nostrdb.c"
+      ]
+    }
+  },
+  "profile": {
+    "architecture": "x86_64",
+    "build_parallelism": 2,
+    "build_type": "Debug",
+    "capabilities": [
+      "display",
+      "private_bus"
+    ],
+    "compiler": "gcc",
+    "configure_args": [
+      "-G",
+      "Ninja",
+      "-DCMAKE_BUILD_TYPE=Debug",
+      "-DBUILD_APPS=ON",
+      "-DBUILD_GNOSTR_APP=OFF",
+      "-DBUILD_GROUNDHOG=ON",
+      "-DBUILD_TESTING=ON",
+      "-DBUILD_SIGNER_TESTS=ON",
+      "-DBUILD_NATIVE_HOST=ON",
+      "-DNIP55L_SECRET_BACKEND=libsecret",
+      "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+      "-DBUILD_RELAYD=OFF",
+      "-DSIGNET_ENABLE=OFF"
+    ],
+    "environment": {
+      "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+      "G_SLICE": "always-malloc",
+      "TSAN_OPTIONS": "halt_on_error=1",
+      "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+    },
+    "feature_variants": [],
+    "instrumentation": "none",
+    "local_availability": "host_or_container",
+    "parallelism": 1,
+    "platform": "linux",
+    "setup": ".github/workflows/grotto-ci.yml:signer",
+    "source_dir": ".",
+    "test_parallelism": 1,
+    "timeout_seconds": 3600,
+    "workflow_contract": {
+      "build_command": [
+        "cmake",
+        "--build",
+        "{build}",
+        "--parallel",
+        "2"
+      ],
+      "build_parallelism": 2,
+      "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+      "matrix": {
+        "mode": "native",
+        "runner": "ubuntu-24.04"
+      },
+      "required_minimum": [
+        "signer/bunker",
+        "signer/bunker-e2e",
+        "signer/approval-controller",
+        "signer/approval-integration",
+        "signer/permissions",
+        "signer/background",
+        "signer/onboarding",
+        "signer/clients",
+        "signer/activity",
+        "signer/ui-layout",
+        "signer/desktop-contract",
+        "signer/blueprint-drift",
+        "signer/qr-scanner",
+        "signer/trust-tiers",
+        "signer/home-model",
+        "nip55l_approval_service",
+        "nip55l_dbus_contract"
+      ],
+      "runtime_wrapper": [
+        "dbus-run-session",
+        "--",
+        "xvfb-run",
+        "-a",
+        "-s",
+        "-screen 0 1280x800x24"
+      ],
+      "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+      "test_command": [
+        "ctest",
+        "--test-dir",
+        "{build}",
+        "-j1",
+        "-R",
+        "^(signer/|nip55l_|nostr_signer_webext_host_)",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "test_parallelism": 1
+    }
+  },
+  "provenance": "Fresh authored Linux/x86_64 full export at b7aede8166cc52a6ec55faafd755a1fa4a9121d1; exact File API/command/descriptor/runtime/fixture closure, not full-profile acceptance.",
+  "realization": {
+    "descriptors": [
+      {
+        "binary_dir": "{build}/nips/nip04",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_nip04_error_uniformity",
+        "owner": [
+          "nip04",
+          "nip04.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip04",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/nips/nip04",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_nip04_secure_roundtrip",
+        "owner": [
+          "nip04",
+          "nip04.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip04",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/nips/nip04",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_nip04_strict",
+        "owner": [
+          "nip04",
+          "nip04.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip04",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/nips/nip44",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_nip44_convkey",
+        "owner": [
+          "nip44",
+          "nip44.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip44",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/nips/nip44",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_nip44_roundtrip",
+        "owner": [
+          "nip44",
+          "nip44.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip44",
+        "targets": []
+      },
+      {
+        "binary_dir": "{build}/nips/nip04",
+        "declared_depends": [],
+        "expected": [],
+        "inputs": [],
+        "name": "test_roundtrip",
+        "owner": [
+          "nip04",
+          "nip04.test_inputs"
+        ],
+        "owner_authority": "descriptor",
+        "requires": [],
+        "source_dir": "{source}/nips/nip04",
+        "targets": []
+      }
+    ],
+    "targets": {
+      "nip04::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/libnip04.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nip04::@6027616dcf59074a386e",
+        "name": "nip04",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/src/nip04.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr::@458585523a3aea9bfd6f": {
+        "artifacts": [
+          "{build}/libnostr/libnostr.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostr::@458585523a3aea9bfd6f",
+        "name": "nostr",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/timestamp.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/tag.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/event.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/envelope.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/init.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/filter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/connection.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/subscription.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/keys.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/json.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/utils.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_json_parse.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/simplepool.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/brown_list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/secure_buf.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/rate_limiter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_log.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/security_limits_runtime.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/storage_registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_core.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/relay_limits.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/registry.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/store.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip39_wordlist_en.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip39.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/crypto/bip32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/metrics.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/metrics_collector.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_json_glib.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_event_boxed.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/nostr_filter_boxed.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libnostr/src/store/nostrdb/ndb_backend.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostr_nip44_core::@eba61e620492a073b8b9": {
+        "artifacts": [
+          "{build}/nips/nip44/libnostr_nip44_core.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f"
+        ],
+        "id": "nostr_nip44_core::@eba61e620492a073b8b9",
+        "name": "nostr_nip44_core",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_convkey.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_padding.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_hkdf_hmac.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_chacha.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/src/core/nip44_base64.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrdb::@458585523a3aea9bfd6f": {
+        "artifacts": [
+          "{build}/libnostr/libnostrdb.a"
+        ],
+        "compile_fragments": [
+          "-g -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-include",
+          "{build}/libnostr/nostrdb_compat/hex_compat.h"
+        ],
+        "dependencies": [],
+        "id": "nostrdb::@458585523a3aea9bfd6f",
+        "name": "nostrdb",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/base64.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/binmoji.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/block.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/configurator.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/content_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hkdf_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/hmac_sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/invoice.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/metadata.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nip44.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostr_bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/nostrdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/mdb.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/lmdb/midl.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/amount.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bech32_util.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/bolt11.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/hash_u5.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/src/bolt11/node_id.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/list/list.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/debug.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/take/take.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "nostrgo::@01832e3469ab35a56bce": {
+        "artifacts": [
+          "{build}/libgo/libnostrgo.a"
+        ],
+        "compile_fragments": [
+          "-g -std=c11 -fPIC",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-Wall",
+          "-Wextra",
+          "-Wpedantic"
+        ],
+        "dependencies": [],
+        "id": "nostrgo::@01832e3469ab35a56bce",
+        "name": "nostrgo",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/go.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/context.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/channel.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/wait_group.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/hash_map.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/counter.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/select.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/string_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/int_array.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/ticker.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/error.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/metrics_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/fiber_hooks_stub.c"
+          },
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/libgo/src/blocking_executor.c"
+          }
+        ],
+        "type": "STATIC_LIBRARY"
+      },
+      "test_nip04_error_uniformity::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/test_nip04_error_uniformity"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip04::@6027616dcf59074a386e"
+        ],
+        "id": "test_nip04_error_uniformity::@6027616dcf59074a386e",
+        "name": "test_nip04_error_uniformity",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/tests/test_nip04_error_uniformity.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test_nip04_secure_roundtrip::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/test_nip04_secure_roundtrip"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip04::@6027616dcf59074a386e"
+        ],
+        "id": "test_nip04_secure_roundtrip::@6027616dcf59074a386e",
+        "name": "test_nip04_secure_roundtrip",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/tests/test_nip04_secure_roundtrip.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test_nip04_strict::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/test_nip04_strict"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip04::@6027616dcf59074a386e"
+        ],
+        "id": "test_nip04_strict::@6027616dcf59074a386e",
+        "name": "test_nip04_strict",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/tests/test_nip04_strict.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test_nip44_convkey::@eba61e620492a073b8b9": {
+        "artifacts": [
+          "{build}/nips/nip44/test_nip44_convkey"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_nip44_core::@eba61e620492a073b8b9"
+        ],
+        "id": "test_nip44_convkey::@eba61e620492a073b8b9",
+        "name": "test_nip44_convkey",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/tests/test_nip44_convkey.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test_nip44_roundtrip::@eba61e620492a073b8b9": {
+        "artifacts": [
+          "{build}/nips/nip44/test_nip44_roundtrip"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nostr_nip44_core::@eba61e620492a073b8b9"
+        ],
+        "id": "test_nip44_roundtrip::@eba61e620492a073b8b9",
+        "name": "test_nip44_roundtrip",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip44/tests/test_nip44_roundtrip.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      },
+      "test_roundtrip::@6027616dcf59074a386e": {
+        "artifacts": [
+          "{build}/nips/nip04/test_roundtrip"
+        ],
+        "compile_fragments": [
+          "-g -fPIE",
+          "-fstack-protector-strong",
+          "-fno-strict-aliasing",
+          "-D_FORTIFY_SOURCE=2",
+          "-UNDEBUG"
+        ],
+        "dependencies": [
+          "nostrgo::@01832e3469ab35a56bce",
+          "nostr::@458585523a3aea9bfd6f",
+          "nostrdb::@458585523a3aea9bfd6f",
+          "nip04::@6027616dcf59074a386e"
+        ],
+        "id": "test_roundtrip::@6027616dcf59074a386e",
+        "name": "test_roundtrip",
+        "sources": [
+          {
+            "compiled": true,
+            "generated": false,
+            "path": "{source}/nips/nip04/tests/test_roundtrip.c"
+          }
+        ],
+        "type": "EXECUTABLE"
+      }
+    },
+    "tests": [
+      {
+        "backtrace": 279,
+        "command": [
+          "{build}/nips/nip04/test_nip04_error_uniformity"
+        ],
+        "config": "Debug",
+        "name": "test_nip04_error_uniformity",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip04.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip04"
+          }
+        ]
+      },
+      {
+        "backtrace": 284,
+        "command": [
+          "{build}/nips/nip04/test_nip04_secure_roundtrip"
+        ],
+        "config": "Debug",
+        "name": "test_nip04_secure_roundtrip",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip04.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip04"
+          }
+        ]
+      },
+      {
+        "backtrace": 289,
+        "command": [
+          "{build}/nips/nip04/test_nip04_strict"
+        ],
+        "config": "Debug",
+        "name": "test_nip04_strict",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip04.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip04"
+          }
+        ]
+      },
+      {
+        "backtrace": 424,
+        "command": [
+          "{build}/nips/nip44/test_nip44_convkey"
+        ],
+        "config": "Debug",
+        "name": "test_nip44_convkey",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip44.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip44"
+          }
+        ]
+      },
+      {
+        "backtrace": 419,
+        "command": [
+          "{build}/nips/nip44/test_nip44_roundtrip"
+        ],
+        "config": "Debug",
+        "name": "test_nip44_roundtrip",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip44.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip44"
+          }
+        ]
+      },
+      {
+        "backtrace": 294,
+        "command": [
+          "{build}/nips/nip04/test_roundtrip"
+        ],
+        "config": "Debug",
+        "name": "test_roundtrip",
+        "properties": [
+          {
+            "name": "LABELS",
+            "value": [
+              "selection:nip04.test_inputs"
+            ]
+          },
+          {
+            "name": "WORKING_DIRECTORY",
+            "value": "{build}/nips/nip04"
+          }
+        ]
+      }
+    ]
+  },
+  "realization_sha256": "6f7cb9b05d284e720ff0605f7584ce2bd4a95f817a8bb55d377c7c6ff4e34811",
+  "reviewed_source_sha256": {
+    "libgo/src/blocking_executor.c": "3e80d9884a9be0e43c5f723d93e18680ebf91b67779f261dc8b19135d6805a25",
+    "libgo/src/channel.c": "b8700ecd84b72ddabda7565c59bc0632ccbf4faf8f5dcd6942d2f6d04311031c",
+    "libgo/src/context.c": "ff441c21df283c722be9b6a1998dd50c7c180d2ef9cf1ce7870cea4dd6ed96e2",
+    "libgo/src/counter.c": "4e01d482c356268b41cb94d999b0bc74cad4116b9371068247aa59225cc35a71",
+    "libgo/src/error.c": "877ad203cbced8273204dbf7dc763442a9c87e454574276686b5ddaec5999906",
+    "libgo/src/fiber_hooks_stub.c": "47ec7fb4ebe3ad31af5ed6b2554dbb5dbc620c003f0ac5113b61e8152a189db8",
+    "libgo/src/go.c": "096795582429bd408e580223bf4cdf228413ec8a74fc8f4fbe939eb899d1a524",
+    "libgo/src/hash_map.c": "90e4af69809425360c4f7d0265fecde47d40b7d1165f7e385ab73656af25a2d2",
+    "libgo/src/int_array.c": "1a7f7a6b48086a2942bf4091d89183b14aef227df311b51151a79691441a122a",
+    "libgo/src/metrics_stub.c": "44cf85d0846debda40bed8f43d395f0611407667a467532a40d6f719bc9bc40f",
+    "libgo/src/select.c": "68b9ff40a21940c253e5be590b21ece6b3ef8039e801106648bfc61c24abe510",
+    "libgo/src/string_array.c": "9a08bf8df1408ed9295d1d00c59d5088c5fae6a2838580fd2222e14d631e2cc8",
+    "libgo/src/ticker.c": "84d415d817bc9bcbd58aaf73cb2348d6d63415cf671033b2ca8a86a779473d4b",
+    "libgo/src/wait_group.c": "32846aded613a1e30f99641dab8191d915caa916698ad8ac28082acc68938091",
+    "libnostr/src/brown_list.c": "97ae1af9e7b5c016699ddea3e53dbdb39aab1fe0deb6d76e98517a5cdcd760de",
+    "libnostr/src/connection.c": "dbfeb04de12aa64c00be065ca8219ba635a8f1d79ebeb73e17e00a5dccd4733a",
+    "libnostr/src/crypto/bip32.c": "30b32d463f3357aa3f367b3f1861b255c72acd0452afa9ad7351771923b79484",
+    "libnostr/src/crypto/bip39.c": "71fa06362804c07c9cc5c70d337a3af2fc8b57acfdf1b0121d8bea3b372e45c9",
+    "libnostr/src/crypto/bip39_wordlist_en.c": "8a2b750b8eb44c9dc1b91f0fbb0091bcc07eb10cba929215661b3a99dd8c3095",
+    "libnostr/src/envelope.c": "7c9d33ff779f7609d07cff1d2a703f6856674c9c270724c65d50867ef79d8b14",
+    "libnostr/src/event.c": "7e5f545a734615a6bce8d436d0717ea74cc58228ce05ca68b35f2d56366f1510",
+    "libnostr/src/filter.c": "38e29a1fa58697f7bceab90228468dfb0ead6e84eda6a685e282835ae58564af",
+    "libnostr/src/init.c": "8f8fa5adde87bdaeba1b157d9cbfdf94c102ef45aadf90023b265d66a37c07d7",
+    "libnostr/src/json.c": "1ae5f12bd1759ac10fc2540b0d7b136cea8019550a511972895d21c055f5c251",
+    "libnostr/src/keys.c": "c4c8435ac14b73eef343a7f6ae36356d4230bce5327177dbc36bf89359a0472c",
+    "libnostr/src/metrics.c": "07719f9ecb8187637dd3808d140ce3c39aaa19d722dde50eb07540fd179e6ca0",
+    "libnostr/src/metrics_collector.c": "8ac60ba83cc202f76cc4c5bd01aa82629fef156f93dc2b30c1e315a043509ccb",
+    "libnostr/src/nostr_event_boxed.c": "dc729bd0a70f340f522125086a0482b479dadfa9aed415dccc7dc01bb0609f9a",
+    "libnostr/src/nostr_filter_boxed.c": "dbfb3cb72ec57b79289d7369e0ef8dfd53260c1ad6528f83293f2d6ceda16e88",
+    "libnostr/src/nostr_json_glib.c": "35da4285595cc53c2b894f0226000236785cb5d2809d8cb387ef3b078cfa9a12",
+    "libnostr/src/nostr_json_parse.c": "8945df5eed214b51cda52fd8722e7f3ce3300b25a30a8e5dbfbf52fc4a21e902",
+    "libnostr/src/nostr_log.c": "8bf432f3843c447b81250b90ba87b737809ebd1428b6f28e517bca47ae16760f",
+    "libnostr/src/rate_limiter.c": "db63e5abbe316d4b688b51482261df1aef89f3361d8df3dfba4ed2e85960d0a8",
+    "libnostr/src/relay.c": "a563c8b15b3e8bdbe39da7211771e453e376d23935d3c468ee6fcba3e46f0b7f",
+    "libnostr/src/relay_core.c": "348ef8c9ac827c363037d83852554153d4213c0b8fc31c280bac44c0d0cbb756",
+    "libnostr/src/relay_limits.c": "86ca4e084149c88911ccdb09ddea1ef8d326d3a903f9a55fc91afa835d8e843f",
+    "libnostr/src/relay_store.c": "0b8d0874b49490b0d34a29b39a832ebe3f26dc53bbdd8dd0dcfe4192ef381fc0",
+    "libnostr/src/secure_buf.c": "b460a720db1b7d39064b7fba6f39e784dfab2929b49f69eabf98abc2aeb90293",
+    "libnostr/src/security_limits_runtime.c": "d2d293962d1ba0edfc78c613a7385345aaa83c7f3b197e647b89ceedfecf42fd",
+    "libnostr/src/simplepool.c": "dea6d603a995e2a65da2da69088bb1c1d731b4f71ff99448b9e854f2a02b0444",
+    "libnostr/src/storage_registry.c": "3c4452c52ecf3ce6c836805fd53e3f5699ea6bba090d6a970e17b8ae54737256",
+    "libnostr/src/store/nostrdb/ndb_backend.c": "8320ef271ee1b9a8cbcd216747271179cda267df3044f9ff505b496d124a37a7",
+    "libnostr/src/store/registry.c": "771b92fb0de9fb4458b49eeef50c9b23d7f87e232c3a2e495b1f85816d00d79c",
+    "libnostr/src/store/store.c": "bb972d2f886f29af7c016d1de429237d9382556816abcf14dfd3acf930cc24ff",
+    "libnostr/src/subscription.c": "98ce3b46710a502833c7b70be44de5c0c1c8c5a888e62ed9ff8741bd90dce908",
+    "libnostr/src/tag.c": "b65c77596e4685fc4753b074f7e9ee5ce49cfc897fe03fc802432daae8e375e4",
+    "libnostr/src/timestamp.c": "e7a6e5ed99fc5d96417c92ad3722e8effd8fde3e61de3c9df5b7d61df3130b16",
+    "libnostr/src/utils.c": "0c7202dc4fc3a13205de6391a2b2b76a57c96eed8ea37ae4f50ad15546926969",
+    "nips/nip04/CMakeLists.txt": "d8fe1650e890eadfe87e37b4652f7ae39fe7abdf3c71714bf5cc21d65cf344a4",
+    "nips/nip04/TestInventory.cmake": "ea09c1c32b4a8309f6dc6035f37f395e34f17cd59d45e8b46e1374c6659ef98c",
+    "nips/nip04/src/nip04.c": "925c4937e81d2c0ca315717b452bfff368dd5ca00c5607df388f2f413984e189",
+    "nips/nip04/tests/test_interop.c": "d7ec2c4136e36818e9d4144b380d1f1683ec652c6205c4d2dd0ef64e3573a3e6",
+    "nips/nip04/tests/test_nip04_error_uniformity.c": "8493f15c8dbb5446d20baca8d561992be75d541de4d73d928fbcac569918de19",
+    "nips/nip04/tests/test_nip04_secure_roundtrip.c": "a5066288cec0c8e712dfb6f3aa95ac20e396780da479d99333c405f26d4eeb08",
+    "nips/nip04/tests/test_nip04_strict.c": "d0f866d8bde36875236d1016896d4a6da861a82de9d2c8420a0fec3522bdd4c3",
+    "nips/nip04/tests/test_roundtrip.c": "d32022af5c5c7302ffd8d93447bc7e92798dcf67aaed36f38b93838fda3fef7b",
+    "nips/nip44/CMakeLists.txt": "a27498a889af525c7da31fd6a6c536dfa8df1ae90c2d2d2ac09187d5d02d0385",
+    "nips/nip44/TestInventory.cmake": "53d4198a5c6fd1e8a32a0000d41c1b45b52b79d31b7976da906c851243e9c77e",
+    "nips/nip44/src/core/nip44.c": "84774b077a325cf3302f16eac7199a9b4258ff8783d6ad5785434e8b9e5f0f11",
+    "nips/nip44/src/core/nip44_base64.c": "c5d3457467b40c798d958e6e8ce8693fde99c55305c57ee73f0156e67c44ca6c",
+    "nips/nip44/src/core/nip44_chacha.c": "e32fb5b46337fc33e9b989349326eed1bf629bccaddf62d57bc63faf99ff1c7b",
+    "nips/nip44/src/core/nip44_convkey.c": "4901cef9f032fb9d39f94a40c5965456c16f40a35416e8f5d191d8fac5f98873",
+    "nips/nip44/src/core/nip44_hkdf_hmac.c": "47c00a34877a4de2b057d848238f7ec8d5f017376a39fe0dfb57f42f734969d4",
+    "nips/nip44/src/core/nip44_padding.c": "c147cf3113c95f0273e67e9dbbe9a80f1ef1dc8517e8f992880c28a7e3a334a2",
+    "nips/nip44/tests/nip44.vectors.json": "269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040",
+    "nips/nip44/tests/test_nip44_convkey.c": "b2f75765dbcff4506a4f100d46e751e6e53a4e21172307df7307d663718f6179",
+    "nips/nip44/tests/test_nip44_roundtrip.c": "83a974a4da706ddc56ea006d69c52310f81ec7ff0d3e96a577b2773897943af9",
+    "nips/nip44/tests/test_nip44_vectors.c": "a2e61cfccc924a6f5b2befc7a00253411353925bbe05c20e278929759193701f",
+    "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c": "1f5f9a116663e2bf78ceaa14d80d4f022798b702b4e36a7ddf169c46164f134d",
+    "third_party/nostrdb/ccan/ccan/htable/htable.c": "198839dde0ddfa31254ce44a4a84ffd028711868ad59440753af8729484521f5",
+    "third_party/nostrdb/ccan/ccan/likely/likely.c": "e914b713a6a016b22b6083d481762cd35a4e7b8c3775714c331a9a344e41269d",
+    "third_party/nostrdb/ccan/ccan/list/list.c": "0c0c2389ca76a3070d2504a49b74e5d8f78cd49ec0123a6b0365a8dcfc3ad0d4",
+    "third_party/nostrdb/ccan/ccan/mem/mem.c": "d69fa520674054e833d42015f3eb46c684925428a228fe10c030c200075519b7",
+    "third_party/nostrdb/ccan/ccan/str/debug.c": "e216741363db34d740b9f5266fdc7a92d2d5ba2ec1c8fe64c45a221860bb1688",
+    "third_party/nostrdb/ccan/ccan/str/str.c": "29d98f23ea44a0e0cbf2892f844809514f560b7d1000d1a77fc0e849c49f8701",
+    "third_party/nostrdb/ccan/ccan/take/take.c": "7622eef49acdf41becc801006c89f0db84c2823602ab07bb84300c2dd9bc8285",
+    "third_party/nostrdb/ccan/ccan/tal/str/str.c": "ba5c6035586970a53dcc4ce478809c7675f8e86a35ece0c7fb594308edcd039b",
+    "third_party/nostrdb/ccan/ccan/tal/tal.c": "23bc64d09f6f06a0ef1b6a6748cf808f68cbbc9d265dda0624863c3c678b32a9",
+    "third_party/nostrdb/ccan/ccan/utf8/utf8.c": "6d4c7a24fa857508c9f400d330152762b57a7e50f1e23c69e33f608090c97e1a",
+    "third_party/nostrdb/deps/flatcc/src/runtime/builder.c": "cee939d8bb51951aeecab05d674197af5b19a28e09e4702ee9edb485edb85025",
+    "third_party/nostrdb/deps/flatcc/src/runtime/emitter.c": "1390dce3201d7c28ea315b2c331460484d7fd45e15f3a56dfcfffe732f0f07eb",
+    "third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c": "e74a5e5a8a77b0f691a52c39b5b2524b3d8bd73b6f8eccd3b710d995c5506646",
+    "third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c": "25525311bcb22f2bdb1b9fcbca56360a56f021ee791b59f224ad1493de4cde55",
+    "third_party/nostrdb/deps/flatcc/src/runtime/refmap.c": "1bb30548a378b87907079d289eb696a22247946337a4142e8cf4bfff06f8f5ea",
+    "third_party/nostrdb/deps/flatcc/src/runtime/verifier.c": "70015af275c5429a9ec6d511cb32553b610f560edd51343afb878644a0c0e562",
+    "third_party/nostrdb/deps/lmdb/mdb.c": "25d47ee49975808a4ef923ea711fe29dc958d111e6fa2462fc36ab95923336cc",
+    "third_party/nostrdb/deps/lmdb/midl.c": "91110543f2e84c516188c1e3960b1f504e1c60a4766027a782349c000276ca93",
+    "third_party/nostrdb/src/base64.c": "fa0a01c606482c8de549b3687e5d033760b805c0c72674661d8dc7e0dce37125",
+    "third_party/nostrdb/src/binmoji.c": "1e0e98794ff5b90f953fbe6bae8e7287b7350f75b9306f7504df7a9a78dc9fb0",
+    "third_party/nostrdb/src/block.c": "442514568303f2c7b90bec2015ed39b1f98f85634508daf65f5c14b9f816b29c",
+    "third_party/nostrdb/src/bolt11/amount.c": "94dfec4281029dd077c861a47b1cbc0450efb41ad2ec482b0718bbdd04ecd846",
+    "third_party/nostrdb/src/bolt11/bech32.c": "f68d63759420f4d512291908c24c7c9c340ea268232e09379f4f23e1e1c3f963",
+    "third_party/nostrdb/src/bolt11/bech32_util.c": "6ca40c1ab919d4406e030bb105763b2b09aba8b57d3febfd6391a13e6d407a2f",
+    "third_party/nostrdb/src/bolt11/bolt11.c": "27169c8533c2ff806e30b6e04d66a2913339076d4ebc1af1924f9316c4ed6793",
+    "third_party/nostrdb/src/bolt11/error.c": "74d76dd5d2f81a1dd6bb932836f0430fa2513c2c91b8652be9b4a8054a4dc610",
+    "third_party/nostrdb/src/bolt11/hash_u5.c": "d8fdcb848bcb0f35e955152c0f9570301b6ee432ef4331b67139d3867056f368",
+    "third_party/nostrdb/src/bolt11/node_id.c": "e35cfa2b8b615bcdf2e1d6ee00f24abdb125328d93e764f50ce21f361ccc61a4",
+    "third_party/nostrdb/src/configurator.c": "36c5d7817dedcefb91b7d2ae261e0927937edb3e1e3855b93b5b8047bd0b39cc",
+    "third_party/nostrdb/src/content_parser.c": "f5dc40a54a1cbbb3d30ded71210f3dacaedc1c3a3d97bbc425731c7dc67996c8",
+    "third_party/nostrdb/src/hkdf_sha256.c": "5023f6834b2c3a94284ea02d6d43cc79041622ebe022e6fa8aae46a121e0b378",
+    "third_party/nostrdb/src/hmac_sha256.c": "5297b23855579307bd6f1053e5acf478eacd31b26b771629f5b383a3896909cd",
+    "third_party/nostrdb/src/invoice.c": "2a704cbea926418e307a08ab4fa88c52cba87142ec6c835e34eef850c182c1c0",
+    "third_party/nostrdb/src/metadata.c": "eda9e537e88758e1d2c0e3f19b41e47b454abb51e82604e34fc1eb39103206ca",
+    "third_party/nostrdb/src/nip44.c": "363d485188a584d4fd21a09b5eb7d436625503f650a74a7c5f2ee62d03661c6b",
+    "third_party/nostrdb/src/nostr_bech32.c": "1fd9ee78ad14d4d83b9a610a196278ae7717f049b80b4a6382e9bbd5b6735194",
+    "third_party/nostrdb/src/nostrdb.c": "771fa47ba36dc6766e23313b09c72d7b3b7b94a6afe02482bcf5c6ea09beea2a"
+  },
+  "schema_version": 1,
+  "source_identity": {
+    "kind": "committed",
+    "sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1"
+  }
+}
