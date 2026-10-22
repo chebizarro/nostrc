@@ -46,6 +46,12 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   non-test source/Ninja/header/runtime/artifact and named/omitted
   prerequisite audits, including eligible unselected defaults. Never substitute
   `signer-tests`, fabricate a File API `all` target or use selected-only audits.
+  Fresh configure binds canonical generation-control inputs, verifier bytes and
+  configured CMake/Ninja identities. Freshness uses the bound VerifyGlobs command
+  (exit0, empty output) and an engine-owned Ninja entry that only includes the
+  original graph from its original cwd; exact no-work and pre/post binding checks
+  are required under the build lock. Query evidence is not physical coverage.
+  No graph filtering, execution-time-only verifier trust or `-d norebuild` flag.
 - Tool capabilities are not resource setup: `nak` and `gnome_keyring` require
   actual executable fingerprints, distinct from display/private-bus evidence.
   Existing keyring CTests own their private HOME/bus/supervised Secret Service,
@@ -87,7 +93,12 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   and no architecture alias, sanitizer-policy relaxation or rollout cutover is
   authorized by this subset. Ordinary-subset `--phase test` refuses before CTest;
   use `--phase all` to retain physical prerequisite-build proof. Standalone build
-  results also retain both incomplete flags and omission accounting. See the
+  results also retain both incomplete flags and omission accounting. Selected
+  inventory `command`/`build_contract` IDs are not CTest registration names:
+  normalization requires exact kind/selected-ID membership and per-kind physical
+  process/argv/environment/evidence, never a broad string whitelist. Neither
+  commands nor forged CTest labels can expand the reviewed33-registration authority.
+  See the
   source-bound admission receipt in TESTING.
 - `scripts/contained-gate.py prepare` / `run` provide attested locked 08/09/011
   preparation and verified CID lifecycle/final retained bytes. The distinct

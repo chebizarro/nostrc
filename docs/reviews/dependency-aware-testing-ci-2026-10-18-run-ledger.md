@@ -1,5 +1,39 @@
 # Dependency-aware testing acceptance run ledger
 
+## Integration refresh — 2026-10-22T19:03:24.712764Z
+
+Dated snapshot, **not a live counter**. Sequential API capture
+`2026-10-22T19:01:19.352039Z`–`19:03:24.712764Z`,142 queries/four workflow
+histories, same46 root/attempt identities: **45 failed, one cancelled, zero
+pending**. Broad/worker/release standalone histories yielded no successful complete
+integration. **0/20 qualifying reviewed distinct PR comparisons;0/2 successful
+complete broad integrations. W11 NOT MET / W12 NOT RUN.** No local/final-source
+unit, native, emulated, nested, retry or diagnostic execution advances these counts.
+
+The formerly pending [master run39765146565](https://github.com/chebizarro/nostrc/actions/runs/39765146565),
+at tested `dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`, is terminal failure:
+[gate job119964964801](https://github.com/chebizarro/nostrc/actions/runs/39765146565/job/119964964801)
+and [broad job119964889920](https://github.com/chebizarro/nostrc/actions/runs/39765146565/job/119964889920).
+Validation artifact12443970995 has `passed=false`, `complete=false`,
+`complete_gate_eligible=false`,537 errors; plan identity
+`b9983e9154cb5e63e0eca1f2f8aac4d1855955712e08482574591fc83d1cc67d`
+matches plan artifact12420350952 and exact tested source. No parent-color credit.
+
+Retained evidence:
+`/tmp/nostrc-closeout-integration-20261022/hosted-refresh-96ad818cc/`.
+Validation ZIP SHA-256
+`93ea03f1c3298dedf88df21e364361baf90927edd4dd611d0c00449acd3ec50a`;
+plan ZIP `1badd3f17fe01febfc07c624db92a4cb4b131fbc4e40e8dde4c938b784c69e64`;
+`latest-terminal-review.json`
+`1b8a7381a76ce5385336507884484f291073bdfeb8cc8e72517b1e160c3dea6b`;
+`SHA256SUMS.final`
+`0c09fbe8392a6f9eab118306b2daa7bde2f4a946c1c0aa8186f8ed4a4e714e31`.
+The original C evidence index and43/1/2 snapshot below, plus the later44/1/1
+observation, remain historical. No failed/cancelled/pending history is erased.
+Current finite code evidence and35-bead criteria:
+[closeout register](dependency-aware-testing-ci-2026-10-22-closeout.md).
+
+
 ## Batch C frozen snapshot — 2026-10-22T11:16:15.818726Z
 
 This section supersedes older **current** labels below without rewriting their

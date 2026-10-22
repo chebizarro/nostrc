@@ -1,5 +1,38 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Final finite integration reconciliation — 2026-10-23 local date
+
+Tested code `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a` has725 selector cases
+PASS/zero skips, all15 combined gates PASS, safe native434pass/five visible skips,
+actual standalone macOS32/Linux33 plus defaults, and actual public supported
+core/Groundhog/Grotto default/prerequisite/NIP14 routes with full pre/postaudits
+zero gaps (6,834/5,818/6,704 hashes). Five affected NIP29 registrations pass.
+Fresh source/generation/control/phase/prerequisite evidence binds incremental
+owned-root artifacts; failed freshness/input/normalization checkpoints remain.
+All three partial aggregations pass and complete-gate requests refuse; exact33
+ordinary omissions/incomplete flags, original authorities and vendor state stay
+unchanged. This is not whole-profile, native Linux x86, original MDK or hosted proof.
+
+The [finite35-bead criterion register](dependency-aware-testing-ci-2026-10-22-closeout.md)
+proposes independent closure of `.2`–`.5`, `.9`, `.31`, `.34` based on their own
+criteria; `.7` is already closed. Root, `.8`, `.11`, `.23`, `.29` and each explicit
+runtime/whole-job cell remain open with concrete next actions. The one integrated
+review and later exact parent/B source spot-checks are distinguished. Groundhog
+and GNostr shipped build corrections are PATCH-class folded into their existing
+unreleased versions; byte-equivalent provenance/ownership and internal validator
+work need no additional bump. Official all-record tracker/event preservation is
+recorded in the register, not a direct semantic database edit.
+
+Latest reviewed hosted snapshot **2026-10-22T19:03:24.712764Z**:45 failed/one
+cancelled/zero pending of46 root attempts; **0/20** qualifying comparisons,
+**0/2** complete broad integrations. [New dated ledger and source-linked terminal
+artifact review](dependency-aware-testing-ci-2026-10-18-run-ledger.md#integration-refresh--2026-10-22t190324712764z)
+retain the earlier pending/failed snapshots and exact hashes. W11 **NOT MET**,
+W12 **NOT RUN**; no default, enforcement, publisher, schedule or protection cutover.
+All prior sections below are source-specific historical evidence, not overwritten
+completion claims.
+
+
 ## Finite Batch C — workflow implementation and hosted snapshot, 2026-10-22
 
 Base `dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`; implementation commit
