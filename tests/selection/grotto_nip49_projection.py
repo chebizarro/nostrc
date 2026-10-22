@@ -18,6 +18,15 @@ DESCRIPTOR_RENEWAL_SHA256 = '78e6c2fed93894ad0f71e37207af28c642f425d57ddba7b21df
 
 
 def before_nip49_descriptor_renewal(contract, profile):
+    if profile == 'groundhog.linux':
+        from encrypted_media_projection import RENEWAL as MEDIA_RENEWAL, before_encrypted_media_family
+        s.require(hashlib.sha256((ROOT / MEDIA_RENEWAL).read_bytes()).hexdigest() ==
+                  'fa30aa40a5598dfafdb070215481bbf617e395e33ad431d6c2ce8c9e8aed4228',
+                  'encrypted media renewal witness bytes changed')
+        contract = before_encrypted_media_family(contract)
+    elif profile == PROFILE:
+        from grotto_crypto_projection import before_grotto_crypto_family
+        contract = before_grotto_crypto_family(contract)
     raw = (ROOT / DESCRIPTOR_RENEWAL).read_bytes()
     s.require(hashlib.sha256(raw).hexdigest() == DESCRIPTOR_RENEWAL_SHA256,
               'NIP-49 descriptor renewal witness bytes changed')
@@ -64,5 +73,10 @@ def grotto_nip49_current_workflow_checks(previous_checks, contract):
     witness = json.loads((ROOT / RENEWAL).read_text())
     s.require(s.digest(previous_checks) == witness['previous_workflow_checks_hash'],
               'Grotto NIP-49 historical workflow checks changed')
-    return sorted(previous_checks + ['grotto.' + name.removeprefix('test_') for name in
-                                    FAMILY + ['test_nip49_spec_source']])
+    from grotto_crypto_projection import grotto_crypto_current_workflow_checks
+    previous_wave = sorted(previous_checks + ['grotto.' + name.removeprefix('test_') for name in
+                                             FAMILY + ['test_nip49_spec_source']])
+    checks = s.load_inventory(ROOT / 'tests/selection/inventory.json')['checks']
+    ordinary = [ident for ident in previous_wave if PROFILE in checks[ident]['profiles']]
+    retained = [ident for ident in previous_wave if ident not in ordinary]
+    return sorted(retained + grotto_crypto_current_workflow_checks(ordinary, contract))

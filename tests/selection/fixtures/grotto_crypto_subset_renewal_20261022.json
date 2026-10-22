@@ -1,0 +1,555 @@
+{
+  "added_primary": [
+    "test_nip04_error_uniformity",
+    "test_nip04_secure_roundtrip",
+    "test_nip04_strict",
+    "test_nip44_convkey",
+    "test_nip44_roundtrip",
+    "test_roundtrip"
+  ],
+  "checks": {
+    "grotto.nip04_error_uniformity": {
+      "build_targets": [
+        "test_nip04_error_uniformity"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "test_nip04_error_uniformity"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "nip04",
+        "nip04.test_inputs"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_roundtrip": {
+      "build_targets": [
+        "test_roundtrip"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "test_roundtrip"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "nip04",
+        "nip04.test_inputs"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_secure_roundtrip": {
+      "build_targets": [
+        "test_nip04_secure_roundtrip"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "test_nip04_secure_roundtrip"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "nip04",
+        "nip04.test_inputs"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_strict": {
+      "build_targets": [
+        "test_nip04_strict"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "test_nip04_strict"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "nip04",
+        "nip04.test_inputs"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip44_convkey": {
+      "build_targets": [
+        "test_nip44_convkey"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "test_nip44_convkey"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "nip44",
+        "nip44.test_inputs"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip44_roundtrip": {
+      "build_targets": [
+        "test_nip44_roundtrip"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "grotto.linux": [
+          "test_nip44_roundtrip"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.grotto",
+        "nip44",
+        "nip44.test_inputs"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    }
+  },
+  "deferred": {
+    "test_interop": {
+      "reason": "Pending independent semantics; excluded from this bounded family."
+    },
+    "test_nip44_vectors": {
+      "reason": "Canonical descriptor INPUTS omits actual JSON; conditional Jansson/VECTORS_PATH plus unreadable-file branch can pass builtin fallback. No check-local authority or builtin-fallback credit. Requires separately approved canonical descriptor/source-authority and fail-closed product/test semantics with proof official JSON loaded.",
+      "required_runtime_inputs": [
+        "{source}/nips/nip44/tests/nip44.vectors.json"
+      ]
+    }
+  },
+  "export_sha256": "1a3ef6243238ed08bfb52ccb77594a5310a0ab6d6bae90b77f07554ac64cf138",
+  "fresh_realization_sha256": "6f7cb9b05d284e720ff0605f7584ce2bd4a95f817a8bb55d377c7c6ff4e34811",
+  "historical_fixture_sha256": {
+    "tests/selection/fixtures/grotto_nip49_exports.json": "4906dc39fae2ac220add4c9e0d3fb8a150c6b192c5ce7a2722e33b2cc46325a0",
+    "tests/selection/fixtures/grotto_nip49_subset_renewal_20261022.json": "4214ef00cbf5ef49e8ec6d5d3854f427c2992c47d3787250c63673e9e24b1253",
+    "tests/selection/fixtures/grotto_profile_exports.json": "7dcce9ca16e5cc55cd6502d1d2d4e4191f3c6f56be963a4892b19fd4d92d10cd",
+    "tests/selection/fixtures/headless_identity_exports.json": "5b099ae15d5c5e5f7081976b0e1fba5274f7774777b68678372b054952269bfa",
+    "tests/selection/fixtures/headless_identity_subset_renewal_20261022.json": "231cefbfe92944f564377cebe03b9558f325165ed3bbbced96ef794844e9b9cd",
+    "tests/selection/fixtures/headless_model_exports.json": "e42337295fa1ebe76d5c45f682b7abed9d0fa9df1c30a344b7f842ae37bdc7ca",
+    "tests/selection/fixtures/headless_model_subset_renewal_20261022.json": "351296afb01d4abf815cbd2f38669c6aa9886782911a6f0d59926908848773e2",
+    "tests/selection/fixtures/headless_transport_exports.json": "f4c07572c3f7ebaaa311dcc04134dd9050eddbdf8d42f1720b7aa298a01374e9",
+    "tests/selection/fixtures/headless_transport_subset_renewal_20261022.json": "50a4f28a5f3e5d36e932a7a08f4e4cc5536d109b2f904b91f8ea491c1c72c745",
+    "tests/selection/fixtures/hosted_audit_edges.json": "ed0b86935f411af0b129ead56d8f9c62167bcb85a7a0e535156433cbac62ed0a",
+    "tests/selection/fixtures/nip49_descriptor_renewal_20261022.json": "78e6c2fed93894ad0f71e37207af28c642f425d57ddba7b21df47b5fb42bfcd7",
+    "tests/selection/fixtures/nonmember_audit_edges.json": "787717dfa59245b9c1f2d072808d1d37403a4fc31d2cafe197f7fb9addbd895b",
+    "tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json": "4809dbf3200ef8a0ddab3507c50e6ba08dc2f668d4cd9a8a366843a04aa9013a",
+    "tests/selection/fixtures/ordinary_subset_x86_exports.json": "74d4a310f945fe19d5f3c78487e692a07dd8afcd76172ab0b35f9e3a24653327",
+    "tests/selection/fixtures/profile_exports.json": "b35080e170a117bf680329d2d398c9dc54b1ee98525c06475182687f08608337",
+    "tests/selection/fixtures/resource_diagnostics_projection_20261022.json": "fe6caae1dacfcc5064f6f6018b5c4dce5b478ddf970d3082c51748a7220a8dc3",
+    "tests/selection/fixtures/resource_profile_exports.json": "74d2ddd36b0d3ea7ba49e358eea59de69aef151f11f73e5b17fccc0bb68fa160",
+    "tests/selection/fixtures/store_key_membership_exports.json": "f1c285da7bec291a13e650b0c9a809998a1a60309367eb018a53ee655a20134e"
+  },
+  "historical_golden_sha256": "5e8801bcc8506a9e3800848921118c44775baf7b4e8e46f17de89beab1125e83",
+  "limits": {
+    "all_omitted_targets_built": false,
+    "complete": false,
+    "complete_gate_eligible": false,
+    "full_profile_execution": false,
+    "hosted_acceptance": false,
+    "postbuild_audits": false,
+    "release_acceptance": false
+  },
+  "physical": {
+    "build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "/evidence/baseline/grotto.linux/build",
+        "--parallel",
+        "2",
+        "--target",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_roundtrip"
+      ],
+      "exit_code": 0,
+      "log_sha256": "f4fd11c59542ea193ec22544cd9ac21b94bf4a28dd66f4f299cf3fb3d2a57099",
+      "seconds": 21.762919634988066
+    },
+    "clean": {
+      "argv": [
+        "cmake",
+        "--build",
+        "/evidence/baseline/grotto.linux/build",
+        "--target",
+        "clean"
+      ],
+      "exit_code": 0,
+      "log_sha256": "afb1d843d2b9574ca84a76e1bf5ada86e4f8d71dc2f242818b06d052467401db",
+      "seconds": 0.5698105829942506
+    },
+    "execution": "raw diagnostic, NOT admitted profile/backend execution",
+    "full_profile_execution": false,
+    "headless_environment": {
+      "DBUS_SESSION_BUS_ADDRESS": null,
+      "DISPLAY": null,
+      "GH_TEST_INTEROP_RELAY_URL": null,
+      "NOSTRC_RELAYD": null,
+      "WAYLAND_DISPLAY": null
+    },
+    "image": "sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724",
+    "platform": "Linux/amd64 Rosetta nonroot uid1001 network-none",
+    "profile_environment": {
+      "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+      "G_SLICE": "always-malloc",
+      "TSAN_OPTIONS": "halt_on_error=1",
+      "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+    },
+    "required_capabilities": [],
+    "source_identity": {
+      "kind": "committed",
+      "sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1"
+    },
+    "test": {
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/evidence/baseline/grotto.linux/build",
+        "-I",
+        "/evidence/ctest-selection.txt",
+        "--parallel",
+        "1",
+        "--timeout",
+        "3600",
+        "--no-tests=error",
+        "--output-on-failure",
+        "--output-junit",
+        "/evidence/focused-junit.xml"
+      ],
+      "executed": [
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_roundtrip"
+      ],
+      "exit_code": 0,
+      "log_sha256": "f73cd3824be0ad00f632a0c97843f928177e57745d446eb34ca5c3ec3f9bd40a",
+      "seconds": 0.3459519580064807,
+      "skips": 0
+    }
+  },
+  "previous": {
+    "primary_registrations": [
+      "nip55l_approval_service",
+      "nip55l_cache_concurrency",
+      "nip55l_dbus_contract",
+      "nip55l_dbus_contract_fail_teardown",
+      "nip55l_fake_secret_service_contract",
+      "nip55l_getrelays",
+      "nip55l_keyring_schema",
+      "nip55l_nip44_b64",
+      "nip55l_profile_guard",
+      "nip55l_selector_safety",
+      "nip55l_sign_event_json",
+      "nostr_signer_webext_host_e2e",
+      "nostr_signer_webext_host_errors",
+      "nostr_signer_webext_host_framing",
+      "nostr_signer_webext_host_policy",
+      "nostr_signer_webext_host_router",
+      "nostr_signer_webext_host_webln",
+      "signer/activity",
+      "signer/approval-controller",
+      "signer/approval-dialog",
+      "signer/approval-integration",
+      "signer/background",
+      "signer/blueprint-drift",
+      "signer/bunker",
+      "signer/bunker-e2e",
+      "signer/bunker-headless",
+      "signer/bunker-startup",
+      "signer/clients",
+      "signer/core",
+      "signer/crypto",
+      "signer/dbus",
+      "signer/desktop-contract",
+      "signer/home-model",
+      "signer/hsm-provider",
+      "signer/identity",
+      "signer/identity-management",
+      "signer/identity-model",
+      "signer/legacy-dirs",
+      "signer/onboarding",
+      "signer/permissions",
+      "signer/profile-guard",
+      "signer/qr-scanner",
+      "signer/rate-limiter",
+      "signer/room-flow",
+      "signer/secure-mem",
+      "signer/session",
+      "signer/session-lock",
+      "signer/signer-core",
+      "signer/social-recovery",
+      "signer/trust-tiers",
+      "signer/ui",
+      "signer/ui-accessibility",
+      "signer/ui-layout",
+      "test_nip49_negative",
+      "test_nip49_payload",
+      "test_nip49_roundtrip",
+      "test_nip49_spec_source",
+      "test_nip49_vectors"
+    ],
+    "required_closure": [
+      "grotto-native-host-test-homes",
+      "grotto-tests-test-homes",
+      "nip55l-test-homes",
+      "nip55l_approval_service",
+      "nip55l_cache_concurrency",
+      "nip55l_dbus_contract",
+      "nip55l_dbus_contract_fail_teardown",
+      "nip55l_fake_secret_service_contract",
+      "nip55l_getrelays",
+      "nip55l_keyring_schema",
+      "nip55l_nip44_b64",
+      "nip55l_profile_guard",
+      "nip55l_selector_safety",
+      "nip55l_sign_event_json",
+      "nostr_signer_webext_host_e2e",
+      "nostr_signer_webext_host_errors",
+      "nostr_signer_webext_host_framing",
+      "nostr_signer_webext_host_policy",
+      "nostr_signer_webext_host_router",
+      "nostr_signer_webext_host_webln",
+      "signer/activity",
+      "signer/approval-controller",
+      "signer/approval-dialog",
+      "signer/approval-integration",
+      "signer/background",
+      "signer/blueprint-drift",
+      "signer/bunker",
+      "signer/bunker-e2e",
+      "signer/bunker-headless",
+      "signer/bunker-startup",
+      "signer/clients",
+      "signer/core",
+      "signer/crypto",
+      "signer/dbus",
+      "signer/desktop-contract",
+      "signer/home-model",
+      "signer/hsm-provider",
+      "signer/identity",
+      "signer/identity-management",
+      "signer/identity-model",
+      "signer/legacy-dirs",
+      "signer/onboarding",
+      "signer/permissions",
+      "signer/profile-guard",
+      "signer/qr-scanner",
+      "signer/rate-limiter",
+      "signer/room-flow",
+      "signer/secure-mem",
+      "signer/session",
+      "signer/session-lock",
+      "signer/signer-core",
+      "signer/social-recovery",
+      "signer/trust-tiers",
+      "signer/ui",
+      "signer/ui-accessibility",
+      "signer/ui-layout",
+      "test_nip49_negative",
+      "test_nip49_payload",
+      "test_nip49_roundtrip",
+      "test_nip49_spec_source",
+      "test_nip49_vectors"
+    ]
+  },
+  "previous_record_hash": "505c70c6391d122af8a5121e120830ea3a36c235af3cffe4b58fb5767e219e6b",
+  "previous_workflow_checks_hash": "b184f62c5e2d36525b79fe7b360a751c94fced6a90b2c2791e2c7e6130e5ac3d",
+  "profile": "grotto.linux",
+  "renewed": {
+    "primary_registrations": [
+      "nip55l_approval_service",
+      "nip55l_cache_concurrency",
+      "nip55l_dbus_contract",
+      "nip55l_dbus_contract_fail_teardown",
+      "nip55l_fake_secret_service_contract",
+      "nip55l_getrelays",
+      "nip55l_keyring_schema",
+      "nip55l_nip44_b64",
+      "nip55l_profile_guard",
+      "nip55l_selector_safety",
+      "nip55l_sign_event_json",
+      "nostr_signer_webext_host_e2e",
+      "nostr_signer_webext_host_errors",
+      "nostr_signer_webext_host_framing",
+      "nostr_signer_webext_host_policy",
+      "nostr_signer_webext_host_router",
+      "nostr_signer_webext_host_webln",
+      "signer/activity",
+      "signer/approval-controller",
+      "signer/approval-dialog",
+      "signer/approval-integration",
+      "signer/background",
+      "signer/blueprint-drift",
+      "signer/bunker",
+      "signer/bunker-e2e",
+      "signer/bunker-headless",
+      "signer/bunker-startup",
+      "signer/clients",
+      "signer/core",
+      "signer/crypto",
+      "signer/dbus",
+      "signer/desktop-contract",
+      "signer/home-model",
+      "signer/hsm-provider",
+      "signer/identity",
+      "signer/identity-management",
+      "signer/identity-model",
+      "signer/legacy-dirs",
+      "signer/onboarding",
+      "signer/permissions",
+      "signer/profile-guard",
+      "signer/qr-scanner",
+      "signer/rate-limiter",
+      "signer/room-flow",
+      "signer/secure-mem",
+      "signer/session",
+      "signer/session-lock",
+      "signer/signer-core",
+      "signer/social-recovery",
+      "signer/trust-tiers",
+      "signer/ui",
+      "signer/ui-accessibility",
+      "signer/ui-layout",
+      "test_nip04_error_uniformity",
+      "test_nip04_secure_roundtrip",
+      "test_nip04_strict",
+      "test_nip44_convkey",
+      "test_nip44_roundtrip",
+      "test_nip49_negative",
+      "test_nip49_payload",
+      "test_nip49_roundtrip",
+      "test_nip49_spec_source",
+      "test_nip49_vectors",
+      "test_roundtrip"
+    ],
+    "required_closure": [
+      "grotto-native-host-test-homes",
+      "grotto-tests-test-homes",
+      "nip55l-test-homes",
+      "nip55l_approval_service",
+      "nip55l_cache_concurrency",
+      "nip55l_dbus_contract",
+      "nip55l_dbus_contract_fail_teardown",
+      "nip55l_fake_secret_service_contract",
+      "nip55l_getrelays",
+      "nip55l_keyring_schema",
+      "nip55l_nip44_b64",
+      "nip55l_profile_guard",
+      "nip55l_selector_safety",
+      "nip55l_sign_event_json",
+      "nostr_signer_webext_host_e2e",
+      "nostr_signer_webext_host_errors",
+      "nostr_signer_webext_host_framing",
+      "nostr_signer_webext_host_policy",
+      "nostr_signer_webext_host_router",
+      "nostr_signer_webext_host_webln",
+      "signer/activity",
+      "signer/approval-controller",
+      "signer/approval-dialog",
+      "signer/approval-integration",
+      "signer/background",
+      "signer/blueprint-drift",
+      "signer/bunker",
+      "signer/bunker-e2e",
+      "signer/bunker-headless",
+      "signer/bunker-startup",
+      "signer/clients",
+      "signer/core",
+      "signer/crypto",
+      "signer/dbus",
+      "signer/desktop-contract",
+      "signer/home-model",
+      "signer/hsm-provider",
+      "signer/identity",
+      "signer/identity-management",
+      "signer/identity-model",
+      "signer/legacy-dirs",
+      "signer/onboarding",
+      "signer/permissions",
+      "signer/profile-guard",
+      "signer/qr-scanner",
+      "signer/rate-limiter",
+      "signer/room-flow",
+      "signer/secure-mem",
+      "signer/session",
+      "signer/session-lock",
+      "signer/signer-core",
+      "signer/social-recovery",
+      "signer/trust-tiers",
+      "signer/ui",
+      "signer/ui-accessibility",
+      "signer/ui-layout",
+      "test_nip04_error_uniformity",
+      "test_nip04_secure_roundtrip",
+      "test_nip04_strict",
+      "test_nip44_convkey",
+      "test_nip44_roundtrip",
+      "test_nip49_negative",
+      "test_nip49_payload",
+      "test_nip49_roundtrip",
+      "test_nip49_spec_source",
+      "test_nip49_vectors",
+      "test_roundtrip"
+    ]
+  },
+  "renewed_record_hash": "e152f87baf1cce33aa1c622665c82f692781cade3de7ecf4b83c801d5538c61e",
+  "schema_version": 1,
+  "source_identity": {
+    "kind": "committed",
+    "sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1"
+  },
+  "unchanged_contract_hashes": {
+    "diagnostic_nonmembers": "b8f7de593bad6947ae73e2e5eacaf91e5e44814e3a24ed9906776a2d0343034b",
+    "nodes": "91dafbea554a51ec5e1eb3cf6658d1048e8eccfaa0fc52b9ed30136b95d4e6ff",
+    "path_rules": "b97f07836ab765abcc51c445dc31081273bfe7232fcc458f26216fcba0679229",
+    "profiles": "88b5dae9f73c4957d3fe1232f6a7bd6b89d4dae5957d36d7b0a9decc27fe1599"
+  },
+  "unchanged_groundhog_subset_hash": "e4c9fe55c937db35ec1429dc3d6e26ac3eed061d7c73e47cfcf296b44debddc8"
+}

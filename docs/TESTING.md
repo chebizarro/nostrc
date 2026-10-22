@@ -56,6 +56,55 @@ source identities. The membership checkpoint below retains its dated receipt;
 only its pending custody/integration status is superseded here. No source-authority
 renewal, hosted/W11/release/default credit, closure or shipped version bump.
 
+## Bounded media/crypto integration — 2026-10-22
+
+**Tested code: `a787dd1948bb2f59fde5276c8156822e9fbe4431`**, from master
+`b7aede816`, preserving media `1a98aed50` and crypto `3dc1944cb` ancestry.
+Groundhog ordinary membership is **30 primaries / 32 CTest executions**;
+Grotto is **64 / 67**. Only three media and six self-contained crypto registrations
+are added; the existing media check gains its explicit build target. All **18 old
+JSON fixtures and the original golden remain byte-identical**. Strict reverse
+projections preserve complete prior records and every non-ordinary golden entry.
+The nine new `selection.contract` file inputs are command coverage, **not new
+CTest runtime authority**; all 13 existing nonempty CTest declarations, both
+193-source controls, exact 33 omissions / 29 required omitted-target closures and
+sanitizer authority remain unchanged. No source-authority renewal occurs here.
+
+At that frozen source, supported installed **Python 3.14** runs **583/583 selector
+cases PASS, zero skips**, 300.230s. Independent media/crypto/composition files pass
+**7/7, 10/10, 5/5** in separate processes with empty `PYTHONPATH`. Six shell
+regression suites, four mandatory statics, inventory validation,
+actionlint/ShellCheck and range whitespace pass. Fresh safe native configure
+**11.348s** and default-all build **65.066s** pass with private HOME/XDG, private
+bus/throwaway Secret Service, loopback/Unix-only sandbox, libsecret/secret-service
+flags and Groundhog default-OFF. Read-only keychain guards pass before/after;
+services are reaped and socket absent. **Native CTest NOT RUN** for this
+metadata/test-only wave; the older native CTest receipt below is not refreshed.
+
+Fresh full authored x86 prebuild audits compare actual base `b7aede816` and final
+`a787dd194` exports: Groundhog **7,895 → 7,327**, exactly **3 unclaimed + 565
+missing-impact** findings removed; Grotto **9,137 → 9,131**, exactly **6 unclaimed**
+removed; **zero added**. All **1,317 / 1,701 input byte hashes** agree. Entire
+finding multisets are compared, not inferred additive counts or selected-only
+audits. **Both audits still FAIL; `complete=false` and
+`complete_gate_eligible=false`.** Actual CLI whole/family resolution, admission
+and validation succeed, but are not physical selected-profile execution.
+
+The first combined **582-case run (12 failures, 6 errors)** remains retained.
+Three integration defects were fixed narrowly; the other 15 MDK failures/errors
+were diagnosed under Apple Python 3.9, which lacks `os.waitid`. The unchanged
+focused test fails there and passes under 3.14; **no MDK code, cleanup guard,
+timeout, test or skipped coverage was weakened**. See the
+[source-bound receipt](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#bounded-mediacrypto-integration--2026-10-22)
+for review limits, comparison-driver failures and separate child physical proofs.
+`test_nip44_vectors` remains unclaimed: **`nostrc-3lofk`** tracks canonical JSON
+input binding and refusal of missing-capability/file or builtin-only fallback
+credit. `test_interop` is excluded. Production postbuild/header audits and all-29
+omitted-target builds remain **NOT RUN**. `.2` OPEN, `.9`/`.31` in progress;
+W11 NOT MET / W12 NOT RUN, no hosted-ledger refresh or complete/release/default
+acceptance. No shipped version bump. Later docs/export are not a new tested-code
+source; parent owns push/merge/cleanup.
+
 ## Final bounded runtime/renewal integration — 2026-10-22
 
 At tested code **`c346c598b2a205e9d1345efee37182b159da02a1`**, verified core

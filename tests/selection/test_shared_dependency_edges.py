@@ -426,7 +426,7 @@ nostrc_finalize_test_inventory()
         self.assertEqual(check["nodes"], ["groundhog.media", "execution.groundhog", "groundhog.unclassified"])
         self.assertEqual(check["profiles"], ["groundhog.linux"])
         self.assertEqual(check["ctest_tests"], {"groundhog.linux": ["groundhog-media"]})
-        self.assertEqual(check["build_targets"], [])
+        self.assertEqual(check["build_targets"], ["test-groundhog-media"])
         for owner in ("groundhog.unclassified", "execution.groundhog"):
             self.assertEqual(self.policy["nodes"][owner]["depends_on"], [])
         for path in self.unclassified + ["gnome/groundhog/src/ui/gh-recipient.c"]:

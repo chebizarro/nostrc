@@ -4674,6 +4674,72 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "grotto.nip04_error_uniformity": {
+      "build_targets": ["test_nip04_error_uniformity"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip04_error_uniformity"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_secure_roundtrip": {
+      "build_targets": ["test_nip04_secure_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip04_secure_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_strict": {
+      "build_targets": ["test_nip04_strict"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip04_strict"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip04_roundtrip": {
+      "build_targets": ["test_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip04", "nip04.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip44_convkey": {
+      "build_targets": ["test_nip44_convkey"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip44_convkey"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip44", "nip44.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "grotto.nip44_roundtrip": {
+      "build_targets": ["test_nip44_roundtrip"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip44_roundtrip"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip44", "nip44.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "grotto.nip49_vectors": {
       "build_targets": ["test_nip49_vectors"],
       "cost": "ordinary",
@@ -4761,8 +4827,10 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
-    "groundhog.media": {
-      "build_targets": [],
+  "groundhog.media": {
+    "build_targets": [
+      "test-groundhog-media"
+    ],
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux": [
@@ -4802,8 +4870,81 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
-    "groundhog.mls_media": {
-      "build_targets": [],
+  "groundhog.blossom": {
+    "build_targets": [
+      "groundhog-test-schemas",
+      "test-groundhog-blossom"
+    ],
+    "cost": "ordinary",
+    "ctest_tests": {
+      "groundhog.linux": [
+        "groundhog-blossom"
+      ]
+    },
+    "expected_outcome": "pass",
+    "kind": "ctest",
+    "nodes": [
+      "groundhog.media",
+      "groundhog.resources",
+      "execution.groundhog",
+      "groundhog.unclassified"
+    ],
+    "profiles": [
+      "groundhog.linux"
+    ],
+    "requirement": "blocking",
+    "runtime_inputs": []
+  },
+  "groundhog.media_cache_binding": {
+    "build_targets": [
+      "groundhog-test-schemas",
+      "test-groundhog-media-cache-binding"
+    ],
+    "cost": "ordinary",
+    "ctest_tests": {
+      "groundhog.linux": [
+        "groundhog-media-cache-binding"
+      ]
+    },
+    "expected_outcome": "pass",
+    "kind": "ctest",
+    "nodes": [
+      "groundhog.media",
+      "groundhog.resources",
+      "execution.groundhog",
+      "groundhog.unclassified"
+    ],
+    "profiles": [
+      "groundhog.linux"
+    ],
+    "requirement": "blocking",
+    "runtime_inputs": []
+  },
+  "groundhog.media_purge": {
+    "build_targets": [
+      "test-groundhog-media-purge"
+    ],
+    "cost": "ordinary",
+    "ctest_tests": {
+      "groundhog.linux": [
+        "groundhog-media-purge"
+      ]
+    },
+    "expected_outcome": "pass",
+    "kind": "ctest",
+    "nodes": [
+      "groundhog.media",
+      "execution.groundhog",
+      "groundhog.unclassified"
+    ],
+    "profiles": [
+      "groundhog.linux"
+    ],
+    "requirement": "blocking",
+    "runtime_inputs": []
+  },
+  "groundhog.mls_media": {
+    "build_targets": [],
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux": [
@@ -5979,6 +6120,15 @@
         "{source}/tests/selection/fixtures/resource_profile_exports.json",
         "{source}/tests/selection/fixtures/store_key_membership_exports.json",
         "{source}/tests/selection/golden/selection.json",
+        "{source}/tests/selection/encrypted_media_projection.py",
+        "{source}/tests/selection/fixtures/encrypted_media_exports.json",
+        "{source}/tests/selection/fixtures/encrypted_media_subset_renewal_20261022.json",
+        "{source}/tests/selection/test_encrypted_media_membership.py",
+        "{source}/tests/selection/grotto_crypto_projection.py",
+        "{source}/tests/selection/fixtures/grotto_crypto_exports.json",
+        "{source}/tests/selection/fixtures/grotto_crypto_subset_renewal_20261022.json",
+        "{source}/tests/selection/test_grotto_crypto_membership.py",
+        "{source}/tests/selection/test_media_crypto_integration.py",
         "{source}/tests/selection/grotto_nip49_projection.py",
         "{source}/tests/selection/test_ctest_runtime_inputs.py",
         "{source}/tests/selection/test_nip49_runtime_descriptor.py",
@@ -13805,8 +13955,11 @@
         "groundhog-about-gui",
         "groundhog-account-backends",
         "groundhog-account-remote-switch",
+        "groundhog-blossom",
         "groundhog-conversations",
         "groundhog-media",
+        "groundhog-media-cache-binding",
+        "groundhog-media-purge",
         "groundhog-mls-files",
         "groundhog-mls-media",
         "groundhog-mls-service",
@@ -14294,8 +14447,11 @@
         "groundhog-about-gui",
         "groundhog-account-backends",
         "groundhog-account-remote-switch",
+        "groundhog-blossom",
         "groundhog-conversations",
         "groundhog-media",
+        "groundhog-media-cache-binding",
+        "groundhog-media-purge",
         "groundhog-mls-files",
         "groundhog-mls-media",
         "groundhog-mls-service",
@@ -14599,11 +14755,17 @@
         "signer/ui",
         "signer/ui-accessibility",
         "signer/ui-layout",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
         "test_nip49_spec_source",
-        "test_nip49_vectors"
+        "test_nip49_vectors",
+        "test_roundtrip"
       ],
       "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
       "registration_universe": [
@@ -15161,11 +15323,17 @@
         "signer/ui",
         "signer/ui-accessibility",
         "signer/ui-layout",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
         "test_nip49_spec_source",
-        "test_nip49_vectors"
+        "test_nip49_vectors",
+        "test_roundtrip"
       ],
       "review": {
         "approval_document": "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
