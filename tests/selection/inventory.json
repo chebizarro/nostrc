@@ -4885,7 +4885,8 @@
       "expected_outcome": "pass",
       "kind": "build_contract",
       "nodes": [
-        "execution.libgo"
+        "execution.libgo",
+        "libgo"
       ],
       "profiles": [
         "libgo.linux.asan",
