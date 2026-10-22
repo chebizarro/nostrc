@@ -14,6 +14,11 @@ ADDED = [name for name in FAMILY if name != 'groundhog-media']
 
 
 def before_encrypted_media_family(contract):
+    from headless_account_policy_projection import RENEWAL as ACCOUNT_RENEWAL, before_account_policy_family
+    s.require(hashlib.sha256((ROOT / ACCOUNT_RENEWAL).read_bytes()).hexdigest() ==
+              '2fef2fb6697e1fc2776fe3d69948ba5f0215c755f154a63e81ab345aede159f1',
+              'account policy renewal witness bytes changed')
+    contract = before_account_policy_family(contract)
     witness = json.loads((ROOT / RENEWAL).read_text())
     s.require(witness['source_identity'] == {'kind': 'committed', 'sha': BASE},
               'encrypted media renewal source witness changed')

@@ -58,8 +58,9 @@ class HeadlessIdentityMembership(unittest.TestCase):
             owners = [key for key, item in self.policy['checks'].items()
                       if name in item.get('ctest_tests', {}).get(PROFILE, [])]
             self.assertEqual(owners, [ident])
-        ordinary = {name for check in self.policy['checks'].values()
-                    for name in check.get('ctest_tests', {}).get(PROFILE, [])}
+        from headless_account_policy_projection import before_account_policy_family
+        ordinary = set(before_account_policy_family(
+            self.policy['diagnostic_nonmember_subsets'][PROFILE])['primary_registrations'])
         excluded = {'groundhog-identity', 'groundhog-account', 'groundhog-auth-policy',
                     'groundhog-account-relays', 'groundhog-account-store', 'groundhog-account-ui',
                     'groundhog-nip46-wire', 'groundhog-nip46-nak',

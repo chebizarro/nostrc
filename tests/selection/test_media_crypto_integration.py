@@ -90,6 +90,23 @@ class MediaCryptoIntegration(unittest.TestCase):
             with self.assertRaisesRegex(s.ContractError, 'historical workflow checks changed'):
                 grotto_nip49_current_workflow_checks(old, current)
 
+    def test_account_policy_wave_precedes_media_and_retains_pinned_witness(self):
+        from headless_account_policy_projection import RENEWAL, before_account_policy_family
+        current = self.contracts['groundhog.linux']
+        previous = before_account_policy_family(current)
+        self.assertEqual((len(current['primary_registrations']), len(current['required_closure'])),
+                         (34, 36))
+        self.assertEqual((len(previous['primary_registrations']), len(previous['required_closure'])),
+                         (30, 32))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / RENEWAL
+            path.parent.mkdir(parents=True)
+            path.write_bytes((ROOT / RENEWAL).read_bytes() + b'\n')
+            with mock.patch('encrypted_media_projection.ROOT', root):
+                with self.assertRaisesRegex(s.ContractError, 'account policy renewal witness bytes changed'):
+                    before_encrypted_media_family(current)
+
     def test_media_witness_bytes_remain_pinned_by_shared_composition(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

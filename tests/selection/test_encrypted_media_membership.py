@@ -142,7 +142,7 @@ class EncryptedMediaMembership(unittest.TestCase):
         current = self.p['diagnostic_nonmember_subsets'][PROFILE]
         old = before_encrypted_media_family(current)
         self.assertEqual((len(current['primary_registrations']), len(current['required_closure'])),
-                         (30, 32))
+                         (34, 36))
         self.assertEqual((len(old['primary_registrations']), len(old['required_closure'])), (27, 29))
         self.assertEqual(len(current['registrations']), 33)
         self.assertEqual(len(current['review']['source_inputs']), 193)
