@@ -115,7 +115,7 @@ class GrottoNip49Membership(unittest.TestCase):
         authored = sorted(n for v in self.policy['checks'].values()
                           for n in v.get('ctest_tests', {}).get(PROFILE, []))
         self.assertEqual(contract['primary_registrations'], authored)
-        self.assertEqual((len(authored), len(contract['required_closure'])), (58, 61))
+        self.assertEqual((len(authored), len(contract['required_closure'])), (64, 67))
         self.assertEqual((len(previous['primary_registrations']), len(previous['required_closure'])), (53, 56))
         self.assertEqual(len(contract['registrations']), 33)
         self.assertEqual(len(contract['review']['source_inputs']), 193)
@@ -136,8 +136,10 @@ class GrottoNip49Membership(unittest.TestCase):
         from grotto_nip49_projection import grotto_nip49_current_workflow_checks
         cases = json.loads((ROOT / 'tests/selection/golden/selection.json').read_text())
         old_checks = next(case['checks'] for case in cases if case['name'] == 'grotto_workflow_only')
+        from grotto_crypto_projection import CHECKS as CRYPTO_CHECKS
         self.assertEqual(grotto_nip49_current_workflow_checks(old_checks, contract),
-                         sorted(old_checks + list(CHECKS) + ['grotto.nip49_spec_source']))
+                         sorted(old_checks + list(CHECKS) + ['grotto.nip49_spec_source'] +
+                                list(CRYPTO_CHECKS)))
         with self.assertRaisesRegex(s.ContractError, 'historical workflow checks changed'):
             grotto_nip49_current_workflow_checks(old_checks + ['unexpected.check'], contract)
 

@@ -180,7 +180,9 @@ class GrottoCryptoMembership(unittest.TestCase):
                          self.witness['export_sha256'])
         for key, digest in self.witness['unchanged_contract_hashes'].items():
             self.assertEqual(s.digest(self.policy[key]), digest, key)
-        self.assertEqual(s.digest(self.policy['diagnostic_nonmember_subsets']['groundhog.linux']),
+        from encrypted_media_projection import before_encrypted_media_family
+        self.assertEqual(s.digest(before_encrypted_media_family(
+                             self.policy['diagnostic_nonmember_subsets']['groundhog.linux'])),
                          self.witness['unchanged_groundhog_subset_hash'])
         self.assertEqual(self.policy['profiles'][PROFILE], self.export['profile'])
         for path, digest in self.witness['historical_fixture_sha256'].items():
