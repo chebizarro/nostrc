@@ -34,8 +34,9 @@
 Final combined gates and three supported production routes passed at the tested
 freeze below. Component evidence is still not whole-profile or hosted acceptance.
 
-This register maps the existing epic and all 34 children; it does not create a
-replacement tracker or close any bead. The complete initial criterion text is
+This register maps the existing epic and all34 children; it is not a replacement
+tracker. Approved finite closures below were executed through official `bd`,
+never by editing the register or semantic database records directly. The complete initial criterion text is
 retained in `/tmp/nostrc-closeout-integration-20261022/criterion-register-initial.json`,
 from official `bd export --all`. The original [execution-index Done when
 contracts](../plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
@@ -339,27 +340,28 @@ they are not native Linux x86 acceptance.
 
 ## Every existing bead: finite criterion accounting
 
-This table evaluates each bead against **its own stated criteria**, not against
-whole-project acceptance. **Propose CLOSE** means the finite criterion is now
-proved and parent may approve closure; it is not a tracker mutation or silent
-scope deferral. `.7` is already officially closed. Historical closed scope stays
-closed; current regression success does not manufacture reruns of historical
-platform/compiler/corpus workloads. Root `nostrc-0cfsg` explicitly retains the
-remaining runtime/whole-job/W11/W12 work in its official comment. No criterion
-is erased and no partial bead is proposed closed.
+This table evaluates each bead against **its own original stated criteria**, not
+against whole-project acceptance. Parent reviewed the verbatim register and
+approved finite closures `.2`, `.3`, `.4`, `.5`, `.9`, `.31`, `.34`; all seven were
+executed through official `bd close` with exact `3ef5cbf9c` proof and finite-bound
+reasons. `.7` was already officially closed. Final combined-source verification
+is complete, not pending. Historical platform/compiler/corpus receipts retain
+their own identities; current regressions do not manufacture reruns. Root
+`nostrc-0cfsg` explicitly retains all remaining runtime/whole-job/W11/W12 work.
+No criterion is erased, no partial bead closed and no broad acceptance promoted.
 
 | Bead | Existing criterion group | Current disposition / remaining proof |
 |---|---|---|
 | `nostrc-0cfsg` | Execute W1-W12 with affected/premerge, broad master/release/manual, fail-broad unknowns, exact-SHA safety/advisory policy. | **OPEN / acceptance incomplete**. Finite implementation criteria below are individually proved; original-image `.8`, heartbeat `.11`, native custody `.23`, dependency leak `.29`, explicit runtime/whole-job cells and W11/W12 remain tracked. W11 **NOT MET**, W12 **NOT RUN**. |
 | `.1` | Schema/range/golden/aggregation: rename/delete/gitlink/shallow/newline, selected skip/cancel/stale identity, release applicability, explicit unsupported roots; real module delegation. | **PASS / CLOSED** finite logical scope; final725-case regressions pass. No hosted acceptance inferred. |
-| `.2` | Fresh/stale/failed configure; standalone/root export; fixtures/reset/model-GUI split; skip/dirty-cache/missing-edge negatives; actual focused build/test; no silently unowned supported registrations. | **PASS — propose CLOSE**. Final real root and standalone configure/build/full input/header/registration audit/selected execution now pass;725 regressions cover fresh/stale/failed generation, fixture/reset/skip/dirty/missing-edge refusal. No silently unowned supported registration; unsupported cells are explicit below/root. Version decisions recorded, no target refactor or invented platform. |
-| `.3` | Shell regressions; actual shared plan/resolve/run; unknown broadening; selected capability refusal; cross-checkout locks/cancellation; sanitizer configuration parity. | **PASS — propose CLOSE** finite gate contract. All six shell suites, real shared plan/resolve/run, split/shared parallelism, locks/cancel/capability-refusal and sanitizer phase/configuration regressions pass. Native wrapped custody remains a visible prelaunch refusal owned by `.23`, not a waived positive criterion here. |
-| `.4` | Workflow lint/static and PR/merge-group/tag/dry-run/result routing; no publication from partial validation; executable broad replacement; duplicate triggers explicit. | **PASS — propose CLOSE** finite workflow contract. Full lint and event/result/merge-group/tag/dry-run/partial-publisher negatives pass; all17 broad families are authored/executable, temporary duplicate triggers explicit. Successful hosted broad/release publication is not claimed and remains root W11/W12 work. |
-| `.5` | Source-grounded baseline/commands; accurate plan/AGENTS/TESTING; combined gates/review; explicit external rollout prerequisites. | **PASS — propose CLOSE after this documentation/export commit**. Exact commands/source/receipts and all15 gates, native/production results, review disposition, version policy and this35-bead register are recorded. Updated19:03 UTC hosted evidence remains0/20 and0/2, explicitly open under root; no rollout acceptance requirement is silently dropped. |
+| `.2` | Fresh/stale/failed configure; standalone/root export; fixtures/reset/model-GUI split; skip/dirty-cache/missing-edge negatives; actual focused build/test; no silently unowned supported registrations. | **PASS / CLOSED — parent-approved finite criteria**. Final real root and standalone configure/build/full input/header/registration audit/selected execution now pass;725 regressions cover fresh/stale/failed generation, fixture/reset/skip/dirty/missing-edge refusal. No silently unowned supported registration; unsupported cells are explicit below/root. Version decisions recorded, no target refactor or invented platform. |
+| `.3` | Shell regressions; actual shared plan/resolve/run; unknown broadening; selected capability refusal; cross-checkout locks/cancellation; sanitizer configuration parity. | **PASS / CLOSED — parent-approved finite criteria** finite gate contract. All six shell suites, real shared plan/resolve/run, split/shared parallelism, locks/cancel/capability-refusal and sanitizer phase/configuration regressions pass. Native wrapped custody remains a visible prelaunch refusal owned by `.23`, not a waived positive criterion here. |
+| `.4` | Workflow lint/static and PR/merge-group/tag/dry-run/result routing; no publication from partial validation; executable broad replacement; duplicate triggers explicit. | **PASS / CLOSED — parent-approved finite criteria** finite workflow contract. Full lint and event/result/merge-group/tag/dry-run/partial-publisher negatives pass; all17 broad families are authored/executable, temporary duplicate triggers explicit. Successful hosted broad/release publication is not claimed and remains root W11/W12 work. |
+| `.5` | Source-grounded baseline/commands; accurate plan/AGENTS/TESTING; combined gates/review; explicit external rollout prerequisites. | **PASS / CLOSED — parent-approved finite criteria**. Exact commands/source/receipts and all15 gates, native/production results, review disposition, version policy and this35-bead register are recorded. Updated19:03 UTC hosted evidence remains0/20 and0/2, explicitly open under root; no rollout acceptance requirement is silently dropped. |
 | `.6` | Full actionlint with ShellCheck, unchanged workloads/artifacts/profiles/advisory behavior. | **PASS / CLOSED**; final actionlint including ShellCheck and all statics pass; workloads/artifact ownership/policy unchanged. |
 | `.7` | Truthful libgo32 diagnostic; no stress/complete promotion; real command/build-contract absent/wrong-source/input/capability/cancel/nonzero/evidence negatives; full regressions. | **PASS / officially CLOSED**. Final actual macOS32/Linux33 plus default/full postbuild routes and725 regressions pass, stress not executed/ineligible; three root routes now also prove public normalization. No complete promotion. |
 | `.8` | Full sanitizer phase/config/environment parity; concurrent roots; cancelled/partial MDK images and sibling cleanup; real safe evidence distinguished from simulation. | **OPEN / FAIL-incomplete**. Final sanitizer diagnostic routes and real scoped lifecycle positives/negatives pass. Original exact-tip matrix stopped in011 dependency fetch;08/09 NOT RUN, full original-image acceptance NOT MET. Scoped cleanup2.8s passed, not native arbitrary-tree proof. Next: resolve actual image fetch/build prerequisites and obtain source-bound original-route proof, separately; no second matrix here. |
-| `.9` | Every job/matrix/check mapped or explicitly tracked unsupported; exact native/Linux registrations/semantic edges; isolation goldens; no unexplained omissions or fake enforcement readiness. | **PASS — propose CLOSE** inventory criteria, not runtime acceptance. Every job/matrix/check is mapped or a tracked unsupported gap; native/available Linux exports, semantic edges, final three full pre/postaudits and isolation/savings goldens pass. Root explicitly owns remaining execution cells, all coverage gaps stay visible/enforcement-not-ready; hosted quotas remain separate. |
+| `.9` | Every job/matrix/check mapped or explicitly tracked unsupported; exact native/Linux registrations/semantic edges; isolation goldens; no unexplained omissions or fake enforcement readiness. | **PASS / CLOSED — parent-approved finite criteria** inventory criteria, not runtime acceptance. Every job/matrix/check is mapped or a tracked unsupported gap; native/available Linux exports, semantic edges, final three full pre/postaudits and isolation/savings goldens pass. Root explicitly owns remaining execution cells, all coverage gaps stay visible/enforcement-not-ready; hosted quotas remain separate. |
 | `.10` | Actual CMake 3.22/3.25 nested/root/standalone metadata and fixture/DEPENDS parity, current suite, no fallback. | **PASS / CLOSED**; final metadata regressions pass. Historical actual3.22/3.25 runs retain their own sources; no invented new old-tool rerun. |
 | `.11` | Source-grounded historical heartbeat cause; deterministic verification where established; unresolved scheduling evidence explicit; original guard retained. | **FAIL / unresolved cause**, not a proved external-toolchain excuse. Later passing samples do not establish causality; no threshold/exclusion/retry waiver. |
 | `.12` | Truthful MDK descendant cleanup after setsid, or stop claiming complete cleanup. | Historical finite refusal correction **PASS / CLOSED**. Legacy `cleanup_complete=false` is preserved, not arbitrary-tree success; wider `.8` remains open. |
@@ -381,10 +383,10 @@ is erased and no partial bead is proposed closed.
 | `.28` | Compatible default UI widget/build with behavior preserved, approved shipped fix and version assessment, no target suppression. | **PASS / CLOSED** finite shipped repair; final safe native configure/default build and current regressions pass. No new product change here. |
 | `.29` | Verified JSON-GLib remedy for real malformed-input leak; original corpus, leak detection and duration intact. | **OPEN / FAIL**, verified real JSON-GLib leak retained; dependency remedy is outside this integration's authorized scope, not a successful skip. Next: compatible upstream/source remedy and exact original corpus/duration/leak-detection proof. No suppression or corpus reduction. |
 | `.30` | Positive and pre/postaudit/build/capability/source/cancel CLI receipts preserve valid lane identity/raw bytes; invalid plans invent none; aggregation retains failure and rejects promotion. | **PASS / CLOSED**; final CLI negative receipts/identity/raw-byte/partial aggregation/promotion regressions pass. |
-| `.31` | Real setup/build probes and worker routing; fresh Grotto registrations/target/input mapping and supported actual cases; isolation/MLS selection; every unsupported step explicit. | **PASS — propose CLOSE** finite setup/routing/membership criteria. Actual final Grotto fresh export/full input/default/NIP14 route, real Nak/keyring producers, existing fixture isolation and MLS/non-MLS savings tests pass. Unsupported variants/whole jobs remain explicit root gaps; native x86 NIP55L and provisioned signer approval are not silently counted as passing cases. |
+| `.31` | Real setup/build probes and worker routing; fresh Grotto registrations/target/input mapping and supported actual cases; isolation/MLS selection; every unsupported step explicit. | **PASS / CLOSED — parent-approved finite criteria** finite setup/routing/membership criteria. Actual final Grotto fresh export/full input/default/NIP14 route, real Nak/keyring producers, existing fixture isolation and MLS/non-MLS savings tests pass. Unsupported variants/whole jobs remain explicit root gaps; native x86 NIP55L and provisioned signer approval are not silently counted as passing cases. |
 | `.32` | Reproduce tracked generated-source mutation; actual build-tree outputs/install paths; source stays byte-clean; no fake platform claim. | **PASS / CLOSED**; final native and production defaults leave source clean. Root-owned templates/witnesses preserve artifacts/install paths; pinned dirty vendor/submodule untouched. |
 | `.33` | Physical CLI build2/test1 and target-only contract; fallback/legacy; type/override/resolved/receipt/argv contradictions; source/capability/failure/cancel negatives. | **PASS / CLOSED**; final Grotto build2/test1 physical evidence, fallback/split/override/forged-argv negatives and shared routes pass. |
-| `.34` | Authorized bounded default-generator contract; exact fresh provenance; unknown custom/default refusal; full non-test audits and negative lifecycle proof before admission. | **PASS — propose CLOSE** separately authorized finite default-production wave. Parent explicitly approved B/root implementation after the earlier criterion's no-implementation wave; this is not retroactive authorization. Final actual three root and two standalone default/full audits/postbuild/selected executions pass, along with known-producer and unknown/refusal/lifecycle negatives. Exact provenance/source/template repairs are proved; no invented `all` target, source-refusal laundering or selected-only audit. |
+| `.34` | Authorized bounded default-generator contract; exact fresh provenance; unknown custom/default refusal; full non-test audits and negative lifecycle proof before admission. | **PASS / CLOSED — parent-approved finite criteria** separately authorized finite default-production wave. Parent explicitly approved B/root implementation after the earlier criterion's no-implementation wave; this is not retroactive authorization. Final actual three root and two standalone default/full audits/postbuild/selected executions pass, along with known-producer and unknown/refusal/lifecycle negatives. Exact provenance/source/template repairs are proved; no invented `all` target, source-refusal laundering or selected-only audit. |
 
 ## Finite remaining execution queue
 
@@ -437,29 +439,52 @@ receipts advance those counters. **W11 NOT MET / W12 NOT RUN.**
 
 ## Tracker and ownership
 
-Final official `bd export --all`, captured **2026-10-22T20:24:53.734648Z**:
-**1,552 records (1,515 issues +37 full memories),575 comments,1,149 generated
-interactions**, including18 root comments and five root interactions. All prior
+Final approved-closure official `bd export --all`, captured
+**2026-10-22T20:36:01.323941Z**: **1,552 records (1,515 issues +37 full memories),
+576 comments,1,157 generated interactions**, including19 root comments and six
+root interactions. All prior
 root HEAD/index/worktree, integration HEAD/worktree and initial preservation
 snapshots were compared semantically: zero lost identities/comments, zero changed
 memory records, zero missing/changed interactions, and every old event stream is
 a byte-exact prefix. The whole legitimate root event file was copied byte-for-byte,
 not merged/edited semantically. It includes the earlier3lofk events, `.7` closure
-`int-450b1585` and final root tool checkpoint `int-8401dac9`.
+`int-450b1585`, all seven newly approved closure events, prior root checkpoint
+`int-8401dac9` and final approved-closure checkpoint `int-11ed4be6`.
 
 Official issue export SHA-256
-`f1045f442386277f8aa4c95d9f45cc391511853bd7dd0cacb259963077275fe2`;
+`1e3552d8c4b317eb423b1744706f44e7f39b080f89032d38a6cdd6c5a3b10846`;
 generated interactions
-`ae3b0e2b35cc9a0eafb6bf123c861b5fb194a4723a58e7c7247755776f137ded`.
-`/tmp/nostrc-closeout-integration-20261022/final-tracker/preservation.json`
-SHA-256 `7f805df0f7fed0200fb0566e15333645eed0f3215ad47be189714b6e7b30d850`;
+`b72a24c0866e5b65859b412c0492287980e80c539450a03966f8b0d1309a3d84`.
+`/tmp/nostrc-closeout-integration-20261022/final-tracker-approved/preservation.json`
+SHA-256 `d514e3c3a7d68d0bcb40e6b1ac0fe0d45f16e3a8ec9ce5399c734a8614aad80a`;
 adjacent `SHA256SUMS`
-`28c2ebbe31a4b0fda4058e8db440c21d1a3f26506443e74aba126455e003be55`.
+`c2c72e6d8d4a520a870ed1f5d8d619ac5bff56320f266a3f13bd6f7191e3a80e`.
+The previous20:24 snapshot (575 comments/1,149 interactions) and its complete
+`final-tracker/` export/manifests remain immutable. The former handoff is also
+archived under the path recorded in `approved-closure-baseline.txt`; the fresh
+export explicitly preserves every prior official record/comment/full memory.
+The final derived `final-handoff/criterion-register.json` now marks bounded
+verification COMPLETE with exact official statuses; its obsolete generic
+"Final combined-source verification pending" scope is removed for all35 rows.
+Original verbatim criteria and historical status-at-start fields are unchanged.
 The earlier14:43 checkpoint (547 comments/1,147 interactions) and15:52 root-before-FF
 snapshot remain retained, not restored over the new generated events.
 
-Seven exact closure proposals are official bd comments, not status mutations;
-`.7` remains officially closed. Root/`.8`/`.11`/`.23`/`.29` stay open. No direct
+Raw paid review/context exports were preserved **before any worktree cleanup**:
+`/tmp/nostrc-closeout-integration-20261022/final-review-exports/` contains73
+byte-exact files (1,196,429 bytes) from the integration/A/B/C worker
+`prompt-exports` directories and parent root. This includes the actual
+`c7641c` integration review and B's two final review exports, not reconstructed
+summaries. `archive-index.json` records source worktree/branch/HEAD/path and each
+file's bytes/SHA-256; source files were not modified. Archive manifest SHA-256
+`851fabfe86a7c6d3229603da9619ff394bce4dd354936394a9dd9eead57bb961`;
+index `f808c7cbddbe66b11da7839109f4e3993c82708ad914d0b3aa2999c419265284`.
+No new review or gate was run for this docs/tracker-only closure update.
+
+Parent approved all seven original finite criteria; `.2`, `.3`, `.4`, `.5`, `.9`,
+`.31`, `.34` are now officially closed with exact proof and finite-bound reasons.
+`.7` remains closed. Root/`.8`/`.11`/`.23`/`.29` and all downstream acceptance
+cells stay open; W11 NOT MET / W12 NOT RUN. No direct
 semantic database/JSONL edit or broad closure. `bd dolt pull` still refuses
 **Error1105: no remote**, not successful sync. Commits remain **local only**;
 parent owns landing/push/cleanup. User image/investigation/submodule fingerprints

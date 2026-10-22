@@ -11,8 +11,8 @@
 > Exact33 omissions/29 required omitted producers/193 source-control keys and
 > immutable histories remain. All three partial aggregates pass; complete requests
 > refuse. Source producer/freshness/typed-normalization failures and fixes are retained.
-> The register proposes finite criterion closures `.2`–`.5`, `.9`, `.31`, `.34`;
-> `.7` is officially closed. Root, `.8`, `.11`, `.23`, `.29` and explicit runtime/
+> Parent approved the original finite criteria; `.2`–`.5`, `.9`, `.31`, `.34`
+> are now officially closed, alongside `.7`. Root, `.8`, `.11`, `.23`, `.29` and explicit runtime/
 > whole-job cells remain open. Scoped original Docker cleanup passes, but the
 > cancelled original image matrix is NOT MET; no second whole matrix here.
 > Membership, runnable capabilities, selected execution and acceptance are separate.

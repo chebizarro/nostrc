@@ -14,8 +14,8 @@ ordinary omissions/incomplete flags, original authorities and vendor state stay
 unchanged. This is not whole-profile, native Linux x86, original MDK or hosted proof.
 
 The [finite35-bead criterion register](dependency-aware-testing-ci-2026-10-22-closeout.md)
-proposes independent closure of `.2`–`.5`, `.9`, `.31`, `.34` based on their own
-criteria; `.7` is already closed. Root, `.8`, `.11`, `.23`, `.29` and each explicit
+records parent-approved official closure of `.2`–`.5`, `.9`, `.31`, `.34` based
+on their original finite criteria; `.7` was already closed. Root, `.8`, `.11`, `.23`, `.29` and each explicit
 runtime/whole-job cell remain open with concrete next actions. The one integrated
 review and later exact parent/B source spot-checks are distinguished. Groundhog
 and GNostr shipped build corrections are PATCH-class folded into their existing

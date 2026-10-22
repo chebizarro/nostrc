@@ -15,8 +15,9 @@
 > 45 failed, one cancelled, zero pending. Earlier pending/failed observations remain. These are dated reviewed counts, not
 > live counters or unit-test totals. W11 **NOT MET** / W12 **NOT RUN**; no local
 > implementation, component proof or nested job advances those counters.
-> The register proposes criterion-specific closure of `.2`–`.5`, `.9`, `.31`
-> and `.34`; `.7` is already closed. These are not broad rollout acceptance:
+> Parent reviewed the original criteria and approved finite closure of
+> `.2`–`.5`, `.9`, `.31`, `.34`; all seven are now officially closed, alongside
+> the already closed `.7`. These are not broad rollout acceptance:
 > root, `.8`, `.11`, `.23`, `.29` and the explicit runtime/whole-job cells remain open.
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
