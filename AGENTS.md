@@ -40,8 +40,10 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
 - Native default-generator build contracts use `build_scope=default`, empty
   `build_targets`, and exact `cmake --build {build}` with realized configuration
   and authored build parallelism. Only attested single-config Ninja closures are
-  supported; custom/utility/dyndep/launcher/unknown generated producers refuse.
-  Preserve full non-test source/Ninja/header/runtime/artifact and named/omitted
+  supported. Custom/generated work needs explicit source/tool/argv/input/output
+  producer attestation; unknown utility/dyndep/launcher or generated shapes refuse.
+  Raw default-build success is not attested selector execution. Preserve full
+  non-test source/Ninja/header/runtime/artifact and named/omitted
   prerequisite audits, including eligible unselected defaults. Never substitute
   `signer-tests`, fabricate a File API `all` target or use selected-only audits.
 - Tool capabilities are not resource setup: `nak` and `gnome_keyring` require

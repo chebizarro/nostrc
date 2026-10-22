@@ -26,8 +26,9 @@
 B's native default-generator route uses a `build_contract` with
 `build_scope=default`, empty `build_targets`, and exact `cmake --build {build}`
 plus the realized configuration and authored build parallelism. It attests only
-supported single-config Ninja closures; unsupported custom/utility/dyndep/launcher
-or generated producers refuse. Full non-test source/Ninja/header/runtime/artifact
+supported single-config Ninja closures. Custom/generated work needs explicit
+source/tool/argv/input/output producer attestation; unknown utility/dyndep/launcher
+or generated shapes refuse. Full non-test source/Ninja/header/runtime/artifact
 and prerequisite audits remain required, even for eligible unselected defaults.
 A `signer-tests` aggregate or fabricated File API `all` target is not equivalent.
 Actual integrated authored-profile execution must be recorded separately from
@@ -41,8 +42,10 @@ fingerprint only. Existing CTests own private HOME/bus/supervised Secret Service
 and service-initially-absent negatives; an ambient/global service prerequisite
 would violate those fixtures. Selected contained commands requiring keyring plus
 private bus instead need an owned throwaway service, real secret roundtrip and
-namespace cleanup. This engineering follow-through still awaits its exact final
-B tip and positive proof before a profile tool declaration is credited.
+namespace cleanup. These tool/contained contracts landed at exact B `82f79ae75`;
+only the ordinary Groundhog/Grotto tool declarations are reconciled at `012d0fcd8`.
+Production default-producer follow-through still awaits its exact next B tip.
+Component keyring positives are not final ordinary-profile execution.
 `nip5f_tcp` instead needs a provisioned signer endpoint/token, explicitly approved
 TCP-enabled configuration, isolated identity and unidentified-caller approval;
 loopback success or exit 77 cannot satisfy it. No approval bypass is authorized.

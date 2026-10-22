@@ -3,17 +3,21 @@
 ## Source and disposition rules
 
 **Integration is in progress, not accepted.** Current code checkpoint:
-`48965e6b5cf46b32c6c75602d1264dfb4acc7526`, based on
+`012d0fcd87546e8154bc6ad9dbbd90e289b20b6b`, based on
 `dd949e4b7a2969e01ac5dea3f12bdde2cf22655b`. Preserving merges contain exactly:
 
 - C `827e1c70ff17ff61747c7d42ff9633820fb0330d`, implementation
   `385a6cf2555756c3ccd46e13ff82bf8eb9a2c33d`, through `513999d373`.
 - B `405c23b3f4bd6ab9d65818ee195e84ad18d5ad33`, preserving
   `1abee21ecbdbeabdf034444d77831e1d05289e35`, through `48965e6b5`.
-- Integration test correction `dd08636cc6e6f77316c4e6f3b2ec52237f9d3f58`.
+- B keyring follow-through `82f79ae75667974591685e11343c9b4cb4053529`, through
+  preserving merge `688135e9f46da39ad4aeffc398614193b84f2a9a`.
+- Integration test correction `dd08636cc6e6f77316c4e6f3b2ec52237f9d3f58` and
+  exact interface/default-contract reconciliation `012d0fcd8`.
 
-**A is not merged. B's keyring follow-through is not merged.** Neither moving
-branch is an accepted source. Final gates await parent-approved exact tips.
+**A is not merged. B's production-producer follow-through is not merged.**
+Neither moving branch is an accepted source. Final gates await parent-approved
+exact tips; A's frozen repair candidate is not approval to merge it.
 
 This register maps the existing epic and all 34 children; it does not create a
 replacement tracker or close any bead. The complete initial criterion text is
@@ -43,7 +47,7 @@ fixtures, review identities and failed attempts remain retained.
 |---|---|
 | C workflow/event/release/setup contracts | **PASS**, 75 focused tests at merge `513999d373`, zero skips. C's failed 613-case full run is historical, not a successful combined suite. |
 | PR merge and annotated-tag workflow identity | **PASS**, 42 workflow tests at `dd08636cc`, including explicit API-head/tag-object workflow-SHA rejection before outputs. Guard unchanged. |
-| B supported default-generator, non-test audit, capability and lifecycle components | **PASS**, B final tip: 622 selector, 65 actual Linux-arm64 component and 13 contained cases, zero skips; 13 shell/static commands. These are component results, not current integration execution. |
+| B supported default-generator, non-test audit, capability and lifecycle components | **PASS at `405c23b3f`**: 622 selector, 65 actual Linux-arm64 component and 13 contained cases, zero skips; 13 shell/static commands. Keyring follow-through **PASS at `82f79ae75`**: 623 selector, 66 Linux, 27 contained (14 new keyring) and 13 shell/static commands, zero skips. These are component results, not current integration execution. |
 | B native default build/full CTest | **PASS at `1abee21ec` only**: 434 pass, five visible skips. **NOT RUN** at final B tip or combined final source. |
 | Current combined full selector/six shell/statics/lint | **NOT RUN**; await frozen A and B follow-through. |
 | Current combined safe native fresh default build/full CTest | **NOT RUN**; earlier native receipts are not relabeled. |
@@ -53,9 +57,18 @@ fixtures, review identities and failed attempts remain retained.
 B component proof SHA-256:
 `da9fe52856ca88b41a7ed9fe6ed23a5ae5d918c53c04b8269de07d8dd237908e`.
 All **66** adjacent `SHA256SUMS` artifacts and **12** committed source-file
-hashes were independently verified. C's **37** workflow records were independently
+hashes were independently verified. B keyring proof SHA-256
+`3cabac2702e3708ee727e07819bd7dae76f7edadfb0676067c4f0946fb2231f9`
+and its **34** adjacent artifacts were also verified. C's **37** workflow records were independently
 matched to actual job/workflow bytes. All **27** existing fixture/golden hashes
 are pinned at the integration base, not refreshed to make assertions pass.
+`012d0fcd8` adds exactly three B/C runtime-input paths, the reviewed 37 workflow
+records, two ordinary tool-capability/profile-hash changes, four explicit default
+contracts, and one conservative global rule for C's non-prose hosted-evidence
+JSON. Normal inventory validation passes; no historical source-review map,
+omission set, named prerequisite contract or original sanitizer authority changes.
+Strict historical projection awaits final A integration; old fixture bytes are
+not rewritten to accept the new interface.
 Receipts and comparison manifests:
 `/tmp/nostrc-closeout-integration-20261022/`.
 
@@ -66,8 +79,8 @@ Receipts and comparison manifests:
 | Single-config native Ninja default scope | B implements `kind=build_contract`, `build_scope=default`, `build_targets=[]`, exact `cmake --build {build}` plus realized configuration and authored build parallelism. All eligible default checks contribute full non-test audits, even when unselected. | **PASS** component compile/link/object/phony/symlink/prerequisite positives and adversarial negatives. **NOT RUN** integrated authored production core route. | Integrate exact A profile interface; run actual configure/resolve/full preaudit/default and named prerequisite builds/postbuild audit/selected execution, retaining source and physical argv. Never substitute `signer-tests` or fabricate a File API `all` target. |
 | Default custom/utility/dyndep/validation/launcher/unknown producer | Unsupported shapes refuse visibly; known native producer traversal is bound to generation/tool/manifests. | **FAIL / engineering** for unsupported authored cells; refusal is not completed parity. | Retain the exact offending producer and required source closure; no omission, selected-only fallback or fabricated generated provenance. |
 | `nak` executable | C produces executable-only fingerprint; B consumes exact path/hash/version and source/profile/plan/workflow/run/attempt for command and CTest requirements. | **PASS** component reader/executable evidence. **NOT RUN** full integrated ordinary-profile lane. | Add ordinary profile declaration only after positive supported setup consumption and exact authored interface reconciliation. Tool proof does not grant bus/display/keyring custody. |
-| `gnome_keyring` executable | At B `405c23b3f`, requirement refuses before launch. Active follow-through changes the contract to actual executable fingerprint only, not bus/display/service setup. Existing CTests already own private HOME/bus/supervised Secret Service, including service-initially-absent negatives. | **NOT RUN** for exact final B integration; current `405c23b3f` support is **FAIL / engineering**, not external. | Await exact B executable positives/negatives, then reconcile profile tool declarations. Do not require a new ambient/global Secret Service authority or reinterpret executable presence as resource isolation. |
-| Contained keyring + private-bus command | Active B follow-through owns throwaway-service setup for commands that explicitly require both capabilities, without taking over CTest fixture resources. | **NOT RUN** until exact B follow-through and real contained positives/negatives. | Require actual secret roundtrip and owned namespace/service cleanup; keep display/bus/tool evidence separate. Do not substitute mocked service presence or global attestation for the real command fixture. |
+| `gnome_keyring` executable | B `82f79ae75` provides actual executable fingerprint only, not bus/display/service setup. Existing CTests own private HOME/bus/supervised Secret Service, including service-initially-absent negatives. Only the ordinary Groundhog/Grotto profiles add `nak` and `gnome_keyring`, with their exact current profile hashes updated; historical review fields remain unchanged. | **PASS** component executable/fixture-ownership positives and negatives. **NOT RUN** final ordinary-profile execution. | Retain executable proof separately from bus/display/service lifecycle. No ambient/global Secret Service authority or executable-as-isolation inference. |
+| Contained keyring + private-bus command | B `82f79ae75` owns throwaway-service setup for commands explicitly requiring both capabilities, without taking over CTest fixture resources. | **PASS** 14 actual new contained cases: secret create/read/delete, cancellation, exit 19, missing/nonserving/preexisting service, environment redirection, HOME/control symlinks and namespace cleanup. **NOT RUN** final production-profile lane. | Preserve exact PreparedContext/control/source/profile/plan/CID/run binding and cleanup evidence; no native arbitrary-tree or whole-profile promotion. |
 | `display` / `private_bus` | Separate authored requirements; neither follows from `nak` or keyring executable presence. | Each selected lane requires actual supported wrapper/setup proof. **FAIL / engineering** for unsafe mixed non-CTest/native wrapper custody. | Preserve prelaunch refusal while the unsupported custody seam remains. Do not drop requirements or silently unwrap. |
 | `nip5f_tcp` provisioned signer | Test consumes real TCP endpoint/token, handshake and `get_public_key`; it is not `test_nip5f_loopback`. Ordinary profiles are not declared capable from tool/loopback evidence. | **EXTERNAL BLOCKER / fixture and approval** unless a genuine isolated setup is explicitly delivered. Exit 77 is not passing execution. | Requires approved `ENABLE_TCP_IPC=ON` configuration, isolated signer identity/runtime token readiness and explicit approval for the always-prompted unidentified caller. No approval bypass, fake signer or ambient identity. |
 | Native/mixed-wrapper arbitrary descendants | Direct-child reap is truthfully distinct from arbitrary-tree cleanup. Explicit diagnostic ptrace/contained routes retain their own limits. | **FAIL / engineering** for unsupported native/mixed wrapper custody. | Retain negative cleanup evidence, escaped-child/sibling survival tests and prelaunch restrictions; no native parity claim from contained tests. |
@@ -118,7 +131,7 @@ satisfied in full before its bead closes; passing a subset does not close it.
 | `.28` | Compatible default UI widget/build with behavior preserved, approved shipped fix and version assessment, no target suppression. | Historical finite shipped repair **PASS / CLOSED**; final safe native build **NOT RUN**. No new product change authorized here. |
 | `.29` | Verified JSON-GLib remedy for real malformed-input leak; original corpus, leak detection and duration intact. | **EXTERNAL BLOCKER / dependency remedy** and retained real corpus **FAIL**. No dependency patch/suppression/corpus reduction in this integration. |
 | `.30` | Positive and pre/postaudit/build/capability/source/cancel CLI receipts preserve valid lane identity/raw bytes; invalid plans invent none; aggregation retains failure and rejects promotion. | Historical **PASS / CLOSED**; B failure components **PASS**; final combined negatives **NOT RUN**. |
-| `.31` | Real setup/build probes and worker routing; fresh Grotto registrations/target/input mapping and supported actual cases; isolation/MLS selection; every unsupported step explicit. | A membership/interface and B setup follow-through not merged: integrated proof **NOT RUN**. Tool capability is distinct from display/bus/fixture and execution acceptance. Existing keyring CTests retain resource ownership. |
+| `.31` | Real setup/build probes and worker routing; fresh Grotto registrations/target/input mapping and supported actual cases; isolation/MLS selection; every unsupported step explicit. | A membership/interface not merged; B executable/contained keyring components **PASS** and are merged. Final integrated profile proof **NOT RUN**. Tool capability is distinct from display/bus/fixture and execution acceptance. Existing keyring CTests retain resource ownership. |
 | `.32` | Reproduce tracked generated-source mutation; actual build-tree outputs/install paths; source stays byte-clean; no fake platform claim. | Historical **PASS / CLOSED**; final native/default build source cleanliness **NOT RUN**. |
 | `.33` | Physical CLI build2/test1 and target-only contract; fallback/legacy; type/override/resolved/receipt/argv contradictions; source/capability/failure/cancel negatives. | Historical **PASS / CLOSED**; B physical argv negatives **PASS**; final combined phase proof **NOT RUN**. |
 | `.34` | Authorized bounded default-generator contract; exact fresh provenance; unknown custom/default refusal; full non-test audits and negative lifecycle proof before admission. | B supported component scope **PASS**. Actual integrated production route **NOT RUN**; unsupported producers **FAIL / engineering**. No `all` target or selected-only approximation. |
