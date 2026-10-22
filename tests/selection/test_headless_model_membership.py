@@ -19,7 +19,8 @@ CHECKS = {
 
 class HeadlessModelMembership(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         self.export = json.loads((ROOT / FIXTURE).read_text())
         self.real = self.export['realization']
         self.tests, self.descriptors = r._test_maps(self.real)

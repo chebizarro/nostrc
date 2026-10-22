@@ -73,7 +73,10 @@ class GrottoProfiles(unittest.TestCase):
             profile = self.policy['profiles'][ident]
             exported = exports['variants'][mode]
             primary = exported['primary_names']
-            actual = [name for check in self.policy['checks'].values()
+            # This frozen regex receipt is distinct from the newly enrolled
+            # ancillary root families, which do not attest legacy job execution.
+            actual = [name for check_id, check in self.policy['checks'].items()
+                      if not check_id.startswith('supported.')
                       for name in check.get('ctest_tests', {}).get(ident, [])]
             if ident == 'grotto.linux':
                 from grotto_nip49_projection import FAMILY, before_grotto_nip49_family

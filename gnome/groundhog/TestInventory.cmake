@@ -258,6 +258,34 @@ foreach(_test IN LISTS _gh_tests)
   endif()
 endforeach()
 
+# Requirements of the exact registered command, not of a similarly named alias.
+# The base model commands of --gui aliases remain headless. Self-hosted test
+# buses are not an ambient session-bus requirement. External tools are separate
+# capabilities: a display/private_bus profile does not imply nak or a keyring.
+foreach(_test
+    groundhog-shell groundhog-account-ui groundhog-conversation-list
+    groundhog-conversation-view groundhog-preferences groundhog-onboarding
+    groundhog-composer groundhog-e2e-dm groundhog-attachment-ui
+    groundhog-nip46-pair-dialog groundhog-poll-ui
+    groundhog-account-store-gui groundhog-notifier-gui groundhog-requests-gui
+    groundhog-conversation-info-gui groundhog-conversation-menu-gui
+    groundhog-nip46-pair-nak)
+  if(TEST "${_test}")
+    set_property(TEST "${_test}" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES display)
+  endif()
+endforeach()
+foreach(_test groundhog-nip46-nak groundhog-nip46-inbox-nak groundhog-nip46-pair-nak)
+  if(TEST "${_test}")
+    set_property(TEST "${_test}" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES nak)
+  endif()
+endforeach()
+foreach(_test groundhog-store-key-keyring groundhog-nip46-credentials-keyring
+    groundhog-nip46-pair-nak)
+  if(TEST "${_test}")
+    set_property(TEST "${_test}" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES gnome_keyring)
+  endif()
+endforeach()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "groundhog-about")
   nostrc_add_test_owners("groundhog-about" OWNER gnome.seahorse gnostr groundhog.account_relays groundhog.media groundhog.unclassified nip06 nip11 nip34 nip46 nip49 nip55l relayd shared.tests)

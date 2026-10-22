@@ -14,7 +14,8 @@ from realization_support import r
 
 class GrottoCryptoMembership(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.policy = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         self.witness = renewal_witness()
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.real = self.export['realization']

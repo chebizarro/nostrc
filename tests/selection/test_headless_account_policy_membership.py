@@ -25,7 +25,8 @@ COUNTS = {'groundhog-account': (27, 176), 'groundhog-account-relays': (26, 173),
 
 class HeadlessAccountPolicyMembership(unittest.TestCase):
     def setUp(self):
-        self.p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from supported_profile_support import before_supported_batch_policy
+        self.p = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.real = self.export['realization']
         self.tests, self.ds = r._test_maps(self.real)
