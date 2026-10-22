@@ -24,7 +24,7 @@ class LocalCommandAdapterTests(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "user.name", "Adapter fixture")
         self.git("config", "user.email", "adapter@example.invalid")
-        for name in ("test-gate.sh", "test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py",
+        for name in ("test-gate.sh", "adapter_custody.py", "test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py",
                      "check-macos-keychain.sh"):
             target = self.repo / "scripts" / name
             target.parent.mkdir(exist_ok=True)
