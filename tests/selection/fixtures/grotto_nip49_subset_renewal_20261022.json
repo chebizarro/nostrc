@@ -3,7 +3,6 @@
     "test_nip49_negative",
     "test_nip49_payload",
     "test_nip49_roundtrip",
-    "test_nip49_spec_source",
     "test_nip49_vectors"
   ],
   "fresh_realization_sha256": "f5aa2889167fee9e88c138d9b50664cb15face35d98aa77bad66bba1b81df20a",
@@ -24,6 +23,7 @@
     "tests/selection/fixtures/resource_profile_exports.json": "74d2ddd36b0d3ea7ba49e358eea59de69aef151f11f73e5b17fccc0bb68fa160",
     "tests/selection/fixtures/store_key_membership_exports.json": "f1c285da7bec291a13e650b0c9a809998a1a60309367eb018a53ee655a20134e"
   },
+  "historical_golden_sha256": "5e8801bcc8506a9e3800848921118c44775baf7b4e8e46f17de89beab1125e83",
   "limits": {
     "all_omitted_targets_built": false,
     "complete": false,
@@ -48,14 +48,23 @@
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
-        "test_nip49_spec_source",
         "test_nip49_vectors"
       ],
-      "compiled_steps": 110,
       "exit_code": 0,
-      "log": "physical-first/focused-build.log",
-      "log_sha256": "db2866c1bd38962ee0da38f838551a52a840780ca4e2406a8f8ceba1b9c868d8",
-      "seconds": 20.992753051017644
+      "log_sha256": "6b5f009122ff913df49a82f878e3c501b9c91919e8addabe4426c85f1952b19c",
+      "seconds": 21.33151609302149
+    },
+    "clean": {
+      "argv": [
+        "cmake",
+        "--build",
+        "/evidence/baseline/grotto.linux/build",
+        "--target",
+        "clean"
+      ],
+      "exit_code": 0,
+      "log_sha256": "9d81f0e3a49f1932143a5ee44d443668db58f02f0e9991ad7568389bce0f4aff",
+      "seconds": 0.6530323329789098
     },
     "execution": "raw diagnostic, NOT admitted profile/backend execution",
     "full_profile_execution": false,
@@ -68,23 +77,11 @@
     },
     "image": "sha256:0c8050c100ee91acab20ea1c47bdb47968ac8c5fc41669451a6fc41254a44724",
     "platform": "Linux/amd64 Rosetta nonroot uid1001 network-none",
-    "prerequisite_recheck": {
-      "argv": [
-        "cmake",
-        "--build",
-        "/evidence/baseline/grotto.linux/build",
-        "--parallel",
-        "2",
-        "--target",
-        "test_nip49_negative",
-        "test_nip49_payload",
-        "test_nip49_roundtrip",
-        "test_nip49_spec_source",
-        "test_nip49_vectors"
-      ],
-      "exit_code": 0,
-      "log_sha256": "c2ed93ffd93c840755c0e91392ae593b1b52de9b7aaf6c208123feaceb1dde2e",
-      "seconds": 0.3568086249870248
+    "profile_environment": {
+      "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+      "G_SLICE": "always-malloc",
+      "TSAN_OPTIONS": "halt_on_error=1",
+      "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
     },
     "required_capabilities": [],
     "source_identity": {
@@ -111,12 +108,11 @@
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
-        "test_nip49_spec_source",
         "test_nip49_vectors"
       ],
       "exit_code": 0,
-      "log_sha256": "fd93f4ebb118692a631c1efd9f9f2052c14770c1ec0a82c1d4b6bd58deb6fd77",
-      "seconds": 38.98376364298747,
+      "log_sha256": "99674bd988e2e7cdae023a5fa6a8852a12af6b0bc823164b3eb4e9b28c3c856c",
+      "seconds": 39.19509843402193,
       "skips": 0
     }
   },
@@ -342,6 +338,7 @@
     "requirement": "blocking",
     "runtime_inputs": []
   },
+  "previous_workflow_checks_hash": "fe883caf98c3a69dc1b0fa58ff1f3b124fb4d75895735dc0dd10ce44afe7469f",
   "profile": "grotto.linux",
   "renewed": {
     "primary_registrations": [
@@ -401,7 +398,6 @@
       "test_nip49_negative",
       "test_nip49_payload",
       "test_nip49_roundtrip",
-      "test_nip49_spec_source",
       "test_nip49_vectors"
     ],
     "required_closure": [
@@ -464,7 +460,6 @@
       "test_nip49_negative",
       "test_nip49_payload",
       "test_nip49_roundtrip",
-      "test_nip49_spec_source",
       "test_nip49_vectors"
     ]
   },

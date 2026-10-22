@@ -1,4 +1,45 @@
 {
+  "excluded_spec_guard": {
+    "descriptor": {
+      "binary_dir": "{build}/nips/nip49",
+      "declared_depends": [],
+      "expected": [],
+      "inputs": [],
+      "name": "test_nip49_spec_source",
+      "owner": [
+        "nip49",
+        "nip49.test_inputs"
+      ],
+      "owner_authority": "descriptor",
+      "requires": [],
+      "source_dir": "{source}/nips/nip49",
+      "targets": []
+    },
+    "required_runtime_inputs": [
+      "{source}/nips/nip49/SPEC_SOURCE"
+    ],
+    "status": "unclaimed_runtime_descriptor_gap",
+    "test": {
+      "backtrace": 619,
+      "command": [
+        "{build}/nips/nip49/test_nip49_spec_source"
+      ],
+      "config": "Debug",
+      "name": "test_nip49_spec_source",
+      "properties": [
+        {
+          "name": "LABELS",
+          "value": [
+            "selection:nip49.test_inputs"
+          ]
+        },
+        {
+          "name": "WORKING_DIRECTORY",
+          "value": "{source}/nips/nip49/../.."
+        }
+      ]
+    }
+  },
   "primary": {
     "test_nip49_negative": {
       "closure_names": [
@@ -336,120 +377,6 @@
         "{source}/third_party/nostrdb/src/nostrdb.c"
       ]
     },
-    "test_nip49_spec_source": {
-      "closure_names": [
-        "test_nip49_spec_source"
-      ],
-      "closure_targets": [
-        "nip19",
-        "nostr",
-        "nostr_nip49_core",
-        "nostrdb",
-        "nostrgo",
-        "test_nip49_spec_source"
-      ],
-      "runtime_inputs": [
-        "{source}/nips/nip49/SPEC_SOURCE"
-      ],
-      "source_inputs": [
-        "{source}/libgo/src/blocking_executor.c",
-        "{source}/libgo/src/channel.c",
-        "{source}/libgo/src/context.c",
-        "{source}/libgo/src/counter.c",
-        "{source}/libgo/src/error.c",
-        "{source}/libgo/src/fiber_hooks_stub.c",
-        "{source}/libgo/src/go.c",
-        "{source}/libgo/src/hash_map.c",
-        "{source}/libgo/src/int_array.c",
-        "{source}/libgo/src/metrics_stub.c",
-        "{source}/libgo/src/select.c",
-        "{source}/libgo/src/string_array.c",
-        "{source}/libgo/src/ticker.c",
-        "{source}/libgo/src/wait_group.c",
-        "{source}/libnostr/src/brown_list.c",
-        "{source}/libnostr/src/connection.c",
-        "{source}/libnostr/src/crypto/bip32.c",
-        "{source}/libnostr/src/crypto/bip39.c",
-        "{source}/libnostr/src/crypto/bip39_wordlist_en.c",
-        "{source}/libnostr/src/envelope.c",
-        "{source}/libnostr/src/event.c",
-        "{source}/libnostr/src/filter.c",
-        "{source}/libnostr/src/init.c",
-        "{source}/libnostr/src/json.c",
-        "{source}/libnostr/src/keys.c",
-        "{source}/libnostr/src/metrics.c",
-        "{source}/libnostr/src/metrics_collector.c",
-        "{source}/libnostr/src/nostr_event_boxed.c",
-        "{source}/libnostr/src/nostr_filter_boxed.c",
-        "{source}/libnostr/src/nostr_json_glib.c",
-        "{source}/libnostr/src/nostr_json_parse.c",
-        "{source}/libnostr/src/nostr_log.c",
-        "{source}/libnostr/src/rate_limiter.c",
-        "{source}/libnostr/src/relay.c",
-        "{source}/libnostr/src/relay_core.c",
-        "{source}/libnostr/src/relay_limits.c",
-        "{source}/libnostr/src/relay_store.c",
-        "{source}/libnostr/src/secure_buf.c",
-        "{source}/libnostr/src/security_limits_runtime.c",
-        "{source}/libnostr/src/simplepool.c",
-        "{source}/libnostr/src/storage_registry.c",
-        "{source}/libnostr/src/store/nostrdb/ndb_backend.c",
-        "{source}/libnostr/src/store/registry.c",
-        "{source}/libnostr/src/store/store.c",
-        "{source}/libnostr/src/subscription.c",
-        "{source}/libnostr/src/tag.c",
-        "{source}/libnostr/src/timestamp.c",
-        "{source}/libnostr/src/utils.c",
-        "{source}/nips/nip19/src/bech32.c",
-        "{source}/nips/nip19/src/nip19.c",
-        "{source}/nips/nip19/src/pointer.c",
-        "{source}/nips/nip19/src/pointer_api.c",
-        "{source}/nips/nip19/src/tlv.c",
-        "{source}/nips/nip49/src/core/nip49.c",
-        "{source}/nips/nip49/src/core/nip49_aead.c",
-        "{source}/nips/nip49/src/core/nip49_bech.c",
-        "{source}/nips/nip49/src/core/nip49_kdf.c",
-        "{source}/nips/nip49/tests/test_spec_source.c",
-        "{source}/third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
-        "{source}/third_party/nostrdb/ccan/ccan/htable/htable.c",
-        "{source}/third_party/nostrdb/ccan/ccan/likely/likely.c",
-        "{source}/third_party/nostrdb/ccan/ccan/list/list.c",
-        "{source}/third_party/nostrdb/ccan/ccan/mem/mem.c",
-        "{source}/third_party/nostrdb/ccan/ccan/str/debug.c",
-        "{source}/third_party/nostrdb/ccan/ccan/str/str.c",
-        "{source}/third_party/nostrdb/ccan/ccan/take/take.c",
-        "{source}/third_party/nostrdb/ccan/ccan/tal/str/str.c",
-        "{source}/third_party/nostrdb/ccan/ccan/tal/tal.c",
-        "{source}/third_party/nostrdb/ccan/ccan/utf8/utf8.c",
-        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/builder.c",
-        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/emitter.c",
-        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_parser.c",
-        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/json_printer.c",
-        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/refmap.c",
-        "{source}/third_party/nostrdb/deps/flatcc/src/runtime/verifier.c",
-        "{source}/third_party/nostrdb/deps/lmdb/mdb.c",
-        "{source}/third_party/nostrdb/deps/lmdb/midl.c",
-        "{source}/third_party/nostrdb/src/base64.c",
-        "{source}/third_party/nostrdb/src/binmoji.c",
-        "{source}/third_party/nostrdb/src/block.c",
-        "{source}/third_party/nostrdb/src/bolt11/amount.c",
-        "{source}/third_party/nostrdb/src/bolt11/bech32.c",
-        "{source}/third_party/nostrdb/src/bolt11/bech32_util.c",
-        "{source}/third_party/nostrdb/src/bolt11/bolt11.c",
-        "{source}/third_party/nostrdb/src/bolt11/error.c",
-        "{source}/third_party/nostrdb/src/bolt11/hash_u5.c",
-        "{source}/third_party/nostrdb/src/bolt11/node_id.c",
-        "{source}/third_party/nostrdb/src/configurator.c",
-        "{source}/third_party/nostrdb/src/content_parser.c",
-        "{source}/third_party/nostrdb/src/hkdf_sha256.c",
-        "{source}/third_party/nostrdb/src/hmac_sha256.c",
-        "{source}/third_party/nostrdb/src/invoice.c",
-        "{source}/third_party/nostrdb/src/metadata.c",
-        "{source}/third_party/nostrdb/src/nip44.c",
-        "{source}/third_party/nostrdb/src/nostr_bech32.c",
-        "{source}/third_party/nostrdb/src/nostrdb.c"
-      ]
-    },
     "test_nip49_vectors": {
       "closure_names": [
         "test_nip49_vectors"
@@ -740,21 +667,6 @@
         "expected": [],
         "inputs": [],
         "name": "test_nip49_roundtrip",
-        "owner": [
-          "nip49",
-          "nip49.test_inputs"
-        ],
-        "owner_authority": "descriptor",
-        "requires": [],
-        "source_dir": "{source}/nips/nip49",
-        "targets": []
-      },
-      {
-        "binary_dir": "{build}/nips/nip49",
-        "declared_depends": [],
-        "expected": [],
-        "inputs": [],
-        "name": "test_nip49_spec_source",
         "owner": [
           "nip49",
           "nip49.test_inputs"
@@ -1448,35 +1360,6 @@
         ],
         "type": "EXECUTABLE"
       },
-      "test_nip49_spec_source::@fe397a1d206baae8ca7f": {
-        "artifacts": [
-          "{build}/nips/nip49/test_nip49_spec_source"
-        ],
-        "compile_fragments": [
-          "-g -fPIE",
-          "-fstack-protector-strong",
-          "-fno-strict-aliasing",
-          "-D_FORTIFY_SOURCE=2",
-          "-UNDEBUG"
-        ],
-        "dependencies": [
-          "nostrgo::@01832e3469ab35a56bce",
-          "nostr::@458585523a3aea9bfd6f",
-          "nostrdb::@458585523a3aea9bfd6f",
-          "nip19::@c476aefc5d4177e752ee",
-          "nostr_nip49_core::@fe397a1d206baae8ca7f"
-        ],
-        "id": "test_nip49_spec_source::@fe397a1d206baae8ca7f",
-        "name": "test_nip49_spec_source",
-        "sources": [
-          {
-            "compiled": true,
-            "generated": false,
-            "path": "{source}/nips/nip49/tests/test_spec_source.c"
-          }
-        ],
-        "type": "EXECUTABLE"
-      },
       "test_nip49_vectors::@fe397a1d206baae8ca7f": {
         "artifacts": [
           "{build}/nips/nip49/test_nip49_vectors"
@@ -1565,26 +1448,6 @@
           {
             "name": "WORKING_DIRECTORY",
             "value": "{build}/nips/nip49"
-          }
-        ]
-      },
-      {
-        "backtrace": 619,
-        "command": [
-          "{build}/nips/nip49/test_nip49_spec_source"
-        ],
-        "config": "Debug",
-        "name": "test_nip49_spec_source",
-        "properties": [
-          {
-            "name": "LABELS",
-            "value": [
-              "selection:nip49.test_inputs"
-            ]
-          },
-          {
-            "name": "WORKING_DIRECTORY",
-            "value": "{source}/nips/nip49/../.."
           }
         ]
       },

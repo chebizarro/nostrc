@@ -62,19 +62,24 @@ class GrottoNip49Membership(unittest.TestCase):
             self.assertEqual(r._fixture_closure([name], self.tests, self.descriptors), [name])
             self.assertEqual(witness['closure_names'], [name])
 
-    def test_runtime_spec_source_cwd_and_untouched_ctest_guards(self):
+    def test_spec_guard_excluded_until_descriptor_runtime_is_bound(self):
         for ident, name in CHECKS.items():
-            expected = [SPEC] if name == 'test_nip49_spec_source' else []
-            self.assertEqual(self.policy['checks'][ident]['runtime_inputs'], expected)
-            self.assertEqual(self.export['primary'][name]['runtime_inputs'], expected)
+            self.assertEqual(self.policy['checks'][ident]['runtime_inputs'], [])
+            self.assertEqual(self.export['primary'][name]['runtime_inputs'], [])
             props = r._properties(self.tests[name])
             self.assertEqual(props['LABELS'], ['selection:nip49.test_inputs'])
-            self.assertEqual(props['WORKING_DIRECTORY'], '{source}/nips/nip49/../..'
-                             if expected else '{build}/nips/nip49')
+            self.assertEqual(props['WORKING_DIRECTORY'], '{build}/nips/nip49')
             for key in ('ENVIRONMENT', 'SKIP_RETURN_CODE', 'FIXTURES_REQUIRED', 'TIMEOUT'):
                 self.assertNotIn(key, props)
-        self.assertIn('SPEC_MD=../../docs/nips/49.md',
-                      (ROOT / SPEC.removeprefix('{source}/')).read_text().splitlines())
+        excluded = self.export['excluded_spec_guard']
+        name = 'test_nip49_spec_source'
+        self.assertEqual(excluded['descriptor']['inputs'], [])
+        self.assertEqual(excluded['required_runtime_inputs'], [SPEC])
+        self.assertEqual(r._properties(excluded['test'])['WORKING_DIRECTORY'],
+                         '{source}/nips/nip49/../..')
+        self.assertFalse(any(name in check.get('ctest_tests', {}).get(PROFILE, [])
+                             for check in self.policy['checks'].values()))
+        self.assertEqual(excluded['status'], 'unclaimed_runtime_descriptor_gap')
 
     def test_semantic_paths_select_family_without_catchall_workaround(self):
         for relative in ('nips/nip49/src/core/nip49.c', 'nips/nip49/tests/test_nip49_vectors.c',
@@ -108,7 +113,7 @@ class GrottoNip49Membership(unittest.TestCase):
         authored = sorted(n for v in self.policy['checks'].values()
                           for n in v.get('ctest_tests', {}).get(PROFILE, []))
         self.assertEqual(contract['primary_registrations'], authored)
-        self.assertEqual((len(authored), len(contract['required_closure'])), (58, 61))
+        self.assertEqual((len(authored), len(contract['required_closure'])), (57, 60))
         self.assertEqual((len(previous['primary_registrations']), len(previous['required_closure'])), (53, 56))
         self.assertEqual(len(contract['registrations']), 33)
         self.assertEqual(len(contract['review']['source_inputs']), 193)
@@ -126,6 +131,13 @@ class GrottoNip49Membership(unittest.TestCase):
             before_grotto_nip49_family(bad)
         with self.assertRaisesRegex(s.ContractError, 'selected closure changed'):
             before_grotto_nip49_family(previous)
+        from grotto_nip49_projection import grotto_nip49_current_workflow_checks
+        cases = json.loads((ROOT / 'tests/selection/golden/selection.json').read_text())
+        old_checks = next(case['checks'] for case in cases if case['name'] == 'grotto_workflow_only')
+        self.assertEqual(grotto_nip49_current_workflow_checks(old_checks, contract),
+                         sorted(old_checks + list(CHECKS)))
+        with self.assertRaisesRegex(s.ContractError, 'historical workflow checks changed'):
+            grotto_nip49_current_workflow_checks(old_checks + ['unexpected.check'], contract)
 
     def test_source_bound_history_other_authorities_and_capabilities_preserved(self):
         self.assertEqual(self.export['source_identity'], {'kind': 'committed', 'sha': BASE})
@@ -136,6 +148,9 @@ class GrottoNip49Membership(unittest.TestCase):
             self.assertEqual(s.digest(self.policy[key]), self.renewal['unchanged_contract_hashes'][key])
         self.assertEqual(s.digest(self.policy['diagnostic_nonmember_subsets']['groundhog.linux']),
                          self.renewal['unchanged_contract_hashes']['groundhog_subset'])
+        golden = 'tests/selection/golden/selection.json'
+        self.assertEqual(hashlib.sha256((ROOT / golden).read_bytes()).hexdigest(),
+                         self.renewal['historical_golden_sha256'])
         for path, digest in self.renewal['historical_fixture_sha256'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
         for name, required in [('signer/approval-dialog', ['display']), ('signer/dbus', ['private_bus'])]:
@@ -149,6 +164,10 @@ class GrottoNip49Membership(unittest.TestCase):
         proof = self.renewal['physical']
         self.assertEqual(proof['source_identity'], self.export['source_identity'])
         self.assertEqual(proof['required_capabilities'], [])
+        self.assertEqual(proof['profile_environment'], self.export['profile']['environment'])
+        self.assertEqual(proof['build']['argv'][3:5], ['--parallel', '2'])
+        self.assertIn('--parallel', proof['test']['argv'])
+        self.assertEqual(proof['test']['argv'][proof['test']['argv'].index('--parallel') + 1], '1')
         self.assertFalse(any(proof['headless_environment'].values()))
         self.assertEqual(proof['build']['exit_code'], 0)
         self.assertEqual(proof['test']['exit_code'], 0)

@@ -120,7 +120,9 @@ class StoreKeyMembership(unittest.TestCase):
         self.assertNotIn('groundhog-shell', ordinary)
         self.assertNotIn('groundhog-packaging-version', ordinary)
         self.assertEqual(self.names('grotto.linux', selected['selected_checks']), [])
-        self.assertEqual(len(self.names('grotto.linux')), 53)
+        from grotto_nip49_projection import before_grotto_nip49_family
+        previous = before_grotto_nip49_family(self.policy['diagnostic_nonmember_subsets']['grotto.linux'])
+        self.assertEqual(len(previous['primary_registrations']), 53)
 
     def test_libgo_presence_does_not_authorize_cross_profile_execution(self):
         include, _ = self.workflow_filter()

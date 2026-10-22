@@ -115,7 +115,12 @@ class PolicyTests(unittest.TestCase):
                 result = plan(p, paths=case["paths"])
                 self.assertEqual(result["effective_mode"], case["mode"])
                 if "checks" in case:
-                    self.assertEqual(result["selected_checks"], case["checks"])
+                    expected_checks = case["checks"]
+                    if case["name"] == "grotto_workflow_only":
+                        from grotto_nip49_projection import grotto_nip49_current_workflow_checks
+                        expected_checks = grotto_nip49_current_workflow_checks(
+                            expected_checks, p["diagnostic_nonmember_subsets"]["grotto.linux"])
+                    self.assertEqual(result["selected_checks"], expected_checks)
                 for prefix in case.get("required_prefixes", []):
                     self.assertTrue(any(x.startswith(prefix) for x in result["selected_checks"]))
                 for prefix in case.get("excluded_prefixes", []):

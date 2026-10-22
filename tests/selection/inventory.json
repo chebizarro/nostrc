@@ -4663,17 +4663,6 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
-    "grotto.nip49_spec_source": {
-      "build_targets": ["test_nip49_spec_source"],
-      "cost": "ordinary",
-      "ctest_tests": {"grotto.linux": ["test_nip49_spec_source"]},
-      "expected_outcome": "pass",
-      "kind": "ctest",
-      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
-      "profiles": ["grotto.linux"],
-      "requirement": "blocking",
-      "runtime_inputs": ["{source}/nips/nip49/SPEC_SOURCE"]
-    },
     "grotto.nip49_vectors": {
       "build_targets": ["test_nip49_vectors"],
       "cost": "ordinary",
@@ -14596,7 +14585,6 @@
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
-        "test_nip49_spec_source",
         "test_nip49_vectors"
       ],
       "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
@@ -15158,7 +15146,6 @@
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
-        "test_nip49_spec_source",
         "test_nip49_vectors"
       ],
       "review": {
