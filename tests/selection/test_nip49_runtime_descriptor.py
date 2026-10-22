@@ -1,7 +1,8 @@
 """Exercise the canonical NIP49 descriptor and physical SPEC_SOURCE reader."""
 import hashlib
 
-from realization_support import Project, ROOT, r
+from realization_support import Project, r
+from selector_support import ROOT
 
 
 class Nip49DescriptorTests(Project):

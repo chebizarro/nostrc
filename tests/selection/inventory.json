@@ -4663,6 +4663,17 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "grotto.nip49_spec_source": {
+      "build_targets": ["test_nip49_spec_source"],
+      "cost": "ordinary",
+      "ctest_tests": {"grotto.linux": ["test_nip49_spec_source"]},
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.grotto", "nip49", "nip49.test_inputs"],
+      "profiles": ["grotto.linux"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "grotto.nip49_vectors": {
       "build_targets": ["test_nip49_vectors"],
       "cost": "ordinary",
@@ -5969,6 +5980,9 @@
         "{source}/tests/selection/fixtures/store_key_membership_exports.json",
         "{source}/tests/selection/golden/selection.json",
         "{source}/tests/selection/grotto_nip49_projection.py",
+        "{source}/tests/selection/test_ctest_runtime_inputs.py",
+        "{source}/tests/selection/test_nip49_runtime_descriptor.py",
+        "{source}/tests/selection/fixtures/nip49_descriptor_renewal_20261022.json",
         "{source}/tests/selection/test_grotto_nip49_membership.py",
         "{source}/tests/selection/fixtures/grotto_nip49_exports.json",
         "{source}/tests/selection/fixtures/grotto_nip49_subset_renewal_20261022.json",
@@ -14456,7 +14470,7 @@
           "nips/nip47/CMakeLists.txt": "dbe7494148de41e4961663e2de6cd0fd636e7f979a8c0b56bc3cedd7c2a0c40c",
           "nips/nip47/TestInventory.cmake": "2e5cf97f6c339c89d29d5993c631dc5031df5eb21c62c40ed6fe37bf3d36c789",
           "nips/nip49/CMakeLists.txt": "3b8a83f55b5b815c02051630866f447a977c82dec158ed84c75c52ac6fac4b60",
-          "nips/nip49/TestInventory.cmake": "3af683228f2e049ac7ac8f0394ea5b6b05710c29bcea1cc6d07cccce6b9e9d59",
+          "nips/nip49/TestInventory.cmake": "519cc03ec97e4110fb3212323fa5833cc8662b6135f3807c76cc3a109f4a549a",
           "nips/nip50/CMakeLists.txt": "d151000adedf877d136e1c3cf1a654b0eb49b14a5b9230c57913a324b3a1e067",
           "nips/nip51/CMakeLists.txt": "c778fe8765309657fdf4c97134f09facb875f5f59f32c2e3f643b02ba6c16faa",
           "nips/nip51/TestInventory.cmake": "e8435909ff500e0369906fc7053bdcad05163e027642ba1bdbba012bc557dc3d",
@@ -14588,6 +14602,7 @@
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
+        "test_nip49_spec_source",
         "test_nip49_vectors"
       ],
       "profile_hash": "5613add713ace7afb946d6d783facff8fecf3a6291f6b67d750585deac1f22f1",
@@ -15149,6 +15164,7 @@
         "test_nip49_negative",
         "test_nip49_payload",
         "test_nip49_roundtrip",
+        "test_nip49_spec_source",
         "test_nip49_vectors"
       ],
       "review": {
@@ -15301,7 +15317,7 @@
           "nips/nip47/CMakeLists.txt": "dbe7494148de41e4961663e2de6cd0fd636e7f979a8c0b56bc3cedd7c2a0c40c",
           "nips/nip47/TestInventory.cmake": "2e5cf97f6c339c89d29d5993c631dc5031df5eb21c62c40ed6fe37bf3d36c789",
           "nips/nip49/CMakeLists.txt": "3b8a83f55b5b815c02051630866f447a977c82dec158ed84c75c52ac6fac4b60",
-          "nips/nip49/TestInventory.cmake": "3af683228f2e049ac7ac8f0394ea5b6b05710c29bcea1cc6d07cccce6b9e9d59",
+          "nips/nip49/TestInventory.cmake": "519cc03ec97e4110fb3212323fa5833cc8662b6135f3807c76cc3a109f4a549a",
           "nips/nip50/CMakeLists.txt": "d151000adedf877d136e1c3cf1a654b0eb49b14a5b9230c57913a324b3a1e067",
           "nips/nip51/CMakeLists.txt": "c778fe8765309657fdf4c97134f09facb875f5f59f32c2e3f643b02ba6c16faa",
           "nips/nip51/TestInventory.cmake": "e8435909ff500e0369906fc7053bdcad05163e027642ba1bdbba012bc557dc3d",

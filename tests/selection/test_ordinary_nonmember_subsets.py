@@ -310,7 +310,7 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertFalse(witness["preaudit"]["passed"])
             self.assertFalse(witness["postaudit"]["passed"])
             self.assertEqual(witness["candidate_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
-            for name, expected in contract["review"]["source_inputs"].items():
+            for name, expected in records[pid]["review"]["source_inputs"].items():
                 self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
 
     def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):

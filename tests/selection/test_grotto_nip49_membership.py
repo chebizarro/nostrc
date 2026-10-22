@@ -5,7 +5,8 @@ import json
 import unittest
 
 from grotto_nip49_projection import (BASE, EXPORT, FAMILY, PROFILE, RENEWAL,
-                                     before_grotto_nip49_family)
+                                     before_grotto_nip49_family, before_nip49_descriptor_renewal,
+                                     DESCRIPTOR_RENEWAL)
 from realization_support import r
 from selector_support import ROOT, change, s
 
@@ -62,7 +63,7 @@ class GrottoNip49Membership(unittest.TestCase):
             self.assertEqual(r._fixture_closure([name], self.tests, self.descriptors), [name])
             self.assertEqual(witness['closure_names'], [name])
 
-    def test_spec_guard_excluded_until_descriptor_runtime_is_bound(self):
+    def test_historical_spec_guard_gap_is_retained_before_descriptor_renewal(self):
         for ident, name in CHECKS.items():
             self.assertEqual(self.policy['checks'][ident]['runtime_inputs'], [])
             self.assertEqual(self.export['primary'][name]['runtime_inputs'], [])
@@ -77,8 +78,9 @@ class GrottoNip49Membership(unittest.TestCase):
         self.assertEqual(excluded['required_runtime_inputs'], [SPEC])
         self.assertEqual(r._properties(excluded['test'])['WORKING_DIRECTORY'],
                          '{source}/nips/nip49/../..')
-        self.assertFalse(any(name in check.get('ctest_tests', {}).get(PROFILE, [])
-                             for check in self.policy['checks'].values()))
+        self.assertEqual(self.policy['checks']['grotto.nip49_spec_source']['ctest_tests'],
+                         {PROFILE: [name]})
+        self.assertEqual(self.policy['checks']['grotto.nip49_spec_source']['runtime_inputs'], [])
         self.assertEqual(excluded['status'], 'unclaimed_runtime_descriptor_gap')
 
     def test_semantic_paths_select_family_without_catchall_workaround(self):
@@ -113,7 +115,7 @@ class GrottoNip49Membership(unittest.TestCase):
         authored = sorted(n for v in self.policy['checks'].values()
                           for n in v.get('ctest_tests', {}).get(PROFILE, []))
         self.assertEqual(contract['primary_registrations'], authored)
-        self.assertEqual((len(authored), len(contract['required_closure'])), (57, 60))
+        self.assertEqual((len(authored), len(contract['required_closure'])), (58, 61))
         self.assertEqual((len(previous['primary_registrations']), len(previous['required_closure'])), (53, 56))
         self.assertEqual(len(contract['registrations']), 33)
         self.assertEqual(len(contract['review']['source_inputs']), 193)
@@ -135,7 +137,7 @@ class GrottoNip49Membership(unittest.TestCase):
         cases = json.loads((ROOT / 'tests/selection/golden/selection.json').read_text())
         old_checks = next(case['checks'] for case in cases if case['name'] == 'grotto_workflow_only')
         self.assertEqual(grotto_nip49_current_workflow_checks(old_checks, contract),
-                         sorted(old_checks + list(CHECKS)))
+                         sorted(old_checks + list(CHECKS) + ['grotto.nip49_spec_source']))
         with self.assertRaisesRegex(s.ContractError, 'historical workflow checks changed'):
             grotto_nip49_current_workflow_checks(old_checks + ['unexpected.check'], contract)
 
@@ -146,7 +148,8 @@ class GrottoNip49Membership(unittest.TestCase):
         self.assertEqual(self.policy['profiles'][PROFILE], self.export['profile'])
         for key in ('profiles', 'diagnostic_nonmembers'):
             self.assertEqual(s.digest(self.policy[key]), self.renewal['unchanged_contract_hashes'][key])
-        self.assertEqual(s.digest(self.policy['diagnostic_nonmember_subsets']['groundhog.linux']),
+        self.assertEqual(s.digest(before_nip49_descriptor_renewal(
+                             self.policy['diagnostic_nonmember_subsets']['groundhog.linux'], 'groundhog.linux')),
                          self.renewal['unchanged_contract_hashes']['groundhog_subset'])
         golden = 'tests/selection/golden/selection.json'
         self.assertEqual(hashlib.sha256((ROOT / golden).read_bytes()).hexdigest(),
@@ -176,8 +179,36 @@ class GrottoNip49Membership(unittest.TestCase):
         self.assertIn('raw diagnostic', proof['execution'])
         self.assertFalse(any(self.renewal['limits'].values()))
 
+    def test_exact_descriptor_source_renewal_and_mutations_refuse(self):
+        witness = json.loads((ROOT / DESCRIPTOR_RENEWAL).read_text())
+        self.assertEqual(witness['source_path'], 'nips/nip49/TestInventory.cmake')
+        self.assertEqual(hashlib.sha256((ROOT / witness['source_path']).read_bytes()).hexdigest(),
+                         witness['after'])
+        for path, digest in witness['historical_fixture_sha256'].items():
+            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
+        for profile, contract in self.policy['diagnostic_nonmember_subsets'].items():
+            old = before_nip49_descriptor_renewal(contract, profile)
+            self.assertEqual(len(contract['review']['source_inputs']), 193)
+            self.assertEqual(contract['review']['source_inputs'].keys(), old['review']['source_inputs'].keys())
+            self.assertEqual([p for p in old['review']['source_inputs']
+                              if old['review']['source_inputs'][p] != contract['review']['source_inputs'][p]],
+                             [witness['source_path']])
+            for mutation in ('second_source', 'old_hash', 'authority', 'missing_primary', 'missing_fixture'):
+                with self.subTest(profile=profile, mutation=mutation):
+                    bad = copy.deepcopy(contract)
+                    if mutation == 'second_source':
+                        bad['review']['source_inputs']['CMakeLists.txt'] = '0' * 64
+                    elif mutation == 'old_hash':
+                        bad['review']['source_inputs'][witness['source_path']] = witness['before']
+                    elif mutation == 'authority':
+                        bad['candidate_contract_hash'] = '0' * 64
+                    else:
+                        bad['primary_registrations' if mutation == 'missing_primary' else 'required_closure'].pop()
+                    with self.assertRaises(s.ContractError):
+                        before_nip49_descriptor_renewal(bad, profile)
+
     def test_new_files_are_selection_contract_runtime_inputs(self):
-        for path in (EXPORT, RENEWAL, 'tests/selection/grotto_nip49_projection.py',
+        for path in (EXPORT, RENEWAL, DESCRIPTOR_RENEWAL, 'tests/selection/grotto_nip49_projection.py',
                      'tests/selection/test_grotto_nip49_membership.py'):
             self.assertIn('{source}/' + path, self.policy['checks']['selection.contract']['runtime_inputs'])
 
