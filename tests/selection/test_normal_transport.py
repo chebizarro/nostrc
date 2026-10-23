@@ -79,8 +79,12 @@ class TransportFixture(NormalFixture):
 
     def aggregate(self, base, repo=None):
         paths = sorted(base.glob('**/receipt.json'))
+        # A CI-context plan needs the select result and independent worker conclusions,
+        # exactly as dependency_contract.aggregate supplies them from the job graph.
+        ci = dict(selection_conclusion='success', job_conclusions={lane['id']: 'success' for lane in self.plan['lanes']}) \
+            if self.plan.get('context') == 'ci' else {}
         with normal.transported_receipts(paths, repo=repo or self.root, plan=self.plan) as receipts:
-            return paths, s.aggregate(self.inventory, self.plan, receipts, complete=True)
+            return paths, s.aggregate(self.inventory, self.plan, receipts, complete=True, **ci)
 
     def assert_raw_retained(self):
         self.assertEqual((self.receipts / 'receipt.json').read_bytes(), self.public_path.read_bytes())
@@ -635,12 +639,13 @@ class PullRequestSelectedTests(TransportFixture):
 
     def test_forged_or_dropped_event_fields_refuse_rederivation(self):
         for label, event in (('pr head moved', dict(self.plan['event'], pr_head_sha=self.pr_base)),
+                             ('base moved off the ancestry', dict(self.plan['event'], base_sha=self.pr_head)),
                              ('event dropped', {})):
             with self.subTest(label):
                 forged = dict(self.plan, event=event)
                 forged.pop('plan_id')
                 forged['plan_id'] = s.digest(forged)
-                with self.assertRaisesRegex(ValueError, 're-derived from the tested history'):
+                with self.assertRaisesRegex(ValueError, 're-derived from the tested history|tested merge ancestry'):
                     normal._rederived_plan(self.inventory, forged, self.root)
 
 
