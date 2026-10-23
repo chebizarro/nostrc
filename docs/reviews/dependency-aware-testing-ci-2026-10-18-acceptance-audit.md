@@ -1,5 +1,51 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## PR23 final source and merge — 2026-10-23
+
+PR23 merged as `e8a1a571ca40792882cd07ce1ddec5cf9eb398f3` at 21:28:52Z.
+Its tree matches reviewed head `05e82b6e09d6ef46aa21bc33ead60ebff0c485c1`
+and tested merge `0609aa7be06845d23797eddfa067028ea89a2b94`:
+`28dd6805e8f971b4f8fc59bbabc57027451da00f`. These remain distinct commit
+identities; the receipts are not relabelled as the landing commit.
+
+- [Final Static checks](https://github.com/chebizarro/nostrc/actions/runs/40023343220/job/120653235257)
+  succeeded. The source-bound artifact contains **1,207 DEFAULT cases, zero
+  failures/errors, 80 skips**, plus **81 passing kernel cases**. All ZIP API
+  digests, CRCs and 5,979 member hashes were independently verified. Scoped
+  controller cleanup and owned AppArmor removal passed.
+- [Policy regressions](https://github.com/chebizarro/nostrc/actions/runs/40023343699/job/120653340092)
+  succeeded independently. The 80 DEFAULT skips are 56 native macOS custody,
+  nine Darwin private-bus, eight real macOS/arm64 configure, six opt-in Docker
+  image lifecycle and one Darwin exec-environment cases; none is execution credit.
+- The earlier independently qualified five-unit homed receipt remains bound to
+  tested `84c36ac` / API `723e601ac`. Final-05 homed was queued at the bounded
+  observation; that result is not inferred. Native 723 remains 434 passed / five
+  skips, not a native-05 receipt. Later changes were docs/test-support only;
+  runtime, inventory and worker bytes were unchanged.
+- [Legacy macOS ASan](https://github.com/chebizarro/nostrc/actions/runs/40023343293/job/120653235947)
+  **failed** the strict Heartbeat guard, three misses versus two allowed.
+  Claude verified the record-only probe ran after Test failed. This recurrence
+  of the pre-existing master issue remains open as `nostrc-0cfsg.11`; no
+  threshold, exclusion, QoS or poll-function workaround was applied.
+
+The literal source scopes `nostrc-0cfsg.36.7`–`.36.11` closed after landing.
+This does not close their broader physical/platform, legacy-parity or W11/W12
+parents. The failed local 05 DEFAULT run (1,167 cases, 12 driver socket-path
+errors, 59 skips) and separate short-path 12-case diagnostic remain separate;
+no complete success is synthesized from them.
+
+The **21:18:22Z** census is a dated snapshot: 62 roots, 59 failed, one cancelled,
+two pending; all prior snapshots remain. It still establishes **0/20 reviewed
+qualifying PR comparisons and 0/2 successful complete broad integrations**.
+A separate post-merge snapshot at **21:38:19Z** has 63 roots: 60 failed,
+one cancelled and two pending; the lossless delta from all 62 earlier identities
+is retained in the evidence JSON, with no qualification increment.
+Neither snapshot is a live counter. **W11 NOT MET / W12 NOT RUN**; supported-profile
+proof, Heartbeat, comparisons and workload benchmarks remain. No default,
+enforcement, protection, release or legacy-trigger cutover occurred. See the
+[final-source ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr23-final-source-and-merge--2026-10-23)
+and `pr23_final05_refresh_20261024` in the evidence JSON.
+
 ## PR23 723 source-linked capture — 2026-10-23T20:14:05.521545Z
 
 The bounded closing API census has **61 roots: 59 failed, one cancelled and one

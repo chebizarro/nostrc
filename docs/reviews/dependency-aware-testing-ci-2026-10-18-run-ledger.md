@@ -1,3 +1,36 @@
+## PR23 final source and merge — 2026-10-23
+
+Landing: PR23 → `e8a1a571ca40792882cd07ce1ddec5cf9eb398f3`, 21:28:52Z.
+Reviewed API head `05e82b6e09d6ef46aa21bc33ead60ebff0c485c1` and actual tested
+merge `0609aa7be06845d23797eddfa067028ea89a2b94` have equal tree
+`28dd6805e8f971b4f8fc59bbabc57027451da00f`, not equal identities.
+
+| Evidence | Source-specific result |
+|---|---|
+|[Static 120653235257](https://github.com/chebizarro/nostrc/actions/runs/40023343220/job/120653235257)|Final job SUCCESS. DEFAULT 1,207 cases / zero failures and errors / 80 skips, 877.399s; kernel 81 passed, 57.574s.|
+|[Policy 120653340092](https://github.com/chebizarro/nostrc/actions/runs/40023343699/job/120653340092)|SUCCESS; independently retained log confirms the same complete DEFAULT and kernel run.|
+|Static artifact 12531728708|31,734,010 bytes; SHA256 `67c036a143c5cd7e1a0a498678fe21765f0b4213fcdcb2d96ac3eb766aebeb26`; API digest, CRCs and all members verified. Controller cleanup and owned AppArmor removal passed.|
+|Plan artifact 12531985831|25,155 bytes; SHA256 `54a3e4d40ee603c3cde62ab939a77473dbf4cd2cf798e8103c9226404f74c106`. Plan `848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d` binds tested0609 and API05.|
+|[Legacy macOS ASan 120653235947](https://github.com/chebizarro/nostrc/actions/runs/40023343293/job/120653235947)|FAILED: Heartbeat missed_count 3 >2. Existing master issue `nostrc-0cfsg.11` stays open; unchanged strict guard, no retry-as-acceptance.|
+
+The 80 DEFAULT skips remain explicit: 56 native macOS custody, nine Darwin
+private-bus, eight real macOS/arm64 configure, six Docker image opt-ins and one
+Darwin exec-environment fixture. All 5,979 ZIP members were independently checked.
+The final-05 homed job was queued at stop; only the earlier tested84c/API723
+five-unit receipt is independently qualified. Native 723 remains 434 passed /
+five skips. Neither earlier result is relabelled as 05 or the landing commit.
+
+After merge, source beads `.36.7`–`.36.11` closed against their literal criteria.
+The local 05 full run still FAILED (1,167 /12 driver-path errors /59 skips);
+the separate short-TMPDIR 12-pass diagnostic does not synthesize complete success.
+The dated **21:18:22Z** root snapshot is **62 =59 failed +1 cancelled +2 pending**,
+not a live counter. The separate **21:38:19Z** post-merge snapshot has 63 roots
+(60 failed, one cancelled, two pending); its lossless delta preserves all 62 prior
+identities in the evidence JSON. All old snapshots and failed receipts remain; **0/20 reviewed
+qualifying PR comparisons, 0/2 complete broad integrations, W11 NOT MET, W12 NOT
+RUN**. No platform/legacy parity, default/enforcement/protection/release cutover
+or component version bump follows from the finite source-bead closures.
+
 ## PR23 723 source-linked capture — 2026-10-23T20:14:05.521545Z
 
 Bounded closing census: **61 roots =59 failed +one cancelled +one pending**.
