@@ -60,10 +60,12 @@ provider-blocked/out of scope; no reroute or claimed remedy.
 
 ## Source-bound integration gates
 
-Initial invocations below bind `2c43b7eb3021457a1050a4339df9cbfabc50a9b5`;
-corrected-source gate receipts are pending and will retain their own exact SHA.
-Initial `tested-source.json` verifies4867 tracked root entries and pinned
-nostrdb/secp256k1/nsync bytes against committed objects and fingerprints tools.
+Final gates bind clean source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`.
+`tested-source-final.json` / `tested-source-post.json` independently verify4868
+tracked root entries and pinned nostrdb/secp256k1/nsync bytes against committed
+objects, fingerprint tools, and prove identical pre/post source/submodules/tools.
+Initial invocations retain `2c43b7eb3021457a1050a4339df9cbfabc50a9b5` and their
+separate4867-entry `tested-source.json`; none is relabelled as final-source proof.
 Unused documentation submodule `docs/nips` is uninitialized; no fetched-source or
 execution credit is claimed for it.
 
@@ -74,15 +76,17 @@ execution credit is claimed for it.
 | `enrollment-focused-corrected.log` |28/28 PASS after the finite projection correction. |
 | `selector/result.json`, `selector/command.log` |786 tests in590.712s: one unclassified evidence-JSON failure, four exact-vector support-input errors,44 explicit Linux-only skips. Failed invocation retained. |
 | `enrollment-complete-focused.log` |59/59 PASS after adding only the missing exact support path and an explicit broad rule for evidence JSON. No engine/authority relaxation. |
-| Corrected-source full discovery/build/shell gates | IN PROGRESS; no result claimed yet. |
-| `native/result.json`, `native/command.log`, `native/heartbeat-registration.json` | Fresh safe Ninja/Debug default build PASS; exact `test_nostr_gobject_main_thread_latency`1/1 PASS,4.38s,TIMEOUT90. Groundhog OFF; unused backend warning retained. Not full CTest/hosted/sanitizer acceptance. |
+| `selector-final/result.json`, `selector-final/command.log` |786 tests in580.461s:742 PASS,44 explicit Linux-only skips, zero failures/errors. All six actual Docker fixture cases execute against immutable cached ARM64 Alpine. No Linux/hosted/complete-profile acceptance is inferred from skips. |
+| `native-final/result.json`, `native-final/heartbeat-proof.json` | Fresh safe Ninja/Debug default build PASS; exact heartbeat registration1/1 PASS,4.32s, all8 internal cases including post-burst boundary/negative controls. TIMEOUT90. Raw build/focused test, not attested selector/default-all/full CTest acceptance. |
+| `shells-statics-final/dispositions.txt` | All seven listed shells, four statics, full actionlint including ShellCheck and range whitespace PASS on the same clean final source. |
+| Initial `native/result.json`, `native/command.log`, `native/heartbeat-registration.json` | Earlier2c43 source build/heartbeat1/1 PASS,4.38s,TIMEOUT90; not substituted for the final invocation. Both builds leave Groundhog OFF and retain the unused backend warning. Not full CTest/hosted/sanitizer acceptance. |
 | `shells-statics/dispositions.txt` | Six established shell suites plus `test-install-hooks.sh`, four statics, full actionlint including ShellCheck, range whitespace PASS. |
-| `enrollment-review.md` | One integration-seam review, no blockers; reviewer did not rerun tests. |
+| `enrollment-review.md` | One bounded review of the initial2c43 enrollment seam, no blockers; reviewer did not rerun tests. Subsequent exact support-path/broad-ownership omissions were diagnosed and corrected by real gates; no second review or widened authority. |
 
 Harnesses use private HOME/XDG and actual private bus/Secret Service with read-only
-developer keychain guards in the original context. Native/shell receipts prove
-service/bus reaped and socket absent; pre-run guard uses `check=True`, post-run
-exit0. No keychain mutation, login-keychain test storage, full old cold matrix or
+developer keychain guards in the original context. Final selector/native/shell
+receipts all prove service/bus reaped and socket absent; pre-run guard uses
+`check=True`, post-run exit0. No keychain mutation, login-keychain test storage, full old cold matrix or
 full native CTest is claimed.
 
 ## Component evidence integrity
@@ -105,10 +109,19 @@ full native CTest is claimed.
 
 ## Tracker, version and landing
 
-Finite integration bead `.38` remains in progress pending gate completion and
-final handoff. Final official all-record export/preservation and evidence
-manifests are pending; comments/memories must all survive, interactions must be
-copied whole/prefix-preserved, and parent root staged tracker/user dirt untouched.
+Finite local integration `.38` is CLOSED; `.36` remains in progress and `.5`
+remains the already-closed baseline criterion, not W11 acceptance. Official
+`bd export --all` at2026-10-23T01:24:51.212483Z preserves1556 records (1519 issues,
+37 memories),610 comments and1165 interactions. Every initial/root HEAD/index/
+worktree identity/comment and complete memory record survives; interaction streams
+are copied whole with every prior stream an exact prefix. Parent PNGs/investigation
+and dirty nostrdb HEAD/status/diff match initial preservation; no root reset or
+semantic JSONL editing. Export SHA256
+`f27c52dbf3c55a24c7643b868068be35b65d7c5492c49e31b42282cc98de3ba3`;
+interaction SHA256 `77d5968d1ddcfd3045b68fffc17153cbb6e5e37b31f42b0f3057adeefce65d37`.
+`tracker-final/preservation.json`, `component-evidence-index.json`, final source
+continuity and evidence manifest retain exact snapshot scope/hashes. The earlier
+`bd dolt pull` Error1105/no remote is retained; no direct database editing.
 Internal CI/tooling, tests and docs only: **no component version bump**;
 `VERSION_MANIFEST.md` unchanged. No defaults/protections/publisher/trigger/schedule
 cutover. Local commits only; parent owns push, merge-back, corrected-source hosted

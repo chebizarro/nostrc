@@ -11,6 +11,11 @@
 > cause only plausible and safe remedy unresolved, `.11` open. The hosted pidns
 > probe proves NEWUSER success then setgroups-open denial, not its policy cause;
 > no helper fix or privilege/sysctl bypass is justified. No rollout cutover.
+> Final clean regression source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`:
+> 786 selector tests/742 pass/44 explicit Linux-only skips/zero failures or errors;
+> fresh safe native build, exact heartbeat1/1/all8 cases, seven shells/four statics/
+> full actionlint+ShellCheck PASS, pre/post source/submodule/tool identity unchanged.
+> Failed786-case enrollment invocation remains retained; no complete/hosted credit.
 
 > **Current finite integration accounting: [closeout criterion register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).**
 > All exact A/B/C tips are merged preserving ancestry. Tested code freeze

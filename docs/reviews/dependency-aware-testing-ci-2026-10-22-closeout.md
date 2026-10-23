@@ -12,6 +12,11 @@
 > Hosted pidns probe confirms NEWUSER then setgroups-open denial; AppArmor is
 > plausible, not confirmed. No helper fix or policy/sysctl bypass is justified.
 > `.36` and `.23` stay in progress. Old manifest mismatch and failed gates remain.
+> Final clean source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508` passes786 selector
+> tests (742 pass,44 explicit Linux-only skips), fresh safe native default build,
+> exact heartbeat1/1/all8 internal cases, seven shells/four statics/full actionlint+
+> ShellCheck; source/submodule/tool identity is unchanged pre/post. No skipped
+> Linux case, local gate or finite `.38` integration closure confers acceptance.
 
 > **Prior bounded integration, tested code `df8fb86ff329fffc72064a4ea255322ef3e955a0`:**
 > approved A9bb00d07a/Ccceaddb38 ancestry is preserved. The internal Linux

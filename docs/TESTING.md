@@ -30,6 +30,17 @@
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
 
+## W11/W12/heartbeat integration — 2026-10-23
+
+[Final source-bound receipt](reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md):
+clean tested source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`,786 selector tests
+(742 pass,44 explicit Linux-only skips, zero failures/errors), fresh safe native
+default build and exact heartbeat registration1/1/all8 internal cases PASS, seven
+shell suites/four statics/full actionlint+ShellCheck PASS. Pre/post tracked source,
+pinned submodules and tools match. First failed786-case invocation is retained;
+its exact enrollment omissions were corrected, not waived. This is native local
+regression proof, not hosted/Linux/complete-profile acceptance or cutover.
+
 ## Remaining acceptance integration — 2026-10-23
 
 [Exact source, commands, failures and criterion boundaries](reviews/dependency-aware-testing-integration-2026-10-23.md)
