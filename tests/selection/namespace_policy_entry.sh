@@ -54,7 +54,7 @@ import hashlib, json, os, pathlib, re, shutil, subprocess
 root = pathlib.Path('/evidence')
 commands = {name: int(code) for name, code in (line.split() for line in (root / 'commands.tsv').read_text().splitlines())}
 tools = {}
-for name in ('python3', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'):
+for name in ('python3', 'git', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'):
     path = pathlib.Path(shutil.which(name)).resolve()
     tools[name] = dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
 required = {'environment', 'mapping-probe', 'kernel-prerequisite', 'kernel-matrix', 'policy-suite',

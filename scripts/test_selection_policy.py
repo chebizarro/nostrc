@@ -20,6 +20,8 @@ INPUTS = ('scripts/test_selection_policy.py', 'tests/selection/namespace-testhos
 REQUIRED = {'environment', 'mapping-probe', 'kernel-prerequisite', 'kernel-matrix', 'policy-suite',
             'unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate', 'linux-smoke',
             'sanitizer', 'signer-names', 'keychain-guard'}
+ENTRY_COMMAND = ('mkdir -p "$HOME"; git config --global --add safe.directory /source; '
+                 'exec bash tests/selection/namespace_policy_entry.sh')
 
 
 class PolicyError(ValueError):
@@ -208,7 +210,7 @@ def controller(realization, resolved, spec, audit):
             '--mount', f'type=bind,source={directory / "source"},target=/source,readonly',
             '--mount', f'type=bind,source={evidence},target=/evidence',
             '-e', 'HOME=/tmp/namespace-home', '-e', 'NOSTRC_CUSTODY_TEST_EVIDENCE=/evidence/custody',
-            '--entrypoint', '/bin/bash', proof['image'], INPUTS[2]]
+            '--entrypoint', '/bin/bash', proof['image'], '-c', ENTRY_COMMAND]
         run(argv, control / 'create.log')
         cid = (control / 'container.cid').read_text().strip()
         require(re.fullmatch('[0-9a-f]{64}', cid), 'invalid owned policy CID')
@@ -245,7 +247,7 @@ def controller(realization, resolved, spec, audit):
                 and workload['kernel_matrix']['tests'] >= 79 and workload['kernel_matrix']['skipped'] == 0
                 and workload['native_profile_acceptance'] is False and workload['complete'] is False,
                 'policy complete unchanged workload/kernel evidence missing or failed')
-        require(set(workload['tools']) == {'python3', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'}
+        require(set(workload['tools']) == {'python3', 'git', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'}
                 and all(re.fullmatch('[0-9a-f]{64}', t['sha256']) and Path(t['path']).is_absolute()
                         for t in workload['tools'].values()), 'policy container tool bindings missing')
         state.update(status='passed', workload=workload)
