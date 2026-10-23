@@ -47,7 +47,7 @@ class CloseoutInterfaces(unittest.TestCase):
             self.assertTrue((ROOT / path.removeprefix('{source}/')).is_file())
 
     def test_source_bound_workflow_records_change_only_reviewed_hash_fields(self):
-        observed = source_job_blocks(ROOT)
+        observed = c.before_w11_setup_jobs(source_job_blocks(ROOT))
         for ident, record in self.data['workflow_jobs'].items():
             before, after = record['before'], record['after']
             for field in set(before) | set(after):
@@ -58,7 +58,7 @@ class CloseoutInterfaces(unittest.TestCase):
 
     def test_actual_install_script_pins_module_and_reported_version_in_one_argument(self):
         repair = self.data['workflow_install_repair']
-        raw = (ROOT / repair['workflow']).read_bytes()
+        raw = c.before_w11_setup_source(repair['workflow'], (ROOT / repair['workflow']).read_bytes())
         self.assertEqual(hashlib.sha256(raw).hexdigest(), repair['after_sha256'])
         self.assertEqual(raw.count(repair['after_command'].encode()), 1)
         prior = raw.replace(repair['after_command'].encode(), repair['before_command'].encode())

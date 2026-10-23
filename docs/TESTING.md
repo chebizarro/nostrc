@@ -7,15 +7,19 @@
 > and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md). The
 > [finite closeout register](reviews/dependency-aware-testing-ci-2026-10-22-closeout.md)
 > distinguishes implemented membership, runnable capabilities and actual final-source
-> execution. Latest bounded integration code is `df8fb86ff329fffc72064a4ea255322ef3e955a0`;
-> split verification and limitations are recorded below. The older production
+> execution. Latest W11/W12/heartbeat enrollment source is
+> `942128955a726536b334bb6a2bcb2d6af278666e`; see the
+> [source-bound integration receipt](reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md).
+> Earlier `df8fb86ff329fffc72064a4ea255322ef3e955a0` split results below retain
+> their own source and failures. The older production
 > baseline keeps its own source and is not new-source execution credit.
 > Acceptance decisions and run counts: [criterion audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
 > and [timestamped run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md).
-> The bounded snapshot at **2026-10-22T22:15:24.573824Z** retains **0/20 PR
-> comparisons / 0/2 successful complete broad integrations**:48 roots/attempts,
-> 45 failed, one cancelled, one queued, one in progress. Historical46 job/artifact
-> identities were matched, not freshly refetched. These are dated reviewed counts, not
+> The reviewed snapshot at **2026-10-23T00:48:54Z** retains **0/20 PR
+> comparisons / 0/2 successful complete broad integrations**:50 roots,
+> 47 failed, one cancelled, two pending. Failed policy suites include actual
+> setgroups denial and sanitizer partition/refusals, not just timeout.
+> These are dated reviewed counts, not
 > live counters or unit-test totals. W11 **NOT MET** / W12 **NOT RUN**; no local
 > implementation, component proof or nested job advances those counters.
 > Parent reviewed the original criteria and approved finite closure of
@@ -25,6 +29,17 @@
 > The older GNostr CI/nightly table and universal environment wording below remain
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
+
+## W11/W12/heartbeat integration — 2026-10-23
+
+[Final source-bound receipt](reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md):
+clean tested source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`,786 selector tests
+(742 pass,44 explicit Linux-only skips, zero failures/errors), fresh safe native
+default build and exact heartbeat registration1/1/all8 internal cases PASS, seven
+shell suites/four statics/full actionlint+ShellCheck PASS. Pre/post tracked source,
+pinned submodules and tools match. First failed786-case invocation is retained;
+its exact enrollment omissions were corrected, not waived. This is native local
+regression proof, not hosted/Linux/complete-profile acceptance or cutover.
 
 ## Remaining acceptance integration — 2026-10-23
 

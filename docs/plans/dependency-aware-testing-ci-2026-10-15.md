@@ -1,5 +1,22 @@
 # Dependency-aware testing and CI/CD
 
+> **2026-10-23 W11/W12/heartbeat integration:** exact approved tips preserve
+> ancestry; enrollment source `942128955a726536b334bb6a2bcb2d6af278666e` and
+> [source-bound gates/evidence](../reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md)
+> keep local proof separate from acceptance. Dated W11 snapshot
+> **2026-10-23T00:48:54Z**:50 roots,47 failed,1 cancelled,2 pending; **0/20**
+> qualifying comparisons / **0/2** complete broad integrations. W11 **NOT MET**,
+> W12 **NOT RUN**; finite `.37` readiness closure is not a default switch.
+> Five current heartbeat recurrences are post-burst idle-wake failures; historical
+> cause only plausible and safe remedy unresolved, `.11` open. The hosted pidns
+> probe proves NEWUSER success then setgroups-open denial, not its policy cause;
+> no helper fix or privilege/sysctl bypass is justified. No rollout cutover.
+> Final clean regression source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`:
+> 786 selector tests/742 pass/44 explicit Linux-only skips/zero failures or errors;
+> fresh safe native build, exact heartbeat1/1/all8 cases, seven shells/four statics/
+> full actionlint+ShellCheck PASS, pre/post source/submodule/tool identity unchanged.
+> Failed786-case enrollment invocation remains retained; no complete/hosted credit.
+
 > **Current finite integration accounting: [closeout criterion register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).**
 > All exact A/B/C tips are merged preserving ancestry. Tested code freeze
 > `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`:725 selector tests/zero skips,
@@ -18,7 +35,7 @@
 > Membership, runnable capabilities, selected execution and acceptance are separate.
 > The status summary below and earlier sections are **HISTORICAL snapshots**,
 > retaining exact source identities and failures; [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
-> remains the original reconciliation. Latest reviewed hosted snapshot:
+> remains the original reconciliation. Prior reviewed hosted snapshot:
 > **2026-10-22T19:03:24.712764Z**,45failed/1cancelled/zero pending of46 roots,
 > **0/20** qualifying comparisons and **0/2** complete broad integrations.
 > W11 **NOT MET**, W12 **NOT RUN**. No default/protection/schedule/publisher cutover.
