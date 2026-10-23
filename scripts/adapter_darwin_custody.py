@@ -131,10 +131,15 @@ class Kernel:
         return self._uniq(pid, False)
 
     def zombie(self, pid):
-        """(pidversion, uniqueid) of an unreaped dead process, else None."""
-        if self._uniq(pid, False) is not None:
+        """(pidversion, uniqueid) of an unreaped dead process, else None.
+
+        Zombie-inclusive lookup first, then a live-only lookup: if the PID is
+        not live afterwards, the identity read first was already dead. The
+        reverse order could return a new live process that reused the PID."""
+        identity = self._uniq(pid, True)
+        if identity is None or self._uniq(pid, False) is not None:
             return None
-        return self._uniq(pid, True)
+        return identity
 
     def pids(self):
         count = self.proc_listallpids(None, 0)
@@ -290,10 +295,13 @@ def await_exits(kernel, members, deadline):
     try:
         waiting = set()
         for pid, version in members.items():
-            events = queue.control([select.kevent(pid, filter=select.KQ_FILTER_PROC,
-                                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
-                                    fflags=select.KQ_NOTE_EXIT)], 1, 0)
-            if events and events[0].flags & select.KQ_EV_ERROR:
+            # Register without receiving events: an event returned here could
+            # be an earlier member's one-shot NOTE_EXIT and would be lost.
+            try:
+                queue.control([select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                               flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                               fflags=select.KQ_NOTE_EXIT)], 0, 0)
+            except ProcessLookupError:
                 continue  # already exited
             current = kernel.version(pid)
             if current is not None and current[0] == version:
@@ -364,8 +372,9 @@ def run_root(kernel, tag, argv, queue, adapter_parent, old_mask, evidence):
     os.close(go_read)
     os.close(ack_write)
     # Only the root keeps the adapter's native seal FD (it inherited it at
-    # fork); the supervisor drops its copy so EOF on the adapter's read end
-    # cannot precede the root's and every member's exit.
+    # fork); the supervisor drops its copy. Seal EOF is NOT a cleanup barrier
+    # (the root may close it early): the barrier is this supervisor's exit
+    # with evidence cleanup_complete=true after a certain empty reap.
     drop_seal()
     reaped = False
     try:

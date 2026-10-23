@@ -280,12 +280,24 @@ class DarwinDiscoveryBarrierTests(unittest.TestCase):
             try:
                 os.close(read_fd)
                 custody.apply_tag(self.kernel, self.tag)
+                os.write(write_fd, b'T')  # acknowledged only after tagging
             finally:
-                os._exit(0)  # exits after tagging; stays a zombie until reaped
+                os._exit(0)  # stays a zombie until the test reaps it
         os.close(write_fd)
-        self.assertEqual(os.read(read_fd, 1), b'')  # child closed: exited
+        tagged = os.read(read_fd, 1)
         os.close(read_fd)
         try:
+            self.assertEqual(tagged, b'T', 'child was not tagged')
+            queue = select.kqueue()
+            try:
+                queue.control([select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                               flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                               fflags=select.KQ_NOTE_EXIT)], 0, 0)
+                self.assertTrue(queue.control(None, 1, GUARD), 'tagged child never exited')
+            except ProcessLookupError:
+                pass  # already exited before registration
+            finally:
+                queue.close()
             self.assertIsNotNone(self.kernel.zombie(pid))
             # scan() returns only from a certain round: a zombie seen dead in
             # pass 1 must not keep every round uncertain.
@@ -293,6 +305,48 @@ class DarwinDiscoveryBarrierTests(unittest.TestCase):
             self.assertEqual(custody.classify(self.kernel, self.tag, pid)[0], 'zombie')
         finally:
             os.waitpid(pid, 0)
+
+    def test_zombie_identity_lookup_order_rejects_pid_reuse(self):
+        """PID reuse between the two lookups cannot be forced on a real host,
+        so the lookup order itself is checked with scripted kernel answers."""
+        class Scripted(custody.Kernel):
+            def __init__(self, answers):
+                super().__init__()
+                self.answers = list(answers)
+
+            def _uniq(self, pid, zombies):
+                expected, answer = self.answers.pop(0)
+                assert expected == zombies, 'zombie-inclusive lookup must come first'
+                return answer
+
+        dead, reused = (7, 70), (9, 90)
+        # Zombie seen, then PID not live: it was dead before the check.
+        self.assertEqual(Scripted([(True, dead), (False, None)]).zombie(123), dead)
+        # Inclusive lookup returned a live process (reuse): never "dead".
+        self.assertIsNone(Scripted([(True, reused), (False, reused)]).zombie(123))
+        self.assertIsNone(Scripted([(True, None)]).zombie(123))
+
+    def test_await_exits_keeps_notifications_of_earlier_members(self):
+        children = []
+        for _ in range(2):
+            child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.read(1)'], stdin=subprocess.PIPE)
+            self.addCleanup(child.wait, timeout=GUARD)
+            children.append(child)
+        members = {c.pid: self.kernel.version(c.pid)[0] for c in children}
+
+        class ExitDuringRegistration(custody.Kernel):
+            """Each member exits right after its own registration check, so the
+            first one's NOTE_EXIT is pending while the second, still live, is
+            registered. A registration that returns events would consume it."""
+            def version(inner, pid):
+                answer = super().version(pid)
+                for child in children:
+                    if child.pid == pid and not child.stdin.closed:
+                        child.stdin.close()
+                        child.wait(timeout=GUARD)  # exited (reaped by the test)
+                return answer
+
+        custody.await_exits(ExitDuringRegistration(), members, time.monotonic() + 10)
 
     def test_foreign_profiles_and_stale_tokens_are_not_members(self):
         code = "import sys; print('ready', flush=True); sys.stdin.read()"
