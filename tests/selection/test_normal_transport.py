@@ -584,12 +584,38 @@ class PullRequestSelectedTests(TransportFixture):
     def execute(self):
         self.execute_production()
 
-    def independent_checkout(self):
-        clone = Path(self.temp.name).resolve() / 'aggregate-checkout'
+    def independent_checkout(self, revision=None, name='aggregate-checkout'):
+        clone = Path(self.temp.name).resolve() / name
         subprocess.run(['git', 'clone', '-q', '--no-local', str(self.root), str(clone)], check=True)
         subprocess.run(['git', '-C', str(clone), '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach',
-                        self.identity['sha']], check=True)
+                        revision or self.identity['sha']], check=True)
         return clone
+
+    def test_tested_two_parent_merge_is_the_identity_never_the_equal_tree_api_head(self):
+        # Mirrors PR23: tested synthetic merge (parents: base, PR head) has the SAME tree
+        # as the API PR head but a different identity; only the tested merge is bound.
+        merge = self.identity['sha']
+        parents = self.git('rev-list', '--parents', '-n', '1', merge).decode().split()[1:]
+        self.assertEqual(parents, [self.pr_base, self.pr_head])
+        tree = lambda rev: self.git('rev-parse', rev + '^{tree}').decode().strip()
+        self.assertEqual(tree(merge), tree(self.pr_head))
+        self.assertNotEqual(merge, self.pr_head)
+        self.assertEqual((self.plan['head'], self.plan['tested_sha'], self.plan['source_identity']['sha']), (merge,) * 3)
+        self.assertEqual((self.plan['event']['tested_sha'], self.plan['event']['pr_head_sha']), (merge, self.pr_head))
+        aliased = dict(self.plan, head=self.pr_head, tested_sha=self.pr_head,
+                       source_identity=dict(self.plan['source_identity'], sha=self.pr_head))
+        aliased.pop('plan_id'); aliased['plan_id'] = s.digest(aliased)
+        with self.assertRaises((ValueError, s.ContractError)):
+            normal._rederived_plan(self.inventory, aliased, self.root)   # event tested SHA != aliased head
+        result = self.worker()
+        self.assertEqual(result['source_identity']['sha'], merge)
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        api_head = self.independent_checkout(self.pr_head, 'api-head-checkout')    # equal tree, wrong identity
+        paths, aggregate = self.aggregate(base, repo=api_head)
+        self.assertFalse(aggregate['passed'])
+        self.assertTrue(any('aggregate checkout is not the tested source' in e for e in aggregate['errors']), aggregate['errors'])
+        self.assertTrue(self.aggregate(base, repo=self.independent_checkout(merge, 'tested-merge-checkout'))[1]['passed'])
 
     def test_pull_request_plan_persists_event_and_both_checkouts_rederive_the_same_plan_id(self):
         self.assertEqual(self.plan['event'], self.event_info)
