@@ -8032,7 +8032,10 @@
         "{source}/tests/selection/test_homed_ci_worker.py",
         "{source}/tests/selection/post1640_integration_support.py",
         "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
-        "{source}/tests/selection/test_post1640_integration.py"
+        "{source}/tests/selection/test_post1640_integration.py",
+        "{source}/tests/selection/worker_prerequisite_support.py",
+        "{source}/tests/selection/fixtures/worker_prerequisite_20261024.json",
+        "{source}/tests/selection/test_worker_prerequisites.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -27576,9 +27579,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "fcf6ac4f6d1011bee1f4706360de3ccad87f0d2821dad67d18b5363b03cf273d",
+      "source_sha256": "7a1fd14bf3f78e15d2037d15bde4baf062f0da3312d0d93e34497e716cd94753",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9"
+      "workflow_sha256": "5058ae30f6e548568e1b6691258dd4758a803bbec7b5708ae7f68d8ab90c5b08"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",

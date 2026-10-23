@@ -19,6 +19,8 @@ def witness():
 
 
 def before_source(path, raw):
+    from worker_prerequisite_support import before_source as before_newer_source
+    raw = before_newer_source(path, raw)
     record = witness()['sources'].get(path)
     if record is None or hashlib.sha256(raw).hexdigest() == record['before_sha256']:
         return raw
@@ -34,7 +36,8 @@ def before_source(path, raw):
 
 
 def before_jobs(records):
-    previous = copy.deepcopy(records)
+    from worker_prerequisite_support import before_jobs as before_newer_jobs
+    previous = before_newer_jobs(records)
     fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
     for ident, record in witness()['maps']['workflow_jobs'].items():
         after = {key: record['after'][key] for key in fields}
@@ -49,8 +52,9 @@ def before_jobs(records):
 
 
 def before_policy(policy):
+    from worker_prerequisite_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     if present:
