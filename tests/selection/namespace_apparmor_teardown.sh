@@ -6,6 +6,10 @@
 set -euo pipefail
 out="$1"
 record() { python3 -I -c 'import json, sys; json.dump(dict(kind="namespace_apparmor_teardown_v1", status=sys.argv[2], detail=sys.argv[3]), open(sys.argv[1], "w"), indent=2, sort_keys=True)' "$out/teardown.json" "$1" "$2"; }
+# Any unanticipated failure (corrupt journal, failed snapshot/removal) still
+# leaves a typed incomplete record; it never becomes success.
+on_error() { local code=$?; [[ -f "$out/teardown.json" ]] || record incomplete "teardown failed (exit $code) at line $1"; }
+trap 'on_error $LINENO' ERR
 if [[ ! -f "$out/setup.json" ]]; then
   mkdir -p "$out"; record not_provisioned "setup journal absent: nothing was rendered or added"; exit 0
 fi
@@ -22,19 +26,25 @@ if ! grep -q -x -F -- "$name (unconfined)" "$out/profiles-teardown-before.txt"; 
   fi
   record incomplete "owned profile missing before teardown"; exit 1
 fi
-# Remove only after every native/container consumer exited. Read-only scan;
-# only tasks that vanish mid-scan are ignored, any other error refuses.
+# Remove only after every native/container consumer exited. Read-only scan of
+# EVERY task (labels are per task, not per process); only tasks that vanish
+# mid-scan are ignored, any other error refuses.
 if ! users="$(sudo python3 -I - "$name" <<'PY'
 import os, sys
 label = sys.argv[1] + ' (unconfined)'
 for pid in filter(str.isdigit, os.listdir('/proc')):
     try:
-        with open('/proc/' + pid + '/attr/current') as stream:
-            value = stream.read().strip('\0\n ')
+        tasks = os.listdir('/proc/' + pid + '/task')
     except (FileNotFoundError, ProcessLookupError):
         continue
-    if value == label:
-        print(pid)
+    for tid in tasks:
+        try:
+            with open('/proc/' + pid + '/task/' + tid + '/attr/current') as stream:
+                value = stream.read().strip('\0\n ')
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if value == label:
+            print(pid + '/' + tid)
 PY
 )"; then
   record incomplete "could not inspect task AppArmor labels; refusing removal"; exit 1
