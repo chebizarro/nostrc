@@ -57,12 +57,42 @@ def wait_for(path, timeout=30):
         time.sleep(0.02)
 
 
-def gate(*argv, timeout=180):
-    return subprocess.run(['bash', str(GATE), '--repo', str(ROOT), *argv], capture_output=True, timeout=timeout,
+def same_sha_repository(work):
+    """A writable repository holding exactly ROOT's committed HEAD.
+
+    test-gate checks out ``--head`` with ``git worktree add``, which writes
+    <repo>/.git/worktrees; the policy testhost mounts /source read-only, where
+    that exits 128. A depth-1 fetch of ROOT's HEAD keeps the attested commit SHA
+    without importing history or alternates; ROOT itself is only read."""
+    head = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                          text=True, timeout=60).stdout.strip()
+    repo = work / 'repo'
+    for argv in (['init', '-q', str(repo)],
+                 ['-C', str(repo), 'fetch', '-q', '--depth', '1', '--no-tags', 'file://' + str(ROOT), 'HEAD'],
+                 ['-C', str(repo), '-c', 'advice.detachedHead=false', 'checkout', '-q', '--detach', 'FETCH_HEAD']):
+        subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', *argv], check=True, capture_output=True, timeout=600)
+    fetched = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                             text=True, timeout=60).stdout.strip()
+    if fetched != head:
+        raise AssertionError(f'fixture repository is not the source commit: {fetched} != {head}')
+    return repo
+
+
+def gate(repo, *argv, timeout=180):
+    return subprocess.run(['bash', str(GATE), '--repo', str(repo), *argv], capture_output=True, timeout=timeout,
                           env=dict(os.environ, XPC_SERVICE_NAME='0'))
 
 
 class DarwinGateWiring(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._repo_tmp = tempfile.TemporaryDirectory(prefix='nostrc-darwin-gate-repo-')
+        cls.repo = same_sha_repository(Path(cls._repo_tmp.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._repo_tmp.cleanup()
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix='nostrc-darwin-gate-')
         self.addCleanup(tmp.cleanup)
@@ -73,11 +103,11 @@ class DarwinGateWiring(unittest.TestCase):
         return json.loads(next(self.evidence.glob('*/adapter-receipt.json')).read_text())
 
     def test_darwin_value_is_explicit_and_legacy_stays_default(self):
-        result = gate('--head', 'HEAD', '--explain', '--evidence-dir', str(self.evidence))
+        result = gate(self.repo, '--head', 'HEAD', '--explain', '--evidence-dir', str(self.evidence))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.receipt()['custody_mode'], 'legacy')
         self.assertNotIn('darwin_custody', self.receipt())
-        result = gate('--head', 'HEAD', '--native-custody', 'darwin', '--namespace-apparmor-profile',
+        result = gate(self.repo, '--head', 'HEAD', '--native-custody', 'darwin', '--namespace-apparmor-profile',
                       'nostrc-ns-' + '0' * 32, '--evidence-dir', str(self.work / 'x'))
         self.assertEqual(result.returncode, 2)
         self.assertIn(b'requires --native-custody pidns', result.stderr)
@@ -107,13 +137,13 @@ class DarwinGateWiring(unittest.TestCase):
             self.assertEqual(record['helper_exit'], exit_code)
 
         def test_pidns_still_refuses_on_darwin_before_checkout(self):
-            result = gate('--head', 'HEAD', '--native-custody', 'pidns', '--evidence-dir', str(self.evidence))
+            result = gate(self.repo, '--head', 'HEAD', '--native-custody', 'pidns', '--evidence-dir', str(self.evidence))
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn(b'native kernel custody unavailable on macOS', result.stderr)
             self.assertFalse(any(self.evidence.glob('*/0/source')))
 
         def test_public_cli_runs_real_checkout_under_custody(self):
-            result = gate('--head', 'HEAD', '--native-custody', 'darwin', '--explain', '--evidence-dir', str(self.evidence))
+            result = gate(self.repo, '--head', 'HEAD', '--native-custody', 'darwin', '--explain', '--evidence-dir', str(self.evidence))
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = self.receipt()
             self.assertEqual((receipt['custody_mode'], receipt['complete'], receipt['complete_gate_eligible'],
@@ -287,7 +317,7 @@ except BaseException as exc:
 
     else:
         def test_darwin_refuses_on_linux_before_launch(self):
-            result = gate('--head', 'HEAD', '--native-custody', 'darwin', '--evidence-dir', str(self.evidence))
+            result = gate(self.repo, '--head', 'HEAD', '--native-custody', 'darwin', '--evidence-dir', str(self.evidence))
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn(b'explicit macOS-only diagnostic', result.stderr)
             self.assertFalse(any(self.evidence.glob('*/0/source/.git')))
