@@ -338,6 +338,7 @@ nostrc_finalize_test_inventory()
 
     def test_keyring_command_setup_still_refuses_before_launch(self):
         self.policy['profiles']['local.command']['capabilities'].append('gnome_keyring')
+        self.policy['checks']['command.actual'].setdefault('requires', []).append('gnome_keyring')
         self.save_policy()
         head = self.commit()
         receipt, directory = self.gate('--head', head, '--linux-custody', 'pidns', success=False)

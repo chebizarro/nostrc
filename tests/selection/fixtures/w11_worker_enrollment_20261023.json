@@ -3,7 +3,7 @@
   "base_inventory_commit": "940a5d9bd8cf7b96577a423106276e450d0885ef",
   "contract_refresh": {
     "grotto.linux": {
-      "after_hash": "c3fc3080491041993c600e02121d5335170a642c010430c54db38210c800c22b",
+      "after_hash": "9588630728dfa8b1145f8b49f6983cce057d24238620a77fe0614e3e60e2e8be",
       "before_hash": "cd36fa4065258e8a55d38cc5a3be76257f119fc68c69d2d42ff65b8ce7ffc0a0",
       "profile_hash": {
         "after": "96d7caebeb6595f4fd530a394f3287fbeea00441ce96823ccf6fdc38deaeac77",
@@ -15,13 +15,13 @@
           "before": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4"
         },
         "nips/nip5f/TestInventory.cmake": {
-          "after": "c8caf0689e55db765a8f42a064fce8dfe54b95059ba45da564eac7f9335c41fc",
+          "after": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
           "before": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da"
         }
       }
     },
     "groundhog.linux": {
-      "after_hash": "ecdd6a378eac1610ea784f514af6b0108c6f61eb0a6b113dc0d67b75586a79ca",
+      "after_hash": "a00d36434a6bb4f42231178dcb979219f55f7744fb0ddc44a44a419053bec4b8",
       "before_hash": "7cf6711e7f7e4d63c7201f836e2aa07ea653f16131b89a14f3c8928a2505a2f1",
       "profile_hash": {
         "after": "df29a94170f0f6ec8064ae31c7e4836a3b64874ceac727b15f7970a6214412ba",
@@ -33,13 +33,17 @@
           "before": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4"
         },
         "nips/nip5f/TestInventory.cmake": {
-          "after": "c8caf0689e55db765a8f42a064fce8dfe54b95059ba45da564eac7f9335c41fc",
+          "after": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
           "before": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da"
         }
       }
     }
   },
   "integration_source_changes": {
+    "nips/nip5f/TestInventory.cmake": {
+      "after": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+      "before": "c8caf0689e55db765a8f42a064fce8dfe54b95059ba45da564eac7f9335c41fc"
+    },
     "scripts/test_selection_realization.py": {
       "after": "bc3f5649a00a49b9efb44ae96c489602b5c13ec680161057764bed73e39eb754",
       "before": "790f7523cc3514078aa16d68facc18e75d74239b95cb1971c193ea7107d5aa25"
@@ -171,13 +175,15 @@
     "nodes": {
       "nip5f.fixture_inputs": {
         "after": {
-          "depends_on": [],
+          "depends_on": [
+            "gnome.seahorse"
+          ],
           "id": "nip5f.fixture_inputs",
           "owner_paths": [
             "tests/runtime/test_provisioned_nip5f.py",
             "tests/runtime/nip5f_approver.c"
           ],
-          "rationale": "One-shot fixture-only inputs; not a product graph dependency or readiness attestation."
+          "rationale": "Fixture-only daemon Secret Service prerequisites; not a dependency of the product NIP-5F library or readiness attestation."
         },
         "before": null
       }
@@ -199,7 +205,7 @@
             "-DCMAKE_BUILD_TYPE=Debug",
             "-DBUILD_TESTING=ON",
             "-DBUILD_APPS=ON",
-            "-DBUILD_GNOSTR_APP=OFF",
+            "-DBUILD_GNOSTR_APP=ON",
             "-DENABLE_TCP_IPC=ON",
             "-DNIP55L_TEST_TRUST_ENV=ON",
             "-DNIP55L_SECRET_BACKEND=libsecret",

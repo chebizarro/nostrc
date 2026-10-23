@@ -28,13 +28,26 @@ class WorkerEnrollmentTests(unittest.TestCase):
             v = p['profiles'][ident]
             for flag in ('-DENABLE_TCP_IPC=ON', '-DNIP55L_TEST_TRUST_ENV=ON',
                          '-DNIP55L_SECRET_BACKEND=libsecret', '-DBUILD_APPS=ON',
-                         '-DBUILD_GNOSTR_APP=OFF', '-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service'):
+                         '-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service'):
                 self.assertEqual(v['configure_args'].count(flag), 1)
+            self.assertEqual(v['configure_args'].count('-DBUILD_GNOSTR_APP=' + ('ON' if ident == 'core.linux' else 'OFF')), 1)
             self.assertIn('signer_endpoint', v['capabilities'])
             self.assertEqual(v['environment']['NOSTRC_TEST_NIP5F_APPROVAL'],
                              'unidentified-get-public-key-once')
             self.assertEqual(r._signer_diagnostic_boundary({'profile': v}),
                              {'complete': False, 'complete_gate_eligible': False})
+
+    def test_current_grotto_input_selects_real_signer_fixture_without_rewriting_goldens(self):
+        from selector_support import change
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        previous = w.before_worker_policy(before_policy_enrollment(p))
+        path = change('apps/grotto/src/main.c')
+        current = s.make_plan(p, [path], head='a' * 40, base='b' * 40)
+        old = s.make_plan(previous, [path], head='a' * 40, base='b' * 40)
+        self.assertEqual(set(current['selected_checks']) - set(old['selected_checks']),
+                         {'supported.nips.nip5f.signer_endpoint'})
+        self.assertEqual(set(old['selected_checks']) - set(current['selected_checks']), set())
+        self.assertFalse(current['enforcement_ready'])
 
     def test_exact_source_refresh_preserves_original_omission_authority(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
@@ -67,9 +80,12 @@ class WorkerEnrollmentTests(unittest.TestCase):
         covered = r._impact_prerequisites(p, check['nodes'])
         for path in ('tests/runtime/test_provisioned_nip5f.py', 'tests/runtime/nip5f_approver.c',
                      'gnome/groundhog/tests/app/test_secret_service.py',
-                     'apps/grotto/data/org.nostr.Grotto.gschema.xml', 'apps/grotto/daemon/main_daemon.c'):
+                     'apps/grotto/data/org.nostr.Grotto.gschema.xml', 'apps/grotto/daemon/main_daemon.c',
+                     'gnome/seahorse/secret_store.c', 'gnome/seahorse/secret_store.h'):
             self.assertTrue(set(s.classify(p, path)['nodes']) & covered, path)
-        self.assertEqual(p['nodes']['nip5f.fixture_inputs']['depends_on'], [])
+        self.assertEqual(p['nodes']['nip5f.fixture_inputs']['depends_on'], ['gnome.seahorse'])
+        self.assertIn('nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs nip5f.fixture_inputs)',
+                      (ROOT / 'nips/nip5f/TestInventory.cmake').read_text())
 
 
 if __name__ == '__main__':

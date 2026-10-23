@@ -11,7 +11,7 @@ if(TEST "test_nip5f_negative_env")
   nostrc_add_test_owners("test_nip5f_negative_env" OWNER nip5f.test_inputs)
 endif()
 if(TEST "test_nip5f_tcp")
-  nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs)
+  nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs nip5f.fixture_inputs)
   # Unlike loopback/negative-env, this command needs an explicitly provisioned
   # TCP signer endpoint and token. An absent endpoint is not passing coverage.
   set_property(TEST "test_nip5f_tcp" APPEND PROPERTY NOSTRC_SELECTION_REQUIRES signer_endpoint)

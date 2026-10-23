@@ -96,7 +96,7 @@
   "source_inputs": {
     "apps/grotto/tests/fuzz/json-glib-setup.sh": "087010f8047b46550299058d282a11af52c07c1bb82a0e12cca6048d7b2f766a",
     "apps/grotto/tests/fuzz/json_glib_leak_probe.c": "d6ada70b6b6331e02cdf8bd2496cd4ac383397ecdc94926855fa6c48ea6a592a",
-    "tests/selection/test_fuzz_json_glib_setup.py": "4450d61477cb5e8f07768bcfc9e235c39036e8ba675ec0922eeb1a7514dd8c18"
+    "tests/selection/test_fuzz_json_glib_setup.py": "c8c2acdeea34c705a78d2427a6a9c16d96ad07663317e7c3447673320f0b8ba0"
   },
   "workflow": {
     "additions": [

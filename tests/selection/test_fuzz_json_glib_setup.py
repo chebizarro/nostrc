@@ -101,6 +101,7 @@ class FuzzJsonGlibSetupTests(unittest.TestCase):
 
 class FuzzJsonGlibEnrollmentTests(unittest.TestCase):
     def test_exact_sources_jobs_and_finite_historical_inverse(self):
+        import copy
         import hashlib
         from selector_support import s
         from profile_contract_support import validate_job_accounting
@@ -114,7 +115,14 @@ class FuzzJsonGlibEnrollmentTests(unittest.TestCase):
         for rule in data['rules']:
             self.assertEqual(set(s.classify(policy, rule['exact'])['nodes']), {'grotto.gui', 'selection.contract'})
         previous = wave.before_policy(policy)
-        self.assertEqual(s.digest(previous), data['before_policy_hash'])
+        # This wave reverses only its named fields; later profile/fixture fixes
+        # remain intact rather than forcing a whole-inventory golden reset.
+        restored = copy.deepcopy(previous)
+        restored['checks']['selection.contract']['runtime_inputs'] += data['input_additions']
+        restored['path_rules'] += data['rules']
+        for ident, record in data['jobs'].items():
+            restored['workflow_jobs'][ident] = copy.deepcopy(record['after'])
+        self.assertEqual(restored, policy)
         self.assertEqual(wave.before_policy(previous), previous)
         source = wave.before_source(data['workflow']['path'], WORKFLOW.read_bytes())
         self.assertEqual(hashlib.sha256(source).hexdigest(), data['workflow']['before_sha256'])

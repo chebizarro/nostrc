@@ -137,7 +137,9 @@ class ContainedCustodyContract(unittest.TestCase):
 
     def test_prepared_peer_capability_without_contained_domain_cannot_launch(self):
         import test_selection_realization as realization
-        resolved = {'source_identity': {}, 'profile_fingerprint': 'bound', 'required_capabilities': ['prepared_peer']}
+        from test_selection import coverage_state
+        resolved = {'source_identity': {}, 'profile_fingerprint': 'bound', 'required_capabilities': ['prepared_peer'],
+                    **coverage_state({})}
         metadata = {'profile_fingerprint': 'bound', 'profile': {}}
         with patch.object(realization, 'load_realization', return_value=metadata), \
                 patch.object(realization, '_validate_resolved_phase'), \

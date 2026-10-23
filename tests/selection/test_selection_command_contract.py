@@ -17,6 +17,8 @@ from selector_support import change, s
 # Workflows, version sources and selection helpers have separately enumerated
 # discovery boundaries below. Never recursively audit mutable __pycache__.
 SUPPORT_INPUTS = {
+    "apps/grotto/tests/fuzz/json-glib-setup.sh",
+    "apps/grotto/tests/fuzz/json_glib_leak_probe.c",
     "scripts/test_selection_policy.py",
     "scripts/w11-evidence.py",
     "nostr-gobject/tests/test_main_thread_forbidden_calls.c",

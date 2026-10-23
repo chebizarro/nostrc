@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_worker_enrollment_20261023.json'
-SHA256 = '4a6092b162791d6454cdeba27e1b6fc1354cf220ceefc9df32f93743d2d83328'
+SHA256 = '67a41aff91b85e6341df03d8625d96bea364cff8a8cd6faa5a9a72c79321cd6d'
 
 
 def witness():
@@ -21,7 +21,7 @@ def current_source_hash(path, historical):
         return historical
     s.require(historical == data['source_before_sha256'][path],
               'worker historical source provenance changed: ' + path)
-    return data['source_sha256'][path]
+    return data.get('integration_source_changes', {}).get(path, {}).get('after', data['source_sha256'][path])
 
 
 def before_worker_source(path, raw):
