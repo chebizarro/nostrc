@@ -288,10 +288,31 @@ def _require_no_mdk_lifecycle(raw, closure, descriptors, recovery):
             'unselected original MDK lifecycle was provisioned or executed')
 
 
+def _event_ancestry(plan, repo):
+    """Persisted event identities must be the tested source's real Git ancestry.
+
+    A pull_request plan tests a two-parent merge: its PR head must be a non-first
+    parent of the tested merge and its event base an ancestor of it. Equal trees
+    never alias identities, and a forged field cannot hide behind an unchanged
+    selection."""
+    from test_selection import git, commit_sha
+    head = commit_sha(repo, plan['head'])
+    events = plan.get('event')
+    for event in (events if isinstance(events, list) else [events or {}]):
+        if event.get('kind') != 'pull_request':
+            continue
+        parents = os.fsdecode(git(repo, 'rev-list', '--parents', '-n', '1', head).stdout).split()[1:]
+        require(commit_sha(repo, event['tested_sha']) == head and commit_sha(repo, event['pr_head_sha']) in parents[1:]
+                and git(repo, 'merge-base', '--is-ancestor', commit_sha(repo, event['base_sha']), head,
+                        check=False).returncode == 0,
+                'pull_request event identities are not the tested merge ancestry')
+
+
 def _rederived_plan(policy, plan, repo):
     """The exact source-bound dependency plan, recomputed from the tested history."""
     from test_selection import git_plan
     require(repo is not None, 'selected-normal qualification requires the exact tested checkout')
+    _event_ancestry(plan, repo)
     event = plan.get('event') or None
     again = git_plan(repo, policy, head=plan['head'], base=plan.get('base'), context=plan['context'],
                      mode=plan['requested_mode'], event=event, profiles=plan.get('partial_profiles') or None)
