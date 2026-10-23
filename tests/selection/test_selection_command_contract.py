@@ -84,6 +84,8 @@ SUPPORT_INPUTS = {
     "scripts/test-gate.sh",
     "scripts/adapter_custody.py",
     "scripts/adapter_namespace_custody.py",
+    "scripts/adapter_darwin_custody.py",
+    "scripts/test_gate_darwin.py",
     "scripts/test_selection_services.py",
     "scripts/test-plan.py",
     "scripts/test_selection.py",

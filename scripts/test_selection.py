@@ -920,7 +920,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: contradictory backend {field}")
         if "coverage_gaps" in receipt and receipt["coverage_gaps"] != plan.get("coverage_gaps", []):
             errors.append(f"{lane_id}: stale coverage gap accounting")
-        if receipt.get('diagnostic_boundary') == 'linux_pidns_v1' or backend.get('diagnostic_boundary') == 'linux_pidns_v1':
+        if (receipt.get('diagnostic_boundary') in ('linux_pidns_v1', 'darwin_seatbelt_v1')
+                or backend.get('diagnostic_boundary') in ('linux_pidns_v1', 'darwin_seatbelt_v1')):
             try:
                 from test_selection_services import verify_native_public_receipt
                 verify_native_public_receipt(receipt)

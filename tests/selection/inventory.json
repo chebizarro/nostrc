@@ -7960,7 +7960,12 @@
         "{source}/apps/grotto/tests/fuzz/json_glib_leak_probe.c",
         "{source}/tests/selection/test_fuzz_json_glib_setup.py",
         "{source}/tests/selection/w11_json_glib_support.py",
-        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json"
+        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json",
+        "{source}/scripts/adapter_darwin_custody.py",
+        "{source}/scripts/test_gate_darwin.py",
+        "{source}/tests/selection/test_darwin_custody.py",
+        "{source}/tests/selection/test_darwin_gate_wiring.py",
+        "{source}/tests/selection/test_darwin_boundary_contract.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -21363,6 +21368,30 @@
     }
   },
   "path_rules": [
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-darwin-gate-wiring-2026-10-23.json",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_gate_darwin.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/adapter_darwin_custody.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
+    },
     {"exact": ".github/workflows/nostr-homed-ci.yml", "nodes": ["execution.homed"], "effect": "impact", "reason": "Exact homed workflow setup and unit contract owner; no systemd/FUSE execution inferred."},
     {"exact": "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json", "nodes": [], "effect": "global", "reason": "Machine-readable acceptance provenance is not a prose exemption."},
     {"exact": "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json", "nodes": [], "effect": "global", "reason": "Machine-readable acceptance provenance is not a prose exemption."},

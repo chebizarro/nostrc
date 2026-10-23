@@ -602,7 +602,7 @@ def _phase_context(profile, root, source, configuration):
 
 def _diagnostic_boundary(realization):
     boundary = realization.get('diagnostic_boundary')
-    if boundary not in (None, 'linux_pidns_v1', 'linux_ptrace_v1'):
+    if boundary not in (None, 'linux_pidns_v1', 'linux_ptrace_v1', 'darwin_seatbelt_v1'):
         raise RealizationError('unknown diagnostic execution boundary')
     return ({'diagnostic_boundary': boundary, 'complete': False, 'complete_gate_eligible': False,
              'untraced_profile_parity': False} if boundary else {})
