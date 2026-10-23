@@ -38,6 +38,64 @@ DEBUGGER_ENTITLEMENT = (b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plis
                         b'<key>com.apple.security.cs.debugger</key><true/></dict></plist>\n')
 
 
+# The victim is the exact finalizer interpreter: it reports its own identity,
+# then blocks on its parent-held stdin until released (no sleep-based hold).
+TASKPORT_VICTIM = ('import json, os, sys; sys.stdout.write(json.dumps({"pid": os.getpid(), '
+                   '"executable": os.path.realpath(sys.executable)}) + "\\n"); sys.stdout.flush(); sys.stdin.read()')
+KERN_FAILURE = 5  # the only accepted task_for_pid denial
+
+
+def _victim_alive(victim):
+    # Observe without reaping: the direct child keeps its PID reserved.
+    return os.waitid(os.P_PID, victim.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+
+
+def taskport_denial_probe(probe_argv, finalizer, victim_argv=None, timeout=15):
+    """(denied, evidence): probe_argv must be deterministically denied the task
+    port of a ready, live, exact-identity finalizer process, before and after."""
+    evidence = {'victim_argv': victim_argv or [str(finalizer), '-c', TASKPORT_VICTIM]}
+    victim = subprocess.Popen(evidence['victim_argv'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL)
+    denied = False
+    try:
+        ready, _, _ = select.select([victim.stdout], [], [], timeout)
+        line = victim.stdout.readline() if ready else b''
+        try:
+            hello = json.loads(line) if line.endswith(b'\n') else None
+        except ValueError:
+            hello = None
+        evidence['victim_ready'] = hello
+        if not isinstance(hello, dict) or hello.get('pid') != victim.pid or hello.get('executable') != str(finalizer):
+            evidence['refusal'] = 'victim not ready or not the exact finalizer identity'
+            return False, evidence
+        if not _victim_alive(victim):
+            evidence['refusal'] = 'victim not alive before probe'
+            return False, evidence
+        code, out = _read_only([*map(str, probe_argv), str(victim.pid)], timeout)
+        evidence.update(probe_exit=code, probe_output=out)
+        if not _victim_alive(victim):
+            evidence['refusal'] = 'victim gone during probe: no task port is not a policy denial'
+            return False, evidence
+        if code != 0 or not re.fullmatch(r'-?[0-9]+', out or '') or int(out) != KERN_FAILURE:
+            evidence['refusal'] = 'unexpected task_for_pid result'
+            return False, evidence
+        denied = True
+        return True, evidence
+    finally:
+        try:
+            victim.stdin.close()  # release the blocked victim
+        except OSError:
+            pass
+        try:
+            evidence['victim_exit'] = victim.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            victim.kill()  # direct, unreaped child: identity reserved
+            evidence['victim_exit'] = victim.wait()
+            evidence['victim_forced'] = True
+        victim.stdout.close()
+        evidence['denied'] = denied
+
+
 def _read_only(argv, timeout=20):
     try:
         result = subprocess.run(argv, capture_output=True, timeout=timeout)
@@ -93,15 +151,11 @@ def seal_admission(work):
             if built[0] != 0 or signed[0] != 0:
                 refusals.append('task-port denial probe could not be built/signed')
             else:
-                target = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-                try:
-                    code, out = _read_only([str(binary), str(target.pid)], 15)
-                finally:
-                    target.kill()  # direct, unreaped child
-                    target.wait()
-                checks['taskport_probe'] = {'exit': code, 'kern_return': out}
-                if code != 0 or not out or out == '0':
-                    refusals.append('same-UID entitled task_for_pid was not deterministically denied')
+                denied, evidence = taskport_denial_probe([binary], Path(os.path.realpath(sys.executable)))
+                checks['taskport_probe'] = evidence
+                if not denied:
+                    refusals.append('same-UID entitled task_for_pid was not deterministically denied: '
+                                    + evidence.get('refusal', 'unknown'))
     record['admitted'] = not refusals
     with open(Path(work) / ('darwin-seal-admission-' + uuid.uuid4().hex + '.json'), 'x') as stream:
         json.dump(record, stream, sort_keys=True, indent=2)
