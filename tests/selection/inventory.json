@@ -8013,7 +8013,11 @@
         "{source}/tests/selection/test_darwin_boundary_contract.py",
         "{source}/tests/selection/test_darwin_private_bus.py",
         "{source}/tests/selection/test_macos_nip5f_tcp_applicability.py",
-        "{source}/tests/selection/test_macos_nip5f_tcp_engine.py"
+        "{source}/tests/selection/test_macos_nip5f_tcp_engine.py",
+        "{source}/tests/selection/test_normal_transport.py",
+        "{source}/tests/selection/post608c_integration_support.py",
+        "{source}/tests/selection/fixtures/post608c_integration_20261024.json",
+        "{source}/tests/selection/test_post608c_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -27180,7 +27184,7 @@
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
       "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
@@ -27188,7 +27192,7 @@
     ".github/workflows/dependency-tests.yml:mdk011": {
       "matrix_source": "",
       "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
@@ -27359,7 +27363,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -27367,7 +27371,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -27375,7 +27379,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -27383,7 +27387,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -27391,7 +27395,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -27399,7 +27403,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -27407,7 +27411,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -27415,7 +27419,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -27423,7 +27427,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -27431,7 +27435,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -27439,7 +27443,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -27447,15 +27451,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "0d66cb4e7558d91115a9d3a61a55d7378bbfc85a3ca02304bc812f1789007ab3",
+      "source_sha256": "d716dbc492425391da996cc4bc475805de34d891a9065dd8126a7839b544d0b1",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
@@ -27463,9 +27467,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "d339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c",
+      "source_sha256": "bbd663a642a0d219bbe87ca291263bd857ff1a0d1ce892c42a26c07a070e48db",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214"
+      "workflow_sha256": "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -27979,7 +27983,7 @@
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
       "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
     },
     ".github/workflows/namespace-policy-regression.yml:regressions": {
       "profiles": [],

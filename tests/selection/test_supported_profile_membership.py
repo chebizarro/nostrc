@@ -180,7 +180,10 @@ class SupportedProfileMembership(unittest.TestCase):
         self.assertNotIn('mdk08.compatibility', bundle_plan['selected_checks'])
         core = self.p['checks']['root.asan.nip5f']
         self.assertNotIn('signer_endpoint', core.get('requires', []))
-        signer = self.p['checks']['supported.nips.nip5f.signer_endpoint']
+        # This assertion describes current applicability, unlike the historical
+        # source census above. Do not project away C's new authored contract.
+        current = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        signer = current['checks']['supported.nips.nip5f.signer_endpoint']
         for profile in ('core.linux.asan', 'core.macos.asan'):
             self.assertEqual(core['ctest_tests'][profile],
                              ['test_nip5f_loopback', 'test_nip5f_negative_env'])
@@ -189,9 +192,9 @@ class SupportedProfileMembership(unittest.TestCase):
         # the exact not_executed/nonvalidation record (nostrc-0cfsg.36.9).
         self.assertNotIn('core.macos.asan', signer['profiles'])
         self.assertNotIn('core.macos.asan', signer['ctest_tests'])
-        self.assertEqual([g for g in self.p['coverage_gaps']
+        self.assertEqual([g for g in current['coverage_gaps']
                           if 'test_nip5f_tcp' in g.get('registrations', [])],
-                         [g for g in self.p['coverage_gaps'] if g['id'] == 'core_macos_asan_nip5f_tcp_unconfigured'])
+                         [g for g in current['coverage_gaps'] if g['id'] == 'core_macos_asan_nip5f_tcp_unconfigured'])
 
     def test_graphics_tools_and_headless_aliases_remain_separate(self):
         record = self.data['profiles']['groundhog.linux']['primary']

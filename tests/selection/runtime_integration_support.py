@@ -20,7 +20,11 @@ def witness():
 
 def before_runtime_source(path, raw):
     record = witness()['sources'].get(path)
-    if record is None or hashlib.sha256(raw).hexdigest() == record['before_sha256']:
+    if record is not None and hashlib.sha256(raw).hexdigest() == record['before_sha256']:
+        return raw
+    from post608c_integration_support import before_source
+    raw = before_source(path, raw)
+    if record is None:
         return raw
     s.require(hashlib.sha256(raw).hexdigest() == record['after_sha256'], 'runtime integration source changed: ' + path)
     for edit in record['edits']:
@@ -32,7 +36,8 @@ def before_runtime_source(path, raw):
 
 
 def before_runtime_jobs(records):
-    previous = copy.deepcopy(records)
+    from post608c_integration_support import before_jobs
+    previous = before_jobs(records)
     fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
     for ident, record in witness()['maps'].get('workflow_jobs', {}).items():
         if ident in previous and all(previous[ident].get(key) == record['after'].get(key) for key in fields):
@@ -54,6 +59,8 @@ def before_runtime_policy(policy):
     data = witness()
     if not any(profile.get('normal_execution') for profile in previous.get('profiles', {}).values()):
         return previous
+    from post608c_integration_support import before_policy
+    previous = before_policy(previous)
     for field, records in data['maps'].items():
         for ident, record in records.items():
             s.require(previous[field].get(ident) == record['after'], 'runtime integration metadata changed: ' + ident)

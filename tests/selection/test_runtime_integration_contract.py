@@ -44,6 +44,8 @@ class HistoricalIntegrationInverse(unittest.TestCase):
         actual = source_job_blocks(ROOT)[ident]
         for field in ('source_sha256', 'workflow_sha256', 'matrix_source'):
             self.assertEqual(record[field], actual[field])
+        from post608c_integration_support import before_jobs
+        record = before_jobs({ident: record})[ident]
         self.assertEqual(record['source_sha256'], 'd339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c')
         self.assertEqual(record['workflow_sha256'], 'b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214')
         self.assertEqual(record['matrix_source'], '')
