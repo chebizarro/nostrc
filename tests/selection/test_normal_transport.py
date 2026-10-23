@@ -14,8 +14,8 @@ import unittest
 from unittest import mock
 
 from realization_support import ROOT, Project
-import test_selection_realization as r
 from selector_support import s
+import test_selection_realization as r   # after selector_support puts scripts/ on sys.path
 from test_normal_execution_contract import NormalFixture
 import test_selection_execution as normal
 
