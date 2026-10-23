@@ -207,7 +207,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$PROFILE:${DEPENDENCY_ROUTE:-plan}" in
-            static.policy:*|core.linux:*|grotto.linux:*|groundhog.linux:*|*:pidns)
+            static.policy:*|core.linux:*|grotto.linux:*|groundhog.linux:*|homed.linux.ci:*|*:pidns)
               # Only namespace-custody lanes; kernel settings are never changed.
               bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/dependency/namespace-apparmor" ;;
             *) echo "not a namespace-custody lane: no AppArmor provisioning" ;;
@@ -227,7 +227,7 @@ jobs:
           # DEPENDENCY_ROUTE comes from the validated profile (verify step).
           if [[ "${DEPENDENCY_ROUTE:-plan}" == pidns ]]; then lane=pidns; fi
           case "$lane" in
-            pidns|core.linux|grotto.linux|groundhog.linux)
+            pidns|homed.linux.ci|core.linux|grotto.linux|groundhog.linux)
               # The outer gate owns private services and post-namespace-exit
               # sealing. Unsupported runner kernels retain refusal, not green.
               # The per-job profile flows from its retained journal into the

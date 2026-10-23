@@ -512,6 +512,7 @@ class WorkflowWiringTests(unittest.TestCase):
             'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',
             'groundhog.mdk011': 'mdk011',
             'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',
+            'homed.linux.ci': 'homed_units',
         }
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')

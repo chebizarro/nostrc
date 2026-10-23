@@ -30,7 +30,8 @@ class HomedProfileContract(unittest.TestCase):
         self.assertEqual(self.profile["source_dir"], "gnome/nostr-homed/tests/unit")
         self.assertEqual(self.profile["configure_args"], ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=RelWithDebInfo"])
         check = self.policy["checks"]["homed.units"]
-        self.assertEqual(check["ctest_tests"], {PROFILE: NAMES})
+        # The CI realization (test_homed_ci_worker.py) owns the same five units.
+        self.assertEqual(check["ctest_tests"], {PROFILE: NAMES, "homed.linux.ci": NAMES})
         claims = [name for c in self.policy["checks"].values() for name in c.get("ctest_tests", {}).get(PROFILE, [])]
         self.assertEqual(claims, NAMES)
         self.assertEqual(check["build_targets"], ["test_cache", "test_cache_config", "test_groups", "test_manifest", "test_uid_map"])

@@ -18,7 +18,7 @@ import test_selection as selection
 LANES = {"core.linux": "core", "core.linux.asan": "core_asan", "core.macos.asan": "core_native",
          "grotto.linux": "grotto", "grotto.linux.asan_ubsan": "grotto_asan", "groundhog.linux": "groundhog",
          "groundhog.linux.sanitizers": "groundhog_sanitizers", "groundhog.mdk08": "mdk08",
-         "groundhog.mdk011": "mdk011",
+         "groundhog.mdk011": "mdk011", "homed.linux.ci": "homed_units",
          "libgo.linux.asan": "libgo", "libgo.macos.asan": "libgo_native", "static.policy": "policy"}
 BROAD_FAMILIES = {
     "core": "nostrc-ci", "libgo": "libgo-ci", "hanami": "libhanami-ci", "gi": "libnostr-gi",

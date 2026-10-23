@@ -149,6 +149,16 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       plan_id: ${{ needs.select.outputs.plan_id }}
       profile: libgo.macos.asan
+  homed_units:
+    # Standalone five-unit homed manifest/cache CI profile; not the legacy
+    # nostr-homed-ci root/systemd/FUSE matrix cells, which remain separate.
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'homed.linux.ci')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: homed.linux.ci
   policy_regressions:
     needs: select
     if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')
@@ -175,7 +185,7 @@ jobs:
   gate:
     name: Dependency gate
     if: always()
-    needs: [select, core, core_asan, core_native, grotto, grotto_asan, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, policy, broad]
+    needs: [select, core, core_asan, core_native, grotto, grotto_asan, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, homed_units, policy, broad]
     runs-on: ubuntu-24.04
     outputs:
       validation_artifact: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}

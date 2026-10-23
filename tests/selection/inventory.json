@@ -31,10 +31,18 @@
         "execution.homed"
       ],
       "profiles": [
-        "homed.linux.units"
+        "homed.linux.units",
+        "homed.linux.ci"
       ],
       "ctest_tests": {
         "homed.linux.units": [
+          "homed_cache",
+          "homed_cache_config",
+          "homed_groups",
+          "homed_manifest",
+          "homed_uid_map"
+        ],
+        "homed.linux.ci": [
           "homed_cache",
           "homed_cache_config",
           "homed_groups",
@@ -62,7 +70,8 @@
         "execution.homed"
       ],
       "profiles": [
-        "homed.linux.units"
+        "homed.linux.units",
+        "homed.linux.ci"
       ],
       "build_scope": "default",
       "build_targets": [],
@@ -25843,6 +25852,51 @@
       "feature_variants": [],
       "contexts": [
         "local"
+      ],
+      "parallelism": 2,
+      "build_parallelism": 2,
+      "test_parallelism": 1,
+      "timeout_seconds": 3600,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+      ],
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "scope": "standalone_manifest_cache_units",
+      "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test",
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      }
+    },
+    "homed.linux.ci": {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "host_system": {
+        "ID": "ubuntu",
+        "VERSION_ID": "24.04"
+      },
+      "build_type": "RelWithDebInfo",
+      "instrumentation": "none",
+      "source_dir": "gnome/nostr-homed/tests/unit",
+      "setup": ".github/workflows/dependency-worker.yml:execute",
+      "local_availability": "host",
+      "capabilities": [],
+      "feature_variants": [],
+      "contexts": [
+        "ci"
       ],
       "parallelism": 2,
       "build_parallelism": 2,
