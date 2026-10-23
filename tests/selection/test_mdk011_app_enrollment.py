@@ -10,7 +10,9 @@ PROFILE, PEER = 'groundhog.mdk011', 'groundhog.mdk08'
 
 class Mdk011AppEnrollment(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's result: newer exact layers are projected away first.
+        from coreasan_app_enrollment_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def claims(self, policy, profile):
         claims = {}
