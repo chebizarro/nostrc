@@ -201,17 +201,90 @@ except BaseException as exc:
             self.assertFalse(alive(escaped))
             self.assertNotEqual(record['informational_evidence'], record['recovery_informational_evidence'])
 
-        def test_missing_or_tampered_seal_is_retained_failure(self):
+        def test_native_seal_requires_admitted_host_then_missing_or_tampered_seal_fails(self):
+            from test_gate_darwin import seal_admission
+            probe = self.work / 'admission'
+            probe.mkdir()
+            admitted = seal_admission(probe)['admitted']
             for name, target in (('missing', 'pass'),
                                  ('tampered', "import os; os.write(int(os.environ['NOSTRC_NATIVE_SEAL_FD']), b'f' * 64)")):
-                with self.subTest(seal=name):
+                with self.subTest(seal=name, admitted=admitted):
                     lane = self.work / ('lane-' + name)
                     lane.mkdir()
-                    record, outcome, _ = self.custody([sys.executable, '-c', target], 'seal-' + name, native_lane=lane)
-                    self.assertEqual(record['status'], 'clean')
-                    self.assertIn('native final evidence refused', str(outcome))
-                    final = json.loads((lane / 'native-final.json').read_text())
-                    self.assertEqual((final['status'], final['complete']), ('failed', False))
+                    marker = lane / 'target-ran'
+                    record, outcome, _ = self.custody([sys.executable, '-c', f'open({str(marker)!r}, "w").close(); ' + target],
+                                                      'seal-' + name, native_lane=lane)
+                    self.assertIs(record['seal_admission']['admitted'], admitted)
+                    if not admitted:
+                        # Host policy cannot establish same-UID task-port denial:
+                        # refuse before the helper/target, never a seal claim.
+                        self.assertIn('trust boundary not established', str(outcome))
+                        self.assertEqual(record['status'], 'refused_before_launch')
+                        self.assertTrue(record['seal_admission']['refusals'])
+                        self.assertFalse(marker.exists())
+                        self.assertFalse((lane / 'native-final.json').exists())
+                        self.assertNotIn('helper_exit', record)
+                    else:
+                        self.assertEqual(record['status'], 'clean')
+                        self.assertIn('native final evidence refused', str(outcome))
+                        final = json.loads((lane / 'native-final.json').read_text())
+                        self.assertEqual((final['status'], final['complete']), ('failed', False))
+        def finalizer(self):
+            return Path(os.path.realpath(sys.executable))
+
+        def test_admin_host_refuses_before_any_taskport_probe(self):
+            from test_gate_darwin import seal_admission
+            record = seal_admission(self.work)
+            if any('member of' in reason for reason in record['refusals']):
+                self.assertFalse(record['admitted'])
+                self.assertNotIn('taskport_probe', record['checks'])  # no probe, no prompt, no mock admission
+
+        def test_probe_mechanics_on_real_kernel_denial(self):
+            # Unentitled probe from the same source: the kernel really denies it.
+            # Proves handshake/liveness/parsing only; NOT this host's admission.
+            from test_gate_darwin import TASKPORT_PROBE, taskport_denial_probe
+            source, binary = self.work / 'probe.c', self.work / 'probe'
+            source.write_text(TASKPORT_PROBE)
+            subprocess.run(['/usr/bin/cc', '-O0', str(source), '-o', str(binary)], check=True, capture_output=True)
+            denied, evidence = taskport_denial_probe([binary], self.finalizer())
+            self.assertTrue(denied, evidence)
+            self.assertEqual((evidence['probe_exit'], evidence['probe_output']), (0, '5'))
+            self.assertEqual(evidence['victim_ready']['executable'], str(self.finalizer()))
+            self.assertEqual(evidence['victim_exit'], 0)  # released, not killed
+            self.assertNotIn('victim_forced', evidence)
+
+        def test_probe_rejects_unready_or_foreign_victims(self):
+            from test_gate_darwin import taskport_denial_probe
+            fake = [sys.executable, '-c', 'print(5)']  # would "deny" if a victim were accepted
+            cases = {
+                'early exit': [sys.executable, '-c', 'pass'],
+                'wrong pid': [sys.executable, '-c', 'import json, os, sys; print(json.dumps({"pid": os.getpid() + 1, '
+                              '"executable": os.path.realpath(sys.executable)})); sys.stdout.flush(); sys.stdin.read()'],
+                'wrong executable': ['/bin/sh', '-c', 'echo "{\\"pid\\": $$, \\"executable\\": \\"/bin/sh\\"}"; cat >/dev/null'],
+                'garbage hello': [sys.executable, '-c', 'import sys; print("ready"); sys.stdout.flush(); sys.stdin.read()'],
+            }
+            for name, victim in cases.items():
+                with self.subTest(victim=name):
+                    denied, evidence = taskport_denial_probe(fake, self.finalizer(), victim_argv=victim, timeout=5)
+                    self.assertFalse(denied)
+                    self.assertIn('not ready or not the exact finalizer identity', evidence['refusal'])
+                    self.assertNotIn('probe_exit', evidence)  # rejected before the probe ran
+
+        def test_probe_rejects_victim_gone_during_probe_and_unexpected_results(self):
+            from test_gate_darwin import taskport_denial_probe
+            killer = [sys.executable, '-c', 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGKILL); print(5)']
+            denied, evidence = taskport_denial_probe(killer, self.finalizer())
+            self.assertFalse(denied)
+            self.assertIn('victim gone during probe', evidence['refusal'])
+            self.assertEqual(evidence['victim_exit'], -signal.SIGKILL)
+            for output, code in (('0', 10), ('4', 0), ('5 extra', 0), ('garbage', 0), ('', 0), ('5', 3)):
+                with self.subTest(output=output, code=code):
+                    probe = [sys.executable, '-c', f'import sys; print({output!r}); sys.exit({code})']
+                    denied, evidence = taskport_denial_probe(probe, self.finalizer())
+                    self.assertFalse(denied)
+                    self.assertEqual(evidence['refusal'], 'unexpected task_for_pid result')
+                    self.assertEqual(evidence['victim_exit'], 0)
+
     else:
         def test_darwin_refuses_on_linux_before_launch(self):
             result = gate('--head', 'HEAD', '--native-custody', 'darwin', '--evidence-dir', str(self.evidence))

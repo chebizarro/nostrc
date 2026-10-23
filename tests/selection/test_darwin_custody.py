@@ -944,13 +944,15 @@ int main(int argc, char **argv) {
         p = NULL;
         return 0;
     }
-    /* tree ENDPOINT normal|cancel EXIT */
+    /* tree ENDPOINT normal|cancel EXIT [anchor-after-stdin] */
     signal(SIGTERM, on_term);
     spawn_escapee(argv[2]);
     const char *seal = getenv("NOSTRC_NATIVE_SEAL_FD");
+    char c;
+    if (argc > 5 && !strcmp(argv[5], "anchor-after-stdin") && read(0, &c, 1) != 1)
+        pause(); /* stdin EOF never releases the hold: only TERM ends it */
     if (seal)
         write(atoi(seal), "anchor-digest", 13);
-    char c;
     if (!strcmp(argv[3], "cancel"))
         pause();
     else
@@ -1036,14 +1038,14 @@ class DarwinCustodyInstrumentedTests(DarwinCustodySupervisorTests):
         self.assertNotEqual(direct.returncode, 0)
         self.assertEqual(held.returncode, self.as_helper_status(direct.returncode))
 
-    def instrumented_tree(self, action):
+    def instrumented_tree(self, action, *extra):
         path, server = self.endpoint()
         procs = self.siblings()
         read_fd, write_fd = os.pipe()
         self.addCleanup(os.close, read_fd)
         try:
             process = subprocess.Popen([sys.executable, str(HELPER), str(self.fixture), 'tree', path, action,
-                                        '23' if action == 'normal' else '0'],
+                                        '23' if action == 'normal' else '0', *extra],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        pass_fds=(write_fd,), start_new_session=True,
                                        env=self.san_env(NOSTRC_NATIVE_SEAL_FD=str(write_fd)))
@@ -1051,6 +1053,14 @@ class DarwinCustodyInstrumentedTests(DarwinCustodySupervisorTests):
             os.close(write_fd)
         try:
             peer = self.accept_ready(server)
+            anchored = not extra
+            if anchored:
+                # Readiness is the root's own anchor write, not the escapee's
+                # connect: the root writes only after its intermediate exits.
+                self.assertEqual(select.select([read_fd], [], [], GUARD)[0], [read_fd], 'no seal anchor')
+                self.assertEqual(os.read(read_fd, 64), b'anchor-digest')
+                # Root and escaped holder are alive: no EOF yet.
+                self.assertEqual(select.select([read_fd], [], [], 0)[0], [])
             if action == 'cancel':
                 process.send_signal(signal.SIGTERM)  # our direct, unreaped child
                 output, errors = process.communicate(timeout=GUARD)
@@ -1067,9 +1077,8 @@ class DarwinCustodyInstrumentedTests(DarwinCustodySupervisorTests):
             self.assertTrue(evidence['cleanup_complete'], evidence)
             self.assertTrue(evidence['killed'], evidence)
             # The escaped instrumented holder of the seal FD died before the
-            # supervisor exited: anchor and EOF are available at once.
+            # supervisor exited: EOF is available at once, with no late bytes.
             self.assertEqual(select.select([read_fd], [], [], 0)[0], [read_fd])
-            self.assertEqual(os.read(read_fd, 64), b'anchor-digest')
             self.assertEqual(os.read(read_fd, 64), b'')
             self.assertEqual(peer.recv(1), b'', 'escaped instrumented descendant survived cleanup')
             self.assert_siblings_alive(procs)
@@ -1083,6 +1092,13 @@ class DarwinCustodyInstrumentedTests(DarwinCustodySupervisorTests):
 
     def test_instrumented_nonzero_exit_cleans_escaped_descendant_and_seal(self):
         self.instrumented_tree('normal')
+
+    def test_cancellation_before_anchor_leaves_seal_without_anchor(self):
+        """Exact reproduction of the retained combined-suite failure: TERM
+        reaches the root before its anchor write. Custody is still clean,
+        and the seal correctly ends with EOF and no anchor, which an adapter
+        must treat as a missing seal (failed lane), never as success."""
+        self.instrumented_tree('cancel', 'anchor-after-stdin')
 
 
 if sys.platform == 'darwin':

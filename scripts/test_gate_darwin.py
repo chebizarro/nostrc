@@ -2,15 +2,164 @@
 
 Diagnostic only: never .23/profile acceptance. Imported by scripts/test-gate.sh.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import select
 import signal
 import subprocess
 import sys
+import tempfile
 import uuid
+
+# Native seal trust boundary (read-only admission, fail closed). The finalizer's
+# PT_DENY_ATTACH closes ptrace attach only; whether a same-UID process can take
+# its task port (and so its private seal pipe) is AMFI/taskgated host policy.
+# Admitted only when that policy has no developer/admin authorization path and
+# a throwaway debugger-entitled probe is actually denied. Never mutates
+# DevToolsSecurity, group membership or any developer executable's signature.
+ADMISSION_TOOLS = {'csrutil': '/usr/bin/csrutil', 'devtools': '/usr/sbin/DevToolsSecurity',
+                   'dseditgroup': '/usr/sbin/dseditgroup', 'codesign': '/usr/bin/codesign', 'cc': '/usr/bin/cc'}
+TASKPORT_PROBE = r'''#include <mach/mach.h>
+#include <stdio.h>
+#include <stdlib.h>
+int main(int argc, char **argv) {
+  mach_port_t task = MACH_PORT_NULL;
+  kern_return_t kr = task_for_pid(mach_task_self(), atoi(argv[1]), &task);
+  printf("%d\n", kr);
+  return kr == KERN_SUCCESS ? 10 : 0;
+}
+'''
+DEBUGGER_ENTITLEMENT = (b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                        b'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>'
+                        b'<key>com.apple.security.cs.debugger</key><true/></dict></plist>\n')
+
+
+# The victim is the exact finalizer interpreter: it reports its own identity,
+# then blocks on its parent-held stdin until released (no sleep-based hold).
+TASKPORT_VICTIM = ('import json, os, sys; sys.stdout.write(json.dumps({"pid": os.getpid(), '
+                   '"executable": os.path.realpath(sys.executable)}) + "\\n"); sys.stdout.flush(); sys.stdin.read()')
+KERN_FAILURE = 5  # the only accepted task_for_pid denial
+
+
+def _victim_alive(victim):
+    # Observe without reaping: the direct child keeps its PID reserved.
+    return os.waitid(os.P_PID, victim.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+
+
+def taskport_denial_probe(probe_argv, finalizer, victim_argv=None, timeout=15):
+    """(denied, evidence): probe_argv must be deterministically denied the task
+    port of a ready, live, exact-identity finalizer process, before and after."""
+    evidence = {'victim_argv': victim_argv or [str(finalizer), '-c', TASKPORT_VICTIM]}
+    victim = subprocess.Popen(evidence['victim_argv'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL)
+    denied = False
+    try:
+        ready, _, _ = select.select([victim.stdout], [], [], timeout)
+        line = victim.stdout.readline() if ready else b''
+        try:
+            hello = json.loads(line) if line.endswith(b'\n') else None
+        except ValueError:
+            hello = None
+        evidence['victim_ready'] = hello
+        if not isinstance(hello, dict) or hello.get('pid') != victim.pid or hello.get('executable') != str(finalizer):
+            evidence['refusal'] = 'victim not ready or not the exact finalizer identity'
+            return False, evidence
+        if not _victim_alive(victim):
+            evidence['refusal'] = 'victim not alive before probe'
+            return False, evidence
+        code, out = _read_only([*map(str, probe_argv), str(victim.pid)], timeout)
+        evidence.update(probe_exit=code, probe_output=out)
+        if not _victim_alive(victim):
+            evidence['refusal'] = 'victim gone during probe: no task port is not a policy denial'
+            return False, evidence
+        if code != 0 or not re.fullmatch(r'-?[0-9]+', out or '') or int(out) != KERN_FAILURE:
+            evidence['refusal'] = 'unexpected task_for_pid result'
+            return False, evidence
+        denied = True
+        return True, evidence
+    finally:
+        try:
+            victim.stdin.close()  # release the blocked victim
+        except OSError:
+            pass
+        try:
+            evidence['victim_exit'] = victim.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            victim.kill()  # direct, unreaped child: identity reserved
+            evidence['victim_exit'] = victim.wait()
+            evidence['victim_forced'] = True
+        victim.stdout.close()
+        evidence['denied'] = denied
+
+
+def _read_only(argv, timeout=20):
+    try:
+        result = subprocess.run(argv, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, type(exc).__name__
+    return result.returncode, (result.stdout + result.stderr).decode(errors='replace').strip()
+
+
+def seal_admission(work):
+    """Fail-closed admission of the native seal trust boundary on this host."""
+    record = {'kind': 'darwin_seal_admission_v1', 'admitted': False, 'checks': {}, 'refusals': [],
+              'boundary': 'same-UID task-port denial for the finalizer interpreter; ptrace attach closed by PT_DENY_ATTACH',
+              'not_claimed': 'hostile-code isolation, root/admin attackers, hardened arbitrary-macOS parity'}
+    checks, refusals = record['checks'], record['refusals']
+    if sys.platform != 'darwin' or os.geteuid() == 0:
+        refusals.append('requires a non-root macOS user')
+    missing = [name for name, path in ADMISSION_TOOLS.items() if not os.access(path, os.X_OK)]
+    if missing:
+        refusals.append('admission tools unavailable: ' + ', '.join(missing))
+    if not refusals:
+        user = pwd.getpwuid(os.geteuid()).pw_name
+        code, out = _read_only([ADMISSION_TOOLS['csrutil'], 'status'])
+        checks['sip'] = out
+        if code != 0 or out != 'System Integrity Protection status: enabled.':
+            refusals.append('SIP not verifiably enabled')
+        code, out = _read_only([ADMISSION_TOOLS['devtools'], '-status'])
+        checks['devtools_security'] = out
+        if code != 0 or out != 'Developer mode is currently disabled.':
+            refusals.append('DevToolsSecurity not verifiably disabled')
+        for group in ('_developer', 'admin'):
+            code, out = _read_only([ADMISSION_TOOLS['dseditgroup'], '-o', 'checkmember', '-m', user, group])
+            checks['member_' + group] = out
+            if not out or not out.startswith('no '):
+                # Members can authorize the taskport right (or the answer is unknown).
+                refusals.append(f'user is (or may be) a member of {group}')
+        finalizer = Path(os.path.realpath(sys.executable))
+        checks['finalizer'] = {'path': str(finalizer), 'sha256': hashlib.sha256(finalizer.read_bytes()).hexdigest()}
+        code, out = _read_only([ADMISSION_TOOLS['codesign'], '-dv', '--verbose=2', str(finalizer)])
+        checks['finalizer']['codesign'] = out
+        code_e, entitlements = _read_only([ADMISSION_TOOLS['codesign'], '-d', '--entitlements', '-', '--xml', str(finalizer)])
+        checks['finalizer']['entitlements'] = entitlements
+        if code != 0 or code_e != 0 or 'get-task-allow' in (entitlements or ''):
+            refusals.append('finalizer executable signature/entitlements unknown or debuggable (get-task-allow)')
+    if not refusals:
+        # Only now (no developer/admin authorization path, so no interactive
+        # prompt) actively prove denial with a throwaway entitled debugger.
+        with tempfile.TemporaryDirectory(prefix='nostrc-taskport-probe-') as tmp:
+            source, binary, plist = Path(tmp) / 'probe.c', Path(tmp) / 'probe', Path(tmp) / 'debugger.plist'
+            source.write_text(TASKPORT_PROBE)
+            plist.write_bytes(DEBUGGER_ENTITLEMENT)
+            built = _read_only([ADMISSION_TOOLS['cc'], '-O0', str(source), '-o', str(binary)], 120)
+            signed = _read_only([ADMISSION_TOOLS['codesign'], '-s', '-', '-f', '--entitlements', str(plist), str(binary)])
+            if built[0] != 0 or signed[0] != 0:
+                refusals.append('task-port denial probe could not be built/signed')
+            else:
+                denied, evidence = taskport_denial_probe([binary], Path(os.path.realpath(sys.executable)))
+                checks['taskport_probe'] = evidence
+                if not denied:
+                    refusals.append('same-UID entitled task_for_pid was not deterministically denied: '
+                                    + evidence.get('refusal', 'unknown'))
+    record['admitted'] = not refusals
+    with open(Path(work) / ('darwin-seal-admission-' + uuid.uuid4().hex + '.json'), 'x') as stream:
+        json.dump(record, stream, sort_keys=True, indent=2)
+    return record
 
 
 DARWIN_NAME = re.compile(r'org\.nostrc\.custody\.([0-9a-f]{32})\.(a|b)')
@@ -113,6 +262,17 @@ def darwin_command(argv, *, helper, records, errors, cwd=None, env=None, log=Non
     seal_read, seal_write = os.pipe() if native_lane else (-1, -1)
     control_read, control_write, evidence, child_env = darwin_spawn(log, 'custody', env=env)
     record['informational_evidence'] = str(evidence)
+    if native_lane:
+        admission = seal_admission(native_lane)
+        record['seal_admission'] = admission
+        if not admission['admitted']:
+            stream.close()
+            for fd in (gate_read, gate_write, seal_read, seal_write, control_read, control_write):
+                os.close(fd)
+            with open(f'{log}.darwin-adapter.json', 'x') as output:
+                json.dump(record, output, sort_keys=True, indent=2)
+            raise RuntimeError('darwin native seal trust boundary not established on this host ('
+                               + '; '.join(admission['refusals']) + '); target not launched')
     waited, code, failure, clean = False, None, None, False
     try:
         try:
