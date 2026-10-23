@@ -41,6 +41,7 @@ cp "$scripts/sanitizer-gate-ci.py" "$repo/scripts/sanitizer-gate-ci.py"
 cp "$scripts/test_selection.py" "$repo/scripts/test_selection.py"
 cp "$scripts/test_selection_realization.py" "$repo/scripts/test_selection_realization.py"
 cp "$scripts/test_selection_subset.py" "$repo/scripts/test_selection_subset.py"
+cp "$scripts/test_selection_macos_nip5f_tcp.py" "$repo/scripts/test_selection_macos_nip5f_tcp.py"
 mkdir -p "$repo/tests/selection"
 cp "$scripts/../tests/selection/inventory.json" "$repo/tests/selection/inventory.json"
 cat > "$repo/scripts/test-gate.sh" <<'GATE'

@@ -1230,6 +1230,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     (query / "cmakeFiles-v1").touch()
     token = uuid.uuid4().hex
     env = phase_environment(profile, root, "configure")
+    _legacy_macos_environment_guard(profile_id, profile, root, env)
     args = [_expand_source(x, root) for x in profile.get("configure_args", [])]
     if any(arg == "--trace-source" or arg.startswith("--trace-source=") for arg in args):
         raise RealizationError("filtered configure trace cannot establish output provenance")
@@ -1574,6 +1575,45 @@ def _diagnostic_nonmembers(inventory, realization, tests, descriptors):
                  binding=_nonmember_binding(realization, descriptors))]
 
 
+def _legacy_macos_environment_guard(profile_id, profile, root, *environments):
+    """Legacy macOS provisions no signer: any inherited endpoint/token refuses.
+
+    Checks every phase's actual effective environment (ambient + overlays) plus
+    any concrete process environment the caller is about to use."""
+    import test_selection_macos_nip5f_tcp as macos_tcp
+    if profile_id != macos_tcp.PROFILE:
+        return
+    try:
+        for phase in PHASES:
+            macos_tcp.require_unconfigured_environment(phase_environment(profile, root, phase))
+        for environment in environments:
+            macos_tcp.require_unconfigured_environment(environment)
+    except macos_tcp.ApplicabilityError as exc:
+        raise RealizationError(str(exc)) from exc
+
+
+def _legacy_macos_tcp_exclusion(inventory, realization, tests, descriptors):
+    """The one exact legacy macOS NIP-5F TCP authority (nostrc-0cfsg.36.9)."""
+    import test_selection_macos_nip5f_tcp as macos_tcp
+    try:
+        records = macos_tcp.records(inventory)
+        if realization["profile_id"] != macos_tcp.PROFILE:
+            return []
+        claimed = any(_eligible(check, macos_tcp.PROFILE) and macos_tcp.REGISTRATION in _membership(check, macos_tcp.PROFILE)
+                      for check in inventory["checks"].values())
+        if not records:
+            if macos_tcp.REGISTRATION in tests and not claimed:
+                raise RealizationError("legacy macOS test_nip5f_tcp has no exact applicability authority")
+            return []
+        macos_tcp.validate_policy(inventory, records[0], realization["repo_root"])
+        _legacy_macos_environment_guard(realization["profile_id"], realization["profile"], realization["repo_root"])
+        record = macos_tcp.validate_realization(inventory, records[0], realization, tests, descriptors,
+                                                _mapped_targets, _relative)
+    except macos_tcp.ApplicabilityError as exc:
+        raise RealizationError(str(exc)) from exc
+    return [record]
+
+
 def _baseline_exclusions(inventory, realization, tests, descriptors):
     """Account the native baseline gap and exact reviewed diagnostic nonmembers.
 
@@ -1592,7 +1632,7 @@ def _baseline_exclusions(inventory, realization, tests, descriptors):
         if not isinstance(record, dict):
             raise RealizationError("malformed coverage gap record")
         if record.get("id") != ident:
-            if "registrations" in record:
+            if "registrations" in record and record.get("id") != "core_macos_asan_nip5f_tcp_unconfigured":
                 raise RealizationError("unsupported registration exclusion coverage gap")
             continue
         if ident in seen:
@@ -1647,6 +1687,7 @@ def _baseline_exclusions(inventory, realization, tests, descriptors):
             raise RealizationError("baseline exclusion actual sanitizer instrumentation differs")
         applicable.append(dict(record, status="not_executed", authority="existing_workflow_baseline",
                                target_ids=target_ids, audit_build_targets=[targets[0]["name"]]))
+    applicable += _legacy_macos_tcp_exclusion(inventory, realization, tests, descriptors)
     import test_selection_subset as subset
     try:
         ordinary = subset.admit(inventory, realization, tests, descriptors)
@@ -2810,6 +2851,7 @@ def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     _validate_resolved_phase(resolved, realization)
     jobs = effective_phase_parallelism(realization["profile"], parallel, build_parallel=build_parallel, phases=("build",))
     _diagnostic_execution_options(resolved, realization, jobs["build"], phase="build")
+    _legacy_macos_environment_guard(realization["profile_id"], realization["profile"], realization["repo_root"])
     commands, outputs = _build_commands(resolved, realization, jobs["build"]), []
     start = time.monotonic()
     for cmd in commands:
@@ -3114,6 +3156,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     receipt["input_audit_status"] = "passed"
     env = phase_environment(realization["profile"], realization["repo_root"], "test")
     build_env = phase_environment(realization["profile"], realization["repo_root"], "build")
+    _legacy_macos_environment_guard(realization["profile_id"], realization["profile"], realization["repo_root"],
+                                    env, build_env)
     config = ["-C", resolved["configuration"]] if resolved["configuration"] else []
     if build:
         begin = time.monotonic()
@@ -3180,6 +3224,21 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
             if (sorted(ids) != exclusion["target_ids"] or targets != exclusion["audit_build_targets"]
                     or not set(targets).issubset(resolved["build_targets"])):
                 raise RealizationError("diagnostic nonmember audit target closure changed")
+        elif exclusion.get("authority") == "legacy_unconfigured_nonvalidation":
+            import test_selection_macos_nip5f_tcp as macos_tcp
+            descriptors = {d["name"]: d for d in realization["descriptors"]}
+            try:
+                macos_tcp.verify_sources(realization["repo_root"])
+                again = macos_tcp.validate_realization(
+                    {"profiles": {macos_tcp.PROFILE: realization["profile"]}},
+                    {k: exclusion.get(k) for k in macos_tcp.RECORD_KEYS}, realization, tests, descriptors,
+                    _mapped_targets, _relative)
+            except macos_tcp.ApplicabilityError as exc:
+                raise RealizationError(str(exc)) from exc
+            if (again != exclusion or set(exclusion["registrations"]) & set(resolved["tests"])
+                    or not set(exclusion["target_ids"]) <= set(resolved["target_ids"])
+                    or not set(exclusion["audit_build_targets"]) <= set(resolved["build_targets"])):
+                raise RealizationError("legacy macOS NIP-5F TCP accounting changed after resolution")
     for name, command in resolved["registered_commands"].items():
         if tests[name].get("command") != command:
             raise RealizationError(f"CTest command changed after resolution: {name}")
@@ -3226,6 +3285,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
                     raise RealizationError('runtime environment authorities overlap')
                 overlay.update(signer_overlay)
             effective_env = dict(env, **overlay)
+            _legacy_macos_environment_guard(realization["profile_id"], realization["profile"],
+                                            realization["repo_root"], effective_env)
             process = _execute(cmd, env=effective_env, log_path=directory / "ctest.log", timeout=timeout)
         receipt['ctest_process'] = dict(process.execution_status)
         receipt['ctest_process_authority'] = 'in_memory_executor_v1'

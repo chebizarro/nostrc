@@ -4,10 +4,13 @@ The legacy nostrc-ci macOS ASan/UBSan job (BUILD_APPS=OFF) provisions no signer
 endpoint or token. ``test_nip5f_tcp`` then takes its unconfigured branch and
 exits 77, which CTest reports as skipped (SKIP_RETURN_CODE 77). That never
 validated a live TCP signer. This module authors the one exact consequence for
-the selector: on ``core.macos.asan`` only, the ``signer_endpoint`` check's
-``test_nip5f_tcp`` registration is accounted ``not_executed`` with
-``validation: nonvalidation``. It is built and audited like every other target,
-is never passed/skipped-as-pass and is never signing coverage.
+the selector: on ``core.macos.asan`` only, ``test_nip5f_tcp`` is excluded
+before execution and accounted ``not_executed`` with ``validation:
+nonvalidation``. Like the libgo stress baseline, the profile is not eligible for
+the ``signer_endpoint`` check (which stays authored and executed for every
+profile that provisions a signer) and this record is the registration's only
+authority there. The target is built and audited like every other target, and
+the registration is never passed/skipped-as-pass and never signing coverage.
 
 Everything is bound to the authored record: profile variant, legacy workflow
 job, test source, CMake registration and selection metadata, and the absence
@@ -17,8 +20,9 @@ the existing ``signer_endpoint`` capability instead. Mandatory loopback and
 negative-environment registrations must stay claimed and executed. There is no
 other profile, registration or general missing-resource waiver here.
 
-Engine wiring (resolve/execute/receipt/aggregation) is a separate, coordinated
-seam; this module only validates and returns the exact record.
+The realization engine calls validate_policy/validate_realization while
+resolving, re-verifies sources and environments before CTest, and the receipt
+aggregator calls validate_receipt_record. Each step refuses on any mismatch.
 """
 import hashlib
 import json
@@ -171,10 +175,17 @@ def validate_policy(inventory, record, root):
     _require(LEGACY_REGISTRATION in (root / REGISTRATION_FILE).read_text(), "legacy SKIP_RETURN_CODE 77 registration changed")
 
     check = inventory.get("checks", {}).get(CHECK)
-    _require(isinstance(check, dict) and check.get("requires") == ["signer_endpoint"]
-             and PROFILE in check.get("profiles", [])
-             and (check.get("ctest_tests") or {}).get(PROFILE) == [REGISTRATION],
-             "signer_endpoint check membership changed")
+    _require(isinstance(check, dict) and check.get("kind") == "ctest" and check.get("requires") == ["signer_endpoint"]
+             and check.get("requirement") == "blocking" and check.get("expected_outcome") == "pass",
+             "signer_endpoint check semantics changed")
+    others = [pid for pid in check.get("profiles", []) if pid != PROFILE]
+    _require(PROFILE not in check.get("profiles", []) and PROFILE not in (check.get("ctest_tests") or {})
+             and others and all((check.get("ctest_tests") or {}).get(pid) == [REGISTRATION] for pid in others),
+             "signer_endpoint check must keep test_nip5f_tcp for signer profiles and exclude only legacy macOS")
+    for ident, other in inventory.get("checks", {}).items():
+        _require(not (PROFILE in other.get("profiles", [])
+                      and REGISTRATION in (other.get("ctest_tests") or {}).get(PROFILE, [])),
+                 f"test_nip5f_tcp is also claimed on legacy macOS by {ident}")
     mandatory = inventory.get("checks", {}).get(MANDATORY_CHECK)
     _require(isinstance(mandatory, dict) and PROFILE in mandatory.get("profiles", [])
              and mandatory.get("requirement") == "blocking" and mandatory.get("expected_outcome") == "pass"
@@ -207,7 +218,9 @@ def validate_realization(inventory, record, realization, tests, descriptors, map
     _require(not any(_mentions_signer(props.get(key)) for key in SIGNER_PROPERTIES),
              "registration environment configures a signer")
     desc = descriptors.get(REGISTRATION, {})
-    _require(desc.get("owner") == ["nip5f.test_inputs", "nip5f.fixture_inputs"]
+    # Owner list exactly as the real configured graph reports it: the nips/nip5f
+    # directory owner plus TestInventory.cmake's supplements.
+    _require(desc.get("owner") == ["nip5f", "nip5f.test_inputs", "nip5f.fixture_inputs"]
              and desc.get("requires") == ["signer_endpoint"]
              and not desc.get("targets") and not desc.get("inputs")
              and desc.get("expected") in (None, [], ["pass"]),
@@ -223,6 +236,33 @@ def validate_realization(inventory, record, realization, tests, descriptors, map
              "actual sanitizer instrumentation differs")
     return dict(record, status="not_executed", authority=AUTHORITY, validation="nonvalidation",
                 target_ids=sorted(target_ids), audit_build_targets=[TARGET])
+
+
+def verify_sources(root):
+    """Execution-time re-check of the authored source/registration binding."""
+    binding = AUTHORED_RECORD["binding"]
+    for path, key in ((SOURCE, "source_sha256"), (REGISTRATION_FILE, "registration_sha256"),
+                      (SELECTION_FILE, "selection_metadata_sha256"), (LEGACY_WORKFLOW, "legacy_workflow_sha256")):
+        _require(_sha256(Path(root) / path) == binding[key], f"{path} changed after resolution")
+
+
+def validate_receipt_record(exclusion, policy, lane_profile):
+    """Receipt/aggregate boundary: the exact authored accounting, nothing else."""
+    authored = authored_record()
+    known = [g for g in policy.get("coverage_gaps", []) if isinstance(g, dict) and g.get("id") == IDENT]
+    _require(known == [authored], "policy lacks the exact authored legacy macOS record")
+    _require(lane_profile == PROFILE, "legacy macOS NIP-5F TCP accounting on another profile")
+    _require(isinstance(exclusion, dict)
+             and set(exclusion) == set(authored) | {"status", "authority", "validation", "target_ids", "audit_build_targets"}
+             and all(exclusion.get(k) == v for k, v in authored.items())
+             and exclusion.get("status") == "not_executed" and exclusion.get("authority") == AUTHORITY
+             and exclusion.get("validation") == "nonvalidation" and exclusion.get("audit_build_targets") == [TARGET]
+             and isinstance(exclusion.get("target_ids"), list) and len(exclusion["target_ids"]) == 1
+             and isinstance(exclusion["target_ids"][0], str) and exclusion["target_ids"][0],
+             "unknown/mismatched legacy macOS NIP-5F TCP accounting")
+    for ident, check in policy.get("checks", {}).items():
+        _require(REGISTRATION not in (check.get("ctest_tests") or {}).get(PROFILE, []),
+                 f"test_nip5f_tcp is claimed on legacy macOS by {ident}")
 
 
 def require_unconfigured_environment(environment):

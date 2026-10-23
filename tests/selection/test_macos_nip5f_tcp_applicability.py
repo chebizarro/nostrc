@@ -1,9 +1,9 @@
 """Exact legacy macOS unconfigured NIP-5F TCP applicability (nostrc-0cfsg.36.9).
 
-Validator-level proof only: the engine seam (resolve/execute/receipt) is wired
-separately. The authored record below is the exact inventory proposal; its
-positive case runs against the real committed sources and inventory, and every
-drift/configured-endpoint negative refuses instead of becoming a waiver.
+Validator-level cases; test_macos_nip5f_tcp_engine.py drives the real engine.
+The authored record below is pinned independently of the module and must equal
+the enrolled inventory record. Every drift/configured-endpoint negative refuses
+instead of becoming a waiver.
 """
 import copy
 import json
@@ -63,7 +63,7 @@ class PolicyApplicabilityTests(unittest.TestCase):
         self.assertEqual(a.authored_record(), AUTHORED_RECORD)  # independent literal pin
         a.validate_policy(self.inventory, self.record, ROOT)
         a.validate_policy(self.inventory, self.record, self.root)
-        self.assertEqual(a.records(self.inventory), [])  # not enrolled until the engine seam lands
+        self.assertEqual(a.records(self.inventory), [AUTHORED_RECORD])  # enrolled exactly
 
     def test_record_shape_and_identity_cannot_be_widened(self):
         for change in ({"waiver": True}, {"profile": "core.linux.asan"}, {"profile": "libgo.macos.asan"},
@@ -150,15 +150,23 @@ class PolicyApplicabilityTests(unittest.TestCase):
         self.assertIn(a.LEGACY_REGISTRATION, (ROOT / a.REGISTRATION_FILE).read_text())
 
     def test_membership_mandatory_coverage_and_enforcement_stay_intact(self):
-        def drop_profile(inv):
+        def readd_profile(inv):  # double authority: check and record
             check = inv["checks"][a.CHECK]
-            check["profiles"].remove(a.PROFILE)
-            del check["ctest_tests"][a.PROFILE]
+            check["profiles"].append(a.PROFILE)
+            check["ctest_tests"][a.PROFILE] = ["test_nip5f_tcp"]
+
+        def drop_signer_coverage(inv):  # the check must stay real for signer profiles
+            check = inv["checks"][a.CHECK]
+            for pid in list(check["ctest_tests"]):
+                check["ctest_tests"][pid] = []
+
+        def other_check_claims(inv):
+            inv["checks"][a.MANDATORY_CHECK]["ctest_tests"][a.PROFILE].append("test_nip5f_tcp")
 
         def drop_negative(inv):
             inv["checks"][a.MANDATORY_CHECK]["ctest_tests"][a.PROFILE].remove("test_nip5f_negative_env")
 
-        for mutate in (drop_profile, drop_negative,
+        for mutate in (readd_profile, drop_signer_coverage, other_check_claims, drop_negative,
                        lambda inv: inv["checks"][a.MANDATORY_CHECK].update(requirement="advisory"),
                        lambda inv: inv["checks"][a.MANDATORY_CHECK].update(requires=["signer_endpoint"]),
                        lambda inv: inv["checks"][a.CHECK].update(requires=["signer_endpoint", "docker"]),
@@ -191,7 +199,7 @@ def realization_fixture(test_case):
     tests = {name: {"name": name, "command": [str(build / "nips/nip5f" / name)], "properties": []}
              for name in ("test_nip5f_tcp",) + a.MANDATORY}
     tests["test_nip5f_tcp"]["properties"] = [{"name": "SKIP_RETURN_CODE", "value": "77"}]
-    descriptors = {"test_nip5f_tcp": {"name": "test_nip5f_tcp", "owner": ["nip5f.test_inputs", "nip5f.fixture_inputs"],
+    descriptors = {"test_nip5f_tcp": {"name": "test_nip5f_tcp", "owner": ["nip5f", "nip5f.test_inputs", "nip5f.fixture_inputs"],
                                       "requires": ["signer_endpoint"], "targets": [], "inputs": [], "expected": []}}
     targets = {f"{name}-id": {"id": f"{name}-id", "name": name, "type": "EXECUTABLE",
                               "artifacts": tests[name]["command"], "dependencies": [],
@@ -246,7 +254,8 @@ class RealizationApplicabilityTests(unittest.TestCase):
             "approver/fixture targets present": lambda rz, t, d: d["test_nip5f_tcp"].update(targets=["test_nip5f_tcp", "test_nip5f_approver"]),
             "fixture inputs present": lambda rz, t, d: d["test_nip5f_tcp"].update(inputs=["x"]),
             "requires changed": lambda rz, t, d: d["test_nip5f_tcp"].update(requires=[]),
-            "owner changed": lambda rz, t, d: d["test_nip5f_tcp"].update(owner=["nip5f.test_inputs"]),
+            "owner changed": lambda rz, t, d: d["test_nip5f_tcp"].update(owner=["nip5f", "nip5f.test_inputs"]),
+            "directory owner missing": lambda rz, t, d: d["test_nip5f_tcp"].update(owner=["nip5f.test_inputs", "nip5f.fixture_inputs"]),
             "expected changed": lambda rz, t, d: d["test_nip5f_tcp"].update(expected=["fixture"]),
             "mandatory loopback missing": lambda rz, t, d: t.pop("test_nip5f_loopback"),
             "mandatory negative missing": lambda rz, t, d: t.pop("test_nip5f_negative_env"),

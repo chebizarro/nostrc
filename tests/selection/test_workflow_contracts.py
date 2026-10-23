@@ -136,6 +136,7 @@ class EventToWorkerTests(GitCase):
         self.write("tests/selection/inventory.json", s.canonical(self.p).decode())
         self.write("scripts/test_selection.py", (ROOT / "scripts/test_selection.py").read_text())
         self.write("scripts/test_selection_subset.py", (ROOT / "scripts/test_selection_subset.py").read_text())
+        self.write("scripts/test_selection_macos_nip5f_tcp.py", (ROOT / "scripts/test_selection_macos_nip5f_tcp.py").read_text())
         self.write(".github/workflows/dependency_contract.py", (WORKFLOWS / "dependency_contract.py").read_text())
         self.head = self.commit()
         self.evidence = tempfile.TemporaryDirectory()
