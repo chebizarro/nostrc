@@ -40,6 +40,7 @@ SUPPORT_INPUTS = {
     "apps/grotto/tests/CMakeLists.txt",
     "apps/grotto/tests/identity-tests.cmake",
     "nips/nip55l/CMakeLists.txt",
+    "nips/nip44/tests/nip44.vectors.json",
     "Testing/CMakeLists.txt",
     "Testing/TestInventory.cmake",
     "tests/CMakeLists.txt",

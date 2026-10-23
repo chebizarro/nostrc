@@ -21179,6 +21179,7 @@
     }
   },
   "path_rules": [
+    {"effect": "global", "exact": "docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json", "nodes": ["selection.contract"], "reason": "Hosted diagnostic evidence index; explicit broad validation, not executable admission."},
     {"effect": "impact", "exact": "nips/nip44/tests/nip44.vectors.json", "nodes": ["nip44.test_inputs", "selection.contract"], "reason": "W11 checkout regression consumes pinned vector bytes; preserve vector ownership."},
     {"effect": "impact", "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml", "nodes": ["grotto.gui", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
     {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Dockerfile", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},

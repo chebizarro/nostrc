@@ -117,7 +117,10 @@ RUNTIME_SOURCE_RULES = [
      for name in ('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'src/main.rs')]
 ] + [{'effect': 'impact', 'exact': 'nips/nip44/tests/nip44.vectors.json',
       'nodes': ['nip44.test_inputs', 'selection.contract'],
-      'reason': 'W11 checkout regression consumes pinned vector bytes; preserve vector ownership.'}]
+      'reason': 'W11 checkout regression consumes pinned vector bytes; preserve vector ownership.'},
+     {'effect': 'global', 'exact': 'docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json',
+      'nodes': ['selection.contract'],
+      'reason': 'Hosted diagnostic evidence index; explicit broad validation, not executable admission.'}]
 NATIVE_RUNTIME_INPUTS = [
     '{source}/scripts/adapter_namespace_custody.py',
     '{source}/tests/selection/test_namespace_custody.py',

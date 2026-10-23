@@ -22,6 +22,10 @@ class W11WorkerSetupTests(unittest.TestCase):
                          ['selection.contract'])
         self.assertEqual(set(s.classify(policy, 'nips/nip44/tests/nip44.vectors.json')['nodes']),
                          {'nip44.test_inputs', 'selection.contract'})
+        evidence = s.classify(policy, 'docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json')
+        self.assertEqual(evidence['effect'], 'global')
+        self.assertEqual(evidence['nodes'], ['selection.contract'])
+        self.assertFalse(evidence['unclassified'])
         self.assertEqual(c.witness()['after_policy_hash'], s.digest(c.before_native_custody_policy(policy)))
         for path, record in c.w11_setup_witness()['sources'].items():
             raw = (ROOT / path).read_bytes()
