@@ -50,8 +50,10 @@ jobs:
           s.require(profile['platform'] == actual_platform and profile['architecture'] == platform.machine(), 'runner/profile mismatch')
           # The provisioned signer fixture exists only inside the outer pidns
           # gate: any profile authoring signer_endpoint (including sanitizer
-          # variants) takes that route, never ambient wrapper services.
-          route = 'pidns' if 'signer_endpoint' in profile.get('capabilities', []) else 'plan'
+          # variants) takes that route, never ambient wrapper services; so do
+          # original MDK image/peer lanes, whose host tree only pidns owns.
+          route = 'pidns' if ('signer_endpoint' in profile.get('capabilities', [])
+                              or profile.get('execution_domain') == 'mdk_original_linux_v1') else 'plan'
           with open(os.environ['GITHUB_ENV'], 'a') as stream:
               stream.write('DEPENDENCY_ROUTE=' + route + '\n')
           PY

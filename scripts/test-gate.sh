@@ -447,6 +447,14 @@ def host_guard(profile, checks, policy, profile_id):
                 raise RuntimeError('signer fixture supports only exact test_nip5f_tcp; lane not launched')
         if not {'display', 'private_bus'} <= caps:
             raise RuntimeError('signer fixture requires authored namespace-owned display/private bus resources')
+    if 'docker' in caps:
+        # Original MDK images/peers: Docker scope by the selected controller,
+        # host tree by the PID namespace. Never legacy/ptrace or other domains.
+        if (host != 'linux' or args.linux_custody != 'pidns' or profile['architecture'] != platform.machine()
+                or profile.get('execution_domain') != 'mdk_original_linux_v1'):
+            raise RuntimeError('original MDK image/peer lifecycle requires its authored domain, exact native '
+                               'Linux architecture and pidns custody; lane not launched')
+        caps = caps - {'docker'}
     unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring", "signer_endpoint"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
@@ -670,6 +678,14 @@ finally:
                     if resource_root:
                         from test_selection_services import release_resource_mountpoint
                         release_resource_mountpoint(lane_dir)
+                    if args.linux_custody == 'pidns' and (lane_dir / 'evidence').is_dir():
+                        # Docker resources outlive a namespace kill: replay exact
+                        # journaled cleanup outside it, never as success.
+                        from test_selection_mdk import recover_lane
+                        state['mdk_recovery'] = recover_lane(lane_dir / 'evidence', source / 'scripts/mdk-gate.py', lane_dir)
+                if any(not item['closed_in_namespace'] for item in state.get('mdk_recovery', [])):
+                    raise RuntimeError('original MDK lifecycle required out-of-namespace recovery; lane failed: '
+                                       + json.dumps(state['mdk_recovery'], sort_keys=True))
                 if args.linux_custody == 'pidns':
                     import test_selection_realization as realization_backend
                     realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')

@@ -13,6 +13,12 @@ Only the original session and recorded containers have scoped cleanup results.
 Detached/reparented descendants cannot be proved absent: run refuses lifecycle
 success with cleanup_unverified even when the guarded command succeeds.
 
+recover --state DIR
+    after a selected lifecycle was killed (for example a PID-namespace grace
+    timeout), replays the same exact-identity Docker cleanup from that run's
+    retained journal outside the namespace. It never discovers, prunes or
+    name-matches resources and never upgrades an earlier failed result.
+
 images --source-root DIR --evidence-dir DIR --version {08,09,011} [--probe]
     builds the original Dockerfile/context snapshots using a unique, explicit
     docker-container Buildx builder. Optional network-disabled hello is only a
@@ -731,6 +737,55 @@ def retained_records(paths, errors):
     return records
 
 
+def local_daemon(real):
+    """Exact local Unix Docker daemon identity/endpoint; never a remote/TCP daemon."""
+    daemon = subprocess.check_output([real, "info", "--format", "{{.ID}}"], timeout=30).decode().strip()
+    endpoint = os.environ.get("DOCKER_HOST")
+    if not endpoint:
+        context_name = subprocess.check_output([real, "context", "show"], timeout=30).decode().strip()
+        endpoint = json.loads(subprocess.check_output([real, "context", "inspect", context_name,
+                            "--format", "{{json .Endpoints.docker}}"], timeout=30))["Host"]
+    if not daemon or not endpoint.startswith("unix://"):
+        raise ValueError("original MDK ownership requires an identified local Unix Docker endpoint")
+    return daemon, endpoint
+
+
+def recover(state):
+    """Replay exact-identity cleanup for a retained, not cleanly closed lifecycle."""
+    state = Path(state).resolve(strict=True)
+    config = json.loads((state / "config.json").read_text())
+    if config.get("state") != str(state) or config.get("run_id") != state.name:
+        raise ValueError("retained MDK journal does not describe this state directory")
+    if file_identity(__file__) != config["helper"]:
+        raise ValueError("MDK helper bytes differ from the retained lifecycle; refusing recovery")
+    if file_identity(config["docker"]) != config["docker_executable"]:
+        raise ValueError("Docker executable differs from the retained lifecycle; refusing recovery")
+    previous = json.loads((state / "builder.json").read_text()) if (state / "builder.json").exists() else None
+    phase = json.loads((state / "phase.json").read_text()) if (state / "phase.json").exists() else None
+    record = {"kind": "mdk_lifecycle_recovery_v1", "run_id": config["run_id"], "previous_phase": phase,
+              "previous_cleanup": previous}
+    if phase == {"run_id": config["run_id"], "phase": "closed"} and previous and previous.get("cleanup_complete"):
+        record.update(status="already_closed", cleanup_complete=True)
+    elif "builder" not in config:
+        # Setup never reached BuildKit allocation: no builder/peer was admitted.
+        if previous or list((state / "containers").glob("*.json")):
+            raise ValueError("retained journal has resources but no builder identity")
+        record.update(status="nothing_allocated", cleanup_complete=True)
+    else:
+        same_daemon(config)
+        owner = OwnedBuilder(config)
+        owner.started = True
+        if (state / "builder-container.json").exists():
+            owner.identity = json.loads((state / "builder-container.json").read_text())
+        result = owner.cleanup()
+        record.update(status="recovered" if result["cleanup_complete"] else "recovery_failed",
+                      cleanup_complete=result["cleanup_complete"], cleanup=result)
+    target = state / ("recovery-" + uuid.uuid4().hex + ".json")
+    write(target, record)
+    print("mdk-gate: recovery " + record["status"] + " " + str(target), flush=True)
+    return 0 if record["cleanup_complete"] else 1
+
+
 def run(args):
     source = Path(args.source_root).resolve(strict=True)
     parent = Path(args.evidence_dir).resolve()
@@ -743,14 +798,7 @@ def run(args):
     if not real:
         raise ValueError("Docker required; no unguarded fallback")
     real = str(Path(real).resolve(strict=True))
-    daemon = subprocess.check_output([real, "info", "--format", "{{.ID}}"], timeout=30).decode().strip()
-    endpoint = os.environ.get("DOCKER_HOST")
-    if not endpoint:
-        context_name = subprocess.check_output([real, "context", "show"], timeout=30).decode().strip()
-        endpoint = json.loads(subprocess.check_output([real, "context", "inspect", context_name,
-                            "--format", "{{json .Endpoints.docker}}"], timeout=30))["Host"]
-    if not daemon or not endpoint.startswith("unix://"):
-        raise ValueError("original MDK ownership requires an identified local Unix Docker endpoint")
+    daemon, endpoint = local_daemon(real)
     images = {}
     for version in sorted(set(args.version)):
         directory, tag = VERSIONS[version]
@@ -909,6 +957,10 @@ def main():
                 if result.returncode:
                     return result.returncode
         return 0
+    if sys.argv[1:2] == ["recover"]:
+        if len(sys.argv) != 4 or sys.argv[2] != "--state":
+            raise ValueError("usage: recover --state DIR")
+        return recover(sys.argv[3])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     for operation in ("run", "images"):
