@@ -6,6 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-dev libjson-glib-dev libsecret-1-dev libsecret-tools \
     dbus-bin dbus-daemon xvfb xauth gnome-keyring blueprint-compiler \
     libxml2-utils ca-certificates gettext gir1.2-gtk-4.0 \
+    # The policy suite configures the real homed unit graph
+    # (gnome/nostr-homed/tests/unit): jansson, SQLite3 and OpenSSL::Crypto.
+    libjansson-dev libsqlite3-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1001 namespace-test \
     && useradd --uid 1001 --gid 1001 --create-home namespace-test \

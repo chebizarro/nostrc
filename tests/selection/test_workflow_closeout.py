@@ -205,7 +205,9 @@ class BroadUnionWiringTests(unittest.TestCase):
         self.assertIn('submodules: recursive', checkout)
         self.assertIn('ref: ${{ inputs.sha || github.sha }}', checkout)
         self.assertIn('persist-credentials: false', checkout)
-        self.assertLess(text.index('submodules: recursive'), text.index('python3 -m unittest discover -s tests/selection'))
+        # The full suite runs in the shared testhost over this read-only checkout.
+        self.assertLess(text.index('submodules: recursive'),
+                        text.index('bash tests/selection/namespace_policy_controller.sh execute'))
         self.assertNotIn('git submodule update --remote', text)
 
     def test_aggregate_runs_after_download_failure_and_uses_only_same_run_broad_receipt(self):
