@@ -8017,7 +8017,9 @@
         "{source}/tests/selection/test_normal_transport.py",
         "{source}/tests/selection/post608c_integration_support.py",
         "{source}/tests/selection/fixtures/post608c_integration_20261024.json",
-        "{source}/tests/selection/test_post608c_integration.py"
+        "{source}/tests/selection/test_post608c_integration.py",
+        "{source}/tests/selection/namespace_policy_controller.sh",
+        "{source}/tests/selection/fixtures/hosted_cause_integration_20261024.json"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -27925,9 +27927,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "b559612b864c18579f98b4bafbaaa26cc65783d08ddae23e02ab37e20a3d035a",
+      "source_sha256": "226fc05a778d84e8cf4d922c667db5a3fcbc442c918b83282bb8ee6cf3e9a2e5",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "1514feb9fac686f18bb07cc20dd5c5c2ba5d2a1f6fc1c983aae7ade3bc8de2f0"
+      "workflow_sha256": "9bb4045825b44193452b187f1e5d7ef80911a29bd531ffb787aa512255cbae4f"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
@@ -27990,8 +27992,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
-      "source_sha256": "940ee3f4fbbb9cef8655c52f9dbe0632736917af7aaa6146edbb685027f24ecc",
-      "workflow_sha256": "428a5816fd6404d8c6d8d2b873c66f8a348eb59912110c501b10a5c8dbc4709f"
+      "source_sha256": "c712a814165514da86ef9e7399d0c78d4310ce6615536cf930d9b5e4d457a46c",
+      "workflow_sha256": "4ce40f1e0ea0b66dfd7580f8fc5344872c13672cf889a2dd5bcf098c3293f5aa"
     }
   },
   "schema_version": 1,

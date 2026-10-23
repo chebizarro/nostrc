@@ -4,7 +4,8 @@
 # regression workflow and the stable static-checks job invoke these operations,
 # one per step, after proving their exact checkout; the per-job AppArmor setup
 # and teardown scripts and the `if: always()` removal steps stay in the caller so
-# a failure, cancellation or job timeout still removes only owned state.
+# always() requests owned cleanup while the runner is available. Hard timeout
+# or VM-loss absence is unverified/failed, never evidence of cleanup success.
 set -euo pipefail
 : "${RUNNER_TEMP:?}" "${REQUESTED_SHA:?}"
 control="$RUNNER_TEMP/namespace-policy/control"

@@ -53,7 +53,9 @@ jobs:
       # (namespace_policy_entry.sh: discover -s tests/selection) runs in the
       # shared provisioned testhost controller, with the exact checkout mounted
       # read-only, its kernel-custody matrix actually provisioned, and owned
-      # container/profile removal even on failure, cancellation or timeout.
+      # always() steps request owned container/profile cleanup while the runner
+      # is available. Hard timeout or VM-loss absence is unverified/failed,
+      # never evidence of cleanup success.
       - name: Bind exact source and retain native launcher diagnosis (not acceptance)
         run: |
           set -euo pipefail

@@ -1,3 +1,41 @@
+## 2026-10-23 frozen hosted-cause source integration (not a hosted census)
+
+Checkpoint: 2026-10-23T17:15:00.397175+00:00.
+The exact `9062bceaa1132acbf1b4bd825dd796a17b279eff` local DEFAULT baseline
+completed 1,125 tests in 721.202 seconds with zero failures/errors and 59 explicit
+skips (52 Linux-only, six Docker opt-ins, one platform-negative case). Its full
+source manifests were identical before/after; minimum free space was
+3,262,615,552 bytes. Original logs and the independently verified parent approval
+proof remain retained. This is not physical Linux/MDK or native-profile proof.
+
+Parent-reviewed C source `f838a530e1eba407a93cd2cf0b83b7c2552ebc4b` is now
+integrated preserving ancestry: the nonroot testhost declares the missing homed
+dev packages; Darwin wiring uses a writable same-SHA shallow fixture and cleans
+failed setup; the existing physical namespace-controller operations are shared
+with the stable static job. Job names/triggers, the full DEFAULT suite and all
+nine following static gates remain. Only the job walltime is bounded at 20
+minutes; per-test/heartbeat timeouts and security guards are unchanged.
+`always()` requests owned cleanup while a runner is available; a hard timeout or
+VM-loss absence is unverified/failed, not cleanup success.
+
+B enrolled the exact two changed job fingerprints and controller input under its
+existing selection-contract owner. A separate exact test-only inverse restores
+9062 before the prior608c layers; original runtime and33/193 witnesses remain
+byte-identical. A named full-gate fixture import failure is retained and fixed by
+copying its actual normal-metadata validator module, with an isolated positive
+and missing-copy negative. No policy/guard or expected outcome was weakened.
+Focused workflow tests (35 cases), finite inverse/copy tests (11 cases), all nine
+static gates and Groundhog privacy checks pass. The original shell-wrapper
+status-variable error and initial inverse/static failures are retained separately.
+
+The next frozen-source DEFAULT attempt, safe native verification and landing
+remain pending at this checkpoint. Source beads `.36.8`/`.36.9` may be closed by
+the parent after their literal final gates and landing, without broader
+profile/W11 credit. No Docker execution, hosted retry or new API census was run.
+All prior dated census/history below remains intact and is not a live counter;
+W11 is not met, W12 is not run, and enforcement/default/protection cutover stays
+unauthorized.
+
 # Dependency-aware testing acceptance run ledger
 
 ## PR23 bounded hosted triage — 2026-10-23T15:58:02Z
