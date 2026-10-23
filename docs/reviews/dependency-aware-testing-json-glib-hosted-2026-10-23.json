@@ -1,0 +1,2324 @@
+{
+  "artifacts": [
+    {
+      "api": {
+        "archive_download_url": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12489007569/zip",
+        "created_at": "2026-10-23T08:38:21Z",
+        "digest": "sha256:4d6082bfd2dfb30a242e2fcf713a6f14ec1794f3659201798a90e84f15c4428c",
+        "expired": false,
+        "expires_at": "2027-01-21T08:06:28Z",
+        "id": 12489007569,
+        "name": "fuzz-corpus-bip39",
+        "node_id": "MDg6QXJ0aWZhY3QxMjQ4OTAwNzU2OQ==",
+        "size_in_bytes": 15677,
+        "updated_at": "2026-10-23T08:38:21Z",
+        "url": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12489007569",
+        "workflow_run": {
+          "head_branch": "master",
+          "head_repository_id": 867931223,
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "id": 39922316626,
+          "repository_id": 867931223
+        }
+      },
+      "members": [
+        {
+          "bytes": 17,
+          "name": "017091a6d3012afc3cc7b197008d86b0d1a9d49f",
+          "sha256": "968393b5c33284cf0dc51419eefca09520da44395306bcae2097f83883861ffe"
+        },
+        {
+          "bytes": 25,
+          "name": "03c0d390f07e771d71fba36cab6fce61e14d7b19",
+          "sha256": "d6d17e1b435be29c52413056e522dd99784f6216e87b1b2b14131e2e6483664c"
+        },
+        {
+          "bytes": 33,
+          "name": "065bee86b716f19bf80ce1610a5e493fd73b8a0c",
+          "sha256": "5faca59219f35c85c169c4cf1ec70dfce630124fca9e78b92dac828b081fdf5e"
+        },
+        {
+          "bytes": 7,
+          "name": "090b656b6352eed7230097f260b45d2783f4ccd6",
+          "sha256": "1374711169a499f538322b4f290132bed302d7277a8f29bfb398e440962f6f18"
+        },
+        {
+          "bytes": 2,
+          "name": "0a04b971b03da607ce6c455184037b660ca89f78",
+          "sha256": "ffe9aaeaa2a2d5048174df0b80599ef0197ec024c4b051bc9860cff58ef7f9f3"
+        },
+        {
+          "bytes": 34,
+          "name": "0eb7fbdd473811a53140f84271657ef7b642a064",
+          "sha256": "75cebc4ac74b9bbc4c5e3e8fd141766c7eb1fe303334c2e47ae3fd99be47bbb3"
+        },
+        {
+          "bytes": 84,
+          "name": "114afa82e05e10353eb4057173ce44a42858a4ec",
+          "sha256": "ac70541e99744831549637dd515d9ac363451b837b98c25de9dc40e698d9d4f4"
+        },
+        {
+          "bytes": 2,
+          "name": "1489f923c4dca729178b3e3233458550d8dddf29",
+          "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+        },
+        {
+          "bytes": 10,
+          "name": "18ae0cc5cd4f7051be5345b0f105fe549d842dcb",
+          "sha256": "f4163c2a925fea9da8170078cdfb2fa7364126e2e1dcad57456a52fa32bf9693"
+        },
+        {
+          "bytes": 11,
+          "name": "1c644359dbd6219972e6d318beef538d1e56c953",
+          "sha256": "1e12d72ffc738f8ba45b3c659cddb7350e9b5f230f626e6b5f0c388e90561eb7"
+        },
+        {
+          "bytes": 9,
+          "name": "20b6fbfec5ad10ee7157cb8d9cb193ae7901c4d6",
+          "sha256": "718401a359af376af924eeff6bc4106eff30e565aefc00b05a7653a22d28663e"
+        },
+        {
+          "bytes": 12,
+          "name": "22cdca933e21055146c0277ef09d5192de2546fe",
+          "sha256": "c46c96cd6cf992e440ba06aa42c7392cccdb9146c2ba11739b16c0e9c0978ea1"
+        },
+        {
+          "bytes": 35,
+          "name": "273722f5fde263f62b5f1e7e580c21a32ea4e690",
+          "sha256": "ad03ca856c8106b785554d1db5717794cb9040c26512c801efe4835f481dd832"
+        },
+        {
+          "bytes": 103,
+          "name": "34379153d93e38438b1e4aad0af4c5b393df13d8",
+          "sha256": "5ca72c7d8b8b4fd2bd4d33eb84c4cdc08011ae32cd6fdb3f6dbcb83421e28a6d"
+        },
+        {
+          "bytes": 2,
+          "name": "34f8ccadd1d22ac1dc09578591a8f06a2554beed",
+          "sha256": "e3993528729dc56e2c694f61c34c2e286b178167cf736b80f98552be51c07660"
+        },
+        {
+          "bytes": 53,
+          "name": "3720c2bc4764db07166082c86d92022abb931436",
+          "sha256": "79a753729d744af8f21b7a36838eb8a40d5208ed9bd52b28be764e269e849ea4"
+        },
+        {
+          "bytes": 38,
+          "name": "397e749bb4c382c0d270840a79309ad572fd987c",
+          "sha256": "e132f2b3b568daeeb2dd1868cd55ed1e2a689435e8d6f7c85c22dff7316a3064"
+        },
+        {
+          "bytes": 75,
+          "name": "3d93b946e07419b63989a0825824fd7e3766e54e",
+          "sha256": "07b83918a5c3f073cd5376a0337a7cd38cf42537310b3e3bd47d4cfb2d48b179"
+        },
+        {
+          "bytes": 27,
+          "name": "454640463035d797151222b9b9afd9a02a756d45",
+          "sha256": "a68e900547dcc9f8dd03477b2efe79f4f104e96019221a110682b5b08e538351"
+        },
+        {
+          "bytes": 38,
+          "name": "48f0741d1a2e67461c63a8d731da4d5bb7dbc1c4",
+          "sha256": "89786d828a94b2cf091431d6c1a038bc42416ad1130951099948f3a64c2c4057"
+        },
+        {
+          "bytes": 9,
+          "name": "4b05c1c3edbe818290b10be65a124c947b1a67a0",
+          "sha256": "4021fcfb6be32884c6a2da5d34844601f689433da76b50309db3f67059fcee6c"
+        },
+        {
+          "bytes": 39,
+          "name": "53ac0306c539d37c6f44f3b8c6a3ab7bedd5fdad",
+          "sha256": "7990228e62d74c43d5f702b3d64ddd3b5b4c30ad37bd7421bff1b2643e7c4caf"
+        },
+        {
+          "bytes": 14,
+          "name": "5570737dc5250c9b15cdaed5374d170477a5efbe",
+          "sha256": "d7035574c48baae652450f767ca0f075c0cf151f4712a7455aed46c142b13f08"
+        },
+        {
+          "bytes": 12,
+          "name": "55fa441e7486696e5a027f5e1d1a6d6b46024e1c",
+          "sha256": "5261f111eb7f54f8e987331085e7c52401e44815f5574f8237f7ed235f2187e3"
+        },
+        {
+          "bytes": 1,
+          "name": "5ba93c9db0cff93f52b521d7420e43f6eda2784f",
+          "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+        },
+        {
+          "bytes": 3,
+          "name": "5c503540b733afaa5d9c32bc0101e45ca45b6589",
+          "sha256": "59d49fecdc3d226f9e72adf2d3c26921af20a17e004bb9ba443577a160ab3155"
+        },
+        {
+          "bytes": 12,
+          "name": "6c7b156e2847a588a1131b56cbddf631fe9fbee5",
+          "sha256": "8afe5ee15b1df62e4fb4bf21e5dfbacfddb1ddd65eb519010b3a81fa93bf701b"
+        },
+        {
+          "bytes": 94,
+          "name": "715ded6ac1fc1c9637e1adb44c44951d7737b494",
+          "sha256": "49157bea1cf0ef2381917b9be71f8fd1313504af2e9410d1c773b3b429cb975a"
+        },
+        {
+          "bytes": 4,
+          "name": "717caa17ece635cfdcf52d9554dced2a84d875db",
+          "sha256": "9d5c90aa01533e5e5943471d9e12b8f6b82c082253c886d9fcf1cf2fbbf3a1eb"
+        },
+        {
+          "bytes": 76,
+          "name": "74d2bf352ddbf51183be40ae27be55cb52a71df6",
+          "sha256": "91755340a6d8e3ad14754cf81ada93aa0b79c3c9597fcef10dd3adcd59951bbb"
+        },
+        {
+          "bytes": 47,
+          "name": "768dc802fd24ec5830bb65b9f8c3bcba1c189d24",
+          "sha256": "3a98b455d759189cbde170ee36569620c5bcd6474d646555ab18aa7d5b146f59"
+        },
+        {
+          "bytes": 20,
+          "name": "799235e1b503ed518f93b1e898bd576733b0ca1b",
+          "sha256": "40c7a7a698ce9fa260ac13fddda770a287c864b23fce3d88485fd5c3f685a6c3"
+        },
+        {
+          "bytes": 2,
+          "name": "7a7daa41de60675a6aad420ec55d37468eae2908",
+          "sha256": "0ddb35cf9cd8e7e0393aed5df1b14c3e6c4803d5867ee2b3c72cc2599cecb997"
+        },
+        {
+          "bytes": 42,
+          "name": "7d47cc1023485c51cb1a75bd3ba1acfcd8c67f61",
+          "sha256": "472515b55b03fe757e32afa220634b85b808a85a9b764f7ac8784c107ca0644a"
+        },
+        {
+          "bytes": 20,
+          "name": "7d7a84f956444cba9db50ec9aa57cb259810aa32",
+          "sha256": "fa1869bf4f755b4e60c3eaffd77e474e890c5ad254a263ff888e1b6bff550115"
+        },
+        {
+          "bytes": 12,
+          "name": "7e9d486492f2d731d9940fa02ca8e00773148fd5",
+          "sha256": "3ff79d103d8c21ebd0629a6e7d9ec0a829877d667ebbbf74bc551ae57295dff9"
+        },
+        {
+          "bytes": 11,
+          "name": "83edd9cb00abb255547b177048822a081e7904c6",
+          "sha256": "5e149a3af519ac349c331040984c5eb1acc4b568726171d18633d5d8776497af"
+        },
+        {
+          "bytes": 11,
+          "name": "855bd450e229eb134d981c96cd0c2afee7d1dbd6",
+          "sha256": "aa824e6a7a8b4ac2b560b9db5cb5d7db8a15cfc8734852a4eeab10955d55734c"
+        },
+        {
+          "bytes": 4,
+          "name": "8bbe99e47307f012574c0f74f6429057a8249909",
+          "sha256": "e1b8087c421badf5922457d712fc368dd7f1307fc0dfc30b86abaeeaabf95950"
+        },
+        {
+          "bytes": 46,
+          "name": "8e87668f0a660ba6b6a1fcf766ac56f3e023ff1a",
+          "sha256": "cdc83c795f783ac42cfa3161e084a146087d07d2c422c9a3985e60682178c798"
+        },
+        {
+          "bytes": 258,
+          "name": "8ecac6718e7cae457186ca2fb6dab5d855d93821",
+          "sha256": "6d1cc0234d6081af9455edfa5902224bf2c4ce64e05d1820944bcc254dbc0e16"
+        },
+        {
+          "bytes": 11,
+          "name": "8f707e51ec6e3591816fa312ecf66ea5e1d9ba88",
+          "sha256": "a91158d8618b370143e6368842ab9add5387c1eace319a4b0a108d05ff7a8776"
+        },
+        {
+          "bytes": 5,
+          "name": "94f90d547583267e603de991d9d66f1272e9e932",
+          "sha256": "54cf679bb30cb9950d7004e6e9380687718eeb78d668c95a5adc426e12fb2f67"
+        },
+        {
+          "bytes": 165,
+          "name": "9401de83d75e975c94f7c8eb74fb50d5d9ff9ca8",
+          "sha256": "9e875ddf42f840e4724c72cde15352cf209154558f3f5646b4790401824151d5"
+        },
+        {
+          "bytes": 55,
+          "name": "96ddbb3becbd1f3e2e16024379c45b5372bbd5d6",
+          "sha256": "f8e0d53e36ee0975531253dcf6c795e846c3b81fb29d3fb634236ecab8c8797a"
+        },
+        {
+          "bytes": 62,
+          "name": "96f1edad6bab27d4cb3fec287e6c80a0a9c89d4b",
+          "sha256": "0bbb9bae82ef068d9d633ef7bb83be501ba960efa9b8e85cd6ec5d1b925820f1"
+        },
+        {
+          "bytes": 3,
+          "name": "9b457a98a1a59d14b07e590784a2d4fe876a0453",
+          "sha256": "0c6c532eb34b79c120b9c9f2a02bd38a749d9a50bc29f581c96f79521ff93d20"
+        },
+        {
+          "bytes": 2,
+          "name": "9c90f9c1b7a5f2b940aa17fb2e86e7bdf4a15f16",
+          "sha256": "5a1fe7dc2f8e26c6339c8a03a1cea3558c0bed8790dbc12226ae66cb36c0a2ad"
+        },
+        {
+          "bytes": 14,
+          "name": "9d7013ba55df95b9f504cb8aef8f484a50697160",
+          "sha256": "d894f16ca5f1b6b72f41f4b0aed69917faba538cba79f1d8014ef4c2aa50be3f"
+        },
+        {
+          "bytes": 3,
+          "name": "9d78f2847e5e3f66c5eaf4a0b1f80848c4531c67",
+          "sha256": "b62bf25342503a0e702918fdf69a803ce16e991253cbf6b3b4efb1aab6b9399f"
+        },
+        {
+          "bytes": 20,
+          "name": "9f44262c2d4124f958a7c62bb2fb0c6fc83b1a03",
+          "sha256": "27c7b893c7a019fcc5956ec3c2b4039751d526664ff0a54aedb15d8bc776ab7e"
+        },
+        {
+          "bytes": 16,
+          "name": "a25b9eab45a3e88678c69c7eb409f95bd8a2257d",
+          "sha256": "28d4b7fe6b78ada62aea2ecfa716f8b4b60486d7ac5b6375d551b30fe70a3b2f"
+        },
+        {
+          "bytes": 132,
+          "name": "a40f02be77a16b716aa9d6fe0dd6057a6a2e6de9",
+          "sha256": "bc005c3ee21602070f4dcd27346db2cd14b8c7c1d29b41c8d1375a84a1406893"
+        },
+        {
+          "bytes": 4,
+          "name": "ab4f9b6b95cbf945f9d781701be27ac03e67d83e",
+          "sha256": "c1300890362e4038068ef5bb55667ab91b89c1896221dace4988a44a93ce1eb3"
+        },
+        {
+          "bytes": 155,
+          "name": "abbe7f464eda300aee3b634e1ab34f296fa43433",
+          "sha256": "6289d33334f6ddfbc5449eb6fa4ee735cc9e5adef52b4bb4498106ffcf63ce95"
+        },
+        {
+          "bytes": 27,
+          "name": "b16986f5b86127735ecb19755458bd6ba31182af",
+          "sha256": "414217a03761a43c14cae049ee28f14668337b95ea2c1d572debe66f7b27c494"
+        },
+        {
+          "bytes": 129,
+          "name": "b1d850a5145c06555fa77a967ecf34e529c78053",
+          "sha256": "608db1a17ac3e60de105ee58af22e19c8f5dd4e2b842b775812bea2f78b4180c"
+        },
+        {
+          "bytes": 3,
+          "name": "b74ce6434d37df89653b4154a948bcf7ec6e5fee",
+          "sha256": "93cbdd80e2d472db703df612176b8ec87e646594fc808bd797a98a7b912b9d4d"
+        },
+        {
+          "bytes": 7,
+          "name": "bc4f41492c4a201f65a4cb814933d8a59449cd2a",
+          "sha256": "d618affab9ebca74ba905811166584150e968c4bcdd39c29001d68dbb1f99807"
+        },
+        {
+          "bytes": 5,
+          "name": "ca4240ff2da01e54b1bc7f8c8be6edda9b96f58d",
+          "sha256": "55db892ff038a4b1ea8c52e17a6e95853a9051308340b2fe92ed75c983a5031d"
+        },
+        {
+          "bytes": 53,
+          "name": "cab22d4fb3b6325c7cb8a999a96a969239dbb28a",
+          "sha256": "22b64683c6a53f9286db635ce5b5bf24bc627f7f00c28faa6b2e90a5b65330eb"
+        },
+        {
+          "bytes": 11,
+          "name": "cf92687c1223862118ed0d4b76f3185384bf90b2",
+          "sha256": "91a538409471d050d2e9e65f1c3ba33ed9053f79d97e51082931625d9348d776"
+        },
+        {
+          "bytes": 25,
+          "name": "d0f982e554e3b060038d0bcd35da5a13e50715ad",
+          "sha256": "986714756aec4eb2bed1e52619e1a8502852b9531be1545905fc9531a9722a2a"
+        },
+        {
+          "bytes": 23,
+          "name": "d225285805dd8e6d31115bfb70eef1bd942915a5",
+          "sha256": "b81f5269e6ed7568b9b9d3f02ed419d193e5bbeb8b6bb70ce8705ccec12afb08"
+        },
+        {
+          "bytes": 67,
+          "name": "dacc2f09bfc5b521baf4238fdf6e8eda2863d908",
+          "sha256": "664d9f2a45a4db3720b433e5e36f90e47070ba63e93fc3bf1f110dff200650a4"
+        },
+        {
+          "bytes": 18,
+          "name": "df14fe3ec4cfef88e732725b5fdb3421f1ed1d18",
+          "sha256": "fa89071a19f804282e612d0f4d8395d75966567730a34e09b4e463ed35728078"
+        },
+        {
+          "bytes": 2,
+          "name": "e34fc5d6db78c93728da70833d34e4e08d88fce2",
+          "sha256": "df43c7b495c27e782821685017da9a06ddb941f27371f965fbd6cfe24f2a1ae4"
+        },
+        {
+          "bytes": 10,
+          "name": "dfe99c65f95758fc4c29a0d37aadb4e9b1e8af9d",
+          "sha256": "72c387ef46515ce4607cb6b9f4eb054d7e3d3741d47433cf83ff0fc1add25de8"
+        },
+        {
+          "bytes": 132,
+          "name": "e8752ec1f33435c4afe75b07eeaa3b65e027b36d",
+          "sha256": "f7cc309c2c40acb79c0df822ac3789f64371d33b5d02655af75017ac60b39d0f"
+        },
+        {
+          "bytes": 33,
+          "name": "e999a21c3947ddfae2a59aede3e097b96116b211",
+          "sha256": "4387c779fdfe16de7e896c8506505b80527d9bc9511034310b30ff28b9bc160a"
+        },
+        {
+          "bytes": 11,
+          "name": "ecd2ba8392beed9727d9d6807173e2e7f2b627d1",
+          "sha256": "3e0e304504dad3bfbc19956800875dd8ca7585888b275f6d9470d46d15f88415"
+        },
+        {
+          "bytes": 178,
+          "name": "f0a30c0992bf813919dd375381054dda876ea488",
+          "sha256": "e6afacbc662fe018d3aeafed6d27ef8266f122df26f1c63992b0ea97af9f6460"
+        },
+        {
+          "bytes": 11,
+          "name": "f632521b1e7b62838804c637965705556768b3d0",
+          "sha256": "4c3fabaa680c67399b3b32d6a27f3ba9549705ccdb4f90556baca054f3215465"
+        },
+        {
+          "bytes": 32,
+          "name": "fab93d563be87bcfe2064d2809978665b2fd9e33",
+          "sha256": "d98494422a8518235ff0f3dba411617f9b53982e6db4be88103b2ec303997c43"
+        },
+        {
+          "bytes": 36,
+          "name": "fb2a9be601f280efabad91199c208306699ec597",
+          "sha256": "a11d49c2065cc01865100290d03c52ceb7c9f73dbcf645f62323d5c9e9f4882e"
+        },
+        {
+          "bytes": 132,
+          "name": "fb6ed850d6c293a30de0f6102e0e4e10250bc9be",
+          "sha256": "330360e0d42cb299c509c475a2c248da7c6a3df9e68d8e87e786d4077c364643"
+        },
+        {
+          "bytes": 26,
+          "name": "passphrase_mode.bin",
+          "sha256": "fd78b24bb38ddf8ec6e099d24adac83dcce0737b7f049616401d8612845a4126"
+        },
+        {
+          "bytes": 94,
+          "name": "seed_mode.bin",
+          "sha256": "3cb82df421365a47ff742aff35d4e18018032585e119a52aac0a8122c91f34aa"
+        },
+        {
+          "bytes": 93,
+          "name": "valid_12_words.txt",
+          "sha256": "c557eec878dfd852ba3f88087c4f350f09c55537ab5e549c3cd14320ec3cef38"
+        },
+        {
+          "bytes": 187,
+          "name": "valid_24_words.txt",
+          "sha256": "69be79ef3c28f55d7cb84db2dd3c18dfff45eeefebd09b8c5f7f3489b8ba09ac"
+        },
+        {
+          "bytes": 94,
+          "name": "validate_mode.bin",
+          "sha256": "c2f40ed95e6fe2d7e9ca9ebc94c8d1298675e7c1e361b9a41e7cb8c989ef048d"
+        },
+        {
+          "bytes": 194,
+          "name": "word_build_mode.bin",
+          "sha256": "0b03ac85fe1ef2f0b1072ad73b78c0c0ab02ec3e9dfc885ff055545b952d72bf"
+        }
+      ],
+      "original_zip_sha256": "4d6082bfd2dfb30a242e2fcf713a6f14ec1794f3659201798a90e84f15c4428c"
+    },
+    {
+      "api": {
+        "archive_download_url": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12488847881/zip",
+        "created_at": "2026-10-23T08:29:18Z",
+        "digest": "sha256:f8f1fb5dbd15bc70d41e11af1ed7cd2cf7fc1d01f056276c94c4f91fe9c2f701",
+        "expired": false,
+        "expires_at": "2027-01-21T08:06:28Z",
+        "id": 12488847881,
+        "name": "fuzz-corpus-nip49",
+        "node_id": "MDg6QXJ0aWZhY3QxMjQ4ODg0Nzg4MQ==",
+        "size_in_bytes": 4389,
+        "updated_at": "2026-10-23T08:29:18Z",
+        "url": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12488847881",
+        "workflow_run": {
+          "head_branch": "master",
+          "head_repository_id": 867931223,
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "id": 39922316626,
+          "repository_id": 867931223
+        }
+      },
+      "members": [
+        {
+          "bytes": 37,
+          "name": "17358c33f9c7a500b6548651df549c800930849e",
+          "sha256": "df97976e235ff439e8f1d2191b3ee9b6deea851a89ecad03f3036c817b2525a7"
+        },
+        {
+          "bytes": 119,
+          "name": "2537d977da24af15571429f6ada5809dfd664fe6",
+          "sha256": "9106318d1e7d802ec3ba88d73c10970edac9bc19a40356eeb93234e21cd5b8c4"
+        },
+        {
+          "bytes": 92,
+          "name": "1ddbf9f3c9d099dc838cdb65b959e1cdbfda16f0",
+          "sha256": "ccf5cdab51b4d8b79d70f900abbde526e0380ccfcef1646648b0eeb4a430d779"
+        },
+        {
+          "bytes": 46,
+          "name": "3cfa1ec9e519264f705257308c9dc9bfb217f57a",
+          "sha256": "902331c563966cb1fbf5c1ef3f14a3fdc8de709305acb6cc84a950e045c57676"
+        },
+        {
+          "bytes": 141,
+          "name": "45fa676d7d06de53de43361b84589b21b8fdb8eb",
+          "sha256": "ed5e75eb0ae4d98d554c7d60e43eacbf4cf29fe02edbe56bee1cbafcfc6271ec"
+        },
+        {
+          "bytes": 2,
+          "name": "5afe025663e13707d86c8a6795f95daed22e47df",
+          "sha256": "acdff77449ec60b5b11ac5c8c5b909da8c02d8af777543f6fbab9987e5d80ec3"
+        },
+        {
+          "bytes": 92,
+          "name": "92f58a1705b8ccd3b9a6015abe6610ef27e60754",
+          "sha256": "d4758ac1d6d7dc0928663ca44821c3faf9979b1ea75544f91570edd8cf80ca3a"
+        },
+        {
+          "bytes": 52,
+          "name": "998d5dd853d6507d2c6ac2d0218e4e5c4a281a9a",
+          "sha256": "a4cbc71affe0639166f4df4fa8d1e08f6571c7470bf7e3da5ad4806e707428e1"
+        },
+        {
+          "bytes": 103,
+          "name": "a0241bcee09d9d3c2c426a0c09b7876c4931b04a",
+          "sha256": "99eef61207c896b7794e879acd390c05475bc29058dd5a94278c18407798d17f"
+        },
+        {
+          "bytes": 139,
+          "name": "ac1f1385a96e7d1fd59e0ca1f75087abe23db5c7",
+          "sha256": "aff9f2aaf8f6038d5e3fe0c26f6b2af8772842d951dad495340d3d3182787379"
+        },
+        {
+          "bytes": 8,
+          "name": "d418c31239de5248ace2848f00fc926e7c50b3dc",
+          "sha256": "fc5b719a22d9211420d3cb6be659d355effc347a0dfc9f230e4aa815990995e8"
+        },
+        {
+          "bytes": 39,
+          "name": "e453ac0fc820cf464a43dc65114fb2116550e8ae",
+          "sha256": "5b5ef2ee4b50023bdf8ab3026e76a513bfc0f2fbb41f923713f13ea066f7df5b"
+        },
+        {
+          "bytes": 34,
+          "name": "e563e5ff688aa21d9700a2366264c0f39b59aa7d",
+          "sha256": "e364f5fe1578abc8e8a6a87748a259f54be240a27830674c596cdf5848c2817c"
+        },
+        {
+          "bytes": 34,
+          "name": "eb12c8bf331aa7fdc16b4f487cb1c04bf0f8ec58",
+          "sha256": "abb8e79dab8d6eccfdabc46036a5efc00fe725584041b83d92c6a8e82a9390a0"
+        },
+        {
+          "bytes": 4,
+          "name": "efb76dbb0a372e359775eb698cb68377ae9f80d2",
+          "sha256": "d47c2b2fed4700890a592ab317eb3601fe954fe9d823a2b6613d02f433ee5abb"
+        },
+        {
+          "bytes": 129,
+          "name": "encrypt_mode.bin",
+          "sha256": "289d0c6f2ebe94defed78274c12ddda0a009e7c11d3e2e6e985c1204348c6c22"
+        },
+        {
+          "bytes": 1,
+          "name": "payload_mode_short.bin",
+          "sha256": "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        },
+        {
+          "bytes": 149,
+          "name": "valid_decrypt_mode.bin",
+          "sha256": "81d7e73d21b57f0d6815e15aeefdc2e2c2d27accbb183fab139402f22ded8105"
+        },
+        {
+          "bytes": 148,
+          "name": "valid_ncryptsec_1.txt",
+          "sha256": "29c4e54f5b651b26e5dbb3902f358ccbac28bcbda8c3d8037392a545c6360133"
+        },
+        {
+          "bytes": 14,
+          "name": "valid_password_mode.bin",
+          "sha256": "50e652ce26bf6b6cbc099ffef37c4d9a82b5435d981e70f71c1ea4df4cd58b77"
+        }
+      ],
+      "original_zip_sha256": "f8f1fb5dbd15bc70d41e11af1ed7cd2cf7fc1d01f056276c94c4f91fe9c2f701"
+    },
+    {
+      "api": {
+        "archive_download_url": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12488830715/zip",
+        "created_at": "2026-10-23T08:16:55Z",
+        "digest": "sha256:cad4dd4e4014d5d265ea530ef8c688891e5e2e60d3c90add55af1e25cd33157d",
+        "expired": false,
+        "expires_at": "2027-01-21T08:06:28Z",
+        "id": 12488830715,
+        "name": "fuzz-corpus-json-event",
+        "node_id": "MDg6QXJ0aWZhY3QxMjQ4ODgzMDcxNQ==",
+        "size_in_bytes": 25504,
+        "updated_at": "2026-10-23T08:16:55Z",
+        "url": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12488830715",
+        "workflow_run": {
+          "head_branch": "master",
+          "head_repository_id": 867931223,
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "id": 39922316626,
+          "repository_id": 867931223
+        }
+      },
+      "members": [
+        {
+          "bytes": 76,
+          "name": "01707a848d08bbc8771ac85cc48c4b708f8febab",
+          "sha256": "7c34e31073a6fe30caea38f61048146f739366657dca31fd565117d15bdc5d72"
+        },
+        {
+          "bytes": 22,
+          "name": "02175c719224a78e4195eb05ad93b2d2fbff2329",
+          "sha256": "73ca15071c0b2a6294e312ff62f380293a422cb4c5b6109b6f292326e2b69d4f"
+        },
+        {
+          "bytes": 67,
+          "name": "0277edc7d95ebe765d596390139d5634ed493f3e",
+          "sha256": "20266a747cd3ec12c28766302f61db38e8436f3ba26c44b19c5ed47303db3239"
+        },
+        {
+          "bytes": 66,
+          "name": "0335ff8b91d75e31827f921dddc2fbc726b56a11",
+          "sha256": "37056660703cee9e143f876ea5cecdd7672f5af61b332272cd89813363e59cdb"
+        },
+        {
+          "bytes": 2,
+          "name": "0b0feb3147ce20eb2c90076367f895c59bcd14b3",
+          "sha256": "9def996cb1ea87e596b6cadccca3839a352e99d9ce07e635cdb239f38ca294f8"
+        },
+        {
+          "bytes": 8,
+          "name": "0db71d9f706fd1097f6744432abc636999b5a2d0",
+          "sha256": "e09aec7fb74a6318cb50adf5a95ab4bfb1aef8dbcce54940216c9f22f26336fd"
+        },
+        {
+          "bytes": 4,
+          "name": "0f09c1c337a4a9704613d360d43011b9046e5839",
+          "sha256": "64451a52ea27d26836cc723b6fa0ceee74ca32bec364ac4f7c9158cff84be2c5"
+        },
+        {
+          "bytes": 70,
+          "name": "120fa5a27fc07dd3f281fcbdb75f6793536d383e",
+          "sha256": "83ebc688df39635b425df7b77a4a79f20f3315367baf71c7b90aea954fda836e"
+        },
+        {
+          "bytes": 9,
+          "name": "146757af35e7432c911d08435d7c4be93f267f08",
+          "sha256": "8ce70adde30a4240e598acd9926836854ff05290d5e289187d0f9019efb97359"
+        },
+        {
+          "bytes": 23,
+          "name": "158761c66ab1c39f46533cfceae0514f5689b955",
+          "sha256": "fa605ca554dc4c04f4ad58fcb64e1cc94540729a9d34ec8bcd7d090f8342255a"
+        },
+        {
+          "bytes": 10,
+          "name": "1a4a2db2672b96d84d672d5b3beb436f23f55ad3",
+          "sha256": "27d4549b1f330f621e0c88ff6a92aab57e7b8222b400077a166f57d9572d338d"
+        },
+        {
+          "bytes": 29,
+          "name": "1b071b5b22905e982f32c23f817d872d0ee7c442",
+          "sha256": "0d9e6875cf32a4995b087d8d305eab4985171e5842c1e367ee403f9c1424ada4"
+        },
+        {
+          "bytes": 10,
+          "name": "1bb077014d8b2ab90cb330b0241be40dc8f39032",
+          "sha256": "e9928bca337fd79f248ce76b017e89d3f51a3fd41e8ed5594bbafac07eec699c"
+        },
+        {
+          "bytes": 118,
+          "name": "1f0bb71689a150de1eaa49a7e82a1bb56475c5f9",
+          "sha256": "9c3fe7153c6398e9b1d1783d0ba50a28cff649b1bced261dcbeff1f0caa6e030"
+        },
+        {
+          "bytes": 15,
+          "name": "218ba6f90664e6e72068a43df132bf9ac059005f",
+          "sha256": "23ec30a94427933a01ad0729fd207aca64c552f0eadd2f74fffa708685fc1a7d"
+        },
+        {
+          "bytes": 66,
+          "name": "25932f27bad6cf9fd46ef51aa23e677d54521cd6",
+          "sha256": "6e8b3ca7f88a6933e00f0b5f1c96d0be74653a9f67f63a3dcb9e0e69f2bde509"
+        },
+        {
+          "bytes": 11,
+          "name": "25d745d72850e2d40c997d4d5b8b8b852724f587",
+          "sha256": "f0e4eea7fe9b3c81122595f11f11fcb5d594cba318d953498a639aae30064926"
+        },
+        {
+          "bytes": 66,
+          "name": "2720fb25ee0059e93001bff4243e7dec819c60ac",
+          "sha256": "9647f9d238ae00527f81ec1686a6b3fdb6b1b2567cc4a9290347f4d3dd440e77"
+        },
+        {
+          "bytes": 141,
+          "name": "2887392321c6145f4ccc88b70000f5943b995d91",
+          "sha256": "54aecde7b73eac5eda357e5d3c232d60ccc01d2878ded11b1b9c66c444f2c51d"
+        },
+        {
+          "bytes": 10,
+          "name": "2a766713b3e201e9d337d781fc35bad1f161c1b9",
+          "sha256": "ea367d4358c6c9238ef977c548d6112f0416f19b29854213a3d3b6877183381f"
+        },
+        {
+          "bytes": 3,
+          "name": "2c3872311c510661e4945cae0bb55b225328fbbd",
+          "sha256": "5452b90218fa204025701d0196eec067bc473043d65ad91a9c66f94cce58ab47"
+        },
+        {
+          "bytes": 66,
+          "name": "2d0022855d94b1e17feb74691b679a121638ff8e",
+          "sha256": "f32e841ec6faff0ab364e94f0057a9a914299bff94bec5df1f67bcaf3dc3afd8"
+        },
+        {
+          "bytes": 19,
+          "name": "2d140196f453711d364bc97900bb9521e8d0ebdd",
+          "sha256": "739a35388fd3b64fb77b3eb5e0c7f6ddb7e3719f7062b95fb24e88c89344a929"
+        },
+        {
+          "bytes": 76,
+          "name": "2e26637afdbd2df7b105676e7f897062e07e82f9",
+          "sha256": "cc3faac34a683a66668ae28355b4dfbc9f4412f7be220d0f080200f5f5e81a6e"
+        },
+        {
+          "bytes": 66,
+          "name": "2f86f34d5cf2db58efa21d45ceb58c69eb55b025",
+          "sha256": "8449a9605568ff7d372649ed402d4e155444003b8e919e01eeb0b35dd948f876"
+        },
+        {
+          "bytes": 13,
+          "name": "3515a981438140e2656d2918bcc39bae7c009531",
+          "sha256": "cf69ed8627e089c919ebd7d78a1725aa8034c16015dd92af5dd303cddc618cc7"
+        },
+        {
+          "bytes": 2,
+          "name": "3074d30cd9a39fb8be028b94c457c67ebb03ef53",
+          "sha256": "7a0fea703f89680b2ce80fc2fcc40ba207cd8e752ffd523e7dd39c3099ed3dcd"
+        },
+        {
+          "bytes": 66,
+          "name": "354bba0ed79e40f738a1424e9da16461dbe8be48",
+          "sha256": "e25a0a65e2642331a2e9f11a52883215bc43ec764decf76275b05cbe08162b83"
+        },
+        {
+          "bytes": 66,
+          "name": "3898b94acec47fca07d86eaa22559149ada5a175",
+          "sha256": "69609a08c692a3d90fee4deb64ca688e88a8d57cb4db8f39ab8e2c7cfe3bc08e"
+        },
+        {
+          "bytes": 9,
+          "name": "3b94b257804bb371112e0d537a11274b6ab92941",
+          "sha256": "c6617487432617ec32edbef72ee1a3dc4275a6017a0b9b53d8188f5ca5f30c27"
+        },
+        {
+          "bytes": 27,
+          "name": "3da5902a951a863625943e945dc54df4a69d36d2",
+          "sha256": "76c72797a69938241c26d245782fb1e88fcf27f471f6d151a5a10b780db6045c"
+        },
+        {
+          "bytes": 67,
+          "name": "3e7d74dbbe711fb5bb1eea847ae38dce1a89d026",
+          "sha256": "e74d81de54e60040ff3aa7720ba4fc0fe6c0d04d24af54015ee276f518197fb8"
+        },
+        {
+          "bytes": 2,
+          "name": "3ed1a58e16a1be4d7c3b7ecf38cb3a260dbafe18",
+          "sha256": "b71210c6179ac15215bcc3d3e4fe57bf6edd243eeab18d9b2ba65330cf7744c6"
+        },
+        {
+          "bytes": 26,
+          "name": "4103f85f3e2eac094aa7ad4e52ea0d02713017ce",
+          "sha256": "6cbe19adfb144b727eaad9864d0f8e5aa0f8c110c5729ec3d313c1e41a03d3aa"
+        },
+        {
+          "bytes": 3,
+          "name": "410715f114d8008eaeceb407a7d88ea7286e9084",
+          "sha256": "a817ec6d630af48dc7f0dfa0025beab2df6054fcbf01465a9857940179d07e1a"
+        },
+        {
+          "bytes": 20,
+          "name": "42b8804cced8837322e0abcdb61ac5ad8277fd35",
+          "sha256": "8964df7d562a87f4f7f662f163f8fa41954bcdd39fb1da3583584f5b30ecf2fb"
+        },
+        {
+          "bytes": 90,
+          "name": "444b554e27ee633b3e71539b4ac265ce7b8be20f",
+          "sha256": "53aef99c60e74152b2ef0076cc0c746b3e778d296772149b7c8858fa8ac17f6b"
+        },
+        {
+          "bytes": 12,
+          "name": "4444562e3f6fc7bc9476fce004d5294c36e9011f",
+          "sha256": "cc01be6265d4dce0781db14b8782bf4c751b151fd29e4066cead5e5d68265b5b"
+        },
+        {
+          "bytes": 12,
+          "name": "458f5bf7d76f4a61cc7c2cf5fea4d13f8e878f55",
+          "sha256": "a233e5cf7868f9e8b0a726135af270526bc9268faebd358c59036e017df77777"
+        },
+        {
+          "bytes": 171,
+          "name": "4bb5855ce2272c3b79f9a00b97df52576649eac9",
+          "sha256": "139f38a09e5efc07082af1acba55a914785679faab1b1f20439f1944e97120cc"
+        },
+        {
+          "bytes": 36,
+          "name": "4f1842a47c607e90ea46bac604dbe15b2d892cb4",
+          "sha256": "398f628ecca92dff4e90d9e7dde7f6a12c74cd12c97e8bd70be09f9f2b1f3ac4"
+        },
+        {
+          "bytes": 278,
+          "name": "51896b97a50c289a3d1fd6f0a67fc5b7d53cd0f2",
+          "sha256": "f89ecf8d7331b221a1757d9df0115a3dd4a6ba85ccfe996b5e1ec27c261aee05"
+        },
+        {
+          "bytes": 12,
+          "name": "532f77fc04b6f4b90a193e410c17f0771f3db6ee",
+          "sha256": "62b5565922698934fce91a705b1fcbe4a505733f1010c835263aecd79731e7eb"
+        },
+        {
+          "bytes": 31,
+          "name": "537005ffffaaafabaac1dac2230b8958732e0205",
+          "sha256": "eab4c1f54ddecbe4d62a7be36c0cc10f36fc509b44bc244feddd28c09b329a21"
+        },
+        {
+          "bytes": 3,
+          "name": "5419911dca7ebd6d84e9258561505a3dfcadf1bc",
+          "sha256": "014974fda99e6dfcec90a985ff1992cfaa7616879d03a2b68ec263be9092735f"
+        },
+        {
+          "bytes": 2,
+          "name": "5ca960df8536c1e9d89999d588591d26d779960f",
+          "sha256": "8ef19acb68bb7bacb5c6715f2d6f0a293db6dc0a8eadb8c92f24c0e34e86deda"
+        },
+        {
+          "bytes": 66,
+          "name": "5e8f6e00dd4b32df03ef0d08e2e9dc9f8e8eac70",
+          "sha256": "28152f574a92dedb51fc457842b5f4d08c8cd4eb84a4145892d0634a38ab0e32"
+        },
+        {
+          "bytes": 72,
+          "name": "5edb3832a0c7f4a5a845cd6f9eb77f5d02829df5",
+          "sha256": "ced1046b2fc6926e42c4426dfded441dd258a206023f951771e22fa7145117e6"
+        },
+        {
+          "bytes": 8,
+          "name": "600c35a8278b369a4e4d240df29ef9f3002838ab",
+          "sha256": "553b394632ac3e4369d7c03f6ed24aec3c6fb5cff9b62817da747018465e5831"
+        },
+        {
+          "bytes": 13,
+          "name": "6285a982fb846ca59c3ea2cac553f47737d9e278",
+          "sha256": "80d19e421b02a2714d08f5dc71f4b5b84631b36dc67ca923442bacba58cfb85e"
+        },
+        {
+          "bytes": 3,
+          "name": "62b6c7f894689741637d211c39bf93df44985434",
+          "sha256": "fb1c784eb10ba42e22c36af396fc94547662837c14f708e19ae625ccb9d491dc"
+        },
+        {
+          "bytes": 11,
+          "name": "65dfdfc052f81f38338d0cc3a3abf35e343244d9",
+          "sha256": "d1f9e70b2ee540d011a4328ad9844bb5b0b92ae0b437985b94495e152ac87332"
+        },
+        {
+          "bytes": 15,
+          "name": "67fc0acdd2500487096ae60076c256b56794e290",
+          "sha256": "76156f1654afe892fccd35cad058832f8b22d69e7cc7f5f7750c1cb45001dc67"
+        },
+        {
+          "bytes": 3,
+          "name": "6a987f32ce6dcb95334a03f4ee9f9221326c32b0",
+          "sha256": "2ab5d674ec9c0447c2b9a3c1c1e4f6395f84a5b99ec3109ab43879d64637ee22"
+        },
+        {
+          "bytes": 66,
+          "name": "6ef8e6ee4eed48d2cbaf6ae662a537b5069beed7",
+          "sha256": "ec2ae3bdeb41fec1800377798a4a0c689f7957bd4ce5f17db15ecb3ed6ca0d1e"
+        },
+        {
+          "bytes": 66,
+          "name": "6f0ddb3727e815a7563e591dd71099ac19ae42c6",
+          "sha256": "c5e07a636180a87da5a34158f1b50e9ef903646ab358d5377eb97de6f88748ab"
+        },
+        {
+          "bytes": 66,
+          "name": "6f54449961544a415c1f800caeb897aa562ae3f9",
+          "sha256": "ed800a6131b0d5239da23ae4eeb37ca13589fb4d46b824f4dc3d2f94b0cc591e"
+        },
+        {
+          "bytes": 66,
+          "name": "71d85f3cdc7fc2da1a87d163d8287edba492226d",
+          "sha256": "bd1050b22332a4b61f6a98ca44b5327e0a0768bad4ea770a53773e6c12478662"
+        },
+        {
+          "bytes": 66,
+          "name": "73670b0ee9385091dc79bbc17f16ce2096622687",
+          "sha256": "b3b46ceac628a6e535e3b0c6acb9963b28240f0072f8c5128c574916b33c4152"
+        },
+        {
+          "bytes": 11,
+          "name": "7382a1401e71255e719dab79574f75b59accb113",
+          "sha256": "305fad1906b9e7174306667d2b3129c285b128c22a1bf8c327ee9016705d7827"
+        },
+        {
+          "bytes": 66,
+          "name": "74635c626600fb47f6e16d75d18396ae40e29fa8",
+          "sha256": "b06479a235a24bd2a4ad5a23bef0f21c8bdae4bd3e0911ace3612854fafaf982"
+        },
+        {
+          "bytes": 66,
+          "name": "74b0945108625b8524084663ccde483d039569be",
+          "sha256": "b743c051f441bcfe8804591c79b562e5cc91eb955e7d3a5ecd09b206da849d44"
+        },
+        {
+          "bytes": 13,
+          "name": "75353601349b3fd2612fcb18e40cbc411ed3c11c",
+          "sha256": "677ab3a7a615775a2f5da367d0dc0f50492148e55f8148bd888d1bfd08fc01a2"
+        },
+        {
+          "bytes": 20,
+          "name": "772fc9d994026e47bbfcd6ad87a1e47be00fd775",
+          "sha256": "c57bf85d29591d196d1400e73569e3b6506c6becb452a0f188176c590350f920"
+        },
+        {
+          "bytes": 3,
+          "name": "7850c00275b3acc8d53a319483b6ed40ce80ade5",
+          "sha256": "60ef03305bbfcac5fad345dab9b45ad4960d6f8aebd83430a49ba44600c19d0f"
+        },
+        {
+          "bytes": 46,
+          "name": "77a6ad4347c44d36283bdf3837c1dcb778078de8",
+          "sha256": "6db73300a802e801aa8f7d65459fa0df7502a3f9ba425d65bae3aedec269edd9"
+        },
+        {
+          "bytes": 17,
+          "name": "791734cf5f84fbbe90bf2c14b7b693620968c999",
+          "sha256": "e87c1f2731a1babe2b9af3589670253b47a9ed787b2b9494f487d2770634fdd0"
+        },
+        {
+          "bytes": 7,
+          "name": "79e940f00a437535f04c902b1b31e906d5c4ec39",
+          "sha256": "88fbc3b5c20bbccfaf21dbb5b157266b5e4fa5ae6f0ad509624c44df57579179"
+        },
+        {
+          "bytes": 66,
+          "name": "7b4037210dbb0e83d337d8bad533ab681414fe0c",
+          "sha256": "7d9a0feef5d5600d6aeff5db620cce1ca0a71ddcdf25ee4b4af15481b85466de"
+        },
+        {
+          "bytes": 72,
+          "name": "7b8736d52d5b536a7719570c9ebe903c05fe6410",
+          "sha256": "746b7bc36224b3787d08a65b34b8287ca8a7760e0f91b31cb00f76c42e219fa6"
+        },
+        {
+          "bytes": 68,
+          "name": "85a6d955a7161036dd8919de4a842647950ff0b4",
+          "sha256": "35f8186d305e551ed001a140164d1398ab82d781bd6984df09188b22e2bf6768"
+        },
+        {
+          "bytes": 115,
+          "name": "8aa092bc57b574d75201b16afe160ec6d0edac5c",
+          "sha256": "31b6a50bb22e6ea1f73f30df8338457ab3dd2ea61020f30d9d3c7f39f8e299c3"
+        },
+        {
+          "bytes": 66,
+          "name": "8dc79623e308530a3283e627732382797728ffb5",
+          "sha256": "af2318bc4fffb3634eb40e95f64632b16b4c9e300bcdf56b0d79973ba66dff76"
+        },
+        {
+          "bytes": 2,
+          "name": "9159cb8bcee7fcb95582f140960cdae72788d326",
+          "sha256": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+        },
+        {
+          "bytes": 14,
+          "name": "934bc66021e4b754ed98f2b9a2c5e050563b0964",
+          "sha256": "affe57ab138e83b5025ecea3ed147b15893909454729722c4f55507da64b4c8e"
+        },
+        {
+          "bytes": 66,
+          "name": "9630af86891ee4d18d37109a78fb81ffde45d639",
+          "sha256": "ea40929d61136ea7cf8f4198fb00b3ce7e8c73e9795091af09c74ad4255807e0"
+        },
+        {
+          "bytes": 170,
+          "name": "97b08b3d6d99492c70be8eab4f3e9b3bc55e5c8a",
+          "sha256": "56d18c13a04e1b2b0f3278441a39b60b034dc85cb10b8eab59c38b238be879d9"
+        },
+        {
+          "bytes": 5,
+          "name": "9b96317fc1d4a9c734ba2cf971547a426d5b3e56",
+          "sha256": "9154c95cc86161f1488705dda8aae2ff12e3c31b9200e8cc0f6f82d2fc47de13"
+        },
+        {
+          "bytes": 29,
+          "name": "9bd81279ea2e0125e572327072a9a36a2a0c1131",
+          "sha256": "0f7299281adac4e44fe4c121d87ded93b65bbd2a6f3405c651a32f1fc8e72915"
+        },
+        {
+          "bytes": 1,
+          "name": "a1a7715c7596c77b892dc6d4debb7c108ca4ef97",
+          "sha256": "d52022534fa2dba3bb8a45809c425f42a5dd8786ef8d206fcff19c1fd66725b4"
+        },
+        {
+          "bytes": 66,
+          "name": "9edf6ebe09312ac6feb68282873a25985df5608a",
+          "sha256": "6600dbd3867ffabaeb6f1099970a8215f47bad38ba0e7784e4f0e3631a7c1326"
+        },
+        {
+          "bytes": 3,
+          "name": "a33a4c513647bbde06336af26ae7e0a6bd9eaf63",
+          "sha256": "5f073fc3edd33678872164346bea948e933a07c6a8e3a092a3c2b8caa10dc786"
+        },
+        {
+          "bytes": 14,
+          "name": "a3c537d2fdc2fc3900020803805a508fe36fe65f",
+          "sha256": "97abcdf2324f6c6754536c27d47aea4d3999223c02bbe2c14c22bce46823511a"
+        },
+        {
+          "bytes": 66,
+          "name": "a509ad3d5710a36bd63cc36be8fe8facfeba4c69",
+          "sha256": "ae66c37360aae78152c79a1ee02b7271d4c25bb4ada11a78817536dbc1cb5ff2"
+        },
+        {
+          "bytes": 15,
+          "name": "a6b5d89c6efd85fba713a28a12cc96e88124ef78",
+          "sha256": "0ab1a4bde801e43a5754514c2e33f3fb1e281803997199529ee93d6639ff7bac"
+        },
+        {
+          "bytes": 75,
+          "name": "aa33ac07f1cba237c9c91a3ac471a412174e6de0",
+          "sha256": "135a543995f019da749acaa4737f0efb2ee08d6441a40f61de08884ab99a99d4"
+        },
+        {
+          "bytes": 21,
+          "name": "aeffe31da85de026e03fc2adc0d9c7127bfc8a68",
+          "sha256": "096a9c9bf4ed3e5007afe68cf40554bab4e4a9accad919903ba13de7d8e9d72d"
+        },
+        {
+          "bytes": 66,
+          "name": "b0e77fe69ea7c2a659e1bad0a008f39d0621412d",
+          "sha256": "4d948d96fefcf899729707b820f20ca7805f89c23e0b281759069ae8699dd63b"
+        },
+        {
+          "bytes": 66,
+          "name": "b1c419eb0091452902f4d4a5bb2822292c0f33a3",
+          "sha256": "dde71f94d137e2b6dd2069be04c5fcd460d62233b133b106ec97a6ac39afa5a7"
+        },
+        {
+          "bytes": 149,
+          "name": "b2cab2d241f102e0af22c767f49c4df54e8780d5",
+          "sha256": "9fd7628a300f252e01c504243ec21ff29e61b315a935f895c259f6f657b69381"
+        },
+        {
+          "bytes": 133,
+          "name": "b54b603ddbb8bcd57636e5a6cc39af5dfe4274fa",
+          "sha256": "3143eeffa1a40cdefa38ec6a7331a6534f104716cbe580fb520e700a73d50734"
+        },
+        {
+          "bytes": 69,
+          "name": "b559b0b02e01d0c2423f707239bfcc81f37379dd",
+          "sha256": "f365c18a2476ccec40e4b8870f583b15d611e6a2f139d839edee1479f5655d78"
+        },
+        {
+          "bytes": 16,
+          "name": "b57cd19f1a3c89d109ad46896cb532fb09104be4",
+          "sha256": "fcf6a2bd98de440b1e24708f9e1a17c1fdf0de6bb5dd6701a76f6f69a3decd51"
+        },
+        {
+          "bytes": 2,
+          "name": "b9b9aa5a11cf255ed1d60d1399449e58b9cc9549",
+          "sha256": "45aba653755f190b0f98bb70aba941b0fa4ceba067ca9e1b1c25d2c9c54899ca"
+        },
+        {
+          "bytes": 45,
+          "name": "bfdfe6d93b0abc2bd10eb10d9e138a4e00d009d1",
+          "sha256": "7100008a3aab63699e28cb4b4dc72bb544f007d76db74270dd50fb48ab747c96"
+        },
+        {
+          "bytes": 74,
+          "name": "c4567b507a2180e91f2bce8314d8d3e71460b1fd",
+          "sha256": "848a71081dec4b74c577f157030eafc020f26fea425dcc6b492a561576f45497"
+        },
+        {
+          "bytes": 46,
+          "name": "c4a7a76f8ed3315369ce58374a6d234f3c873c11",
+          "sha256": "2c25db30dc33ef9590891557e2fb6760ab5b212c72c81a61b3e18c869c4ba11c"
+        },
+        {
+          "bytes": 41,
+          "name": "cbf136653384016513285011177e722d195a160d",
+          "sha256": "ddd56614a7d0b521de514e5989f54996ae550b60a9da7451c519e2b8e1e31db5"
+        },
+        {
+          "bytes": 66,
+          "name": "d041d8ed48977063df02be571d261f76a8123a05",
+          "sha256": "7a281bf649a460e6e2e527b1defe71b4bb0c63b29b7b8311723365ca76bc99e3"
+        },
+        {
+          "bytes": 141,
+          "name": "d06dced73551d9a008a3ca069e4e47716b3f4a17",
+          "sha256": "7e8a992641c2bbb351f08175f982841d3c8c550b7951931c9c182292aa8a868e"
+        },
+        {
+          "bytes": 67,
+          "name": "d07ec2c0d331668088141d06d8365c181d25f782",
+          "sha256": "e94c93bed6ee3c1034696fa332d00df69ce63a8694daeedbd29c1b4f68df74b9"
+        },
+        {
+          "bytes": 66,
+          "name": "d187e23d6386ef7116980a7a678b2ca8549cc8c5",
+          "sha256": "49813ac480f7356086df174d46265921651202bffa015155a5c040bb5e9d2595"
+        },
+        {
+          "bytes": 14,
+          "name": "d1df94dbf14219120fe6464b2a8a4a0c1302cdce",
+          "sha256": "d0214099065229e578b41d0b5da516cddb97886e663222a8478be082d0ef70f5"
+        },
+        {
+          "bytes": 13,
+          "name": "d40fceb2eb075f8bc3d6fe387cf5abc60991b871",
+          "sha256": "39d8f57d2670da4dfec4feddc1f73e3830c18cbd8ca8ac7a087b9d9ca21b9428"
+        },
+        {
+          "bytes": 66,
+          "name": "da338475fa17390c05779943899bf3f9fe5b65a6",
+          "sha256": "6d12070b6d4b21b2cd79e9b3fff1fa0476d15daa47ae27b7f13ddd7ce923bd44"
+        },
+        {
+          "bytes": 3,
+          "name": "da3cddb5b12a12e30b8e04d30a5d4651a413b35d",
+          "sha256": "dfc5464f6bc909a6e84b9d453302fc56cfe1d32ae46d6c6c0a6a5399468f188c"
+        },
+        {
+          "bytes": 10,
+          "name": "db394a73440c101dcece0e127c3b1624ea8a9dea",
+          "sha256": "aa86be8fb4a99265c9a5f474b2d8d9c8ba9a640258e93ed67d195b4ce197509b"
+        },
+        {
+          "bytes": 16,
+          "name": "dcff6e57c95ec3aaa7f147220fa2088b518678a9",
+          "sha256": "6e2f3eb116ea4c91e71f0b5e2024bc520222772454f68ad40b6416e33c279ee3"
+        },
+        {
+          "bytes": 66,
+          "name": "de6b0d617cd0c43d0ebd7f7d6c263acb77af501a",
+          "sha256": "42a72a06b28a93f01d575839a3505fc0156339079a612c6370b090e8b0185e64"
+        },
+        {
+          "bytes": 69,
+          "name": "e571b289c6040ed3dbc1ff3121753051050c7cbc",
+          "sha256": "0693132610f948c61111895c60f9bf44df2452f09075e118e14c7bc4469d535d"
+        },
+        {
+          "bytes": 66,
+          "name": "de9b8816f788e5a4bb4a1cbd4231f5840608602d",
+          "sha256": "1e1e10bede4d9e8d67c2f8af5fbb381342f05c2a923f7c4c6abb1c50a4978227"
+        },
+        {
+          "bytes": 2,
+          "name": "ea2dd247d64e124c5e25f5e889c4e054c1491c9f",
+          "sha256": "53e425bc0aeebee5c0c38033e4b3d8d1f5f053730a0184a62febf7ffd4ffffcb"
+        },
+        {
+          "bytes": 74,
+          "name": "eac6b9c733e7034960f6c5862f81fa81bcaf5f80",
+          "sha256": "c89bd3746fe68913a6dff3842979cd9fa4b40905e048c68e4452bea699c28d22"
+        },
+        {
+          "bytes": 2,
+          "name": "eec2e4294207e8400028d1fdea3d844508c4e772",
+          "sha256": "e375afd87295290a09cf2b7d28e7e74c4c6934ecc85cb8c2d36528813a3432a3"
+        },
+        {
+          "bytes": 33,
+          "name": "empty_content.json",
+          "sha256": "156e1291be411e64bf1708d78f433790076a0c248932a83fbda0106cd8aea18b"
+        },
+        {
+          "bytes": 66,
+          "name": "f18e3fd2765252adeea86399d6b2a6136edf7930",
+          "sha256": "c544f656ec4a904c04f1c12da4aefac029fd17c18360f7d75fa3ead5af65c606"
+        },
+        {
+          "bytes": 24,
+          "name": "f91d1c19d230fbab7d50ce4d9745220fb6b33595",
+          "sha256": "c529a0b9fde21c235143dabad91fa406607092d3e97a2a21384ac37de4cc917f"
+        },
+        {
+          "bytes": 66,
+          "name": "fb347018d08663bf02f93ed6978c4873c30a3398",
+          "sha256": "3dcc0668c48379a68e2f81f1929409b7ada5397b5afa878f684af8f42d3f6aba"
+        },
+        {
+          "bytes": 66,
+          "name": "ff32671f37ec032d447f7957dc88f186e001b787",
+          "sha256": "545ca01adb660de9dd8830973cf930bc0e2fd1cbb35462c07d5147dc07f3834b"
+        },
+        {
+          "bytes": 12,
+          "name": "kind_extract_mode.bin",
+          "sha256": "55f773e27475c7f2a2cf7c0ec3100e702c157726d3387b3db15a906f871bb63d"
+        },
+        {
+          "bytes": 3,
+          "name": "nested_mode.bin",
+          "sha256": "f46a8f98eab2a924b9b293c200df0f012fdd4fdfa7fdfea7d06c192ed7df173e"
+        },
+        {
+          "bytes": 152,
+          "name": "nested_tags.json",
+          "sha256": "c82b84834b0feaf172a707e71a407154d04c5fcb796936708b6a352c8cdfda15"
+        },
+        {
+          "bytes": 28,
+          "name": "parse_mode.bin",
+          "sha256": "566b80467531a8f70c1923b3029102a7e3a105b44b49f3d470555c70e1cbcd93"
+        },
+        {
+          "bytes": 281,
+          "name": "structured_mode.bin",
+          "sha256": "cb1c25bef65b3e910f296ea8d67f8e7d19acba8bf40d6c30cf3a47acf2f1b4bf"
+        },
+        {
+          "bytes": 39,
+          "name": "preview_mode.bin",
+          "sha256": "873072c451034bc55cc30e71ef7a66e790e8cbfe4f31eb4cfca05bba5a8006f9"
+        },
+        {
+          "bytes": 388,
+          "name": "valid_event_kind_0.json",
+          "sha256": "4d17eb6f658e0261596af897ea13a11f6822b529ffc932456a1c0dde0688594f"
+        },
+        {
+          "bytes": 384,
+          "name": "valid_event_1.json",
+          "sha256": "8fff54900686fb0cfdfe44c3b3e468370c88f01a9d36930b6c9e6ff84ac6b1f5"
+        }
+      ],
+      "original_zip_sha256": "cad4dd4e4014d5d265ea530ef8c688891e5e2e60d3c90add55af1e25cd33157d"
+    }
+  ],
+  "kind": "json_glib_hosted_remedy_20261023_v1",
+  "limits": [
+    "Prior failed fuzz attempts remain in ledger; no retry-to-green erasure.",
+    "Original62179 input/probe/log unavailable; exact-original replay NOT RUN. 51 distinct inputs not its replacement.",
+    "Logs API offers no content digest: original logs hashed locally; artifact ZIPs verified against API SHA256+size and CRC/member hashes.",
+    "Coverage report uses existing advisory ||true commands; actual reports retained, not promoted into a new blocking contract.",
+    "No fuzz binary hash/full compiler command database artifact was uploaded; source-bound CMake sanitizer flags and actual configure/build/link/runtime output retained, not an independently fingerprinted binary claim.",
+    "Standalone strict fuzz does not qualify any broad integration or W11 PR comparison."
+  ],
+  "log_evidence": {
+    "job-120310236399.log": [
+      {
+        "line": 35,
+        "text": "2026-10-23T08:10:14.9682981Z   ref: 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 94,
+        "text": "2026-10-23T08:10:15.2266850Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 103,
+        "text": "2026-10-23T08:10:18.8758656Z [command]/usr/bin/git checkout --progress --force 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 124,
+        "text": "2026-10-23T08:10:19.4000882Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 140,
+        "text": "2026-10-23T08:10:19.5389442Z   REQUESTED_SHA: 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      }
+    ],
+    "job-120311754884.log": [
+      {
+        "line": 38,
+        "text": "2026-10-23T08:14:13.1585882Z   ref: 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 157,
+        "text": "2026-10-23T08:14:20.0041557Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 164,
+        "text": "2026-10-23T08:14:20.0058490Z [command]/usr/bin/git checkout --progress --force 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 216,
+        "text": "2026-10-23T08:14:25.9989419Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 2011,
+        "text": "2026-10-23T08:15:26.4047049Z /tmp/tmp.pkVcus4SqS/json-glib.tar.xz: OK"
+      },
+      {
+        "line": 2173,
+        "text": "2026-10-23T08:15:38.2372710Z -- The C compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2195,
+        "text": "2026-10-23T08:15:43.1464746Z -- The ASM compiler identification is Clang with GNU-like command-line"
+      },
+      {
+        "line": 2197,
+        "text": "2026-10-23T08:15:43.6688652Z -- The CXX compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2260,
+        "text": "2026-10-23T08:15:46.4440401Z --   Found json-glib-1.0, version 1.10.8"
+      },
+      {
+        "line": 2314,
+        "text": "2026-10-23T08:15:48.5884209Z --   Found json-glib-1.0, version 1.10.8"
+      },
+      {
+        "line": 2332,
+        "text": "2026-10-23T08:15:49.0651140Z -- Run with: ./fuzz-nip49 corpus/nip49 -max_total_time=60"
+      },
+      {
+        "line": 2358,
+        "text": "2026-10-23T08:15:52.1276216Z -- Build files have been written to: /home/runner/work/nostrc/nostrc/build"
+      },
+      {
+        "line": 2371,
+        "text": "2026-10-23T08:15:53.0437367Z [2/3] Linking C executable apps/grotto/tests/fuzz/fuzz-json-event"
+      },
+      {
+        "line": 2389,
+        "text": "2026-10-23T08:15:53.4152027Z loaded_library=/home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0.1000.8"
+      },
+      {
+        "line": 2390,
+        "text": "2026-10-23T08:15:53.4204313Z loaded_library=/home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0.1000.8"
+      },
+      {
+        "line": 2393,
+        "text": "2026-10-23T08:15:53.4306302Z \tlibjson-glib-1.0.so.0 => /home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0 (0x00007f3af7843000)"
+      },
+      {
+        "line": 2409,
+        "text": "2026-10-23T08:15:53.4322526Z \tlibjson-glib-1.0.so.0 => /home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0 (0x00007f3af7843000)"
+      },
+      {
+        "line": 2422,
+        "text": "2026-10-23T08:15:53.4381234Z \u001b[36;1m  -max_total_time=60 \\\u001b[0m"
+      },
+      {
+        "line": 2433,
+        "text": "2026-10-23T08:15:53.4384654Z \u001b[36;1mecho \"Fuzzing completed successfully for json-event\"\u001b[0m"
+      },
+      {
+        "line": 3113,
+        "text": "2026-10-23T08:16:54.4722894Z Done 5892314 runs in 61 second(s)"
+      },
+      {
+        "line": 3119,
+        "text": "2026-10-23T08:16:54.6818612Z Fuzzing completed successfully for json-event"
+      }
+    ],
+    "job-120311754975.log": [
+      {
+        "line": 38,
+        "text": "2026-10-23T08:27:00.5505466Z   ref: 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 157,
+        "text": "2026-10-23T08:27:07.0585483Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 164,
+        "text": "2026-10-23T08:27:07.0602077Z [command]/usr/bin/git checkout --progress --force 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 216,
+        "text": "2026-10-23T08:27:11.4904129Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 2013,
+        "text": "2026-10-23T08:27:57.9854402Z -- The C compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2035,
+        "text": "2026-10-23T08:28:03.1008690Z -- The ASM compiler identification is Clang with GNU-like command-line"
+      },
+      {
+        "line": 2037,
+        "text": "2026-10-23T08:28:03.4130534Z -- The CXX compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2172,
+        "text": "2026-10-23T08:28:08.5799283Z -- Run with: ./fuzz-nip49 corpus/nip49 -max_total_time=60"
+      },
+      {
+        "line": 2198,
+        "text": "2026-10-23T08:28:11.4889271Z -- Build files have been written to: /home/runner/work/nostrc/nostrc/build"
+      },
+      {
+        "line": 2308,
+        "text": "2026-10-23T08:28:15.5812811Z [102/103] Linking C executable apps/grotto/tests/fuzz/fuzz-nip49"
+      },
+      {
+        "line": 2321,
+        "text": "2026-10-23T08:28:15.5888909Z \u001b[36;1m  -max_total_time=60 \\\u001b[0m"
+      },
+      {
+        "line": 2332,
+        "text": "2026-10-23T08:28:15.5891876Z \u001b[36;1mecho \"Fuzzing completed successfully for nip49\"\u001b[0m"
+      },
+      {
+        "line": 2376,
+        "text": "2026-10-23T08:29:18.1821823Z Done 325 runs in 62 second(s)"
+      },
+      {
+        "line": 2382,
+        "text": "2026-10-23T08:29:18.1936695Z Fuzzing completed successfully for nip49"
+      }
+    ],
+    "job-120311756128.log": [
+      {
+        "line": 38,
+        "text": "2026-10-23T08:34:36.5896932Z   ref: 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 157,
+        "text": "2026-10-23T08:34:43.3005844Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 164,
+        "text": "2026-10-23T08:34:43.3021900Z [command]/usr/bin/git checkout --progress --force 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 216,
+        "text": "2026-10-23T08:34:49.2761354Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 2014,
+        "text": "2026-10-23T08:36:59.8161303Z -- The C compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2036,
+        "text": "2026-10-23T08:37:06.0928044Z -- The ASM compiler identification is Clang with GNU-like command-line"
+      },
+      {
+        "line": 2038,
+        "text": "2026-10-23T08:37:06.6259857Z -- The CXX compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2173,
+        "text": "2026-10-23T08:37:11.8275335Z -- Run with: ./fuzz-nip49 corpus/nip49 -max_total_time=60"
+      },
+      {
+        "line": 2199,
+        "text": "2026-10-23T08:37:14.7501084Z -- Build files have been written to: /home/runner/work/nostrc/nostrc/build"
+      },
+      {
+        "line": 2298,
+        "text": "2026-10-23T08:37:19.0502495Z [91/92] Linking C executable apps/grotto/tests/fuzz/fuzz-bip39"
+      },
+      {
+        "line": 2311,
+        "text": "2026-10-23T08:37:19.0575762Z \u001b[36;1m  -max_total_time=60 \\\u001b[0m"
+      },
+      {
+        "line": 2322,
+        "text": "2026-10-23T08:37:19.0578729Z \u001b[36;1mecho \"Fuzzing completed successfully for bip39\"\u001b[0m"
+      },
+      {
+        "line": 4325,
+        "text": "2026-10-23T08:38:20.0969860Z Done 41446 runs in 61 second(s)"
+      },
+      {
+        "line": 4331,
+        "text": "2026-10-23T08:38:20.1878151Z Fuzzing completed successfully for bip39"
+      }
+    ],
+    "job-120322628197.log": [
+      {
+        "line": 38,
+        "text": "2026-10-23T09:31:15.2055139Z   ref: 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 156,
+        "text": "2026-10-23T09:31:22.5602562Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 163,
+        "text": "2026-10-23T09:31:22.5699543Z [command]/usr/bin/git checkout --progress --force 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 215,
+        "text": "2026-10-23T09:31:31.0699861Z 94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+      },
+      {
+        "line": 2278,
+        "text": "2026-10-23T09:59:15.4905805Z /tmp/tmp.bIprkgJXiA/json-glib.tar.xz: OK"
+      },
+      {
+        "line": 2440,
+        "text": "2026-10-23T09:59:21.8233741Z -- The C compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2462,
+        "text": "2026-10-23T09:59:26.4296018Z -- The ASM compiler identification is Clang with GNU-like command-line"
+      },
+      {
+        "line": 2464,
+        "text": "2026-10-23T09:59:26.7738942Z -- The CXX compiler identification is Clang 18.1.3"
+      },
+      {
+        "line": 2527,
+        "text": "2026-10-23T09:59:29.4271040Z --   Found json-glib-1.0, version 1.10.8"
+      },
+      {
+        "line": 2581,
+        "text": "2026-10-23T09:59:31.5004618Z --   Found json-glib-1.0, version 1.10.8"
+      },
+      {
+        "line": 2599,
+        "text": "2026-10-23T09:59:31.9603522Z -- Run with: ./fuzz-nip49 corpus/nip49 -max_total_time=60"
+      },
+      {
+        "line": 2625,
+        "text": "2026-10-23T09:59:34.8876583Z -- Build files have been written to: /home/runner/work/nostrc/nostrc/build"
+      },
+      {
+        "line": 2739,
+        "text": "2026-10-23T09:59:39.3786025Z [104/108] Linking C executable apps/grotto/tests/fuzz/fuzz-bip39"
+      },
+      {
+        "line": 2740,
+        "text": "2026-10-23T09:59:39.3887354Z [105/108] Linking C executable apps/grotto/tests/fuzz/fuzz-json-event"
+      },
+      {
+        "line": 2741,
+        "text": "2026-10-23T09:59:39.4068475Z [106/108] Linking C executable apps/grotto/tests/fuzz/fuzz-nip49"
+      },
+      {
+        "line": 2759,
+        "text": "2026-10-23T09:59:39.7714223Z loaded_library=/home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0.1000.8"
+      },
+      {
+        "line": 2760,
+        "text": "2026-10-23T09:59:39.7763598Z loaded_library=/home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0.1000.8"
+      },
+      {
+        "line": 2763,
+        "text": "2026-10-23T09:59:39.7864437Z \tlibjson-glib-1.0.so.0 => /home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0 (0x00007f7ed86c5000)"
+      },
+      {
+        "line": 2779,
+        "text": "2026-10-23T09:59:39.7889252Z \tlibjson-glib-1.0.so.0 => /home/runner/work/_temp/json-glib-1.10.8/lib/libjson-glib-1.0.so.0 (0x00007f7ed86c5000)"
+      },
+      {
+        "line": 2804,
+        "text": "2026-10-23T09:59:41.4665846Z Done 21 runs in 1 second(s)"
+      },
+      {
+        "line": 2816,
+        "text": "2026-10-23T09:59:41.7430354Z Done 85 runs in 0 second(s)"
+      },
+      {
+        "line": 2826,
+        "text": "2026-10-23T09:59:41.8053842Z Done 129 runs in 0 second(s)"
+      },
+      {
+        "line": 2860,
+        "text": "2026-10-23T09:59:42.0373735Z TOTAL                                       513               162    68.42%          32                 8    75.00%         484                98    79.75%         364               170    53.30%"
+      },
+      {
+        "line": 2866,
+        "text": "2026-10-23T09:59:42.0530326Z TOTAL                                       246                78    68.29%          10                 1    90.00%         282                67    76.24%         190                76    60.00%"
+      },
+      {
+        "line": 2871,
+        "text": "2026-10-23T09:59:42.0735087Z TOTAL                                                                            168                29    82.74%           5                 0   100.00%         211                20    90.52%         140                36    74.29%"
+      }
+    ]
+  },
+  "raw_directory": "/tmp/nostrc-w11-e-fuzz-originals-20261023",
+  "raw_file_sha256": {
+    "archive-12488830715.process.json": "8503d223c35e8428ce150dad68ff9525273628071d865c088df7de718fd390aa",
+    "archive-12488830715.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive-12488830715.stdout": "cad4dd4e4014d5d265ea530ef8c688891e5e2e60d3c90add55af1e25cd33157d",
+    "archive-12488847881.process.json": "1eb7ba4d4ce906453d80fb9c70a819a59f3639c41c5c45453cd8e351f8a0295a",
+    "archive-12488847881.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive-12488847881.stdout": "f8f1fb5dbd15bc70d41e11af1ed7cd2cf7fc1d01f056276c94c4f91fe9c2f701",
+    "archive-12489007569.process.json": "c93cf3c3aee3109d0208a536b1f15110f764baee1ee72bb6c0f107ef9a4d3709",
+    "archive-12489007569.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive-12489007569.stdout": "4d6082bfd2dfb30a242e2fcf713a6f14ec1794f3659201798a90e84f15c4428c",
+    "artifact-12488830715-proof.json": "a782f3aa31cbc435d9635c380b93a91bd46bb3afa3e299f224f13ba5bca4c6f9",
+    "artifact-12488830715.zip": "cad4dd4e4014d5d265ea530ef8c688891e5e2e60d3c90add55af1e25cd33157d",
+    "artifact-12488847881-proof.json": "71f4c6ec6750cee232ce2244825d7175e5b5eb0f0d8ffb7597fa81238942100c",
+    "artifact-12488847881.zip": "f8f1fb5dbd15bc70d41e11af1ed7cd2cf7fc1d01f056276c94c4f91fe9c2f701",
+    "artifact-12489007569-proof.json": "e8febec03ce8fbf355591610c4ddeb5841662edc86d79125966089d49d316aeb",
+    "artifact-12489007569.zip": "4d6082bfd2dfb30a242e2fcf713a6f14ec1794f3659201798a90e84f15c4428c",
+    "artifacts-1.json": "c9833a19a657437b37b44d99778eb0b6f8660c58203aa63d63485d575cdbc99b",
+    "artifacts-1.process.json": "365d37f54ea1ef7af322107cb95aa183b02d3c36686ba5ce7182e9472440f2a3",
+    "artifacts-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "artifacts-1.stdout": "c9833a19a657437b37b44d99778eb0b6f8660c58203aa63d63485d575cdbc99b",
+    "attempt-after.json": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+    "attempt-after.process.json": "3b7f75e21d1c765921c330c730282ec5695d9c3adf9d0a7a687339a525373201",
+    "attempt-after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "attempt-after.stdout": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+    "attempt.json": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+    "attempt.process.json": "c3bb7ebaba291f6ea7591a10bfbc8afecc20a39b36536e6cbdc902531190b346",
+    "attempt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "attempt.stdout": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+    "job-120310236399.log": "bcf42190aa4b2935b7768c5eeee11d54ec2dfe201edabf526b75ae2ff1076925",
+    "job-120311754884.log": "ab241e01ab7da6d5bcefc608a9c359bf0c04ee55453b2af393c756474c1ab499",
+    "job-120311754975.log": "fec1c7b3b460bd45ebcc6bbb6d2d5461ca97a5900fd44275cfefb0afe46bf1a0",
+    "job-120311756128.log": "210eb2ada85a2bd1c1121d748374311b37174c47e56149bf1f82eca13e59452c",
+    "job-120322628197.log": "e303a8a86b520b765ab7e5f522238f965b7c0afb803c965f3e01ea5d4e03158d",
+    "job-log-120310236399.process.json": "8cd155914a93020463ba00074d6f2c4ab0eb4d7707c2484ea4b7d17f6579ff3b",
+    "job-log-120310236399.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "job-log-120310236399.stdout": "bcf42190aa4b2935b7768c5eeee11d54ec2dfe201edabf526b75ae2ff1076925",
+    "job-log-120311754884.process.json": "4356d3f76c6f043fc0a55c51efbe34437ad14e0d3e5866b0db30fdcc3f981d13",
+    "job-log-120311754884.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "job-log-120311754884.stdout": "ab241e01ab7da6d5bcefc608a9c359bf0c04ee55453b2af393c756474c1ab499",
+    "job-log-120311754975.process.json": "acf53ffb54cef0d6a092944adbe7bd7465eb18c17f837d2ed3dd55b1c11a8a50",
+    "job-log-120311754975.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "job-log-120311754975.stdout": "fec1c7b3b460bd45ebcc6bbb6d2d5461ca97a5900fd44275cfefb0afe46bf1a0",
+    "job-log-120311756128.process.json": "bce7ad6e870d4c178fadf62b9992f8b505680924e527ccddbedc8ace750839e1",
+    "job-log-120311756128.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "job-log-120311756128.stdout": "210eb2ada85a2bd1c1121d748374311b37174c47e56149bf1f82eca13e59452c",
+    "job-log-120322628197.process.json": "f37431a8281e10cf501e5b2ff81b389b05b9777f0020d7adfc2c782337bca385",
+    "job-log-120322628197.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "job-log-120322628197.stdout": "e303a8a86b520b765ab7e5f522238f965b7c0afb803c965f3e01ea5d4e03158d",
+    "jobs-1.json": "db2414d3bfa5f7350de61061c95ddfbb0dca1acc51de866819956e4e4726fd16",
+    "jobs-1.process.json": "eb3be379adbcace9c9f75021cbfdeb6f5fa694041d278ebd38726b36ddbff0ad",
+    "jobs-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jobs-1.stdout": "db2414d3bfa5f7350de61061c95ddfbb0dca1acc51de866819956e4e4726fd16",
+    "result.json": "0bcbf72c07b09228098a758e5364fe917dd877d9ad16063dfdfbbe0c7fbf07cf",
+    "run-before.json": "f20ab0ae0e6c5b6d3cc041a195369224b1d9c7ae8322178c7a66be0b17ef5b44",
+    "run-before.process.json": "e0fba6c7947db5ab11a8f2f2129a572d711c00db4c7eadac95b45c9e38e37313",
+    "run-before.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "run-before.stdout": "f20ab0ae0e6c5b6d3cc041a195369224b1d9c7ae8322178c7a66be0b17ef5b44",
+    "runner.json": "2830d68a3ba154219d44480de28529feb1d0ad297d24069076dbcc599f195119"
+  },
+  "result": {
+    "artifact_identities": [
+      {
+        "digest": "sha256:4d6082bfd2dfb30a242e2fcf713a6f14ec1794f3659201798a90e84f15c4428c",
+        "id": 12489007569,
+        "name": "fuzz-corpus-bip39",
+        "size_in_bytes": 15677,
+        "workflow_run": {
+          "head_branch": "master",
+          "head_repository_id": 867931223,
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "id": 39922316626,
+          "repository_id": 867931223
+        }
+      },
+      {
+        "digest": "sha256:f8f1fb5dbd15bc70d41e11af1ed7cd2cf7fc1d01f056276c94c4f91fe9c2f701",
+        "id": 12488847881,
+        "name": "fuzz-corpus-nip49",
+        "size_in_bytes": 4389,
+        "workflow_run": {
+          "head_branch": "master",
+          "head_repository_id": 867931223,
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "id": 39922316626,
+          "repository_id": 867931223
+        }
+      },
+      {
+        "digest": "sha256:cad4dd4e4014d5d265ea530ef8c688891e5e2e60d3c90add55af1e25cd33157d",
+        "id": 12488830715,
+        "name": "fuzz-corpus-json-event",
+        "size_in_bytes": 25504,
+        "workflow_run": {
+          "head_branch": "master",
+          "head_repository_id": 867931223,
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "id": 39922316626,
+          "repository_id": 867931223
+        }
+      }
+    ],
+    "complete": false,
+    "complete_gate_eligible": false,
+    "conclusion": "success",
+    "downloaded_artifact_ids": [
+      12488830715,
+      12488847881,
+      12489007569
+    ],
+    "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+    "job_log_proofs": [
+      {
+        "api_digest": null,
+        "bytes": 12879,
+        "endpoint": "repos/chebizarro/nostrc/actions/jobs/120310236399/logs",
+        "job_id": 120310236399,
+        "limits": "Job logs API supplies no authoritative content digest; SHA256 is capture integrity, not an API checksum.",
+        "sha256": "bcf42190aa4b2935b7768c5eeee11d54ec2dfe201edabf526b75ae2ff1076925"
+      },
+      {
+        "api_digest": null,
+        "bytes": 339285,
+        "endpoint": "repos/chebizarro/nostrc/actions/jobs/120311754884/logs",
+        "job_id": 120311754884,
+        "limits": "Job logs API supplies no authoritative content digest; SHA256 is capture integrity, not an API checksum.",
+        "sha256": "ab241e01ab7da6d5bcefc608a9c359bf0c04ee55453b2af393c756474c1ab499"
+      },
+      {
+        "api_digest": null,
+        "bytes": 240486,
+        "endpoint": "repos/chebizarro/nostrc/actions/jobs/120311754975/logs",
+        "job_id": 120311754975,
+        "limits": "Job logs API supplies no authoritative content digest; SHA256 is capture integrity, not an API checksum.",
+        "sha256": "fec1c7b3b460bd45ebcc6bbb6d2d5461ca97a5900fd44275cfefb0afe46bf1a0"
+      },
+      {
+        "api_digest": null,
+        "bytes": 389283,
+        "endpoint": "repos/chebizarro/nostrc/actions/jobs/120311756128/logs",
+        "job_id": 120311756128,
+        "limits": "Job logs API supplies no authoritative content digest; SHA256 is capture integrity, not an API checksum.",
+        "sha256": "210eb2ada85a2bd1c1121d748374311b37174c47e56149bf1f82eca13e59452c"
+      },
+      {
+        "api_digest": null,
+        "bytes": 288622,
+        "endpoint": "repos/chebizarro/nostrc/actions/jobs/120322628197/logs",
+        "job_id": 120322628197,
+        "limits": "Job logs API supplies no authoritative content digest; SHA256 is capture integrity, not an API checksum.",
+        "sha256": "e303a8a86b520b765ab7e5f522238f965b7c0afb803c965f3e01ea5d4e03158d"
+      }
+    ],
+    "kind": "w11_hosted_attempt_collection_v1",
+    "latest_attempt_at_capture": 1,
+    "limits": "API head is not tested merge SHA. Verify original plan/checkout evidence. Artifacts are root-scoped, not inferred to belong to this attempt. Job sums are observed allocated time, not billed time or DAG critical path.",
+    "qualifying_comparisons": 0,
+    "repository": "chebizarro/nostrc",
+    "run_attempt": 1,
+    "run_id": 39922316626,
+    "stable_snapshot": true,
+    "status": "completed",
+    "timing": {
+      "complete": false,
+      "complete_gate_eligible": false,
+      "job_count": 5,
+      "jobs": [
+        {
+          "conclusion": "success",
+          "id": 120310236399,
+          "labels": [
+            "ubuntu-24.04"
+          ],
+          "name": "select-fuzz",
+          "runner_id": 1000055066,
+          "runner_name": "GitHub Actions 1000055066",
+          "seconds": 8.0,
+          "steps": [
+            {
+              "completed_at": "2026-10-23T08:10:14Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "started_at": "2026-10-23T08:10:14Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:10:19Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "started_at": "2026-10-23T08:10:14Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:10:19Z",
+              "conclusion": "success",
+              "name": "Run python3 .github/workflows/dependency_contract.py fuzz --sha \"$REQUESTED_SHA\" --mode \"$MODE\" --fuzz-target \"$TARGET\" --duration \"$DURATION\"",
+              "number": 3,
+              "started_at": "2026-10-23T08:10:19Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:10:19Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 6,
+              "started_at": "2026-10-23T08:10:19Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:10:19Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 7,
+              "started_at": "2026-10-23T08:10:19Z",
+              "status": "completed"
+            }
+          ]
+        },
+        {
+          "conclusion": "success",
+          "id": 120311754884,
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "name": "Fuzz json-event",
+          "runner_id": 1000055077,
+          "runner_name": "GitHub Actions 1000055077",
+          "seconds": 168.0,
+          "steps": [
+            {
+              "completed_at": "2026-10-23T08:14:13Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "started_at": "2026-10-23T08:14:12Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:14:26Z",
+              "conclusion": "success",
+              "name": "Checkout",
+              "number": 2,
+              "started_at": "2026-10-23T08:14:13Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:14:26Z",
+              "conclusion": "skipped",
+              "name": "Verify requested checkout",
+              "number": 3,
+              "started_at": "2026-10-23T08:14:26Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:15:24Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 4,
+              "started_at": "2026-10-23T08:14:26Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:15:26Z",
+              "conclusion": "success",
+              "name": "Install pinned Blueprint compiler",
+              "number": 5,
+              "started_at": "2026-10-23T08:15:24Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:15:36Z",
+              "conclusion": "success",
+              "name": "Install pinned JSON-GLib",
+              "number": 6,
+              "started_at": "2026-10-23T08:15:26Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:15:52Z",
+              "conclusion": "success",
+              "name": "Configure with fuzz targets",
+              "number": 7,
+              "started_at": "2026-10-23T08:15:36Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:15:53Z",
+              "conclusion": "success",
+              "name": "Build fuzz targets",
+              "number": 8,
+              "started_at": "2026-10-23T08:15:52Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:15:53Z",
+              "conclusion": "success",
+              "name": "Verify pinned JSON-GLib",
+              "number": 9,
+              "started_at": "2026-10-23T08:15:53Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:16:54Z",
+              "conclusion": "success",
+              "name": "Run fuzz-json-event",
+              "number": 10,
+              "started_at": "2026-10-23T08:15:53Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:16:54Z",
+              "conclusion": "skipped",
+              "name": "Upload crash artifacts",
+              "number": 11,
+              "started_at": "2026-10-23T08:16:54Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:16:56Z",
+              "conclusion": "success",
+              "name": "Upload updated corpus",
+              "number": 12,
+              "started_at": "2026-10-23T08:16:54Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:16:56Z",
+              "conclusion": "success",
+              "name": "Post Checkout",
+              "number": 24,
+              "started_at": "2026-10-23T08:16:56Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:16:56Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 25,
+              "started_at": "2026-10-23T08:16:56Z",
+              "status": "completed"
+            }
+          ]
+        },
+        {
+          "conclusion": "success",
+          "id": 120311754975,
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "name": "Fuzz nip49",
+          "runner_id": 1000055123,
+          "runner_name": "GitHub Actions 1000055123",
+          "seconds": 141.0,
+          "steps": [
+            {
+              "completed_at": "2026-10-23T08:27:00Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "started_at": "2026-10-23T08:26:59Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:27:11Z",
+              "conclusion": "success",
+              "name": "Checkout",
+              "number": 2,
+              "started_at": "2026-10-23T08:27:00Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:27:11Z",
+              "conclusion": "skipped",
+              "name": "Verify requested checkout",
+              "number": 3,
+              "started_at": "2026-10-23T08:27:11Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:27:50Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 4,
+              "started_at": "2026-10-23T08:27:11Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:27:52Z",
+              "conclusion": "success",
+              "name": "Install pinned Blueprint compiler",
+              "number": 5,
+              "started_at": "2026-10-23T08:27:50Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:27:52Z",
+              "conclusion": "skipped",
+              "name": "Install pinned JSON-GLib",
+              "number": 6,
+              "started_at": "2026-10-23T08:27:52Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:28:11Z",
+              "conclusion": "success",
+              "name": "Configure with fuzz targets",
+              "number": 7,
+              "started_at": "2026-10-23T08:27:52Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:28:15Z",
+              "conclusion": "success",
+              "name": "Build fuzz targets",
+              "number": 8,
+              "started_at": "2026-10-23T08:28:11Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:28:15Z",
+              "conclusion": "skipped",
+              "name": "Verify pinned JSON-GLib",
+              "number": 9,
+              "started_at": "2026-10-23T08:28:15Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:29:18Z",
+              "conclusion": "success",
+              "name": "Run fuzz-nip49",
+              "number": 10,
+              "started_at": "2026-10-23T08:28:15Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:29:18Z",
+              "conclusion": "skipped",
+              "name": "Upload crash artifacts",
+              "number": 11,
+              "started_at": "2026-10-23T08:29:18Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:29:19Z",
+              "conclusion": "success",
+              "name": "Upload updated corpus",
+              "number": 12,
+              "started_at": "2026-10-23T08:29:18Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:29:19Z",
+              "conclusion": "success",
+              "name": "Post Checkout",
+              "number": 24,
+              "started_at": "2026-10-23T08:29:19Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:29:19Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 25,
+              "started_at": "2026-10-23T08:29:19Z",
+              "status": "completed"
+            }
+          ]
+        },
+        {
+          "conclusion": "success",
+          "id": 120311756128,
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "name": "Fuzz bip39",
+          "runner_id": 1000055145,
+          "runner_name": "GitHub Actions 1000055145",
+          "seconds": 230.0,
+          "steps": [
+            {
+              "completed_at": "2026-10-23T08:34:36Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "started_at": "2026-10-23T08:34:35Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:34:49Z",
+              "conclusion": "success",
+              "name": "Checkout",
+              "number": 2,
+              "started_at": "2026-10-23T08:34:36Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:34:49Z",
+              "conclusion": "skipped",
+              "name": "Verify requested checkout",
+              "number": 3,
+              "started_at": "2026-10-23T08:34:49Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:36:49Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 4,
+              "started_at": "2026-10-23T08:34:49Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:36:51Z",
+              "conclusion": "success",
+              "name": "Install pinned Blueprint compiler",
+              "number": 5,
+              "started_at": "2026-10-23T08:36:49Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:36:51Z",
+              "conclusion": "skipped",
+              "name": "Install pinned JSON-GLib",
+              "number": 6,
+              "started_at": "2026-10-23T08:36:51Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:37:14Z",
+              "conclusion": "success",
+              "name": "Configure with fuzz targets",
+              "number": 7,
+              "started_at": "2026-10-23T08:36:51Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:37:19Z",
+              "conclusion": "success",
+              "name": "Build fuzz targets",
+              "number": 8,
+              "started_at": "2026-10-23T08:37:14Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:37:19Z",
+              "conclusion": "skipped",
+              "name": "Verify pinned JSON-GLib",
+              "number": 9,
+              "started_at": "2026-10-23T08:37:19Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:38:20Z",
+              "conclusion": "success",
+              "name": "Run fuzz-bip39",
+              "number": 10,
+              "started_at": "2026-10-23T08:37:19Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:38:20Z",
+              "conclusion": "skipped",
+              "name": "Upload crash artifacts",
+              "number": 11,
+              "started_at": "2026-10-23T08:38:20Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:38:21Z",
+              "conclusion": "success",
+              "name": "Upload updated corpus",
+              "number": 12,
+              "started_at": "2026-10-23T08:38:20Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:38:22Z",
+              "conclusion": "success",
+              "name": "Post Checkout",
+              "number": 24,
+              "started_at": "2026-10-23T08:38:21Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T08:38:22Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 25,
+              "started_at": "2026-10-23T08:38:22Z",
+              "status": "completed"
+            }
+          ]
+        },
+        {
+          "conclusion": "success",
+          "id": 120322628197,
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "name": "Generate coverage report",
+          "runner_id": 1000055310,
+          "runner_name": "GitHub Actions 1000055310",
+          "seconds": 1713.0,
+          "steps": [
+            {
+              "completed_at": "2026-10-23T09:31:15Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "started_at": "2026-10-23T09:31:13Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:31:31Z",
+              "conclusion": "success",
+              "name": "Checkout",
+              "number": 2,
+              "started_at": "2026-10-23T09:31:15Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:31:31Z",
+              "conclusion": "skipped",
+              "name": "Verify requested checkout",
+              "number": 3,
+              "started_at": "2026-10-23T09:31:31Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:12Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 4,
+              "started_at": "2026-10-23T09:31:31Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:13Z",
+              "conclusion": "success",
+              "name": "Download all corpus artifacts",
+              "number": 5,
+              "started_at": "2026-10-23T09:59:12Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:15Z",
+              "conclusion": "success",
+              "name": "Install pinned Blueprint compiler",
+              "number": 6,
+              "started_at": "2026-10-23T09:59:13Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:19Z",
+              "conclusion": "success",
+              "name": "Install pinned JSON-GLib",
+              "number": 7,
+              "started_at": "2026-10-23T09:59:15Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:34Z",
+              "conclusion": "success",
+              "name": "Configure with coverage",
+              "number": 8,
+              "started_at": "2026-10-23T09:59:19Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:39Z",
+              "conclusion": "success",
+              "name": "Build fuzz targets",
+              "number": 9,
+              "started_at": "2026-10-23T09:59:34Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:39Z",
+              "conclusion": "success",
+              "name": "Verify pinned JSON-GLib",
+              "number": 10,
+              "started_at": "2026-10-23T09:59:39Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:41Z",
+              "conclusion": "success",
+              "name": "Run corpus for coverage",
+              "number": 11,
+              "started_at": "2026-10-23T09:59:39Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:41Z",
+              "conclusion": "success",
+              "name": "Merge coverage data",
+              "number": 12,
+              "started_at": "2026-10-23T09:59:41Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:42Z",
+              "conclusion": "success",
+              "name": "Generate coverage report",
+              "number": 13,
+              "started_at": "2026-10-23T09:59:41Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:42Z",
+              "conclusion": "success",
+              "name": "Post Checkout",
+              "number": 26,
+              "started_at": "2026-10-23T09:59:42Z",
+              "status": "completed"
+            },
+            {
+              "completed_at": "2026-10-23T09:59:42Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 27,
+              "started_at": "2026-10-23T09:59:42Z",
+              "status": "completed"
+            }
+          ]
+        }
+      ],
+      "kind": "partial_nested_job_timing_v1",
+      "limits": "Not billed runner-minutes, a DAG critical path, phase timings, a complete workload or paired savings.",
+      "observed_job_minutes": 37.666666666666664,
+      "pending_job_ids": [],
+      "qualifying_comparisons": 0,
+      "skipped_job_ids": []
+    }
+  },
+  "run_attempt": 1,
+  "run_id": 39922316626,
+  "scope": "nostrc-0cfsg.29 only",
+  "source_bindings": {
+    ".github/workflows/grotto-fuzz.yml": {
+      "git_blob": "db7b83aefce7a97ce83815ce28a656dacc284bbb",
+      "sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+    },
+    "apps/grotto/tests/fuzz/CMakeLists.txt": {
+      "git_blob": "d4de270e400b824b6ee2ed437302f389cd1430fa",
+      "sha256": "213d0fbdf06d10612b23318185960f98358882ef5467e4378d69db372aad1f56"
+    },
+    "apps/grotto/tests/fuzz/fuzz_json_event.c": {
+      "git_blob": "ad7f038205f766ab65c261abed960921380c7d8a",
+      "sha256": "25f3a772c711a6175771c937abca8b090cd124b7338a9fadbcb6e9794c044ca8"
+    },
+    "apps/grotto/tests/fuzz/json-glib-setup.sh": {
+      "git_blob": "4b121935e11e86473ec63425b18c7587d4807477",
+      "sha256": "087010f8047b46550299058d282a11af52c07c1bb82a0e12cca6048d7b2f766a"
+    },
+    "apps/grotto/tests/fuzz/json_glib_leak_probe.c": {
+      "git_blob": "5d124eb715400a05deaee083d9d4b3796ca0f850",
+      "sha256": "d6ada70b6b6331e02cdf8bd2496cd4ac383397ecdc94926855fa6c48ea6a592a"
+    }
+  },
+  "tested_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65"
+}

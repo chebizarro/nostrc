@@ -1,5 +1,48 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## `.29` actual hosted closure — strict run39922316626 at94647b282
+
+[Original-log/source/artifact closure receipt](dependency-aware-testing-json-glib-hosted-2026-10-23.md)
+verifies the compatible official1.10.8 remedy in actual hosted strict JSON,
+NIP49/BIP39 timed corpus jobs plus pin/runtime verification and emitted coverage
+output. All five jobs succeeded. `.29`'s literal remediation AC is met and the
+bead is **CLOSED**; the absent original62179 input stays UNRECOVERABLE/exact replay
+NOT RUN, with51 distinct inputs not its replacement. No extra permanent closure
+condition is invented; prior failed fuzz attempts remain below. This is actual
+hosted bug-remediation proof, not a fixture result or complete broad integration.
+**W11 remains0/20 and0/2 at the dated census;W11 NOT MET/W12 NOT RUN.** No active
+policy/protection/trigger/publication switch. Internal evidence only,no bump.
+
+
+## E execution support and dated hosted snapshot — 2026-10-23T10:22:47.933138Z
+
+[E's implemented physical execution/collector and unapplied W12 interface](dependency-aware-testing-w11-e-protocol-2026-10-23.md)
+adds actual bounded GitHub collection, same-original-PR-source physical command
+execution, failure-preserving paired descriptive statistics and reproducible
+forward/rollback patch generation. Small process/Git/API fixtures are not product
+or W11 acceptance. B's normal full-Go source contract and A's actual runtime
+completion remain prerequisites; no fixed product hashes or dual-source historical
+measurement workaround is introduced. No heavy local build/Docker/source copy.
+
+The [new dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#e-bounded-execution-collection--2026-10-23t102247933138z)
+retains **58 roots:53 failure,one cancellation,three in progress,one queued** at
+10:22:47Z. This is a sequential API snapshot, not a live counter. PR22's original
+small failure ZIPs and manual broad plan/accounting ZIPs are digest/size/CRC/member
+verified. Broad accounting12493552566 is **passed=false** (GH/Grotto cancelled,
+static failed). Strict fuzz39922316626 is terminal success, not a complete broad
+integration. Root and every nested failure remain visible.
+
+Read-only server discovery found rulesets `[]`, master protection404 and actual
+PR21 check `Dependency gate` / Actions app15368 (failed). Existing protected-context
+baseline is absent, not permission to invent one. Generated W12 source patch is
+unapplied; server payload generation stays blocked without an operator-approved
+baseline and explicitly reviewed obsolete contexts. **0/20 qualifying comparisons;
+0/2 complete broad integrations;W11 NOT MET/W12 NOT RUN.** No threshold, default,
+trigger, schedule, protection, publisher or acceptance-policy change. `.5` stays
+closed with evidence comment only; `.36.6` stays open/in progress. Internal tooling,
+tests and docs only: no component bump; parent lands local commits.
+
+
 ## PR22 postlanding finite snapshot — 2026-10-23T08:14:14.914574Z
 
 Authenticated sequential GitHub API window **08:11:46.634875Z–08:14:14.914574Z**:
