@@ -658,8 +658,9 @@ def host_guard(profile, checks, policy, profile_id):
         # host tree by the PID namespace. Never legacy/ptrace or other domains.
         if (host != 'linux' or args.linux_custody != 'pidns' or profile['architecture'] != platform.machine()
                 or profile.get('execution_domain') != 'mdk_original_linux_v1'):
-            raise RuntimeError('original MDK image/peer lifecycle requires its authored domain, exact native '
-                               'Linux architecture and pidns custody; lane not launched')
+            raise RuntimeError("selected capabilities require an unimplemented guarded adapter: ['docker'] "
+                               '(original MDK image/peer lifecycle requires its authored domain, exact native '
+                               'Linux architecture and pidns custody); lane not launched')
         caps = caps - {'docker'}
     unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring", "signer_endpoint"}
     if unsupported:
