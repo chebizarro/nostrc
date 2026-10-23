@@ -65,8 +65,9 @@ class NamespaceHostProbeTests(unittest.TestCase):
             self.assertEqual(stages[0]['uid'], [os.geteuid()] * 3)
 
         def test_named_profile_child_enters_exact_label_or_refuses_before_unshare(self):
-            result, records = self.invoke('--apparmor-profile', 'nostrc-namespace-custody')
-            self.assertEqual(records[0]['apparmor_profile_requested'], 'nostrc-namespace-custody')
+            name = os.environ.get('NOSTRC_NAMESPACE_APPARMOR_PROFILE', 'nostrc-ns-' + '0' * 32)
+            result, records = self.invoke('--apparmor-profile', name)
+            self.assertEqual(records[0]['apparmor_profile_requested'], name)
             first = next(r for r in records if 'stage' in r)
             if first['stage'] == 'profile-refused':
                 self.assertEqual(result.returncode, 125, result.stderr)
@@ -74,9 +75,9 @@ class NamespaceHostProbeTests(unittest.TestCase):
                 self.assertIn('target not launched', first['error'])
             else:
                 self.assertEqual(first['stage'], 'profile-entered')
-                self.assertEqual(first['label'], 'nostrc-namespace-custody (unconfined)')
+                self.assertEqual(first['label'], name + ' (unconfined)')
                 after = next(r for r in records if r.get('stage') == 'after-unshare')
-                self.assertIn('nostrc-namespace-custody', after['apparmor'])
+                self.assertEqual(after['apparmor'], name + ' (unconfined)')
                 self.assertEqual(result.returncode, 0, records)
 
 

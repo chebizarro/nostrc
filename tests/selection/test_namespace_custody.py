@@ -249,7 +249,9 @@ p.wait()
             self.tree('cancel', nested=True)
 
         def test_named_apparmor_profile_is_entered_or_refused_before_target(self):
-            profile = 'nostrc-namespace-custody'
+            # The per-job profile a provisioned container was launched in;
+            # elsewhere a valid but never-loaded name must refuse.
+            profile = os.environ.get('NOSTRC_NAMESPACE_APPARMOR_PROFILE', 'nostrc-ns-' + '0' * 32)
             label = profile + ' (unconfined)'
             current = Path('/proc/self/attr/apparmor/current')
             current = current if current.exists() else Path('/proc/self/attr/current')

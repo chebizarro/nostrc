@@ -52,16 +52,16 @@ jobs:
           control = Path(os.environ['RUNNER_TEMP']) / 'namespace-policy/control'
           security = json.loads((control / 'docker-security.json').read_text())
           state = dict(kind='namespace_testhost_setup_v1', docker_security=security,
-              container_apparmor='nostrc-namespace-custody', source_sha=os.environ['REQUESTED_SHA'],
+              container_apparmor='per-job profile named by control/apparmor/setup.json', source_sha=os.environ['REQUESTED_SHA'],
               scope='provisioned_container_regressions_not_authored_native_profile',
               complete=False, complete_gate_eligible=False,
-              policy_authority='explicit dedicated disposable regression container only; named path-unattached userns profile, kernel settings unchanged')
+              policy_authority='disposable GitHub-hosted runner only; fresh per-job path-unattached userns profile added and exactly removed; kernel settings unchanged')
           (control / 'setup.json').write_text(json.dumps(state, indent=2) + '\n')
           PY
-      - name: Provision named namespace-custody AppArmor profile
+      - name: Provision per-job namespace-custody AppArmor profile
         shell: bash
         # An unconfined container still enters unprivileged_userns at unshare
-        # on Ubuntu 24.04 (PR22 hosted evidence); only this named profile is added.
+        # on Ubuntu 24.04 (PR22 hosted evidence); only a fresh owned profile is added.
         run: bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
       - name: Build dedicated nonroot regression image
         shell: bash
@@ -81,16 +81,18 @@ jobs:
           # No Docker socket, host PID namespace, added capabilities or writable checkout.
           chmod 0777 "$evidence"
           python3 tests/selection/namespace_testhost_lifecycle.py prepare "$control"
+          profile="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["name"])' "$control/apparmor/setup.json")"
           docker create --cidfile "$control/container.cid" --name "$(cat "$control/container.name")" \
             --label "nostrc.namespace-policy=$(cat "$control/owner.token")" \
             --user 1001:1001 --cap-drop=ALL --security-opt=no-new-privileges \
             --security-opt=seccomp=unconfined --security-opt=systempaths=unconfined \
-            --security-opt=apparmor=nostrc-namespace-custody --network none --read-only \
+            --security-opt="apparmor=$profile" --network none --read-only \
             --tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777 \
             --tmpfs /tmp/.X11-unix:rw,nosuid,nodev,mode=1777 \
             --mount "type=bind,source=$GITHUB_WORKSPACE,target=/source,readonly" \
             --mount "type=bind,source=$evidence,target=/evidence" \
             -e HOME=/tmp/namespace-home -e NOSTRC_CUSTODY_TEST_EVIDENCE=/evidence/custody \
+            -e "NOSTRC_NAMESPACE_APPARMOR_PROFILE=$profile" \
             --entrypoint /bin/bash "$(cat "$control/image.id")" \
             tests/selection/namespace_policy_entry.sh
           cid="$(cat "$control/container.cid")"
@@ -114,6 +116,10 @@ jobs:
           if [[ -f "$control/owner.json" ]]; then
             python3 tests/selection/namespace_testhost_lifecycle.py cleanup "$control"
           fi
+      - name: Remove only this job's AppArmor profile after its consumers exited
+        if: always()
+        shell: bash
+        run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
