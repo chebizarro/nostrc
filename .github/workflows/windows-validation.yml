@@ -25,6 +25,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        # Pinned input hashes bind repository bytes, not Windows CRLF conversion.
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
         with:
           submodules: recursive
           ref: ${{ inputs.sha || github.sha }}
