@@ -1,5 +1,70 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Final finite hosted refresh — 2026-10-23T12:49:15.864836Z
+
+One bounded fresh API census and terminal job/artifact collection, not a waiting
+loop: **58 distinct dependency-test roots/latest attempts,57 failed/one cancelled;
+zero pending or successful roots**. All four roots pending at the preserved10:22
+snapshot are now terminal failures: PR22 `39922245779` (10:31:26Z), master946
+`39922272251` (10:44:09Z), manual broad `39922309846` (10:45:10Z), and master440
+`39923954670` (10:50:05Z). These are source-specific terminal dispositions, not
+new executions of B/A/C's later unpushed fixes. The
+[final ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#final-finite-hosted-refresh--2026-10-23t124915864836z)
+links actual jobs, exact tested source, newly retained original ZIPs and hashes.
+
+All four original validation receipts retain **`passed=false`, `complete=true`,
+`complete_gate_eligible=false`, `enforcement_ready=false`**, nine physical gaps,
+failed resolve lanes and missing ordinary/static lanes. Requested completeness is
+not acceptance. Manual broad has62 jobs:42 success,13 failure,six cancelled,one
+skip. Its selected MDK08 is now a finalized failure; ordinary/ASan/policy/native
+failures remain. Standalone libgo/native jobs120314996705/120314996669 succeeded,
+but are not complete broad coverage. Parent's11:39 terminal run/jobs capture and
+this fresh capture agree on all62 job identities/outcomes/timestamps.
+
+Standalone strict-fuzz39922316626 remains SUCCESS and `.29` remains CLOSED;
+parent independently verified291 retained entries with no errors (source94647b2,
+`.29` scope only). No fuzz archive/log redownload was needed. Exact original62179
+replay remains NOT RUN/unrecoverable;51 distinct inputs are not its replacement.
+**0/20 qualifying reviewed distinct real-PR physical comparisons and0/2 successful
+complete broad integrations;W11 NOT MET/W12 NOT RUN.** No new reviewed paired
+comparison or successful complete broad is supplied by this refresh. Nested jobs,
+retries, skips, partial/profile receipts and standalone fuzz add no quota credit.
+The10:22 and every earlier failure/attempt remain unchanged below.
+
+**Historical-engine boundary clarification:** original plan
+[§5 shadow comparison](../plans/dependency-aware-testing-ci-2026-10-15.md#shadow-comparison)
+requires20 representative real PR comparisons, not20 necessarily prospective PRs.
+E's existing rejection of a modern external selector over a historical product
+revision is an implementation/source-admission boundary, **not an original user
+quota condition**. Independent product/engine bindings alone do not establish an
+already-approved external-engine method; that method requires explicit source/
+recipe/authority review, not a silent framework or waiver. This refresh neither
+proposes such an extension nor precludes an authentically reviewed historical
+case. Counters reflect actual reviewed evidence, not an invented prospective-only
+requirement.
+
+**Finite next integration steps (parent-supplied state, not new hosted proof):**
+- B reviews/integrates normal source checkpoint `a786f19e`, not yet accepted or
+  pushed at handoff; old-source hosted failures are not results for that checkpoint.
+- Preserve A `44cb6b47afa22614dc1b746f9d1e66ac4e30310f` and C
+  `b3bf81118b6e98da24ee8c5e1379f375f357c669` as bounded native fixes, not complete
+  profiles. Public macOS CTest still refuses the admin/`_developer` seal; finish
+  core-macOS legacy-TCP applicability correction with visible **nonvalidation**,
+  not a claim of provisioned TCP coverage.
+- After accepted integrated source and real runtime/custody prerequisites, retain
+  actual complete broad/PR comparison/performance evidence under the original
+  criteria. Docker remains unresponsive; no restart/prune is authorized and no
+  heavy local build is run. No further observation loop over these terminal roots.
+
+The existing E evidence JSON appends this refresh without changing its historical
+fields; historical SHA256`50ab6ef3…` identifies the original file at commit
+`762b09d6c`, not the appended file's new bytes. `.5` stays CLOSED with a fresh
+comment; official `bd export --all` preserves37 memories/comments, while the
+interaction journal is untouched. Docs/tracker only,no component bump; no source,
+protocol, default/hook, trigger/schedule, protection or publication changes. Parent
+integrates the separate frozen documentation commit.
+
+
 ## `.29` actual hosted closure — strict run39922316626 at94647b282
 
 [Original-log/source/artifact closure receipt](dependency-aware-testing-json-glib-hosted-2026-10-23.md)
