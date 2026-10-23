@@ -413,7 +413,9 @@ def signer_contract(realization, environment=None):
     # Authored common + test-phase overlay, source-expanded, without ambient values.
     overlay = phase_environment(profile, str(root), 'test', base_environment={})
     authored_env = {key: value for key, value in overlay.items() if key in SANITIZER_ENVIRONMENT}
-    if {key: environment.get(key) for key in authored_env} != authored_env:
+    # The whole effective projection: an inherited unauthored LSAN_OPTIONS
+    # (e.g. a suppression file) must not reach fixture processes.
+    if {key: environment[key] for key in SANITIZER_ENVIRONMENT if key in environment} != authored_env:
         raise ServiceError('signer fixture test-phase sanitizer environment differs from authored profile')
     return {'kind': 'nip5f_one_shot_provision_contract_v1', 'readiness': False,
             'executables': tools, 'instrumentation': instrumentation,

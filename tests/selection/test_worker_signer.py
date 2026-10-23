@@ -127,6 +127,13 @@ class WorkerSignerAdmission(unittest.TestCase):
         with self.assertRaisesRegex(services.ServiceError, 'test-phase consent differs'):
             services.signer_contract(self.record, dict(os.environ, NOSTRC_TEST_NIP5F_APPROVAL='all'))
 
+    def test_inherited_unauthored_sanitizer_variable_refuses(self):
+        # Runs for ordinary and (inherited) sanitizer variants alike.
+        with self.assertRaisesRegex(services.ServiceError, 'sanitizer environment differs'):
+            services.signer_contract(self.record, dict(getattr(self, 'env', os.environ),
+                                                       NOSTRC_TEST_NIP5F_APPROVAL=services.SIGNER_CONSENT,
+                                                       LSAN_OPTIONS='suppressions=/tmp/hide-leaks'))
+
     def test_changed_contract_refuses_before_launch(self):
         proof = copy.deepcopy(services.signer_contract(self.record))
         proof['remember'] = True
