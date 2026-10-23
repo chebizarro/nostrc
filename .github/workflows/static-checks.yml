@@ -30,7 +30,11 @@ on:
 jobs:
   static-checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Bounded walltime for testhost provisioning plus the full default selection
+    # suite (474 s in the hosted policy testhost) and the finite gates below.
+    timeout-minutes: 20
+    env:
+      REQUESTED_SHA: ${{ inputs.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,8 +49,39 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      # Selection and workflow contract tests: the full default suite
+      # (namespace_policy_entry.sh: discover -s tests/selection) runs in the
+      # shared provisioned testhost controller, with the exact checkout mounted
+      # read-only, its kernel-custody matrix actually provisioned, and owned
+      # container/profile removal even on failure, cancellation or timeout.
+      - name: Bind exact source and retain native launcher diagnosis (not acceptance)
+        run: |
+          set -euo pipefail
+          # Prove the exact checkout before executing its shared controller.
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          bash tests/selection/namespace_policy_controller.sh bind
+      - name: Record explicitly provisioned disposable Docker regression policy
+        run: bash tests/selection/namespace_policy_controller.sh record
+      - name: Provision per-job namespace-custody AppArmor profile
+        run: bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
+      - name: Build dedicated nonroot regression image
+        run: bash tests/selection/namespace_policy_controller.sh build
       - name: Selection and workflow contract tests
-        run: python3 -m unittest discover -s tests/selection
+        run: bash tests/selection/namespace_policy_controller.sh execute
+      - name: Remove only this job's recorded immutable container
+        if: always()
+        run: bash tests/selection/namespace_policy_controller.sh remove
+      - name: Remove only this job's AppArmor profile after its consumers exited
+        if: always()
+        run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
+      - name: Retain testhost control and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}static-checks-testhost-${{ inputs.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/namespace-policy
+          if-no-files-found: error
+
       - name: No call modifies a variable another argument uses
         # nostrc-td3b: argument evaluation order is unspecified; x86_64 GCC
         # goes right to left, so such a call breaks only on x86_64 runners.
