@@ -53,6 +53,10 @@ class CommandTimeout(ValueError):
     pass
 
 
+class CommandInterrupted(CommandTimeout):
+    """An owned command stopped by cancellation; handled exactly like a timeout."""
+
+
 def command(argv, cwd, prefix, timeout=120, env=None):
     start = time.monotonic()
     if os.name != "posix":
@@ -96,7 +100,8 @@ def command(argv, cwd, prefix, timeout=120, env=None):
               "custody_scope": "owned_posix_process_group_not_kernel_namespace"}
     write(prefix.with_suffix(".process.json"), record)
     if timed_out or interrupted:
-        raise CommandTimeout(f"command timed out; cohort stopped; see {prefix}.process.json")
+        raise (CommandInterrupted if interrupted else CommandTimeout)(
+            f"command timed out; cohort stopped; see {prefix}.process.json")
     if code:
         raise ValueError(f"command failed ({code}); see {prefix}.stderr")
     return stdout
@@ -697,7 +702,7 @@ def matrix(args, out):
     write(out / "result.json", result)
     if not ready or not args.execute:
         return result
-    sample_paths, active = [], None
+    sample_paths, active, cancelled = [], None, False
     try:
         # Keep all common-repository locks across the cohort, not just within a phase.
         with contextlib.ExitStack() as stack:
@@ -728,15 +733,33 @@ def matrix(args, out):
                     sample = execute_locked(child_args, child)
                     sample_paths.append(str(child / "result.json"))
                     entry["status"] = "passed" if sample["execution_passed"] else "failed"
+                    # command() captures a running-phase interrupt as interrupted:true
+                    # in the child's process record; that is cancellation, not an
+                    # ordinary workload failure.
+                    interrupted = [phase["phase"] for phase in sample.get("phases", [])
+                                   if (phase.get("process") or {}).get("interrupted") is True]
+                    if interrupted:
+                        cancelled = True
+                        entry["status"] = "failed"
+                        write(child / "cancellation.json", {"cancelled": True, "interrupted_phases": interrupted,
+                                                            "process_records": [str(child / (name + ".process.json"))
+                                                                                for name in interrupted],
+                                                            "complete": False})
                 except (ValueError, OSError, KeyError, TypeError, KeyboardInterrupt, subprocess.SubprocessError) as exc:
-                    write(child / "failure.json", {"error": str(exc), "complete": False})
+                    interrupt = isinstance(exc, (KeyboardInterrupt, CommandInterrupted))
+                    cancelled = cancelled or interrupt
+                    write(child / "failure.json", {"error": str(exc), "cancelled": interrupt, "complete": False})
                     sample_paths.append(str(child / "failure.json"))
                     entry.update(status="failed", error=str(exc))
+                if cancelled:
+                    entry["cancelled"] = True
+                    result["cancelled"] = True
                 write(out / "result.json", result)
                 active = None
                 if entry["status"] == "failed":
                     break  # No retry, replacement sample, or later workload after failure/cancellation.
-        result["execution_passed"] = all(e["status"] == "passed" for e in scheduled)
+        result["execution_passed"] = not cancelled and all(e["status"] == "passed" for e in scheduled)
+        result["cancelled"] = cancelled
         result["measurement_report"] = measurement_report(sample_paths)
         result["measurement_matrix_satisfied"] = result["measurement_report"]["measurement_matrix_satisfied"]
         write(out / "result.json", result)
@@ -744,7 +767,7 @@ def matrix(args, out):
         if active is not None and active["status"] == "not_run":
             active.update(status="failed", error=str(exc))
         result.update(execution_passed=False, measurement_matrix_satisfied=False,
-                      cohort_error=str(exc), cancelled=isinstance(exc, KeyboardInterrupt),
+                      cohort_error=str(exc), cancelled=cancelled or isinstance(exc, KeyboardInterrupt),
                       retained_sample_paths=sample_paths)
         write(out / "failure.json", {"error": str(exc), "cancelled": result["cancelled"], "complete": False})
         write(out / "result.json", result)

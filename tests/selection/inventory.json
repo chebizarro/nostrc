@@ -8041,7 +8041,11 @@
         "{source}/tests/selection/test_coreasan_app_enrollment.py",
         "{source}/tests/selection/worker_prerequisite_support.py",
         "{source}/tests/selection/fixtures/worker_prerequisite_20261024.json",
-        "{source}/tests/selection/test_worker_prerequisites.py"
+        "{source}/tests/selection/test_worker_prerequisites.py",
+        "{source}/tests/selection/test_w11_matrix.py",
+        "{source}/tests/selection/w11_matrix_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_matrix_integration_20261024.json",
+        "{source}/tests/selection/test_w11_matrix_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [

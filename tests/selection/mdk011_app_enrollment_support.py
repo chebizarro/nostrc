@@ -63,6 +63,8 @@ COMPOSED_SOURCES = {
 
 
 def before_source(path, raw):
+    from coreasan_app_enrollment_support import before_source as before_newer_source
+    raw = before_newer_source(path, raw)
     record = COMPOSED_SOURCES.get(path)
     if record is None or hashlib.sha256(raw).hexdigest() != record['composed_sha256']:
         return raw

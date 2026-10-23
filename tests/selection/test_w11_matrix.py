@@ -193,6 +193,82 @@ class MatrixTests(unittest.TestCase):
         self.assertIsNotNone(report["preflight_failures"][0]["contract_sha256"])
         self.assertTrue(all(e["status"] == "not_run" for e in result["entries"][1:]))
 
+    def test_inner_preflight_cancellation_marks_child_entry_and_cohort_cancelled(self):
+        with patch.object(w11, "execute_locked", side_effect=KeyboardInterrupt("fixture cancel")) as execute:
+            result, out = self.run_matrix(execute=True)
+        execute.assert_called_once()
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["execution_passed"])
+        self.assertFalse(result["measurement_matrix_satisfied"])
+        self.assertTrue(result["entries"][0]["cancelled"])
+        self.assertEqual("failed", result["entries"][0]["status"])
+        self.assertTrue(json.loads((out / "sample-0000/failure.json").read_bytes())["cancelled"])
+        self.assertTrue(all(e["status"] == "not_run" and "cancelled" not in e for e in result["entries"][1:]))
+        self.assertEqual(1, len(result["measurement_report"]["preflight_failures"]))
+        self.assertTrue(json.loads((out / "result.json").read_bytes())["cancelled"])
+
+    def test_actual_running_phase_interrupt_is_cancellation_not_ordinary_failure(self):
+        import signal
+        exe = str(Path(sys.executable).resolve())
+        # The running workload itself delivers the cancellation signal to the
+        # measuring process, so the interrupt lands exactly in the running phase.
+        workload = "import os, signal, time; os.kill(os.getppid(), signal.SIGUSR1); time.sleep(60)"
+        for entry in self.manifest["entries"]:
+            contract = json.loads(Path(entry["contract"]).read_bytes())
+            contract["phases"][0].update(argv=[exe, "-c", workload], timeout_seconds=60)
+            w11.write(Path(entry["contract"]), contract)
+            entry["contract_sha256"] = w11.digest(Path(entry["contract"]).read_bytes())
+        def cancel(signum, frame):
+            raise KeyboardInterrupt("measurement cancelled")
+        previous = signal.signal(signal.SIGUSR1, cancel)
+        try:
+            with patch.object(w11, "provenance", return_value={"fixture_only": True}):
+                result, out = self.run_matrix(execute=True)
+        finally:
+            signal.signal(signal.SIGUSR1, previous)
+        record = json.loads((out / "sample-0000/workload.process.json").read_bytes())
+        self.assertTrue(record["interrupted"])
+        self.assertEqual(130, record["exit_code"])
+        sample = json.loads((out / "sample-0000/result.json").read_bytes())
+        self.assertFalse(sample["execution_passed"])
+        cancellation = json.loads((out / "sample-0000/cancellation.json").read_bytes())
+        self.assertEqual(["workload"], cancellation["interrupted_phases"])
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["execution_passed"])
+        self.assertFalse(result["measurement_matrix_satisfied"])
+        self.assertTrue(result["entries"][0]["cancelled"])
+        self.assertEqual("failed", result["entries"][0]["status"])
+        self.assertTrue(all(e["status"] == "not_run" for e in result["entries"][1:]))
+        self.assertFalse((out / "sample-0001").exists())
+
+    def test_interrupted_preflight_command_is_cancellation(self):
+        interrupted = w11.CommandInterrupted("command timed out; cohort stopped; see pull.process.json")
+        self.assertIsInstance(interrupted, w11.CommandTimeout)
+        with patch.object(w11, "execute_locked", side_effect=interrupted):
+            result, out = self.run_matrix(execute=True)
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["execution_passed"])
+        self.assertTrue(json.loads((out / "sample-0000/failure.json").read_bytes())["cancelled"])
+        with patch.object(w11, "execute_locked", side_effect=w11.CommandTimeout("command timed out")):
+            result, out = self.run_matrix_again()
+        self.assertFalse(result["cancelled"])
+
+    def run_matrix_again(self):
+        path = self.root / "manifest.json"
+        w11.write(path, self.manifest)
+        out = self.root / "out-again"
+        out.mkdir()
+        return w11.matrix(SimpleNamespace(manifest=str(path), execute=True), out), out
+
+    def test_ordinary_workload_failure_is_not_cancellation(self):
+        with patch.object(w11, "provenance", return_value={"fixture_only": True}):
+            result, out = self.run_matrix(execute=True)
+        self.assertEqual(7, json.loads((out / "sample-0000/workload.process.json").read_bytes())["exit_code"])
+        self.assertFalse(result["cancelled"])
+        self.assertFalse(result["execution_passed"])
+        self.assertNotIn("cancelled", result["entries"][0])
+        self.assertFalse((out / "sample-0000/cancellation.json").exists())
+
     def test_mocked_matrix_statistics_are_fixture_only_never_acceptance(self):
         with patch.object(w11, "execute_locked", side_effect=self.fixture_sample) as execute:
             result, _ = self.run_matrix(execute=True)

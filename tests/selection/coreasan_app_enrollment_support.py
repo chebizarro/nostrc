@@ -22,9 +22,16 @@ def witness():
     return json.loads(raw)
 
 
+def before_source(path, raw):
+    # This layer changes no source; only the newest exact integration layer does.
+    from w11_matrix_integration_support import before_source as before_newer_source
+    return before_newer_source(path, raw)
+
+
 def before_policy(policy):
+    from w11_matrix_integration_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     records = data['maps']['checks']
