@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "scope": "Exact libmicrohttpd-dev and groundhog.linux pinned-Blueprint worker provisioning repairs and their clerical enrollment from master eaa918a0a; historical-test inverse only, not runtime admission, profile acceptance or a product-byte allowlist.",
+  "base": "eaa918a0ab5ffb757171922a690c629d919d4025",
+  "bead": "nostrc-0cfsg.36.12",
+  "hosted_failure": {
+    "run": 40023343699,
+    "event": "pull_request",
+    "pr": 23,
+    "head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+    "requested_sha": "0609aa7be06845d23797eddfa067028ea89a2b94",
+    "plan_id": "848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d",
+    "profile": "core.linux",
+    "job": 120653339860,
+    "evidence_artifact": 12534574832,
+    "lane": "lane-0c60b2c81b76c5c3",
+    "phase": "selected prerequisite build",
+    "argv": [
+      "cmake",
+      "--build",
+      "{build}",
+      "--parallel",
+      "2",
+      "--config",
+      "Debug"
+    ],
+    "exit_code": 1,
+    "build_log_sha256": "cf9248709e319a8c8629e113f797bdaf7e5f48bf9d66f6007c06d778dbf047c3",
+    "failed_object": "signet/CMakeFiles/signet_core.dir/src/bootstrap_server.c.o",
+    "source": "signet/src/bootstrap_server.c",
+    "missing_header": "microhttpd.h",
+    "also_reported": {
+      "profile": "groundhog.mdk08",
+      "job": 120653340392,
+      "basis": "sibling P2 report, same missing header; not re-derived here"
+    },
+    "not_claimed": "No hosted or native rerun; repair is static wiring until a fresh hosted receipt."
+  },
+  "blueprint_hosted_failure": {
+    "bead": "nostrc-0cfsg.36.15",
+    "run": 40023343699,
+    "profile": "groundhog.linux",
+    "job": 120653339921,
+    "evidence_artifact": 12532111488,
+    "lane": "lane-5981b92ddf6bab4c",
+    "requested_sha": "0609aa7be06845d23797eddfa067028ea89a2b94",
+    "phase": "configure",
+    "location": "apps/grotto/CMakeLists.txt:123",
+    "pinned_version": "0.22.2",
+    "found_version": "0.12.0",
+    "consequence": "native final evidence refused: trusted native finalizer seal missing",
+    "pinned_counterevidence": "same run grotto.linux job 120653340143 ran groundhog-blueprint with /usr/local/bin/blueprint-compiler (pinned 0.22.2): Test Passed, 46 committed Groundhog .ui files match",
+    "not_claimed": "No hosted or native rerun; static wiring until a fresh hosted groundhog.linux receipt."
+  },
+  "base_policy_hash": "c8165e5a92638a2a10718cc1b03fb8e625969d5b56f4a3777de12a921dbc120f",
+  "enrolled_policy_hash": "e9ffa464085781be61a15d5dac5eba1750da35b23b9997c58314273213c05428",
+  "runtime_inputs": [
+    "{source}/tests/selection/worker_prerequisite_support.py",
+    "{source}/tests/selection/fixtures/worker_prerequisite_20261024.json",
+    "{source}/tests/selection/test_worker_prerequisites.py"
+  ],
+  "maps": {
+    "workflow_jobs": {
+      ".github/workflows/dependency-worker.yml:execute": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "fcf6ac4f6d1011bee1f4706360de3ccad87f0d2821dad67d18b5363b03cf273d",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "4960e3d34b17ad9827972b5450d445b7431c2054ff566012ffed156575ef6ef0",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9"
+        }
+      }
+    }
+  },
+  "sources": {
+    ".github/workflows/dependency-worker.yml": {
+      "before_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9",
+      "after_sha256": "16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9",
+      "edits": [
+        {
+          "before": "            libjson-glib-dev libgit2-dev libnsync-dev libgtk-4-dev libadwaita-1-dev \\\n            libsecret-1-dev libgcrypt20-dev libqrencode-dev libsqlite3-dev \\\n            libsqlcipher-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \\\n",
+          "after": "            libjson-glib-dev libgit2-dev libnsync-dev libgtk-4-dev libadwaita-1-dev \\\n            libsecret-1-dev libgcrypt20-dev libqrencode-dev libsqlite3-dev libmicrohttpd-dev \\\n            libsqlcipher-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \\\n"
+        },
+        {
+          "before": "      - name: Install pinned Blueprint compiler for application profiles\n        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'core.linux.asan' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')\n        run: |\n",
+          "after": "      - name: Install pinned Blueprint compiler for application profiles\n        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'core.linux.asan' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.linux' || inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')\n        run: |\n"
+        }
+      ]
+    },
+    "tests/selection/post1640_integration_support.py": {
+      "before_sha256": "54955e20d2d62b4e6552bcbe2c41d1388cf225ed3847e29a1630d26ef2413d8b",
+      "after_sha256": "90e5e9fa582af39f8a1288acdef773af929f864c0046161229881d23b84e6840",
+      "edits": [
+        {
+          "before": "def before_source(path, raw):\n    record = witness()['sources'].get(path)\n",
+          "after": "def before_source(path, raw):\n    from worker_prerequisite_support import before_source as before_newer_source\n    raw = before_newer_source(path, raw)\n    record = witness()['sources'].get(path)\n"
+        },
+        {
+          "before": "def before_jobs(records):\n    previous = copy.deepcopy(records)\n    fields = ('source_sha256', 'workflow_sha256', 'matrix_source')\n",
+          "after": "def before_jobs(records):\n    from worker_prerequisite_support import before_jobs as before_newer_jobs\n    previous = before_newer_jobs(records)\n    fields = ('source_sha256', 'workflow_sha256', 'matrix_source')\n"
+        },
+        {
+          "before": "def before_policy(policy):\n    data = witness()\n",
+          "after": "def before_policy(policy):\n    from worker_prerequisite_support import before_policy as before_newer_policy\n    data = witness()\n"
+        },
+        {
+          "before": "    data = witness()\n    previous = copy.deepcopy(policy)\n    inputs = previous['checks']['selection.contract']['runtime_inputs']\n",
+          "after": "    data = witness()\n    previous = before_newer_policy(policy)\n    inputs = previous['checks']['selection.contract']['runtime_inputs']\n"
+        }
+      ]
+    },
+    "tests/selection/test_post1640_integration.py": {
+      "before_sha256": "c2da4c1904e690eb616cefb85185b5ce3dc92167e9421f289d5b17e7fb0323db",
+      "after_sha256": "001d95311301f200271d536e1e0f0a82d607125ea5add1602404b3fb01cf4b9d",
+      "edits": [
+        {
+          "before": "    def test_original_witnesses_and_author_production_bytes_unchanged(self):\n        data = wave.witness()\n",
+          "after": "    def test_original_witnesses_and_author_production_bytes_unchanged(self):\n        from worker_prerequisite_support import before_source as before_newer_source\n        data = wave.witness()\n"
+        },
+        {
+          "before": "                with self.subTest(field=field, path=path):\n                    self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest)\n\n",
+          "after": "                with self.subTest(field=field, path=path):\n                    raw = before_newer_source(path, (ROOT / path).read_bytes())\n                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)\n\n"
+        }
+      ]
+    },
+    "tests/selection/test_worker_signer_prerequisites.py": {
+      "before_sha256": "34fa0f8e712bbbc679ad6a6f27023c94ab0eac9f3aadc605e255a4b791627588",
+      "after_sha256": "cc07963f1b00094c48c7ee6794c18030c12c73e0bfcc19119f4a3d4da71e51f1",
+      "edits": [
+        {
+          "before": "                      \" || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')\\n\")\n        self.assertEqual(self.text.count(current), 1)\n        original = self.text.replace(current, checkpoint)\n        start = original.index('      # Both original MDK profiles author the nak capability')\n",
+          "after": "                      \" || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')\\n\")\n        # Start from the pre-.36.12/.36.15 worker: only that exact reviewed repair is reversed.\n        import worker_prerequisite_support as newer\n        text = newer.before_source('.github/workflows/dependency-worker.yml', WORKER.read_bytes()).decode()\n        self.assertEqual(text.count(current), 1)\n        original = text.replace(current, checkpoint)\n        start = original.index('      # Both original MDK profiles author the nak capability')\n"
+        }
+      ]
+    }
+  }
+}

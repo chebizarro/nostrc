@@ -163,8 +163,11 @@ class WorkerSignerPrerequisiteTests(unittest.TestCase):
                    " || inputs.profile == 'groundhog.mdk011')\n")
         checkpoint = ("        if: runner.os == 'Linux' && (inputs.profile == 'core.linux'"
                       " || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')\n")
-        self.assertEqual(self.text.count(current), 1)
-        original = self.text.replace(current, checkpoint)
+        # Start from the pre-.36.12/.36.15 worker: only that exact reviewed repair is reversed.
+        import worker_prerequisite_support as newer
+        text = newer.before_source('.github/workflows/dependency-worker.yml', WORKER.read_bytes()).decode()
+        self.assertEqual(text.count(current), 1)
+        original = text.replace(current, checkpoint)
         start = original.index('      # Both original MDK profiles author the nak capability')
         end = original.index('      - name: Install pinned Blueprint compiler for application profiles')
         original = original[:start] + original[end:]

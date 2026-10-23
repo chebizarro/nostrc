@@ -100,6 +100,41 @@ class Mdk011AppEnrollment(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'historical check changed'):
             wave.before_policy(stripped)
 
+    def test_composes_with_independent_worker_prerequisite_inverse(self):
+        import coreasan_app_enrollment_support as asan
+        import post1640_integration_support as oldest
+        import worker_prerequisite_support as worker
+        current = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        mine = wave.before_policy(current)
+        theirs = worker.before_policy(current)
+        # Either order reaches the same exact base; neither touches the other's fields.
+        self.assertEqual(worker.before_policy(mine), wave.before_policy(theirs))
+        self.assertEqual(s.digest(worker.before_policy(mine)), worker.witness()['base_policy_hash'])
+        self.assertEqual(s.digest(wave.before_policy(theirs)), wave.witness()['base_policy_hash'])
+        self.assertEqual(s.digest(mine), worker.witness()['enrolled_policy_hash'])
+        self.assertEqual(mine['workflow_jobs'], current['workflow_jobs'])
+        for ident in list(wave.witness()['maps']['checks']) + list(asan.witness()['maps']['checks']):
+            self.assertEqual(theirs['checks'][ident], current['checks'][ident], ident)
+        self.assertEqual(s.digest(oldest.before_policy(current)), oldest.witness()['base_policy_hash'])
+        # The integrated post-1640 hook bytes project exactly to the worker layer's
+        # reviewed bytes and then, through the chain, to its reviewed base.
+        import hashlib
+        path = 'tests/selection/post1640_integration_support.py'
+        record = worker.witness()['sources'][path]
+        raw = (ROOT / path).read_bytes()
+        self.assertEqual(hashlib.sha256(wave.before_source(path, raw)).hexdigest(), record['after_sha256'])
+        self.assertEqual(hashlib.sha256(oldest.before_source(path, raw)).hexdigest(), record['before_sha256'])
+        drifted = raw + b'\n# unreviewed\n'
+        self.assertEqual(wave.before_source(path, drifted), drifted)
+        # Each layer keeps its own strict guard inside the composition.
+        for layer, mutate in ((worker, lambda p: p['workflow_jobs'][sorted(worker.witness()['maps']['workflow_jobs'])[0]].update(unreviewed=True)),
+                              (wave, lambda p: p['checks'][sorted(wave.witness()['maps']['checks'])[0]]['ctest_tests'][PROFILE].append('invented')),
+                              (asan, lambda p: p['checks'][sorted(asan.witness()['maps']['checks'])[0]]['ctest_tests']['core.linux.asan'].append('invented'))):
+            changed = copy.deepcopy(current)
+            mutate(changed)
+            with self.subTest(layer=layer.__name__), self.assertRaises(ValueError):
+                oldest.before_policy(changed)
+
 
 if __name__ == '__main__':
     unittest.main()

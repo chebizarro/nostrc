@@ -10,7 +10,10 @@ PROFILE, PEER = 'core.linux.asan', 'core.linux'
 
 class CoreAsanAppEnrollment(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's result: the independent worker-prerequisite layer
+        # (disjoint workflow_jobs/inputs) is projected away first.
+        from worker_prerequisite_support import before_policy as before_worker_policy
+        return before_worker_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def claims(self, policy, profile):
         claims = {}
