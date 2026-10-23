@@ -57,6 +57,42 @@
 > historical guidance, not a current repository-wide execution guarantee. Extended
 > BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
 
+## Selected-normal contract and homed CI route — 2026-10-24
+
+Source `723e601ac1322ca0220cd88b3b0ed22b0a7fcd81` (tree `5d9ae919`):
+`scripts/test_selection_execution.py`, with tests `test_normal_execution_contract.py`,
+`test_normal_transport.py` and `test_homed_ci_worker.py` under `tests/selection/`.
+
+- **Selected normal** (`normal_selected_execution`): authored only on `core.linux`,
+  `core.linux.asan`, `grotto.linux`, `grotto.linux.asan_ubsan`, `groundhog.linux`,
+  `groundhog.mdk08` and `groundhog.mdk011`, each of which keeps the full
+  `normal_execution` contract. It applies only to a fresh, committed, unrestricted,
+  unbroadened affected plan. The qualifier re-derives that plan from the tested
+  history, and pull_request event identities must match the tested two-parent
+  merge. Only the selected checks' registration/fixture closure executes.
+  Whole-universe ownership, eligible default prerequisite builds and full pre/post
+  source/Ninja/header/runtime audits remain required. The receipt records
+  `not_executed` checks/registrations with `whole_universe_executed=false` and
+  `full_profile_acceptance=false`. That is never whole-profile, complete or W11
+  credit. Broad plans, and profiles without the marker, use the full contract.
+- **`homed.linux.ci`**: CI-only; the same five standalone units as local-only
+  `homed.linux.units`. It runs through the `homed_units` dependency worker, the
+  pidns gate, per-job AppArmor and post-teardown qualification. It has no selected
+  marker, so only broad CI plans qualify; affected plans keep the raw receipt and
+  fail closed. The normal receipt from
+  [job 120626068734](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068734)
+  is bound to tested merge `84c36ac00cac0e5ccbc973f7c8cc48995d0b672b`
+  (PR head `723e601ac`, which the API reports). It shows five registrations plus
+  `homed.default_build` passed and full audits passed, with `complete=false`.
+  It is not legacy four-distro root/systemd/FUSE or 140-registration parity; the
+  `homed_unit_profile_contract` gap remains.
+- **Results labelled `723e601ac` only:** 137 focused selection tests pass with
+  zero skips (41 normal-execution cases), and all 11 statics pass. One fresh native
+  root default build and serial CTest ran 439 registrations: 434 passed, 5 skipped
+  (four signer UI opt-outs and unconfigured `test_nip5f_tcp`), 0 failed, with
+  read-only keychain guards at 0. Later test-only commits are not re-executed
+  native evidence.
+
 ## W11/W12/heartbeat integration — 2026-10-23
 
 [Final source-bound receipt](reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md):

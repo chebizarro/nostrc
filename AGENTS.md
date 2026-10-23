@@ -42,6 +42,18 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   complete/profile parity is inferred. Default custody stays `legacy`; keyring
   commands and shared signer capability remain unsupported. See the
   [source-bound integration report](docs/reviews/dependency-aware-testing-integration-2026-10-23.md).
+- Normal pidns receipts (`normal_execution`) qualify only from fresh committed
+  **broad** plans. Seven profiles also author `normal_selected_execution`:
+  `core.linux`, `core.linux.asan`, `grotto.linux`, `grotto.linux.asan_ubsan`,
+  `groundhog.linux`, `groundhog.mdk08`, `groundhog.mdk011`. For an unrestricted,
+  unbroadened affected plan re-derived from the tested history, these execute only
+  the selected dependency closure, while whole-universe ownership, eligible default
+  prerequisite builds and full source/Ninja/header/runtime audits stay mandatory.
+  Unselected checks/registrations are `not_executed`: never whole-profile,
+  complete or W11 credit. `homed.linux.ci` is a separate CI-only route for the
+  five standalone homed units with no selected marker, so only broad CI plans
+  qualify it. It is not legacy four-distro/root-140 parity. See
+  [TESTING](docs/TESTING.md#selected-normal-contract-and-homed-ci-route--2026-10-24).
 - Native default-generator build contracts use `build_scope=default`, empty
   `build_targets`, and exact `cmake --build {build}` with realized configuration
   and authored build parallelism. Only attested single-config Ninja closures are
