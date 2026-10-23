@@ -292,6 +292,9 @@ int main(int argc, char **argv) {
   nostr_json_init(); nostrc_test_bus_tolerate_ebadf();
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", argv[0], TRUE);
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", secret, TRUE);
+  /* The private daemon is D-Bus only: never inherit an ambient NIP-5F endpoint
+   * or token (a provisioned signer fixture may already own that listener). */
+  g_unsetenv("NOSTR_SIGNER_ENDPOINT"); g_unsetenv("NOSTR_SIGNER_SOCK"); g_unsetenv("NOSTR_SIGNER_TOKEN");
 #ifndef __APPLE__
   if (worker) {
     nostrc_test_tolerate_gdk_frame_warning(); gtk_init(); adw_init();
