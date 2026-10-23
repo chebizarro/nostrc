@@ -23,7 +23,15 @@ for d in ('containers','volumes','images'): (root/d).mkdir(exist_ok=True)
 def save(d,k,v):
  p=root/d/k;tmp=p.with_suffix('.'+str(os.getpid()));tmp.write_text(json.dumps(v));tmp.replace(p)
 def read(d,k):return json.loads((root/d/k).read_text())
-def containers():return [json.loads(p.read_text()) for p in (root/'containers').iterdir() if p.is_file() and '.' not in p.name]
+def containers():
+ # Like Docker's atomic listing: a container removed by another run between
+ # iterdir() and read is absent, never a client crash (nostrc-0cfsg.8.1).
+ out=[]
+ for p in (root/'containers').iterdir():
+  if p.is_file() and '.' not in p.name:
+   try:out.append(json.loads(p.read_text()))
+   except FileNotFoundError:pass
+ return out
 def find(k):return next(c for c in containers() if k in (c['Id'],c['Name'].lstrip('/')))
 def cid(name):return hashlib.sha256(name.encode()).hexdigest()
 def value(flag):return args[args.index(flag)+1]
@@ -197,6 +205,26 @@ class MDKGateTests(unittest.TestCase):
         self.assertFalse(receipt['complete'])
         self.assertTrue(receipt['docker_lifecycle']['cleanup_complete'])
         self.assertEqual(receipt['docker_lifecycle']['scope'], 'original_docker_build_and_recorded_peers_only')
+
+    def test_fake_inventory_skips_container_removed_during_listing(self):
+        # Fixture regression only (fake Docker, no backend claim): two runs share
+        # one fake daemon; a sibling's removal between iterdir() and read must not
+        # crash this run's exact-CID `rm -f` (attempt-3 cleanup_failed cause).
+        containers = Path(str(self.trace)+'.daemon')/'containers'
+        containers.mkdir(parents=True)
+        keep, gone = 'a'*64, 'b'*64
+        for cid, name in ((keep,'keep'),(gone,'gone')):
+            (containers/cid).write_text(json.dumps({'Id':cid,'Name':'/'+name}))
+        vanish = ('import pathlib\n_read=pathlib.Path.read_text\n'
+                  'def _vanish(self,*a,**k):\n'
+                  ' if self.name==%r:self.unlink()\n'
+                  ' return _read(self,*a,**k)\n'
+                  'pathlib.Path.read_text=_vanish\n') % gone
+        result = subprocess.run([sys.executable,'-c',vanish+FAKE,'rm','-f',keep],env=self.env,
+                                capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse((containers/keep).exists())
+        self.assertFalse((containers/gone).exists())
 
     def test_two_roots_different_inputs_bind_exact_ids(self):
         a,b = self.root('a'),self.root('b')
