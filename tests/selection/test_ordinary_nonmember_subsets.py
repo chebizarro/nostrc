@@ -429,6 +429,25 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         with self.assertRaisesRegex(ValueError, "source input changed"):
             subset.validate_graph(self.contract, real, tests, descriptors, ["a-model"])
 
+    def test_fresh_committed_product_edit_does_not_refresh_legacy_omission_authority(self):
+        real = self.configure()
+        contract = copy.deepcopy(self.contract)
+        # A clean new execution identity does not reauthorize a historical
+        # omission witness, even when the registration/target shape is intact.
+        path = self.root / "libgo/support.c"
+        path.write_text(path.read_text() + "/* ordinary code-only revision */\n")
+        self.git("add", "-A")
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "new implementation bytes")
+        identity = {"kind": "committed", "sha": self.git("rev-parse", "HEAD").decode().strip()}
+        fresh = r.configure_profile(self.root, self.build, self.pid, self.profile,
+                                    identity, s.digest(self.inventory))
+        self.assertNotEqual(fresh["source_identity"], real["source_identity"])
+        tests = {t["name"]: t for t in fresh["tests"]}
+        descriptors = {d["name"]: d for d in fresh["descriptors"]}
+        with self.assertRaisesRegex(ValueError, "candidate command/property/target/input contract changed"):
+            subset.validate_graph(contract, fresh, tests, descriptors, ["a-model"])
+        self.assertEqual(self.contract, contract)
+
     def test_target_custody_binding_and_phase_options_refuse_before_build(self):
         real = self.configure("grotto.linux")
         resolved = r.resolve_checks(self.inventory, self.plan, real, self.pid)

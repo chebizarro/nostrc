@@ -70,15 +70,20 @@ class FullDeclarationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             subset.before_full_ownership_policy(bad)
 
-    def test_pinned_fixture_w4_semantics_sources_and_old_witness_unchanged(self):
+    def test_pinned_structural_fixture_w4_semantics_and_source_provenance(self):
         fixture = subset._full_fixture(ROOT)
         self.assertEqual(sorted(fixture["registrations"]), list(subset.REGISTRATIONS))
         w4 = {n for n, rec in fixture["registrations"].items()
               if rec["properties"].get("ENVIRONMENT") == ["GOF_NWORKERS=4"]}
         self.assertEqual(w4, {n for n in subset.REGISTRATIONS if n.endswith("W4")})
         self.assertEqual(len(w4), 6)
-        for name, expected in fixture["source_inputs"].items():
-            self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
+        self.assertTrue(subset._sha(fixture["base"], 40))
+        for name, historical_hash in fixture["source_inputs"].items():
+            self.assertEqual(s.normalized_path(name), name)
+            self.assertTrue(subset._sha(historical_hash))
+            self.assertTrue((ROOT / name).is_file(), name)
+        # _full_fixture verifies the immutable fixture itself, including review
+        # hashes. Normal product edits need no historical hash/policy refresh.
         for name in subset.REGISTRATIONS:
             rec = fixture["registrations"][name]
             self.assertEqual(rec["runtime_inputs"], [])
@@ -87,6 +92,24 @@ class FullDeclarationTests(unittest.TestCase):
             if name.endswith("W4"):
                 self.assertEqual(rec["command"], fixture["registrations"][name[:-2]]["command"])
                 self.assertGreater(rec["properties"]["TIMEOUT"], 0)
+
+    def test_product_source_changes_select_full_go_and_original_consumers(self):
+        before = s.digest(self.policy)
+        for name in ("libgo/src/channel.c", "libgo/include/channel.h"):
+            with self.subTest(name=name):
+                self.assertTrue((ROOT / name).is_file())
+                plan = s.make_plan(self.policy, [change(name)], head="a" * 40, base="b" * 40)
+                self.assertEqual(plan["effective_mode"], "affected")
+                self.assertEqual(plan["source_identity"], {"kind": "committed", "sha": "a" * 40})
+                for pid, default in (("groundhog.linux", "groundhog.default_build"),
+                                     ("grotto.linux", "grotto.default_build")):
+                    lane = next(lane for lane in plan["lanes"] if lane["profile"] == pid)
+                    self.assertTrue({"supported.libgo", "supported.libnostr", "supported.nips.nip04", default}
+                                    <= set(lane["checks"]))
+                    self.assertEqual(self.policy["checks"]["supported.libgo"]["ctest_tests"][pid],
+                                     list(subset.REGISTRATIONS))
+                self.assertFalse(subset.nested(plan))
+        self.assertEqual(s.digest(self.policy), before)
 
     def test_full_contract_does_not_rebind_historical_current_profile_hashes(self):
         self.policy["profiles"]["groundhog.linux"]["capabilities"].append("future-tool")
@@ -123,9 +146,12 @@ class FullGraphTests(Project):
         executables = sorted({t for rec in actual["registrations"].values() for t in rec["descriptor"]["targets"]})
         libgo = self.root / "libgo"
         libgo.mkdir()
-        (libgo / "runner.c").write_text('#include "runner.h"\n#include <stdlib.h>\nint main(void) { const char *w = getenv("GOF_NWORKERS"); return w && w[0] != \'4\' ? 1 : VALUE; }\n')
-        (libgo / "runner.h").write_text("#define VALUE 0\n")
-        lines = [f"add_executable({name} runner.c)" for name in executables]
+        (libgo / "runner.c").write_text('#include "runner.h"\n#include <stdlib.h>\nint main(void) { const char *w = getenv("GOF_NWORKERS"); return w && w[0] != \'4\' ? 1 : go_value(); }\n')
+        (libgo / "runner.h").write_text("#define VALUE 0\nint go_value(void);\n")
+        (libgo / "value.c").write_text('#include "runner.h"\nint go_value(void) { return VALUE; }\n')
+        lines = ["add_library(go_fixture STATIC value.c)"]
+        for name in executables:
+            lines += [f"add_executable({name} runner.c)", f"target_link_libraries({name} PRIVATE go_fixture)"]
         for name, rec in actual["registrations"].items():
             target = rec["descriptor"]["targets"][0]
             lines += [f"add_test(NAME {name} COMMAND {target})",
@@ -135,8 +161,14 @@ class FullGraphTests(Project):
         (libgo / "CMakeLists.txt").write_text("\n".join(lines) + "\n")
         cmake = self.root / "CMakeLists.txt"
         cmake.write_text(cmake.read_text().replace("nostrc_finalize_test_inventory()",
-                         "add_subdirectory(libgo)\nnostrc_finalize_test_inventory()"))
+                         "add_subdirectory(libgo)\ntarget_link_libraries(shared PRIVATE go_fixture)\nnostrc_finalize_test_inventory()"))
+        consumer = self.root / "main.c"
+        consumer.write_text(consumer.read_text().replace('#include "shared.h"',
+                            '#include "shared.h"\n#include "libgo/runner.h"').replace(
+                            'int main(int argc, char **argv) {',
+                            'int main(int argc, char **argv) {\n  if (go_value() != 0) return 1;'))
         self.inventory["nodes"]["libgo"] = {}
+        self.inventory["nodes"]["application"]["depends_on"].append("libgo")
         self.inventory["path_rules"].append({"prefix": "libgo/", "nodes": ["libgo"], "effect": "impact", "reason": "fixture"})
         self.inventory["profiles"] = {pid: copy.deepcopy(self.profile) for pid in subset.PROFILES}
         for check in self.inventory["checks"].values():
@@ -168,7 +200,9 @@ class FullGraphTests(Project):
                                         self.identity, s.digest(self.inventory), inventory=self.inventory)
         self.tests, self.descriptors = r._metadata(self.inventory, self.real)
         candidate = subset.candidate_contract(self.real, self.tests, self.descriptors)
-        fixture = {"registrations": {}, "source_inputs": {"libgo/runner.h": hashlib.sha256((libgo / "runner.h").read_bytes()).hexdigest()}}
+        fixture = {"registrations": {}, "source_inputs": {
+            name: hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+            for name in ("libgo/runner.h", "libgo/value.c", "libgo/CMakeLists.txt")}}
         for name, record in candidate.items():
             fixture["registrations"][name] = {k: record[k] for k in ("command", "properties", "descriptor", "runtime_inputs")}
             fixture["registrations"][name].update(input_names=sorted(record["input_hashes"]),
@@ -176,6 +210,124 @@ class FullGraphTests(Project):
         fixture["target_graph"] = subset._full_target_structure(candidate)
         self.graph_fixture = fixture
         mock.patch.object(subset, "_full_fixture", return_value=fixture).start()
+
+    def test_new_committed_product_bytes_run_full_go_and_linked_consumers_without_policy_refresh(self):
+        # The only adapted interfaces are native host admission and the small
+        # structural graph fixture in setUp; source Git/graphs/audits/build/CTest
+        # and normalization execute the production engine without bypasses.
+        policy_hash = s.digest(self.inventory)
+        fixture_before = copy.deepcopy(self.graph_fixture)
+        policy_path = self.root / "tests/selection/inventory.json"
+        policy_path.parent.mkdir(parents=True)
+        policy_path.write_text(json.dumps(self.inventory))
+        self.git("add", "-A")
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "full normal fixture baseline")
+        old_identity = {"kind": "committed", "sha": self.git("rev-parse", "HEAD").decode().strip()}
+        old_real = r.configure_profile(self.root, self.build, self.pid, self.profile,
+                                      old_identity, policy_hash, inventory=self.inventory)
+        old_tests, old_desc = r._metadata(self.inventory, old_real)
+        old_full = subset.full_evidence(self.inventory, old_real, old_tests, old_desc)
+        product_edits = {
+            "libgo/value.c": '#include "runner.h"\nint go_value(void) { return (VALUE + 0); }\n',
+            "libgo/runner.h": "#define VALUE (0)\nint go_value(void);\n",
+        }
+        for name, content in product_edits.items():
+            (self.root / name).write_text(content)
+            self.assertNotEqual(hashlib.sha256(content.encode()).hexdigest(),
+                                fixture_before["source_inputs"][name])
+        self.git("add", "-A")
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "ordinary libgo implementation and header edit")
+        identity = {"kind": "committed", "sha": self.git("rev-parse", "HEAD").decode().strip()}
+        self.assertNotEqual(identity, old_identity)
+        self.assertEqual(set(self.git("diff", "--name-only", old_identity["sha"], identity["sha"]).decode().splitlines()),
+                         set(product_edits))
+        plan = s.git_plan(self.root, self.inventory, head=identity["sha"], base=old_identity["sha"])
+        self.assertEqual(plan["source_identity"], identity)
+        self.assertEqual(plan["effective_mode"], "affected")
+        self.assertEqual(plan["broadening_reasons"], [])
+        self.assertEqual(set(plan["selected_checks"]), set(self.inventory["checks"]))
+        self.assertIn("application", plan["witnesses"])
+        self.assertEqual(s.digest(self.inventory), policy_hash)
+        self.assertEqual(self.graph_fixture, fixture_before)
+        spec = importlib.util.spec_from_file_location("fresh_source_adapter", ROOT / "scripts/test-plan.py")
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        for pid in sorted(subset.PROFILES):
+            with self.subTest(profile=pid):
+                build = self.build if pid == self.pid else self.build.parent / pid
+                real = r.configure_profile(self.root, build, pid, self.inventory["profiles"][pid],
+                                           identity, policy_hash, inventory=self.inventory)
+                tests, descriptors = r._metadata(self.inventory, real)
+                full = subset.full_evidence(self.inventory, real, tests, descriptors)
+                self.assertEqual(full["binding"]["source_identity"], identity)
+                self.assertNotEqual(full["graph_sha256"], old_full["graph_sha256"])
+                self.assertEqual(full["fixture_sha256"], old_full["fixture_sha256"])
+                lane = next(lane for lane in plan["lanes"] if lane["profile"] == pid)
+                resolved = r.resolve_checks(self.inventory, plan, real, pid)
+                pre = r.check_inputs(self.inventory, real)
+                self.assertTrue(pre["passed"], pre["gaps"])
+                r.build_resolved(resolved, build)
+                post = r.check_inputs(self.inventory, real, after_build=True)
+                self.assertTrue(post["passed"], post["gaps"])
+                self.assertTrue(post["header_index_hash"])
+                self.assertGreater(post["header_entries"], 0)
+                for name, content in product_edits.items():
+                    self.assertEqual(post["input_hashes"][str(self.root / name)],
+                                     hashlib.sha256(content.encode()).hexdigest())
+                self.assertEqual(pre["input_hashes"][str(self.root / "libgo/value.c")],
+                                 post["input_hashes"][str(self.root / "libgo/value.c")])
+                raw = r.run_resolved(resolved, build, self.evidence / pid, input_audit=post,
+                                     input_audit_before_build=pre, build=False)
+                self.assertEqual(raw["outcome"], "passed", raw)
+                self.assertEqual(raw["checks"]["supported.libgo"]["observed_executions"], list(subset.REGISTRATIONS))
+                # shared is really linked to go_fixture and includes runner.h;
+                # all three application registrations are selected and run.
+                for name in ("a-model", "gui", "omitted"):
+                    self.assertEqual(raw["observed_executions"][name], "passed")
+                normalized = adapter.normalize_receipt(self.inventory, plan, resolved, raw)
+                self.assertEqual(normalized["source_identity"], identity)
+                self.assertEqual(normalized[subset.FULL_FIELD], full)
+                subset.validate_full_receipt(raw, raw, plan, lane, self.profile, checks=self.inventory["checks"])
+                for stale in (old_full, dict(full, binding=dict(full["binding"], source_identity=old_identity))):
+                    wrong_source = copy.deepcopy(raw)
+                    wrong_source[subset.FULL_FIELD] = stale
+                    # The old groundhog receipt also has the wrong profile in
+                    # the grotto lane; either mismatch must refuse promotion.
+                    with self.assertRaisesRegex(ValueError, "full source/profile/context evidence differs|missing/forged full ownership evidence"):
+                        subset.validate_full_receipt(wrong_source, wrong_source, plan, lane, self.profile,
+                                                     checks=self.inventory["checks"])
+                partial = copy.deepcopy(raw)
+                partial["retained_partial"] = {"authority": subset.AUTHORITY, "complete": False}
+                with self.assertRaisesRegex(ValueError, "historical partial authority"):
+                    subset.validate_full_receipt(partial, partial, plan, lane, self.profile, checks=self.inventory["checks"])
+                for name, content in product_edits.items():
+                    with self.subTest(drift=name):
+                        path = self.root / name
+                        path.write_text(content + "/* post-resolution mutation */\n")
+                        try:
+                            with mock.patch.object(r, "_execute", wraps=r._execute) as execute:
+                                with self.assertRaises(r.RealizationError):
+                                    r.run_resolved(resolved, build, self.evidence / pid / "drift",
+                                                   input_audit=post, input_audit_before_build=pre, build=False)
+                                self.assertFalse(any("--output-junit" in call.args[0] or "--build" in call.args[0]
+                                                     for call in execute.call_args_list))
+                        finally:
+                            path.write_text(content)
+        self.assertEqual(s.digest(self.inventory), policy_hash)
+        self.assertEqual(self.graph_fixture, fixture_before)
+
+    def test_new_committed_source_graph_change_still_requires_authored_contract(self):
+        (self.root / "libgo/new.c").write_text("int new_function(void) { return 0; }\n")
+        path = self.root / "libgo/CMakeLists.txt"
+        path.write_text(path.read_text() + "target_sources(go_fixture PRIVATE new.c)\n")
+        self.git("add", "-A")
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "unreviewed source graph change")
+        identity = {"kind": "committed", "sha": self.git("rev-parse", "HEAD").decode().strip()}
+        real = r.configure_profile(self.root, self.build, self.pid, self.profile, identity,
+                                   s.digest(self.inventory), inventory=self.inventory)
+        tests, descriptors = r._metadata(self.inventory, real)
+        with self.assertRaisesRegex(ValueError, "source/prerequisite graph changed"):
+            subset.full_evidence(self.inventory, real, tests, descriptors)
 
     def test_live_graph_and_pre_post_full_audits_without_any_exclusion(self):
         full = subset.full_evidence(self.inventory, self.real, self.tests, self.descriptors)

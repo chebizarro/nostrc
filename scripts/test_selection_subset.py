@@ -1,6 +1,6 @@
-"""Exact ordinary libgo diagnostic subset authority; never a full partition.
+"""Ordinary libgo ownership and separate historical diagnostic authorities.
 
-Historical review provenance and current realization bindings are independent.
+Full ownership binds current source bytes; omission witnesses stay source-pinned.
 """
 from __future__ import annotations
 
@@ -208,10 +208,14 @@ def full_evidence(inventory, realization, tests, descriptors):
             "full fresh CTest export changed/duplicated")
     root = Path(realization["repo_root"])
     fixture = _full_fixture(root)
-    for name, expected in fixture["source_inputs"].items():
+    # These hashes record the fixture's review provenance, not an allowlist of
+    # product bytes. load_realization has checked the fresh source identity;
+    # candidate_contract and the full pre/post audits bind its current inputs.
+    # Keep the source/registration/prerequisite shape independently constrained.
+    for name in fixture["source_inputs"]:
         path = root / name
-        require(path.is_file() and path.resolve().is_relative_to(root.resolve())
-                and hashlib.sha256(path.read_bytes()).hexdigest() == expected, "full source input changed: " + name)
+        require(path.is_file() and path.resolve().is_relative_to(root.resolve()),
+                "full source input missing/escaped: " + name)
     candidate = candidate_contract(realization, tests, descriptors)
     projection = {}
     for name, record in candidate.items():
