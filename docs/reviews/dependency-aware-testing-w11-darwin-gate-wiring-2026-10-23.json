@@ -1,0 +1,82 @@
+{
+ "b_asks": [
+  "accept diagnostic boundary darwin_seatbelt_v1 in test-plan.py --diagnostic-boundary choices and realization._diagnostic_boundary, with aggregate/verify_native_public_receipt treatment equivalent to linux_pidns_v1 (complete=false)",
+  "enroll scripts/adapter_darwin_custody.py, scripts/test_gate_darwin.py, tests/selection/test_darwin_custody.py, tests/selection/test_darwin_gate_wiring.py; refresh scripts/test-gate.sh witness hash"
+ ],
+ "c_findings": [
+  "intermittent instrumented cancellation seal-anchor EOF under load in C test (retained adjacent.log)"
+ ],
+ "c_interface_sha256": {
+  "v1": "df3b9805c0b1098a0e820fabf1354434928d173c0df689d8c0d44b8c3fe73ff2",
+  "v2": "6e8b0cae098f9b7638620a2d6f98a2811769b9763376434cb13c6738274d8deb"
+ },
+ "code_tip": "229a20234e0b2b6635f19244c12cf56def24ad07",
+ "commits": {
+  "229a20234": "wiring on C v2 control-pipe authority (current)",
+  "7936d1fa2": "first wiring (--tag-fd proposal; superseded by C v2)",
+  "9d613fc6a": "D1 docker refusal contract phrase restored"
+ },
+ "evidence_root": "/tmp/nostrc-w11-runtime-20261023/darwin-proof",
+ "evidence_sha256": {
+  "adjacent.log": "5a74c6756930ca69a2f10453580928c398d8ab57203795ba410f072822372b20",
+  "c-instrumented-isolated.log": "d352a5f20cf457db6ddedf682c78b085f7167be1e5d094d11925152d8a3f7fce",
+  "frozen-wiring.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "frozen-wiring.log": "e5e25f87e35905d670ce1230cd2316a127145b4c78efed2e7ebf9776626a86e8",
+  "frozen.sha": "b0ae63a2cd46a0718f1fd2c276d1eb272d50701637f25fa04d309b5142a76566",
+  "run1.log": "6a462bce2e510c84db71d53b666ab3fb2cacb11ef10d69cc2a21a46d4a56be49",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/aggregate.json": "31a15990b72b22ff91b1ac18501384346975e1a195f3826c6b51ba9100d1e875",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/keychain-after.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/keychain-after.log.darwin-adapter.json": "ecfd67f2a5bbc43fd702c9e8aa110457b930aac3594f0a4b5d3fcc1b074914df",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/keychain-after.log.darwin-custody-79419d47bdf74bdc9a41858d6d892720.json": "29772a760cb87221506f25fe95314198157e6b4e80fac2007c8b780dd423db63",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/keychain-before.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/keychain-before.log.darwin-adapter.json": "ddda82b7065b3ec788672aa64b4ebed0c6f715d268824ee73632a6658f808cc9",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/keychain-before.log.darwin-custody-89ee6b12995d47bcb57d4d49e514466e.json": "c33a6d0cbb9f526d2980d62ad859ab97c379b73b2c2d46e7e671bed790587ea6",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/lane.log": "021e89d5ddce7ad3f6c8dbce38b9c111d0c3cb3342ad93e41f1ccc55ff065df1",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/lane.log.darwin-adapter.json": "3d72fc1b7dc65d7180d7b98b72f44cac7226fe04646ae6e25d47e67decf724ee",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/lane.log.darwin-custody-d0a376587f16448882254bc9d067b0ab.json": "25bf78af1fa69d72166125a9a693100eb6d114fe552bd86732a9f86215043e3c",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/native-final.json": "ad4a45cd6acbd0f2b6ac8a86fdd7c176dd454cfef0ce16c2c874af68b0db6b1f",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/submodule-c03ea25df3f57d0b.log": "574eea12909bc5d85364f2b7d3ff4cefc9fe50ce137416479af294c1b49cb26b",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/submodule-c03ea25df3f57d0b.log.darwin-adapter.json": "9cfd8cd56afe2594e431b9c3ccb4f27d5e6b7164778dcd159b97fecd2f27711c",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/submodule-c03ea25df3f57d0b.log.darwin-custody-c296e756a9ee461f8964d668c0334d89.json": "7d5de6a79ef6cc2573ea605147ddeb34da0d4307d8fcdc7a4d35bb6ab29812db",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/lane-f9128cf90dd4d236/submodules.json": "1e3638613657483625791fe309624d9ea978d93da63c4d69a561e86817a64f40",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/plan.json": "5ab784cb6e2e703db7c9d2425987186d0c540237652db812cd2f855d2b1ebf0e",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/source-checkout.log": "22eff92edc86c770f7b5d9616d9ad4b8ee85ab39f0bbc81e79af4fe1361d9721",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/source-checkout.log.darwin-adapter.json": "d88e99fca30cf214930afebdeebfe2edc1aaa8f13e971e8f8f7d2e59fa6963ea",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/0/source-checkout.log.darwin-custody-d42520085032405b8557564c5f9e6f59.json": "164024bc467a7cf5c01d9c08fba124c0458d70d86342b57df920137e4481c50a",
+  "run1/e41aba921d1d4e53b508a38d2abf0b1d/adapter-receipt.json": "dc51d11a03ae368fc481d72dcefd7442352342782804322d8b019040baeda8ce",
+  "wip.sha": "7a23b4598c5572c9c6fcd68074ae23e5a1a3ca109bb5a7d663a6816982f5eb06",
+  "wiring-1.log": "c3ff77336c2432de7941f488d2c2268b57cfa89911f304fae513054a42c08f85",
+  "wiring-2.log": "33e3b3e721b3e285e8ee17f475b8ed11d15bc9a319df4c10951186f3bf1cbc8c"
+ },
+ "files_sha256": {
+  "scripts/adapter_darwin_custody.py": "e012fe3ad24f7eef839df480487b67d66be4583cf16a2f31d5e5b8c774e1d4a4",
+  "scripts/test-gate.sh": "c6bd4221d03902f66bc47784457a350f58d4fbe9577812e212a856ebe204ce08",
+  "scripts/test_gate_darwin.py": "5cf6a47916e855b1becab6b042803e7f7f4d6d9b73afd72027695b50c98bc697",
+  "tests/selection/test_darwin_custody.py": "269517a3d44cd477e588447b464565ec0e72d6f6ec3ab0f3c4046fcae5e8002e",
+  "tests/selection/test_darwin_gate_wiring.py": "7bb71aded68f1432b1b9390ff88eea3ae394be4a6f77a79c8bd867800b8fb42a"
+ },
+ "kind": "w11_darwin_gate_wiring_handoff_v1",
+ "merges": {
+  "131695d0b66e3935b0daa358abdcb6d57986d3e9": "C frozen tag-authority correction (merge 4b3ecea8f)",
+  "525d35d9ca2991d93c4c047eb74f978b107d769b": "C draft (merge 34b527236)"
+ },
+ "not_run": [
+  "real CTest through the public CLI (needs B boundary value)",
+  "Linux refusal of darwin (Docker held)",
+  "hosted macOS",
+  "x86_64 macOS",
+  "TSan/fuzz"
+ ],
+ "proofs": {
+  "native_macos_arm64": "8/8 test_darwin_gate_wiring (public CLI checkout under custody; simple/nonzero; escaped setsid TERM-ignoring descendant cleaned + outside sibling alive; cancellation; helper SIGKILL -> parent-bound --reap-tag recovery, lane failed; missing/tampered seal retained failure) + 9/9 local command adapter on frozen tip",
+  "public_cli_lane_run1": "darwin lane (libgo.macos.asan): checkout, keychain guards, submodule hydration, lane run_api all control-pipe clean; lane stops at engine --diagnostic-boundary choices (darwin_seatbelt_v1 not accepted): B blocker; native-final failed retained"
+ },
+ "retained_failures": [
+  "run1 on pre-v2 wip (lane stopped at B boundary)",
+  "wiring-1.log harness bug (helper method shadowed TestCase.run)",
+  "adjacent.log: C test_instrumented_cancellation_cleans_escaped_descendant_and_seal failed under combined load (seal anchor EOF); isolated diagnostic run passed 6/6 and is NOT counted"
+ ],
+ "schema_version": 1,
+ "scope": "bounded explicit native Darwin diagnostic gate wiring; NOT .23/full-profile acceptance",
+ "version_bump": "none (CI/test tooling)"
+}
