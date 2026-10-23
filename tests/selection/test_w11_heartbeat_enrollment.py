@@ -12,6 +12,7 @@ class HeartbeatEnrollmentTests(unittest.TestCase):
     def test_actual_approved_sources_and_workflow_are_bound(self):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         witness = c.heartbeat_witness()
+        self.assertEqual(witness['approved_tip'], 'cbf3d14a32204f647e2a7157b8cbea3f42c128b5')
         observed = source_job_blocks(ROOT)
         for path, expected in witness['source_sha256'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
@@ -39,8 +40,15 @@ class HeartbeatEnrollmentTests(unittest.TestCase):
         self.assertIn("!cancelled() && startsWith(matrix.os, 'macos')", block)
         self.assertNotIn('NOSTRC_HEARTBEAT_CONTROL', workflow[test:probe].split('\n      # Record-only')[0])
         script = (ROOT / 'nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh').read_text()
-        self.assertIn('run_one inherit inherit "$i" 0', script)
-        self.assertIn('run_one fg fg "$i" 0', script)
+        for command in ('run_one inherit inherit "$i" 0 default',
+                        'run_one poll inherit "$i" 0 poll',
+                        'run_one inherit-control inherit "$i" 1 default',
+                        'run_one poll-control inherit "$i" 1 poll',
+                        'run_one fg fg 1 0 default',
+                        'run_one bg-positive bg 1 0 default'):
+            self.assertIn(command, script)
+        self.assertIn('unset_env+=(-u NOSTRC_HEARTBEAT_POLL_FUNC)', script)
+        self.assertNotIn('NOSTRC_HEARTBEAT_POLL_FUNC', workflow[test:probe].split('\n      # Record-only')[0])
         self.assertNotIn('kill ', script)
         self.assertTrue(script.rstrip().endswith('exit 0'))
 

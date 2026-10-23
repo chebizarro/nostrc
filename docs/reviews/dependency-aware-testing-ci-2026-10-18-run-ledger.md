@@ -1,5 +1,84 @@
 # Dependency-aware testing acceptance run ledger
 
+## JSON-GLib real hosted remediation — finalized run39922316626
+
+[Literal `.29` closure evidence](dependency-aware-testing-json-glib-hosted-2026-10-23.md)
+now retains ORIGINAL logs for all five successful jobs at exact94647b282, not just
+API green status. JSON's actual official1.10.8 checksum/install/ASan probe/loaded
+library/ldd, Clang18.1.3 LIBFUZZER build/link, original `json_event` corpus and
+strict60s command finish5,892,314 runs/61s; NIP49325/62s and BIP3941,446/61s also
+succeed. Coverage pin verification and actual printed reports retained, existing
+advisory `|| true` semantics not promoted. Source blob/SHA256 bindings and original
+corpus ZIP API checksums/size/CRC/member hashes are in the
+[machine evidence](dependency-aware-testing-json-glib-hosted-2026-10-23.json),
+SHA256`fa8d7ec9c9971c94111bf51a7dc28553713dd98118ad662ad6c26cd22eaf4dc8`.
+Logs API has no content digest; log hashes are capture integrity, explicitly not
+API attestations. No independent fuzz-binary fingerprint was uploaded or claimed.
+
+Official `.29` is **CLOSED** for its literal compatible-dependency strict-fuzz
+remedy contract. Original62179 input/probe/log still UNRECOVERABLE/exact replay
+**NOT RUN**,51 distinct inputs not replacement. That unavailable historical input
+is not an invented permanent condition absent from the issue AC. Prior failed
+runs39132650260/39753293484 and previous receipts below remain unchanged.
+**Zero W11 comparison/broad quota credit** from this standalone success; dated
+58-root census below still has0/20 and0/2. A/B own manual broad's actual selected,
+policy/native runtime failures; no gate/default/protection/publication change.
+
+
+## E bounded execution collection — 2026-10-23T10:22:47.933138Z
+
+New collector actually executed; no dispatch, retry, waiting loop or historical
+archive sweep. Root census10:22:43.834229Z–10:22:47.933138Z: all58 distinct roots,
+**53 failed / one cancelled / three in progress / one queued;zero successful**.
+New push root39923954670 binds API head44044fefe; PR22 root39922245779 still queued
+at capture despite completed nested jobs. Manual broad39922309846 and master
+push39922272251 remain in progress. Prior57-root08:14 and54-root snapshots below
+are unchanged historical evidence, not overwritten counters.
+
+| Actual source/run attempt1 | Retained observation, not acceptance |
+|---|---|
+| [PR22 39922245779](https://github.com/chebizarro/nostrc/actions/runs/39922245779) | API head d29a5ac; original receipts bind tested4527a06e8. At original-ZIP capture60 jobs:44 success,12 failure,one cancelled,one skipped,two nonterminal. Ordinary GH/Grotto source-checkout git125, root macOS signer capability refusal, GH sanitizer partition refusal, MDK011 missing keyring/nak/signer remain failures. No new causal attribution or receipt promotion. |
+| [Manual broad39922309846](https://github.com/chebizarro/nostrc/actions/runs/39922309846) | API head and plan94647b2. At original-ZIP capture61 jobs:42 success,11 failure,six cancelled,one skip,one in progress. Original broad accounting12493552566 has `passed=false`:groundhog/grotto cancelled,static failed. Physical root is not complete. |
+| [Strict fuzz39922316626](https://github.com/chebizarro/nostrc/actions/runs/39922316626) | Terminal success, same94647b2 API head. Retained full job/step metadata; no corpus ZIP fetch needed. It is neither a legacy/selected comparison nor complete broad integration. |
+
+Original ZIP verification (API size/digest, CRC and every member SHA256):
+
+| Artifact ID | Bytes | Original ZIP SHA256 |
+|---|---:|---|
+|12489004053 PR22 MDK011 receipt/log|11571|`b24de997c80e760753437728eed8ba89cfa0eb05d68576fb1c2adadc503e9813`|
+|12488397904 PR22 root macOS ASan receipt/log|8856|`b19f641ec1761b0ed703890fe495bf95a7c965fb3a64350e2f3406d3b97eb38d`|
+|12490642140 PR22 GH sanitizer receipt/log|8219|`38f4473414c6af7ca5f00272e5f3398b2b5ba9184de1856b160c794ef79068bf`|
+|12493880301 PR22 ordinary GH **log only**|358|`95454c873b50faea30a035ca9ee2e442bca4258adcf4cbbd469991be48dc194d`|
+|12493161690 PR22 ordinary Grotto **log only**|354|`f6a48ec3fe55ca5be35b2139e2b687a9cf1213b9b6d93e49cd6de123e8beede7`|
+|12493552566 manual broad failed accounting|1463|`b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf`|
+|12488212907 manual broad original plan|16591|`13fb9103901ade05abd2676b5d5f7619bcca400cdb74b49b826ab3cf3f004c9e`|
+
+[Machine evidence manifest](dependency-aware-testing-w11-e-evidence-2026-10-23.json)
+SHA256 `50ab6ef3e96d749bbe18e2b2c827809a12c7845195feea276a9618953796a626`
+retains API/run/attempt/source identities, timestamps, job/step outcomes/durations,
+runner labels, original archive/member hashes and collector/Python fingerprints.
+Raw original bytes under the manifest's `/tmp/nostrc-w11-e-*` paths may expire;
+artifact IDs/GitHub source links and captured hashes are durable references.
+Missing cache/tool/capability identity is not inferred from job labels.
+
+Read-only discovery through10:18:30.768429Z:rulesets`[]`; master branch protection404; caller
+permissions include admin/push. Actual failed PR21 check `Dependency gate`, app
+`github-actions`15368 observed; PR22 had not emitted that check at capture. Full
+check-head pagination retained. This establishes no enabled merge queue or
+operator-approved protection baseline; no HTTP write was made.
+
+[E's actual implementation/protocol and conditional source-bound W12 patches](dependency-aware-testing-w11-e-protocol-2026-10-23.md)
+are distinct from product execution. Local fixture tests add **zero** credit.
+**0/20 qualifying reviewed distinct PR comparisons;0/2 successful complete broad
+integrations;W11 NOT MET/W12 NOT RUN.** Historical original-source PR execution
+needs parent-reviewed faithful recipes and complete native prerequisites; if those
+cannot satisfy original source criteria, genuine future PRs are necessary. No
+manufactured PRs, fixed-product-hash bypass, criterion waiver or dual-source
+framework. `.5` remains closed (evidence comment), `.36.6` open. No active default,
+trigger,schedule,protection or publication changes; internal tooling/tests/docs,
+no bump; local commits only,parent lands.
+
+
 ## PR22 postlanding finite snapshot — 2026-10-23T08:14:14.914574Z
 
 Sequential authenticated API capture **08:11:46.634875Z–08:14:14.914574Z**;

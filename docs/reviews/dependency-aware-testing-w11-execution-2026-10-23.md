@@ -1,5 +1,28 @@
 # W11 executable census and current-head closure gaps — 2026-10-23
 
+## E follow-through at44044fefe — physical runner and actual collection
+
+[Implemented command/contract protocol](dependency-aware-testing-w11-e-protocol-2026-10-23.md)
+now supplies `census`, attempt-scoped `collect`, original-PR-source `execute`,
+failure-preserving paired `measurements` and **unapplied** `prepare-cutover`.
+These replace neither native custody nor complete selector/legacy receipts.
+The runner rejects transplanted candidates, uses committed-source bytes/modes
+rather than a fixed historical product-body whitelist, checks within-run drift,
+and keeps actual phase/opaque-adapter times and original failures. Its physical
+byte/mode checks verify pre/post endpoints, **not** within-phase modify/restore
+or immutable execution; accepted inner custody must supply that separate proof. All14
+clean/incremental cells are accounted; no automatic W11 credit is granted.
+No production workload was run locally under the host's5GiB/Docker restriction.
+
+[Actual new dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#e-bounded-execution-collection--2026-10-23t102247933138z)
+records58 roots at10:22:47Z (53 failed,one cancelled,four nonterminal), original
+PR22 failure ZIPs, failed manual broad accounting and terminal strict-fuzz
+success. **0/20 and0/2;W11 NOT MET/W12 NOT RUN.** Future qualifying original-source
+cases need parent review and B/A/native prerequisites, not planner-case promotion.
+The prior master663 replay/ownership narrative below remains source-specific
+history; it is not a current implementation inventory or acceptance claim.
+
+
 ## Scope and result
 
 Base/master: `663edcd70c0d313c98f87610aa41f1261bce4ee6`; finite measurement

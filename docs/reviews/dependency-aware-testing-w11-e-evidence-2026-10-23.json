@@ -1,0 +1,1810 @@
+{
+  "base_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+  "captures": [
+    {
+      "directory": "/tmp/nostrc-w11-e-census-20261023",
+      "files": {
+        "result.json": "0702a842892f86cbde758a1d37fb967dbfc0c173dcf9b6e38fcfa5e1fc84249f",
+        "roots-1.json": "12cfaf0de02784b458150a0f5be2058bee69653071702c4c0c180b7f73bed0be",
+        "roots-1.process.json": "b639bf598458b05a42ec7c4636dda97895a6c200a81fdd296c1be141b283663c",
+        "roots-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "roots-1.stdout": "12cfaf0de02784b458150a0f5be2058bee69653071702c4c0c180b7f73bed0be",
+        "runner.json": "9f797fab5331da51ce901ef46a3e8c45ae18d77f262706dea2ea1715a67b841c"
+      },
+      "result": {
+        "complete": false,
+        "complete_gate_eligible": false,
+        "kind": "w11_root_census_v1",
+        "limits": "Dated sequential API census of distinct roots/latest attempts, not reviewed acceptance. Prior attempts/failures in older retained snapshots are not erased.",
+        "qualifying_broad_integrations": 0,
+        "qualifying_comparisons": 0,
+        "repository": "chebizarro/nostrc",
+        "root_count": 58,
+        "root_states": {
+          "cancelled": 1,
+          "failure": 53,
+          "in_progress": 3,
+          "queued": 1
+        },
+        "roots": [
+          {
+            "conclusion": null,
+            "event": "push",
+            "head_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39923954670",
+            "id": 39923954670,
+            "run_attempt": 1,
+            "status": "in_progress",
+            "updated_at": "2026-10-23T10:13:42Z"
+          },
+          {
+            "conclusion": null,
+            "event": "workflow_dispatch",
+            "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39922309846",
+            "id": 39922309846,
+            "run_attempt": 1,
+            "status": "in_progress",
+            "updated_at": "2026-10-23T10:05:04Z"
+          },
+          {
+            "conclusion": null,
+            "event": "push",
+            "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39922272251",
+            "id": 39922272251,
+            "run_attempt": 1,
+            "status": "in_progress",
+            "updated_at": "2026-10-23T09:40:12Z"
+          },
+          {
+            "conclusion": null,
+            "event": "pull_request",
+            "head_sha": "d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39922245779",
+            "id": 39922245779,
+            "run_attempt": 1,
+            "status": "queued",
+            "updated_at": "2026-10-23T08:07:55Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "663edcd70c0d313c98f87610aa41f1261bce4ee6",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39885713147",
+            "id": 39885713147,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-23T03:41:22Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "5641f8b0bade465fee093925aa29443e791c4ae9",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39885673421",
+            "id": 39885673421,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-23T02:12:17Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "d9c9c8808b2611fc179ed4ed3640e63920f4683f",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39884406426",
+            "id": 39884406426,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-23T03:13:46Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "7319d339365d74efe0e26577d0055b91153707fd",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39884384021",
+            "id": 39884384021,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-23T03:40:59Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39872363501",
+            "id": 39872363501,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-23T01:20:50Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "cc56887a7b433f6391d13be5ef1688035de7de88",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39872346136",
+            "id": 39872346136,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-23T02:08:30Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "0ce430299060a09e4a2db250be1a2cac4df2c212",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39851489448",
+            "id": 39851489448,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T23:01:39Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "88d36526af2c913d9d7a93dce6078d7ce5259418",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39851463581",
+            "id": 39851463581,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T22:48:11Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39765146565",
+            "id": 39765146565,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T17:01:56Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "decef538f1b3cdddbffdb6695eae085b54c548fd",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39765128286",
+            "id": 39765128286,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T12:39:11Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "f646db033031a32ad0f6283f881d8506eafbcc4b",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39753293484",
+            "id": 39753293484,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T10:28:32Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "2a1513ade043da9612f1b9a7c4c35037c43049ed",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39753280286",
+            "id": 39753280286,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T10:20:17Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39740131392",
+            "id": 39740131392,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T08:45:56Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "fc3bf15792110c095a13049eb4f471e612af07cb",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39740044784",
+            "id": 39740044784,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T08:24:25Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "ed70631704778a7fbe31d45b24161570a91abb53",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39721223143",
+            "id": 39721223143,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T05:12:29Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "c5509f6c184e56f6c7d08049257cb0bcad8374ae",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39721202319",
+            "id": 39721202319,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T05:02:04Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "53f2e822d04bd32e243a9cf969396f2f241af83e",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39712305258",
+            "id": 39712305258,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T04:02:18Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "bb001a70c53f713baa63fac435c4f5f103e68e63",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39712294835",
+            "id": 39712294835,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T03:33:24Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39709833505",
+            "id": 39709833505,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T03:21:27Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39709815551",
+            "id": 39709815551,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T03:12:35Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "3c7c42c08cf1fade80da1355e4392847060abdb2",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39706136042",
+            "id": 39706136042,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T02:37:02Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "81a907d187a735e69c1bbde0840fe5fb4b9b51a8",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39706114829",
+            "id": 39706114829,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T02:33:22Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "d953c37fb7705eae76342c78222308f1290995ec",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39696802787",
+            "id": 39696802787,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T01:06:56Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "3930033b573b953b3e3e0d9f2dfa5ed503292017",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39696789681",
+            "id": 39696789681,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T00:46:45Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "37e144cab898e942d2875d903670ccaf4335158b",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39691368155",
+            "id": 39691368155,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-22T00:28:18Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "e65063eb5c9dd42bf77395245d50b4b695c29b35",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39691347591",
+            "id": 39691347591,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T23:27:13Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39685711754",
+            "id": 39685711754,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T23:36:17Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "e8ad431f1b5866bf40dadcd12d41716e487e4463",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39685690707",
+            "id": 39685690707,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T23:03:36Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39680092640",
+            "id": 39680092640,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T22:52:42Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39680066929",
+            "id": 39680066929,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T22:18:24Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39639305885",
+            "id": 39639305885,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T18:18:10Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "3632336068340b842cc1c76a5d89014c3c1e430a",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39639281932",
+            "id": 39639281932,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T17:54:26Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "7219eb4b5dd7e3bd046dd96f846baa26ed08ddbf",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39635020066",
+            "id": 39635020066,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T17:41:39Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "1f34a3bdf326bda6c2f2e15d2f26b11f97dbc230",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39634993581",
+            "id": 39634993581,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T17:43:03Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "f9d1e853794d81037e8dcf177e40b9bc83178b9c",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39522032401",
+            "id": 39522032401,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T02:17:31Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "172139a92e617d19d8d1aa3e0b9bd3fe5937e52d",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39522018295",
+            "id": 39522018295,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T01:56:28Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "f39401e12eaac24cbf86e903cdc37198fb332479",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39520208404",
+            "id": 39520208404,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T01:39:53Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "4ea308cc2c888c6e0b8a6de842a621cecd66ea93",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39520195345",
+            "id": 39520195345,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T01:45:15Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "096091aaa758468a8338e9cf0646acee432cfba1",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39519285551",
+            "id": 39519285551,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T01:37:10Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "9271b0667d141f979f196e59fd5d617117bc81d8",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39519271161",
+            "id": 39519271161,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-21T01:37:08Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "1fad10a239f9cef72b7b056b8ab99679337d53c4",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39280051357",
+            "id": 39280051357,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T16:44:33Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_sha": "d120bc972bbb0f4c09951e376bcc229b41931e0e",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39280037488",
+            "id": 39280037488,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T16:44:31Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "b72b9ec70f4aee51a4a5f42447bc763cce5cc516",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39271217772",
+            "id": 39271217772,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T15:32:42Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "6ce261c4234c35d5f6c95822edeab83fdae48b60",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39202094613",
+            "id": 39202094613,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T05:56:03Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "fb7335cb0e9546463293b6adf2044fe54178f5ac",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39198909741",
+            "id": 39198909741,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T05:17:52Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "e57ef16ed1aeff152d808aec407c1b6f86bfc6be",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39196963896",
+            "id": 39196963896,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T04:39:15Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "2c5b18c23344b3a4c32faf2738e6c34064ab1af7",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39194781902",
+            "id": 39194781902,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T04:04:41Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "5280ea324ec474e9d0644638565a2e5a01748b51",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39194059430",
+            "id": 39194059430,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-19T04:04:23Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "2743f17354ac13527d8d8919f81abc711396c959",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39132650260",
+            "id": 39132650260,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-18T14:24:47Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "249f9657fb230947ba486fb3cd92894316f9acc3",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38878691465",
+            "id": 38878691465,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-16T09:53:52Z"
+          },
+          {
+            "conclusion": "cancelled",
+            "event": "workflow_dispatch",
+            "head_sha": "a478070509569c26917dd5fb13a548b1f68eade9",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38873978927",
+            "id": 38873978927,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-16T09:19:49Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "8a031f443ac84850345a4cf0fb6ab5a8c3b32814",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38856570439",
+            "id": 38856570439,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-16T06:18:19Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "33a1012767c9db5a46057280178134a544b86af7",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38845886339",
+            "id": 38845886339,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-16T03:32:15Z"
+          },
+          {
+            "conclusion": "failure",
+            "event": "push",
+            "head_sha": "5467c02d11f74efc1a85c833024efb654bbf98b5",
+            "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38833746063",
+            "id": 38833746063,
+            "run_attempt": 1,
+            "status": "completed",
+            "updated_at": "2026-10-16T01:56:42Z"
+          }
+        ],
+        "snapshot_completed_at": "2026-10-23T10:22:47.933138+00:00"
+      },
+      "runner": {
+        "argv": [
+          "scripts/w11-evidence.py",
+          "census",
+          "--output",
+          "/tmp/nostrc-w11-e-census-20261023"
+        ],
+        "python": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]",
+        "python_executable": "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+        "python_sha256": "7ebde552773a4045532637b114d645a313e045ac07b26f5e520bf039f1e34063",
+        "runner_sha256": "8306089c6ef3026b9492a469fcdb73ba3ab4abdaaf76749a12890d7c90ef24be",
+        "started_at": "2026-10-23T10:22:43.834229+00:00"
+      }
+    },
+    {
+      "directory": "/tmp/nostrc-w11-e-discovery-20261023",
+      "files": {
+        "checks-head-2.json": "726fb36458e56c072feda5df788eef764707d1bc3ee0f4dd125b90fe2d1bd8ab",
+        "checks-head-2.process.json": "88e4e502c81be0d4e995c43af08c9bcbf6d483e6d4b7ffccb943934a15ad1db0",
+        "checks-head-2.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "checks-head-2.stdout": "726fb36458e56c072feda5df788eef764707d1bc3ee0f4dd125b90fe2d1bd8ab",
+        "checks-head.json": "b295a45bf9ee565d7944c6609f6a8db00148bdb9530bc532419b7eab187f2ed7",
+        "checks-head.process.json": "1e8febbef973ad15f4a7a18db2064283a9d17a6463e1e7d364e238c6fe036153",
+        "checks-head.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "checks-head.stdout": "b295a45bf9ee565d7944c6609f6a8db00148bdb9530bc532419b7eab187f2ed7",
+        "checks-merge.json": "e83cfac35507982a40cfeb776ce85aa0367e7646f81fe857df4a6c841ea8a170",
+        "checks-merge.process.json": "2081f88e89bf55b008d5a41136a3e7f8d0a47c511d5f10734e41ecfe225e385c",
+        "checks-merge.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "checks-merge.stdout": "e83cfac35507982a40cfeb776ce85aa0367e7646f81fe857df4a6c841ea8a170",
+        "checks-pr21.json": "f7ae2c4db72b25a16ed437853d502ef63bdb3d58267a6c205d1f6776cd9e81cf",
+        "checks-pr21.process.json": "1580f9b9dca04d0a94895d35158c19b4340b5d37578f4309fa0fd4897865cf91",
+        "checks-pr21.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "checks-pr21.stdout": "f7ae2c4db72b25a16ed437853d502ef63bdb3d58267a6c205d1f6776cd9e81cf",
+        "proof-manifest.json": "9b79f064101904fca543bd6924ebf1a0f22dc1107c262dbec1707c878775c18f",
+        "protection.process.json": "ad7cf657e9557968d7b3ffad8aba57e6995799b96f57a189a50f8edca8b584dd",
+        "protection.stderr": "256bf323d488b96ed59be6a50a192e2badd6b722792fcc4b8856f97aa3a3d23a",
+        "protection.stdout": "d6020ee3b0852c3deb66c66d159cc80caabeaa66ee301778307a2a18d486450d",
+        "repository.json": "331ce84ee6db9302e81f428094ef08547fb9160131fea077b3e6d30d9852f436",
+        "repository.process.json": "bf4563e049de9d246e3d63bd1174d71f337ba3e7029871fff8d590281a60dcfa",
+        "repository.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "repository.stdout": "331ce84ee6db9302e81f428094ef08547fb9160131fea077b3e6d30d9852f436",
+        "roots.json": "fb9c0381c2e2fcbbeae7fd0b04dddd4659bd29e9b5815f7e84555d5fc5f15375",
+        "roots.process.json": "58fd4aa858e551daa7d8919c6880d89f6a9c4920c9835382e16865809e022749",
+        "roots.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "roots.stdout": "fb9c0381c2e2fcbbeae7fd0b04dddd4659bd29e9b5815f7e84555d5fc5f15375",
+        "rulesets.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "rulesets.process.json": "a6baf5470a09a8cfc3a65f0cdd8cbae7889f67e76d950d058f053a0471e9bf0e",
+        "rulesets.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rulesets.stdout": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    {
+      "directory": "/tmp/nostrc-w11-e-pr22-originals-20261023",
+      "files": {
+        "archive-12488397904.process.json": "a61644457bc827607671f3c60c6b301cd67aa9b3aeb41616a39bdcf08d4bbf0d",
+        "archive-12488397904.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12488397904.stdout": "b19f641ec1761b0ed703890fe495bf95a7c965fb3a64350e2f3406d3b97eb38d",
+        "archive-12489004053.process.json": "a73185550f8e64dda22332a293dc3aa7f5ba87526ccbda1f863188447517870e",
+        "archive-12489004053.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12489004053.stdout": "b24de997c80e760753437728eed8ba89cfa0eb05d68576fb1c2adadc503e9813",
+        "archive-12490642140.process.json": "a3582f9c13edcdcffae19cc5c8c2e1d6ac5802f8bd78134801072626e3c29daa",
+        "archive-12490642140.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12490642140.stdout": "38f4473414c6af7ca5f00272e5f3398b2b5ba9184de1856b160c794ef79068bf",
+        "archive-12493161690.process.json": "6c5408672a790686f252b9036d179eed820db18ffa7086f4fac1e1ba05ca03c5",
+        "archive-12493161690.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12493161690.stdout": "f6a48ec3fe55ca5be35b2139e2b687a9cf1213b9b6d93e49cd6de123e8beede7",
+        "archive-12493880301.process.json": "17aa3dd0e6b5c642fadbef5469ad10dd42333a1f48b112b7cc8ac185a307d202",
+        "archive-12493880301.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12493880301.stdout": "95454c873b50faea30a035ca9ee2e442bca4258adcf4cbbd469991be48dc194d",
+        "artifact-12488397904-proof.json": "7838a49eb05f22a4f22bf343b3951cf607a2d2f7520779ab53baa67e81ea5a8d",
+        "artifact-12488397904.zip": "b19f641ec1761b0ed703890fe495bf95a7c965fb3a64350e2f3406d3b97eb38d",
+        "artifact-12489004053-proof.json": "d75e0c73ae76b7ca357a7557c6569550447fe5607a731960294cfd077655ba34",
+        "artifact-12489004053.zip": "b24de997c80e760753437728eed8ba89cfa0eb05d68576fb1c2adadc503e9813",
+        "artifact-12490642140-proof.json": "f41470f8e0bb48d98dd1ad3fa9c37ca4cf661bf47fbb0f8b21273c79d462d1a2",
+        "artifact-12490642140.zip": "38f4473414c6af7ca5f00272e5f3398b2b5ba9184de1856b160c794ef79068bf",
+        "artifact-12493161690-proof.json": "006dee073ec5b8ab8a3fae2b0f4fdf471906ee5960dc5bfc0c58ae60b1ca151b",
+        "artifact-12493161690.zip": "f6a48ec3fe55ca5be35b2139e2b687a9cf1213b9b6d93e49cd6de123e8beede7",
+        "artifact-12493880301-proof.json": "cfbd6e87856f1a6c8904580ed348493174de0b91a131222f48eefd375a4ec9cc",
+        "artifact-12493880301.zip": "95454c873b50faea30a035ca9ee2e442bca4258adcf4cbbd469991be48dc194d",
+        "artifacts-1.json": "2ac6ea021dadefb974399ce2b7209d530b4d75d60b6343d91b0842487d7900d0",
+        "artifacts-1.process.json": "309d070e2f9373b697d4bb3e37b9f76e6667b582efa7a95b9f0d00a71903d5ea",
+        "artifacts-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "artifacts-1.stdout": "2ac6ea021dadefb974399ce2b7209d530b4d75d60b6343d91b0842487d7900d0",
+        "attempt-after.json": "9ed585c085fc3afd95cb86fa724f1b9e291dc78b34cf79556166760373d09007",
+        "attempt-after.process.json": "ab3784aaa03999ef8618df50466c3ec7af814b7ca0f8e94ee6bdc4cc53c5cb2f",
+        "attempt-after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt-after.stdout": "9ed585c085fc3afd95cb86fa724f1b9e291dc78b34cf79556166760373d09007",
+        "attempt.json": "9ed585c085fc3afd95cb86fa724f1b9e291dc78b34cf79556166760373d09007",
+        "attempt.process.json": "4bf8529cd067014089093fe268942698925a72ec9c951a0a219b800b344874e1",
+        "attempt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt.stdout": "9ed585c085fc3afd95cb86fa724f1b9e291dc78b34cf79556166760373d09007",
+        "jobs-1.json": "3ad2e7799080fb6531a83d6140c50ad74b7e1d5d487c507a5595e6973f1b59ee",
+        "jobs-1.process.json": "c8a5b7fe9aa4018b7c9fd7f66ce4b20e2899adffbfe686611789b5431f669da7",
+        "jobs-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "jobs-1.stdout": "3ad2e7799080fb6531a83d6140c50ad74b7e1d5d487c507a5595e6973f1b59ee",
+        "result.json": "7cc98f858cf7bebe7d4ddd7f6c15af826205dc91677e3a31b0ff489e89445380",
+        "run-before.json": "2775dc896b3f88686cf0a2ce8382a8e634afcdc725ad8b3141d426dcb234f5aa",
+        "run-before.process.json": "6805eec130f2fe914d74c184f5c009e56e64667931fabacfc2327f2f3800c4cf",
+        "run-before.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "run-before.stdout": "2775dc896b3f88686cf0a2ce8382a8e634afcdc725ad8b3141d426dcb234f5aa",
+        "runner.json": "e9f262529ec51a83c6320f4cd5e4dc46e72ce159a509b2db2bcd9907c48b347f"
+      },
+      "result": {
+        "complete": false,
+        "complete_gate_eligible": false,
+        "conclusion": null,
+        "downloaded_artifact_ids": [
+          12488397904,
+          12489004053,
+          12490642140,
+          12493161690,
+          12493880301
+        ],
+        "head_sha": "d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626",
+        "kind": "w11_hosted_attempt_collection_v1",
+        "latest_attempt_at_capture": 1,
+        "limits": "API head is not tested merge SHA. Verify original plan/checkout evidence. Artifacts are root-scoped, not inferred to belong to this attempt. Job sums are observed allocated time, not billed time or DAG critical path.",
+        "qualifying_comparisons": 0,
+        "repository": "chebizarro/nostrc",
+        "run_attempt": 1,
+        "run_id": 39922245779,
+        "stable_snapshot": true,
+        "status": "queued",
+        "timing": {
+          "complete": false,
+          "complete_gate_eligible": false,
+          "job_count": 60,
+          "jobs": [
+            {
+              "conclusion": "success",
+              "id": 120310000520,
+              "name": "select",
+              "seconds": 14.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801279,
+              "name": "grotto / execute",
+              "seconds": 4633.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801461,
+              "name": "core_asan / execute",
+              "seconds": 92.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801482,
+              "name": "core / execute",
+              "seconds": 4662.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801528,
+              "name": "core_native / execute",
+              "seconds": 101.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801546,
+              "name": "mdk08 / execute",
+              "seconds": 101.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801632,
+              "name": "groundhog_sanitizers / execute",
+              "seconds": 100.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801692,
+              "name": "grotto_asan / execute",
+              "seconds": 121.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801700,
+              "name": "policy_regressions / regressions",
+              "seconds": 66.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801899,
+              "name": "groundhog / execute",
+              "seconds": 4566.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310801953,
+              "name": "libgo_native / execute",
+              "seconds": 100.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310801961,
+              "name": "mdk011 / execute",
+              "seconds": 90.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802002,
+              "name": "libgo / execute",
+              "seconds": 136.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802344,
+              "name": "broad / core / ubuntu-latest \u2022 asan_ubsan",
+              "seconds": 1083.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310802377,
+              "name": "broad / core / macos-latest \u2022 asan_ubsan",
+              "seconds": 449.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802438,
+              "name": "broad / gi / ubuntu-latest \u2022 GIR/typelib",
+              "seconds": 48.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802499,
+              "name": "broad / groundhog / groundhog",
+              "seconds": 1172.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802558,
+              "name": "broad / hanami / ubuntu-latest \u2022 libhanami",
+              "seconds": 89.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802561,
+              "name": "broad / gi / macos-latest \u2022 GIR/typelib",
+              "seconds": 120.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120310802602,
+              "name": "broad / groundhog / groundhog-sanitizers",
+              "seconds": 2756.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120310802627,
+              "name": "broad / static / regressions",
+              "seconds": 77.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802632,
+              "name": "broad / appimage / Build and smoke test gnostr AppImage (x86_64)",
+              "seconds": 228.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802649,
+              "name": "broad / homed / systemd-opensession",
+              "seconds": 55.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802684,
+              "name": "broad / libgo / macos-latest \u2022 fuzz-driver",
+              "seconds": 62.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802699,
+              "name": "broad / homed / build-and-test (ubuntu-24.04, ubuntu:24.04, apt-get update, apt-get install -y build-essential cm...",
+              "seconds": 75.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802701,
+              "name": "broad / libgo / linux \u2022 gofiber \u2022 tsan",
+              "seconds": 159.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802714,
+              "name": "broad / libgo / ubuntu-latest \u2022 fuzz-driver",
+              "seconds": 316.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802715,
+              "name": "broad / appimage / Build and smoke test gnostr AppImage (aarch64)",
+              "seconds": 258.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802764,
+              "name": "broad / libgo / linux \u2022 gofiber \u2022 asan_ubsan",
+              "seconds": 131.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802769,
+              "name": "broad / homed / build-and-test (fedora-40, fedora:40, dnf -y update, dnf -y install @development-tools cmake ninj...",
+              "seconds": 86.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802783,
+              "name": "broad / homed / build-and-test (debian-bookworm, debian:bookworm, apt-get update, apt-get install -y build-essent...",
+              "seconds": 76.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802804,
+              "name": "broad / nip55l / refusing-session",
+              "seconds": 72.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802805,
+              "name": "broad / bp / bp-matrix",
+              "seconds": 491.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802860,
+              "name": "broad / homed / build-and-test (archlinux, archlinux:latest, pacman -Syu --noconfirm, pacman -S --noconfirm base-...",
+              "seconds": 57.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802894,
+              "name": "broad / mdk08 / mdk-interop",
+              "seconds": 249.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802896,
+              "name": "broad / libgo / macos-latest \u2022 asan_ubsan",
+              "seconds": 57.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802907,
+              "name": "broad / hanami / macos-latest \u2022 libhanami",
+              "seconds": 150.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802910,
+              "name": "broad / mdk011 / MDK 0.11 adopted matrix",
+              "seconds": 4330.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802950,
+              "name": "broad / libgo / ubuntu-latest \u2022 tsan_mpmc",
+              "seconds": 56.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802961,
+              "name": "broad / windows / Build Windows Installer",
+              "seconds": 339.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802983,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=ON \u2022 sqlcipher=OFF \u2022 hooks=ON",
+              "seconds": 95.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802984,
+              "name": "broad / libgo / ubuntu-latest \u2022 tsan",
+              "seconds": 238.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310802990,
+              "name": "broad / libgo / macos-latest \u2022 tsan",
+              "seconds": 86.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803015,
+              "name": "broad / libgo / ubuntu-latest \u2022 asan_ubsan",
+              "seconds": 45.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803017,
+              "name": "broad / libgo / macos-latest \u2022 tsan_mpmc",
+              "seconds": 86.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803054,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=OFF \u2022 sqlcipher=OFF \u2022 hooks=OFF",
+              "seconds": 96.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803056,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=OFF \u2022 sqlcipher=ON \u2022 hooks=OFF",
+              "seconds": 120.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803067,
+              "name": "broad / fuzz / select-fuzz",
+              "seconds": 4.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803137,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=ON \u2022 sqlcipher=ON \u2022 hooks=OFF",
+              "seconds": 96.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803293,
+              "name": "broad / signet / signet \u2022 Release \u2022 passkeys=ON \u2022 sqlcipher=ON \u2022 hooks=OFF",
+              "seconds": 176.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803407,
+              "name": "broad / bp_extended / nightly-matrix",
+              "seconds": 1608.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803441,
+              "name": "broad / grotto / ubuntu-24.04 / native",
+              "seconds": 766.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120310803446,
+              "name": "broad / grotto / ubuntu-latest / native",
+              "seconds": 799.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120316243553,
+              "name": "broad / fuzz / Fuzz json-event",
+              "seconds": 2287.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120316243759,
+              "name": "broad / fuzz / Fuzz nip49",
+              "seconds": 2294.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120316243789,
+              "name": "broad / fuzz / Fuzz bip39",
+              "seconds": 382.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120343145804,
+              "name": "broad / fuzz / Generate coverage report",
+              "seconds": 750.0
+            }
+          ],
+          "kind": "partial_nested_job_timing_v1",
+          "limits": "Not billed runner-minutes, a DAG critical path, phase timings, a complete workload or paired savings.",
+          "observed_job_minutes": 629.1833333333333,
+          "pending_job_ids": [
+            120310803317,
+            120310803393
+          ],
+          "qualifying_comparisons": 0,
+          "skipped_job_ids": [
+            120316686434
+          ]
+        }
+      },
+      "runner": {
+        "argv": [
+          "scripts/w11-evidence.py",
+          "collect",
+          "--run",
+          "39922245779",
+          "--attempt",
+          "1",
+          "--artifact",
+          "12489004053",
+          "--artifact",
+          "12490642140",
+          "--artifact",
+          "12488397904",
+          "--artifact",
+          "12493880301",
+          "--artifact",
+          "12493161690",
+          "--output",
+          "/tmp/nostrc-w11-e-pr22-originals-20261023"
+        ],
+        "python": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]",
+        "python_executable": "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+        "python_sha256": "7ebde552773a4045532637b114d645a313e045ac07b26f5e520bf039f1e34063",
+        "runner_sha256": "2ac18280aace0fc5af4db29b410b3c0fb50b0c59037c618bdcd954aa4957cbb6",
+        "started_at": "2026-10-23T10:09:06.987658+00:00"
+      }
+    },
+    {
+      "directory": "/tmp/nostrc-w11-e-broad-originals-20261023",
+      "files": {
+        "archive-12488212907.process.json": "261c5b8a53eec05b1a258ac7ec0cebcd8f81424c91f5e6bc607facbf18c3e8b1",
+        "archive-12488212907.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12488212907.stdout": "13fb9103901ade05abd2676b5d5f7619bcca400cdb74b49b826ab3cf3f004c9e",
+        "archive-12493552566.process.json": "75a3a82723ace4c014cf0b83041b2dddaa1b6ca8320dfdf5cbd3b14ab8a6f591",
+        "archive-12493552566.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "archive-12493552566.stdout": "b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf",
+        "artifact-12488212907-proof.json": "0c24a19c0d124e7acf6db6f3b2bb171afae375bd24c7fe584ac588b355228188",
+        "artifact-12488212907.zip": "13fb9103901ade05abd2676b5d5f7619bcca400cdb74b49b826ab3cf3f004c9e",
+        "artifact-12493552566-proof.json": "1605884ea32c141bcd89f3ae38913066ac3def1f9e02451295954717e85de855",
+        "artifact-12493552566.zip": "b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf",
+        "artifacts-1.json": "1d8687fa252f9021e3d02333da21e5250fc2691c51116bc4b2481a5abbbb4daa",
+        "artifacts-1.process.json": "718db4e544c1660c8a9efbdc394b17a1798cb81c4e12d23ef0264a1dad7b493a",
+        "artifacts-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "artifacts-1.stdout": "1d8687fa252f9021e3d02333da21e5250fc2691c51116bc4b2481a5abbbb4daa",
+        "attempt-after.json": "cae03868defed7dcdd0622776e20c01be14650b2063332db1f9e20ee25b9d7ff",
+        "attempt-after.process.json": "d6cac37830ba43c7897bca41119e18958121c7bf95bb7fc7577425ff14bd73d8",
+        "attempt-after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt-after.stdout": "cae03868defed7dcdd0622776e20c01be14650b2063332db1f9e20ee25b9d7ff",
+        "attempt.json": "cae03868defed7dcdd0622776e20c01be14650b2063332db1f9e20ee25b9d7ff",
+        "attempt.process.json": "394949018dddff30287a0b09e37b2d0143d7f7f187db8264e33f74b29bb1c670",
+        "attempt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt.stdout": "cae03868defed7dcdd0622776e20c01be14650b2063332db1f9e20ee25b9d7ff",
+        "jobs-1.json": "b47edfd03d04c58e6d79e7e268efb5bb4d40fc022d59c8a17832104a040d2129",
+        "jobs-1.process.json": "38dbb26e653631bdd19ce648289cfc374b09b9d25b97d357e5375438a809c3e9",
+        "jobs-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "jobs-1.stdout": "b47edfd03d04c58e6d79e7e268efb5bb4d40fc022d59c8a17832104a040d2129",
+        "result.json": "52e791b78cc34dc9345152d7b5d375f20f9ff84a3fb26491fa720680104f4a28",
+        "run-before.json": "dc8f3cf2341410043e130e72ad0c934e5816c97c585f28c97330891ad56e7c92",
+        "run-before.process.json": "9e653cd349c55be710fb8eb36d5944f7d1769a3933ce1ce37c44cf98b58eb87b",
+        "run-before.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "run-before.stdout": "dc8f3cf2341410043e130e72ad0c934e5816c97c585f28c97330891ad56e7c92",
+        "runner.json": "5121260331be8f7a7abcf26eda6891ef7e65ce6a5baf5e07c1cb62e809eb3fe0"
+      },
+      "result": {
+        "complete": false,
+        "complete_gate_eligible": false,
+        "conclusion": null,
+        "downloaded_artifact_ids": [
+          12488212907,
+          12493552566
+        ],
+        "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+        "kind": "w11_hosted_attempt_collection_v1",
+        "latest_attempt_at_capture": 1,
+        "limits": "API head is not tested merge SHA. Verify original plan/checkout evidence. Artifacts are root-scoped, not inferred to belong to this attempt. Job sums are observed allocated time, not billed time or DAG critical path.",
+        "qualifying_comparisons": 0,
+        "repository": "chebizarro/nostrc",
+        "run_attempt": 1,
+        "run_id": 39922309846,
+        "stable_snapshot": true,
+        "status": "in_progress",
+        "timing": {
+          "complete": false,
+          "complete_gate_eligible": false,
+          "job_count": 61,
+          "jobs": [
+            {
+              "conclusion": "success",
+              "id": 120310216274,
+              "name": "select",
+              "seconds": 13.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996272,
+              "name": "grotto_asan / execute",
+              "seconds": 126.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996402,
+              "name": "grotto / execute",
+              "seconds": 115.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996444,
+              "name": "core / execute",
+              "seconds": 77.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996446,
+              "name": "core_asan / execute",
+              "seconds": 1871.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996497,
+              "name": "groundhog_sanitizers / execute",
+              "seconds": 106.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996525,
+              "name": "core_native / execute",
+              "seconds": 87.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996578,
+              "name": "groundhog / execute",
+              "seconds": 112.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996587,
+              "name": "policy_regressions / regressions",
+              "seconds": 74.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314996669,
+              "name": "libgo_native / execute",
+              "seconds": 76.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314996705,
+              "name": "libgo / execute",
+              "seconds": 110.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314996888,
+              "name": "mdk011 / execute",
+              "seconds": 642.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997195,
+              "name": "broad / mdk011 / MDK 0.11 adopted matrix",
+              "seconds": 867.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997241,
+              "name": "broad / appimage / Build and smoke test gnostr AppImage (x86_64)",
+              "seconds": 227.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997255,
+              "name": "broad / hanami / ubuntu-latest \u2022 libhanami",
+              "seconds": 88.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997280,
+              "name": "broad / hanami / macos-latest \u2022 libhanami",
+              "seconds": 129.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997308,
+              "name": "broad / gi / macos-latest \u2022 GIR/typelib",
+              "seconds": 62.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120314997309,
+              "name": "broad / groundhog / groundhog",
+              "seconds": 3624.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997333,
+              "name": "broad / gi / ubuntu-latest \u2022 GIR/typelib",
+              "seconds": 54.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120314997409,
+              "name": "broad / groundhog / groundhog-sanitizers",
+              "seconds": 2721.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997494,
+              "name": "broad / core / ubuntu-latest \u2022 asan_ubsan",
+              "seconds": 533.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997548,
+              "name": "broad / signet / signet \u2022 Release \u2022 passkeys=ON \u2022 sqlcipher=ON \u2022 hooks=OFF",
+              "seconds": 155.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997583,
+              "name": "broad / bp / bp-matrix",
+              "seconds": 495.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997588,
+              "name": "broad / core / macos-latest \u2022 asan_ubsan",
+              "seconds": 431.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997613,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=ON \u2022 sqlcipher=ON \u2022 hooks=OFF",
+              "seconds": 131.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997629,
+              "name": "broad / appimage / Build and smoke test gnostr AppImage (aarch64)",
+              "seconds": 257.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997638,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=OFF \u2022 sqlcipher=OFF \u2022 hooks=OFF",
+              "seconds": 71.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997653,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=ON \u2022 sqlcipher=OFF \u2022 hooks=ON",
+              "seconds": 98.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997661,
+              "name": "broad / windows / Build Windows Installer",
+              "seconds": 336.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997678,
+              "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=OFF \u2022 sqlcipher=ON \u2022 hooks=OFF",
+              "seconds": 126.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314997837,
+              "name": "broad / nip55l / refusing-session",
+              "seconds": 70.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998022,
+              "name": "broad / homed / systemd-opensession",
+              "seconds": 57.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998046,
+              "name": "broad / mdk08 / mdk-interop",
+              "seconds": 188.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998098,
+              "name": "broad / libgo / ubuntu-latest \u2022 fuzz-driver",
+              "seconds": 80.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998123,
+              "name": "broad / libgo / macos-latest \u2022 fuzz-driver",
+              "seconds": 45.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998125,
+              "name": "broad / homed / build-and-test (debian-bookworm, debian:bookworm, apt-get update, apt-get install -y build-essent...",
+              "seconds": 79.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998146,
+              "name": "broad / homed / build-and-test (fedora-40, fedora:40, dnf -y update, dnf -y install @development-tools cmake ninj...",
+              "seconds": 100.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998151,
+              "name": "broad / homed / build-and-test (archlinux, archlinux:latest, pacman -Syu --noconfirm, pacman -S --noconfirm base-...",
+              "seconds": 62.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998176,
+              "name": "broad / bp_extended / nightly-matrix",
+              "seconds": 1644.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998245,
+              "name": "broad / libgo / linux \u2022 gofiber \u2022 asan_ubsan",
+              "seconds": 134.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120314998257,
+              "name": "broad / static / regressions",
+              "seconds": 63.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998282,
+              "name": "broad / libgo / linux \u2022 gofiber \u2022 tsan",
+              "seconds": 54.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998316,
+              "name": "broad / homed / build-and-test (ubuntu-24.04, ubuntu:24.04, apt-get update, apt-get install -y build-essential cm...",
+              "seconds": 65.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998361,
+              "name": "broad / libgo / ubuntu-latest \u2022 asan_ubsan",
+              "seconds": 48.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998402,
+              "name": "broad / libgo / ubuntu-latest \u2022 tsan",
+              "seconds": 276.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998405,
+              "name": "broad / fuzz / select-fuzz",
+              "seconds": 8.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998406,
+              "name": "broad / libgo / macos-latest \u2022 asan_ubsan",
+              "seconds": 58.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998407,
+              "name": "broad / libgo / macos-latest \u2022 tsan",
+              "seconds": 69.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998438,
+              "name": "broad / libgo / macos-latest \u2022 tsan_mpmc",
+              "seconds": 98.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120314998455,
+              "name": "broad / libgo / ubuntu-latest \u2022 tsan_mpmc",
+              "seconds": 233.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120314998902,
+              "name": "broad / grotto / ubuntu-latest / native",
+              "seconds": 1394.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120314999114,
+              "name": "broad / grotto / ubuntu-24.04 / tsan (ADVISORY, non-gating)",
+              "seconds": 1394.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120314999213,
+              "name": "broad / grotto / ubuntu-24.04 / asan-ubsan",
+              "seconds": 1394.0
+            },
+            {
+              "conclusion": "cancelled",
+              "id": 120314999421,
+              "name": "broad / grotto / ubuntu-24.04 / native",
+              "seconds": 1394.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120321640933,
+              "name": "broad / fuzz / Fuzz json-event",
+              "seconds": 2130.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120321641041,
+              "name": "broad / fuzz / Fuzz nip49",
+              "seconds": 379.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120321641202,
+              "name": "broad / fuzz / Fuzz bip39",
+              "seconds": 378.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120356647403,
+              "name": "broad / fuzz / Generate coverage report",
+              "seconds": 101.0
+            },
+            {
+              "conclusion": "failure",
+              "id": 120357354465,
+              "name": "broad / Broad family accounting",
+              "seconds": 12.0
+            }
+          ],
+          "kind": "partial_nested_job_timing_v1",
+          "limits": "Not billed runner-minutes, a DAG critical path, phase timings, a complete workload or paired savings.",
+          "observed_job_minutes": 430.35,
+          "pending_job_ids": [
+            120314996533
+          ],
+          "qualifying_comparisons": 0,
+          "skipped_job_ids": [
+            120330461026
+          ]
+        }
+      },
+      "runner": {
+        "argv": [
+          "scripts/w11-evidence.py",
+          "collect",
+          "--run",
+          "39922309846",
+          "--attempt",
+          "1",
+          "--artifact",
+          "12493552566",
+          "--artifact",
+          "12488212907",
+          "--output",
+          "/tmp/nostrc-w11-e-broad-originals-20261023"
+        ],
+        "python": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]",
+        "python_executable": "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+        "python_sha256": "7ebde552773a4045532637b114d645a313e045ac07b26f5e520bf039f1e34063",
+        "runner_sha256": "2ac18280aace0fc5af4db29b410b3c0fb50b0c59037c618bdcd954aa4957cbb6",
+        "started_at": "2026-10-23T10:09:34.757868+00:00"
+      }
+    },
+    {
+      "directory": "/tmp/nostrc-w11-e-fuzz-20261023-1005",
+      "files": {
+        "artifacts-1.json": "c9833a19a657437b37b44d99778eb0b6f8660c58203aa63d63485d575cdbc99b",
+        "artifacts-1.process.json": "698747cd6386438d712ca5b97b25e5ff8cfe994b668c1ed59d164f85fef3f526",
+        "artifacts-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "artifacts-1.stdout": "c9833a19a657437b37b44d99778eb0b6f8660c58203aa63d63485d575cdbc99b",
+        "attempt-after.json": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+        "attempt-after.process.json": "a14be96132c2f96e7c718f72de8c8777ec15660938dd18adcef9309472b7478b",
+        "attempt-after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt-after.stdout": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+        "attempt.json": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+        "attempt.process.json": "7afca98ca0499a371cc03c640f735a110d579c1817031d4e594725f9ce3bb540",
+        "attempt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt.stdout": "dbdeabe2c1a8958f49e7e5340cf5ed384f1d89c4c478f8ade7579d31d3ec1f7e",
+        "jobs-1.json": "db2414d3bfa5f7350de61061c95ddfbb0dca1acc51de866819956e4e4726fd16",
+        "jobs-1.process.json": "5d8d8bf1973d8683ef92d49c4e20c1a334f44a642dc472de7ff357624db63570",
+        "jobs-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "jobs-1.stdout": "db2414d3bfa5f7350de61061c95ddfbb0dca1acc51de866819956e4e4726fd16",
+        "result.json": "e5af8bf9d363d36432b522809368f3f7ba97aac5082c120c8534a2c47455ece8",
+        "run-before.json": "f20ab0ae0e6c5b6d3cc041a195369224b1d9c7ae8322178c7a66be0b17ef5b44",
+        "run-before.process.json": "1d11e0990330e0e945e385de141ae913359111e6e838799b35fb0dccaf6072de",
+        "run-before.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "run-before.stdout": "f20ab0ae0e6c5b6d3cc041a195369224b1d9c7ae8322178c7a66be0b17ef5b44",
+        "runner.json": "97baadadff705c0700e1cfca90ec6bd8c174544d229ecabd94c450e029c786b9"
+      },
+      "result": {
+        "complete": false,
+        "complete_gate_eligible": false,
+        "conclusion": "success",
+        "downloaded_artifact_ids": [],
+        "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+        "kind": "w11_hosted_attempt_collection_v1",
+        "latest_attempt_at_capture": 1,
+        "limits": "API head is not tested merge SHA. Verify original plan/checkout evidence. Artifacts are root-scoped, not inferred to belong to this attempt. Job sums are observed allocated time, not billed time or DAG critical path.",
+        "qualifying_comparisons": 0,
+        "repository": "chebizarro/nostrc",
+        "run_attempt": 1,
+        "run_id": 39922316626,
+        "stable_snapshot": true,
+        "status": "completed",
+        "timing": {
+          "complete": false,
+          "complete_gate_eligible": false,
+          "job_count": 5,
+          "jobs": [
+            {
+              "conclusion": "success",
+              "id": 120310236399,
+              "name": "select-fuzz",
+              "seconds": 8.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120311754884,
+              "name": "Fuzz json-event",
+              "seconds": 168.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120311754975,
+              "name": "Fuzz nip49",
+              "seconds": 141.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120311756128,
+              "name": "Fuzz bip39",
+              "seconds": 230.0
+            },
+            {
+              "conclusion": "success",
+              "id": 120322628197,
+              "name": "Generate coverage report",
+              "seconds": 1713.0
+            }
+          ],
+          "kind": "partial_nested_job_timing_v1",
+          "limits": "Not billed runner-minutes, a DAG critical path, phase timings, a complete workload or paired savings.",
+          "observed_job_minutes": 37.666666666666664,
+          "pending_job_ids": [],
+          "qualifying_comparisons": 0,
+          "skipped_job_ids": []
+        }
+      },
+      "runner": {
+        "argv": [
+          "scripts/w11-evidence.py",
+          "collect",
+          "--run",
+          "39922316626",
+          "--attempt",
+          "1",
+          "--output",
+          "/tmp/nostrc-w11-e-fuzz-20261023-1005"
+        ],
+        "python": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]",
+        "python_executable": "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+        "python_sha256": "7ebde552773a4045532637b114d645a313e045ac07b26f5e520bf039f1e34063",
+        "runner_sha256": "0381fefce60de752e3586ae87dd49e1154a0b778fa09f41bfc3c10f72c4bc3e0",
+        "started_at": "2026-10-23T10:07:43.957434+00:00"
+      }
+    }
+  ],
+  "complete": false,
+  "complete_gate_eligible": false,
+  "kind": "w11_e_retained_snapshot_v1",
+  "limits": [
+    "Temporary raw files can expire; GitHub original artifact IDs and all captured hashes retained here.",
+    "No real paired PR/native performance execution performed in this batch.",
+    "Cache identity/compiler/architecture/capabilities are not inferred from job metadata; original inner receipts retain their own limits.",
+    "Root latest-attempt census does not erase older failed attempts or historical snapshots."
+  ],
+  "original_zips": [
+    {
+      "api_digest": "sha256:b19f641ec1761b0ed703890fe495bf95a7c965fb3a64350e2f3406d3b97eb38d",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12488397904",
+      "bytes": 8856,
+      "id": 12488397904,
+      "members": [
+        {
+          "bytes": 52535,
+          "name": "core.macos.asan/receipt.json",
+          "sha256": "07fc20dab05c9a35bb07d8d788ed17db15a85278e480c6db1bebf2f7c25a73fd"
+        },
+        {
+          "bytes": 66,
+          "name": "core.macos.asan/worker.log",
+          "sha256": "4d5307aeaebe098203d2c5d7bc683882ff9d47fe5bb971821c30984d7dd8b238"
+        }
+      ],
+      "name": "dependency-receipt-5b9b549f6bd22a0f604e3a52c00ba0255593361baad46fa0719c127ff82e5971-core.macos.asan-1",
+      "original_zip_sha256": "b19f641ec1761b0ed703890fe495bf95a7c965fb3a64350e2f3406d3b97eb38d"
+    },
+    {
+      "api_digest": "sha256:b24de997c80e760753437728eed8ba89cfa0eb05d68576fb1c2adadc503e9813",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12489004053",
+      "bytes": 11571,
+      "id": 12489004053,
+      "members": [
+        {
+          "bytes": 89024,
+          "name": "groundhog.mdk011/receipt.json",
+          "sha256": "b29dc36a537c9849ed099652fe630e0fd62e7dc88728b7af338f8b6d9dd1ff17"
+        },
+        {
+          "bytes": 90,
+          "name": "groundhog.mdk011/worker.log",
+          "sha256": "6f35ff7164fd2359f8eb205e51c6a15cecce04e1b020e149bf83b7b698856133"
+        }
+      ],
+      "name": "dependency-receipt-5b9b549f6bd22a0f604e3a52c00ba0255593361baad46fa0719c127ff82e5971-groundhog.mdk011-1",
+      "original_zip_sha256": "b24de997c80e760753437728eed8ba89cfa0eb05d68576fb1c2adadc503e9813"
+    },
+    {
+      "api_digest": "sha256:38f4473414c6af7ca5f00272e5f3398b2b5ba9184de1856b160c794ef79068bf",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12490642140",
+      "bytes": 8219,
+      "id": 12490642140,
+      "members": [
+        {
+          "bytes": 38794,
+          "name": "groundhog.linux.sanitizers/receipt.json",
+          "sha256": "240b0ddb3dfdc491dfa017c7130ef33e9967cf8039d5e0a817fcb627d34d287d"
+        },
+        {
+          "bytes": 69,
+          "name": "groundhog.linux.sanitizers/worker.log",
+          "sha256": "389e76c63f8828b5a7a5f6faf9587d06aff79d72a44ecab7151c0eaac496496c"
+        }
+      ],
+      "name": "dependency-receipt-5b9b549f6bd22a0f604e3a52c00ba0255593361baad46fa0719c127ff82e5971-groundhog.linux.sanitizers-1",
+      "original_zip_sha256": "38f4473414c6af7ca5f00272e5f3398b2b5ba9184de1856b160c794ef79068bf"
+    },
+    {
+      "api_digest": "sha256:f6a48ec3fe55ca5be35b2139e2b687a9cf1213b9b6d93e49cd6de123e8beede7",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12493161690",
+      "bytes": 354,
+      "id": 12493161690,
+      "members": [
+        {
+          "bytes": 404,
+          "name": "grotto.linux/worker.log",
+          "sha256": "3c47118472299a8931d4e813b20065f471c2b997080baf045b77db5b7826ad45"
+        }
+      ],
+      "name": "dependency-receipt-5b9b549f6bd22a0f604e3a52c00ba0255593361baad46fa0719c127ff82e5971-grotto.linux-1",
+      "original_zip_sha256": "f6a48ec3fe55ca5be35b2139e2b687a9cf1213b9b6d93e49cd6de123e8beede7"
+    },
+    {
+      "api_digest": "sha256:95454c873b50faea30a035ca9ee2e442bca4258adcf4cbbd469991be48dc194d",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12493880301",
+      "bytes": 358,
+      "id": 12493880301,
+      "members": [
+        {
+          "bytes": 404,
+          "name": "groundhog.linux/worker.log",
+          "sha256": "02f2d0563f7f83b3752a162d6aa00bcd3c5b5738b897e1448395056df0725cf2"
+        }
+      ],
+      "name": "dependency-receipt-5b9b549f6bd22a0f604e3a52c00ba0255593361baad46fa0719c127ff82e5971-groundhog.linux-1",
+      "original_zip_sha256": "95454c873b50faea30a035ca9ee2e442bca4258adcf4cbbd469991be48dc194d"
+    },
+    {
+      "api_digest": "sha256:13fb9103901ade05abd2676b5d5f7619bcca400cdb74b49b826ab3cf3f004c9e",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12488212907",
+      "bytes": 16591,
+      "id": 12488212907,
+      "members": [
+        {
+          "bytes": 107255,
+          "name": "plan.json",
+          "sha256": "a6fbfde42a3e98b36b4fc5a551d6b255b2802419675f2b8b65d71080a3b1c95d"
+        }
+      ],
+      "name": "dependency-plan-0307044a8a41249ff717959007d6d8edc785ab66fe22486be100989ba1f046c6-1",
+      "original_zip_sha256": "13fb9103901ade05abd2676b5d5f7619bcca400cdb74b49b826ab3cf3f004c9e"
+    },
+    {
+      "api_digest": "sha256:b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf",
+      "api_source": "https://api.github.com/repos/chebizarro/nostrc/actions/artifacts/12493552566",
+      "bytes": 1463,
+      "id": 12493552566,
+      "members": [
+        {
+          "bytes": 3155,
+          "name": "broad.json",
+          "sha256": "3fc89ad4484ebc7182d3db2a29114abbfc0acc6f09a3b7d149cf1567b5e60943"
+        }
+      ],
+      "name": "dependency-broad-94647b282b1c26d8eed2a4fc2b7a1bf109479e65-1",
+      "original_zip_sha256": "b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf"
+    }
+  ],
+  "qualifying_broad_integrations": 0,
+  "qualifying_comparisons": 0
+}

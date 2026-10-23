@@ -45,7 +45,7 @@ def parser():
             cmd.add_argument("--test-parallel", type=int, help="must match authored test_parallelism (or parallelism fallback)")
             cmd.add_argument("--timeout", type=int)
             cmd.add_argument("--evidence-path", action="append", default=[])
-            cmd.add_argument("--diagnostic-boundary", choices=('linux_pidns_v1', 'linux_ptrace_v1'),
+            cmd.add_argument("--diagnostic-boundary", choices=('linux_pidns_v1', 'linux_ptrace_v1', 'darwin_seatbelt_v1'),
                              help="bind an incomplete kernel diagnostic; never profile parity or complete acceptance")
         elif name == "aggregate":
             cmd.add_argument("--plan", required=True)

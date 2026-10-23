@@ -339,7 +339,7 @@ class PublicationTests(unittest.TestCase):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         # Exercise publication routing with an explicitly synthetic ready policy;
         # never forge ready validation against the actual unready inventory.
-        p.update(enforcement_ready=True, coverage_gaps=[])
+        p.update(enforcement_ready=True, coverage_gaps=[], workflow_jobs={})
         return s.release_plan(ROOT, p, head="HEAD", component=component, dry_run=True, run_id="synthetic")
 
     def needs(self, release, publisher):

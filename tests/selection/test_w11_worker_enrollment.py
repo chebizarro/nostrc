@@ -70,8 +70,9 @@ class WorkerEnrollmentTests(unittest.TestCase):
 
     def test_live_sources_and_semantic_prerequisites_are_owned(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from homed_profile_support import before_homed_source
         for path, expected in w.witness()['source_sha256'].items():
-            raw = before_policy_source(path, (ROOT / path).read_bytes())
+            raw = before_policy_source(path, before_homed_source(path, (ROOT / path).read_bytes()))
             expected = w.witness().get('integration_source_changes', {}).get(path, {}).get('after', expected)
             self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, path)
         check = p['checks']['supported.nips.nip5f.signer_endpoint']

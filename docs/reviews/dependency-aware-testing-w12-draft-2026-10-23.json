@@ -1,0 +1,35 @@
+{
+  "applied": false,
+  "complete": false,
+  "forward_sha256": "763373033b7e205854ef16e4b27dec9b3b6e25621b6c12db5bc8e19a76a16be7",
+  "kind": "w12_unapplied_patch_v1",
+  "prerequisites": "Original W11 complete; parent accepts exact source, coverage/trigger union, manual broad override, release dryrun and rollback tests. Recheck live protection before each conditional write; 404 is not permission to invent a branch policy. Do not apply either patch before that acceptance.",
+  "protection": {
+    "reason": "refresh protected-branch snapshot and operator-approved legacy required contexts",
+    "status": "blocked"
+  },
+  "rollback_sha256": "1ea9b212ea1b8002a7fb5d398b85c6393008678a008ae3a090de479427b18581",
+  "source_bindings": {
+    ".github/workflows/bp-matrix.yml": "281feeff71c35392e460a7e57918f3b3e5be13ce5611fbb170c9a9f0c11e487e",
+    ".github/workflows/dependency-tests.yml": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+    ".github/workflows/gnostr-appimage.yml": "be7e886ee7ab68b1a7701a813674f4f9e27f591477a66a35b5d96e124e1e5d3a",
+    ".github/workflows/grotto-ci.yml": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
+    ".github/workflows/grotto-fuzz.yml": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12",
+    ".github/workflows/groundhog-ci.yml": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c",
+    ".github/workflows/libgo-ci.yml": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0",
+    ".github/workflows/libhanami-ci.yml": "32f744499c33fe562d5cbca75499d950b2f1494e23ef35e3d9f0cfb36e1c2971",
+    ".github/workflows/libnostr-gi.yml": "3406c1488d5cb2e0a41ee8ed6206c54417bf3663603b709e3bd7645e045ea121",
+    ".github/workflows/marmot-mdk-interop.yml": "bf4a316d80b8a96af6c0a28b8fd9029032d5f8c19fc698b67a5ba74fe2d36a5c",
+    ".github/workflows/marmot-mdk011-interop.yml": "ffa6142b3f663098943519171c4e4f16f32b1695beed9f78e569eb90bd824cac",
+    ".github/workflows/nip55l-libsecret-ci.yml": "e3d76999d3f03394575070b68b8f055b95af654e27e17502e786a5f3f15a0627",
+    ".github/workflows/nostr-homed-ci.yml": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c",
+    ".github/workflows/nostrc-ci.yml": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef",
+    ".github/workflows/signet-ci.yml": "8ce7a7d50c35a32ac5fc9813205322bbe920241629fe301761289912b2fef00a",
+    ".github/workflows/static-checks.yml": "1514feb9fac686f18bb07cc20dd5c5c2ba5d2a1f6fc1c983aae7ade3bc8de2f0",
+    ".github/workflows/windows-build.yml": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd",
+    "AGENTS.md": "72fe8190775850d1f62fa4877cd5d12777a6d505e5b2a06579d3e4501f249598",
+    "docs/TESTING.md": "254f551143bbc2eb88e1f5a48f5e4877a87f0e46ec8e86f8ddf9da8dedce1505",
+    "scripts/pre-push": "ced6a2f3883f4fcb1d5e55887d6c0c1ef762215daab2654d8a059f0efe1c986f"
+  },
+  "source_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f"
+}
