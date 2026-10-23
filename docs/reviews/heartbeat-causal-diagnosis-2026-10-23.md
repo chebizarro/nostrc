@@ -41,7 +41,7 @@ Test revised in `23ca21c19` (ancestor of all rows) prints per-cycle operation ti
 | 119738914144 | 39753293299 | f646db033 | FAIL | 6 | 4 | 89.7 ms | 0 | 0.26 ms |
 | 120078574935 | 39851489170 | 0ce430299 | FAIL | 6 | 3 | 88.7 ms | 0 | 0.41 ms |
 
-(9 other collected jobs passed; passing logs print no heartbeat line, so they carry no timeline.) Log hashes: 120078574935 `dc37a9a5…c964ac`; 119634793144 `9cae936f…882c3d`; 119634860301 `74da17a6…f0acd`; 119694790212 `5b49cad1…974`; 119738914144 `85700e83…e60b4`.
+(9 other collected jobs passed; passing logs print no heartbeat line, so they carry no timeline.) Full hashes, run/job/head-SHA bindings from the Actions jobs API, and all other evidence digests are in the evidence-only `MANIFEST.json` / `SHA256SUMS` under `/tmp/nostrc-heartbeat-claude-20261023/` (not committed).
 
 Interpretation: the burst (50 cycles) lasts a few ms, so at most one beat lands in it; the remaining ≥5 beats are produced by the post-burst `g_main_loop_run`, in which the main thread only polls for a 10 ms timer. Three or more of those wake-ups were 78–90 ms apart while no store call was executing and no cycle was flagged. Therefore these failures are not main-thread blocking by the store. The cluster of 78–90 ms gaps is notable but its source is not identified.
 
@@ -59,7 +59,7 @@ A candidate that stopped counting post-burst gaps was built and verified locally
 ## Retained change (diagnostic only; counts/thresholds/coverage unchanged)
 
 `nostr-gobject/tests/test_main_thread_forbidden_calls.c`:
-- `HeartbeatData.post_burst_missed_count` / `post_burst_max_gap_us`, updated in `heartbeat_record_at` only for gaps that already count in `missed_count`.
+- `HeartbeatData.post_burst_missed_count` (increments only for post-burst gaps that already count in `missed_count`) and `post_burst_max_gap_us` (tracks **all** post-burst gaps, including those at or below 50 ms, so idle runs print e.g. 12.5 ms), both updated in `heartbeat_record_at`.
 - New message `Attribution: burst_missed=%u post_burst_missed=%u post_burst_max_gap=…` so any future hosted failure states, without inference, whether the gap closed inside the store burst or in the idle phase.
 
 Unchanged: `gap > 50 ms` strict rule, `missed_count <= 2`, `heartbeat_count > 5`, the 50 unpaced cycles, final explicit sample, CTest `TIMEOUT 90`, sanitizer flags, the three blocking controls.
