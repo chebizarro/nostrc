@@ -6,18 +6,26 @@
 # child-local process policies and prints what each run observed:
 #
 #   inherit          policy exactly as the CI step handed it down (the control)
-#   fg               child-local setpriority(PRIO_DARWIN_PROCESS,0,0) —
-#                    unprivileged, this process only, no global policy
-#   inherit-control  inherit / fg with the opt-in no-work control sleeper
-#   fg-control       thread (NOSTRC_HEARTBEAT_CONTROL=1). ONLY these runs set it.
+#   poll             inherit, but the test's main context waits in poll(2)
+#                    instead of GLib's Darwin select()-based g_poll()
+#                    (NOSTRC_HEARTBEAT_POLL_FUNC=poll; ONLY these runs set it).
+#                    select() timeouts get latency-QoS leeway (up to ~40 ms for
+#                    10 ms under an inherited UTILITY clamp); poll(2) does not.
+#                    inherit vs poll separates OS timer leeway from the
+#                    remaining wake latency on the actual host.
+#   inherit-control  inherit / poll with the opt-in no-work control sleeper
+#   poll-control     thread (NOSTRC_HEARTBEAT_CONTROL=1). ONLY these runs set it.
+#   fg               child-local setpriority(PRIO_DARWIN_PROCESS,0,0); kept once
+#                    for continuity (hosted runs 39922245644/39922272026 showed
+#                    darwin_bg_process=0 and fg failing like inherit)
 #   bg-positive      positive control: PRIO_DARWIN_BG on this process only
 #   diag-case        the opt-in metric-validity case
 #                    (NOSTRC_HEARTBEAT_DIAGNOSTICS=1, run with -p; never in CTest)
 #
 # Opt-in variables are set EXPLICITLY on every run (0/unset for the gating-
 # equivalent runs), so a run's workload is stated in its own log line
-# `probe-env:`. Normal CTest sets neither and keeps the original 8 cases and
-# the original single-thread workload.
+# `probe-env:`. Normal CTest sets none of them and keeps the original 8 cases,
+# the original single-thread workload and GLib's default poll function.
 #
 # Runs are sequential and quiet. The probe deliberately does NOT try to
 # reproduce `ctest -j2` contention (no background load generators, no PID
@@ -63,6 +71,11 @@ for _ in 1 2 3 4 5 6; do
     [[ -n "$pid" && "$pid" -gt 1 ]] || break
 done
 echo "-- launchctl managername: $(launchctl managername 2>&1)"
+echo "-- timer coalescing parameters (read-only sysctl):"
+sysctl kern.timer.coalescing_enabled 2>&1
+sysctl -a 2>/dev/null | grep -E '^kern\.timer_coalesce_(tier[0-9]|bg)_(scale|ns_max):' || echo "(timer_coalesce sysctls unavailable)"
+echo "-- top CPU consumers before runs (pid pri nice %cpu stat comm):"
+ps -A -o pid=,pri=,nice=,%cpu=,stat=,comm= -r 2>&1 | head -12
 echo "-- control timer microprobe, inherited policy:"
 "$launch" --policy inherit --timer
 
@@ -71,33 +84,43 @@ export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:strict_string_checks=1}"
 
 declare -a rows=()
 declare -a rcs=()
-# run_one label policy index control(0|1) [test args...]
+# run_one label policy index control(0|1) pollfunc(default|poll) [test args...]
 run_one() {
-    local label=$1 policy=$2 idx=$3 control=$4
-    shift 4
+    local label=$1 policy=$2 idx=$3 control=$4 pollfunc=$5
+    shift 5
     local log="$work/$label-$idx.log" rc diag=unset
-    local -a diag_env=(-u NOSTRC_HEARTBEAT_DIAGNOSTICS)
+    # BSD env(1) stops option parsing at the first NAME=value, so every -u
+    # must precede every assignment.
+    local -a unset_env=() set_env=(NOSTRC_HEARTBEAT_CONTROL="$control")
     if [[ $label == diag-case ]]; then
         diag=1
-        diag_env=(NOSTRC_HEARTBEAT_DIAGNOSTICS=1)
+        set_env+=(NOSTRC_HEARTBEAT_DIAGNOSTICS=1)
+    else
+        unset_env+=(-u NOSTRC_HEARTBEAT_DIAGNOSTICS)
+    fi
+    if [[ $pollfunc == poll ]]; then
+        set_env+=(NOSTRC_HEARTBEAT_POLL_FUNC=poll)
+    else
+        unset_env+=(-u NOSTRC_HEARTBEAT_POLL_FUNC)
     fi
     {
-        echo "probe-env: label=$label policy=$policy NOSTRC_HEARTBEAT_CONTROL=$control NOSTRC_HEARTBEAT_DIAGNOSTICS=$diag args=${*:-<none>}"
-        env "${diag_env[@]}" NOSTRC_HEARTBEAT_CONTROL="$control" \
-            "$launch" --policy "$policy" -- "$bin" "$@"
+        echo "probe-env: label=$label policy=$policy NOSTRC_HEARTBEAT_CONTROL=$control NOSTRC_HEARTBEAT_DIAGNOSTICS=$diag NOSTRC_HEARTBEAT_POLL_FUNC=${pollfunc/default/unset} args=${*:-<none>}"
+        env "${unset_env[@]}" "${set_env[@]}" "$launch" --policy "$policy" -- "$bin" "$@"
     } >"$log" 2>&1
     rc=$?
-    echo "== $label run $idx policy=$policy control=$control rc=$rc"
+    echo "== $label run $idx policy=$policy control=$control pollfunc=$pollfunc rc=$rc"
     grep -E 'probe-env:|sched-probe: (before|after|setpriority|requested)|^1\.\.|Heartbeat:|Attribution:|SchedEnv:|^not ok|Bail out' "$log"
-    local before after setrc bgflag hb cases
+    local before after setrc bgflag hb cases pf pri
     before=$(grep -m1 'sched-probe: before' "$log" | grep -o 'darwin_bg_process=[-0-9]*')
     after=$(grep 'sched-probe: after' "$log" | grep -o 'darwin_bg_process=[-0-9]*')
     setrc=$(grep -m1 -o 'setpriority([^)]*) rc=[-0-9]*' "$log" | sed 's/.*) //')
     bgflag=$(grep -m1 -o 'SchedEnv: darwin_bg_process=[0-9-]*' "$log" | sed 's/SchedEnv: /test_/')
     hb=$(grep -m1 -o 'Heartbeat: .*cycles=[0-9]*' "$log")
     cases=$(grep -m1 -o '^1\.\.[0-9]*' "$log" | sed 's/^1\.\.//')
+    pf=$(grep -m1 -o 'SchedEnv: poll_func=[^ ]*' "$log" | sed 's/SchedEnv: //')
+    pri=$(grep -m1 -o 'main_thread_sched_pri cur=[-0-9]* base=[-0-9]*' "$log" | sed 's/main_thread_sched_pri /pri_/')
     rcs+=("$label-$idx=$rc")
-    rows+=("$label|$idx|rc=$rc|cases=${cases:-none}|before:${before:-none}|after:${after:-none (policy unchanged)}|setpriority:${setrc:-none}|${bgflag:-test_darwin_bg_process=none}|${hb:-Heartbeat: none (test aborted or not a heartbeat run)}")
+    rows+=("$label|$idx|rc=$rc|cases=${cases:-none}|before:${before:-none}|after:${after:-none (policy unchanged)}|setpriority:${setrc:-none}|${bgflag:-test_darwin_bg_process=none}|${pf:-poll_func=none}|${pri:-pri_none}|${hb:-Heartbeat: none (test aborted or not a heartbeat run)}")
     if [[ $rc -ne 0 && $label == bg-positive ]]; then
         echo "-- bg-positive is expected to fail the guard (positive control); not a CI finding"
     elif [[ $rc -ne 0 ]]; then
@@ -107,16 +130,21 @@ run_one() {
     fi
 }
 
+# inherit and poll alternate within each repetition so both see the same
+# host state; every run is reported, none is retried.
 for ((i = 1; i <= reps; i++)); do
-    run_one inherit inherit "$i" 0
-    run_one fg fg "$i" 0
-    run_one inherit-control inherit "$i" 1
-    run_one fg-control fg "$i" 1
+    run_one inherit inherit "$i" 0 default
+    run_one poll inherit "$i" 0 poll
+    run_one inherit-control inherit "$i" 1 default
+    run_one poll-control inherit "$i" 1 poll
 done
-run_one bg-positive bg 1 0
-run_one diag-case inherit 1 0 -p /nostr-gobject/latency-diagnostic/sched-env-thread-cpu
+run_one fg fg 1 0 default
+run_one bg-positive bg 1 0 default
+run_one diag-case inherit 1 0 default -p /nostr-gobject/latency-diagnostic/sched-env-thread-cpu
 
-echo "== summary (label|run|rc|TAP cases|policy before|after|setpriority|in-test bg flag|heartbeat)"
+echo "-- top CPU consumers after runs (pid pri nice %cpu stat comm):"
+ps -A -o pid=,pri=,nice=,%cpu=,stat=,comm= -r 2>&1 | head -12
+echo "== summary (label|run|rc|TAP cases|policy before|after|setpriority|in-test bg flag|poll func|main-thread sched pri|heartbeat)"
 printf '%s\n' "${rows[@]}"
 echo "== all return codes: ${rcs[*]}"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
