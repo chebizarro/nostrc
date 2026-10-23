@@ -1,5 +1,48 @@
 # Dependency-aware testing acceptance run ledger
 
+## W11 refresh — 2026-10-23T00:48:54.695786Z
+
+Dated sequential snapshot, **not a live counter**. Full source-linked capture
+00:32:59.251872Z–00:35:51.902641Z:154 queries, all50 roots with exact-attempt
+jobs/artifact metadata; standalone broad/worker/release histories0/0/0. Final
+bounded capture00:48:24.506164Z–00:48:54.695786Z freshly verifies master/PR19,
+all50 listed identities and PR19/master jobs/artifacts. Listing unchanged:
+**47 failures / one cancellation / one queued / one in progress**. No successful
+terminal `Dependency gate`. Historical bodies retain the earlier full-capture
+time; intervening attempted full-refresh TLS failure is preserved separately.
+
+**0/20 qualifying reviewed distinct PR comparisons;0/2 successful complete broad
+integrations. W11 NOT MET / W12 NOT RUN.** Nineteen observed PR/API-head identities
+are not qualifying comparisons. No synthetic PR, split/nested/retry/diagnostic
+credit or additional unchanged cold broad dispatch. Existing evidence cannot
+finish W11. [Finite report/blocker/actionable-run checklist](dependency-aware-testing-ci-2026-10-23-w11.md).
+
+| Root / attempt1 | Exact source and final disposition |
+|---|---|
+| [PR19 39872346136](https://github.com/chebizarro/nostrc/actions/runs/39872346136) | API head `cc56887a7b433f6391d13be5ef1688035de7de88`; tested merge `b5c94b6b61befca32a3291e73b9863bf1570c03a`, independently verified parents. Root queued with failed lanes, no terminal gate/broad accounting. |
+| [master39872363501](https://github.com/chebizarro/nostrc/actions/runs/39872363501) | `587ebea254fb3b7c19c8f91a42b23a8a4d950db3`; root in progress with failed lanes, no terminal gate/broad accounting. |
+| [PR18 39851463581](https://github.com/chebizarro/nostrc/actions/runs/39851463581) | Terminal failure. Validation12464408185 matches tested merge `dede487fcdbcecd88ad7abac2aa9983c3384201c`; passed/complete/eligible false,2,339 errors. [Gate120133302311](https://github.com/chebizarro/nostrc/actions/runs/39851463581/job/120133302311). |
+| [previous master39851489448](https://github.com/chebizarro/nostrc/actions/runs/39851489448) | Terminal failure at `0ce430299060a09e4a2db250be1a2cac4df2c212`. Validation12464563701 passed/complete/eligible false,2,340 errors. [Gate120138388326](https://github.com/chebizarro/nostrc/actions/runs/39851489448/job/120138388326). |
+
+[Durable evidence index](dependency-aware-testing-ci-2026-10-23-w11-evidence.json)
+SHA256 `b917ef204ea22342cb30241d56c573d75a9b2f08de4e43ea5a9061a79d7024e0`:
+all50 dispositions, query windows/body hashes, final source/jobs/artifacts and
+**25 newly verified ZIPs** with API digest/size/CRC/member hashes. This does not
+claim every hosted archive was downloaded. Raw commands/captures/receipts and
+retained setup failures: `/tmp/nostrc-w11-20261023/`.
+
+First worker refusals are real missing signer/resources, pip CMake configured/PATH
+identity mismatch, hosted namespace `/proc/self/setgroups` permission denial and
+sanitizer partition mismatch. Windows broad configure fails canonical-vector SHA;
+local CRLF reproduction supports the checkout diagnosis, but original hosted
+file bytes were not archived. Local setup commit `fc5333d58` preserves guards and
+passes focused gates/safe native default build; patched hosted/native Windows
+acceptance remains NOT RUN. `.36` stays in progress for follow-through; `.5` stays
+closed with measurement comment only. Heartbeat `.11` safe remedy remains open,
+post-burst exclusion rejected; W12 and JSON-GLib remediation are outside scope.
+No default/protection/publisher/trigger/schedule cutover or operator credit.
+
+
 ## Integration refresh — 2026-10-22T19:03:24.712764Z
 
 Dated snapshot, **not a live counter**. Sequential API capture

@@ -118,7 +118,11 @@ jobs:
           blueprint-compiler --version | grep -x 0.22.2
       - name: Match standalone libgo Linux CMake toolchain
         if: runner.os == 'Linux' && inputs.profile == 'libgo.linux.asan'
-        run: python3 -m pip install --break-system-packages 'cmake==3.31.6'
+        run: |
+          python3 -m pip install --break-system-packages 'cmake==3.31.6'
+          # The pip entrypoint is a Python launcher; CMake records its real binary.
+          # Select that same binary for configure/build rather than weakening identity checks.
+          python3 -c 'import cmake; print(cmake.CMAKE_BIN_DIR)' >> "$GITHUB_PATH"
       - name: Install matching Groundhog sanitizer symbols
         if: runner.os == 'Linux' && inputs.profile == 'groundhog.linux.sanitizers'
         run: |
