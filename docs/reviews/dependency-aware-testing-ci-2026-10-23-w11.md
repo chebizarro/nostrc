@@ -1,5 +1,42 @@
 # W11: hosted measurement and first blockers — 2026-10-23 UTC
 
+## Bounded postlanding follow-through — 2026-10-23T01:36:36.747178Z
+
+Own branch fast-forwarded from the earlier local tip to merged master
+`d9c9c8808b2611fc179ed4ed3640e63920f4683f`; no I-branch edits. PR20 head
+`7319d339365d74efe0e26577d0055b91153707fd` and master share exact Git tree
+`54e86992fa6e0133a70c5a43dae61189cec3b895`. Both corrected workflow files are
+byte-identical to setup commit `fc5333d58`.
+
+One bounded follow-through, initial observation01:33:31–01:34:25 UTC and final
+capture **01:35:57.553122–01:36:36.747178 UTC**; not a live counter:
+
+| Corrected-source execution | Exact observed boundary |
+|---|---|
+| [PR20 root39884384021](https://github.com/chebizarro/nostrc/actions/runs/39884384021) | Plan artifact12471967279 binds tested merge `7ff720d9709672cb60a7b7b50b3294de337ee186`, parents `587ebea…`/`7319d339…`, same exact tree above. Root queued; no terminal gate. |
+| [Windows job120189097982](https://github.com/chebizarro/nostrc/actions/runs/39884384021/job/120189097982) | Checkout, requested-checkout verification and **Configure CMake succeeded** on corrected source. Job still in progress: not full Windows validation or broad integration. |
+| [libgo job120189097071](https://github.com/chebizarro/nostrc/actions/runs/39884384021/job/120189097071) | Queued, no steps started; corrected CMake PATH step remains **NOT RUN**, not a recurrence of the old-source mismatch. |
+| [master root39884406426](https://github.com/chebizarro/nostrc/actions/runs/39884406426), [select120189092163](https://github.com/chebizarro/nostrc/actions/runs/39884406426/job/120189092163) | Root/selector queued at requested/API head `d9c9c8808…`; no emitted plan or physical tested-source receipt yet. |
+
+All52 listed roots: **48 failures / one cancellation / two queued / one in
+progress**, zero successful roots; standalone broad/worker/release histories0/0/0.
+There are20 observed PR API heads, **not20 qualifying comparisons**. Counts remain
+**0/20 reviewed qualifying comparisons;0/2 complete broad integrations**. W11
+**NOT MET**, W12 **NOT RUN**; no acceptance/default cutover. Former master
+`587ebea…` run39872363501 is now terminal failure (gate120185942128); PR19 remains
+in progress with its old failed lanes. Those failures are not corrected-source
+outcomes. No new code fix, retry or cold broad workload was dispatched.
+
+Raw proof and per-query hashes: `/tmp/nostrc-w11-postlanding-20261023/hosted-proof-manifest.json`,
+SHA256 `82ffcee5790274ccf953e6a4a846d99e7bc33d16ae7ce43b9f38e0e06605ea46`.
+No new repository evidence index; prior snapshots and checksum history remain
+retained. Official `bd export --all` in this worktree retains **1,556 records,
+613 comments (610 prior plus three new),37 exact memories**; whole interactions
+copy retains all **1,165** entries. Superset checks cover root/own HEAD,index and
+worktree snapshots; proof is `tracker-preservation-proof.json` beside raw evidence.
+No semantic JSONL rewrite. Docs/tracker-only: no bump; parent lands/pushes.
+
+
 Base/master `587ebea254fb3b7c19c8f91a42b23a8a4d950db3`; local setup repair
 `fc5333d58447110fff59f3da1741f193e098227d`. Finite work item
 `nostrc-0cfsg.36`; completed finite baseline `.5` remains **CLOSED**.
