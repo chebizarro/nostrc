@@ -311,8 +311,9 @@ DARWIN_BUS_CONFIG = ('<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus 
                      '<busconfig><type>session</type><listen>{address}</listen><auth>EXTERNAL</auth>'
                      '<policy context="default"><allow send_destination="*" eavesdrop="true"/>'
                      '<allow eavesdrop="true"/><allow own="*"/></policy></busconfig>\n')
-AMBIENT_SESSION = ('DBUS_SESSION_BUS_ADDRESS', 'DBUS_SESSION_BUS_PID', 'DBUS_LAUNCHD_SESSION_BUS_SOCKET',
-                   'DBUS_STARTER_ADDRESS', 'DBUS_STARTER_BUS_TYPE', 'DISPLAY', 'XAUTHORITY', 'GNOME_KEYRING_CONTROL')
+# Besides every inherited DBUS_* variable (session, system, launchd, starter,
+# activation): no ambient display/keyring route either.
+AMBIENT_NON_DBUS = ('DISPLAY', 'XAUTHORITY', 'GNOME_KEYRING_CONTROL')
 
 
 @contextlib.contextmanager
@@ -351,8 +352,8 @@ def darwin_private_bus(evidence_dir, resource_root):
                            'XDG_CACHE_HOME': private / 'cache'}.items():
             path.mkdir(mode=0o700)
             os.environ[name] = str(path)
-        for name in AMBIENT_SESSION:
-            os.environ.pop(name, None)
+        for name in [key for key in os.environ if key.startswith('DBUS_')] + list(AMBIENT_NON_DBUS):
+            os.environ.pop(name, None)  # only the fresh private session address is set below
         config = private / 'bus.conf'
         config.write_text(DARWIN_BUS_CONFIG.format(address='unix:path=' + str(socket_path)))
         log = (evidence / 'dbus-daemon.log').open('xb')
@@ -361,7 +362,9 @@ def darwin_private_bus(evidence_dir, resource_root):
         try:
             command = [identities['dbus-daemon']['path'], '--nofork', '--nopidfile', '--nosyslog',
                        '--config-file=' + str(config), '--print-address=' + str(write_fd)]
-            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, pass_fds=(write_fd,),
+            launch_env = dict(os.environ)  # exact exec environment: no inherited DBUS_* at all
+            state['daemon_environment_dbus'] = sorted(k for k in launch_env if k.startswith('DBUS_'))
+            process = subprocess.Popen(command, env=launch_env, stdout=log, stderr=subprocess.STDOUT, pass_fds=(write_fd,),
                                        restore_signals=True, start_new_session=True,
                                        preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
             os.kill(process.pid, 0)  # direct, unreaped child: identity reserved
@@ -427,6 +430,10 @@ def darwin_private_bus(evidence_dir, resource_root):
                         record['forced_exit'] = True
                         record['exit_code'] = process.wait(timeout=15)
                     record['reaped'] = True
+                    if record.get('forced_exit'):
+                        # Reaped (cleanup proof kept above) but not a graceful
+                        # lifecycle: never a passing bus.
+                        errors.append('private bus ignored SIGTERM; forced SIGKILL after the grace period')
                 except Exception as exc:
                     errors.append(type(exc).__name__ + ': ' + str(exc))
             if log is not None:

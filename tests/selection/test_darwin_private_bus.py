@@ -26,6 +26,9 @@ from pathlib import Path
 sys.path.insert(0, SCRIPTS)
 from test_selection_services import darwin_private_bus
 root, evidence, mode, report = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+if mode == 'hungdaemon':
+    # The real daemon inherits a blocked SIGTERM, so graceful shutdown hangs.
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
 with darwin_private_bus(evidence, root) as state:
     out = {'address': os.environ['DBUS_SESSION_BUS_ADDRESS'], 'home': os.environ['HOME'],
            'launchd': os.environ.get('DBUS_LAUNCHD_SESSION_BUS_SOCKET'), 'daemon_pid': state['services'][0]['pid'],
@@ -34,6 +37,11 @@ with darwin_private_bus(evidence, root) as state:
                             '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.ListNames'],
                            capture_output=True, text=True, timeout=15)
     out['gdbus'] = [names.returncode, names.stdout]
+    if mode == 'env':
+        out['dbus_env'] = {k: v for k, v in os.environ.items() if k.startswith('DBUS_')}
+        child = subprocess.run([sys.executable, '-c', 'import json, os; print(json.dumps(sorted(k for k in os.environ if k.startswith("DBUS_"))))'],
+                               capture_output=True, text=True)
+        out['consumer_dbus_keys'] = json.loads(child.stdout)
     if mode == 'asan':
         consumer = subprocess.run([sys.argv[5]], capture_output=True, text=True, timeout=30)
         out['asan'] = [consumer.returncode, consumer.stdout, consumer.stderr[-2000:]]
@@ -146,6 +154,37 @@ class DarwinPrivateBus(unittest.TestCase):
         self.assertGreaterEqual(record['control_final']['killed_count'], 1)
         for pid in report['escaped'] + [report['daemon_pid']]:
             self.assertFalse(alive(pid))
+        self.assertFalse(self.root.exists())
+
+    def test_no_inherited_dbus_route_survives(self):
+        ambient = {'DBUS_SYSTEM_BUS_ADDRESS': 'unix:path=/nonexistent/nostrc-fake-system',
+                   'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/nonexistent/nostrc-fake-session',
+                   'DBUS_LAUNCHD_SESSION_BUS_SOCKET': '/nonexistent/nostrc-fake-launchd',
+                   'DBUS_STARTER_ADDRESS': 'unix:path=/nonexistent/nostrc-fake-starter',
+                   'DBUS_STARTER_BUS_TYPE': 'system',
+                   'DBUS_ACTIVATION_ADDRESS': 'unix:path=/nonexistent/nostrc-fake-activation',
+                   'DBUS_NOSTRC_FUTURE_ROUTE': 'unix:path=/nonexistent/nostrc-fake-future'}
+        record, outcome, report = self.custody('env', name='ambient', env=dict(os.environ, **ambient))
+        self.assertIsNone(outcome, record)
+        self.assertEqual(set(report['dbus_env']), {'DBUS_SESSION_BUS_ADDRESS'})
+        self.assertTrue(report['dbus_env']['DBUS_SESSION_BUS_ADDRESS'].startswith('unix:path=' + str(self.root) + '/'))
+        self.assertEqual(report['consumer_dbus_keys'], ['DBUS_SESSION_BUS_ADDRESS'])  # a consumer process sees the same
+        services = json.loads((self.lane / 'services/services.json').read_text())
+        self.assertEqual(services['daemon_environment_dbus'], [])  # the daemon's exact exec environment
+        for value in ambient.values():
+            self.assertNotIn(value, json.dumps(report['dbus_env']))
+
+    def test_hung_daemon_forced_kill_fails_the_lifecycle_and_keeps_proof(self):
+        record, outcome, report = self.custody('hungdaemon', name='hung')
+        self.assertIn('command exited', str(outcome))
+        self.assertEqual(record['status'], 'clean')  # custody itself clean
+        services = json.loads((self.lane / 'services/services.json').read_text())
+        self.assertEqual(services['status'], 'failed')
+        self.assertIn('forced SIGKILL', ' '.join(services['cleanup_errors']))
+        daemon = services['services'][0]
+        self.assertEqual((daemon['forced_exit'], daemon['reaped'], daemon['exit_code']), (True, True, -signal.SIGKILL))
+        self.assertFalse(alive(report['daemon_pid']))
+        self.assertIn(b'private bus cleanup unverified', (self.lane / 'hung.log').read_bytes())
         self.assertFalse(self.root.exists())
 
     def test_absent_bus_executables_refuse_before_any_daemon(self):
