@@ -40,6 +40,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
+          # The selection suite reads pinned ancestor commits (vector-family
+          # witnesses), so it needs full history like the regression controller.
+          fetch-depth: 0
           # Source-membership regressions hash the pinned nostrdb sources; no build is needed.
           submodules: recursive
           persist-credentials: false

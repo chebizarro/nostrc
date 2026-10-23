@@ -129,6 +129,11 @@ class NamespacePolicyContractTests(unittest.TestCase):
         self.assertIn('    timeout-minutes: 45\n', regression)
         self.assertIn('REQUESTED_SHA: ${{ inputs.sha || github.sha }}', legacy)
         self.assertIn('ref: ${{ inputs.sha || github.sha }}', legacy)
+        # Same full history as the controller's own checkout: the suite reads
+        # pinned ancestor commits (test_vector_family_integration witnesses).
+        checkout = legacy.split('- name: Checkout\n', 1)[1].split('- name: Verify requested checkout', 1)[0]
+        self.assertIn('          fetch-depth: 0\n', checkout)
+        self.assertIn('          fetch-depth: 0\n', regression)
         for found, expected, observed in (controller_steps(regression, 'Execute unchanged kernel matrix and full policy suite'),
                                           controller_steps(legacy, 'Selection and workflow contract tests')):
             self.assertEqual(observed, expected)
