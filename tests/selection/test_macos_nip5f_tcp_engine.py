@@ -67,6 +67,12 @@ if(GO_ENABLE_UBSAN)
   add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=undefined)
 endif()
+# Same option/gating shape as the production root (CMakeLists.txt:490,509).
+option(BUILD_APPS "Build application binaries under apps/" ON)
+# APPS-OVERRIDE
+if(BUILD_APPS)
+  add_executable(grotto-daemon fixture/ok.c)
+endif()
 add_subdirectory(nips/nip5f/mini)
 nostrc_finalize_test_inventory()
 ''')
@@ -160,9 +166,19 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../TestInventory.cmake)
                               ("authority", lambda e: e.update(authority="existing_workflow_baseline")),
                               ("extra", lambda e: e.update(coverage="signing")),
                               ("registrations", lambda e: e.update(registrations=["test_nip5f_loopback"])),
-                              ("binding", lambda e: e["binding"].update(source_sha256="0" * 64))):
+                              ("binding", lambda e: e["binding"].update(source_sha256="0" * 64)),
+                              ("duplicated in one receipt", None)):
             with self.subTest(tamper=label):
                 forged = copy.deepcopy(normalized)
+                if tamper is None:
+                    # The exact record twice in one receipt (and its backend).
+                    for holder in (forged, forged["backend_receipt"]):
+                        holder["baseline_exclusions"] = [copy.deepcopy(holder["baseline_exclusions"][0])] * 2
+                    verdict = s.aggregate(self.inventory, self.plan, [forged], complete=False)
+                    self.assertFalse(verdict["passed"], verdict)
+                    self.assertTrue(any("duplicate/unapproved baseline exclusions" in e for e in verdict["errors"]),
+                                    verdict["errors"])
+                    continue
                 # The two receipts may share one exclusion object; tamper each once.
                 targets = {id(e): e for e in (forged["baseline_exclusions"][0],
                                               forged["backend_receipt"]["baseline_exclusions"][0])}
@@ -211,6 +227,25 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../TestInventory.cmake)
         resolved = r.resolve_checks(self.inventory, self.plan, realized, "core.macos.asan.alternate")
         self.assertEqual(resolved["baseline_exclusions"], [])
         self.assertNotIn(m.REGISTRATION, resolved["tests"])
+
+    def test_effective_build_apps_on_refuses_with_unchanged_argv_and_profile(self):
+        _, baseline = self.resolve()  # authored -DBUILD_APPS=OFF: no daemon, resolves
+        self.assertNotIn("grotto-daemon", baseline["build_targets"])
+        argv = copy.deepcopy(self.profile["configure_args"])
+        cmake = self.root / "CMakeLists.txt"
+        original = cmake.read_text()
+        overrides = {
+            "cache FORCE": ('set(BUILD_APPS ON CACHE BOOL "apps" FORCE)', "effective cache BUILD_APPS is not exactly OFF"),
+            "variable shadow": ("set(BUILD_APPS ON)", "application/signer producer: grotto-daemon"),
+        }
+        for label, (line, message) in overrides.items():
+            with self.subTest(override=label):
+                cmake.write_text(original.replace("# APPS-OVERRIDE", line))
+                with self.assertRaisesRegex(r.RealizationError, message):
+                    self.resolve()
+                self.assertEqual(self.profile["configure_args"], argv)
+                self.assertIn("-DBUILD_APPS=OFF", self.profile["configure_args"])
+        cmake.write_text(original)
 
     def test_registration_drift_refuses(self):
         self.resolve()  # baseline resolves

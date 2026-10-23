@@ -195,6 +195,8 @@ def realization_fixture(test_case):
     source, build = root / "source", root / "build"
     source.mkdir()
     build.mkdir()
+    (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Debug\nBUILD_APPS:BOOL=OFF\n"
+                                          "BUILD_APPS-ADVANCED:INTERNAL=1\n")
     profile = copy.deepcopy(inventory()["profiles"][a.PROFILE])
     tests = {name: {"name": name, "command": [str(build / "nips/nip5f" / name)], "properties": []}
              for name in ("test_nip5f_tcp",) + a.MANDATORY}
@@ -265,6 +267,21 @@ class RealizationApplicabilityTests(unittest.TestCase):
             "tsan instead": lambda rz, t, d: rz["targets"]["test_nip5f_tcp-id"].update(compile_fragments=["-fsanitize=thread"]),
             "ubsan dropped": lambda rz, t, d: rz["targets"]["test_nip5f_tcp-id"].update(compile_fragments=["-fsanitize=address"]),
             "realized signer capability": lambda rz, t, d: rz["profile"]["capabilities"].append("signer_endpoint"),
+            "effective cache BUILD_APPS=ON": lambda rz, t, d: (Path(rz["build_dir"]) / "CMakeCache.txt").write_text(
+                "BUILD_APPS:BOOL=ON\n"),
+            "cache entry duplicated": lambda rz, t, d: (Path(rz["build_dir"]) / "CMakeCache.txt").write_text(
+                "BUILD_APPS:BOOL=OFF\nBUILD_APPS:BOOL=OFF\n"),
+            "cache entry missing": lambda rz, t, d: (Path(rz["build_dir"]) / "CMakeCache.txt").write_text(
+                "CMAKE_BUILD_TYPE:STRING=Debug\n"),
+            "cache absent": lambda rz, t, d: (Path(rz["build_dir"]) / "CMakeCache.txt").unlink(),
+            "cache symlinked": lambda rz, t, d: ((Path(rz["build_dir"]) / "real-cache").write_text("BUILD_APPS:BOOL=OFF\n"),
+                                                  (Path(rz["build_dir"]) / "CMakeCache.txt").unlink(),
+                                                  (Path(rz["build_dir"]) / "CMakeCache.txt").symlink_to("real-cache")),
+            "daemon producer configured": lambda rz, t, d: rz["targets"].update({"daemon-id": dict(
+                rz["targets"]["test_nip5f_loopback-id"], id="daemon-id", name="grotto-daemon")}),
+            "apps/ source configured": lambda rz, t, d: rz["targets"].update({"app-id": dict(
+                rz["targets"]["test_nip5f_loopback-id"], id="app-id", name="anything",
+                sources=[{"path": rz["repo_root"] + "/apps/grotto/main.c", "generated": False}])}),
         }
         for label, mutate in mutations.items():
             with self.subTest(mutation=label):

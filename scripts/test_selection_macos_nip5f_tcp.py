@@ -57,6 +57,9 @@ UNCONFIGURED = re.compile(
 LEGACY_REGISTRATION = ("  add_test(NAME test_nip5f_tcp COMMAND test_nip5f_tcp)\n"
                        "  set_tests_properties(test_nip5f_tcp PROPERTIES SKIP_RETURN_CODE 77)\n")
 SIGNER_PROPERTIES = ("ENVIRONMENT", "ENVIRONMENT_MODIFICATION")
+# Producers that exist only when applications/the signer fixture are configured.
+APP_PRODUCERS = ("grotto-daemon", "grotto-schemas", "test_nip5f_approver")
+CACHE_ENTRY = re.compile(r"BUILD_APPS(?::[A-Za-z_]+)?=(.*)\Z")
 
 # The single authored record. The inventory's coverage_gaps entry with this id
 # must equal it exactly; any source/workflow change requires re-authoring here.
@@ -195,6 +198,25 @@ def validate_policy(inventory, record, root):
     _require(inventory.get("enforcement_ready") is False, "applicability does not authorize enforcement")
 
 
+def observed_build_apps(build_dir):
+    """The effective cache value, not the authored argv: catches FORCE/preload/
+    toolchain cache overrides. Exactly one entry, exactly OFF."""
+    path = Path(build_dir) / "CMakeCache.txt"
+    _require(path.is_file() and not path.is_symlink(), "native CMake cache missing for BUILD_APPS proof")
+    values = [m[1] for m in map(CACHE_ENTRY.match, path.read_text().splitlines()) if m]
+    _require(values == ["OFF"], f"effective cache BUILD_APPS is not exactly OFF: {values}")
+
+
+def require_no_application_producers(realization, relative):
+    """A plain variable can shadow the cache: prove the configured graph itself
+    contains no application or signer-fixture producer."""
+    for target in realization.get("targets", {}).values():
+        sources = {relative(src["path"], realization["repo_root"]) for src in target.get("sources", [])}
+        _require(target.get("name") not in APP_PRODUCERS
+                 and not any(path and path.startswith("apps/") for path in sources),
+                 f"configured graph contains an application/signer producer: {target.get('name')}")
+
+
 def validate_realization(inventory, record, realization, tests, descriptors, mapped_targets, relative):
     """Configured-graph validation; returns the not_executed record or None.
 
@@ -207,6 +229,8 @@ def validate_realization(inventory, record, realization, tests, descriptors, map
              "realized profile differs from the validated legacy macOS profile")
     _require("signer_endpoint" not in realization["profile"].get("capabilities", []),
              "realized profile provisions signer_endpoint")
+    observed_build_apps(realization["build_dir"])
+    require_no_application_producers(realization, relative)
     _require(REGISTRATION in tests, "legacy test_nip5f_tcp registration is missing")
     for name in MANDATORY:
         _require(name in tests, f"mandatory registration missing: {name}")
