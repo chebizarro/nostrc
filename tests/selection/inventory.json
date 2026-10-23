@@ -18316,7 +18316,9 @@
         "core.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "grotto.linux",
+        "groundhog.linux"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18462,6 +18464,76 @@
           "GoStringArrayTest",
           "GoTickerTest",
           "GoWaitGroupTest"
+        ],
+        "grotto.linux": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ],
+        "groundhog.linux": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
         ]
       },
       "build_targets": [
@@ -18493,7 +18565,17 @@
         "refptr_test",
         "string_array_test"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "ordinary_go_full_ownership": {
+        "schema_version": 1,
+        "authority": "ordinary_go_full_ownership_v1",
+        "profiles": [
+          "grotto.linux",
+          "groundhog.linux"
+        ],
+        "fixture": "tests/selection/fixtures/ordinary_go_full_ownership.json",
+        "fixture_sha256": "5b785df0e0fbe66d98f303730d4bbaf8c2ee05ee6f3911d24e33c04a20644bc6"
+      }
     },
     "supported.nostr.gtk.nostr.gtk.display": {
       "nodes": [
