@@ -472,9 +472,9 @@ def _expand_source(value, source_root):
 
 
 def _host_system_contract(profile):
-    expected = profile.get("host_system")
-    if expected is None:
+    if "host_system" not in profile:
         return None
+    expected = profile["host_system"]
     if (profile.get("platform") != "linux" or not isinstance(expected, dict)
             or not {"ID"} <= set(expected) <= {"ID", "VERSION_ID"}
             or any(not isinstance(v, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", v)

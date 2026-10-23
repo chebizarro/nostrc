@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from selector_support import ROOT, change, s
+from homed_profile_support import before_homed_source
 from nip44_vector_projection import (CHECK, REGISTRATION, RENEWAL, SOURCES,
                                      before_nip44_vector_renewal, renewal_witness)
 
@@ -40,7 +41,8 @@ class VectorFamilyIntegration(unittest.TestCase):
                 self.assertEqual({path for path in after if after[path] != historical[path]},
                                  {'gnome/groundhog/TestInventory.cmake', 'nips/nip5f/TestInventory.cmake'})
                 for path, expected in current.items():
-                    self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected)
+                    raw = before_homed_source(path, (ROOT / path).read_bytes())
+                    self.assertEqual(hashlib.sha256(raw).hexdigest(), expected)
                 for key in contract.keys() - {'review', 'primary_registrations', 'required_closure'}:
                     self.assertEqual(contract[key], previous[key], key)
                 for key in contract['review'].keys() - {'source_inputs'}:

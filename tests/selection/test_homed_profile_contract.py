@@ -67,7 +67,14 @@ class HomedProfileContract(unittest.TestCase):
     def test_historical_policy_and_sources_reverse_exactly_without_authority_renewal(self):
         from homed_profile_support import before_homed_policy, before_homed_source
         data = json.loads((ROOT / "tests/selection/fixtures/homed_profile_enrollment_20261023.json").read_text())
-        self.assertEqual(s.digest(before_homed_policy(self.policy)), data["before_policy_hash"])
+        historical = before_homed_policy(self.policy)
+        self.assertEqual(s.digest(historical), data["before_policy_hash"])
+        self.assertEqual(self.policy["diagnostic_nonmember_subsets"], historical["diagnostic_nonmember_subsets"])
+        self.assertEqual(self.policy["diagnostic_nonmembers"], historical["diagnostic_nonmembers"])
+        for contract in self.policy["diagnostic_nonmember_subsets"].values():
+            for path in ("gnome/nostr-homed/CMakeLists.txt", "gnome/nostr-homed/TestInventory.cmake"):
+                self.assertEqual(contract["review"]["source_inputs"][path], data["sources"][path]["before_sha256"])
+                self.assertNotEqual(contract["review"]["source_inputs"][path], data["sources"][path]["after_sha256"])
         for path, record in data["sources"].items():
             raw = (ROOT / path).read_bytes()
             self.assertEqual(hashlib.sha256(before_homed_source(path, raw)).hexdigest(), record["before_sha256"])
@@ -99,7 +106,7 @@ class HomedProfileContract(unittest.TestCase):
                 r._host_system_evidence(self.profile)
 
     def test_malformed_host_contract_refuses_before_execution(self):
-        for value in [{}, {"ID_LIKE": "ubuntu"}, {"ID": "Ubuntu"}, {"ID": "ubuntu", "VERSION_ID": 24.04},
+        for value in [None, {}, {"ID_LIKE": "ubuntu"}, {"ID": "Ubuntu"}, {"ID": "ubuntu", "VERSION_ID": 24.04},
                       {"ID": "ubuntu", "image": "ubuntu:24.04"}, "ubuntu"]:
             profile = dict(self.profile, host_system=value)
             with self.subTest(value=value), self.assertRaises(r.RealizationError):

@@ -10,6 +10,7 @@ from closeout_support import before_closeout_policy
 from w11_worker_support import before_worker_policy, current_source_hash
 from w11_policy_support import before_policy_enrollment
 from test_selection_subset import before_full_ownership_policy
+from homed_profile_support import before_homed_policy
 from supported_profile_support import (
     NEW_INPUTS, before_supported_batch_contract, before_supported_batch_policy,
     census_inputs, witness,
@@ -19,7 +20,7 @@ from supported_profile_support import (
 class SupportedProfileMembership(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))))
+        cls.p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(before_homed_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json')))))
         cls.data = witness()
 
     def test_actual_inventory_valid_and_historical_bytes_immutable(self):

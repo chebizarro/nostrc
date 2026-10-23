@@ -407,6 +407,8 @@ class PlacementEnrollmentTests(unittest.TestCase):
         import w11_placement_support as wave
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         data = wave.witness()
+        from homed_profile_support import before_homed_policy
+        policy = before_homed_policy(policy)
         previous = wave.before_policy(policy)
         self.assertEqual(s.digest(previous), data['before_policy_hash'])
         restored = copy.deepcopy(previous)

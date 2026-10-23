@@ -97,6 +97,8 @@ class BroadPrerequisiteTests(unittest.TestCase):
         # Outside the experimental-roaming runtime, which opens much later.
         self.assertLess(start, cmake.index("if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)"))
         self.assertIn("if(NOSTR_HOMED_BUILD_TESTS)", block)
+        self.assertIn("include(${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/ManifestCacheTests.cmake)", block)
+        block = (WORKFLOWS.parents[1] / "gnome/nostr-homed/tests/unit/ManifestCacheTests.cmake").read_text()
         names = {m.group(1) for m in re.finditer(r"add_test\(NAME (homed_\w+) COMMAND", block)}
         loop = re.search(r"foreach\(nh_cache_unit ([\w ]+)\)", block).group(1).split()
         names = {n for n in names if "${" not in n}
@@ -112,8 +114,9 @@ class BroadPrerequisiteTests(unittest.TestCase):
             with self.subTest(test=test_name):
                 self.assertTrue((root / "tests/unit" / f"{target}.c").is_file())
                 self.assertTrue((root / common).is_file())
-        self.assertIn("add_executable(test_manifest tests/unit/test_manifest.c src/common/nostr_manifest.c)", block)
-        self.assertIn("tests/unit/test_${nh_cache_unit}.c src/common/nostr_cache.c", block)
+        normalized = " ".join(block.replace("${_nh_unit_root}/", "").split())
+        self.assertIn("add_executable(test_manifest tests/unit/test_manifest.c src/common/nostr_manifest.c)", normalized)
+        self.assertIn("tests/unit/test_${nh_cache_unit}.c src/common/nostr_cache.c", normalized)
         code = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
         for forbidden in ("nostr_homed_common", "FUSE", "libnostr", "nip19"):
             self.assertNotIn(forbidden, code)
