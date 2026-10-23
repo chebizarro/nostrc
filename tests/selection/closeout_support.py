@@ -72,13 +72,52 @@ def before_closeout_contract(contract, profile):
     return previous
 
 
+W11_SETUP_WITNESS = 'tests/selection/fixtures/w11_setup_enrollment_20261023.json'
+W11_SETUP_SHA256 = '20c26fe28584a6036436cb338358ec60e7cf2696e44cdc0487dbd257d69273d9'
+
+
+def w11_setup_witness():
+    raw = (ROOT / W11_SETUP_WITNESS).read_bytes()
+    s.require(hashlib.sha256(raw).hexdigest() == W11_SETUP_SHA256,
+              'W11 setup witness bytes changed')
+    return json.loads(raw)
+
+
+def before_w11_setup_jobs(records):
+    """Project only reviewed fingerprint fields for immutable historical tests."""
+    previous = copy.deepcopy(records)
+    for ident, record in w11_setup_witness()['workflow_jobs'].items():
+        fields = {field: previous[ident][field] for field in record['after']}
+        s.require(fields in (record['before'], record['after']),
+                  'W11 setup job source changed: ' + ident)
+        previous[ident].update(record['before'])
+    return previous
+
+
+def before_w11_setup_source(path, raw):
+    record = w11_setup_witness()['sources'][path]
+    if hashlib.sha256(raw).hexdigest() == record['before_sha256']:
+        return raw
+    s.require(hashlib.sha256(raw).hexdigest() == record['after_sha256'],
+              'W11 setup source changed: ' + path)
+    for edit in record['edits']:
+        after, before = edit['after'].encode(), edit['before'].encode()
+        s.require(raw.count(after) == 1, 'W11 setup edit is not unique: ' + path)
+        raw = raw.replace(after, before, 1)
+    s.require(hashlib.sha256(raw).hexdigest() == record['before_sha256'],
+              'W11 historical setup source changed: ' + path)
+    return raw
+
+
 RUNTIME_SOURCE_RULES = [
     {'effect': 'impact', 'exact': path, 'nodes': [owner, 'selection.contract'],
      'reason': 'Standalone runtime diagnostic source closure; preserve product ownership without profile admission.'}
     for owner, path in [('grotto.gui', 'apps/grotto/data/org.nostr.Grotto.gschema.xml')] +
     [('mdk011.peer_inputs', 'tests/interop/mdk/driver-0.11/' + name)
      for name in ('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'src/main.rs')]
-]
+] + [{'effect': 'impact', 'exact': 'nips/nip44/tests/nip44.vectors.json',
+      'nodes': ['nip44.test_inputs', 'selection.contract'],
+      'reason': 'W11 checkout regression consumes pinned vector bytes; preserve vector ownership.'}]
 NATIVE_RUNTIME_INPUTS = [
     '{source}/scripts/adapter_namespace_custody.py',
     '{source}/tests/selection/test_namespace_custody.py',
@@ -99,6 +138,9 @@ NATIVE_RUNTIME_INPUTS = [
     '{source}/tests/interop/mdk/driver-0.11/Cargo.lock',
     '{source}/tests/interop/mdk/driver-0.11/rust-toolchain.toml',
     '{source}/tests/interop/mdk/driver-0.11/src/main.rs',
+    '{source}/tests/selection/test_w11_worker_setup.py',
+    '{source}/tests/selection/fixtures/w11_setup_enrollment_20261023.json',
+    '{source}/nips/nip44/tests/nip44.vectors.json',
 ]
 
 
@@ -107,6 +149,7 @@ def before_native_custody_policy(policy):
     previous = copy.deepcopy(policy)
     check = previous['checks']['selection.contract']
     if set(NATIVE_RUNTIME_INPUTS) & set(check.get('runtime_inputs', [])):
+        previous['workflow_jobs'] = before_w11_setup_jobs(previous['workflow_jobs'])
         before = witness()['checks']['selection.contract']['after']
         after = copy.deepcopy(before)
         after['runtime_inputs'] += NATIVE_RUNTIME_INPUTS

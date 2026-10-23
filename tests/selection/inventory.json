@@ -7889,8 +7889,11 @@
       "{source}/tests/interop/mdk/driver-0.11/Cargo.toml",
       "{source}/tests/interop/mdk/driver-0.11/Cargo.lock",
       "{source}/tests/interop/mdk/driver-0.11/rust-toolchain.toml",
-      "{source}/tests/interop/mdk/driver-0.11/src/main.rs"
-      ],
+      "{source}/tests/interop/mdk/driver-0.11/src/main.rs",
+            "{source}/tests/selection/test_w11_worker_setup.py",
+            "{source}/tests/selection/fixtures/w11_setup_enrollment_20261023.json",
+            "{source}/nips/nip44/tests/nip44.vectors.json"
+          ],
       "working_directory": "{source}"
     },
     "prepared011.matrix": {
@@ -21176,6 +21179,7 @@
     }
   },
   "path_rules": [
+    {"effect": "impact", "exact": "nips/nip44/tests/nip44.vectors.json", "nodes": ["nip44.test_inputs", "selection.contract"], "reason": "W11 checkout regression consumes pinned vector bytes; preserve vector ownership."},
     {"effect": "impact", "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml", "nodes": ["grotto.gui", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
     {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Dockerfile", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
     {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
@@ -26692,9 +26696,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "6126abd637fccb72dc977c615b7357d6cbc7a39f239bdf53833698c3886c2476",
+      "source_sha256": "577d2a31ea4057a91db0bd71c50501f91a6e416292c74b4817797ef841a80de3",
       "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
-      "workflow_sha256": "4afc30d9ae625160c7f763a35df255cdc6ce015dc4924b6edb35cd91e3eb2aa0"
+      "workflow_sha256": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -27198,9 +27202,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "1bc8e99bc386537de2ff226b1aaaf0b8e040d00b654fa70fd6516950e5e18452",
+      "source_sha256": "1572639c86d781f7b3edbee41bc0dd2563558a00ceedf95bd775417999bb74dd",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "d69012a314c9ef55f3bf1d8ba4fe0d62f96c910a3237947b1888ccc3bbf42095"
+      "workflow_sha256": "e84e5a3cc65956f6e9293e676f4bece47f9ce9a2cb97048583bb419f5dcf82d6"
     }
   },
   "schema_version": 1,

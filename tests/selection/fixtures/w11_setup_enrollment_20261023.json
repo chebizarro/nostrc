@@ -1,0 +1,48 @@
+{
+  "base": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+  "approved_code_tip": "fc5333d58447110fff59f3da1741f193e098227d",
+  "sources": {
+    ".github/workflows/dependency-worker.yml": {
+      "before_sha256": "4afc30d9ae625160c7f763a35df255cdc6ce015dc4924b6edb35cd91e3eb2aa0",
+      "after_sha256": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df",
+      "edits": [
+        {
+          "before": "        run: python3 -m pip install --break-system-packages 'cmake==3.31.6'\n",
+          "after": "        run: |\n          python3 -m pip install --break-system-packages 'cmake==3.31.6'\n          # The pip entrypoint is a Python launcher; CMake records its real binary.\n          # Select that same binary for configure/build rather than weakening identity checks.\n          python3 -c 'import cmake; print(cmake.CMAKE_BIN_DIR)' >> \"$GITHUB_PATH\"\n"
+        }
+      ]
+    },
+    ".github/workflows/windows-validation.yml": {
+      "before_sha256": "d69012a314c9ef55f3bf1d8ba4fe0d62f96c910a3237947b1888ccc3bbf42095",
+      "after_sha256": "e84e5a3cc65956f6e9293e676f4bece47f9ce9a2cb97048583bb419f5dcf82d6",
+      "edits": [
+        {
+          "before": "",
+          "after": "        # Pinned input hashes bind repository bytes, not Windows CRLF conversion.\n        env:\n          GIT_CONFIG_COUNT: '1'\n          GIT_CONFIG_KEY_0: core.autocrlf\n          GIT_CONFIG_VALUE_0: 'false'\n"
+        }
+      ]
+    }
+  },
+  "workflow_jobs": {
+    ".github/workflows/dependency-worker.yml:execute": {
+      "before": {
+        "source_sha256": "6126abd637fccb72dc977c615b7357d6cbc7a39f239bdf53833698c3886c2476",
+        "workflow_sha256": "4afc30d9ae625160c7f763a35df255cdc6ce015dc4924b6edb35cd91e3eb2aa0"
+      },
+      "after": {
+        "source_sha256": "577d2a31ea4057a91db0bd71c50501f91a6e416292c74b4817797ef841a80de3",
+        "workflow_sha256": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df"
+      }
+    },
+    ".github/workflows/windows-validation.yml:build": {
+      "before": {
+        "source_sha256": "1bc8e99bc386537de2ff226b1aaaf0b8e040d00b654fa70fd6516950e5e18452",
+        "workflow_sha256": "d69012a314c9ef55f3bf1d8ba4fe0d62f96c910a3237947b1888ccc3bbf42095"
+      },
+      "after": {
+        "source_sha256": "1572639c86d781f7b3edbee41bc0dd2563558a00ceedf95bd775417999bb74dd",
+        "workflow_sha256": "e84e5a3cc65956f6e9293e676f4bece47f9ce9a2cb97048583bb419f5dcf82d6"
+      }
+    }
+  }
+}
