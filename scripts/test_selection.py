@@ -104,16 +104,72 @@ def validate_nonmember_record(record, contract, identities):
             raise ValueError("invalid diagnostic nonmember targets")
 
 
-def _nested_incomplete(value):
+COVERAGE_STATE_FIELDS = ("coverage_gaps", "physical_coverage_gaps", "rollout_prerequisites",
+                         "enforcement_ready", "rollout_readiness")
+
+
+def coverage_state(policy):
+    """Separate only the reviewed W11 administrative prerequisite; never waive coverage."""
+    require(isinstance(policy, dict), "coverage policy must be a map")
+    gaps = policy.get("coverage_gaps", [])
+    require(isinstance(gaps, list), "coverage_gaps must be a list")
+    enforcement = policy.get("enforcement_ready", False)
+    require(type(enforcement) is bool, "enforcement_ready must be an explicit boolean")
+    technical, prerequisites, seen = [], [], set()
+    for gap in gaps:
+        if isinstance(gap, dict) and isinstance(gap.get("id"), str):
+            require(gap["id"] not in seen, "duplicate coverage gap ID")
+            seen.add(gap["id"])
+        if not isinstance(gap, dict) or not ({"classification", "authority"} & gap.keys()):
+            technical.append(gap)  # Untyped historical rows remain technical, including shadow_cutover.
+            continue
+        require(set(gap) == {"id", "reason", "tracking", "classification", "authority"}
+                and gap.get("id") == "shadow_cutover"
+                and gap.get("classification") == "administrative_rollout_prerequisite"
+                and gap.get("authority") == "reviewed_shadow_cutover_v1"
+                and gap.get("tracking") == "nostrc-0cfsg.5"
+                and isinstance(gap.get("reason"), str) and bool(gap["reason"].strip()),
+                "unreviewed/malformed administrative rollout prerequisite")
+        prerequisites.append(gap)
+    return {"coverage_gaps": gaps, "physical_coverage_gaps": technical,
+            "rollout_prerequisites": prerequisites, "enforcement_ready": enforcement,
+            "rollout_readiness": {"schema_version": 1, "enforcement_ready": enforcement,
+                "pending_prerequisite_ids": [g["id"] for g in prerequisites],
+                "ready": enforcement and not gaps}}
+
+
+def require_coverage_state(value, expected):
+    require(isinstance(value, dict) and all(k in value for k in COVERAGE_STATE_FIELDS)
+            and all(digest(value[k]) == digest(expected[k]) for k in COVERAGE_STATE_FIELDS),
+            "missing/mismatched bound coverage and rollout readiness")
+
+
+def require_rollout_ready(release, validation):
+    """A physically complete shadow observation is not publication/cutover authority."""
+    expected = coverage_state(release)
+    require_coverage_state(release, expected)
+    require_coverage_state(validation, expected)
+    require(expected["rollout_readiness"]["ready"] is True
+            and validation.get("complete_gate_eligible") is True,
+            "rollout prerequisites/readiness do not authorize enforcement or publication")
+
+
+def _nested_incomplete(value, *, rollout=False):
     """An optimistic wrapper cannot launder nested diagnostic evidence to release."""
     if isinstance(value, dict):
-        if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
+        if (("complete" in value and value["complete"] is not True) or value.get("partial_profiles")
+                or ("complete_gate_eligible" in value and value["complete_gate_eligible"] is not True)
+                or value.get("baseline_exclusions")
                 or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY
                 or subset.marked(value) or value.get("receipt_kind") == "lane_failure_v1"
                 or value.get('diagnostic_boundary') is not None):
             return True
-        return any(_nested_incomplete(v) for v in value.values())
-    return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
+        if rollout and (value.get("rollout_prerequisites") or
+                ("rollout_readiness" in value and (not isinstance(value["rollout_readiness"], dict)
+                 or value["rollout_readiness"].get("ready") is not True))):
+            return True
+        return any(_nested_incomplete(v, rollout=rollout) for v in value.values())
+    return isinstance(value, list) and any(_nested_incomplete(v, rollout=rollout) for v in value)
 
 
 def read_json(path):
@@ -168,6 +224,7 @@ def validate_inventory(policy):
             # Canonical release IDs retain their public hyphens; internal IDs do not.
             pattern = r"[a-z0-9]+(?:-[a-z0-9]+)*" if key == "release_components" else ID.pattern
             require(isinstance(ident, str) and re.fullmatch(pattern, ident) and isinstance(value, dict), f"invalid {key} ID: {ident}")
+    coverage_state(policy)
     nodes, profiles, checks = (policy[k] for k in ("nodes", "profiles", "checks"))
     for ident, node in nodes.items():
         require(node.get("id", ident) == ident, f"node ID mismatch: {ident}")
@@ -243,7 +300,7 @@ def validate_inventory(policy):
         _ids(members, checks, f"alias {alias}")
     try:
         diagnostic_nonmember_contracts(policy)
-        subset.contracts(policy)
+        subset.active_contracts(policy)
     except ValueError as exc:
         raise ContractError(str(exc)) from exc
     return policy
@@ -386,7 +443,7 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
               "broadening_reasons": sorted(set(reasons)), "selected_checks": sorted(active),
               "excluded_checks": excluded, "witnesses": witnesses, "lanes": lanes,
               "expected_lane_ids": [lane["id"] for lane in lanes], "partial_profiles": restriction,
-              "coverage_gaps": policy.get("coverage_gaps", []), "enforcement_ready": policy.get("enforcement_ready", False)}
+              **coverage_state(policy)}
     if omitted:
         result['omitted_profiles'] = omitted
     result["plan_id"] = digest(result)
@@ -521,6 +578,14 @@ def validate_plan(plan, policy):
     expected.pop("plan_id", None)
     require(plan.get("plan_id") == digest(expected), "plan identity hash mismatch")
     require(plan.get("inventory_hash") == digest(policy), "plan inventory mismatch")
+    state = coverage_state(policy)
+    require(digest(plan.get("coverage_gaps", [])) == digest(state["coverage_gaps"])
+            and type(plan.get("enforcement_ready", False)) is bool
+            and plan.get("enforcement_ready", False) is state["enforcement_ready"],
+            "plan coverage/enforcement policy mismatch")
+    if state["rollout_prerequisites"] or any(k in plan for k in
+            ("physical_coverage_gaps", "rollout_prerequisites", "rollout_readiness")):
+        require_coverage_state(plan, state)
     require(plan.get("source_identity", {}).get("sha") == plan.get("tested_sha") == plan.get("head"), "source/tested SHA mismatch")
     identity = plan["source_identity"]
     require(identity.get("kind") in {"committed", "dirty"}, "invalid source identity kind")
@@ -643,14 +708,21 @@ def validate_default_build_evidence(profile, backend, checks, *, resolved=None):
 def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=None, job_conclusions=None, repo=None):
     validate_plan(plan, policy)
     errors, visible, incomplete_lanes = [], [], []
-    if complete and plan.get("coverage_gaps"):
-        errors.append("inventory coverage/enforcement readiness cannot satisfy complete gate")
+    state = coverage_state(policy)
+    if complete:
+        try:
+            require_coverage_state(plan, state)
+        except ContractError as exc:
+            errors.append(str(exc))
+    if complete and state["physical_coverage_gaps"]:
+        errors.append("inventory physical coverage cannot satisfy complete gate")
     if selection_conclusion != "success" and not (selection_conclusion is None and plan.get("context") == "local"):
         errors.append("selection job was not explicitly successful")
     if complete and (plan.get("partial_profiles") or plan["source_identity"].get("kind") != "committed"):
         errors.append("partial/dirty run cannot satisfy complete gate")
     expected = {lane["id"]: lane for lane in plan["lanes"]}
-    subset_profiles = sorted({lane["profile"] for lane in plan["lanes"]} & subset.contracts(policy).keys())
+    subset_profiles = sorted({lane["profile"] for lane in plan["lanes"]} & subset.active_contracts(policy).keys())
+    full_owned_profiles = subset.full_profiles(policy)
     seen = set()
     if job_conclusions is not None:
         require(isinstance(job_conclusions, dict), "malformed worker conclusions")
@@ -690,6 +762,17 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             if receipt.get(key) != value:
                 errors.append(f"{lane_id}: {key} did not pass")
         backend = receipt.get("backend_receipt", {})
+        if complete:
+            try:
+                require_coverage_state(backend if backend else receipt, state)
+                require("coverage_gaps" in receipt
+                        and digest(receipt["coverage_gaps"]) == digest(state["coverage_gaps"]),
+                        "receipt dropped coverage/rollout prerequisites")
+                for key in COVERAGE_STATE_FIELDS:
+                    if key in receipt:
+                        require(digest(receipt[key]) == digest(state[key]), "receipt rollout state contradiction: " + key)
+            except ContractError as exc:
+                errors.append(f"{lane_id}: {exc}")
         profile = policy["profiles"][lane["profile"]]
         if any(key in profile for key in ("build_parallelism", "test_parallelism")):
             try:
@@ -767,13 +850,19 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile)
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append(f"{lane_id}: diagnostic nonmember evidence did not qualify: {exc}")
-        subset_contract = subset.contracts(policy).get(lane["profile"])
+        subset_contract = subset.active_contracts(policy).get(lane["profile"])
         try:
             if subset_contract is not None:
                 subset.validate_receipt(receipt, backend, exclusions, subset_contract, plan, lane, profile,
                                         checks={ident: policy['checks'][ident] for ident in lane['checks']})
             else:
                 subset.validate_nested(receipt, None)
+                require(lane["profile"] in full_owned_profiles
+                        or (subset.FULL_FIELD not in receipt and subset.FULL_FIELD not in backend),
+                        "full ownership evidence on undeclared profile")
+                if lane["profile"] in full_owned_profiles:
+                    subset.validate_full_receipt(receipt, backend, plan, lane, profile,
+                        checks={ident: policy['checks'][ident] for ident in lane['checks']})
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             errors.append(f"{lane_id}: ordinary subset evidence did not qualify: {exc}")
         for exclusion in exclusions:
@@ -812,7 +901,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f'{lane_id}: native kernel custody final evidence refused: {exc}')
         incomplete = (receipt.get("complete_gate_eligible") is False or backend.get("complete_gate_eligible") is False
                       or receipt.get("baseline_exclusions") or backend.get("baseline_exclusions")
-                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps") or subset.nested(receipt)
+                      or coverage_state(receipt)["physical_coverage_gaps"]
+                      or coverage_state(backend)["physical_coverage_gaps"] or _nested_incomplete(receipt)
                       or receipt.get('diagnostic_boundary') or backend.get('diagnostic_boundary'))
         if incomplete:
             incomplete_lanes.append(lane_id)
@@ -866,7 +956,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             "diagnostic_eligible": not errors, "incomplete_lanes": incomplete_lanes,
             "complete_gate_eligible": bool(complete and not errors and not incomplete_lanes),
             "tag": plan["event"].get("tag") if isinstance(plan["event"], dict) else None,
-            "enforcement_ready": plan.get("enforcement_ready", False), "coverage_gaps": plan.get("coverage_gaps", [])}
+            **state}
 
 
 def _semver(version):
@@ -950,8 +1040,8 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
             "source_identity": {"kind": "committed", "sha": tested}, "inventory_hash": digest(policy),
             "mode": "broad", "publishers": publishers, "required_package_jobs": jobs,
             "validation_only": publishers == ["none"], "dry_run": dry_run, "publish": bool(tag and not dry_run and publishers != ["none"]),
-            "run_id": run_id, "verified_versions": verified,
-            **({"diagnostic_nonmember_subset_profiles": sorted(subset.contracts(policy))} if subset.contracts(policy) else {})}
+            "run_id": run_id, "verified_versions": verified, **coverage_state(policy),
+            **({"diagnostic_nonmember_subset_profiles": sorted(subset.active_contracts(policy))} if subset.active_contracts(policy) else {})}
 
 
 def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile):
@@ -1015,7 +1105,13 @@ def aggregate_release(release, validation, jobs):
     errors = []
     if subset.references_profiles(validation, release.get("diagnostic_nonmember_subset_profiles", [])):
         errors.append("ordinary subset receipt cannot authorize complete release validation")
-    if (not validation.get("passed") or not validation.get("complete") or _nested_incomplete(validation)
+    try:
+        require_rollout_ready(release, validation)
+        rollout_ready = True
+    except ContractError:
+        rollout_ready = False
+    if (not rollout_ready or validation.get("passed") is not True or validation.get("complete") is not True
+            or _nested_incomplete(validation, rollout=True)
             or validation.get("source_identity") != release["source_identity"]
             or validation.get("tested_sha") != release["tested_sha"]
             or validation.get("inventory_hash") != release["inventory_hash"]

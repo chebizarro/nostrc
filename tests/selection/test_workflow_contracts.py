@@ -80,11 +80,17 @@ class WorkerAccountingTests(unittest.TestCase):
         errors, _ = ci.check_jobs(broad, self.needs)
         self.assertIn("broad family coverage did not complete as selected", errors)
 
-    def test_empty_set_needs_explicit_accounting_and_ready_policy(self):
+    def test_empty_set_needs_physical_accounting_not_rollout_approval(self):
         plan = s.make_plan(self.p, [], head="a" * 40, context="ci", event={"kind": "manual"})
         self.needs["core"]["result"] = "skipped"
         self.assertTrue(ci.aggregate(ROOT, self.p, plan, self.needs, [])["passed"])
         self.p["enforcement_ready"] = False
+        plan = s.make_plan(self.p, [], head="a" * 40, context="ci")
+        observed = ci.aggregate(ROOT, self.p, plan, self.needs, [])
+        self.assertTrue(observed["passed"])
+        self.assertTrue(observed["complete_gate_eligible"])
+        self.assertFalse(observed["rollout_readiness"]["ready"])
+        self.p["coverage_gaps"] = [{"id": "missing_runtime", "reason": "physical dependency missing"}]
         plan = s.make_plan(self.p, [], head="a" * 40, context="ci")
         self.assertFalse(ci.aggregate(ROOT, self.p, plan, self.needs, [])["passed"])
 
@@ -330,6 +336,9 @@ class PublicationTests(unittest.TestCase):
 
     def release(self, component):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        # Exercise publication routing with an explicitly synthetic ready policy;
+        # never forge ready validation against the actual unready inventory.
+        p.update(enforcement_ready=True, coverage_gaps=[])
         return s.release_plan(ROOT, p, head="HEAD", component=component, dry_run=True, run_id="synthetic")
 
     def needs(self, release, publisher):
@@ -342,7 +351,7 @@ class PublicationTests(unittest.TestCase):
         return result
 
     def validation(self, release):
-        return dict(passed=True, complete=True, enforcement_ready=True, coverage_gaps=[],
+        return dict(passed=True, complete=True, complete_gate_eligible=True, **s.coverage_state(release),
                     source_identity=release["source_identity"], tested_sha=release["tested_sha"],
                     inventory_hash=release["inventory_hash"], mode="broad", tag=release["tag"], partial_profiles=[],
                     broad_family_receipt=ci.broad_aggregate(ROOT, release['tested_sha'],
