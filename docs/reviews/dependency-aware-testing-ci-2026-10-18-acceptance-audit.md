@@ -1,5 +1,30 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Concrete closure implementation and refreshed evidence — 2026-10-23
+
+[Final integration and frozen hosted handoff](dependency-aware-testing-w11-closure-integration-2026-10-23.md)
+implements internal enrollment, genuine ordinary33 ownership, retained five-state
+coverage/readiness fields and a typed selected policy controller. These supersede
+master663's missing ownership and predecessor-only architecture below, not its
+historical evidence. Only marked shadow_cutover is administrative; nine technical
+rows still block and enforcement_ready remains false. No diagnostic flag clearing.
+
+[Fresh dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md):
+API window06:34:08.709047Z–06:34:42.397955Z returns all54 roots,53 failed/one
+cancelled. Four roots' full job/artifact lists and eleven original source-linked
+plan/broad/validation archives are retained and hashed; all four validation and
+three broad receipts fail. This is not final-batch hosted execution. **0/20
+qualifying reviewed comparisons,0/2 successful complete broad integrations;
+W11 NOT MET/W12 NOT RUN.** Parent lands and dispatches existing approved workflows
+on the exact landed ref; no endpoint, SSH or approval dependency remains. Local
+native439, provisioned policy915/kernel79 and diagnostic real-PR replays add zero
+quota credit. `.5` remains a closed finite baseline with a fresh official comment.
+
+J's strict official1.10.8 remedy and full internal source/toolchain enrollment
+exist; original62179 input identity remains unavailable/exact replay NOT RUN,
+not a claim that prior provider refusal explains the technical leak. Native and
+hosted acceptance criteria stay open. No default/protection/publication cutover.
+
 ## W11 executable census and current-head refusal — 2026-10-23T02:12:28.940355Z
 
 [Finite source-bound register,21 real PR replays and run sequence](dependency-aware-testing-w11-execution-2026-10-23.md)

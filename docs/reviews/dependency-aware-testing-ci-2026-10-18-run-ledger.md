@@ -1,5 +1,31 @@
 # Dependency-aware testing acceptance run ledger
 
+## Closure integration refresh — 2026-10-23T06:34:08.709047Z–06:34:42.397955Z
+
+Fresh existing-workflow API listing: all54 shadow roots returned,53 failed and
+one cancelled, zero successful roots. Four source-linked roots below were
+re-fetched with their complete jobs/artifact lists; eleven plan/broad/validation
+ZIPs passed CRC and member-byte hashing. Their validation receipts all retain
+passed=false, and the three broad receipts retain passed=false. No final-batch
+hosted run exists. **0/20 qualifying comparisons,0/2 complete broad integrations;
+W11 NOT MET/W12 NOT RUN.** This is a dated sequential observation, not a live
+counter or acceptance inferred from job colours.
+
+| Existing root | Refreshed terminal jobs (all jobs retained) |
+|---|---|
+| [PR20 39884384021](https://github.com/chebizarro/nostrc/actions/runs/39884384021) |61 jobs:44 success,14 failure,2 cancelled,1 skipped; validation12477295521 and broad12476354937 fail. |
+| [PR21 39885673421](https://github.com/chebizarro/nostrc/actions/runs/39885673421) |15 jobs:1 success,1 failure,13 skipped; validation12473820942 fails. |
+| [master20 39884406426](https://github.com/chebizarro/nostrc/actions/runs/39884406426) |61 jobs:45 success,14 failure,1 cancelled,1 skipped; validation12475613780 and broad12474313917 fail. |
+| [master21 39885713147](https://github.com/chebizarro/nostrc/actions/runs/39885713147) |61 jobs:44 success,15 failure,1 cancelled,1 skipped; validation12476368219 and broad12475939683 fail. |
+
+Raw API bytes, query failures (none), eleven original archives and exact member
+hashes: `/tmp/nostrc-w11-closure-20261023/final-integration/hosted-refresh/`.
+Older snapshots/failed attempts below remain unchanged. The [concrete integration
+report](dependency-aware-testing-w11-closure-integration-2026-10-23.md) documents
+implemented internal enrollment and local proofs; parent dispatches the landed
+SHA through existing workflows. No local439/915/79 case count or21-PR planner
+replay enters the W11 cohort.
+
 ## W11 finite execution snapshot — 2026-10-23T02:12:28.940355Z
 
 [Executable replay/census and current-head gap register](dependency-aware-testing-w11-execution-2026-10-23.md).
