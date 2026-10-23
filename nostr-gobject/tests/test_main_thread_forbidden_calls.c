@@ -165,6 +165,11 @@ typedef struct {
     gint64 first_gap_us;
     gint64 final_gap_us;
     gboolean burst_complete;
+    /* Diagnostic attribution only (nostrc-0cfsg.11): the subset of missed_count
+     * observed after the store burst, while only the idle main loop runs. It
+     * never changes missed_count or the pass/fail policy. */
+    guint post_burst_missed_count;
+    gint64 post_burst_max_gap_us;
     HeartbeatWork work;
     gpointer work_data;
     GMainLoop *loop;
@@ -178,9 +183,13 @@ heartbeat_record_at(HeartbeatData *hb, gint64 now)
     /* Preserve the original strict >50ms boundary and two-gap allowance. */
     if (gap > HEARTBEAT_GAP_US) {
         hb->missed_count++;
-        if (!hb->burst_complete && hb->work_count > 0)
+        if (hb->burst_complete)
+            hb->post_burst_missed_count++;
+        else if (hb->work_count > 0)
             hb->missed_after_cycle[hb->work_count - 1] = TRUE;
     }
+    if (hb->burst_complete)
+        hb->post_burst_max_gap_us = MAX(hb->post_burst_max_gap_us, gap);
     if (hb->interval_count++ == 0)
         hb->first_gap_us = gap;
     hb->last_beat_us = now;
@@ -239,6 +248,10 @@ run_heartbeat(HeartbeatWork work, gpointer data)
                    hb.max_gap_us / 1000.0, hb.work_count);
     g_test_message("Initial interval=%.3f ms, explicit final interval=%.3f ms",
                    hb.first_gap_us / 1000.0, hb.final_gap_us / 1000.0);
+    g_test_message("Attribution: burst_missed=%u post_burst_missed=%u post_burst_max_gap=%.1f ms",
+                   hb.missed_count - hb.post_burst_missed_count,
+                   hb.post_burst_missed_count,
+                   hb.post_burst_max_gap_us / 1000.0);
     for (guint i = 0; i < hb.work_count; i++) {
         g_test_message("cycle=%u operation=%.3f ms%s",
                        i + 1, hb.work_us[i] / 1000.0,
@@ -372,6 +385,17 @@ test_heartbeat_gap_boundary(void)
     g_assert_cmpuint(hb.missed_count, ==, 2);
     heartbeat_record_at(&hb, 1650002);
     g_assert_cmpuint(hb.missed_count, ==, 3);
+    g_assert_cmpuint(hb.post_burst_missed_count, ==, 0);
+
+    /* Attribution is diagnostic only: a post-burst gap still counts. */
+    hb.burst_complete = TRUE;
+    heartbeat_record_at(&hb, 1650002 + 500000);
+    g_assert_cmpuint(hb.missed_count, ==, 4);
+    g_assert_cmpuint(hb.post_burst_missed_count, ==, 1);
+    g_assert_cmpint(hb.post_burst_max_gap_us, ==, 500000);
+    heartbeat_record_at(&hb, 1650002 + 500000 + 50000); /* exactly 50ms */
+    g_assert_cmpuint(hb.missed_count, ==, 4);
+    g_assert_cmpuint(hb.post_burst_missed_count, ==, 1);
 }
 
 int
