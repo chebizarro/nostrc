@@ -1,5 +1,54 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## W11 source-linked hosted measurement — 2026-10-23T00:48:54.695786Z
+
+This dated observation supersedes older **current/latest** labels below without
+rewriting their historical evidence. [Bounded W11 report and actionable-run
+checklist](dependency-aware-testing-ci-2026-10-23-w11.md) and
+[exact source/job/artifact index](dependency-aware-testing-ci-2026-10-23-w11-evidence.json)
+record the full 00:32:59–00:35:51 UTC capture (154 queries/all 50 root attempts)
+and final bounded 00:48:24–00:48:54 UTC refresh (master/PR19/root listing plus their
+exact-attempt jobs/artifacts). Final listing: **47 failed / one cancelled / one
+queued / one in progress**. Older root bodies remain the earlier full capture;
+intervening full-refresh TLS failure is retained, not erased or called complete.
+
+PR19 [root39872346136](https://github.com/chebizarro/nostrc/actions/runs/39872346136)
+tests merge `b5c94b6b61befca32a3291e73b9863bf1570c03a`, not API head `cc56887a7` or
+subsequently merged master. Latest master
+[root39872363501](https://github.com/chebizarro/nostrc/actions/runs/39872363501)
+tests `587ebea254fb3b7c19c8f91a42b23a8a4d950db3`. Both remain nonterminal with
+failed lanes and no terminal gate/broad accounting at the final snapshot.
+Previous PR18/master roots are terminal failures: freshly verified validation
+artifacts12464408185/12464563701 retain all three false acceptance flags and
+2,339/2,340 errors. All **25** indexed new archives pass API digest/size/ZIP
+CRC/member checks; other archive contents are not claimed freshly reviewed.
+
+**0/20 qualifying reviewed distinct PR comparisons; 0/2 successful complete broad
+integrations. W11 NOT MET / W12 NOT RUN.** Only 19 PR root/API-head identities
+exist in this history; none qualifies. Local/nested/retry/partial successes add
+no credit, and existing real PR19/master workloads were not duplicated by an
+unchanged cold broad dispatch. Existing evidence cannot finish W11.
+
+First concrete blockers are capability/signer refusals, pip CMake launcher versus
+configured-binary identity, actual hosted `/proc/self/setgroups` permission denial
+(808-case policy invocation:44 failures/15 errors/six skips), sanitizer partition
+drift and Windows canonical-vector hash failure. A ten-minute broad static
+cancellation follows earlier real failures; raising its timeout alone is not a
+remedy. Local setup commit `fc5333d58447110fff59f3da1741f193e098227d` corrects only
+CMake PATH and byte-preserving Windows checkout, retaining strict guards. Two
+physical setup regressions,52 workflow/17 failure-receipt tests, fresh safe native
+default build, four statics and actionlint pass; actual cached pip3.31.6 miniature
+Linux/amd64 execution is emulated diagnostic proof only. Patched-source hosted
+and native Windows execution remain NOT RUN. One bounded review: no actionable
+findings. Internal CI/tests/docs: no version bump; local commits only,parent lands.
+
+Finite W11 follow-through is `nostrc-0cfsg.36` in progress; `.5` stays **CLOSED**
+and receives a measurement comment only. `.11` remedy remains unresolved;
+post-burst-gap exclusion is rejected, later passes do not close it. W12 default
+switch and `.29` provider-blocked work remain outside scope. No default,
+required-check, publisher, protection, trigger or schedule cutover is authorized.
+
+
 ## Remaining acceptance integration — 2026-10-23
 
 [Source-bound report](dependency-aware-testing-integration-2026-10-23.md), tested
