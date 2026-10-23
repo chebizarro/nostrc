@@ -7922,14 +7922,14 @@
         "{source}/tests/selection/fixtures/ordinary_go_full_ownership.json",
         "{source}/tests/selection/test_rollout_prerequisites.py",
         "{source}/tests/selection/test_w11_receipt_retention.py",
+        "{source}/tests/selection/test_resource_placement.py",
+        "{source}/tests/selection/w11_placement_support.py",
+        "{source}/tests/selection/fixtures/w11_placement_enrollment_20261023.json",
         "{source}/apps/grotto/tests/fuzz/json-glib-setup.sh",
         "{source}/apps/grotto/tests/fuzz/json_glib_leak_probe.c",
         "{source}/tests/selection/test_fuzz_json_glib_setup.py",
         "{source}/tests/selection/w11_json_glib_support.py",
-        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json",
-        "{source}/tests/selection/test_resource_placement.py",
-        "{source}/tests/selection/w11_placement_support.py",
-        "{source}/tests/selection/fixtures/w11_placement_enrollment_20261023.json"
+        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json"
       ],
       "working_directory": "{source}",
       "requires": [

@@ -24,7 +24,7 @@ import test_namespace_wrapper_adapter as wrapper_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / 'scripts/adapter_namespace_custody.py'
-BASE = os.path.realpath(tempfile.gettempdir())
+BASE = os.path.realpath('/tmp')  # short; the macOS TMPDIR cannot fit the socket budget
 
 
 def deep_directory(parent, depth_chars=140):
@@ -114,20 +114,94 @@ class PlacementJournalTests(unittest.TestCase):
         with self.assertRaises(services.ServiceError):
             services.release_resource_mountpoint(self.lane)
 
-    def test_crash_after_intent_recovers_only_the_journaled_empty_directory(self):
-        path = Path(BASE) / (services.RESOURCE_PREFIX + 'deadbeef')
-        services._journal_append(self.lane / services.JOURNAL_NAME,
-                                 {'state': 'intent', 'token': 'deadbeef' * 4, 'path': str(path),
-                                  'uid': os.geteuid(), 'pid': 1}, create=True)
-        services.release_resource_mountpoint(self.lane)  # mkdir never happened
-        self.assertEqual(services.read_resource_journal(self.lane / services.JOURNAL_NAME)[-1]['state'], 'released')
-        lane = Path(tempfile.mkdtemp(prefix='placement-lane-')); self.addCleanup(shutil.rmtree, lane, ignore_errors=True)
-        path.mkdir(mode=0o700)
+    def intent_only(self, lane, token='ab' * 16):
+        path = Path(BASE) / (services.RESOURCE_PREFIX + token)
         services._journal_append(lane / services.JOURNAL_NAME,
-                                 {'state': 'intent', 'token': 'deadbeef' * 4, 'path': str(path),
+                                 {'state': 'intent', 'token': token, 'base': BASE, 'path': str(path),
                                   'uid': os.geteuid(), 'pid': 1}, create=True)
-        services.release_resource_mountpoint(lane)  # mkdir happened, crash before allocated
+        return path
+
+    def states(self, lane):
+        return [r['state'] for r in services.read_resource_journal(lane / services.JOURNAL_NAME)]
+
+    def test_intent_only_with_absent_directory_records_absence_without_ownership(self):
+        path = self.intent_only(self.lane)
         self.assertFalse(path.exists())
+        self.assertEqual(services.release_resource_mountpoint(self.lane), path)
+        self.assertEqual(self.states(self.lane), ['intent', 'absent'])
+        self.assertFalse(services.read_resource_journal(self.lane / services.JOURNAL_NAME)[-1]['allocation_proved'])
+        self.assertEqual(services.release_resource_mountpoint(self.lane), path)  # idempotent
+        with self.assertRaisesRegex(services.ServiceError, 'allocated state'):
+            services.resource_mountpoint(self.lane)
+
+    def test_intent_only_never_authorizes_removal_of_a_present_directory(self):
+        path = self.intent_only(self.lane)
+        path.mkdir(mode=0o700)
+        self.addCleanup(lambda: path.is_dir() and path.rmdir())
+        for _ in range(2):  # the refusal is retained and stays a refusal
+            with self.assertRaisesRegex(services.ServiceError, 'cannot authorize|refused earlier'):
+                services.release_resource_mountpoint(self.lane)
+            self.assertTrue(path.is_dir())
+        self.assertEqual(self.states(self.lane), ['intent', 'recovery_refused'])
+
+    def test_mkdir_collision_preserves_the_unowned_directory(self):
+        from unittest.mock import patch
+        token = 'cd' * 16
+        squatter = Path(BASE) / (services.RESOURCE_PREFIX + token)
+        squatter.mkdir(mode=0o700)
+        self.addCleanup(lambda: squatter.is_dir() and squatter.rmdir())
+        with patch.object(services.secrets, 'token_hex', return_value=token), self.assertRaises(FileExistsError):
+            services.allocate_resource_mountpoint(self.lane, bases=(BASE,))
+        self.assertEqual(self.states(self.lane), ['intent'])
+        with self.assertRaises(services.ServiceError):
+            services.release_resource_mountpoint(self.lane)
+        self.assertTrue(squatter.is_dir())
+
+    def test_allocation_must_agree_with_intent_and_allocator_name(self):
+        path = self.allocate()
+        records = services.read_resource_journal(self.lane / services.JOURNAL_NAME)
+        allocated = records[-1]
+        other = Path(BASE) / (services.RESOURCE_PREFIX + 'ef' * 16)
+        other.mkdir(mode=0o700)
+        self.addCleanup(lambda: other.is_dir() and other.rmdir())
+        forged = {
+            'path differs from intent': dict(allocated, path=str(other)),
+            'token differs from intent': dict(allocated, token='ef' * 16),
+            'base differs from intent': dict(allocated, base='/var/tmp'),
+        }
+        for label, record in forged.items():
+            lane = Path(tempfile.mkdtemp(prefix='placement-forged-')); self.addCleanup(shutil.rmtree, lane, ignore_errors=True)
+            services._journal_append(lane / services.JOURNAL_NAME, {k: v for k, v in records[0].items() if k != 'prev'}, create=True)
+            services._journal_append(lane / services.JOURNAL_NAME, {k: v for k, v in record.items() if k != 'prev'})
+            with self.subTest(label), self.assertRaisesRegex(services.ServiceError, 'disagree'):
+                services.release_resource_mountpoint(lane)
+            with self.assertRaises(services.ServiceError):
+                services.resource_mountpoint(lane)
+        self.assertTrue(other.is_dir() and path.is_dir())
+
+    def test_non_allocator_name_or_token_is_refused_even_when_self_consistent(self):
+        for label, token, name in (('wrong name', 'ab' * 16, 'something-else'),
+                                   ('short token', 'ab' * 8, services.RESOURCE_PREFIX + 'ab' * 8),
+                                   ('non-hex token', 'zz' * 16, services.RESOURCE_PREFIX + 'zz' * 16)):
+            lane = Path(tempfile.mkdtemp(prefix='placement-forged-')); self.addCleanup(shutil.rmtree, lane, ignore_errors=True)
+            path = Path(BASE) / name
+            path.mkdir(mode=0o700)
+            self.addCleanup(lambda p=path: p.is_dir() and p.rmdir())
+            info = path.lstat()
+            for state in ({'state': 'intent', 'uid': os.geteuid(), 'pid': 1}, {'state': 'allocated', 'dev': info.st_dev, 'ino': info.st_ino}):
+                services._journal_append(lane / services.JOURNAL_NAME,
+                                         dict(state, token=token, base=BASE, path=str(path)),
+                                         create=state['state'] == 'intent')
+            with self.subTest(label), self.assertRaisesRegex(services.ServiceError, 'allocator name'):
+                services.release_resource_mountpoint(lane)
+            self.assertTrue(path.is_dir())
+
+    def test_allocator_uses_the_full_unpredictable_token_in_a_short_name(self):
+        path = self.allocate()
+        token = services.read_resource_journal(self.lane / services.JOURNAL_NAME)[0]['token']
+        self.assertEqual(len(token), 32)
+        self.assertEqual(path.name, services.RESOURCE_PREFIX + token)
+        services.require_socket_budget(path)
 
     def test_unusable_bases_fail_closed(self):
         link = self.lane / 'link'
@@ -336,7 +410,9 @@ class PlacementEnrollmentTests(unittest.TestCase):
         previous = wave.before_policy(policy)
         self.assertEqual(s.digest(previous), data['before_policy_hash'])
         restored = copy.deepcopy(previous)
-        restored['checks']['selection.contract']['runtime_inputs'] += data['input_additions']
+        inputs = restored['checks']['selection.contract']['runtime_inputs']
+        # Enrolled immediately before the (older) JSON-GLib wave's inputs.
+        inputs[inputs.index('{source}/apps/grotto/tests/fuzz/json-glib-setup.sh'):0] = data['input_additions']
         self.assertEqual(s.digest(restored), s.digest(policy))
         self.assertEqual(wave.before_policy(previous), previous)
         for path, record in data['sources'].items():

@@ -128,9 +128,10 @@ def read_resource_journal(path):
 def allocate_resource_mountpoint(lane_dir, *, bases=RESOURCE_BASES):
     """Create the short, owned, empty 0700 mountpoint for the namespace tmpfs.
 
-    The mountpoint is journaled before and after creation. The tmpfs, HOME,
-    runtime and sockets live only in the namespace mount and vanish with it;
-    release_resource_mountpoint removes the empty host directory.
+    The journal's intent record is only a plan: ownership exists once mkdir
+    succeeded and the 'allocated' record captured the new directory's dev/ino.
+    The tmpfs, HOME, runtime and sockets live only in the namespace mount and
+    vanish with it; release_resource_mountpoint removes the empty host directory.
     """
     journal = Path(lane_dir) / JOURNAL_NAME
     token = secrets.token_hex(16)
@@ -142,56 +143,81 @@ def allocate_resource_mountpoint(lane_dir, *, bases=RESOURCE_BASES):
                       and os.access(candidate, os.W_OK | os.X_OK))
         except OSError:
             usable = False
-        path = candidate / (RESOURCE_PREFIX + token[:8])
+        path = candidate / (RESOURCE_PREFIX + token)
         if usable and len(os.fsencode(str(path))) + FIXTURE_SOCKET_TAIL <= UNIX_SOCKET_MAX:
             break
     else:
         raise ServiceError('no short owned directory available for the private resource mountpoint')
-    _journal_append(journal, {'state': 'intent', 'token': token, 'path': str(path),
+    _journal_append(journal, {'state': 'intent', 'token': token, 'base': str(candidate), 'path': str(path),
                               'uid': os.geteuid(), 'pid': os.getpid()}, create=True)
-    os.mkdir(path, 0o700)
+    os.mkdir(path, 0o700)  # EEXIST: not ours; the journal stays intent-only
     info = os.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise ServiceError('private resource mountpoint was not created owned/0700')
-    _journal_append(journal, {'state': 'allocated', 'token': token, 'path': str(path),
+    _journal_append(journal, {'state': 'allocated', 'token': token, 'base': str(candidate), 'path': str(path),
                               'dev': info.st_dev, 'ino': info.st_ino})
     return path
+
+
+def _journal_allocation(records):
+    """The allocated record, only if it agrees with its intent (token/base/name)."""
+    intent, allocated = records[0], records[1]
+    if allocated.get('state') != 'allocated':
+        raise ServiceError('resource placement journal lacks its allocated record')
+    for field in ('token', 'base', 'path'):
+        if intent.get(field) != allocated.get(field):
+            raise ServiceError('resource placement journal intent/allocation disagree: ' + field)
+    token, base, path = intent['token'], Path(intent['base']), Path(intent['path'])
+    if (len(token) != 32 or any(c not in '0123456789abcdef' for c in token) or not base.is_absolute()
+            or path != base / (RESOURCE_PREFIX + token)):
+        raise ServiceError('resource placement journal path/token is not the allocator name')
+    return allocated
 
 
 def resource_mountpoint(lane_dir):
     """The allocated mountpoint named by the journal (namespace side)."""
     records = read_resource_journal(Path(lane_dir) / JOURNAL_NAME)
-    if records[-1].get('state') != 'allocated':
+    if records[-1].get('state') != 'allocated' or len(records) != 2:
         raise ServiceError('resource placement journal is not in the allocated state')
-    return Path(records[-1]['path'])
+    return Path(_journal_allocation(records)['path'])
 
 
 def release_resource_mountpoint(lane_dir):
-    """Outer cleanup after the namespace barrier; verified, journaled, idempotent."""
+    """Outer cleanup after the namespace barrier; verified, journaled, idempotent.
+
+    Only a directory this journal proved it created (allocated dev/ino, owner,
+    mode, empty, unmounted) is ever removed, non-recursively. An intent-only
+    journal never authorizes deletion: a present directory is refused and the
+    incomplete recovery is retained; an absent one is recorded as absent.
+    """
     journal = Path(lane_dir) / JOURNAL_NAME
     records = read_resource_journal(journal)
     last = records[-1]
-    if last['state'] == 'released':
+    if last['state'] in ('released', 'absent'):
         return Path(last['path'])
+    if last['state'] == 'recovery_refused':
+        raise ServiceError('resource placement recovery refused earlier; unowned directory retained: ' + last['path'])
     if last['state'] == 'intent':
-        # Crash between intent and mkdir: remove only an empty directory that
-        # this journal's exact name could have produced.
-        allocation = None
-    elif last['state'] == 'allocated':
-        allocation = last
-    else:
+        path = Path(last['path'])
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            _journal_append(journal, {'state': 'absent', 'path': str(path), 'allocation_proved': False})
+            return path
+        _journal_append(journal, {'state': 'recovery_refused', 'path': str(path),
+                                  'reason': 'intent-only journal does not prove ownership'})
+        raise ServiceError('intent-only resource placement journal cannot authorize removal of ' + str(path))
+    if last['state'] != 'allocated' or len(records) != 2:
         raise ServiceError('unknown resource placement journal state')
-    path = Path(last['path'])
+    allocation = _journal_allocation(records)
+    path = Path(allocation['path'])
     try:
         info = os.lstat(path)
     except FileNotFoundError:
-        if allocation is not None:
-            raise ServiceError('private resource mountpoint vanished before release')
-        _journal_append(journal, {'state': 'released', 'path': str(path), 'absent_after': True})
-        return path
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise ServiceError('private resource mountpoint vanished before release')
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise ServiceError('private resource mountpoint changed identity before release')
-    if allocation is not None and (info.st_dev, info.st_ino) != (allocation['dev'], allocation['ino']):
+    if (info.st_dev, info.st_ino) != (allocation['dev'], allocation['ino']):
         raise ServiceError('private resource mountpoint was replaced before release')
     if os.path.ismount(path):
         raise ServiceError('private resource mountpoint is still mounted; namespace not gone')
