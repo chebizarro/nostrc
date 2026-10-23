@@ -85,7 +85,19 @@ class ContainedCustodyContract(unittest.TestCase):
         for context in ('ci', 'release'):
             plan = selection.make_plan(policy, [], head='a' * 40, context=context, mode='broad')
             self.assertNotIn(profile, plan['expected_lane_ids'])
-            self.assertEqual(len(plan['expected_lane_ids']), 12)
+            # The authored homed worker adds exactly one CI-only lane; it
+            # does not expand release applicability or prepared local authority.
+            homed = 'homed.linux.ci'
+            self.assertEqual(policy['profiles'][homed]['contexts'], ['ci'])
+            self.assertEqual(policy['workflow_jobs'][
+                '.github/workflows/dependency-tests.yml:homed_units']['source_sha256'],
+                '5e470ea449945b085873bc31a1e21bfd5868154ea2625e0c9a403c943d42082b')
+            self.assertEqual(len(plan['expected_lane_ids']), 13 if context == 'ci' else 12)
+            self.assertEqual(homed in plan['expected_lane_ids'], context == 'ci')
+            if context == 'ci':
+                lane = next(lane for lane in plan['lanes'] if lane['id'] == homed)
+                self.assertEqual(set(lane['checks']), {'homed.default_build', 'homed.units'})
+            self.assertNotIn('homed.linux.units', plan['expected_lane_ids'])
             self.assertEqual(plan['omitted_profiles'][0]['id'], profile)
             self.assertEqual(plan['omitted_profiles'][0]['status'], 'not_executed')
             selection.validate_plan(plan, policy)

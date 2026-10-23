@@ -40,7 +40,8 @@ class WorkerEnrollmentTests(unittest.TestCase):
     def test_current_grotto_input_selects_real_signer_fixture_without_rewriting_goldens(self):
         from selector_support import change
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        previous = w.before_worker_policy(before_policy_enrollment(p))
+        from homed_profile_support import before_homed_policy
+        previous = w.before_worker_policy(before_policy_enrollment(before_homed_policy(p)))
         path = change('apps/grotto/src/main.c')
         current = s.make_plan(p, [path], head='a' * 40, base='b' * 40)
         old = s.make_plan(previous, [path], head='a' * 40, base='b' * 40)
@@ -51,7 +52,8 @@ class WorkerEnrollmentTests(unittest.TestCase):
 
     def test_exact_source_refresh_preserves_original_omission_authority(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        old = w.before_worker_policy(before_policy_enrollment(p))
+        from homed_profile_support import before_homed_policy
+        old = w.before_worker_policy(before_policy_enrollment(before_homed_policy(p)))
         for ident in ('groundhog.linux', 'grotto.linux'):
             a, b = p['diagnostic_nonmember_subsets'][ident], old['diagnostic_nonmember_subsets'][ident]
             self.assertEqual(set(a['review']['source_inputs']), set(b['review']['source_inputs']))
@@ -63,15 +65,16 @@ class WorkerEnrollmentTests(unittest.TestCase):
             for key, value in b['review'].items():
                 if key != 'source_inputs':
                     self.assertEqual(a['review'][key], value, key)
-        changed = copy.deepcopy(p)
+        changed = before_homed_policy(p)
         changed['profiles']['core.linux']['environment']['NOSTRC_TEST_NIP5F_APPROVAL'] = 'allow-all'
         with self.assertRaises(s.ContractError):
             w.before_worker_policy(changed)
 
     def test_live_sources_and_semantic_prerequisites_are_owned(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        from homed_profile_support import before_homed_source
         for path, expected in w.witness()['source_sha256'].items():
-            raw = before_policy_source(path, (ROOT / path).read_bytes())
+            raw = before_policy_source(path, before_homed_source(path, (ROOT / path).read_bytes()))
             expected = w.witness().get('integration_source_changes', {}).get(path, {}).get('after', expected)
             self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, path)
         check = p['checks']['supported.nips.nip5f.signer_endpoint']

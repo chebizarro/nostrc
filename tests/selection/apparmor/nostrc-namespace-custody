@@ -1,0 +1,14 @@
+# Template for a per-job, path-unattached AppArmor profile used only on a
+# disposable GitHub-hosted runner by namespace-custody tests, where
+# kernel.apparmor_restrict_unprivileged_userns=1 moves unconfined tasks into
+# unprivileged_userns at user-namespace creation. namespace_apparmor_setup.sh
+# renders @PROFILE_NAME@ as a fresh nostrc-ns-<128-bit token>, adds it (never
+# replaces), and namespace_apparmor_teardown.sh removes exactly that profile
+# once no task runs in it. Only tasks explicitly placed in it (docker
+# --security-opt apparmor=NAME, or adapter_namespace_custody.py
+# --apparmor-profile NAME before unshare) gain the userns permission.
+abi <abi/4.0>,
+
+profile @PROFILE_NAME@ flags=(unconfined) {
+  userns,
+}

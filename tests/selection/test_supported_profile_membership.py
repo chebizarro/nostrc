@@ -10,6 +10,7 @@ from closeout_support import before_closeout_policy
 from w11_worker_support import before_worker_policy, current_source_hash
 from w11_policy_support import before_policy_enrollment
 from test_selection_subset import before_full_ownership_policy
+from homed_profile_support import before_homed_policy
 from supported_profile_support import (
     NEW_INPUTS, before_supported_batch_contract, before_supported_batch_policy,
     census_inputs, witness,
@@ -19,7 +20,7 @@ from supported_profile_support import (
 class SupportedProfileMembership(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))))
+        cls.p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(before_homed_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json')))))
         cls.data = witness()
 
     def test_actual_inventory_valid_and_historical_bytes_immutable(self):
@@ -179,11 +180,21 @@ class SupportedProfileMembership(unittest.TestCase):
         self.assertNotIn('mdk08.compatibility', bundle_plan['selected_checks'])
         core = self.p['checks']['root.asan.nip5f']
         self.assertNotIn('signer_endpoint', core.get('requires', []))
+        # This assertion describes current applicability, unlike the historical
+        # source census above. Do not project away C's new authored contract.
+        current = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        signer = current['checks']['supported.nips.nip5f.signer_endpoint']
         for profile in ('core.linux.asan', 'core.macos.asan'):
             self.assertEqual(core['ctest_tests'][profile],
                              ['test_nip5f_loopback', 'test_nip5f_negative_env'])
-            self.assertEqual(self.p['checks']['supported.nips.nip5f.signer_endpoint']
-                             ['ctest_tests'][profile], ['test_nip5f_tcp'])
+        self.assertEqual(signer['ctest_tests']['core.linux.asan'], ['test_nip5f_tcp'])
+        # Legacy macOS provisions no signer: its registration is accounted only by
+        # the exact not_executed/nonvalidation record (nostrc-0cfsg.36.9).
+        self.assertNotIn('core.macos.asan', signer['profiles'])
+        self.assertNotIn('core.macos.asan', signer['ctest_tests'])
+        self.assertEqual([g for g in current['coverage_gaps']
+                          if 'test_nip5f_tcp' in g.get('registrations', [])],
+                         [g for g in current['coverage_gaps'] if g['id'] == 'core_macos_asan_nip5f_tcp_unconfigured'])
 
     def test_graphics_tools_and_headless_aliases_remain_separate(self):
         record = self.data['profiles']['groundhog.linux']['primary']

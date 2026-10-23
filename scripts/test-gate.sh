@@ -29,8 +29,11 @@ parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--plan", help="execute exact retained committed plan identity; --profile selects physical lanes without rewriting the plan")
 parser.add_argument("--broad", action="store_true")
-parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
-                    help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
+parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns", "darwin"), default="legacy",
+                    help="explicit native custody: Linux ptrace (no instrumentation) or user/mount/PID namespaces; macOS-only "
+                         "darwin seatbelt-tag diagnostic (no wrappers/keyring/instrumentation); none is profile parity")
+parser.add_argument("--namespace-apparmor-profile", metavar="NAME",
+                    help="pidns only: provisioned path-unattached AppArmor profile the custody helper explicitly enters before unshare; host policy unchanged")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -45,6 +48,10 @@ receipt["bypasses"] = {name: os.environ[name] for name in
     ("NOSTRC_SKIP_PRE_PUSH", "NOSTRC_SKIP_LINUX_GATE", "NOSTRC_SKIP_SANITIZER_GATE", "NOSTRC_GATE_LINUX_TESTS")
     if os.environ.get(name) == ("0" if name == "NOSTRC_GATE_LINUX_TESTS" else "1")}
 receipt["custody_mode"] = args.linux_custody
+if args.namespace_apparmor_profile is not None:
+    if args.linux_custody != "pidns":
+        parser.error("--namespace-apparmor-profile requires --native-custody pidns")
+    receipt["namespace_apparmor_profile"] = args.namespace_apparmor_profile
 receipt["complete_gate_eligible"] = False
 if args.linux_custody != "legacy":
     receipt["untraced_profile_parity"] = False
@@ -102,6 +109,8 @@ def linux_command(argv, *, cwd=None, env=None, log=None, resource_root=None, pri
                 helper = "adapter_namespace_custody.py" if args.linux_custody == "pidns" else "adapter_custody.py"
                 resources = (["--private-resource-root", str(resource_root)] +
                              (["--private-display"] if private_display else [])) if resource_root else []
+                if args.linux_custody == "pidns" and args.namespace_apparmor_profile is not None:
+                    resources = ["--apparmor-profile", args.namespace_apparmor_profile, *resources]
                 active = subprocess.Popen([sys.executable, str(adapter.parent / helper),
                                            "--parent-ready-fd", str(read_fd), "--parent-pid", str(os.getpid()),
                                            *resources, *map(str, argv)],
@@ -198,9 +207,26 @@ def linux_command(argv, *, cwd=None, env=None, log=None, resource_root=None, pri
                 os.close(seal_read)
 
 
+darwin_records = []
+
+
+def darwin_command(argv, *, cwd=None, env=None, log=None, native_lane=None):
+    from test_gate_darwin import darwin_command as run
+    return run(argv, helper=adapter.parent / 'adapter_darwin_custody.py', records=darwin_records,
+               errors=receipt['errors'], cwd=cwd, env=env, log=log, native_lane=native_lane)
+
+
 def command(argv, *, cwd=None, env=None, log=None, resource_root=None, private_display=False, native_lane=None):
     # macOS remains the inherited legacy compatibility path, NOT safe unified
     # arbitrary-descendant custody. Do not substitute a reserved-group-only path.
+    if args.linux_custody == "darwin":
+        if platform.system() != "Darwin":
+            raise RuntimeError("darwin custody is an explicit macOS-only diagnostic; target not launched")
+        if private_display:
+            raise RuntimeError("darwin custody hosts no private display; target not launched")
+        # A private bus is started by the custodied backend itself (a tag
+        # member) from the journaled owned directory, never by the helper.
+        return darwin_command(argv, cwd=cwd, env=env, log=log, native_lane=native_lane)
     if args.linux_custody != "legacy":
         if platform.system() != "Linux":
             raise RuntimeError("native kernel custody unavailable on macOS: EndpointSecurity descendant client requires com.apple.developer.endpoint-security.client (not provisioned); kqueue NOTE_TRACK is ENOTSUP; target not launched"
@@ -411,6 +437,25 @@ def host_guard(profile, checks, policy, profile_id):
                                               for check in profile_checks)
     caps = set(profile.get("capabilities", []))
     caps.update(cap for ident in checks for cap in policy["checks"][ident].get("requires", []))
+    if args.linux_custody == "darwin":
+        if host != "macos":
+            raise RuntimeError("darwin custody is an explicit macOS-only diagnostic; lane not launched")
+        instrumentation = profile.get("instrumentation")
+        if instrumentation == "asan_ubsan":
+            # Only C's demonstrated domain: Apple clang ASan/UBSan on arm64 with
+            # authored detect_leaks=0 (LeakSanitizer is unsupported by the
+            # toolchain, identically outside custody). No TSan/fuzz/x86 inference.
+            asan = dict(item.split("=", 1) for item in profile.get("environment", {}).get("ASAN_OPTIONS", "").split(":") if "=" in item)
+            cc = profile.get("environment", {}).get("CC", "clang")
+            apple = shutil.which(cc) and "apple clang" in subprocess.check_output([cc, "--version"]).decode(errors="replace").lower()
+            if arch != "arm64" or profile.get("compiler") != "clang" or not apple or asan.get("detect_leaks") != "0":
+                raise RuntimeError("darwin custody instrumentation outside the demonstrated Apple clang arm64 "
+                                   "ASan/UBSan detect_leaks=0 domain; lane not launched")
+        elif instrumentation != "none":
+            raise RuntimeError(f"darwin custody instrumentation {instrumentation} is unproven; lane not launched")
+        refused = caps & {"display", "gnome_keyring", "signer_endpoint", "docker"}
+        if refused:
+            raise RuntimeError(f"darwin custody does not implement {sorted(refused)}; lane not launched")
     if 'gnome_keyring' in caps:
         if any(policy['checks'][ident]['kind'] != 'ctest' and
                'gnome_keyring' in policy['checks'][ident].get('requires', []) for ident in checks):
@@ -439,6 +484,15 @@ def host_guard(profile, checks, policy, profile_id):
                 raise RuntimeError('signer fixture supports only exact test_nip5f_tcp; lane not launched')
         if not {'display', 'private_bus'} <= caps:
             raise RuntimeError('signer fixture requires authored namespace-owned display/private bus resources')
+    if 'docker' in caps:
+        # Original MDK images/peers: Docker scope by the selected controller,
+        # host tree by the PID namespace. Never legacy/ptrace or other domains.
+        if (host != 'linux' or args.linux_custody != 'pidns' or profile['architecture'] != platform.machine()
+                or profile.get('execution_domain') != 'mdk_original_linux_v1'):
+            raise RuntimeError("selected capabilities require an unimplemented guarded adapter: ['docker'] "
+                               '(original MDK image/peer lifecycle requires its authored domain, exact native '
+                               'Linux architecture and pidns custody); lane not launched')
+        caps = caps - {'docker'}
     unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring", "signer_endpoint"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
@@ -451,7 +505,7 @@ def host_guard(profile, checks, policy, profile_id):
         raise RuntimeError(f"unsupported {args.linux_custody} custody wrappers: {sorted(wrapped)}; lane not launched")
     # Never reuse the developer's display/session bus as proof of isolation.
     prefix = []
-    if args.linux_custody == "pidns" and wrapped:
+    if args.linux_custody in ("pidns", "darwin") and wrapped:
         # The backend itself is the namespace's retained root, not the child
         # of a bus/display wrapper that could die before receipt finalization.
         for executable in (["dbus-daemon", "dbus-send"] if "private_bus" in caps else []) + (["Xvfb", "xauth"] if "display" in caps else []):
@@ -567,7 +621,9 @@ def execute(head, events, number, dirty=False):
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 common = ["--repo", source, "--profile", profile_id, "--plan", directory / "plan.json",
                           "--build-dir", lane_dir / "build", "--evidence-dir", lane_dir / "evidence"]
-                if args.linux_custody != 'legacy':
+                if args.linux_custody == 'darwin':
+                    common += ['--diagnostic-boundary', 'darwin_seatbelt_v1']
+                elif args.linux_custody != 'legacy':
                     common += ['--diagnostic-boundary', 'linux_' + args.linux_custody + '_v1']
                 resolved = lane_dir / "resolved.json"
                 result = lane_dir / "receipt.json"
@@ -585,11 +641,20 @@ seal_fd = os.environ.pop('NOSTRC_NATIVE_SEAL_FD', None)
 if seal_fd is not None:
     seal_fd = int(seal_fd)
     os.set_inheritable(seal_fd, False)
-    # Same-UID workers must not reopen this private pipe through procfs.
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(3, 0, 0, 0, 0) != 0:
-        raise RuntimeError('native finalizer nondumpable boundary unavailable')
+    if sys.platform == 'linux':
+        # Same-UID workers must not reopen this private pipe through procfs.
+        if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(3, 0, 0, 0, 0) != 0:
+            raise RuntimeError('native finalizer nondumpable boundary unavailable')
+    else:
+        # macOS has no procfs descriptor-reopen path. PT_DENY_ATTACH closes
+        # ptrace attach only; task-port access is AMFI/taskgated host policy,
+        # which the adapter's fail-closed seal admission must have established
+        # (test_gate_darwin.seal_admission) before this finalizer was launched.
+        libc.ptrace.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        if libc.ptrace(31, 0, None, 0) != 0:
+            raise RuntimeError('native finalizer PT_DENY_ATTACH boundary unavailable')
 observed, original_resolution = [], []
 def observe(result):
     observed.append(json.loads(json.dumps(result)))
@@ -608,9 +673,13 @@ try:
     with contextlib.ExitStack() as resources:
         if service_caps:
             sys.path.insert(0, service_scripts)
-            from test_selection_services import namespace_services, resource_mountpoint
-            resources.enter_context(namespace_services(service_caps.split(','), service_evidence,
-                                    resource_mountpoint(pathlib.Path(service_evidence).parent), finalizer_fd=seal_fd))
+            from test_selection_services import namespace_services, darwin_private_bus, resource_mountpoint
+            root = resource_mountpoint(pathlib.Path(service_evidence).parent)
+            if sys.platform == 'darwin':
+                resources.enter_context(darwin_private_bus(service_evidence, root))
+            else:
+                resources.enter_context(namespace_services(service_caps.split(','), service_evidence,
+                                        root, finalizer_fd=seal_fd))
         with (directory / "resolve.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             status = cli["main"](resolve, **({'result_observer': observe_resolution} if seal_fd is not None else {}))
         if status:
@@ -640,14 +709,16 @@ finally:
 '''
                 service_caps = set(profile.get("capabilities", []))
                 service_caps.update(cap for ident in lane["checks"] for cap in policy["checks"][ident].get("requires", []))
-                service_caps = service_caps & {"display", "private_bus"} if args.linux_custody == "pidns" else set()
+                service_caps = (service_caps & {"display", "private_bus"} if args.linux_custody == "pidns" else
+                                service_caps & {"private_bus"} if args.linux_custody == "darwin" else set())
                 if service_caps:
                     state["private_services"] = str(lane_dir / "services/services.json")
                 resource_root = None
                 if service_caps:
                     # Short owned mountpoint: sockets cannot live under deep evidence roots.
-                    from test_selection_services import allocate_resource_mountpoint
-                    resource_root = allocate_resource_mountpoint(lane_dir)
+                    from test_selection_services import allocate_resource_mountpoint, DARWIN_RESOURCE_BASES
+                    resource_root = (allocate_resource_mountpoint(lane_dir, bases=DARWIN_RESOURCE_BASES)
+                                     if args.linux_custody == "darwin" else allocate_resource_mountpoint(lane_dir))
                 try:
                     command(prefix + [sys.executable, "-c", run_api, source / "scripts", adapter.parent,
                                       ','.join(sorted(service_caps)), lane_dir / "services", "run", *common,
@@ -655,14 +726,35 @@ finally:
                                       "--output", result],
                             env=env, log=lane_dir / "lane.log", resource_root=resource_root,
                             private_display="display" in service_caps,
-                            native_lane=lane_dir if args.linux_custody == 'pidns' else None)
+                            native_lane=lane_dir if args.linux_custody in ('pidns', 'darwin') else None)
                 finally:
                     # After the helper's wait barrier only the empty host
                     # mountpoint remains; private HOME/socket bytes were tmpfs.
-                    if resource_root:
+                    if resource_root and args.linux_custody == "darwin":
+                        # Exact owned directory, only after a validated custody exit.
+                        from test_selection_services import release_resource_directory, retain_resource_directory
+                        outcome = next((r['status'] for r in reversed(darwin_records)
+                                        if r['log'] == str(lane_dir / 'lane.log')), None)
+                        if outcome in ('clean', 'recovered_lane_failed'):
+                            release_resource_directory(lane_dir)
+                        elif outcome == 'refused_before_launch':
+                            # Never exposed to any process: empty, non-recursive release.
+                            from test_selection_services import release_resource_mountpoint
+                            release_resource_mountpoint(lane_dir)
+                        else:
+                            retain_resource_directory(lane_dir, 'darwin custody exit not validated: ' + str(outcome))
+                    elif resource_root:
                         from test_selection_services import release_resource_mountpoint
                         release_resource_mountpoint(lane_dir)
-                if args.linux_custody == 'pidns':
+                    if args.linux_custody == 'pidns' and (lane_dir / 'evidence').is_dir():
+                        # Docker resources outlive a namespace kill: replay exact
+                        # journaled cleanup outside it, never as success.
+                        from test_selection_mdk import recover_lane
+                        state['mdk_recovery'] = recover_lane(lane_dir / 'evidence', source / 'scripts/mdk-gate.py', lane_dir)
+                if any(not item['closed_in_namespace'] for item in state.get('mdk_recovery', [])):
+                    raise RuntimeError('original MDK lifecycle required out-of-namespace recovery; lane failed: '
+                                       + json.dumps(state['mdk_recovery'], sort_keys=True))
+                if args.linux_custody in ('pidns', 'darwin'):
                     import test_selection_realization as realization_backend
                     realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')
                     state['retained_evidence'] = str(lane_dir / 'native-final.json')
@@ -679,6 +771,10 @@ finally:
             state["error"] = str(exc)
             print(f"test-gate: {profile_id}: {exc}", file=sys.stderr, flush=True)
         finally:
+            if args.linux_custody == 'darwin':
+                # Every custody invocation for this lane, including refusals,
+                # recovery and cleanup_unverified outcomes.
+                state['darwin_custody'] = [r for r in darwin_records if r['log'].startswith(str(lane_dir) + os.sep)]
             if platform.system() == "Darwin":
                 # Read-only, even on failure/cancellation. Never attempt repair.
                 command(["bash", guard], log=lane_dir / "keychain-after.log")
@@ -755,6 +851,8 @@ finally:
         # --force is Git's explicit permission for this private checkout only.
         subprocess.run(["git", "-C", args.repo, "worktree", "remove", "--force", "--force", str(source)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if args.linux_custody == "darwin":
+        receipt["darwin_custody"] = darwin_records  # every invocation, including checkout/guards/refusals
     if run_dir:
         shared.write_json(run_dir / "adapter-receipt.json", receipt)
         print(f"test-gate: {receipt['status']}; NOT complete CI/push coverage; receipt={run_dir / 'adapter-receipt.json'}", flush=True)

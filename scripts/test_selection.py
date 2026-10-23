@@ -14,6 +14,7 @@ import tempfile
 from collections import deque
 
 import test_selection_subset as subset
+import test_selection_macos_nip5f_tcp as macos_tcp
 
 SCHEMA_VERSION = 1
 ID = re.compile(r"[a-z0-9_]+(?:\.[a-z0-9_]+)*\Z")
@@ -131,6 +132,24 @@ def coverage_state(policy):
                 and isinstance(gap.get("reason"), str) and bool(gap["reason"].strip()),
                 "unreviewed/malformed administrative rollout prerequisite")
         prerequisites.append(gap)
+    # Source job/matrix snapshots are not validation contracts. Their unresolved
+    # obligations cannot disappear merely by deleting the human-readable row.
+    jobs = policy.get("workflow_jobs", {})
+    require(isinstance(jobs, dict), "workflow_jobs must be a map")
+    technical_ids = {g.get("id") for g in technical if isinstance(g, dict)}
+    for job, record in jobs.items():
+        require(isinstance(record, dict), f"malformed workflow job contract: {job}")
+        gap = record.get("coverage_gap")
+        require(not gap or (isinstance(gap, str) and gap in technical_ids),
+                f"workflow job has an untracked technical coverage obligation: {job}")
+        if gap:
+            require(isinstance(record.get("unsupported_reason"), str)
+                    and bool(record["unsupported_reason"].strip()),
+                    f"workflow job lacks a concrete coverage remainder: {job}")
+        else:
+            require(isinstance(record.get("profiles"), list) and bool(record["profiles"])
+                    and not record.get("unsupported_reason"),
+                    f"workflow job has neither a supported contract nor a coverage obligation: {job}")
     return {"coverage_gaps": gaps, "physical_coverage_gaps": technical,
             "rollout_prerequisites": prerequisites, "enforcement_ready": enforcement,
             "rollout_readiness": {"schema_version": 1, "enforcement_ready": enforcement,
@@ -225,6 +244,9 @@ def validate_inventory(policy):
             pattern = r"[a-z0-9]+(?:-[a-z0-9]+)*" if key == "release_components" else ID.pattern
             require(isinstance(ident, str) and re.fullmatch(pattern, ident) and isinstance(value, dict), f"invalid {key} ID: {ident}")
     coverage_state(policy)
+    if any('normal_execution' in profile for profile in policy.get('profiles', {}).values()):
+        from test_selection_execution import validate_metadata as validate_normal_metadata
+        validate_normal_metadata(policy)
     nodes, profiles, checks = (policy[k] for k in ("nodes", "profiles", "checks"))
     for ident, node in nodes.items():
         require(node.get("id", ident) == ident, f"node ID mismatch: {ident}")
@@ -257,7 +279,7 @@ def validate_inventory(policy):
                 and all(x in {'local', 'ci', 'release'} for x in contexts), f'{ident}: invalid contexts')
         if profile.get('execution_domain') == 'prepared_peer_linux_v1':
             require(contexts == ['local'], f'{ident}: prepared runtime is local-only')
-        if any(key in profile for key in ("phase_environments", "sanitizer_compatibility", "build_parallelism", "test_parallelism")):
+        if any(key in profile for key in ("phase_environments", "sanitizer_compatibility", "build_parallelism", "test_parallelism", "host_system")):
             from test_selection_realization import RealizationError, validate_phase_profile
             try:
                 validate_phase_profile(profile)
@@ -747,6 +769,15 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             continue
         seen.add(lane_id)
         lane = expected[lane_id]
+        if receipt.get('receipt_kind') == 'normal_execution_v1':
+            try:
+                from test_selection_execution import validate_receipt as validate_normal_receipt
+                validate_normal_receipt(policy, plan, receipt)
+                if coverage_state(receipt)['physical_coverage_gaps']:
+                    incomplete_lanes.append(lane_id)
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                errors.append(f'{lane_id}: normal execution did not qualify: {exc}')
+            continue
         if receipt.get("receipt_kind") == "lane_failure_v1":
             failure = receipt.get("failure", {})
             errors.append(f"{lane_id}: lane failure at {failure.get('stage', 'unknown')}")
@@ -816,6 +847,12 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 validate_policy_runtime(backend, plan, lane, profile)
             except (ImportError, ValueError, KeyError, TypeError) as exc:
                 errors.append(f'{lane_id}: authored policy controller did not qualify: {exc}')
+        if 'docker' in backend.get('required_capabilities', []) or 'mdk_runtime' in backend:
+            try:
+                from test_selection_mdk import validate_runtime as validate_mdk_runtime
+                validate_mdk_runtime(backend, plan, lane, profile)
+            except (ImportError, ValueError, OSError, KeyError, TypeError) as exc:
+                errors.append(f'{lane_id}: original MDK runtime did not qualify: {exc}')
         required_caps = set(backend.get("required_capabilities", []))
         keyring_commands = [ident for ident in lane['checks'] if policy['checks'][ident]['kind'] != 'ctest'
                             and 'gnome_keyring' in policy['checks'][ident].get('requires', [])]
@@ -883,6 +920,13 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 if contract is None:
                     errors.append(f"{lane_id}: unsupported diagnostic nonmember profile")
                 continue
+            if isinstance(exclusion, dict) and exclusion.get("authority") == macos_tcp.AUTHORITY:
+                # Separate exact authority; the libgo record below stays immutable.
+                try:
+                    macos_tcp.validate_receipt_record(exclusion, policy, lane["profile"])
+                except macos_tcp.ApplicabilityError as exc:
+                    errors.append(f"{lane_id}: {exc}")
+                continue
             known = next((g for g in policy.get("coverage_gaps", []) if g.get("id") == "libgo_macos_asan_stress_exclusion"), None)
             if (not isinstance(exclusion, dict) or known is None
                     or lane["profile"] != "libgo.macos.asan"
@@ -902,7 +946,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: contradictory backend {field}")
         if "coverage_gaps" in receipt and receipt["coverage_gaps"] != plan.get("coverage_gaps", []):
             errors.append(f"{lane_id}: stale coverage gap accounting")
-        if receipt.get('diagnostic_boundary') == 'linux_pidns_v1' or backend.get('diagnostic_boundary') == 'linux_pidns_v1':
+        if (receipt.get('diagnostic_boundary') in ('linux_pidns_v1', 'darwin_seatbelt_v1')
+                or backend.get('diagnostic_boundary') in ('linux_pidns_v1', 'darwin_seatbelt_v1')):
             try:
                 from test_selection_services import verify_native_public_receipt
                 verify_native_public_receipt(receipt)

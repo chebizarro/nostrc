@@ -1,0 +1,722 @@
+--- a/.github/workflows/bp-matrix.yml
++++ b/.github/workflows/bp-matrix.yml
+@@ -10,44 +10,6 @@
+         type: string
+         default: ''
+   workflow_dispatch:
+-  push:
+-    branches: [ main ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'apps/relayd/**'
+-      - 'scripts/run_bp_matrix.py'
+-      - 'scripts/aggregate_bp_matrix.py'
+-      - 'scripts/generate_bp_report.py'
+-      - '.github/workflows/bp-matrix.yml'
+-  pull_request:
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'apps/relayd/**'
+-      - 'scripts/run_bp_matrix.py'
+-      - 'scripts/aggregate_bp_matrix.py'
+-      - 'scripts/generate_bp_report.py'
+-      - '.github/workflows/bp-matrix.yml'
+-
+ jobs:
+   bp-matrix:
+     runs-on: ubuntu-latest
+--- a/.github/workflows/dependency-tests.yml
++++ b/.github/workflows/dependency-tests.yml
+@@ -1,5 +1,5 @@
+ name: Dependency tests (shadow)
+-# NOT required yet. Keep legacy required checks, duplicate triggers and schedules through W11.
++# W12 cutover: require Dependency gate only after dual-status W11 acceptance.
+ on:
+   pull_request:
+     branches: [main, master]
+--- a/.github/workflows/gnostr-appimage.yml
++++ b/.github/workflows/gnostr-appimage.yml
+@@ -14,36 +14,6 @@
+         description: Version to use in the AppImage filename
+         required: false
+         type: string
+-  push:
+-    branches:
+-      - master
+-    paths:
+-      # nostrc-appci: the AppImage statically bundles these libraries, so
+-      # changes to any of them must rebuild it — an apps/gnostr-only filter
+-      # silently shipped stale library code (e.g. libnostr log fixes).
+-      - 'apps/gnostr/**'
+-      - 'libnostr/**'
+-      - 'libgo/**'
+-      - 'nips/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'components/**'
+-      - 'scripts/ci/**'
+-      - '.github/workflows/gnostr-appimage.yml'
+-      - '.github/workflows/release.yml'
+-  pull_request:
+-    paths:
+-      - 'apps/gnostr/**'
+-      - 'libnostr/**'
+-      - 'libgo/**'
+-      - 'nips/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'components/**'
+-      - 'scripts/ci/**'
+-      - '.github/workflows/gnostr-appimage.yml'
+-      - '.github/workflows/release.yml'
+-
+ jobs:
+   build-appimage:
+     name: Build and smoke test gnostr AppImage (${{ matrix.arch }})
+--- a/.github/workflows/grotto-ci.yml
++++ b/.github/workflows/grotto-ci.yml
+@@ -9,29 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    paths: &inputs
+-      - '.github/workflows/grotto-ci.yml'
+-      - 'apps/grotto/**'
+-      - 'nips/**'
+-      - 'libnostr/**'
+-      - 'libgo/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - 'cmake/**'
+-      - 'CMakeLists.txt'
+-      - 'VERSION_MANIFEST.md'
+-      - 'flake.nix'
+-      - 'packaging/**'
+-      - 'tests/**'
+-      - 'scripts/**'
+-      - 'gnome/seahorse/**'
+-      - 'gnome/common/**'
+-      - 'gnome/nostr-shell-extension/**'
+-  pull_request:
+-    paths: *inputs
+   workflow_dispatch:
+
+ permissions:
+--- a/.github/workflows/grotto-fuzz.yml
++++ b/.github/workflows/grotto-fuzz.yml
+@@ -34,20 +34,6 @@
+         description: 'Specific target (nip49, bip39, json-event, or all)'
+         required: false
+         default: 'all'
+-  schedule:
+-    # Run weekly on Sundays at 3:00 UTC
+-    - cron: '0 3 * * 0'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'apps/grotto/src/backup-recovery.c'
+-      - 'apps/grotto/src/backup-recovery.h'
+-      - 'apps/grotto/src/bunker_service.c'
+-      - 'apps/grotto/src/bunker_service.h'
+-      - 'nips/nip49/**'
+-      - 'libnostr/src/crypto/bip39*'
+-      - 'apps/grotto/tests/fuzz/**'
+-
+ env:
+   # Default duration for scheduled runs and PRs (shorter for PRs)
+   DEFAULT_FUZZ_DURATION: 60
+--- a/.github/workflows/groundhog-ci.yml
++++ b/.github/workflows/groundhog-ci.yml
+@@ -9,70 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [main, master]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'Testing/**'
+-      - 'tests/**'
+-      - 'tools/**'
+-      - 'gnome/groundhog/**'
+-      - 'gnome/seahorse/**'
+-      - 'gnome/common/**'
+-      - 'gnome/dbus/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'libmarmot/**'
+-      - 'marmot-gobject/**'
+-      - 'apps/relayd/**'
+-      - 'apps/gnostr/data/schemas/**'
+-      - 'scripts/check-unsequenced-args.py'
+-      - 'scripts/check-gui-test-gdk-frame.py'
+-      - 'scripts/sanitizer-gate-ci.py'
+-      - 'scripts/*groundhog*'
+-      - '.github/workflows/groundhog-ci.yml'
+-  pull_request:
+-    branches: [main, master]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'Testing/**'
+-      - 'tests/**'
+-      - 'tools/**'
+-      - 'gnome/groundhog/**'
+-      - 'gnome/seahorse/**'
+-      - 'gnome/common/**'
+-      - 'gnome/dbus/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'libmarmot/**'
+-      - 'marmot-gobject/**'
+-      - 'apps/relayd/**'
+-      - 'apps/gnostr/data/schemas/**'
+-      - 'scripts/check-unsequenced-args.py'
+-      - 'scripts/check-gui-test-gdk-frame.py'
+-      - 'scripts/sanitizer-gate-ci.py'
+-      - 'scripts/*groundhog*'
+-      - '.github/workflows/groundhog-ci.yml'
+   workflow_dispatch:
+
+ # This is a focused compile/test gate, not messaging-protocol or GNOME manual
+--- a/.github/workflows/libgo-ci.yml
++++ b/.github/workflows/libgo-ci.yml
+@@ -9,37 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - '.github/workflows/libgo-ci.yml'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - '.github/workflows/libgo-ci.yml'
+-
+ jobs:
+   build-and-test:
+     name: ${{ matrix.os }} • ${{ matrix.sanitizer }}
+--- a/.github/workflows/libhanami-ci.yml
++++ b/.github/workflows/libhanami-ci.yml
+@@ -9,44 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'Testing/**'
+-      - 'tests/**'
+-      - 'tools/**'
+-      - 'libhanami/**'
+-      - '.github/workflows/libhanami-ci.yml'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'Testing/**'
+-      - 'tests/**'
+-      - 'tools/**'
+-      - 'libhanami/**'
+-      - '.github/workflows/libhanami-ci.yml'
+   workflow_dispatch:
+
+ jobs:
+--- a/.github/workflows/libnostr-gi.yml
++++ b/.github/workflows/libnostr-gi.yml
+@@ -9,41 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'nostr-gobject/**'
+-      - 'gir_wrappers/**'
+-      - '.github/workflows/libnostr-gi.yml'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'nostr-gobject/**'
+-      - 'gir_wrappers/**'
+-      - '.github/workflows/libnostr-gi.yml'
+-
+ jobs:
+   generate-gir:
+     name: ${{ matrix.os }} • GIR/typelib
+--- a/.github/workflows/marmot-mdk-interop.yml
++++ b/.github/workflows/marmot-mdk-interop.yml
+@@ -17,10 +17,6 @@
+         type: string
+         default: ''
+   workflow_dispatch:
+-  schedule:
+-    - cron: '17 3 * * *'
+-
+-# Builds and runs third-party code (MDK, OpenMLS crates): read-only token.
+ permissions:
+   contents: read
+
+--- a/.github/workflows/marmot-mdk011-interop.yml
++++ b/.github/workflows/marmot-mdk011-interop.yml
+@@ -23,11 +23,6 @@
+         type: string
+         default: ''
+   workflow_dispatch:
+-  schedule:
+-    - cron: '47 3 * * *'
+-
+-# Builds and runs third-party code (MDK, OpenMLS crates): read-only token,
+-# no secrets.
+ permissions:
+   contents: read
+
+--- a/.github/workflows/nip55l-libsecret-ci.yml
++++ b/.github/workflows/nip55l-libsecret-ci.yml
+@@ -9,32 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [main, master]
+-    paths:
+-      - 'nips/nip55l/**'
+-      - 'nips/nip19/**'
+-      - 'nips/nip44/**'
+-      - 'libnostr/**'
+-      - 'gnome/seahorse/**'
+-      - 'CMakeLists.txt'
+-      - 'cmake/**'
+-      - 'scripts/nip55l-libsecret-ci.Dockerfile'
+-      - 'scripts/run-nip55l-libsecret-ci.sh'
+-      - '.github/workflows/nip55l-libsecret-ci.yml'
+-  pull_request:
+-    branches: [main, master]
+-    paths:
+-      - 'nips/nip55l/**'
+-      - 'nips/nip19/**'
+-      - 'nips/nip44/**'
+-      - 'libnostr/**'
+-      - 'gnome/seahorse/**'
+-      - 'CMakeLists.txt'
+-      - 'cmake/**'
+-      - 'scripts/nip55l-libsecret-ci.Dockerfile'
+-      - 'scripts/run-nip55l-libsecret-ci.sh'
+-      - '.github/workflows/nip55l-libsecret-ci.yml'
+   workflow_dispatch:
+
+ permissions:
+--- a/.github/workflows/nostr-homed-ci.yml
++++ b/.github/workflows/nostr-homed-ci.yml
+@@ -9,40 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'gnome/nostr-homed/**'
+-      - 'gnome/common/**'
+-      - '.github/workflows/nostr-homed-ci.yml'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'gnome/nostr-homed/**'
+-      - 'gnome/common/**'
+-      - '.github/workflows/nostr-homed-ci.yml'
+   workflow_dispatch:
+
+ jobs:
+--- a/.github/workflows/nostrc-ci.yml
++++ b/.github/workflows/nostrc-ci.yml
+@@ -9,53 +9,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'Testing/**'
+-      - 'tests/**'
+-      - 'tools/**'
+-      - 'libmarmot/**'
+-      - 'marmot-gobject/**'
+-      - 'nostr-gobject/**'
+-      - 'libhanami/**'
+-      - 'signet/**'
+-      - '.github/workflows/nostrc-ci.yml'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'Testing/**'
+-      - 'tests/**'
+-      - 'tools/**'
+-      - 'libmarmot/**'
+-      - 'marmot-gobject/**'
+-      - 'nostr-gobject/**'
+-      - 'libhanami/**'
+-      - 'signet/**'
+-      - '.github/workflows/nostrc-ci.yml'
+-
+ jobs:
+   build-and-test:
+     name: ${{ matrix.os }} • ${{ matrix.sanitizer }}
+--- a/.github/workflows/signet-ci.yml
++++ b/.github/workflows/signet-ci.yml
+@@ -15,16 +15,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [ main, master ]
+-    paths:
+-      - 'signet/**'
+-      - '.github/workflows/signet-ci.yml'
+-  pull_request:
+-    branches: [ main, master ]
+-    paths:
+-      - 'signet/**'
+-      - '.github/workflows/signet-ci.yml'
+   workflow_dispatch:
+
+ jobs:
+--- a/.github/workflows/static-checks.yml
++++ b/.github/workflows/static-checks.yml
+@@ -11,20 +11,6 @@
+       artifact_prefix:
+         type: string
+         default: ''
+-  push:
+-    branches: [main, master]
+-    paths-ignore:
+-      - 'docs/**'
+-      - '**/*.md'
+-      - '.beads/**'
+-      - 'LICENSE'
+-  pull_request:
+-    branches: [main, master]
+-    paths-ignore:
+-      - 'docs/**'
+-      - '**/*.md'
+-      - '.beads/**'
+-      - 'LICENSE'
+   workflow_dispatch:
+
+ jobs:
+--- a/.github/workflows/windows-build.yml
++++ b/.github/workflows/windows-build.yml
+@@ -17,44 +17,7 @@
+
+ on:
+   push:
+-    branches: [main, master]
+     tags: ['v*']
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'apps/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'gnome/common/**'
+-      - '.github/workflows/windows-build.yml'
+-  pull_request:
+-    branches: [main, master]
+-    paths:
+-      - 'CMakeLists.txt'
+-      - 'CMakePresets.json'
+-      - 'NipOptions.cmake'
+-      - 'cmake/**'
+-      - 'libgo/**'
+-      - 'libnostr/**'
+-      - 'libjson/**'
+-      - 'nips/**'
+-      - 'third_party/**'
+-      - 'components/**'
+-      - '.gitmodules'
+-      - 'apps/**'
+-      - 'nostr-gobject/**'
+-      - 'nostr-gtk/**'
+-      - 'gnome/common/**'
+-      - '.github/workflows/windows-build.yml'
+   workflow_dispatch:
+     inputs:
+       debug_enabled:
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,4 +1,18 @@
+ # Agent Instructions
++
++## W12 default policy (operator-accepted cutover)
++
++The pre-push hook runs static checks and the shared selective gate by default.
++`NOSTRC_FULL_GATE=1 git push` retains the original full broad override.
++`NOSTRC_SELECTIVE_GATE=0` does not disable shared execution. Explicit skip
++controls are bypasses, never successful validation. GitHub requires
++`Dependency gate`; legacy required checks are removed only after dual-status
++PR and enabled merge-group proof. Proven master/release/manual broad calls
++replace all three legacy scheduled workloads; no scheduled tier remains.
++Rollback restores broad required checks and legacy
++triggers before removing the new requirement. Release publication mode
++is unchanged by this patch. Dated shadow/default statements below are historical;
++their source-bound test results and limitations are not rewritten as acceptance.
+
+ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+
+@@ -21,12 +35,12 @@
+
+ This installs the fast pre-push hook (static checks, no build; CI builds and tests).
+
+-**Staged dependency-aware testing — operational rules:**
++**Dependency-aware testing — operational rules:**
+ - `scripts/test-gate.sh --help` documents explicit diagnostics; `--explain` is
+   plan-only. Profile-restricted execution is not complete CI coverage;
+   `libgo.macos.asan` is standalone macOS/arm64 libgo ASan/UBSan, not native root.
+-  `NOSTRC_SELECTIVE_GATE=1` adds diagnostics to existing push gates, never replaces
+-  them. Partial success cannot establish complete-gate or release acceptance.
++  Shared selective execution is now the default after W11/operator acceptance;
++  static checks and the explicit full override remain. Partial success cannot establish complete-gate or release acceptance.
+   Authored `build_parallelism` / `test_parallelism` are independently enforced;
+   legacy `parallelism` remains their fallback. Phase overrides must match the
+   profile, and physical argv/resolved/retained evidence must agree. Admitted CLI
+@@ -131,7 +145,8 @@
+   PR comparisons and successful complete broad integrations, not unit cases,
+   nested jobs, retries or partial diagnostics. Record the snapshot time; never
+   present an old ledger as a live counter or erase a failed attempt.
+-- Shadow workflows are additive, not accepted required checks. Publisher
++- After recorded W11/operator acceptance, Dependency gate is required and the
++  shared local gate is default. Publisher
+   `NOSTRC_DEPENDENCY_RELEASE_MODE` is `disabled` by default; `disabled`/`shadow`
+   publication decisions are not validation attestations. No default/enforcement,
+   legacy gate/trigger/schedule or protection cutover before **W11 evidence and
+@@ -229,8 +244,8 @@
+ in one argument and use it in another; x86_64 GCC evaluates arguments right to
+ left), `scripts/check-gui-test-gdk-frame.py`, `scripts/check-linux-ci-packages.py`
+ and `gnome/groundhog/tests/check_privacy.py`. `NOSTRC_SKIP_PRE_PUSH=1` skips
+-them (announced). Full builds and tests run in CI, scoped per component by
+-workflow path filters.
++them (announced). Full builds and tests run through shared CI selection;
++master/releases/manual retain complete broad validation.
+
+ The former full gate is kept as an explicit opt-in, `scripts/full-gate.sh`
+ (run it for a push with `NOSTRC_FULL_GATE=1 git push`): the macOS build and
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -1,4 +1,19 @@
+ # Test Strategy & Suite Documentation
++
++## W12 default policy (operator-accepted cutover)
++
++The pre-push hook runs static checks and the shared selective gate by default.
++`NOSTRC_FULL_GATE=1 git push` retains the original full broad override.
++`NOSTRC_SELECTIVE_GATE=0` does not disable shared execution. Explicit skip
++controls are bypasses, never successful validation. GitHub requires
++`Dependency gate`; legacy required checks are removed only after dual-status
++PR and enabled merge-group proof. Proven master/release/manual broad calls
++replace all three legacy scheduled workloads; no scheduled tier remains.
++Rollback restores broad required checks and legacy
++triggers before removing the new requirement. Release publication mode
++is unchanged by this patch. Dated shadow/default statements below are historical;
++their source-bound test results and limitations are not rewritten as acceptance.
++
+
+ > **Concrete W11 closure batch (2026-10-23):** all six frozen component tips are
+ > integrated with actual profile/source/producer enrollment. The typed selected
+--- a/scripts/pre-push
++++ b/scripts/pre-push
+@@ -1,20 +1,7 @@
+ #!/usr/bin/env bash
+-# Fast pre-push checks: cheap static checks on each pushed commit, no build.
+-#
+-# CI builds and tests every component (scoped by path in .github/workflows),
+-# so this hook only catches what CI would otherwise report late and that costs
+-# seconds here: whitespace errors in the pushed range (git diff --check), and
+-# the repository static checkers, run on the pushed tree (not the working tree):
+-#   scripts/check-unsequenced-args.py, scripts/check-gui-test-gdk-frame.py,
+-#   scripts/check-linux-ci-packages.py, gnome/groundhog/tests/check_privacy.py
+-# Each checker runs only if the pushed commit ships it. Typical run: ~5-10 s.
+-#
+-# The former full gate (macOS build + CTest, Linux Docker build, sanitizer
+-# stage) is scripts/full-gate.sh. Opt in per push with
+-#   NOSTRC_FULL_GATE=1 git push ...
+-# NOSTRC_SKIP_PRE_PUSH=1 skips these static checks (announced).
+-# NOSTRC_SELECTIVE_GATE=1 additionally runs the diagnostic shared adapter.
+-# This is explicit opt-in, not a replacement for required pre-push gates.
++# W12 operator-accepted selective pre-push: static checks then shared execution.
++# NOSTRC_FULL_GATE=1 retains the original full broad override.
++# Explicit NOSTRC_SKIP_PRE_PUSH remains an announced bypass, not validation.
+ set -euo pipefail
+ {
+
+@@ -95,9 +82,7 @@
+     echo "Pre-push static checks failed - push blocked (NOSTRC_SKIP_PRE_PUSH=1 bypasses)" >&2
+     exit 1
+ fi
+-if [ "${NOSTRC_SELECTIVE_GATE:-0}" = 1 ]; then
+-    echo "Pre-push: explicit diagnostic shared gate (does not replace mandatory rollout gates)"
+-    bash "$repo_root/scripts/test-gate.sh" --repo "$repo_root" --pre-push --refs-file "$tmp/refs"
+-fi
++echo "Pre-push: shared selective gate (NOSTRC_FULL_GATE=1 selects full override)"
++bash "$repo_root/scripts/test-gate.sh" --repo "$repo_root" --pre-push --refs-file "$tmp/refs"
+ exit 0
+ }

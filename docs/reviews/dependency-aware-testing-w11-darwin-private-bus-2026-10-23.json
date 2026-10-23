@@ -1,0 +1,108 @@
+{
+ "b_inputs": {
+  "changed": [
+   "scripts/test-gate.sh",
+   "scripts/test_gate_darwin.py",
+   "scripts/test_selection_services.py",
+   "tests/selection/test_darwin_gate_wiring.py"
+  ],
+  "decision": "core.macos.asan signer_endpoint claim: darwin custody refuses it; author/correct membership (no admission without capability)",
+  "enroll_new": [
+   "tests/selection/test_darwin_private_bus.py"
+  ]
+ },
+ "c_findings": [
+  "direct (outside custody) san_fixture heap/ubsan runs timed out at 60 s under load in test_darwin_custody; retained, not rerun to green"
+ ],
+ "code_tip": "67f53cdfc5c593ebd965f3bc2809866aec501375",
+ "commits": {
+  "66862fd34": "fail-closed seal admission; PT_DENY_ATTACH claim corrected (ptrace attach only)",
+  "67f53cdfc": "private session bus under darwin custody; owned journaled directory; validated-exit release"
+ },
+ "evidence_root": "/tmp/nostrc-w11-runtime-20261023/darwin-bus",
+ "evidence_sha256": {
+  "adjacent-1.log": "d68fd2dad5e46700e1f049d07a85cbe9bf8dd64db58a9db7fda110105ce5eeb0",
+  "admission/darwin-seal-admission-0cf1d33955d043c099bde2ca1e4df8ee.json": "746548219c871bd80befafd30ed11ac98fbceea87922d134817c971a1499517c",
+  "bus-1.log": "00428788dfc3604263cc8c774773789dff46fabc23a8e52539956cd12208e58f",
+  "bus-2.log": "2a88f07178e1c2430c98571913167b56bae60bb2da8856f9ca8a142a353f4892",
+  "public-checks/post.txt": "079a8d7d4f0f23666e91e995c1734d78e364a02b9f77bd907ff5d8be363098ee",
+  "public-checks/pre.txt": "49519c9cba650970b4abd0c2fbfd58f0fb33ec29fec151266c06cdc6f1ad76b6",
+  "public-checks/summary.txt": "3e782033796cd62caca14ae20d77236a0d768e752a7ab5b9da1a8623d90296b3",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/aggregate.json": "86c7d6f5c7d012a6a8d2ec4b8e7a5f9691fbab0949f99443dffd10eae758e3a0",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/lane-4e043840fedb94c4/keychain-after.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/lane-4e043840fedb94c4/keychain-after.log.darwin-adapter.json": "dce8b89b272caa0b6f89f218524310d0b5c94cc0aa6424aee6402d1e9b002ac0",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/lane-4e043840fedb94c4/keychain-after.log.darwin-custody-42a3fbdee1bf4143bed64995bf2bac11.json": "357952abe2b92f2b2b67e6eb32caa8da2c773052df01c4d2e8c031a2855bcb27",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/lane-4e043840fedb94c4/keychain-before.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/lane-4e043840fedb94c4/keychain-before.log.darwin-adapter.json": "94ecc4ca2d0bf9649dcd6bfd530b59325b9d4bd09d618e25d8d27f0bdb6ad48b",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/lane-4e043840fedb94c4/keychain-before.log.darwin-custody-21af31949b5f497e9ce12c98bfc5cd9f.json": "68d9fc68ec9286f0efac34c8c65103bf9dad96f0ebbc564b5b3653597bfc015d",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/plan.json": "fa839e8224f6f9e6a3095f4c1c9f174ffb3ed24e6933ed0d1737448197dc296b",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/source-checkout.log": "d13ddedd223c0bc3c388cbf527830f29586fe89e06b0bfdad82a26d41c4f719b",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/source-checkout.log.darwin-adapter.json": "3d0b75326be5f9b083f0245baf9d10fdcfbfe026b7544146806e071fff72ef77",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/0/source-checkout.log.darwin-custody-95482e99b9414716a77cb78c76d94ecf.json": "6de3b5b63facd99aba22a2ea7e64bd0326a60099100eab43c967e87590c53b06",
+  "public/core.macos.asan/789fbdbe8cce4e358bb5ab8352003e34/adapter-receipt.json": "4388f4be5a80337d484bc1c8340a7266cc04513a67fdca589ec9cbec9fd81a4c",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/aggregate.json": "68b35e961d3b292abc5d737fbc8bd5095b3a47401c8f9339b2450dc6d242c523",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/darwin-seal-admission-acf986bdce054830a6402c29080bf8fb.json": "746548219c871bd80befafd30ed11ac98fbceea87922d134817c971a1499517c",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/keychain-after.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/keychain-after.log.darwin-adapter.json": "515f0995832f42d49a91ad5a52bf93054ac02f0a9cd08a3386cb1167faac857a",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/keychain-after.log.darwin-custody-e00a6b05465b428e8492a8f5d3bf4df5.json": "c547dbda6091ba6f04a32c29001dbd9a6b370b412bbc4580d12480dd973d7883",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/keychain-before.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/keychain-before.log.darwin-adapter.json": "c9bb5e59e9b3e35e851254633b4af1117529cff502c1613c131e140614894919",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/keychain-before.log.darwin-custody-8bc2b2e3352e46d19b94306472c89d59.json": "820081290144b1a725fc7f4c88812583c9a22a23f1b7155a4748ef73165d6c0f",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/lane.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/lane.log.darwin-adapter.json": "8305be28e136c9731a27d2d932c3e2db8a9dbfd8d83ba68651b2f6f9ecc0fdfc",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/submodule-f90e2ceecc5d2b8a.log": "8e940062aa73d82c2af045e15a9ac2a0d7152e3b8fc343a5ed0f385d0bbdf0e1",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/submodule-f90e2ceecc5d2b8a.log.darwin-adapter.json": "07eec177451162bafd9ee8aba1704c9884eea51b53e0534dcb4b7ae73f0fa1f5",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/submodule-f90e2ceecc5d2b8a.log.darwin-custody-8f95f7313c4947858807760f51898ac0.json": "3bc914aa0352593a6719d5509e2f7846f07657cd23eab1d2f4e477576a630036",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/lane-f9128cf90dd4d236/submodules.json": "c2b155c09899ec110b94bc0e35894c4f2fb122a73b3c19225c837bf28dab9444",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/plan.json": "11c5ed2e7d175963534d2daf8b863481045148761555af10446429a376c888eb",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/source-checkout.log": "d13ddedd223c0bc3c388cbf527830f29586fe89e06b0bfdad82a26d41c4f719b",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/source-checkout.log.darwin-adapter.json": "12caa9a923befbb95d0c7604adbb15d110dd57a0b87662b3955d3e899ca60e57",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/0/source-checkout.log.darwin-custody-0a0a9def3cb54f9b9e5b9c0675b31aff.json": "8954d473ae75424a002b68cfe572009a1fabb32d25e528235bb1856a3a3354d4",
+  "public/libgo.macos.asan/3209b6ba04ef40e1a7652cb57bdd33bd/adapter-receipt.json": "53695eea54641d3cc752d0c1ca60a4b18588900b0f79037ae47018170af3fdc2",
+  "repro1/lane/lane.log": "113665e1c7c3b54b59688a852dcde03b0d764c98d9b824bae940a245b4d59ed7",
+  "repro1/lane/lane.log.darwin-adapter.json": "440f46ae04f8055d1378946ef5e00c4478263454975dc2154f1127d0b26b7641",
+  "repro1/lane/lane.log.darwin-custody-6153e3aef997450e85695ff5efac1af0.json": "b5657fbd4cf7c6648299bc293498533a5864fef996a067ba8d9883d496eddfc6",
+  "repro1/lane/resource-placement.jsonl": "e15592bbf80eeadef4572b840773d4642003b91ec217babc6c29e1d4836a70a6",
+  "repro1/lane/services/dbus-daemon.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "repro1/lane/services/services.json": "cd5909d3485955b5698d1bb395ac1b3e6e809d88930fce76b5eea66fcfb4d9f0"
+ },
+ "files_sha256": {
+  "scripts/adapter_darwin_custody.py": "e012fe3ad24f7eef839df480487b67d66be4583cf16a2f31d5e5b8c774e1d4a4",
+  "scripts/test-gate.sh": "2bcdb1fbd755ef7561453d7850a30348bed283248f9a864cd56cc60e15d24554",
+  "scripts/test_gate_darwin.py": "e66101708922c028a6df64d8fbb6354862384073c00e6007907eca7082beb7e9",
+  "scripts/test_selection_services.py": "f1a4b9185598bdba00fac84f1f584349cb585c063884cfed52557103d7292501",
+  "tests/selection/test_darwin_custody.py": "2609612504e478671001e478b1fb7e7622121cac452f0211a2d0d7824db01301",
+  "tests/selection/test_darwin_gate_wiring.py": "3b0bbe3b6aa6a65e2dc4fb985ee990886d9ca82c1e27ad48cc614a50d02d9411",
+  "tests/selection/test_darwin_private_bus.py": "bf3ceb5800c1c4949ede1850dd7021764f581654cac7c57dd6f5f7672515f310"
+ },
+ "kind": "w11_darwin_private_bus_seal_handoff_v1",
+ "merges": {
+  "3f6fd1af65c133f1d577e2ee742b279950792f37": "B darwin_seatbelt_v1 boundary/enrollment (0b2f2bf2c)",
+  "8100c6fafc250c19e95385da2ecb83b29d8ef52f": "C test-only seal readiness (6cdd7616c)"
+ },
+ "native_test_scope": {
+  "host": "macOS 27.0.1 arm64, admin+_developer user, SIP enabled, DevToolsSecurity disabled",
+  "not_run": [
+   "real CTest through public CLI (seal admission refuses this host)",
+   "Linux refusal (Docker held)",
+   "hosted/x86 macOS",
+   "TSan/fuzz"
+  ],
+  "private_bus": "7/7 real: round-trip with private HOME/address and no launchd var; escaped TERM-ignoring bus client killed; absent dbus refuses before daemon; cancellation and helper-death recovery (lane failed) clean bus/root/escapee and release owned dir; unvalidated exit retains dir; strict ASan/UBSan GIO consumer on private bus; outside sibling survives",
+  "wiring": "8/8 incl. seal admission refusal before helper/target on this host"
+ },
+ "nonadmin_host_prerequisite": "Seal-bearing lanes are admitted only for a non-root user who is NOT in admin or _developer, with SIP enabled, DevToolsSecurity disabled, a finalizer interpreter without get-task-allow, Apple /usr/bin/cc and codesign available, and a throwaway debugger-entitled probe deterministically denied task_for_pid on a same-UID finalizer-identity process. No host policy/group/signature mutation.",
+ "public_cli_runs": {
+  "core.macos.asan": "lane refused by host_guard: darwin custody does not implement ['signer_endpoint'] (broad selects supported.nips.nip5f.signer_endpoint claimed in core.macos.asan); private bus path not reached; exit 1",
+  "libgo.macos.asan": "lane refused_before_launch at seal admission (_developer, admin); checkout/guards/submodule custody clean; exit 1",
+  "owned_cleanup": "only same-run detached checkouts removed; no nostrc-rr dir allocated; pre/post checks retained"
+ },
+ "retained_failures": [
+  "bus-1.log (wrong GetId==server guid assumption)",
+  "adjacent-1.log",
+  "public runs (both exit 1, refusals)"
+ ],
+ "schema_version": 1,
+ "scope": "bounded native Darwin diagnostic: private_bus resource + fail-closed seal admission; NOT .23/W11/full-profile acceptance",
+ "version_bump": "none (CI/test tooling)"
+}

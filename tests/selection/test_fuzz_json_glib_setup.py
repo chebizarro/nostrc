@@ -110,7 +110,8 @@ class FuzzJsonGlibEnrollmentTests(unittest.TestCase):
         data = wave.witness()
         validate_job_accounting(policy, ROOT)
         for name, expected in data['source_inputs'].items():
-            self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
+            from runtime_integration_support import before_runtime_source
+            self.assertEqual(hashlib.sha256(before_runtime_source(name, (ROOT / name).read_bytes())).hexdigest(), expected, name)
             self.assertIn('{source}/' + name, policy['checks']['selection.contract']['runtime_inputs'])
         for rule in data['rules']:
             self.assertEqual(set(s.classify(policy, rule['exact'])['nodes']), {'grotto.gui', 'selection.contract'})
@@ -118,8 +119,13 @@ class FuzzJsonGlibEnrollmentTests(unittest.TestCase):
         # This wave reverses only its named fields; later profile/fixture fixes
         # remain intact rather than forcing a whole-inventory golden reset.
         restored = copy.deepcopy(previous)
-        restored['checks']['selection.contract']['runtime_inputs'] += data['input_additions']
-        restored['path_rules'] += data['rules']
+        for target, original, additions in (
+                (restored['checks']['selection.contract']['runtime_inputs'],
+                 policy['checks']['selection.contract']['runtime_inputs'], data['input_additions']),
+                (restored['path_rules'], policy['path_rules'], data['rules'])):
+            self.assertEqual(target, [value for value in original if value not in additions])
+            for value in sorted(additions, key=original.index):
+                target.insert(original.index(value), copy.deepcopy(value))
         for ident, record in data['jobs'].items():
             restored['workflow_jobs'][ident] = copy.deepcopy(record['after'])
         self.assertEqual(restored, policy)

@@ -15,8 +15,15 @@
  *
  * It prints the policy it observed (before and after), optionally measures
  * usleep()/poll() wake latency, then exec()s cmd (the policy survives exec).
+ *
+ * --timer also compares select() (what GLib's g_poll() is built on, Darwin
+ * BROKEN_POLL) with poll(2) on a pipe for the heartbeat's 10 ms interval:
+ * XNU applies latency-QoS timer leeway to the former, so under an inherited
+ * UTILITY clamp only select() stretches toward 50 ms. The scheduler priority
+ * printed with the policy exposes such a clamp (requested QoS does not).
  */
 #include <errno.h>
+#include <libproc.h>
 #include <mach/mach.h>
 #include <poll.h>
 #include <pthread.h>
@@ -24,7 +31,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/proc_info.h>
 #include <sys/resource.h>
+#include <sys/select.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -67,40 +76,122 @@ print_policy(const char *when)
     qos_class_t qos = QOS_CLASS_UNSPECIFIED;
     int rel = 0;
     pthread_get_qos_class_np(pthread_self(), &qos, &rel);
-    printf("sched-probe: %s darwin_bg_process=%d darwin_bg_thread=%d qos=0x%x nice=%d\n",
+    struct proc_threadinfo ti;
+    uint64_t tid = 0;
+    pthread_threadid_np(NULL, &tid);
+    int have_pri = proc_pidinfo(getpid(), PROC_PIDTHREADID64INFO, tid, &ti, sizeof ti) == (int)sizeof ti;
+    printf("sched-probe: %s darwin_bg_process=%d darwin_bg_thread=%d qos=0x%x nice=%d sched_pri_cur=%d sched_pri_base=%d\n",
            when, read_prio(PRIO_DARWIN_PROCESS), read_prio(PRIO_DARWIN_THREAD),
-           (unsigned)qos, read_prio(PRIO_PROCESS));
+           (unsigned)qos, read_prio(PRIO_PROCESS),
+           have_pri ? ti.pth_curpri : -1, have_pri ? ti.pth_priority : -1);
+}
+
+/* Heartbeat-interval (10 ms) wait comparison: select() with a pipe fd, as
+ * GLib's Darwin g_poll() does, versus poll(2) on the same pipe. Nothing ever
+ * writes the pipe, so the only expected result is rc == 0 (timeout). Any other
+ * return (error, EINTR, unexpected readiness) is counted with its errno and
+ * the sample kept, never retried; the comparison is then labelled invalid,
+ * because a failed or early-returning wait would read as low latency. */
+typedef struct {
+    double sum, max;
+    int over50, unexpected, last_rc, last_errno;
+} WaitStats;
+
+static void
+wait_sample(WaitStats *st, int rc, int err, double ms)
+{
+    st->sum += ms;
+    st->max = ms > st->max ? ms : st->max;
+    st->over50 += ms > 50.0;
+    if (rc != 0) {
+        st->unexpected++;
+        st->last_rc = rc;
+        st->last_errno = rc < 0 ? err : 0;
+    }
+}
+
+static void
+wait_report(const char *name, int n, const WaitStats *st)
+{
+    printf("sched-probe: %s x%d mean=%.2f ms max=%.2f ms over50=%d unexpected_rc=%d",
+           name, n, st->sum / n, st->max, st->over50, st->unexpected);
+    if (st->unexpected)
+        printf(" last_rc=%d last_errno=%d(%s)", st->last_rc, st->last_errno,
+               st->last_errno ? strerror(st->last_errno) : "none");
+    printf("\n");
+}
+
+static void
+wait_probe(void)
+{
+    enum { N = 20, WAIT_MS = 10 };
+    int p[2];
+    if (pipe(p) != 0) {
+        printf("sched-probe: wait comparison unavailable: pipe errno=%d(%s)\n", errno, strerror(errno));
+        return;
+    }
+    WaitStats sel = {0}, pol = {0};
+    for (int i = 0; i < N; i++) {
+        fd_set r;
+        FD_ZERO(&r);
+        FD_SET(p[0], &r);
+        struct timeval tv = {0, WAIT_MS * 1000};
+        double a = now_ms();
+        errno = 0;
+        int rc = select(p[0] + 1, &r, NULL, NULL, &tv);
+        int err = errno;
+        wait_sample(&sel, rc, err, now_ms() - a);
+        struct pollfd f = {p[0], POLLIN, 0};
+        a = now_ms();
+        errno = 0;
+        rc = poll(&f, 1, WAIT_MS);
+        err = errno;
+        wait_sample(&pol, rc, err, now_ms() - a);
+    }
+    wait_report("select(pipe,10ms)", N, &sel);
+    wait_report("poll(pipe,10ms)", N, &pol);
+    printf("sched-probe: wait comparison %s\n",
+           sel.unexpected || pol.unexpected ? "INVALID (unexpected select/poll return; samples kept, not retried)"
+                                            : "valid (all waits timed out with rc=0)");
+    close(p[0]);
+    close(p[1]);
 }
 
 static void
 timer_probe(void)
 {
     enum { N = 20, SLEEP_US = 5000 };
-    double max = 0, sum = 0;
+    WaitStats st = {0};
     double w0 = now_ms(), c0 = thread_cpu_ms();
     for (int i = 0; i < N; i++) {
         double a = now_ms();
-        usleep(SLEEP_US);
-        double d = now_ms() - a;
-        sum += d;
-        if (d > max)
-            max = d;
+        errno = 0;
+        int rc = usleep(SLEEP_US);
+        int err = errno;
+        wait_sample(&st, rc, err, now_ms() - a);
     }
-    printf("sched-probe: usleep(5ms) x%d mean=%.2f ms max=%.2f ms wall=%.1f ms thread_cpu=%.3f ms\n",
-           N, sum / N, max, now_ms() - w0, thread_cpu_ms() - c0);
-    max = sum = 0;
+    double wall = now_ms() - w0, cpu = thread_cpu_ms() - c0;
+    wait_report("usleep(5ms)", N, &st);
+    printf("sched-probe: usleep(5ms) wall=%.1f ms thread_cpu=%.3f ms\n", wall, cpu);
+    int bad = st.unexpected;
+    memset(&st, 0, sizeof st);
     w0 = now_ms();
     c0 = thread_cpu_ms();
     for (int i = 0; i < N; i++) {
         double a = now_ms();
-        poll(NULL, 0, 5);
-        double d = now_ms() - a;
-        sum += d;
-        if (d > max)
-            max = d;
+        errno = 0;
+        int rc = poll(NULL, 0, 5);
+        int err = errno;
+        wait_sample(&st, rc, err, now_ms() - a);
     }
-    printf("sched-probe: poll(5ms) x%d mean=%.2f ms max=%.2f ms wall=%.1f ms thread_cpu=%.3f ms\n",
-           N, sum / N, max, now_ms() - w0, thread_cpu_ms() - c0);
+    wall = now_ms() - w0;
+    cpu = thread_cpu_ms() - c0;
+    wait_report("poll(5ms)", N, &st);
+    printf("sched-probe: poll(5ms) wall=%.1f ms thread_cpu=%.3f ms\n", wall, cpu);
+    printf("sched-probe: 5ms timer comparison %s\n",
+           bad || st.unexpected ? "INVALID (unexpected usleep/poll return; samples kept, not retried)"
+                                : "valid (all waits returned 0)");
+    wait_probe();
 }
 
 int

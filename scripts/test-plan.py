@@ -17,7 +17,7 @@ import test_selection as selection
 def parser():
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
-    for name in ("plan", "explain", "validate", "resolve", "check-inputs", "run", "aggregate", "release-plan"):
+    for name in ("plan", "explain", "validate", "resolve", "check-inputs", "run", "aggregate", "release-plan", "qualify-normal"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--repo", default=str(Path(__file__).resolve().parents[1]))
         cmd.add_argument("--inventory", default="tests/selection/inventory.json")
@@ -45,8 +45,13 @@ def parser():
             cmd.add_argument("--test-parallel", type=int, help="must match authored test_parallelism (or parallelism fallback)")
             cmd.add_argument("--timeout", type=int)
             cmd.add_argument("--evidence-path", action="append", default=[])
-            cmd.add_argument("--diagnostic-boundary", choices=('linux_pidns_v1', 'linux_ptrace_v1'),
+            cmd.add_argument("--diagnostic-boundary", choices=('linux_pidns_v1', 'linux_ptrace_v1', 'darwin_seatbelt_v1'),
                              help="bind an incomplete kernel diagnostic; never profile parity or complete acceptance")
+        elif name == 'qualify-normal':
+            cmd.add_argument('--plan', required=True)
+            cmd.add_argument('--receipt', required=True, help='original post-exit native-receipt.json')
+            cmd.add_argument('--adapter-receipt', required=True)
+            cmd.add_argument('--apparmor-evidence')
         elif name == "aggregate":
             cmd.add_argument("--plan", required=True)
             cmd.add_argument("--receipt", action="append", default=[])
@@ -356,7 +361,12 @@ def _realization_command_owned(args, policy, backend, *, custody=None, state=Non
     if custody is not None:
         custody.validate(resolved)
     elif set(resolved.get("required_capabilities", [])) & {"docker", "external_peer", "prepared_peer"}:
-        raise selection.CheckFailure("live peer/image lifecycle requires the existing guarded adapter")
+        caps = set(resolved['required_capabilities'])
+        if (caps & {'external_peer', 'prepared_peer'}
+                or realized['profile'].get('execution_domain') != 'mdk_original_linux_v1'):
+            raise selection.CheckFailure("live peer/image lifecycle requires the existing guarded adapter")
+        from test_selection_services import _namespace_resources
+        _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
     if state is not None:
         state["stage"] = "preaudit"
     audit = backend.check_inputs(policy, realized, identity, after_build=False,
@@ -508,6 +518,9 @@ def normalize_receipt(policy, plan, resolved, raw):
             **({"complete": False} if raw.get("complete") is False else {}),
             **({'diagnostic_boundary': raw['diagnostic_boundary'], 'untraced_profile_parity': False}
                if 'diagnostic_boundary' in raw else {})}
+    if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:
+        from test_selection_mdk import validate_runtime
+        validate_runtime(raw, plan, lane, phase_profile)
     import test_selection_subset as subset
     result.update({key: raw[key] for key in selection.COVERAGE_STATE_FIELDS})
     if subset.FULL_FIELD in resolved:
@@ -589,6 +602,11 @@ def main(argv=None, *, result_observer=None):
                 for lane in result["lanes"]:
                     print(f"  {lane['id']}: {', '.join(lane['checks'])}")
                 return 0
+        elif args.command == 'qualify-normal':
+            from test_selection_execution import qualify
+            result = qualify(policy, selection.read_json(args.plan), args.receipt,
+                             args.adapter_receipt, args.apparmor_evidence)
+            code = 0
         elif args.command == "aggregate":
             plan = selection.read_json(args.plan)
             if args.package_results:

@@ -136,6 +136,7 @@ class EventToWorkerTests(GitCase):
         self.write("tests/selection/inventory.json", s.canonical(self.p).decode())
         self.write("scripts/test_selection.py", (ROOT / "scripts/test_selection.py").read_text())
         self.write("scripts/test_selection_subset.py", (ROOT / "scripts/test_selection_subset.py").read_text())
+        self.write("scripts/test_selection_macos_nip5f_tcp.py", (ROOT / "scripts/test_selection_macos_nip5f_tcp.py").read_text())
         self.write(".github/workflows/dependency_contract.py", (WORKFLOWS / "dependency_contract.py").read_text())
         self.head = self.commit()
         self.evidence = tempfile.TemporaryDirectory()
@@ -241,6 +242,7 @@ class EventToWorkerTests(GitCase):
         self.p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         self.write('tests/selection/inventory.json', s.canonical(self.p).decode())
         self.write('scripts/test_selection_realization.py', (ROOT / 'scripts/test_selection_realization.py').read_text())
+        self.write('scripts/test_selection_execution.py', (ROOT / 'scripts/test_selection_execution.py').read_text())
         self.head = self.commit()
         result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, args=('--mode', 'broad'))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -339,7 +341,7 @@ class PublicationTests(unittest.TestCase):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         # Exercise publication routing with an explicitly synthetic ready policy;
         # never forge ready validation against the actual unready inventory.
-        p.update(enforcement_ready=True, coverage_gaps=[])
+        p.update(enforcement_ready=True, coverage_gaps=[], workflow_jobs={})
         return s.release_plan(ROOT, p, head="HEAD", component=component, dry_run=True, run_id="synthetic")
 
     def needs(self, release, publisher):
@@ -510,6 +512,7 @@ class WorkflowWiringTests(unittest.TestCase):
             'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',
             'groundhog.mdk011': 'mdk011',
             'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',
+            'homed.linux.ci': 'homed_units',
         }
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')

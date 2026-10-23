@@ -28,87 +28,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Prove the exact checkout before executing its shared controller.
           test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
-          mkdir -p "$RUNNER_TEMP/namespace-policy/control" "$RUNNER_TEMP/namespace-policy/evidence"
-          git submodule status --recursive > "$RUNNER_TEMP/namespace-policy/control/submodules.txt"
-          sha256sum tests/selection/namespace_host_probe.py scripts/adapter_namespace_custody.py \
-            tests/selection/namespace-testhost.Dockerfile > "$RUNNER_TEMP/namespace-policy/control/sources.sha256"
-          set +e
-          python3 tests/selection/namespace_host_probe.py \
-            > "$RUNNER_TEMP/namespace-policy/control/native-host-probe.jsonl" 2>&1
-          status=$?
-          set -e
-          # Diagnostic refusal is retained, never counted as positive coverage.
-          printf '%s\n' "$status" > "$RUNNER_TEMP/namespace-policy/control/native-host-probe.exit"
+          bash tests/selection/namespace_policy_controller.sh bind
       - name: Record explicitly provisioned disposable Docker regression policy
         shell: bash
-        run: |
-          set -euo pipefail
-          docker info --format '{{json .SecurityOptions}}' > "$RUNNER_TEMP/namespace-policy/control/docker-security.json"
-          docker version > "$RUNNER_TEMP/namespace-policy/control/docker-version.txt"
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          control = Path(os.environ['RUNNER_TEMP']) / 'namespace-policy/control'
-          security = json.loads((control / 'docker-security.json').read_text())
-          state = dict(kind='namespace_testhost_setup_v1', docker_security=security,
-              container_apparmor='unconfined', source_sha=os.environ['REQUESTED_SHA'],
-              scope='provisioned_container_regressions_not_authored_native_profile',
-              complete=False, complete_gate_eligible=False,
-              policy_authority='explicit dedicated disposable regression container only; host policy unchanged')
-          (control / 'setup.json').write_text(json.dumps(state, indent=2) + '\n')
-          PY
+        run: bash tests/selection/namespace_policy_controller.sh record
+      - name: Provision per-job namespace-custody AppArmor profile
+        shell: bash
+        # An unconfined container still enters unprivileged_userns at unshare
+        # on Ubuntu 24.04 (PR22 hosted evidence); only a fresh owned profile is added.
+        run: bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
       - name: Build dedicated nonroot regression image
         shell: bash
-        run: |
-          set -euo pipefail
-          docker build --progress plain --iidfile "$RUNNER_TEMP/namespace-policy/control/image.id" \
-            -f tests/selection/namespace-testhost.Dockerfile tests/selection \
-            2>&1 | tee "$RUNNER_TEMP/namespace-policy/control/image-build.log"
-          docker image inspect "$(cat "$RUNNER_TEMP/namespace-policy/control/image.id")" \
-            > "$RUNNER_TEMP/namespace-policy/control/image.json"
+        run: bash tests/selection/namespace_policy_controller.sh build
       - name: Execute unchanged kernel matrix and full policy suite
         shell: bash
-        run: |
-          set -euo pipefail
-          control="$RUNNER_TEMP/namespace-policy/control"
-          evidence="$RUNNER_TEMP/namespace-policy/evidence"
-          # No Docker socket, host PID namespace, added capabilities or writable checkout.
-          chmod 0777 "$evidence"
-          python3 tests/selection/namespace_testhost_lifecycle.py prepare "$control"
-          docker create --cidfile "$control/container.cid" --name "$(cat "$control/container.name")" \
-            --label "nostrc.namespace-policy=$(cat "$control/owner.token")" \
-            --user 1001:1001 --cap-drop=ALL --security-opt=no-new-privileges \
-            --security-opt=seccomp=unconfined --security-opt=systempaths=unconfined \
-            --security-opt=apparmor=unconfined --network none --read-only \
-            --tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777 \
-            --tmpfs /tmp/.X11-unix:rw,nosuid,nodev,mode=1777 \
-            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/source,readonly" \
-            --mount "type=bind,source=$evidence,target=/evidence" \
-            -e HOME=/tmp/namespace-home -e NOSTRC_CUSTODY_TEST_EVIDENCE=/evidence/custody \
-            --entrypoint /bin/bash "$(cat "$control/image.id")" \
-            tests/selection/namespace_policy_entry.sh
-          cid="$(cat "$control/container.cid")"
-          docker inspect "$cid" > "$control/container-before.json"
-          set +e
-          docker start --attach "$cid" 2>&1 | tee "$control/container.log"
-          attach_status=${PIPESTATUS[0]}
-          set -e
-          docker inspect "$cid" > "$control/container-after.json"
-          printf '%s\n' "$attach_status" > "$control/attach.exit"
-          status="$(docker wait "$cid")"
-          printf '%s\n' "$status" > "$control/container.exit"
-          test "$attach_status" -eq 0
-          test "$status" -eq 0
+        run: bash tests/selection/namespace_policy_controller.sh execute
       - name: Remove only this job's recorded immutable container
         if: always()
         shell: bash
-        run: |
-          set -euo pipefail
-          control="$RUNNER_TEMP/namespace-policy/control"
-          if [[ -f "$control/owner.json" ]]; then
-            python3 tests/selection/namespace_testhost_lifecycle.py cleanup "$control"
-          fi
+        run: bash tests/selection/namespace_policy_controller.sh remove
+      - name: Remove only this job's AppArmor profile after its consumers exited
+        if: always()
+        shell: bash
+        run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,0 +1,653 @@
+{
+  "base_sha": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+  "approved_tips": [
+    "284d002ef5270a920e85db24bd0d58a4206949cf",
+    "0f579a7ea376ab508311e4ee04804fb9c88b25b3"
+  ],
+  "maps": {
+    "nodes": {
+      "selection.contract": {
+        "before": {
+          "depends_on": [],
+          "id": "selection.contract",
+          "owner_paths": [
+            "tests/selection",
+            "scripts/test-plan.py",
+            "scripts/test_selection.py",
+            "scripts/test_selection_realization.py",
+            "scripts/test_selection_subset.py",
+            "cmake/NostrcTestInventory.cmake",
+            "gnome/groundhog/TestInventory.cmake"
+          ]
+        },
+        "after": {
+          "depends_on": [],
+          "id": "selection.contract",
+          "owner_paths": [
+            "tests/selection",
+            "scripts/test-plan.py",
+            "scripts/test_selection.py",
+            "scripts/test_selection_realization.py",
+            "scripts/test_selection_subset.py",
+            "scripts/test_selection_macos_nip5f_tcp.py",
+            "cmake/NostrcTestInventory.cmake",
+            "gnome/groundhog/TestInventory.cmake"
+          ]
+        }
+      }
+    },
+    "checks": {
+      "supported.nips.nip5f.signer_endpoint": {
+        "before": {
+          "nodes": [
+            "execution.core",
+            "execution.grotto",
+            "execution.groundhog",
+            "nip5f",
+            "nip5f.test_inputs",
+            "grotto.daemon",
+            "grotto.gui",
+            "nip5f.fixture_inputs"
+          ],
+          "profiles": [
+            "core.linux",
+            "core.linux.asan",
+            "core.macos.asan",
+            "grotto.linux",
+            "grotto.linux.asan_ubsan",
+            "groundhog.linux",
+            "groundhog.mdk011",
+            "groundhog.mdk08"
+          ],
+          "kind": "ctest",
+          "cost": "ordinary",
+          "requirement": "blocking",
+          "expected_outcome": "pass",
+          "ctest_tests": {
+            "groundhog.linux": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux": [
+              "test_nip5f_tcp"
+            ],
+            "core.linux": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux.asan_ubsan": [
+              "test_nip5f_tcp"
+            ],
+            "core.linux.asan": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk08": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk011": [
+              "test_nip5f_tcp"
+            ],
+            "core.macos.asan": [
+              "test_nip5f_tcp"
+            ]
+          },
+          "build_targets": [
+            "test_nip5f_tcp",
+            "test_nip5f_approver",
+            "grotto-daemon",
+            "grotto-schemas"
+          ],
+          "runtime_inputs": [],
+          "requires": [
+            "signer_endpoint"
+          ]
+        },
+        "after": {
+          "nodes": [
+            "execution.core",
+            "execution.grotto",
+            "execution.groundhog",
+            "nip5f",
+            "nip5f.test_inputs",
+            "grotto.daemon",
+            "grotto.gui",
+            "nip5f.fixture_inputs"
+          ],
+          "profiles": [
+            "core.linux",
+            "core.linux.asan",
+            "grotto.linux",
+            "grotto.linux.asan_ubsan",
+            "groundhog.linux",
+            "groundhog.mdk011",
+            "groundhog.mdk08"
+          ],
+          "kind": "ctest",
+          "cost": "ordinary",
+          "requirement": "blocking",
+          "expected_outcome": "pass",
+          "ctest_tests": {
+            "groundhog.linux": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux": [
+              "test_nip5f_tcp"
+            ],
+            "core.linux": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux.asan_ubsan": [
+              "test_nip5f_tcp"
+            ],
+            "core.linux.asan": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk08": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk011": [
+              "test_nip5f_tcp"
+            ]
+          },
+          "build_targets": [
+            "test_nip5f_tcp",
+            "test_nip5f_approver",
+            "grotto-daemon",
+            "grotto-schemas"
+          ],
+          "runtime_inputs": [],
+          "requires": [
+            "signer_endpoint"
+          ]
+        }
+      }
+    },
+    "workflow_jobs": {
+      ".github/workflows/dependency-tests.yml:grotto_asan": {
+        "before": {
+          "matrix_source": "",
+          "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
+        },
+        "after": {
+          "matrix_source": "",
+          "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
+        }
+      },
+      ".github/workflows/dependency-tests.yml:mdk011": {
+        "before": {
+          "matrix_source": "",
+          "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
+        },
+        "after": {
+          "matrix_source": "",
+          "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
+        }
+      },
+      ".github/workflows/dependency-tests.yml:core_asan": {
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
+          "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
+          "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:core_native": {
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
+          "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
+          "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
+          "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
+          "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:select": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
+          "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
+          "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:core": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
+          "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
+          "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:grotto": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
+          "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
+          "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:groundhog": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
+          "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
+          "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:mdk08": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
+          "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
+          "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:libgo": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
+          "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
+          "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:libgo_native": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
+          "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
+          "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:policy": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
+          "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
+          "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:broad": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
+          "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
+          "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:gate": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "0d66cb4e7558d91115a9d3a61a55d7378bbfc85a3ca02304bc812f1789007ab3",
+          "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "d716dbc492425391da996cc4bc475805de34d891a9065dd8126a7839b544d0b1",
+          "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      },
+      ".github/workflows/dependency-worker.yml:execute": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "d339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "bbd663a642a0d219bbe87ca291263bd857ff1a0d1ce892c42a26c07a070e48db",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:policy_regressions": {
+        "before": {
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
+          "matrix_source": "",
+          "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
+          "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+        },
+        "after": {
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
+          "matrix_source": "",
+          "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        }
+      }
+    }
+  },
+  "runtime_inputs": [
+    "{source}/scripts/test_selection_macos_nip5f_tcp.py",
+    "{source}/tests/selection/test_macos_nip5f_tcp_applicability.py",
+    "{source}/tests/selection/test_macos_nip5f_tcp_engine.py",
+    "{source}/tests/selection/test_normal_transport.py",
+    "{source}/tests/selection/post608c_integration_support.py",
+    "{source}/tests/selection/fixtures/post608c_integration_20261024.json",
+    "{source}/tests/selection/test_post608c_integration.py"
+  ],
+  "added_path_rules": [
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_macos_nip5f_tcp.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact legacy macOS NIP-5F TCP applicability changes require broad validation."
+    }
+  ],
+  "added_coverage_gaps": [
+    {
+      "id": "core_macos_asan_nip5f_tcp_unconfigured",
+      "profile": "core.macos.asan",
+      "check": "supported.nips.nip5f.signer_endpoint",
+      "registrations": [
+        "test_nip5f_tcp"
+      ],
+      "reason": "Legacy nostrc-ci macOS ASan/UBSan (BUILD_APPS=OFF) provisions no NIP-5F TCP endpoint or token; test_nip5f_tcp then exits 77 (SKIP_RETURN_CODE 77), which never validated a live signer. Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage.",
+      "tracking": "nostrc-0cfsg.36.9",
+      "binding": {
+        "source_sha256": "618c01fdb6d46b0eae8902f1cf543472cac0e5691cbef4945502210a476acbe0",
+        "registration_sha256": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+        "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+        "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
+        "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
+      }
+    }
+  ],
+  "sources": {
+    ".github/workflows/dependency-tests.yml": {
+      "before_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+      "after_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+      "edits": [
+        {
+          "before": "      - uses: actions/checkout@v4\n        with:\n          ref: ${{ needs.select.outputs.sha }}\n          fetch-depth: 0\n          persist-credentials: false\n      - name: Record existing publisher ownership (not a validation attestation)\n        if: needs.select.outputs.run != 'true'\n        env:\n",
+          "after": "      - uses: actions/checkout@v4\n        with:\n          ref: ${{ needs.select.outputs.sha }}\n          fetch-depth: 0\n          # Normal portable receipts verify sealed source claims against this\n          # exact tested commit including its submodule gitlinks.\n          submodules: recursive\n          persist-credentials: false\n      - name: Record existing publisher ownership (not a validation attestation)\n        if: needs.select.outputs.run != 'true'\n        env:\n"
+        }
+      ]
+    },
+    ".github/workflows/dependency-worker.yml": {
+      "before_sha256": "b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214",
+      "after_sha256": "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac",
+      "edits": [
+        {
+          "before": "        shell: bash\n        # Unconditional (failure/cancellation too); a never-provisioned lane\n        # records not_provisioned. Any surviving consumer or policy delta fails.\n        run: bash tests/selection/namespace_apparmor_teardown.sh \"$RUNNER_TEMP/dependency/namespace-apparmor\"\n      - name: Retain incomplete evidence on failure or cancellation\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n",
+          "after": "        shell: bash\n        # Unconditional (failure/cancellation too); a never-provisioned lane\n        # records not_provisioned. Any surviving consumer or policy delta fails.\n        run: bash tests/selection/namespace_apparmor_teardown.sh \"$RUNNER_TEMP/dependency/namespace-apparmor\"\n      # Only after the pidns gate exited and the teardown above removed this job's\n      # profile. Profiles without the authored normal contract are a no-op. The\n      # raw receipt stays the lane receipt unless in-place AND relocated portable\n      # requalification pass; then receipt.json is atomically replaced (raw bytes\n      # kept as original-native-receipt.json and inside the sealed bundle).\n      - name: Qualify normal lane after pidns exit and AppArmor teardown\n        if: success() && runner.os == 'Linux'\n        shell: bash\n        run: |\n          python3 scripts/test_selection_execution.py worker-qualify --repo \"$GITHUB_WORKSPACE\" \\\n            --plan \"$RUNNER_TEMP/dependency/plan.json\" --profile \"$PROFILE\" \\\n            --evidence-root \"$RUNNER_TEMP/dependency/evidence\" \\\n            --apparmor-evidence \"$RUNNER_TEMP/dependency/namespace-apparmor\" \\\n            --receipts-dir \"$RUNNER_TEMP/dependency/receipts/$PROFILE\"\n      - name: Retain incomplete evidence on failure or cancellation\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n"
+        }
+      ]
+    },
+    ".github/workflows/dependency_contract.py": {
+      "before_sha256": "df616033931dcf2a8e44ea769ba6169e67396a58e31c01ea4c659a586e3f826b",
+      "after_sha256": "039960034695ae9b3bacca17bb6598c1c798b711b1a54081fe4703ab9995bd0e",
+      "edits": [
+        {
+          "before": "            return 0\n        needs = selection.read_json(args.needs)\n        if args.command == \"aggregate\":\n            plan = selection.read_json(directory / \"plan.json\")\n            receipts = [selection.read_json(p) for p in sorted((directory / \"receipts\").glob(\"**/receipt.json\"))]\n            broad_path = directory / \"broad.json\"\n            broad_receipt = selection.read_json(broad_path) if broad_path.exists() else None\n            result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)\n            selection.write_json(directory / \"validation.json\", result)\n        else:\n            release = selection.read_json(directory / \"release.json\")\n            expected_release = selection.release_plan(ROOT, policy, head=args.sha, tag=release['tag'],\n",
+          "after": "            return 0\n        needs = selection.read_json(args.needs)\n        if args.command == \"aggregate\":\n            plan = selection.read_json(directory / \"plan.json\")\n            broad_path = directory / \"broad.json\"\n            broad_receipt = selection.read_json(broad_path) if broad_path.exists() else None\n            # This job alone owns the aggregate result. Exactly one receipt.json per\n            # lane artifact; normal receipts resolve only inside their own verified\n            # portable bundle against this exact-SHA (submodule) checkout.\n            from test_selection_execution import transported_receipts\n            paths = sorted((directory / \"receipts\").glob(\"**/receipt.json\"))\n            with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:\n                result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)\n            selection.write_json(directory / \"validation.json\", result)\n        else:\n            release = selection.read_json(directory / \"release.json\")\n            expected_release = selection.release_plan(ROOT, policy, head=args.sha, tag=release['tag'],\n"
+        }
+      ]
+    },
+    "scripts/test-full-gate.sh": {
+      "before_sha256": "54bce208f2f91bc510cc7ee7bcfd9ae927f3314349dff6d832bc32c5a1849baf",
+      "after_sha256": "28f1fe3e905b39d54944848ad4538df66a38d7eb58a379bb021455bcf1dd2120",
+      "edits": [
+        {
+          "before": "cp \"$scripts/sanitizer-gate-ci.py\" \"$repo/scripts/sanitizer-gate-ci.py\"\ncp \"$scripts/test_selection.py\" \"$repo/scripts/test_selection.py\"\ncp \"$scripts/test_selection_realization.py\" \"$repo/scripts/test_selection_realization.py\"\ncp \"$scripts/test_selection_subset.py\" \"$repo/scripts/test_selection_subset.py\"\nmkdir -p \"$repo/tests/selection\"\ncp \"$scripts/../tests/selection/inventory.json\" \"$repo/tests/selection/inventory.json\"\ncat > \"$repo/scripts/test-gate.sh\" <<'GATE'\n#!/bin/bash\n",
+          "after": "cp \"$scripts/sanitizer-gate-ci.py\" \"$repo/scripts/sanitizer-gate-ci.py\"\ncp \"$scripts/test_selection.py\" \"$repo/scripts/test_selection.py\"\ncp \"$scripts/test_selection_realization.py\" \"$repo/scripts/test_selection_realization.py\"\ncp \"$scripts/test_selection_subset.py\" \"$repo/scripts/test_selection_subset.py\"\ncp \"$scripts/test_selection_macos_nip5f_tcp.py\" \"$repo/scripts/test_selection_macos_nip5f_tcp.py\"\nmkdir -p \"$repo/tests/selection\"\ncp \"$scripts/../tests/selection/inventory.json\" \"$repo/tests/selection/inventory.json\"\ncat > \"$repo/scripts/test-gate.sh\" <<'GATE'\n#!/bin/bash\n"
+        }
+      ]
+    },
+    "scripts/test-test-gate.sh": {
+      "before_sha256": "9724ff426e08592dc3fd48b56f9483c21f95edb34e0f6f220c31ec3d9a9ee876",
+      "after_sha256": "c08876036fa5119cb262e83b283bb8136c2871b53e56e337a733b402bd8a4e48",
+      "edits": [
+        {
+          "before": "git('config', 'user.name', 'Gate Test')\ngit('config', 'user.email', 'gate@example.invalid')\nfor path in ('scripts/test-gate.sh', 'scripts/test-plan.py', 'scripts/test_selection.py',\n             'scripts/test_selection_realization.py', 'scripts/test_selection_subset.py',\n             'scripts/check-macos-keychain.sh',\n             'cmake/NostrcTestInventory.cmake'):\n    dest = repo / path\n    dest.parent.mkdir(parents=True, exist_ok=True)\n",
+          "after": "git('config', 'user.name', 'Gate Test')\ngit('config', 'user.email', 'gate@example.invalid')\nfor path in ('scripts/test-gate.sh', 'scripts/test-plan.py', 'scripts/test_selection.py',\n             'scripts/test_selection_realization.py', 'scripts/test_selection_subset.py',\n             'scripts/test_selection_macos_nip5f_tcp.py',\n             'scripts/check-macos-keychain.sh',\n             'cmake/NostrcTestInventory.cmake'):\n    dest = repo / path\n    dest.parent.mkdir(parents=True, exist_ok=True)\n"
+        }
+      ]
+    },
+    "scripts/test_selection.py": {
+      "before_sha256": "55da78c2d6110740d6231c48a8f4a4d166e83c956abf5a1f3909ab1d3bf06213",
+      "after_sha256": "52cef8325a4521396964fcad82ddc0bbb8ad9eacfc8484712b64585953dc5eba",
+      "edits": [
+        {
+          "before": "import tempfile\nfrom collections import deque\n\nimport test_selection_subset as subset\n\nSCHEMA_VERSION = 1\nID = re.compile(r\"[a-z0-9_]+(?:\\.[a-z0-9_]+)*\\Z\")\nSEMVER = re.compile(r\"(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?\\Z\")\n",
+          "after": "import tempfile\nfrom collections import deque\n\nimport test_selection_subset as subset\nimport test_selection_macos_nip5f_tcp as macos_tcp\n\nSCHEMA_VERSION = 1\nID = re.compile(r\"[a-z0-9_]+(?:\\.[a-z0-9_]+)*\\Z\")\nSEMVER = re.compile(r\"(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?\\Z\")\n"
+        },
+        {
+          "before": "            if isinstance(exclusion, dict) and exclusion.get(\"authority\") == NONMEMBER_AUTHORITY:\n                if contract is None:\n                    errors.append(f\"{lane_id}: unsupported diagnostic nonmember profile\")\n                continue\n            known = next((g for g in policy.get(\"coverage_gaps\", []) if g.get(\"id\") == \"libgo_macos_asan_stress_exclusion\"), None)\n            if (not isinstance(exclusion, dict) or known is None\n                    or lane[\"profile\"] != \"libgo.macos.asan\"\n                    or exclusion.get(\"id\") != \"libgo_macos_asan_stress_exclusion\"\n",
+          "after": "            if isinstance(exclusion, dict) and exclusion.get(\"authority\") == NONMEMBER_AUTHORITY:\n                if contract is None:\n                    errors.append(f\"{lane_id}: unsupported diagnostic nonmember profile\")\n                continue\n            if isinstance(exclusion, dict) and exclusion.get(\"authority\") == macos_tcp.AUTHORITY:\n                # Separate exact authority; the libgo record below stays immutable.\n                try:\n                    macos_tcp.validate_receipt_record(exclusion, policy, lane[\"profile\"])\n                except macos_tcp.ApplicabilityError as exc:\n                    errors.append(f\"{lane_id}: {exc}\")\n                continue\n            known = next((g for g in policy.get(\"coverage_gaps\", []) if g.get(\"id\") == \"libgo_macos_asan_stress_exclusion\"), None)\n            if (not isinstance(exclusion, dict) or known is None\n                    or lane[\"profile\"] != \"libgo.macos.asan\"\n                    or exclusion.get(\"id\") != \"libgo_macos_asan_stress_exclusion\"\n"
+        }
+      ]
+    },
+    "scripts/test_selection_execution.py": {
+      "before_sha256": "feaf633087ce43a622316f98481b0f47ad9d01f91f201e6f566434a42d8c41ae",
+      "after_sha256": "70714e1c3978e67d31ff1bc83d83dc6c04c75a559a354e812eb5e0b40f3e8526",
+      "edits": [
+        {
+          "before": "\nRaw custody/signer/MDK receipts retain their diagnostic flags. This contract\nrechecks physical facts and references those original sealed bytes; it never\nchanges flags, grants rollout authority, or admits an omission witness.\n\"\"\"\nimport hashlib\nfrom pathlib import Path\n\nKIND = 'normal_execution_v1'\nFIELD = 'normal_execution'\nMARKER = dict(schema_version=1, custody='linux_pidns_v1',\n              audit_scope='full_configured_universe', registration_policy='all_owned_and_executed')\n\n\ndef require(value, message):\n    if not value:\n",
+          "after": "\nRaw custody/signer/MDK receipts retain their diagnostic flags. This contract\nrechecks physical facts and references those original sealed bytes; it never\nchanges flags, grants rollout authority, or admits an omission witness.\n\nPortable transport (nostrc-0cfsg.36.8): the production worker qualifies in\nplace only after the outer pidns supervisor exited and the per-job AppArmor\nprofile was torn down, packs the exact retained bytes into one bounded framed\narchive, re-qualifies that archive from a fresh relocated extraction and only\nthen atomically replaces its lane receipt. The independent aggregate resolves\nevery original (logical) path through a map derived from the admitted raw\nsealed evidence into its own private extraction; it never opens worker paths,\nnever falls back to them, and never rewrites a path string. Retained source\nclaims are checked against the aggregate's own exact checkout (submodules\nincluded). Trust is limited to the same workflow run's artifacts, plan and\ncheckout: the archive digest is integrity, not external authenticity.\n\"\"\"\nimport contextlib\nimport hashlib\nimport json\nimport os\nimport re\nimport shutil\nimport stat\nimport subprocess\nimport sys\nimport tempfile\nfrom pathlib import Path, PurePosixPath\n\nKIND = 'normal_execution_v1'\nFIELD = 'normal_execution'\nMARKER = dict(schema_version=1, custody='linux_pidns_v1',\n              audit_scope='full_configured_universe', registration_policy='all_owned_and_executed')\n\n\nAPPARMOR_FILES = ('setup.json', 'teardown.json', 'profiles-before.txt', 'profiles-after.txt')\n\n\ndef require(value, message):\n    if not value:\n"
+        },
+        {
+          "before": "                or any(_omission(item) for item in value.values()))\n    return isinstance(value, list) and any(_omission(item) for item in value)\n\n\ndef retained(path):\n    path = Path(path)\n    require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file() and not path.is_symlink(),\n            'unsafe/missing retained file: ' + str(path))\n    return dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())\n\n\ndef validate_mdk_graph(realization, proof):\n    \"\"\"Only the original source-authored image fixtures/peer argv use Docker.\"\"\"\n",
+          "after": "                or any(_omission(item) for item in value.values()))\n    return isinstance(value, list) and any(_omission(item) for item in value)\n\n\nclass Locator:\n    \"\"\"Original logical paths -> physical files. ``roots=None`` is in place.\"\"\"\n    def __init__(self, roots=None):\n        self.roots = roots\n        self.seal = self.real = self.result = None\n\n    def path(self, logical):\n        logical = str(logical)\n        require(os.path.isabs(logical) and os.path.normpath(logical) == logical,\n                'non-canonical logical evidence path: ' + logical)\n        if self.roots is None:\n            return Path(logical)\n        hits = [root for root in self.roots if logical == root or logical.startswith(root + os.sep)]\n        require(len(hits) == 1, 'evidence path outside the transported roots: ' + logical)\n        return self.roots[hits[0]].joinpath(*Path(logical).relative_to(hits[0]).parts)\n\n\ndef _file(locator, logical):\n    path = (locator or Locator()).path(logical)\n    require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file() and not path.is_symlink(),\n            'unsafe/missing retained file: ' + str(logical))\n    return path\n\n\ndef _json(locator, logical):\n    return json.loads(_file(locator, logical).read_text())\n\n\ndef _sha(path):\n    digest = hashlib.sha256()\n    with open(path, 'rb') as stream:\n        for block in iter(lambda: stream.read(1 << 20), b''):\n            digest.update(block)\n    return digest.hexdigest()\n\n\ndef retained(path, locator=None):\n    return dict(path=str(path), sha256=_sha(_file(locator, path)))\n\n\ndef _verify_native(public, locator):\n    \"\"\"verify_native_public_receipt with the logical/physical roots kept apart.\"\"\"\n    from test_selection_custody import attest_retained_evidence\n    from test_selection_services import NATIVE_ROOTS, _native_files\n    final = public.get('native_custody_final')\n    require(isinstance(final, dict) and set(final) == {'kind', 'evidence_root', 'seal_sha256'}\n            and final.get('kind') == 'native_kernel_custody_v1', 'native kernel custody final seal missing or malformed')\n    work = Path(final['evidence_root'])\n    physical = locator.path(work)\n    require(physical.is_absolute() and physical.resolve(strict=True) == physical and physical.is_dir(),\n            'native evidence root is not canonical')\n    original = {key: value for key, value in public.items() if key != 'native_custody_final'}\n    backend = original.get('backend_receipt', original)\n    require(Path(backend.get('build_dir', '')).parent == work and _json(locator, work / 'receipt.json') == original,\n            'native public receipt differs from original execution binding')\n    expected = final['seal_sha256']\n    seal_path = _file(locator, work / 'native-seal.json')\n    require(isinstance(expected, str) and re.fullmatch(r'[0-9a-f]{64}', expected) and _sha(seal_path) == expected,\n            'native finalizer seal bytes changed')\n    seal = json.loads(seal_path.read_text())\n    require(_native_files(physical) == seal['files'], 'native top-level retained evidence changed after seal')\n    locator.result = _json(locator, work / 'receipt.json')\n    verification = attest_retained_evidence(physical, locator.result, seal, roots=NATIVE_ROOTS, claim_root=work)\n    for name, value in seal['source_claims'].items():\n        kept = physical / 'source-inputs' / (hashlib.sha256(name.encode()).hexdigest() + '.input')\n        require(not kept.is_symlink() and kept.is_file() and _sha(kept) == value,\n                'native retained source input changed after finalizer seal')\n    require(verification['status'] == 'verified', 'native retained evidence changed after finalizer seal')\n    observed = {'schema_version': 1, 'status': 'verified', 'seal_sha256': expected,\n                'retained_evidence': verification, 'complete': False, 'complete_gate_eligible': False}\n    require(_json(locator, work / 'native-final.json') == observed,\n            'native final verification differs from retained evidence')\n    locator.seal = seal\n    return seal\n\n\ndef validate_mdk_graph(realization, proof):\n    \"\"\"Only the original source-authored image fixtures/peer argv use Docker.\"\"\"\n"
+        },
+        {
+          "before": "            require(child.get('sanitizer_reports') == [] and child.get('exit_code') == 0,\n                    'signer sanitizer/graceful shutdown failed')\n\n\ndef qualify(policy, plan, public_path, adapter_path, apparmor_dir=None):\n    from test_selection import (read_json, digest, validate_plan, coverage_state,\n                                validate_default_build_evidence, validate_phase_parallelism_evidence)\n    import test_selection_subset as subset\n    import test_selection_realization as backend_api\n    from test_selection_services import verify_native_public_receipt\n    validate_metadata(policy)\n    validate_plan(plan, policy)\n    public_ref, adapter_ref = retained(public_path), retained(adapter_path)\n    public, adapter = read_json(public_path), read_json(adapter_path)\n    require(public.get('receipt_kind') not in ('lane_failure_v1', KIND), 'not an original execution receipt')\n    pid = public.get('profile')\n    lane = next((item for item in plan['lanes'] if item['profile'] == pid), None)\n    require(lane is not None and policy['profiles'][pid].get(FIELD) == MARKER, 'profile has no authored normal contract')\n",
+          "after": "            require(child.get('sanitizer_reports') == [] and child.get('exit_code') == 0,\n                    'signer sanitizer/graceful shutdown failed')\n\n\ndef qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locator=None, transport=None):\n    from test_selection import (read_json, digest, validate_plan, coverage_state,\n                                validate_default_build_evidence, validate_phase_parallelism_evidence)\n    import test_selection_subset as subset\n    import test_selection_realization as backend_api\n    from test_selection_services import verify_native_public_receipt\n    validate_metadata(policy)\n    validate_plan(plan, policy)\n    locator = locator or Locator()\n    public_ref, adapter_ref = retained(public_path, locator), retained(adapter_path, locator)\n    public, adapter = _json(locator, public_path), _json(locator, adapter_path)\n    require(public.get('receipt_kind') not in ('lane_failure_v1', KIND), 'not an original execution receipt')\n    pid = public.get('profile')\n    lane = next((item for item in plan['lanes'] if item['profile'] == pid), None)\n    require(lane is not None and policy['profiles'][pid].get(FIELD) == MARKER, 'profile has no authored normal contract')\n"
+        },
+        {
+          "before": "            'normal full-profile qualification requires a fresh committed broad plan')\n    require(not _omission(public) and not subset.active_contracts(policy).get(pid),\n            'historical omission authority cannot become normal')\n    require(not public.get('baseline_exclusions'), 'omitted registrations cannot become normal')\n    verify_native_public_receipt(public)\n    work = Path(public['native_custody_final']['evidence_root'])\n    require(Path(public_path) == work / 'native-receipt.json', 'public receipt is not the post-exit adapter output')\n    require(adapter.get('adapter') == 'test-gate' and adapter.get('custody_mode') == 'pidns'\n            and adapter.get('status') == 'partial' and not adapter.get('errors') and not adapter.get('bypasses'),\n",
+          "after": "            'normal full-profile qualification requires a fresh committed broad plan')\n    require(not _omission(public) and not subset.active_contracts(policy).get(pid),\n            'historical omission authority cannot become normal')\n    require(not public.get('baseline_exclusions'), 'omitted registrations cannot become normal')\n    _verify_native(public, locator)\n    if locator.roots is None:\n        verify_native_public_receipt(public)  # in place, the original verifier must agree\n    work = Path(public['native_custody_final']['evidence_root'])\n    require(Path(public_path) == work / 'native-receipt.json', 'public receipt is not the post-exit adapter output')\n    require(adapter.get('adapter') == 'test-gate' and adapter.get('custody_mode') == 'pidns'\n            and adapter.get('status') == 'partial' and not adapter.get('errors') and not adapter.get('bypasses'),\n"
+        },
+        {
+          "before": "    extra = {}\n    if adapter.get('namespace_apparmor_profile'):\n        require(apparmor_dir is not None, 'AppArmor teardown evidence required')\n        directory = Path(apparmor_dir)\n        for name in ('setup.json', 'teardown.json', 'profiles-before.txt', 'profiles-after.txt'):\n            extra[name] = retained(directory / name)\n        require(read_json(directory / 'setup.json').get('name') == adapter['namespace_apparmor_profile']\n                and read_json(directory / 'teardown.json').get('status') == 'removed'\n                and read_json(directory / 'teardown.json').get('kind') == 'namespace_apparmor_teardown_v1'\n                and (directory / 'profiles-before.txt').read_bytes() == (directory / 'profiles-after.txt').read_bytes(),\n                'owned AppArmor profile teardown not proved')\n    service_caps = set(profile.get('capabilities', [])) & {'display', 'private_bus'}\n    if service_caps:\n        service_state = read_json(work / 'services/services.json')\n        require(service_state.get('capabilities') == sorted(service_caps) and service_state.get('status') == 'passed'\n                and service_state.get('private_home_removed') is True and not service_state.get('cleanup_errors')\n                and service_state.get('services') and all(item.get('reaped') is True\n                    and item.get('exit_code') in (0, -15) and not item.get('forced_exit')\n                    for item in service_state['services']), 'private service setup/cleanup missing')\n    raw = public.get('backend_receipt', {})\n    resolved = read_json(work / 'resolved.json')\n    real = read_json(work / 'build/nostrc-test-realization.json')\n    require(all(value.get('diagnostic_boundary') == 'linux_pidns_v1' for value in (public, raw, resolved, real))\n            and backend_api._profile_fingerprint(real) == real['profile_fingerprint'], 'unbound/non-pidns execution')\n    require(real.get('profile_id') == resolved.get('profile_id') == raw.get('profile_id') == pid\n            and real.get('configuration') == raw.get('configuration') == profile['build_type']\n",
+          "after": "    extra = {}\n    if adapter.get('namespace_apparmor_profile'):\n        require(apparmor_dir is not None, 'AppArmor teardown evidence required')\n        directory = Path(apparmor_dir)\n        for name in APPARMOR_FILES:\n            extra[name] = retained(directory / name, locator)\n        teardown = _json(locator, directory / 'teardown.json')\n        require(_json(locator, directory / 'setup.json').get('name') == adapter['namespace_apparmor_profile']\n                and teardown.get('status') == 'removed' and teardown.get('kind') == 'namespace_apparmor_teardown_v1'\n                and _file(locator, directory / 'profiles-before.txt').read_bytes()\n                == _file(locator, directory / 'profiles-after.txt').read_bytes(),\n                'owned AppArmor profile teardown not proved')\n    service_caps = set(profile.get('capabilities', [])) & {'display', 'private_bus'}\n    if service_caps:\n        service_state = _json(locator, work / 'services/services.json')\n        require(service_state.get('capabilities') == sorted(service_caps) and service_state.get('status') == 'passed'\n                and service_state.get('private_home_removed') is True and not service_state.get('cleanup_errors')\n                and service_state.get('services') and all(item.get('reaped') is True\n                    and item.get('exit_code') in (0, -15) and not item.get('forced_exit')\n                    for item in service_state['services']), 'private service setup/cleanup missing')\n    raw = public.get('backend_receipt', {})\n    resolved = _json(locator, work / 'resolved.json')\n    real = _json(locator, work / 'build/nostrc-test-realization.json')\n    locator.real = real\n    require(all(value.get('diagnostic_boundary') == 'linux_pidns_v1' for value in (public, raw, resolved, real))\n            and backend_api._profile_fingerprint(real) == real['profile_fingerprint'], 'unbound/non-pidns execution')\n    require(real.get('profile_id') == resolved.get('profile_id') == raw.get('profile_id') == pid\n            and real.get('configuration') == raw.get('configuration') == profile['build_type']\n"
+        },
+        {
+          "before": "                     '--parallel', str(raw['execution_parallelism']['test'])]\n    argv = process['argv']\n    require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'\n            and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')\n    require((directory / 'ctest-indices.txt').read_text() == '0,0,1,' + ','.join(str(i + 1) for i in range(len(tests))) + '\\n',\n            'physical CTest selection does not cover whole registration universe')\n    logfile = directory / 'ctest.log'\n    require(logfile.is_relative_to(work) and hashlib.sha256(logfile.read_bytes()).hexdigest() == process.get('output_sha256'),\n            'CTest output binding differs')\n    require(not any(marker in logfile.read_bytes() for marker in\n                    (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')\n    _signer(raw, profile, post, real['repo_root'])\n    if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:\n        from test_selection_mdk import validate_runtime\n",
+          "after": "                     '--parallel', str(raw['execution_parallelism']['test'])]\n    argv = process['argv']\n    require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'\n            and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')\n    require(_file(locator, directory / 'ctest-indices.txt').read_text() == '0,0,1,' + ','.join(str(i + 1) for i in range(len(tests))) + '\\n',\n            'physical CTest selection does not cover whole registration universe')\n    logfile = directory / 'ctest.log'\n    require(logfile.is_relative_to(work), 'CTest output outside the sealed lane')\n    log_bytes = _file(locator, logfile).read_bytes()\n    require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')\n    require(not any(marker in log_bytes for marker in\n                    (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')\n    _signer(raw, profile, post, real['repo_root'])\n    if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:\n        from test_selection_mdk import validate_runtime\n"
+        },
+        {
+          "before": "                  normal_contract=MARKER, public_evidence=public_ref, adapter_evidence=adapter_ref,\n                  apparmor_evidence=extra, executed_registrations=closure,\n                  full_audit_hashes=dict(pre=pre['audit_hash'], post=post['audit_hash']),\n                  **coverage_state(policy))\n    result['qualification_hash'] = digest(result)\n    return result\n\n\ndef validate_receipt(policy, plan, receipt):\n    from test_selection import read_json\n    for field in ('public_evidence', 'adapter_evidence'):\n        require(retained(receipt[field]['path']) == receipt[field], 'retained evidence changed: ' + field)\n    apparmor = receipt.get('apparmor_evidence', {})\n    directory = str(Path(apparmor['setup.json']['path']).parent) if apparmor else None\n    expected = qualify(policy, plan, receipt['public_evidence']['path'], receipt['adapter_evidence']['path'], directory)\n    require(receipt == expected, 'normal qualification changed/forged')\n    return read_json(receipt['public_evidence']['path'])\n",
+          "after": "                  normal_contract=MARKER, public_evidence=public_ref, adapter_evidence=adapter_ref,\n                  apparmor_evidence=extra, executed_registrations=closure,\n                  full_audit_hashes=dict(pre=pre['audit_hash'], post=post['audit_hash']),\n                  **coverage_state(policy))\n    if transport is not None:\n        result['transport'] = transport\n    result['qualification_hash'] = digest(result)\n    return result\n\n\ndef validate_receipt(policy, plan, receipt):\n    if 'transport' in receipt or _PORTABLE_ONLY:\n        # Aggregation: only a receipt loaded from its own verified bundle; no\n        # fallback to (or acceptance of) original worker paths.\n        key = receipt.get('qualification_hash')\n        require(key not in _LOAD_ERRORS, 'portable bundle refused: ' + str(_LOAD_ERRORS.get(key)))\n        entry = _LOADED.get(key)\n        require(entry is not None and entry['receipt'] == receipt and 'transport' in receipt,\n                'normal receipt was not loaded from its verified portable bundle')\n        expected = qualify(policy, plan, receipt['public_evidence']['path'], receipt['adapter_evidence']['path'],\n                           entry['apparmor'], locator=entry['locator'], transport=entry['transport'])\n        require(receipt == expected, 'normal qualification changed/forged')\n        verify_source_closure(entry['locator'], entry['repo'], plan)\n        return _json(entry['locator'], receipt['public_evidence']['path'])\n    for field in ('public_evidence', 'adapter_evidence'):\n        require(retained(receipt[field]['path']) == receipt[field], 'retained evidence changed: ' + field)\n    apparmor = receipt.get('apparmor_evidence', {})\n    directory = str(Path(apparmor['setup.json']['path']).parent) if apparmor else None\n    expected = qualify(policy, plan, receipt['public_evidence']['path'], receipt['adapter_evidence']['path'], directory)\n    require(receipt == expected, 'normal qualification changed/forged')\n    return _json(None, receipt['public_evidence']['path'])\n\n\n# ---------------------------------------------------------------- transport --\nTRANSPORT_FORMAT = 'nostrc_normal_transport_v1'\nARCHIVE = 'normal-transport.bin'\nORIGINAL = 'original-native-receipt.json'\nMAGIC = b'NOSTRC-NORMAL-TRANSPORT-1\\n'\nLIMITS = dict(archive_bytes=8 << 30, manifest_bytes=64 << 20, members=400_000, name_bytes=1024,\n              link_bytes=1024, receipt_bytes=16 << 20, headroom_bytes=256 << 20)\n_LOADED, _LOAD_ERRORS = {}, {}\n_PORTABLE_ONLY = 0\n# Only what qualification reads and the native seal covers travels; anything\n# else in the lane stays in the separately retained raw evidence artifact.\nLANE_FILES = ('receipt.json', 'resolved.json', 'resolve.log', 'run.log', 'lane.log',\n              'native-seal.json', 'native-final.json', 'native-receipt.json')\nLANE_ROOTS = ('build', 'evidence', 'services', 'source-inputs')\n\n\ndef _roots(public_path):\n    \"\"\"Logical roots fixed by the sealed public receipt path (worker layout only).\"\"\"\n    public = Path(str(public_path))\n    work = public.parent\n    require(public.name == 'native-receipt.json' and os.path.isabs(str(public)) and os.path.normpath(str(public)) == str(public)\n            and work.name.startswith('lane-') and work.parent.name.isdigit() and len(work.parts) >= 6,\n            'unsupported transported evidence root shape')\n    run = work.parents[1]\n    return dict(work=work, run=run, apparmor=run.parent.parent / 'namespace-apparmor',\n                lane=(work.parent.name, work.name))\n\n\ndef _name_ok(name):\n    pure = PurePosixPath(name)\n    return (isinstance(name, str) and 0 < len(name.encode()) <= LIMITS['name_bytes'] and not pure.is_absolute()\n            and str(pure) == name and '..' not in pure.parts and '.' not in pure.parts and '\\0' not in name\n            and pure.parts[0] in ('run', 'apparmor'))\n\n\ndef _members(run, lane, apparmor):\n    \"\"\"Exact retained bytes of the run's adapter receipt, the one lane tree and AppArmor evidence.\"\"\"\n    members, total = [], 0\n    def add(name, path):\n        nonlocal total\n        info = os.lstat(path)\n        require(_name_ok(name) and len(members) < LIMITS['members'], 'transport member limit/name refused: ' + name)\n        if stat.S_ISDIR(info.st_mode):\n            members.append(dict(name=name, kind='dir'))\n        elif stat.S_ISREG(info.st_mode):\n            total += info.st_size\n            require(total <= LIMITS['archive_bytes'], 'transport input exceeds archive limit')\n            members.append(dict(name=name, kind='file', size=info.st_size, sha256=_sha(path),\n                                executable=bool(info.st_mode & 0o111)))\n        elif stat.S_ISLNK(info.st_mode):\n            target = os.readlink(path)\n            resolved = os.path.normpath(os.path.join(os.path.dirname(name), target))\n            require(0 < len(target.encode()) <= LIMITS['link_bytes'] and not os.path.isabs(target)\n                    and resolved.split('/')[0] == name.split('/')[0] and '..' not in resolved.split('/'),\n                    'unsupported (absolute/escaping) retained symlink: ' + name)\n            members.append(dict(name=name, kind='symlink', target=target))\n        else:\n            raise ValueError('normal execution: special retained file refused: ' + name)\n    def tree(name, path):\n        add(name, path)\n        if stat.S_ISDIR(os.lstat(path).st_mode):\n            for child in sorted(os.listdir(path)):\n                tree(name + '/' + child, path / child)\n    add('run', run)\n    add('run/adapter-receipt.json', run / 'adapter-receipt.json')\n    add('run/' + lane[0], run / lane[0])\n    work = run.joinpath(*lane)\n    add('run/' + '/'.join(lane), work)\n    for name in sorted(os.listdir(work)):\n        if name in LANE_FILES:\n            add('run/%s/%s' % ('/'.join(lane), name), work / name)\n        elif name in LANE_ROOTS:\n            tree('run/%s/%s' % ('/'.join(lane), name), work / name)\n    if apparmor is not None:\n        add('apparmor', apparmor)\n        for name in APPARMOR_FILES:\n            add('apparmor/' + name, apparmor / name)\n    return members, total\n\n\ndef package(receipt_path, out_path, identity, apparmor):\n    \"\"\"Write the framed archive; returns the transport descriptor (not yet published).\"\"\"\n    roots = _roots(receipt_path)\n    members, total = _members(roots['run'], roots['lane'], roots['apparmor'] if apparmor else None)\n    manifest = (json.dumps(dict(format=TRANSPORT_FORMAT, identity=identity, members=members),\n                           sort_keys=True, separators=(',', ':')) + '\\n').encode()\n    require(len(manifest) <= LIMITS['manifest_bytes'], 'transport manifest exceeds limit')\n    size = len(MAGIC) + 8 + len(manifest) + total\n    require(shutil.disk_usage(Path(out_path).parent).free >= size + LIMITS['headroom_bytes'],\n            'insufficient space for transport archive')\n    digest = hashlib.sha256()\n    fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o644)\n    with os.fdopen(fd, 'wb') as stream:\n        def write(data):\n            digest.update(data)\n            stream.write(data)\n        write(MAGIC); write(len(manifest).to_bytes(8, 'big')); write(manifest)\n        for member in members:\n            if member['kind'] != 'file':\n                continue\n            source = (roots['run'] if member['name'].split('/')[0] == 'run' else roots['apparmor']).joinpath(\n                *member['name'].split('/')[1:])\n            check, copied = hashlib.sha256(), 0\n            with open(source, 'rb') as data:\n                for block in iter(lambda: data.read(1 << 20), b''):\n                    check.update(block); copied += len(block); write(block)\n            require(copied == member['size'] and check.hexdigest() == member['sha256'],\n                    'retained evidence changed while packing: ' + member['name'])\n    return dict(format=TRANSPORT_FORMAT, archive=ARCHIVE, archive_bytes=size, archive_sha256=digest.hexdigest(),\n                manifest_sha256=hashlib.sha256(manifest).hexdigest(), members=len(members))\n\n\ndef _validate_manifest(manifest, transport, identity, roots, apparmor):\n    require(isinstance(manifest, dict) and set(manifest) == {'format', 'identity', 'members'}\n            and manifest['format'] == TRANSPORT_FORMAT and manifest['identity'] == identity\n            and isinstance(manifest['members'], list) and len(manifest['members']) == transport['members']\n            <= LIMITS['members'], 'transport manifest identity/shape differs')\n    lane = 'run/' + '/'.join(roots['lane'])\n    allowed = {'run', 'run/adapter-receipt.json', 'run/' + roots['lane'][0]}\n    if apparmor:\n        allowed |= {'apparmor'} | {'apparmor/' + name for name in APPARMOR_FILES}\n    kinds, total = {}, 0\n    for member in manifest['members']:\n        require(isinstance(member, dict) and _name_ok(member.get('name')) and member['name'] not in kinds,\n                'unsafe/duplicate transport member')\n        name, kind = member['name'], member.get('kind')\n        inner = name[len(lane) + 1:].split('/') if name.startswith(lane + '/') else None\n        require(name in allowed or name == lane or (inner and (\n                (len(inner) == 1 and (inner[0] in LANE_FILES and kind == 'file' or inner[0] in LANE_ROOTS and kind == 'dir'))\n                or (len(inner) > 1 and inner[0] in LANE_ROOTS))),\n                'cross-lane/unadmitted transport member: ' + name)\n        require(kind == 'file' or name not in allowed or name in ('run', 'apparmor', 'run/' + roots['lane'][0]),\n                'unexpected transport member kind: ' + name)\n        require(kind != 'symlink' or (inner and len(inner) > 1), 'symlink outside sealed lane roots: ' + name)\n        parent = name.rsplit('/', 1)[0] if '/' in name else None\n        require(parent is None or kinds.get(parent) == 'dir', 'transport member parent is not a listed directory: ' + name)\n        if kind == 'dir':\n            require(set(member) == {'name', 'kind'}, 'malformed directory member')\n        elif kind == 'file':\n            require(set(member) == {'name', 'kind', 'size', 'sha256', 'executable'} and type(member['size']) is int\n                    and 0 <= member['size'] and isinstance(member['sha256'], str)\n                    and re.fullmatch(r'[0-9a-f]{64}', member['sha256']) and type(member['executable']) is bool,\n                    'malformed file member')\n            total += member['size']\n        elif kind == 'symlink':\n            target = member.get('target')\n            require(set(member) == {'name', 'kind', 'target'} and isinstance(target, str)\n                    and 0 < len(target.encode()) <= LIMITS['link_bytes'] and not os.path.isabs(target) and '\\0' not in target,\n                    'malformed symlink member')\n            resolved = os.path.normpath(os.path.join(os.path.dirname(name), target)).split('/')\n            require(resolved[0] == name.split('/')[0] and '..' not in resolved, 'transport symlink escapes its root')\n        else:\n            raise ValueError('normal execution: unsupported transport member kind')\n        kinds[name] = kind\n    require(kinds.get('run') == 'dir' and kinds.get('run/adapter-receipt.json') == 'file' and kinds.get(lane) == 'dir'\n            and (not apparmor or all(kinds.get('apparmor/' + n) == 'file' for n in APPARMOR_FILES)),\n            'transport lacks required evidence roots')\n    return total\n\n\ndef extract(archive, destination, transport, identity, roots, apparmor):\n    \"\"\"Type/size limits first, then the digest, then bounded streamed materialization (one descriptor).\"\"\"\n    fd = os.open(archive, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))\n    with os.fdopen(fd, 'rb') as stream:\n        info = os.fstat(stream.fileno())\n        require(stat.S_ISREG(info.st_mode) and type(transport.get('archive_bytes')) is int\n                and info.st_size == transport['archive_bytes'] <= LIMITS['archive_bytes'],\n                'transport archive missing/oversized/size differs')\n        digest = hashlib.sha256()\n        for block in iter(lambda: stream.read(1 << 20), b''):\n            digest.update(block)\n        require(digest.hexdigest() == transport['archive_sha256'], 'transport archive bytes differ')\n        stream.seek(0)\n        require(stream.read(len(MAGIC)) == MAGIC, 'not a normal transport archive')\n        length = int.from_bytes(stream.read(8), 'big')\n        require(length <= LIMITS['manifest_bytes'], 'transport manifest exceeds limit')\n        manifest_bytes = stream.read(length)\n        require(len(manifest_bytes) == length and hashlib.sha256(manifest_bytes).hexdigest() == transport['manifest_sha256'],\n                'transport manifest bytes differ')\n        manifest = json.loads(manifest_bytes)\n        total = _validate_manifest(manifest, transport, identity, roots, apparmor)\n        require(len(MAGIC) + 8 + length + total == info.st_size, 'transport archive length differs from manifest')\n        require(shutil.disk_usage(destination).free >= total + LIMITS['headroom_bytes'], 'insufficient extraction space')\n        links = []\n        for member in manifest['members']:\n            path = destination.joinpath(*member['name'].split('/'))\n            if member['kind'] == 'dir':\n                os.mkdir(path, 0o700)\n            elif member['kind'] == 'symlink':\n                links.append((member['target'], path))\n            else:\n                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0),\n                             0o700 if member['executable'] else 0o600)\n                check, remaining = hashlib.sha256(), member['size']\n                with os.fdopen(fd, 'wb') as output:\n                    while remaining:\n                        block = stream.read(min(remaining, 1 << 20))\n                        require(block, 'transport archive truncated')\n                        check.update(block); output.write(block); remaining -= len(block)\n                require(check.hexdigest() == member['sha256'], 'transport member bytes differ: ' + member['name'])\n        require(stream.read(1) == b'', 'trailing transport bytes')\n    for target, path in links:\n        os.symlink(target, path)\n    for target, path in links:\n        top = destination / path.relative_to(destination).parts[0]\n        require(Path(os.path.realpath(path)).is_relative_to(top), 'transport symlink resolves outside its root')\n    return manifest\n\n\ndef verify_source_closure(locator, repo, plan):\n    \"\"\"Every sealed source claim equals the same tested commit in this independent checkout.\"\"\"\n    identity = plan['source_identity']\n    require(identity.get('kind') == 'committed', 'portable normal proof requires a committed source')\n    repo = Path(repo).resolve(strict=True)\n    def git(*args):\n        return subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, check=True).stdout\n    require(git('rev-parse', 'HEAD').strip() == identity['sha'], 'aggregate checkout is not the tested source')\n    require(git('status', '--porcelain=v1', '--ignore-submodules=none', '--untracked-files=no') == '',\n            'aggregate checkout differs from the tested source')\n    require(all(line[:1] == ' ' for line in git('submodule', 'status', '--recursive').splitlines()),\n            'aggregate checkout submodules are missing or differ from the tested gitlinks')\n    source = str(locator.real['repo_root'])\n    claims = locator.seal['source_claims']\n    require(os.path.isabs(source) and os.path.normpath(source) == source and isinstance(claims, dict) and claims,\n            'unsupported/empty sealed source closure')\n    require(claims == _derived_claims(locator.result, source),\n            'sealed source claims differ from the sealed raw input audits')\n    tracked = set(git('ls-files', '-z', '--recurse-submodules').split('\\0')) - {''}\n    for name, expected in claims.items():\n        require(os.path.normpath(name) == name and name.startswith(source + os.sep), 'source claim outside sealed source root')\n        relative = Path(name).relative_to(source)\n        require(relative.as_posix() in tracked, 'source claim is not a tracked file of the tested commit: ' + name)\n        candidate = repo.joinpath(*relative.parts)\n        resolved = candidate.resolve(strict=True)\n        require(resolved.is_relative_to(repo) and resolved.is_file() and _sha(resolved) == expected,\n                'sealed source input differs from the tested checkout: ' + name)\n\n\ndef _derived_claims(result, source):\n    \"\"\"Lexical counterpart of the sealer's claim derivation over the sealed raw receipt.\"\"\"\n    claims = {}\n    def visit(value):\n        if isinstance(value, dict):\n            for path, expected in (value.get('input_hashes') or {}).items():\n                if os.path.isabs(path) and os.path.normpath(path) == path and path.startswith(source + os.sep):\n                    require(claims.setdefault(path, expected) == expected, 'contradictory sealed source input claim')\n            for child in value.values():\n                visit(child)\n        elif isinstance(value, list):\n            for child in value:\n                visit(child)\n    visit(result)\n    return claims\n\n\ndef _identity(receipt):\n    return {key: receipt.get(key) for key in ('plan_id', 'lane_id', 'profile', 'profile_hash', 'source_identity')}\n\n\ndef _load_transport(path, receipt, repo, plan, temps):\n    transport = receipt.get('transport')\n    require(isinstance(transport, dict) and set(transport) == {'format', 'archive', 'archive_bytes', 'archive_sha256',\n            'manifest_sha256', 'members'} and transport['format'] == TRANSPORT_FORMAT and transport['archive'] == ARCHIVE\n            and type(transport['archive_bytes']) is int and type(transport['members']) is int,\n            'normal receipt lacks a portable transport')\n    profile = receipt.get('profile')\n    require(isinstance(profile, str) and path.parent.name == profile and re.fullmatch(\n            re.escape('dependency-receipt-%s-%s-' % (plan['plan_id'], profile)) + r'[1-9][0-9]*', path.parent.parent.name),\n            'normal receipt is not inside its own lane artifact')\n    require(receipt.get('plan_id') == plan['plan_id'], 'transported receipt belongs to another plan')\n    roots = _roots(receipt['public_evidence']['path'])\n    require(receipt['adapter_evidence']['path'] == str(roots['run'] / 'adapter-receipt.json'),\n            'adapter evidence is not the sealed run receipt')\n    apparmor = receipt.get('apparmor_evidence') or {}\n    require(not apparmor or (set(apparmor) == set(APPARMOR_FILES) and all(\n            apparmor[name]['path'] == str(roots['apparmor'] / name) for name in APPARMOR_FILES)),\n            'AppArmor evidence is not the job teardown directory')\n    archive = path.parent / ARCHIVE\n    temp = Path(tempfile.mkdtemp(prefix='nostrc-normal-transport-')).resolve()\n    temps.append(temp)\n    extract(archive, temp, transport, _identity(receipt), roots, bool(apparmor))\n    mapping = {str(roots['run']): temp / 'run'}\n    if apparmor:\n        mapping[str(roots['apparmor'])] = temp / 'apparmor'\n    require(not str(roots['apparmor']).startswith(str(roots['run']) + os.sep), 'overlapping transport roots')\n    return dict(receipt=receipt, locator=Locator(mapping), transport=transport, repo=repo,\n                apparmor=str(roots['apparmor']) if apparmor else None)\n\n\n@contextlib.contextmanager\ndef transported_receipts(paths, *, repo, plan):\n    \"\"\"Aggregate-side loader. Normal receipts resolve only inside their own verified bundles.\"\"\"\n    global _PORTABLE_ONLY\n    temps, keys, receipts = [], [], []\n    _PORTABLE_ONLY += 1\n    try:\n        for path in map(Path, paths):\n            require(path.stat().st_size <= LIMITS['receipt_bytes'], 'receipt exceeds limit: ' + str(path))\n            receipt = json.loads(path.read_text())\n            receipts.append(receipt)\n            if not (isinstance(receipt, dict) and receipt.get('receipt_kind') == KIND):\n                continue\n            key = receipt.get('qualification_hash')\n            require(isinstance(key, str) and key not in _LOADED and key not in _LOAD_ERRORS,\n                    'duplicate/malformed normal receipt')\n            keys.append(key)\n            try:\n                _LOADED[key] = _load_transport(path, receipt, repo, plan, temps)\n            except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:\n                _LOAD_ERRORS[key] = str(exc)\n        yield receipts\n    finally:\n        _PORTABLE_ONLY -= 1\n        for key in keys:\n            _LOADED.pop(key, None)\n            _LOAD_ERRORS.pop(key, None)\n        for temp in temps:\n            shutil.rmtree(temp, ignore_errors=True)  # private extraction created above only\n\n\ndef _strip(receipt):\n    return {key: value for key, value in receipt.items() if key not in ('transport', 'qualification_hash')}\n\n\ndef worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_dir, *, policy=None):\n    \"\"\"Production worker step after pidns exit + AppArmor teardown; raw stays unless all checks pass.\n\n    ``policy`` is only for synthetic tests; production loads the checkout's inventory.\"\"\"\n    sys.path.insert(0, str(Path(repo) / 'scripts'))\n    import test_selection as selection\n    if policy is None:\n        policy = selection.load_inventory(Path(repo) / 'tests/selection/inventory.json')\n    plan = selection.read_json(plan_path)\n    if policy['profiles'].get(pid, {}).get(FIELD) != MARKER:\n        print('normal qualification: %s has no authored normal contract; raw receipt unchanged' % pid)\n        return None\n    evidence_root, receipts_dir = Path(evidence_root).resolve(strict=True), Path(receipts_dir).resolve(strict=True)\n    apparmor_dir = Path(apparmor_dir)\n    require(apparmor_dir == evidence_root.parent / 'namespace-apparmor', 'AppArmor evidence is not the job directory')\n    current = receipts_dir / 'receipt.json'\n    require(current.is_file() and not current.is_symlink(), 'raw worker receipt missing')\n    matches = [path for path in evidence_root.glob('*/0/lane-*/native-receipt.json')\n               if (lambda raw: raw.get('plan_id') == plan['plan_id'] and raw.get('profile') == pid\n                   and raw.get('source_identity') == plan['source_identity'])(json.loads(path.read_text()))]\n    require(len(matches) == 1 and matches[0].read_bytes() == current.read_bytes(),\n            'normal contract requires exactly one retained pidns lane equal to the published raw receipt')\n    public_path = matches[0]\n    roots = _roots(public_path)\n    adapter = json.loads((roots['run'] / 'adapter-receipt.json').read_text())\n    provisioned = (apparmor_dir / 'setup.json').exists()\n    require(provisioned == bool(adapter.get('namespace_apparmor_profile')),\n            'provisioned AppArmor profile and gate custody disagree')\n    apparmor = str(apparmor_dir) if provisioned else None\n    in_place = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor)\n    partial = receipts_dir / ('.' + ARCHIVE + '.partial')\n    temps = []\n    try:\n        transport = package(public_path, partial, _identity(in_place), provisioned)\n        temp = Path(tempfile.mkdtemp(prefix='nostrc-normal-selfcheck-')).resolve()\n        temps.append(temp)\n        extract(partial, temp, transport, _identity(in_place), roots, provisioned)\n        mapping = {str(roots['run']): temp / 'run'}\n        if provisioned:\n            mapping[str(roots['apparmor'])] = temp / 'apparmor'\n        locator = Locator(mapping)\n        relocated = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor,\n                            locator=locator, transport=transport)\n        require(_strip(relocated) == _strip(in_place), 'relocated qualification differs from in-place qualification')\n        verify_source_closure(locator, repo, plan)\n        raw = current.read_bytes()\n        with open(receipts_dir / ORIGINAL, 'xb') as stream:\n            stream.write(raw)\n        os.replace(partial, receipts_dir / ARCHIVE)\n        staged = receipts_dir / '.receipt.json.normal'\n        with open(staged, 'x') as stream:\n            json.dump(relocated, stream, sort_keys=True, indent=2)\n            stream.write('\\n')\n        os.replace(staged, current)  # the only lane receipt; raw bytes retained beside it\n        return relocated\n    finally:\n        partial.unlink(missing_ok=True)  # owned partial output only\n        for temp in temps:\n            shutil.rmtree(temp, ignore_errors=True)\n\n\ndef main(argv=None):\n    import argparse\n    parser = argparse.ArgumentParser(description='normal execution worker qualification')\n    commands = parser.add_subparsers(dest='command', required=True)\n    worker = commands.add_parser('worker-qualify')\n    for name in ('repo', 'plan', 'profile', 'evidence-root', 'apparmor-evidence', 'receipts-dir'):\n        worker.add_argument('--' + name, required=True)\n    args = parser.parse_args(argv)\n    try:\n        worker_qualify(args.repo, args.plan, args.profile, args.evidence_root, args.apparmor_evidence, args.receipts_dir)\n    except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError, subprocess.SubprocessError) as exc:\n        print('normal qualification refused; raw receipt retained unchanged: %s' % exc, file=sys.stderr)\n        return 1\n    return 0\n\n\nif __name__ == '__main__':\n    sys.exit(main())\n"
+        }
+      ]
+    },
+    "scripts/test_selection_realization.py": {
+      "before_sha256": "9a6ad2edbbccad8c7b56bb4f38c4d6eb64eb96d17cc9c030f311e29c1969532e",
+      "after_sha256": "941772636a5e46398c46577a50b22fa86e0dbd96c4034f2a0887e03b83e91a4e",
+      "edits": [
+        {
+          "before": "    (query / \"toolchains-v1\").touch()\n    (query / \"cmakeFiles-v1\").touch()\n    token = uuid.uuid4().hex\n    env = phase_environment(profile, root, \"configure\")\n    args = [_expand_source(x, root) for x in profile.get(\"configure_args\", [])]\n    if any(arg == \"--trace-source\" or arg.startswith(\"--trace-source=\") for arg in args):\n        raise RealizationError(\"filtered configure trace cannot establish output provenance\")\n    source = (root / _expand_source(profile.get(\"source_dir\", \".\"), root)).resolve()\n",
+          "after": "    (query / \"toolchains-v1\").touch()\n    (query / \"cmakeFiles-v1\").touch()\n    token = uuid.uuid4().hex\n    env = phase_environment(profile, root, \"configure\")\n    _legacy_macos_environment_guard(profile_id, profile, root, env)\n    args = [_expand_source(x, root) for x in profile.get(\"configure_args\", [])]\n    if any(arg == \"--trace-source\" or arg.startswith(\"--trace-source=\") for arg in args):\n        raise RealizationError(\"filtered configure trace cannot establish output provenance\")\n    source = (root / _expand_source(profile.get(\"source_dir\", \".\"), root)).resolve()\n"
+        },
+        {
+          "before": "                 target_ids=sorted(ids), audit_build_targets=sorted({realization[\"targets\"][i][\"name\"] for i in ids}),\n                 binding=_nonmember_binding(realization, descriptors))]\n\n\ndef _baseline_exclusions(inventory, realization, tests, descriptors):\n    \"\"\"Account the native baseline gap and exact reviewed diagnostic nonmembers.\n\n    coverage_gaps remains deliberately closed; diagnostic_nonmembers admits only\n",
+          "after": "                 target_ids=sorted(ids), audit_build_targets=sorted({realization[\"targets\"][i][\"name\"] for i in ids}),\n                 binding=_nonmember_binding(realization, descriptors))]\n\n\ndef _legacy_macos_environment_guard(profile_id, profile, root, *environments):\n    \"\"\"Legacy macOS provisions no signer: any inherited endpoint/token refuses.\n\n    Checks every phase's actual effective environment (ambient + overlays) plus\n    any concrete process environment the caller is about to use.\"\"\"\n    import test_selection_macos_nip5f_tcp as macos_tcp\n    if profile_id != macos_tcp.PROFILE:\n        return\n    try:\n        for phase in PHASES:\n            macos_tcp.require_unconfigured_environment(phase_environment(profile, root, phase))\n        for environment in environments:\n            macos_tcp.require_unconfigured_environment(environment)\n    except macos_tcp.ApplicabilityError as exc:\n        raise RealizationError(str(exc)) from exc\n\n\ndef _legacy_macos_tcp_exclusion(inventory, realization, tests, descriptors):\n    \"\"\"The one exact legacy macOS NIP-5F TCP authority (nostrc-0cfsg.36.9).\"\"\"\n    import test_selection_macos_nip5f_tcp as macos_tcp\n    try:\n        records = macos_tcp.records(inventory)\n        if realization[\"profile_id\"] != macos_tcp.PROFILE:\n            return []\n        claimed = any(_eligible(check, macos_tcp.PROFILE) and macos_tcp.REGISTRATION in _membership(check, macos_tcp.PROFILE)\n                      for check in inventory[\"checks\"].values())\n        if not records:\n            if macos_tcp.REGISTRATION in tests and not claimed:\n                raise RealizationError(\"legacy macOS test_nip5f_tcp has no exact applicability authority\")\n            return []\n        macos_tcp.validate_policy(inventory, records[0], realization[\"repo_root\"])\n        _legacy_macos_environment_guard(realization[\"profile_id\"], realization[\"profile\"], realization[\"repo_root\"])\n        record = macos_tcp.validate_realization(inventory, records[0], realization, tests, descriptors,\n                                                _mapped_targets, _relative)\n    except macos_tcp.ApplicabilityError as exc:\n        raise RealizationError(str(exc)) from exc\n    return [record]\n\n\ndef _baseline_exclusions(inventory, realization, tests, descriptors):\n    \"\"\"Account the native baseline gap and exact reviewed diagnostic nonmembers.\n\n    coverage_gaps remains deliberately closed; diagnostic_nonmembers admits only\n"
+        },
+        {
+          "before": "    for record in records:\n        if not isinstance(record, dict):\n            raise RealizationError(\"malformed coverage gap record\")\n        if record.get(\"id\") != ident:\n            if \"registrations\" in record:\n                raise RealizationError(\"unsupported registration exclusion coverage gap\")\n            continue\n        if ident in seen:\n            raise RealizationError(\"duplicate baseline exclusion authority\")\n",
+          "after": "    for record in records:\n        if not isinstance(record, dict):\n            raise RealizationError(\"malformed coverage gap record\")\n        if record.get(\"id\") != ident:\n            if \"registrations\" in record and record.get(\"id\") != \"core_macos_asan_nip5f_tcp_unconfigured\":\n                raise RealizationError(\"unsupported registration exclusion coverage gap\")\n            continue\n        if ident in seen:\n            raise RealizationError(\"duplicate baseline exclusion authority\")\n"
+        },
+        {
+          "before": "        if not {\"address\", \"undefined\"}.issubset(sanitizers) or \"thread\" in sanitizers or \"-fno-sanitize=\" in fragments:\n            raise RealizationError(\"baseline exclusion actual sanitizer instrumentation differs\")\n        applicable.append(dict(record, status=\"not_executed\", authority=\"existing_workflow_baseline\",\n                               target_ids=target_ids, audit_build_targets=[targets[0][\"name\"]]))\n    import test_selection_subset as subset\n    try:\n        ordinary = subset.admit(inventory, realization, tests, descriptors)\n    except ValueError as exc:\n",
+          "after": "        if not {\"address\", \"undefined\"}.issubset(sanitizers) or \"thread\" in sanitizers or \"-fno-sanitize=\" in fragments:\n            raise RealizationError(\"baseline exclusion actual sanitizer instrumentation differs\")\n        applicable.append(dict(record, status=\"not_executed\", authority=\"existing_workflow_baseline\",\n                               target_ids=target_ids, audit_build_targets=[targets[0][\"name\"]]))\n    applicable += _legacy_macos_tcp_exclusion(inventory, realization, tests, descriptors)\n    import test_selection_subset as subset\n    try:\n        ordinary = subset.admit(inventory, realization, tests, descriptors)\n    except ValueError as exc:\n"
+        },
+        {
+          "before": "        raise RealizationError(\"build profile identity mismatch\")\n    _validate_resolved_phase(resolved, realization)\n    jobs = effective_phase_parallelism(realization[\"profile\"], parallel, build_parallel=build_parallel, phases=(\"build\",))\n    _diagnostic_execution_options(resolved, realization, jobs[\"build\"], phase=\"build\")\n    commands, outputs = _build_commands(resolved, realization, jobs[\"build\"]), []\n    start = time.monotonic()\n    for cmd in commands:\n        logfile = Path(build_dir) / f\"nostrc-prerequisite-{uuid.uuid4().hex}.log\"\n",
+          "after": "        raise RealizationError(\"build profile identity mismatch\")\n    _validate_resolved_phase(resolved, realization)\n    jobs = effective_phase_parallelism(realization[\"profile\"], parallel, build_parallel=build_parallel, phases=(\"build\",))\n    _diagnostic_execution_options(resolved, realization, jobs[\"build\"], phase=\"build\")\n    _legacy_macos_environment_guard(realization[\"profile_id\"], realization[\"profile\"], realization[\"repo_root\"])\n    commands, outputs = _build_commands(resolved, realization, jobs[\"build\"]), []\n    start = time.monotonic()\n    for cmd in commands:\n        logfile = Path(build_dir) / f\"nostrc-prerequisite-{uuid.uuid4().hex}.log\"\n"
+        },
+        {
+          "before": "    receipt[\"input_audit\"] = input_audit\n    receipt[\"input_audit_status\"] = \"passed\"\n    env = phase_environment(realization[\"profile\"], realization[\"repo_root\"], \"test\")\n    build_env = phase_environment(realization[\"profile\"], realization[\"repo_root\"], \"build\")\n    config = [\"-C\", resolved[\"configuration\"]] if resolved[\"configuration\"] else []\n    if build:\n        begin = time.monotonic()\n        for index, cmd in enumerate(_build_commands(resolved, realization, jobs[\"build\"])):\n",
+          "after": "    receipt[\"input_audit\"] = input_audit\n    receipt[\"input_audit_status\"] = \"passed\"\n    env = phase_environment(realization[\"profile\"], realization[\"repo_root\"], \"test\")\n    build_env = phase_environment(realization[\"profile\"], realization[\"repo_root\"], \"build\")\n    _legacy_macos_environment_guard(realization[\"profile_id\"], realization[\"profile\"], realization[\"repo_root\"],\n                                    env, build_env)\n    config = [\"-C\", resolved[\"configuration\"]] if resolved[\"configuration\"] else []\n    if build:\n        begin = time.monotonic()\n        for index, cmd in enumerate(_build_commands(resolved, realization, jobs[\"build\"])):\n"
+        },
+        {
+          "before": "            targets = sorted({realization[\"targets\"][i][\"name\"] for i in ids})\n            if (sorted(ids) != exclusion[\"target_ids\"] or targets != exclusion[\"audit_build_targets\"]\n                    or not set(targets).issubset(resolved[\"build_targets\"])):\n                raise RealizationError(\"diagnostic nonmember audit target closure changed\")\n    for name, command in resolved[\"registered_commands\"].items():\n        if tests[name].get(\"command\") != command:\n            raise RealizationError(f\"CTest command changed after resolution: {name}\")\n    for name in resolved[\"tests\"]:\n",
+          "after": "            targets = sorted({realization[\"targets\"][i][\"name\"] for i in ids})\n            if (sorted(ids) != exclusion[\"target_ids\"] or targets != exclusion[\"audit_build_targets\"]\n                    or not set(targets).issubset(resolved[\"build_targets\"])):\n                raise RealizationError(\"diagnostic nonmember audit target closure changed\")\n        elif exclusion.get(\"authority\") == \"legacy_unconfigured_nonvalidation\":\n            import test_selection_macos_nip5f_tcp as macos_tcp\n            descriptors = {d[\"name\"]: d for d in realization[\"descriptors\"]}\n            try:\n                macos_tcp.verify_sources(realization[\"repo_root\"])\n                again = macos_tcp.validate_realization(\n                    {\"profiles\": {macos_tcp.PROFILE: realization[\"profile\"]}},\n                    {k: exclusion.get(k) for k in macos_tcp.RECORD_KEYS}, realization, tests, descriptors,\n                    _mapped_targets, _relative)\n            except macos_tcp.ApplicabilityError as exc:\n                raise RealizationError(str(exc)) from exc\n            if (again != exclusion or set(exclusion[\"registrations\"]) & set(resolved[\"tests\"])\n                    or not set(exclusion[\"target_ids\"]) <= set(resolved[\"target_ids\"])\n                    or not set(exclusion[\"audit_build_targets\"]) <= set(resolved[\"build_targets\"])):\n                raise RealizationError(\"legacy macOS NIP-5F TCP accounting changed after resolution\")\n    for name, command in resolved[\"registered_commands\"].items():\n        if tests[name].get(\"command\") != command:\n            raise RealizationError(f\"CTest command changed after resolution: {name}\")\n    for name in resolved[\"tests\"]:\n"
+        },
+        {
+          "before": "                if overlay.keys() & signer_overlay.keys():\n                    raise RealizationError('runtime environment authorities overlap')\n                overlay.update(signer_overlay)\n            effective_env = dict(env, **overlay)\n            process = _execute(cmd, env=effective_env, log_path=directory / \"ctest.log\", timeout=timeout)\n        receipt['ctest_process'] = dict(process.execution_status)\n        receipt['ctest_process_authority'] = 'in_memory_executor_v1'\n        receipt['ctest_environment'] = dict(base_hash=_hash(env), effective_hash=_hash(effective_env),\n",
+          "after": "                if overlay.keys() & signer_overlay.keys():\n                    raise RealizationError('runtime environment authorities overlap')\n                overlay.update(signer_overlay)\n            effective_env = dict(env, **overlay)\n            _legacy_macos_environment_guard(realization[\"profile_id\"], realization[\"profile\"],\n                                            realization[\"repo_root\"], effective_env)\n            process = _execute(cmd, env=effective_env, log_path=directory / \"ctest.log\", timeout=timeout)\n        receipt['ctest_process'] = dict(process.execution_status)\n        receipt['ctest_process_authority'] = 'in_memory_executor_v1'\n        receipt['ctest_environment'] = dict(base_hash=_hash(env), effective_hash=_hash(effective_env),\n"
+        }
+      ]
+    }
+  },
+  "base_policy_hash": "b74401be4907a2a959912466198d8eb1bf34cd99af85a89bf4d183250e5be02b"
+}

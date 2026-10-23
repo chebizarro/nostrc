@@ -45,6 +45,10 @@ class FailureReceiptTests(Project):
                             build_type="Debug", instrumentation="none", setup="synthetic", local_availability="host")
         self.profile["configure_args"] += ["-DCMAKE_BUILD_TYPE=Debug", f"-DCMAKE_C_COMPILER={compiler}"]
         self.profile["environment"] = {"TEST_DISPLAY": "1"}
+        if platform.system() == 'Darwin':
+            # launchd resets this process-local value at exec. Author it in the
+            # fixture so parent-side revalidation uses the CLI's exact env too.
+            self.profile['environment']['XPC_SERVICE_NAME'] = '0'
         self.inventory.update(schema_version=1, profiles={"synthetic": self.profile},
                               test_overrides=[], release_components={})
         for ident, node in self.inventory["nodes"].items():
@@ -358,8 +362,8 @@ backend.resolve_checks = unexpected
     def test_capability_refusal_precedes_build_and_keeps_expected_lane(self):
         self.prepare(capability=True)
         receipt = self.cli()
-        self.assert_negative(receipt, "capability")
-        self.assertIn("guarded adapter", json.dumps(receipt["failure"]["errors"]))
+        self.assert_negative(receipt, 'resolve')
+        self.assertIn('authored execution domain and docker capability', json.dumps(receipt['failure']['errors']))
         self.assertEqual(receipt["failure"]["work_status"]["build"], "not_executed")
         self.assertFalse(list(self.evidence.rglob("build-attempt-*.log")))
 

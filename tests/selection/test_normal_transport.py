@@ -1,0 +1,799 @@
+"""Portable normal-receipt transport (nostrc-0cfsg.36.8).
+
+Small real synthetic builds/seals in the worker's <run>/0/lane-<id> layout with
+synthetic supervisor/AppArmor records. Proves the worker->artifact->aggregate
+contract logic only: NOT Linux pidns, AppArmor kernel, hosted or MDK proof.
+"""
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import unittest
+from unittest import mock
+
+from realization_support import ROOT, Project
+from selector_support import s, change
+import test_selection_realization as r   # after selector_support puts scripts/ on sys.path
+from test_normal_execution_contract import NormalFixture
+import test_selection_execution as normal
+
+
+def split(path):
+    data = Path(path).read_bytes()
+    start = len(normal.MAGIC) + 8
+    length = int.from_bytes(data[len(normal.MAGIC):start], 'big')
+    manifest = json.loads(data[start:start + length])
+    contents, offset = {}, start + length
+    for member in manifest['members']:
+        if member['kind'] == 'file':
+            contents[member['name']] = data[offset:offset + member['size']]
+            offset += member['size']
+    return manifest, contents
+
+
+def join(manifest, contents):
+    raw = (json.dumps(manifest, sort_keys=True, separators=(',', ':')) + '\n').encode()
+    body = b''.join(contents[m['name']] for m in manifest['members'] if m['kind'] == 'file')
+    return normal.MAGIC + len(raw).to_bytes(8, 'big') + raw + body, raw
+
+
+class TransportFixture(NormalFixture):
+    LANE = ('dependency', 'evidence', 'run1', '0', 'lane-synthetic')
+    ADAPTER_UP = 1
+
+    def setUp(self):
+        super().setUp()
+        self.dependency = Path(self.temp.name).resolve() / 'dependency'
+        self.apparmor = self.dependency / 'namespace-apparmor'
+        self.receipts = self.dependency / 'receipts' / 'synthetic'
+        self.receipts.mkdir(parents=True)
+        self.plan_path = self.dependency / 'plan.json'
+        self.plan_path.write_text(json.dumps(self.plan))
+        self.publish_raw()
+
+    def publish_raw(self):
+        # The execute step's existing exact copy of the retained native receipt.
+        (self.receipts / 'receipt.json').write_bytes(self.public_path.read_bytes())
+
+    def worker(self, policy=None):
+        return normal.worker_qualify(self.root, self.plan_path, 'synthetic', self.dependency / 'evidence',
+                                     self.apparmor, self.receipts, policy=policy or self.inventory)
+
+    def provision_apparmor(self, status='removed', after=b'unconfined\n'):
+        self.apparmor.mkdir(exist_ok=True)
+        (self.apparmor / 'setup.json').write_text(json.dumps(dict(name='nostrc-job-1')))
+        (self.apparmor / 'teardown.json').write_text(json.dumps(dict(kind='namespace_apparmor_teardown_v1', status=status)))
+        (self.apparmor / 'profiles-before.txt').write_bytes(b'unconfined\n')
+        (self.apparmor / 'profiles-after.txt').write_bytes(after)
+        self.adapter['namespace_apparmor_profile'] = 'nostrc-job-1'
+        self.adapter_path.write_text(json.dumps(self.adapter))
+
+    def download(self, name=None, profile='synthetic'):
+        """actions/upload-artifact of receipts/ then download-artifact pattern: regular files per artifact dir."""
+        base = Path(self.temp.name).resolve() / 'aggregate' / 'receipts'
+        target = base / (name or 'dependency-receipt-%s-synthetic-1' % self.plan['plan_id']) / profile
+        shutil.copytree(self.receipts, target)
+        return base
+
+    def aggregate(self, base, repo=None):
+        paths = sorted(base.glob('**/receipt.json'))
+        # A CI-context plan needs the select result and independent worker conclusions,
+        # exactly as dependency_contract.aggregate supplies them from the job graph.
+        ci = dict(selection_conclusion='success', job_conclusions={lane['id']: 'success' for lane in self.plan['lanes']}) \
+            if self.plan.get('context') == 'ci' else {}
+        with normal.transported_receipts(paths, repo=repo or self.root, plan=self.plan) as receipts:
+            return paths, s.aggregate(self.inventory, self.plan, receipts, complete=True, **ci)
+
+    def assert_raw_retained(self):
+        self.assertEqual((self.receipts / 'receipt.json').read_bytes(), self.public_path.read_bytes())
+        for name in (normal.ARCHIVE, normal.ORIGINAL, '.' + normal.ARCHIVE + '.partial', '.receipt.json.normal'):
+            self.assertFalse((self.receipts / name).exists(), name)
+
+    def rewrite(self, base, mutate, *, refresh=True):
+        """Mutate the downloaded bundle; optionally make receipt hashes self-consistent again."""
+        lane = next(base.glob('*/synthetic'))
+        archive = lane / normal.ARCHIVE
+        manifest, contents = split(archive)
+        mutate(manifest, contents)
+        data, raw = join(manifest, contents)
+        archive.write_bytes(data)
+        if refresh:
+            receipt = json.loads((lane / 'receipt.json').read_text())
+            import hashlib
+            receipt['transport'].update(archive_bytes=len(data), archive_sha256=hashlib.sha256(data).hexdigest(),
+                                        manifest_sha256=hashlib.sha256(raw).hexdigest(), members=len(manifest['members']))
+            receipt['qualification_hash'] = s.digest({k: v for k, v in receipt.items() if k != 'qualification_hash'})
+            (lane / 'receipt.json').write_text(json.dumps(receipt))
+
+
+
+class TransportTests(TransportFixture):
+    def test_worker_publishes_one_portable_receipt_and_aggregate_never_reopens_worker_paths(self):
+        raw = self.public_path.read_bytes()
+        result = self.worker()
+        self.assertEqual(result['receipt_kind'], normal.KIND)
+        self.assertEqual(json.loads((self.receipts / 'receipt.json').read_text()), result)
+        self.assertEqual((self.receipts / normal.ORIGINAL).read_bytes(), raw)
+        self.assertEqual(self.public_path.read_bytes(), raw)
+        self.assertEqual(sorted(p.name for p in self.receipts.iterdir()),
+                         sorted(['receipt.json', normal.ORIGINAL, normal.ARCHIVE]))
+        base = self.download()
+        # The original worker tree is gone: only the downloaded bundle can satisfy reads.
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        paths, aggregate = self.aggregate(base)
+        self.assertEqual(len(paths), 1)
+        self.assertTrue(aggregate['passed'], aggregate['errors'])
+        self.assertTrue(aggregate['complete_gate_eligible'])
+        # No caller fallback: outside a loaded bundle a transported receipt is refused.
+        with self.assertRaisesRegex(ValueError, 'verified portable bundle'):
+            normal.validate_receipt(self.inventory, self.plan, result)
+
+    def test_nested_raw_duplicate_and_untransported_receipts_refuse(self):
+        self.worker()
+        base = self.download()
+        lane = next(base.glob('*/synthetic'))
+        (lane / 'nested').mkdir()
+        shutil.copyfile(lane / normal.ORIGINAL, lane / 'nested' / 'receipt.json')
+        paths, aggregate = self.aggregate(base)
+        self.assertEqual(len(paths), 2)
+        self.assertFalse(aggregate['passed'])
+        self.assertTrue(any('duplicate/unexpected lane' in e for e in aggregate['errors']), aggregate['errors'])
+        shutil.rmtree(lane / 'nested')
+        # An in-place (path-bound) normal receipt is never accepted by the portable aggregate.
+        receipt = json.loads((lane / 'receipt.json').read_text())
+        in_place = {k: v for k, v in receipt.items() if k != 'transport'}
+        in_place['qualification_hash'] = s.digest({k: v for k, v in in_place.items() if k != 'qualification_hash'})
+        (lane / 'receipt.json').write_text(json.dumps(in_place))
+        self.assertFalse(self.aggregate(base)[1]['passed'])
+
+    def test_tampered_missing_extra_duplicate_traversal_and_symlink_members_refuse(self):
+        self.worker()
+        log = 'run/0/lane-synthetic/' + str(Path(self.raw['evidence_dir']).relative_to(self.work) / 'ctest.log')
+        def edit(name, data):
+            def mutate(manifest, contents):
+                contents[name] = data
+                member = next(m for m in manifest['members'] if m['name'] == name)
+                import hashlib
+                member.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+            return mutate
+        def drop(name):
+            def mutate(manifest, contents):
+                manifest['members'] = [m for m in manifest['members'] if m['name'] != name]
+                contents.pop(name, None)
+            return mutate
+        def add(member, data=b''):
+            def mutate(manifest, contents):
+                manifest['members'].append(member)
+                if member['kind'] == 'file':
+                    contents[member['name']] = data
+            return mutate
+        import hashlib
+        extra = lambda name: dict(name=name, kind='file', size=1, sha256=hashlib.sha256(b'x').hexdigest(), executable=False)
+        cases = {
+            'tampered member': (edit(log, b'forged output\n'), True),
+            'missing member': (drop(log), True),
+            'extra sealed member': (add(extra('run/0/lane-synthetic/build/extra'), b'x'), True),
+            'cross-lane member': (add(dict(name='run/0/lane-other', kind='dir')), True),
+            'duplicate member': (lambda m, c: m['members'].append(dict(m['members'][1])), True),
+            'traversal member': (add(extra('run/0/lane-synthetic/../escape'), b'x'), True),
+            'absolute symlink': (add(dict(name='run/0/lane-synthetic/alias', kind='symlink', target='/etc/passwd')), True),
+            'escaping symlink': (add(dict(name='run/0/lane-synthetic/alias', kind='symlink', target='../../../../x')), True),
+            'unrefreshed archive bytes': (edit(log, b'forged output\n'), False),
+        }
+        for label, (mutate, refresh) in cases.items():
+            with self.subTest(label):
+                base = self.download(name='dependency-receipt-%s-synthetic-%d' % (self.plan['plan_id'], len(label)))
+                self.rewrite(base, mutate, refresh=refresh)
+                paths, aggregate = self.aggregate(base)
+                self.assertEqual(len(paths), 1)
+                self.assertFalse(aggregate['passed'], label)
+                shutil.rmtree(base.parent)
+
+    def test_oversized_inputs_refuse_before_allocation(self):
+        self.worker()
+        base = self.download()
+        lane = next(base.glob('*/synthetic'))
+        with mock.patch.dict(normal.LIMITS, archive_bytes=1024):
+            self.assertFalse(self.aggregate(base)[1]['passed'])
+        data = bytearray((lane / normal.ARCHIVE).read_bytes())
+        data[len(normal.MAGIC):len(normal.MAGIC) + 8] = (1 << 62).to_bytes(8, 'big')  # huge manifest length
+        (lane / normal.ARCHIVE).write_bytes(bytes(data))
+        receipt = json.loads((lane / 'receipt.json').read_text())
+        import hashlib
+        receipt['transport']['archive_sha256'] = hashlib.sha256(bytes(data)).hexdigest()
+        receipt['qualification_hash'] = s.digest({k: v for k, v in receipt.items() if k != 'qualification_hash'})
+        (lane / 'receipt.json').write_text(json.dumps(receipt))
+        paths, aggregate = self.aggregate(base)
+        self.assertFalse(aggregate['passed'])
+        self.assertTrue(any('manifest exceeds limit' in e for e in aggregate['errors']), aggregate['errors'])
+
+    def test_wrong_artifact_plan_and_profile_placement_refuse(self):
+        self.worker()
+        for name, profile in (('dependency-receipt-%s-other-1' % self.plan['plan_id'], 'synthetic'),
+                              ('dependency-receipt-%s-synthetic-1' % ('0' * 16), 'synthetic'),
+                              ('dependency-receipt-%s-synthetic-1' % self.plan['plan_id'], 'other')):
+            with self.subTest(name=name, profile=profile):
+                base = self.download(name=name, profile=profile)
+                self.assertFalse(self.aggregate(base)[1]['passed'])
+                shutil.rmtree(base.parent)
+
+    def test_source_closure_is_checked_against_the_exact_aggregate_checkout(self):
+        self.worker()
+        base = self.download()
+        source = self.root / 'shared.h'
+        original = source.read_bytes()
+        source.write_text('#define SHARED 43\n')       # dirty checkout
+        self.assertFalse(self.aggregate(base)[1]['passed'])
+        self.git('commit', '-qam', 'later commit')        # different HEAD than tested
+        self.assertFalse(self.aggregate(base)[1]['passed'])
+        self.git('reset', '-q', '--hard', 'HEAD~1')
+        self.assertEqual(source.read_bytes(), original)
+        self.assertTrue(self.aggregate(base)[1]['passed'])
+
+    def test_sealed_source_claims_must_equal_the_tested_commit(self):
+        # A self-consistent seal over source bytes that differ from the committed
+        # tested SHA: the bundle's own hashes cannot authenticate it.
+        import hashlib
+        source = self.root / 'shared.h'
+        original, forged = source.read_bytes(), b'#define SHARED 43\n'
+        def rebind(value):
+            if isinstance(value, dict):
+                if str(source) in value.get('input_hashes', {}):
+                    value['input_hashes'][str(source)] = hashlib.sha256(forged).hexdigest()
+                    if 'audit_hash' in value:
+                        value['audit_hash'] = s.digest({k: v for k, v in value.items() if k != 'audit_hash'})
+                for child in value.values():
+                    rebind(child)
+            elif isinstance(value, list):
+                for child in value:
+                    rebind(child)
+        rebind(self.original)
+        source.write_bytes(forged)
+        self.seal()
+        source.write_bytes(original)
+        self.publish_raw()
+        with self.assertRaisesRegex(ValueError, 'sealed source input differs'):
+            self.worker()                                   # worker self-check refuses first
+        self.assert_raw_retained()
+        with mock.patch.object(normal, 'verify_source_closure'):
+            self.worker()                                   # bypass only the worker self-check
+        base = self.download()
+        paths, aggregate = self.aggregate(base)
+        self.assertFalse(aggregate['passed'])
+        self.assertTrue(any('sealed source input differs' in e for e in aggregate['errors']), aggregate['errors'])
+
+    def rebind_audits(self, path, data):
+        import hashlib
+        def visit(value):
+            if isinstance(value, dict):
+                if 'input_hashes' in value and isinstance(value['input_hashes'], dict) and value.get('passed') is True:
+                    value['input_hashes'][str(path)] = hashlib.sha256(data).hexdigest()
+                    value['audit_hash'] = s.digest({k: v for k, v in value.items() if k != 'audit_hash'})
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+        visit(self.original)
+
+    def worker_then_aggregate_refuses(self, message):
+        with self.assertRaisesRegex(ValueError, message):
+            self.worker()                                   # worker self-check refuses first
+        self.assert_raw_retained()
+        with mock.patch.object(normal, 'verify_source_closure'):
+            self.worker()                                   # bypass only the worker self-check
+        paths, aggregate = self.aggregate(self.download())
+        self.assertFalse(aggregate['passed'])
+        self.assertTrue(any(message in e for e in aggregate['errors']), aggregate['errors'])
+
+    def test_incomplete_sealed_source_claims_refuse(self):
+        import test_selection_services as services
+        original = services._source_claims
+        def incomplete(result, source):
+            claims = original(result, source)
+            claims.pop(sorted(claims)[0])
+            return claims
+        with mock.patch.object(services, '_source_claims', side_effect=incomplete):
+            self.seal()
+        self.publish_raw()
+        self.worker_then_aggregate_refuses('sealed source claims differ from the sealed raw input audits')
+
+    def test_untracked_source_claim_refuses(self):
+        extra = self.root / 'untracked.h'
+        extra.write_bytes(b'#define UNTRACKED 1\n')
+        self.rebind_audits(extra, extra.read_bytes())
+        self.seal(); self.publish_raw()
+        self.worker_then_aggregate_refuses('not a tracked file of the tested commit')
+
+    def test_unadmitted_lane_entries_and_symlink_chains_refuse(self):
+        self.worker()
+        lane = 'run/0/lane-synthetic'
+        cases = {
+            'unadmitted top-level link': lambda m, c: m['members'].append(dict(name=lane + '/a', kind='symlink', target='../..')),
+            'unadmitted top-level file': lambda m, c: (m['members'].append(dict(name=lane + '/note', kind='file', size=0,
+                sha256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', executable=False)), c.update({lane + '/note': b''})),
+            'resolved symlink chain': lambda m, c: m['members'].extend([
+                dict(name=lane + '/build/zz-a', kind='symlink', target='../..'),
+                dict(name=lane + '/build/zz-b', kind='symlink', target='zz-a/../..')]),
+        }
+        for index, (label, mutate) in enumerate(cases.items()):
+            with self.subTest(label):
+                base = self.download(name='dependency-receipt-%s-synthetic-%d' % (self.plan['plan_id'], index + 1))
+                self.rewrite(base, mutate)
+                paths, aggregate = self.aggregate(base)
+                self.assertFalse(aggregate['passed'])
+                self.assertTrue(any('unadmitted' in e or 'resolves outside' in e for e in aggregate['errors']), aggregate['errors'])
+                shutil.rmtree(base.parent)
+
+    def test_lifecycle_teardown_and_packaging_failures_leave_raw_failure_evidence(self):
+        failures = {
+            'mdk recovery outside namespace': lambda: (self.adapter['executions'][0]['lanes'][0].update(
+                mdk_recovery=[dict(closed_in_namespace=False, recovery_exit=0)]), self.adapter_path.write_text(json.dumps(self.adapter))),
+            'apparmor teardown failed': lambda: self.provision_apparmor(status='failed'),
+            'apparmor policy delta': lambda: self.provision_apparmor(after=b'unconfined\nleftover\n'),
+            'provisioned but not bound': lambda: (self.provision_apparmor(), self.adapter.pop('namespace_apparmor_profile'),
+                                                  self.adapter_path.write_text(json.dumps(self.adapter))),
+        }
+        pristine = copy.deepcopy(self.adapter)
+        for label, fail in failures.items():
+            with self.subTest(label):
+                self.adapter = copy.deepcopy(pristine); self.adapter_path.write_text(json.dumps(self.adapter))
+                shutil.rmtree(self.apparmor, ignore_errors=True)
+                fail()
+                with self.assertRaises((ValueError, KeyError)):
+                    self.worker()
+                self.assert_raw_retained()
+        # Packaging refusal (sealed absolute symlink is not portable) and a failed
+        # relocated self-check both keep the raw receipt and no published bundle.
+        self.adapter = copy.deepcopy(pristine); self.adapter_path.write_text(json.dumps(self.adapter))
+        shutil.rmtree(self.apparmor, ignore_errors=True)
+        with mock.patch.object(normal, 'verify_source_closure', side_effect=ValueError('self-check failed')):
+            with self.assertRaisesRegex(ValueError, 'self-check failed'):
+                self.worker()
+        self.assert_raw_retained()
+        target = next(p for p in (self.work / 'build').iterdir() if p.is_file())
+        (self.work / 'build' / 'absolute-alias').symlink_to(target)
+        self.seal(); self.publish_raw()
+        with self.assertRaisesRegex(ValueError, 'absolute/escaping'):
+            self.worker()
+        self.assert_raw_retained()
+
+    def test_apparmor_teardown_evidence_travels_and_is_requalified(self):
+        self.provision_apparmor()
+        result = self.worker()
+        self.assertEqual(sorted(result['apparmor_evidence']), sorted(normal.APPARMOR_FILES))
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        self.assertTrue(self.aggregate(base)[1]['passed'])
+
+    def test_omission_legacy_prepared_and_macos_profiles_cannot_qualify(self):
+        self.original['backend_receipt'].update(baseline_exclusions=[dict(authority='reviewed_diagnostic_nonmember_subset_v1')])
+        self.seal(); self.publish_raw()
+        with self.assertRaises(ValueError):
+            self.worker()
+        self.assert_raw_retained()
+        policy = copy.deepcopy(self.inventory)
+        policy['profiles']['synthetic'].pop(normal.FIELD)
+        self.assertIsNone(self.worker(policy))              # no authored contract: raw untouched
+        self.assert_raw_retained()
+        for change in (dict(execution_domain='prepared_peer_linux_v1'), dict(platform='macos'), dict(architecture='arm64')):
+            with self.subTest(change=change):
+                policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].update(change)
+                with self.assertRaises(ValueError):
+                    self.worker(policy)
+                self.assert_raw_retained()
+
+
+class SelectedNormalTests(TransportFixture):
+    """Real engine-backed selective lane: only selected primaries + exact fixture closure run."""
+
+    def prepare_source(self):
+        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
+        # Superset of the authored owners/impact edges (the full audit requires them) plus 'other'.
+        self.inventory['checks']['fixture.gui']['nodes'] = ['application', 'testing', 'other']
+        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
+        (self.root / 'other.txt').write_text('base\n')
+        inventory = self.root / 'tests/selection/inventory.json'
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'selected-normal base')
+        self.base_sha = self.git('rev-parse', 'HEAD').decode().strip()
+        (self.root / 'other.txt').write_text('changed\n')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', 'change only the other node')
+
+    def make_plan(self):
+        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')
+
+    def execute(self):
+        self.execute_production()
+
+    def test_plan_really_selects_a_strict_subset(self):
+        self.assertEqual(self.plan['effective_mode'], 'affected')
+        self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])
+        self.assertEqual(self.resolved['primary_tests'], ['gui'])
+        self.assertNotIn('a-model', self.resolved['tests'])
+
+    def test_production_run_built_the_unselected_default_prerequisite_without_passing_it(self):
+        # test-plan.py run: _build_commands emits the untargeted default build because
+        # resolve_checks sets default_build_required from the realization binding;
+        # _record_default_build + check_inputs(after_build) bind it into the post audit.
+        self.assertTrue(self.resolved['default_build_required'])
+        self.assertNotIn('default', self.resolved['checks'])
+        self.assertNotIn('default', self.raw['checks'])
+        execution = self.raw['input_audit']['default_build_execution']
+        self.assertEqual(execution['process']['outcome'], 'passed')
+        self.assertNotIn('--target', execution['process']['argv'])
+        result = self.worker()
+        self.assertIn('default', result['not_executed_checks'])
+        self.assertNotIn('default', result['checks'])
+
+    def test_missing_default_prerequisite_refuses(self):
+        audit = self.original['backend_receipt']['input_audit']
+        audit.pop('default_build_execution')
+        audit['audit_hash'] = s.digest({k: v for k, v in audit.items() if k != 'audit_hash'})
+        self.seal(); self.publish_raw()
+        with self.assertRaises(ValueError):
+            self.worker()
+        self.assert_raw_retained()
+
+    def test_selected_receipt_accounts_not_executed_and_aggregates_portably(self):
+        raw = self.public_path.read_bytes()
+        result = self.worker()
+        eligible = sorted(c for c, check in self.inventory['checks'].items() if 'synthetic' in check['profiles'])
+        universe = sorted(t['name'] for t in self.real['tests'])
+        self.assertEqual(result['execution_scope'], normal.SELECTED_SCOPE)
+        self.assertEqual(result['normal_contract'], normal.SELECTED_MARKER)
+        self.assertEqual(result['selected_checks'], ['fixture.gui'])
+        self.assertEqual(result['not_executed_checks'], sorted(set(eligible) - {'fixture.gui'}))
+        self.assertIn('default', result['not_executed_checks'])
+        self.assertEqual(sorted(result['executed_registrations'] + result['not_executed_registrations']), universe)
+        self.assertFalse(set(result['executed_registrations']) & set(result['not_executed_registrations']))
+        self.assertTrue({'a-model', 'omitted', 'z-first'} <= set(result['not_executed_registrations']))
+        self.assertEqual(sorted(result['checks']), ['fixture.gui'])          # never passed/covered
+        self.assertIs(result['whole_universe_executed'], False)
+        self.assertIs(result['full_profile_acceptance'], False)
+        self.assertEqual((self.receipts / normal.ORIGINAL).read_bytes(), raw)
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        paths, aggregate = self.aggregate(base)
+        self.assertEqual(len(paths), 1)
+        self.assertTrue(aggregate['passed'], aggregate['errors'])
+        # Duplicate raw + normal for the same lane never double-credits.
+        lane = next(base.glob('*/synthetic'))
+        (lane / 'nested').mkdir()
+        shutil.copyfile(lane / normal.ORIGINAL, lane / 'nested' / 'receipt.json')
+        self.assertFalse(self.aggregate(base)[1]['passed'])
+
+    def test_selection_must_equal_the_source_bound_rederived_plan(self):
+        other = s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='broad')
+        with mock.patch.object(s, 'git_plan', return_value=other):
+            with self.assertRaisesRegex(ValueError, 're-derived from the tested history'):
+                self.worker()
+        self.assert_raw_retained()
+        lane = self.plan['lanes'][0]
+        for change in (dict(partial_profiles=['synthetic']), dict(broadening_reasons=['manual']),
+                       dict(requested_mode='broad')):
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(ValueError, 'unrestricted, unbroadened affected plan'):
+                    normal._scope(self.inventory, dict(self.plan, **change), lane, self.profile, self.root)
+        with self.assertRaisesRegex(ValueError, 'exact tested checkout'):
+            normal._scope(self.inventory, self.plan, lane, self.profile, None)
+
+    def test_missing_extra_or_skipped_selected_execution_refuses(self):
+        original = copy.deepcopy(self.original)
+        mutations = {
+            'missing fixture': lambda raw: raw['tests'].remove('reset'),
+            'extra unselected execution': lambda raw: raw['tests'].append('a-model'),
+            'skipped selected fixture': lambda raw: raw['observed_executions'].update(reset='skipped'),
+            'skipped selected primary': lambda raw: raw['observed_executions'].update(gui='skipped'),
+            'omission authority': lambda raw: raw.update(baseline_exclusions=[dict(authority='reviewed_diagnostic_nonmember_subset_v1')]),
+            'selected check dropped': lambda raw: raw['checks'].pop('fixture.gui'),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label):
+                self.original = copy.deepcopy(original); mutate(self.original['backend_receipt'])
+                self.seal(); self.publish_raw()
+                with self.assertRaises((KeyError, ValueError, RuntimeError)):
+                    self.worker()
+                self.assert_raw_retained()
+
+    def test_consistently_rebound_accounting_still_binds_to_derived_closure(self):
+        original, resolved = copy.deepcopy(self.original), copy.deepcopy(self.resolved)
+        def rebind(edit):
+            self.original, self.resolved = copy.deepcopy(original), copy.deepcopy(resolved)
+            raw = self.original['backend_receipt']
+            edit(self.resolved['expected_executions'], raw['expected_executions'], raw['observed_executions'])
+            self.resolved['expected_executions'].sort(); raw['expected_executions'].sort()
+            self.resolved['resolved_hash'] = s.digest({k: v for k, v in self.resolved.items() if k != 'resolved_hash'})
+            raw['resolved_hash'] = self.resolved['resolved_hash']
+            self.seal(); self.publish_raw()
+        cases = {
+            'fixture dropped from every accounting field': lambda r, e, o: (r.remove('reset'), e.remove('reset'), o.pop('reset')),
+            'unrelated passed execution added everywhere': lambda r, e, o: (r.append('a-model'), e.append('a-model'),
+                                                                            o.update({'a-model': 'passed'})),
+        }
+        for label, edit in cases.items():
+            with self.subTest(label):
+                rebind(edit)
+                with self.assertRaisesRegex(ValueError, 'selected physical executions missing'):
+                    self.worker()
+                self.assert_raw_retained()
+
+    def test_unowned_universe_and_failed_cleanup_refuse(self):
+        import test_selection_realization as r
+        metadata = r._metadata
+        def stray(policy, realization):
+            tests, descriptors = metadata(policy, realization)
+            return dict(tests, stray=dict(name='stray')), descriptors
+        with mock.patch.object(r, '_metadata', side_effect=stray):
+            with self.assertRaisesRegex(ValueError, 'not wholly owned'):
+                self.worker()
+        self.assert_raw_retained()
+        self.adapter['executions'][0]['lanes'][0].update(mdk_recovery=[dict(closed_in_namespace=False, recovery_exit=0)])
+        self.adapter_path.write_text(json.dumps(self.adapter))
+        with self.assertRaises(ValueError):
+            self.worker()
+        self.assert_raw_retained()
+
+    def test_contract_must_be_separately_authored_linux_and_never_alone(self):
+        policy = copy.deepcopy(self.inventory)
+        policy['profiles']['synthetic'].pop(normal.SELECTED_FIELD)
+        self.assertIsNone(self.worker(policy))          # no selected contract: raw stays the lane receipt
+        self.assert_raw_retained()
+        for change in (dict(platform='macos'), dict(architecture='arm64')):
+            with self.subTest(change=change):
+                policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].update(change)
+                with self.assertRaises(ValueError):
+                    normal.validate_metadata(policy)
+        policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].pop(normal.FIELD)
+        with self.assertRaisesRegex(ValueError, 'requires the authored full contract'):
+            normal.validate_metadata(policy)
+        policy = copy.deepcopy(self.inventory)
+        policy['profiles']['synthetic'][normal.SELECTED_FIELD]['registration_policy'] = 'all_owned_and_executed'
+        with self.assertRaises(ValueError):
+            normal.validate_metadata(policy)
+
+
+class PullRequestSelectedTests(TransportFixture):
+    """Production CI pull_request event -> dependency_contract.metadata -> the select job's git_plan call."""
+
+    def prepare_source(self):
+        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
+        # Superset of the authored owners/impact edges (the full audit requires them) plus 'other'.
+        self.inventory['checks']['fixture.gui']['nodes'] = ['application', 'testing', 'other']
+        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
+        (self.root / 'other.txt').write_text('base\n')
+        inventory = self.root / 'tests/selection/inventory.json'
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))
+        commit = lambda message: self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', message)
+        self.git('add', '-A'); commit('pull request base')
+        self.pr_base = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('checkout', '-q', '-b', 'pr-branch')
+        (self.root / 'other.txt').write_text('changed in pull request\n'); commit('pull request head')
+        self.pr_head = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('checkout', '-q', '-')
+        self.git('-c', 'core.hooksPath=/dev/null', 'merge', '-q', '--no-ff', '-m', 'tested merge', 'pr-branch')
+
+    def make_plan(self):
+        spec = importlib.util.spec_from_file_location('dependency_contract', ROOT / '.github/workflows/dependency_contract.py')
+        contract = importlib.util.module_from_spec(spec); spec.loader.exec_module(contract)
+        event = {'pull_request': {'base': {'sha': self.pr_base}, 'head': {'sha': self.pr_head}}}
+        info, mode, context = contract.metadata('pull_request', event, self.identity['sha'], 'affected')
+        self.event_info = info
+        # Exactly the select command's planning call.
+        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], context=context, mode=mode, event=info)
+
+    def execute(self):
+        self.execute_production()
+
+    def independent_checkout(self, revision=None, name='aggregate-checkout'):
+        clone = Path(self.temp.name).resolve() / name
+        subprocess.run(['git', 'clone', '-q', '--no-local', str(self.root), str(clone)], check=True)
+        subprocess.run(['git', '-C', str(clone), '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach',
+                        revision or self.identity['sha']], check=True)
+        return clone
+
+    def test_tested_two_parent_merge_is_the_identity_never_the_equal_tree_api_head(self):
+        # Mirrors PR23: tested synthetic merge (parents: base, PR head) has the SAME tree
+        # as the API PR head but a different identity; only the tested merge is bound.
+        merge = self.identity['sha']
+        parents = self.git('rev-list', '--parents', '-n', '1', merge).decode().split()[1:]
+        self.assertEqual(parents, [self.pr_base, self.pr_head])
+        tree = lambda rev: self.git('rev-parse', rev + '^{tree}').decode().strip()
+        self.assertEqual(tree(merge), tree(self.pr_head))
+        self.assertNotEqual(merge, self.pr_head)
+        self.assertEqual((self.plan['head'], self.plan['tested_sha'], self.plan['source_identity']['sha']), (merge,) * 3)
+        self.assertEqual((self.plan['event']['tested_sha'], self.plan['event']['pr_head_sha']), (merge, self.pr_head))
+        aliased = dict(self.plan, head=self.pr_head, tested_sha=self.pr_head,
+                       source_identity=dict(self.plan['source_identity'], sha=self.pr_head))
+        aliased.pop('plan_id'); aliased['plan_id'] = s.digest(aliased)
+        with self.assertRaises((ValueError, s.ContractError)):
+            normal._rederived_plan(self.inventory, aliased, self.root)   # event tested SHA != aliased head
+        result = self.worker()
+        self.assertEqual(result['source_identity']['sha'], merge)
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        api_head = self.independent_checkout(self.pr_head, 'api-head-checkout')    # equal tree, wrong identity
+        paths, aggregate = self.aggregate(base, repo=api_head)
+        self.assertFalse(aggregate['passed'])
+        self.assertTrue(any('aggregate checkout is not the tested source' in e for e in aggregate['errors']), aggregate['errors'])
+        self.assertTrue(self.aggregate(base, repo=self.independent_checkout(merge, 'tested-merge-checkout'))[1]['passed'])
+
+    def test_pull_request_plan_persists_event_and_both_checkouts_rederive_the_same_plan_id(self):
+        self.assertEqual(self.plan['event'], self.event_info)
+        self.assertEqual(self.plan['event']['kind'], 'pull_request')
+        self.assertEqual((self.plan['context'], self.plan['effective_mode'], self.plan['base']), ('ci', 'affected', None))
+        self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])
+        clone = self.independent_checkout()
+        for repo in (self.root, clone):
+            self.assertEqual(normal._rederived_plan(self.inventory, self.plan, repo)['plan_id'], self.plan['plan_id'])
+        result = self.worker()                               # worker re-derives in its checkout
+        self.assertEqual(result['plan_id'], self.plan['plan_id'])
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        self.assertTrue(self.aggregate(base, repo=clone)[1]['passed'])   # aggregate re-derives in its own checkout
+
+    def test_forged_or_dropped_event_fields_refuse_rederivation(self):
+        for label, event in (('pr head moved', dict(self.plan['event'], pr_head_sha=self.pr_base)),
+                             ('base moved off the ancestry', dict(self.plan['event'], base_sha=self.pr_head)),
+                             ('event dropped', {})):
+            with self.subTest(label):
+                forged = dict(self.plan, event=event)
+                forged.pop('plan_id')
+                forged['plan_id'] = s.digest(forged)
+                with self.assertRaisesRegex(ValueError, 're-derived from the tested history|tested merge ancestry'):
+                    normal._rederived_plan(self.inventory, forged, self.root)
+
+
+class AffectedWholeProfileTests(TransportFixture):
+    """Full-only profile (no selected marker), affected plan that selects EVERY eligible check."""
+
+    def make_plan(self):
+        return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
+                           mode='affected', source_identity=self.identity)
+
+    def load_1640_qualifier(self):
+        source = subprocess.run(['git', '-C', str(ROOT), 'show', '1640fc86de42f3b6d495847a83820eafb6dfbf4b:'
+                                 'scripts/test_selection_execution.py'], capture_output=True, check=True).stdout
+        path = Path(self.temp.name) / 'execution_1640.py'
+        path.write_bytes(source)
+        spec = importlib.util.spec_from_file_location('execution_1640', path)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        return module
+
+    def test_affected_whole_profile_without_selected_marker_is_refused_exactly_as_1640(self):
+        eligible = sorted(c for c, check in self.inventory['checks'].items() if 'synthetic' in check['profiles'])
+        self.assertEqual(self.plan['effective_mode'], 'affected')
+        self.assertEqual(self.plan['lanes'][0]['checks'], eligible)                  # whole eligible check set
+        self.assertEqual(self.resolved['tests'], sorted(t['name'] for t in self.real['tests']))  # whole universe ran
+        self.assertNotIn(normal.SELECTED_FIELD, self.profile)
+        message = 'normal full-profile qualification requires a fresh committed broad plan'
+        args = (self.inventory, self.plan, str(self.public_path), str(self.adapter_path))
+        with self.assertRaisesRegex(ValueError, message):
+            normal.qualify(*args)
+        with self.assertRaisesRegex(ValueError, message):
+            self.load_1640_qualifier().qualify(*args)                                # unchanged 1640 behaviour
+        self.assertIsNone(self.worker())                                             # worker: no-op, raw kept
+        self.assert_raw_retained()
+
+
+class CommandOnlySelectedTests(TransportFixture):
+    """A real affected plan selecting only the default build contract: no CTest, explicitly."""
+
+    def prepare_source(self):
+        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
+        self.inventory['checks']['default']['nodes'] = ['application', 'core', 'vectors', 'testing', 'other']
+        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
+        (self.root / 'other.txt').write_text('base\n')
+        inventory = self.root / 'tests/selection/inventory.json'
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'command-only base')
+        self.base_sha = self.git('rev-parse', 'HEAD').decode().strip()
+        (self.root / 'other.txt').write_text('changed\n')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', 'change only the other node')
+
+    def make_plan(self):
+        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')
+
+    def execute(self):
+        self.execute_production()
+
+    def test_command_only_selection_qualifies_without_ctest_and_aggregates(self):
+        self.assertEqual(self.plan['lanes'][0]['checks'], ['default'])
+        self.assertEqual(self.resolved['tests'], [])
+        result = self.worker()
+        self.assertEqual(result['execution_scope'], normal.SELECTED_SCOPE)
+        self.assertEqual(result['executed_registrations'], [])
+        self.assertEqual(sorted(result['not_executed_registrations']), sorted(t['name'] for t in self.real['tests']))
+        self.assertEqual(sorted(result['checks']), ['default'])
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        self.assertTrue(self.aggregate(base)[1]['passed'])
+
+    def test_command_only_lane_with_ctest_evidence_refuses(self):
+        self.original['backend_receipt']['ctest_process'] = dict(outcome='passed')
+        self.seal(); self.publish_raw()
+        with self.assertRaisesRegex(ValueError, 'unexplained CTest evidence'):
+            self.worker()
+        self.assert_raw_retained()
+
+
+class MDKSelectionResolveTests(Project):
+    """Real configure + resolve_checks for an original-MDK-domain profile (no Docker run here)."""
+
+    def setUp(self):
+        super().setUp()
+        cmake = self.root / 'CMakeLists.txt'
+        text = cmake.read_text().replace('nostrc_finalize_test_inventory()', '''add_test(NAME mdk-image COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/noop.cmake)
+set_tests_properties(mdk-image PROPERTIES FIXTURES_SETUP mdkimg)
+nostrc_describe_test(mdk-image OWNER testing INPUTS noop.cmake EXPECTED fixture REQUIRES docker)
+add_test(NAME mdk-interop COMMAND shared)
+set_tests_properties(mdk-interop PROPERTIES FIXTURES_REQUIRED mdkimg)
+nostrc_describe_test(mdk-interop OWNER application TARGETS shared INPUTS vector.txt REQUIRES docker)
+nostrc_finalize_test_inventory()''')
+        cmake.write_text(text)
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'synthetic original-MDK registrations')
+        self.profile.update(execution_domain='mdk_original_linux_v1', capabilities=['display', 'docker'])
+        self.inventory['checks']['mdk-interop'] = {'kind': 'ctest', 'profiles': ['synthetic'],
+            'ctest_tests': {'synthetic': ['mdk-interop']}, 'nodes': ['application', 'testing']}
+        self.realized = self.configure()
+
+    def resolve(self, checks):
+        return r.resolve_checks(self.inventory, dict(self.plan, selected_checks=checks), self.realized, 'synthetic')
+
+    def test_gui_selection_on_mdk_profile_provisions_no_mdk_lifecycle(self):
+        import test_selection_mdk as mdk
+        with mock.patch.object(mdk, 'contract', side_effect=AssertionError('MDK contract must not run')) as contract:
+            resolved = self.resolve(['gui'])
+        contract.assert_not_called()
+        self.assertNotIn('mdk-image', resolved['tests'])
+        self.assertNotIn('mdk-interop', resolved['tests'])
+        self.assertNotIn('docker', resolved['required_capabilities'])
+        self.assertNotIn('docker', resolved.get('runtime_capability_evidence', {}))
+        normal._require_no_mdk_lifecycle(dict(required_capabilities=resolved['required_capabilities'],
+            runtime_capability_evidence=resolved.get('runtime_capability_evidence', {})),
+            resolved['tests'], {d['name']: d for d in self.realized['descriptors']}, [])
+
+    def test_selected_mdk_consumer_pulls_image_fixture_and_requires_the_mdk_contract(self):
+        import test_selection_mdk as mdk
+        class Required(Exception):
+            pass
+        with mock.patch.object(mdk, 'contract', side_effect=Required) as contract:
+            with self.assertRaises(Required):
+                self.resolve(['mdk-interop'])
+        contract.assert_called_once()
+        tests, descriptors = r._metadata(self.inventory, self.realized)
+        self.assertIn('mdk-image', r._fixture_closure(['mdk-interop'], tests, descriptors))
+
+
+class WorkflowWiring(unittest.TestCase):
+    def test_worker_qualifies_after_teardown_and_aggregate_owns_portable_loading(self):
+        worker = (ROOT / '.github/workflows/dependency-worker.yml').read_text()
+        execute = worker.index('- name: Resolve, audit, build and execute exact selected checks')
+        teardown = worker.index("- name: Remove only this job's AppArmor profile after its consumers exited")
+        qualify = worker.index('- name: Qualify normal lane after pidns exit and AppArmor teardown')
+        upload = worker.index('- name: Retain incomplete evidence on failure or cancellation')
+        self.assertLess(execute, teardown); self.assertLess(teardown, qualify); self.assertLess(qualify, upload)
+        step = worker[qualify:upload]
+        self.assertIn("if: success() && runner.os == 'Linux'", step)
+        self.assertIn('scripts/test_selection_execution.py worker-qualify', step)
+        self.assertIn('--receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE"', step)
+        gate = (ROOT / '.github/workflows/dependency-tests.yml').read_text()
+        checkout = gate[gate.index('name: Dependency gate'):]
+        self.assertIn('submodules: recursive', checkout[:checkout.index('dependency_contract.py aggregate')])
+        contract = (ROOT / '.github/workflows/dependency_contract.py').read_text()
+        self.assertIn('with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:', contract)
+        self.assertIn('glob("**/receipt.json")', contract)
+        # The selected-normal re-derivation mirrors exactly this persisted producer call.
+        self.assertIn('plan = selection.git_plan(ROOT, policy, head=args.sha, context=context, mode=mode, event=info)', contract)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -16,7 +16,33 @@ import uuid
 CAPABILITY = 'namespace_policy_controller'
 INPUTS = ('scripts/test_selection_policy.py', 'tests/selection/namespace-testhost.Dockerfile',
           'tests/selection/namespace_policy_entry.sh', 'tests/selection/namespace_testhost_lifecycle.py',
-          'tests/selection/namespace_host_probe.py', 'scripts/adapter_namespace_custody.py')
+          'tests/selection/namespace_host_probe.py', 'scripts/adapter_namespace_custody.py',
+          'tests/selection/apparmor/nostrc-namespace-custody')
+# Per-job path-unattached profile granting only userns (see its template),
+# provisioned by namespace_apparmor_setup.sh on a GitHub-hosted runner. An
+# unconfined Docker workload is still moved into Ubuntu's unprivileged_userns
+# profile at unshare; kernel settings are never changed.
+APPARMOR_SETUP = 'dependency/namespace-apparmor/setup.json'
+APPARMOR_NAME = re.compile(r'nostrc-ns-[0-9a-f]{32}')
+
+
+def security_opt(name):
+    return {'no-new-privileges', 'seccomp=unconfined', 'apparmor=' + name}
+
+
+def apparmor_setup(env):
+    """The loaded per-job profile named by its retained setup journal."""
+    path = Path(env.get('RUNNER_TEMP', '/nonexistent')) / APPARMOR_SETUP
+    setup = json.loads(path.read_text())
+    name = setup.get('name', '')
+    require(setup.get('kind') == 'namespace_apparmor_setup_v1' and setup.get('state') == 'loaded'
+            and APPARMOR_NAME.fullmatch(name) is not None
+            and setup.get('admission', {}).get('RUNNER_ENVIRONMENT') == 'github-hosted',
+            'policy workload requires a loaded per-job GitHub-hosted AppArmor profile journal')
+    rendered = (path.parent / 'profile').read_text()
+    require(rendered.count(name) == 1 and 'profile ' + name + ' flags=(unconfined) {' in rendered,
+            'per-job AppArmor profile render differs from its journal')
+    return name, path
 REQUIRED = {'environment', 'mapping-probe', 'kernel-prerequisite', 'kernel-matrix', 'policy-suite',
             'unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate', 'linux-smoke',
             'sanitizer', 'signer-names', 'keychain-guard'}
@@ -99,6 +125,22 @@ def prepare_image(root, output):
         write(output, state)
 
 
+def workload_apparmor(evidence, name):
+    """Physical in-workload labels around unshare, never a host/policy claim."""
+    labels = {}
+    for line in (Path(evidence) / 'logs/mapping-probe.log').read_text().splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get('stage') in ('before-unshare', 'after-unshare'):
+            labels[record['stage']] = record.get('apparmor')
+    expected = name + ' (unconfined)'
+    require(labels == {'before-unshare': expected, 'after-unshare': expected},
+            'policy workload did not run in provisioned AppArmor profile ' + name)
+    return labels
+
+
 def contract(realization, env):
     profile = realization['profile']
     require(realization['profile_id'] == 'static.policy' and profile.get('execution_domain') == 'policy_controller_linux_v1',
@@ -130,10 +172,11 @@ def contract(realization, env):
         '--label', 'nostrc.policy.source=' + setup['source_sha'], '-f', str(root / INPUTS[1]), str(root / 'tests/selection')]
     require(status['argv'] == setup['argv'] == expected and status['exit_code'] == 0
             and Path(setup['log']).is_file(), 'policy physical image producer evidence differs')
+    profile_name, apparmor_path = apparmor_setup(env)
     return dict(kind='policy_controller_contract_v1', source_identity=realization['source_identity'],
-        inputs=setup['inputs'], tools=tools, image=setup['image'],
+        inputs=setup['inputs'], tools=tools, image=setup['image'], apparmor={'name': profile_name},
         setup_inputs={str(setup_path): hashed(setup_path), str(status_path): hashed(status_path),
-                      setup['log']: hashed(setup['log'])}, readiness=False,
+                      setup['log']: hashed(setup['log']), str(apparmor_path): hashed(apparmor_path)}, readiness=False,
         scope='authored_provisioned_policy_workload_not_native_profile')
 
 
@@ -204,12 +247,13 @@ def controller(realization, resolved, spec, audit):
         argv = [docker, 'create', '--cidfile', str(control / 'container.cid'), '--name', owner['name'],
             '--label', 'nostrc.namespace-policy=' + owner['token'], '--user', '1001:1001', '--cap-drop=ALL',
             '--security-opt=no-new-privileges', '--security-opt=seccomp=unconfined',
-            '--security-opt=systempaths=unconfined', '--security-opt=apparmor=unconfined',
+            '--security-opt=systempaths=unconfined', '--security-opt=apparmor=' + proof['apparmor']['name'],
             '--network', 'none', '--read-only', '--tmpfs', '/tmp:rw,exec,nosuid,nodev,mode=1777',
             '--tmpfs', '/tmp/.X11-unix:rw,nosuid,nodev,mode=1777',
             '--mount', f'type=bind,source={directory / "source"},target=/source,readonly',
             '--mount', f'type=bind,source={evidence},target=/evidence',
             '-e', 'HOME=/tmp/namespace-home', '-e', 'NOSTRC_CUSTODY_TEST_EVIDENCE=/evidence/custody',
+            '-e', 'NOSTRC_NAMESPACE_APPARMOR_PROFILE=' + proof['apparmor']['name'],
             '--entrypoint', '/bin/bash', proof['image'], '-c', ENTRY_COMMAND]
         run(argv, control / 'create.log')
         cid = (control / 'container.cid').read_text().strip()
@@ -231,7 +275,8 @@ def controller(realization, resolved, spec, audit):
                 and all(item['Type'] in {'bind', 'tmpfs'} for item in before['Mounts'])
                 and set(host['Tmpfs']) == {'/tmp', '/tmp/.X11-unix'}
                 and host['MaskedPaths'] == [] and host['ReadonlyPaths'] == []
-                and set(host['SecurityOpt']) == {'no-new-privileges', 'seccomp=unconfined', 'apparmor=unconfined'},
+                and set(host['SecurityOpt']) == security_opt(proof['apparmor']['name'])
+                and before['AppArmorProfile'] == proof['apparmor']['name'],
 
                 'policy container effective isolation/mounts differ before target launch')
         write(control / 'controller.json', dict(docker=proof['tools']['docker'], cid=cid))
@@ -253,7 +298,8 @@ def controller(realization, resolved, spec, audit):
         require(set(workload['tools']) == {'python3', 'git', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'}
                 and all(re.fullmatch('[0-9a-f]{64}', t['sha256']) and Path(t['path']).is_absolute()
                         for t in workload['tools'].values()), 'policy container tool bindings missing')
-        state.update(status='passed', workload=workload)
+        state.update(status='passed', workload=workload,
+                     workload_apparmor=workload_apparmor(evidence, proof['apparmor']['name']))
     finally:
         # Parent-owned cleanup runs even when the command is nonzero/cancelled.
         if owner is not None:
@@ -273,7 +319,7 @@ def controller(realization, resolved, spec, audit):
 
 
 def _validate_contract_shape(proof, identity):
-    fields = {'kind', 'source_identity', 'inputs', 'tools', 'image', 'setup_inputs', 'readiness', 'scope'}
+    fields = {'kind', 'source_identity', 'inputs', 'tools', 'image', 'apparmor', 'setup_inputs', 'readiness', 'scope'}
     require(isinstance(proof, dict) and set(proof) == fields
             and proof['kind'] == 'policy_controller_contract_v1' and proof['source_identity'] == identity
             and proof['readiness'] is False and proof['scope'] == 'authored_provisioned_policy_workload_not_native_profile'
@@ -284,9 +330,13 @@ def _validate_contract_shape(proof, identity):
             and all(set(item) == {'path', 'sha256'} and Path(item['path']).is_absolute()
                     and re.fullmatch('[0-9a-f]{64}', item['sha256']) for item in proof['tools'].values()),
             'policy host executable bindings missing')
+    require(proof.get('apparmor', {}).keys() == {'name'} and APPARMOR_NAME.fullmatch(proof['apparmor']['name']),
+            'policy per-job AppArmor profile binding missing')
     setup = proof['setup_inputs']
-    require(isinstance(setup, dict) and len(setup) == 3
-            and {Path(path).name for path in setup} == {'policy-testhost-setup.json', 'image-build.log', 'image-build.log.process.json'}
+    require(isinstance(setup, dict) and len(setup) == 4
+            and {Path(path).name for path in setup} == {'policy-testhost-setup.json', 'image-build.log',
+                                                        'image-build.log.process.json', 'setup.json'}
+            and any(path.endswith('/' + APPARMOR_SETUP) for path in setup)
             and all(Path(path).is_absolute() and re.fullmatch('[0-9a-f]{64}', sha) for path, sha in setup.items()),
             'policy physical producer evidence bindings missing')
     log = next(Path(path) for path in setup if Path(path).name == 'image-build.log')
@@ -346,7 +396,10 @@ def validate_runtime(backend, plan, lane, profile):
             and host.get('NetworkMode') == 'none' and host.get('PidMode') != 'host'
             and host.get('ReadonlyRootfs') is True and not host.get('Binds')
             and host.get('MaskedPaths') == [] and host.get('ReadonlyPaths') == []
-            and set(host.get('SecurityOpt', [])) == {'no-new-privileges', 'seccomp=unconfined', 'apparmor=unconfined'}
+            and set(host.get('SecurityOpt', [])) == security_opt(proof['apparmor']['name'])
+            and before.get('AppArmorProfile') == proof['apparmor']['name']
+            and state.get('workload_apparmor') == {stage: proof['apparmor']['name'] + ' (unconfined)'
+                                                   for stage in ('before-unshare', 'after-unshare')}
             and set(host.get('Tmpfs', {})) == {'/tmp', '/tmp/.X11-unix'}, 'policy effective isolation differs')
     mounts = before.get('Mounts', [])
     binds = {item.get('Destination'): item for item in mounts if item.get('Type') == 'bind'}

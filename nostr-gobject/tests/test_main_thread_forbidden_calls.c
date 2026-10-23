@@ -16,10 +16,15 @@
 #include <glib.h>
 #include <time.h>
 #ifdef __APPLE__
+#include <libproc.h>
 #include <mach/mach.h>
+#include <poll.h>
 #include <pthread.h>
 #include <pthread/qos.h>
+#include <stddef.h>
+#include <sys/proc_info.h>
 #include <sys/resource.h>
+#include <unistd.h>
 #endif
 #include "gnostr-testkit.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
@@ -253,6 +258,49 @@ env_opt_in(const char *name)
 
 #define CONTROL_INTERVAL_US (10 * G_TIME_SPAN_MILLISECOND)
 
+/* Opt-in poll-function counterfactual (nostrc-0cfsg.11.1), set ONLY by
+ * heartbeat_sched/heartbeat-sched-probe.sh. GLib builds g_poll() on Darwin
+ * from select() (BROKEN_POLL), and XNU gives select() timeouts latency-QoS
+ * leeway: under an inherited UTILITY clamp (latency tier 3) a 10 ms timeout
+ * may legally fire about 40 ms late. poll(2) takes the kqueue path without
+ * that leeway. Comparing the two on the same host separates OS timer leeway
+ * from the remaining wake latency. Default CTest never sets it. */
+#ifdef __APPLE__
+G_STATIC_ASSERT(sizeof(GPollFD) == sizeof(struct pollfd));
+G_STATIC_ASSERT(offsetof(GPollFD, fd) == offsetof(struct pollfd, fd));
+G_STATIC_ASSERT(offsetof(GPollFD, events) == offsetof(struct pollfd, events));
+G_STATIC_ASSERT(offsetof(GPollFD, revents) == offsetof(struct pollfd, revents));
+
+static gint
+heartbeat_posix_poll(GPollFD *fds, guint nfds, gint timeout)
+{
+    return poll((struct pollfd *)fds, nfds, timeout);
+}
+#endif
+
+static const char *
+heartbeat_poll_func_begin(GMainContext *ctx, GPollFunc *saved)
+{
+    *saved = NULL;
+#ifdef __APPLE__
+    if (g_strcmp0(g_getenv("NOSTRC_HEARTBEAT_POLL_FUNC"), "poll") == 0) {
+        *saved = g_main_context_get_poll_func(ctx);
+        g_main_context_set_poll_func(ctx, heartbeat_posix_poll);
+        return "poll(2)";
+    }
+#else
+    (void)ctx;
+#endif
+    return "glib-default";
+}
+
+static void
+heartbeat_poll_func_end(GMainContext *ctx, GPollFunc saved)
+{
+    if (saved)
+        g_main_context_set_poll_func(ctx, saved);
+}
+
 typedef struct {
     gint stop;
     guint wakes;            /* written by the control thread; read after join */
@@ -301,7 +349,8 @@ sched_control_thread(gpointer data)
 }
 
 static void
-report_sched_env(const HeartbeatData *hb, const SchedControl *control)
+report_sched_env(const HeartbeatData *hb, const SchedControl *control,
+                 const char *poll_func)
 {
 #ifdef __APPLE__
     qos_class_t qos = QOS_CLASS_UNSPECIFIED;
@@ -310,9 +359,20 @@ report_sched_env(const HeartbeatData *hb, const SchedControl *control)
     g_test_message("SchedEnv: darwin_bg_process=%d darwin_bg_thread=%d qos=0x%x",
                    getpriority(PRIO_DARWIN_PROCESS, 0),
                    getpriority(PRIO_DARWIN_THREAD, 0), (unsigned)qos);
+    /* The requested QoS above does not show a clamp; the scheduler priority
+     * does (e.g. 20 under a UTILITY clamp, 31/47 otherwise). */
+    struct proc_threadinfo ti;
+    uint64_t tid = 0;
+    pthread_threadid_np(NULL, &tid);
+    if (proc_pidinfo(getpid(), PROC_PIDTHREADID64INFO, tid, &ti, sizeof ti) == (int)sizeof ti)
+        g_test_message("SchedEnv: main_thread_sched_pri cur=%d base=%d max=%d",
+                       ti.pth_curpri, ti.pth_priority, ti.pth_maxpriority);
+    else
+        g_test_message("SchedEnv: main_thread_sched_pri unavailable");
 #else
     g_test_message("SchedEnv: darwin_bg=n/a");
 #endif
+    g_test_message("SchedEnv: poll_func=%s", poll_func);
     g_test_message("SchedEnv: post_burst_wall=%.1f ms main_thread_cpu=%.3f ms",
                    hb->post_burst_wall_us / 1000.0,
                    hb->post_burst_main_cpu_us / 1000.0);
@@ -327,6 +387,8 @@ static void
 run_heartbeat(HeartbeatWork work, gpointer data)
 {
     g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+    GPollFunc saved_poll = NULL;
+    const char *poll_func = heartbeat_poll_func_begin(g_main_context_default(), &saved_poll);
     HeartbeatData hb = {.work = work, .work_data = data, .loop = loop};
     guint hb_id = g_timeout_add(10, heartbeat_cb, &hb);
 
@@ -374,7 +436,8 @@ run_heartbeat(HeartbeatWork work, gpointer data)
                    hb.missed_count - hb.post_burst_missed_count,
                    hb.post_burst_missed_count,
                    hb.post_burst_max_gap_us / 1000.0);
-    report_sched_env(&hb, control_ran ? &control : NULL);
+    heartbeat_poll_func_end(g_main_context_default(), saved_poll);
+    report_sched_env(&hb, control_ran ? &control : NULL, poll_func);
     for (guint i = 0; i < hb.work_count; i++) {
         g_test_message("cycle=%u operation=%.3f ms%s",
                        i + 1, hb.work_us[i] / 1000.0,

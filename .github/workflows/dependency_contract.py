@@ -18,7 +18,7 @@ import test_selection as selection
 LANES = {"core.linux": "core", "core.linux.asan": "core_asan", "core.macos.asan": "core_native",
          "grotto.linux": "grotto", "grotto.linux.asan_ubsan": "grotto_asan", "groundhog.linux": "groundhog",
          "groundhog.linux.sanitizers": "groundhog_sanitizers", "groundhog.mdk08": "mdk08",
-         "groundhog.mdk011": "mdk011",
+         "groundhog.mdk011": "mdk011", "homed.linux.ci": "homed_units",
          "libgo.linux.asan": "libgo", "libgo.macos.asan": "libgo_native", "static.policy": "policy"}
 BROAD_FAMILIES = {
     "core": "nostrc-ci", "libgo": "libgo-ci", "hanami": "libhanami-ci", "gi": "libnostr-gi",
@@ -328,10 +328,15 @@ def main():
         needs = selection.read_json(args.needs)
         if args.command == "aggregate":
             plan = selection.read_json(directory / "plan.json")
-            receipts = [selection.read_json(p) for p in sorted((directory / "receipts").glob("**/receipt.json"))]
             broad_path = directory / "broad.json"
             broad_receipt = selection.read_json(broad_path) if broad_path.exists() else None
-            result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)
+            # This job alone owns the aggregate result. Exactly one receipt.json per
+            # lane artifact; normal receipts resolve only inside their own verified
+            # portable bundle against this exact-SHA (submodule) checkout.
+            from test_selection_execution import transported_receipts
+            paths = sorted((directory / "receipts").glob("**/receipt.json"))
+            with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:
+                result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)
             selection.write_json(directory / "validation.json", result)
         else:
             release = selection.read_json(directory / "release.json")

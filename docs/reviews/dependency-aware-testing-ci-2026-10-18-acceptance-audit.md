@@ -1,5 +1,217 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## PR23 723 source-linked capture — 2026-10-23T20:14:05.521545Z
+
+The bounded closing API census has **61 roots: 59 failed, one cancelled and one
+pending**, with zero successful roots. All 60 identities and the complete prior
+60-root snapshot are retained privately; the previously pending1640 root
+`40004170022` is now failed and the new723 root `40015363696` remains pending at
+this observation. The earlier59-root snapshot and all earlier failures remain
+unchanged below. **0/20 reviewed qualifying PR comparisons; 0/2 successful
+complete broad integrations; W11 NOT MET / W12 NOT RUN.** No nested job, partial
+receipt, skip or local test is a quota unit.
+
+PR23 API head `723e601ac1322ca0220cd88b3b0ed22b0a7fcd81` and tested synthetic
+merge `84c36ac00cac0e5ccbc973f7c8cc48995d0b672b` remain distinct identities.
+Merge parents are master `44044fefe9c40ac095044e9c22eb06f2678aab1f` and723;
+both trees are `5d9ae919a8053b3a283bbc3ac468b6c8e9d0fa2d`. The original
+[Static testhost artifact](https://github.com/chebizarro/nostrc/actions/runs/40015363633)
+binds the tested merge: **81 kernel tests OK; full DEFAULT1205 tests,
+four failures, two errors,80 skips (844.638s)**. This is not green. Three failures
+are exact homed lane/job cardinalities; two errors and the remaining failure
+come from a new test-only inverse's whole-policy digest preempting unrelated
+historical mutations. All six original IDs and tracebacks are retained, not
+replaced by later fixes. At the last job API observation Static checks and
+policy_regressions were still running; no later API terminal status is inferred
+from the artifact. Monitoring stopped at the first critical terminal, without
+retry, dispatch or cancellation.
+
+The [homed_units job120626068734](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068734)
+succeeded once on that tested merge. Original plan, normal receipt, portable
+bundle, raw native receipt and all member hashes are retained. Independent C
+verification used the production transported-receipts/validation/qualification/
+source-closure path on a fresh exact tested-merge checkout: **homed_cache,
+homed_cache_config, homed_groups, homed_manifest, homed_uid_map** and the default
+build passed. Pre/post audits have zero gaps,106/219 inputs and765 discovered
+headers; the pidns seal/original bytes verify, and owned AppArmor teardown leaves
+identical before/after policy lists. Removing one registration refuses. Profile
+capabilities are empty; private-service coverage is not inferred. Proof SHA256
+`4b64989dbc012dc7c1c557d64eae5a7c64a8771b04ae7fe955feafbf03d4baeb`.
+This is narrowly qualified **five-unit homed.linux.ci proof**, not the legacy
+four-distro/root140/systemd/FUSE contract or complete W11 acceptance. All
+complete/eligible/enforcement flags remain false; the original legacy homed gap
+is unchanged. Parent retains closure authority after landing, not before.
+
+On API723 itself, the prior137 focused tests passed without skips; safe native
+verification passed434 tests with five explicit skips and all three guards.
+Parent source/JUnit proofs are `parent-723-focused-approval.json` and
+`parent-723-native-approval.json`; neither is relabeled as tested-merge full
+DEFAULT success or proof for later repaired source. Dated hashes and original
+ZIP identities are in `pr23_723_refresh_20261024` of the
+[evidence JSON](dependency-aware-testing-w11-e-evidence-2026-10-23.json) and the
+[matching ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr23-723-source-linked-capture--2026-10-23t201405521545z).
+CI/test/docs only: no shipped artifact or component version bump. No W12,
+requirement, default, enforcement, protection or cutover change.
+
+## PR23 bounded hosted triage — 2026-10-23T15:58:02Z
+
+One fresh, non-polling census adds PR23 to the preserved historical snapshot:
+**59 distinct roots/latest attempts:57 failed,one cancelled,one queued;zero
+successful**. PR23 root `39977420607` is still API-queued, despite completed failed
+children; it remains **pending**, not a terminal broad integration. Every earlier
+58 root identity/latest-attempt disposition and all prior snapshots remain.
+**0/20 reviewed qualifying real-PR comparisons;0/2 successful complete broad
+integrations;W11 NOT MET/W12 NOT RUN.** Nested jobs, skips, retries and test cases
+are not quota units. See the [matching ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr23-bounded-hosted-triage--2026-10-23t155802z)
+and appended `pr23_refresh_20261024` in the [source/hash evidence](dependency-aware-testing-w11-e-evidence-2026-10-23.json).
+
+PR23 API head `608c1fe20d20121d68c9ea7f948ee7849057ce16` differs from actual
+tested synthetic merge `305dbb638755a667b5495efcf242eb5ae7c32488`, whose parents
+are master `44044fefe9c40ac095044e9c22eb06f2678aab1f` and that head. Both source
+trees are `2da47ec0f0fdbf4fc014a670ec346df64528a597`; equal trees do not alias
+source identities. Original plan artifact12511113659 independently binds305dbb,
+plan `114f94b6442b28399ef986cab3e4394a3994d918436034d96c288a8d38e32b83`.
+Its22951-byte ZIP/API digest/CRC/member hash are verified, not inferred from API head.
+
+Policy job120495699183 fails:81 kernel cases/28 failures, then1121 default cases/
+31 failures/one error/72 skips. Thirty full-suite failures expose the missing
+`test_selection_mdk` module in a deliberately copied miniature fixture; B adds
+that actual dependency plus positive-import/removal-negative regression without
+editing runtime/custody code. The two bounded fixture/ordinary-command cases pass;
+actual Linux namespace execution of the repair is **NOT RUN**. Separate failures
+remain: homed requires absent `jansson` in the testhost, and the Darwin wiring
+fixture fails source checkout with Git128 (exact checkout cause unresolved).
+These are reported, not skipped or claimed repaired. No assertion, deadline,
+sanitizer, cleanup, source hash or immutable33/193 authority is relaxed.
+
+Legacy Static checks39977420640/job120495561665 is cancelled by the annotated
+**10-minute execution limit**, not demonstrated supersession. The dated head
+capture has no successful same-name replacement; separate shadow broad/static
+job120495700282 also fails the policy families, not an equivalent green status.
+Core-macOS refuses `signer_endpoint`; GH sanitizer refuses its fresh partition;
+core/Grotto ASan and MDK08 fail the outer gate without a deeper cause printed in
+job logs. Those classifications are not speculative fixes. The29.4MB policy
+artifact fetch timed out at60s with4078506 bytes: preserved **incomplete/unverified**,
+no retry/member-proof claim. Original job logs and partial capture remain private
+outside Git; the evidence contains paths and hashes, not raw environment values.
+
+The original E evidence fields, seven verified ZIPs and `.29` closure are unchanged.
+Parent's cancelled E provider-reconnect capture is not imported or counted; no
+prior artifact is removed/overwritten. `.5` stays CLOSED with a dated comment, not
+W11 closure. A284d002ef and C0f579a7ea were approved for a later integration, but
+neither is a result of this hosted source or merged into this triage snapshot.
+PR23's reviewed feature branch remains608c. CI/test/docs only,no component bump;
+no heavy gate,Docker,host-policy,push/merge/default/protection/cutover mutation.
+
+
+## Final finite hosted refresh — 2026-10-23T12:49:15.864836Z
+
+One bounded fresh API census and terminal job/artifact collection, not a waiting
+loop: **58 distinct dependency-test roots/latest attempts,57 failed/one cancelled;
+zero pending or successful roots**. All four roots pending at the preserved10:22
+snapshot are now terminal failures: PR22 `39922245779` (10:31:26Z), master946
+`39922272251` (10:44:09Z), manual broad `39922309846` (10:45:10Z), and master440
+`39923954670` (10:50:05Z). These are source-specific terminal dispositions, not
+new executions of B/A/C's later unpushed fixes. The
+[final ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#final-finite-hosted-refresh--2026-10-23t124915864836z)
+links actual jobs, exact tested source, newly retained original ZIPs and hashes.
+
+All four original validation receipts retain **`passed=false`, `complete=true`,
+`complete_gate_eligible=false`, `enforcement_ready=false`**, nine physical gaps,
+failed resolve lanes and missing ordinary/static lanes. Requested completeness is
+not acceptance. Manual broad has62 jobs:42 success,13 failure,six cancelled,one
+skip. Its selected MDK08 is now a finalized failure; ordinary/ASan/policy/native
+failures remain. Standalone libgo/native jobs120314996705/120314996669 succeeded,
+but are not complete broad coverage. Parent's11:39 terminal run/jobs capture and
+this fresh capture agree on all62 job identities/outcomes/timestamps.
+
+Standalone strict-fuzz39922316626 remains SUCCESS and `.29` remains CLOSED;
+parent independently verified291 retained entries with no errors (source94647b2,
+`.29` scope only). No fuzz archive/log redownload was needed. Exact original62179
+replay remains NOT RUN/unrecoverable;51 distinct inputs are not its replacement.
+**0/20 qualifying reviewed distinct real-PR physical comparisons and0/2 successful
+complete broad integrations;W11 NOT MET/W12 NOT RUN.** No new reviewed paired
+comparison or successful complete broad is supplied by this refresh. Nested jobs,
+retries, skips, partial/profile receipts and standalone fuzz add no quota credit.
+The10:22 and every earlier failure/attempt remain unchanged below.
+
+**Historical-engine boundary clarification:** original plan
+[§5 shadow comparison](../plans/dependency-aware-testing-ci-2026-10-15.md#shadow-comparison)
+requires20 representative real PR comparisons, not20 necessarily prospective PRs.
+E's existing rejection of a modern external selector over a historical product
+revision is an implementation/source-admission boundary, **not an original user
+quota condition**. Independent product/engine bindings alone do not establish an
+already-approved external-engine method; that method requires explicit source/
+recipe/authority review, not a silent framework or waiver. This refresh neither
+proposes such an extension nor precludes an authentically reviewed historical
+case. Counters reflect actual reviewed evidence, not an invented prospective-only
+requirement.
+
+**Finite next integration steps (parent-supplied state, not new hosted proof):**
+- B reviews/integrates normal source checkpoint `a786f19e`, not yet accepted or
+  pushed at handoff; old-source hosted failures are not results for that checkpoint.
+- Preserve A `44cb6b47afa22614dc1b746f9d1e66ac4e30310f` and C
+  `b3bf81118b6e98da24ee8c5e1379f375f357c669` as bounded native fixes, not complete
+  profiles. Public macOS CTest still refuses the admin/`_developer` seal; finish
+  core-macOS legacy-TCP applicability correction with visible **nonvalidation**,
+  not a claim of provisioned TCP coverage.
+- After accepted integrated source and real runtime/custody prerequisites, retain
+  actual complete broad/PR comparison/performance evidence under the original
+  criteria. Docker remains unresponsive; no restart/prune is authorized and no
+  heavy local build is run. No further observation loop over these terminal roots.
+
+The existing E evidence JSON appends this refresh without changing its historical
+fields; historical SHA256`50ab6ef3…` identifies the original file at commit
+`762b09d6c`, not the appended file's new bytes. `.5` stays CLOSED with a fresh
+comment; official `bd export --all` preserves37 memories/comments, while the
+interaction journal is untouched. Docs/tracker only,no component bump; no source,
+protocol, default/hook, trigger/schedule, protection or publication changes. Parent
+integrates the separate frozen documentation commit.
+
+
+## `.29` actual hosted closure — strict run39922316626 at94647b282
+
+[Original-log/source/artifact closure receipt](dependency-aware-testing-json-glib-hosted-2026-10-23.md)
+verifies the compatible official1.10.8 remedy in actual hosted strict JSON,
+NIP49/BIP39 timed corpus jobs plus pin/runtime verification and emitted coverage
+output. All five jobs succeeded. `.29`'s literal remediation AC is met and the
+bead is **CLOSED**; the absent original62179 input stays UNRECOVERABLE/exact replay
+NOT RUN, with51 distinct inputs not its replacement. No extra permanent closure
+condition is invented; prior failed fuzz attempts remain below. This is actual
+hosted bug-remediation proof, not a fixture result or complete broad integration.
+**W11 remains0/20 and0/2 at the dated census;W11 NOT MET/W12 NOT RUN.** No active
+policy/protection/trigger/publication switch. Internal evidence only,no bump.
+
+
+## E execution support and dated hosted snapshot — 2026-10-23T10:22:47.933138Z
+
+[E's implemented physical execution/collector and unapplied W12 interface](dependency-aware-testing-w11-e-protocol-2026-10-23.md)
+adds actual bounded GitHub collection, same-original-PR-source physical command
+execution, failure-preserving paired descriptive statistics and reproducible
+forward/rollback patch generation. Small process/Git/API fixtures are not product
+or W11 acceptance. B's normal full-Go source contract and A's actual runtime
+completion remain prerequisites; no fixed product hashes or dual-source historical
+measurement workaround is introduced. No heavy local build/Docker/source copy.
+
+The [new dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#e-bounded-execution-collection--2026-10-23t102247933138z)
+retains **58 roots:53 failure,one cancellation,three in progress,one queued** at
+10:22:47Z. This is a sequential API snapshot, not a live counter. PR22's original
+small failure ZIPs and manual broad plan/accounting ZIPs are digest/size/CRC/member
+verified. Broad accounting12493552566 is **passed=false** (GH/Grotto cancelled,
+static failed). Strict fuzz39922316626 is terminal success, not a complete broad
+integration. Root and every nested failure remain visible.
+
+Read-only server discovery found rulesets `[]`, master protection404 and actual
+PR21 check `Dependency gate` / Actions app15368 (failed). Existing protected-context
+baseline is absent, not permission to invent one. Generated W12 source patch is
+unapplied; server payload generation stays blocked without an operator-approved
+baseline and explicitly reviewed obsolete contexts. **0/20 qualifying comparisons;
+0/2 complete broad integrations;W11 NOT MET/W12 NOT RUN.** No threshold, default,
+trigger, schedule, protection, publisher or acceptance-policy change. `.5` stays
+closed with evidence comment only; `.36.6` stays open/in progress. Internal tooling,
+tests and docs only: no component bump; parent lands local commits.
+
+
 ## PR22 postlanding finite snapshot — 2026-10-23T08:14:14.914574Z
 
 Authenticated sequential GitHub API window **08:11:46.634875Z–08:14:14.914574Z**:

@@ -307,7 +307,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         self.assertIn("{source}/" + renewal_path, policy["checks"]["selection.contract"]["runtime_inputs"])
         self.assertEqual(renewal["source_review_scope"], ["apps/grotto/CMakeLists.txt", "cmake/NostrcConfigureProvenance.cmake"])
         self.assertFalse(any(renewal["limits"].values()))
-        records = subset.contracts(policy)
+        from runtime_integration_support import before_runtime_policy
+        records = subset.contracts(before_runtime_policy(policy))
         self.assertEqual(set(records), set(subset.PROFILES))
         for pid, contract in records.items():
             witness = fixture["profiles"][pid]
@@ -369,7 +370,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertFalse(witness["postaudit"]["passed"])
             self.assertEqual(witness["candidate_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
             for name, expected in records[pid]["review"]["source_inputs"].items():
-                self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
+                from homed_profile_support import before_homed_source
+                self.assertEqual(hashlib.sha256(before_homed_source(name, (ROOT / name).read_bytes())).hexdigest(), expected, name)
 
     def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):
         policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
@@ -428,6 +430,25 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         path.write_text(path.read_text() + "# drift\n")
         with self.assertRaisesRegex(ValueError, "source input changed"):
             subset.validate_graph(self.contract, real, tests, descriptors, ["a-model"])
+
+    def test_fresh_committed_product_edit_does_not_refresh_legacy_omission_authority(self):
+        real = self.configure()
+        contract = copy.deepcopy(self.contract)
+        # A clean new execution identity does not reauthorize a historical
+        # omission witness, even when the registration/target shape is intact.
+        path = self.root / "libgo/support.c"
+        path.write_text(path.read_text() + "/* ordinary code-only revision */\n")
+        self.git("add", "-A")
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "new implementation bytes")
+        identity = {"kind": "committed", "sha": self.git("rev-parse", "HEAD").decode().strip()}
+        fresh = r.configure_profile(self.root, self.build, self.pid, self.profile,
+                                    identity, s.digest(self.inventory))
+        self.assertNotEqual(fresh["source_identity"], real["source_identity"])
+        tests = {t["name"]: t for t in fresh["tests"]}
+        descriptors = {d["name"]: d for d in fresh["descriptors"]}
+        with self.assertRaisesRegex(ValueError, "candidate command/property/target/input contract changed"):
+            subset.validate_graph(contract, fresh, tests, descriptors, ["a-model"])
+        self.assertEqual(self.contract, contract)
 
     def test_target_custody_binding_and_phase_options_refuse_before_build(self):
         real = self.configure("grotto.linux")
@@ -496,7 +517,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertEqual(result["resolved"]["baseline_exclusions"][0]["status"], "not_executed")
 
     def test_historical_production_policy_cannot_promote_ordinary_evidence(self):
-        policy = subset.before_full_ownership_policy(s.load_inventory(ROOT / "tests/selection/inventory.json"))
+        from runtime_integration_support import before_runtime_policy
+        policy = subset.before_full_ownership_policy(before_runtime_policy(s.load_inventory(ROOT / "tests/selection/inventory.json")))
         release = s.release_plan(ROOT, policy, head="HEAD", component="libgo", dry_run=True, run_id="ordinary-production-negative")
         self.assertEqual(release["diagnostic_nonmember_subset_profiles"], sorted(subset.PROFILES))
         validation = dict(passed=True, complete=True, mode="broad", partial_profiles=[], tag=release["tag"],

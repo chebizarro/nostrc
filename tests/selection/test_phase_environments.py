@@ -88,6 +88,10 @@ class PhaseExecutionTests(Project):
         self.addCleanup(self.environment.stop)
         self.profile["configure_args"] += ["-DCMAKE_BUILD_TYPE=Debug"]
         self.profile["environment"] = {"PHASE_COMMON": "common", "PHASE_SCOPE": "common"}
+        if r.platform.system() == "Darwin":
+            # Darwin normalizes this value at exec. Author the physical value in
+            # the fixture; do not exempt any ambient key from engine hashing.
+            self.profile["environment"]["XPC_SERVICE_NAME"] = "0"
         self.profile["phase_environments"] = {
             "configure": {"PHASE_SCOPE": "configure"},
             "build": {"PHASE_SCOPE": "build", "PHASE_BUILD_ONLY": "yes"},
@@ -273,6 +277,17 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/build-phase.txt" "$ENV{PHASE_SCOPE}")
                 r.load_realization(self.build, self.identity)
         r._atomic(self.build / "nostrc-test-realization.json", realized)
         self.assertEqual(r.load_realization(self.build, self.identity), realized)
+
+    @unittest.skipUnless(r.platform.system() == "Darwin", "Darwin exec-normalized fixture environment")
+    def test_exec_normalized_value_is_authored_for_every_physical_phase(self):
+        self.assertEqual(self.profile["environment"]["XPC_SERVICE_NAME"], "0")
+        with mock.patch.dict(os.environ, {"XPC_SERVICE_NAME": "nostrc-phase-exec-counterfactual"}):
+            for phase in r.PHASES:
+                env = r.phase_environment(self.profile, self.root, phase)
+                self.assertEqual(env["XPC_SERVICE_NAME"], "0")
+                observed = subprocess.check_output(
+                    [sys.executable, "-c", "import os;print(os.environ['XPC_SERVICE_NAME'])"], env=env)
+                self.assertEqual(observed, b"0\n")
 
     def test_ambient_drift_is_rejected_before_build_and_test(self):
         _, resolved, audit = self.ready()

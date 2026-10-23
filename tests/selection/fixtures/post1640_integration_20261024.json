@@ -1,0 +1,2029 @@
+{
+  "schema_version": 1,
+  "scope": "Exact approved A/C post-1640 historical-test inverse and clerical source enrollment only; not runtime admission or a product-byte allowlist.",
+  "base": "1640fc86de42f3b6d495847a83820eafb6dfbf4b",
+  "approved_A_tip": "f6e7576c78fd3a2e1614a919b5dc0e0fca9899b4",
+  "approved_C_tip": "645c64a3050af9b3f228c35e3729db75f48104ed",
+  "base_policy_hash": "3be500a4314004dbf32f470aab194314efc9dbff1cc575e48d3556e669c2bb48",
+  "enrolled_policy_hash": "c8165e5a92638a2a10718cc1b03fb8e625969d5b56f4a3777de12a921dbc120f",
+  "selected_profiles": [
+    "core.linux",
+    "core.linux.asan",
+    "grotto.linux",
+    "grotto.linux.asan_ubsan",
+    "groundhog.linux",
+    "groundhog.mdk011",
+    "groundhog.mdk08"
+  ],
+  "maps": {
+    "profiles": {
+      "grotto.linux.asan_ubsan": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DBUILD_GROUNDHOG=OFF",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DGNOSTR_ENABLE_ASAN=ON",
+            "-DGNOSTR_ENABLE_UBSAN=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON"
+          ],
+          "environment": {
+            "G_SLICE": "always-malloc",
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "asan_ubsan",
+          "local_availability": "host_or_container",
+          "parallelism": 1,
+          "platform": "linux",
+          "setup": ".github/workflows/grotto-ci.yml:signer",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "matrix": {
+              "runner": "ubuntu-24.04",
+              "mode": "asan-ubsan"
+            },
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "--parallel",
+              "2"
+            ],
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "-j1",
+              "-R",
+              "^(signer/bunker|signer/bunker-e2e|signer/approval-controller|signer/approval-integration|signer/permissions|signer/trust-tiers|signer/onboarding|signer/background|signer/clients|signer/activity|nip55l_approval_service|nip55l_cache_concurrency|nip55l_dbus_contract)$",
+              "--no-tests=error",
+              "--output-on-failure"
+            ],
+            "required_minimum": [
+              "signer/bunker",
+              "signer/bunker-e2e",
+              "signer/approval-controller",
+              "signer/approval-integration",
+              "signer/permissions",
+              "signer/trust-tiers",
+              "signer/onboarding",
+              "signer/background",
+              "signer/clients",
+              "signer/activity",
+              "nip55l_approval_service",
+              "nip55l_cache_concurrency",
+              "nip55l_dbus_contract"
+            ],
+            "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+            "build_parallelism": 2,
+            "test_parallelism": 1,
+            "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+            "runtime_wrapper": [
+              "dbus-run-session",
+              "--",
+              "xvfb-run",
+              "-a",
+              "-s",
+              "-screen 0 1280x800x24"
+            ]
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 1,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DBUILD_GROUNDHOG=OFF",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DGNOSTR_ENABLE_ASAN=ON",
+            "-DGNOSTR_ENABLE_UBSAN=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON"
+          ],
+          "environment": {
+            "G_SLICE": "always-malloc",
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "asan_ubsan",
+          "local_availability": "host_or_container",
+          "parallelism": 1,
+          "platform": "linux",
+          "setup": ".github/workflows/grotto-ci.yml:signer",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "matrix": {
+              "runner": "ubuntu-24.04",
+              "mode": "asan-ubsan"
+            },
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "--parallel",
+              "2"
+            ],
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "-j1",
+              "-R",
+              "^(signer/bunker|signer/bunker-e2e|signer/approval-controller|signer/approval-integration|signer/permissions|signer/trust-tiers|signer/onboarding|signer/background|signer/clients|signer/activity|nip55l_approval_service|nip55l_cache_concurrency|nip55l_dbus_contract)$",
+              "--no-tests=error",
+              "--output-on-failure"
+            ],
+            "required_minimum": [
+              "signer/bunker",
+              "signer/bunker-e2e",
+              "signer/approval-controller",
+              "signer/approval-integration",
+              "signer/permissions",
+              "signer/trust-tiers",
+              "signer/onboarding",
+              "signer/background",
+              "signer/clients",
+              "signer/activity",
+              "nip55l_approval_service",
+              "nip55l_cache_concurrency",
+              "nip55l_dbus_contract"
+            ],
+            "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+            "build_parallelism": 2,
+            "test_parallelism": 1,
+            "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+            "runtime_wrapper": [
+              "dbus-run-session",
+              "--",
+              "xvfb-run",
+              "-a",
+              "-s",
+              "-screen 0 1280x800x24"
+            ]
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 1,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        }
+      },
+      "groundhog.mdk011": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "docker",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_NOSTR_GOBJECT=ON",
+            "-DBUILD_NOSTR_GTK=ON",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_RELAYD=ON",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_MDK011_INTEROP=ON",
+            "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice",
+            "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [
+            "mdk011_live"
+          ],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "execution_domain": "mdk_original_linux_v1",
+          "build_parallelism": 2,
+          "test_parallelism": 2,
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "docker",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_NOSTR_GOBJECT=ON",
+            "-DBUILD_NOSTR_GTK=ON",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_RELAYD=ON",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_MDK011_INTEROP=ON",
+            "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice",
+            "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [
+            "mdk011_live"
+          ],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "execution_domain": "mdk_original_linux_v1",
+          "build_parallelism": 2,
+          "test_parallelism": 2,
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        }
+      },
+      "core.linux.asan": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "clang",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DCMAKE_VERBOSE_MAKEFILE=ON",
+            "-DENABLE_NIP19=ON",
+            "-DENABLE_NIP49=ON",
+            "-DENABLE_FUZZING=ON",
+            "-DENABLE_FUZZING_RUNTIME=ON",
+            "-DGO_ENABLE_ASAN=ON",
+            "-DGO_ENABLE_UBSAN=ON",
+            "-DGO_WARNINGS_AS_ERRORS=ON",
+            "-DWITH_NOSTRDB=ON",
+            "-DLIBNOSTR_WITH_NOSTRDB=ON",
+            "-DNIP04_STRICT_AEAD_ONLY=ON",
+            "-DBUILD_NOSTR_GTK=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "CMAKE_BUILD_TYPE": "Debug",
+            "ASAN_OPTIONS": "detect_leaks=0:detect_odr_violation=0:strict_string_checks=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "NOSTR_RELAY_REPLAY_TTL": "0",
+            "NOSTR_RELAY_SKEW_FUTURE": "0",
+            "NOSTR_RELAY_SKEW_PAST": "0",
+            "CC": "clang",
+            "CXX": "clang++",
+            "LDFLAGS": "'-fuse-ld=lld'",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [
+            "nip19",
+            "nip49",
+            "nostrdb",
+            "nip04_strict_aead",
+            "fuzzing_runtime"
+          ],
+          "instrumentation": "asan_ubsan",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/nostrc-ci.yml:build-and-test",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "matrix": {
+              "os": "ubuntu-latest",
+              "sanitizer": "asan_ubsan"
+            },
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "-j",
+              "--verbose"
+            ],
+            "audit_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "--output-on-failure",
+              "-R",
+              "libnostr_.*_audit"
+            ],
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "--output-on-failure",
+              "-j2",
+              "-E",
+              "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
+            ],
+            "ctest_exclude": "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit",
+            "fuzz_commands": [
+              [
+                "{build}/tests/fuzz_event_deserialize",
+                "{source}/tests/fuzz_seeds/events",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_envelope_deserialize",
+                "{source}/tests/fuzz_seeds/envelopes",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_filter_parse",
+                "{source}/tests/fuzz_seeds/filters",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_verify_wrapper",
+                "{source}/tests/fuzz_seeds/events",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_event_parse",
+                "{source}/tests/fuzz_seeds/events",
+                "-max_total_time=30"
+              ]
+            ],
+            "fuzz_environment": {
+              "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+              "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+            },
+            "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
+          },
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 2
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "clang",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DCMAKE_VERBOSE_MAKEFILE=ON",
+            "-DENABLE_NIP19=ON",
+            "-DENABLE_NIP49=ON",
+            "-DENABLE_FUZZING=ON",
+            "-DENABLE_FUZZING_RUNTIME=ON",
+            "-DGO_ENABLE_ASAN=ON",
+            "-DGO_ENABLE_UBSAN=ON",
+            "-DGO_WARNINGS_AS_ERRORS=ON",
+            "-DWITH_NOSTRDB=ON",
+            "-DLIBNOSTR_WITH_NOSTRDB=ON",
+            "-DNIP04_STRICT_AEAD_ONLY=ON",
+            "-DBUILD_NOSTR_GTK=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "CMAKE_BUILD_TYPE": "Debug",
+            "ASAN_OPTIONS": "detect_leaks=0:detect_odr_violation=0:strict_string_checks=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "NOSTR_RELAY_REPLAY_TTL": "0",
+            "NOSTR_RELAY_SKEW_FUTURE": "0",
+            "NOSTR_RELAY_SKEW_PAST": "0",
+            "CC": "clang",
+            "CXX": "clang++",
+            "LDFLAGS": "'-fuse-ld=lld'",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [
+            "nip19",
+            "nip49",
+            "nostrdb",
+            "nip04_strict_aead",
+            "fuzzing_runtime"
+          ],
+          "instrumentation": "asan_ubsan",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/nostrc-ci.yml:build-and-test",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "matrix": {
+              "os": "ubuntu-latest",
+              "sanitizer": "asan_ubsan"
+            },
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "-j",
+              "--verbose"
+            ],
+            "audit_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "--output-on-failure",
+              "-R",
+              "libnostr_.*_audit"
+            ],
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "--output-on-failure",
+              "-j2",
+              "-E",
+              "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
+            ],
+            "ctest_exclude": "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit",
+            "fuzz_commands": [
+              [
+                "{build}/tests/fuzz_event_deserialize",
+                "{source}/tests/fuzz_seeds/events",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_envelope_deserialize",
+                "{source}/tests/fuzz_seeds/envelopes",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_filter_parse",
+                "{source}/tests/fuzz_seeds/filters",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_verify_wrapper",
+                "{source}/tests/fuzz_seeds/events",
+                "-max_total_time=30"
+              ],
+              [
+                "{build}/tests/fuzz_event_parse",
+                "{source}/tests/fuzz_seeds/events",
+                "-max_total_time=30"
+              ]
+            ],
+            "fuzz_environment": {
+              "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+              "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+            },
+            "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
+          },
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 2
+        }
+      },
+      "core.linux": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/nostrc-ci.yml",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "build_parallelism": 2,
+          "test_parallelism": 2,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/nostrc-ci.yml",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "build_parallelism": 2,
+          "test_parallelism": 2,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        }
+      },
+      "grotto.linux": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "G_SLICE": "always-malloc",
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 1,
+          "platform": "linux",
+          "setup": ".github/workflows/grotto-ci.yml:signer",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "matrix": {
+              "runner": "ubuntu-24.04",
+              "mode": "native"
+            },
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "--parallel",
+              "2"
+            ],
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "-j1",
+              "-R",
+              "^(signer/|nip55l_|nostr_signer_webext_host_)",
+              "--no-tests=error",
+              "--output-on-failure"
+            ],
+            "required_minimum": [
+              "signer/bunker",
+              "signer/bunker-e2e",
+              "signer/approval-controller",
+              "signer/approval-integration",
+              "signer/permissions",
+              "signer/background",
+              "signer/onboarding",
+              "signer/clients",
+              "signer/activity",
+              "signer/ui-layout",
+              "signer/desktop-contract",
+              "signer/blueprint-drift",
+              "signer/qr-scanner",
+              "signer/trust-tiers",
+              "signer/home-model",
+              "nip55l_approval_service",
+              "nip55l_dbus_contract"
+            ],
+            "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+            "build_parallelism": 2,
+            "test_parallelism": 1,
+            "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+            "runtime_wrapper": [
+              "dbus-run-session",
+              "--",
+              "xvfb-run",
+              "-a",
+              "-s",
+              "-screen 0 1280x800x24"
+            ]
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 1,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "G_SLICE": "always-malloc",
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 1,
+          "platform": "linux",
+          "setup": ".github/workflows/grotto-ci.yml:signer",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "matrix": {
+              "runner": "ubuntu-24.04",
+              "mode": "native"
+            },
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "--parallel",
+              "2"
+            ],
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "-j1",
+              "-R",
+              "^(signer/|nip55l_|nostr_signer_webext_host_)",
+              "--no-tests=error",
+              "--output-on-failure"
+            ],
+            "required_minimum": [
+              "signer/bunker",
+              "signer/bunker-e2e",
+              "signer/approval-controller",
+              "signer/approval-integration",
+              "signer/permissions",
+              "signer/background",
+              "signer/onboarding",
+              "signer/clients",
+              "signer/activity",
+              "signer/ui-layout",
+              "signer/desktop-contract",
+              "signer/blueprint-drift",
+              "signer/qr-scanner",
+              "signer/trust-tiers",
+              "signer/home-model",
+              "nip55l_approval_service",
+              "nip55l_dbus_contract"
+            ],
+            "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+            "build_parallelism": 2,
+            "test_parallelism": 1,
+            "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+            "runtime_wrapper": [
+              "dbus-run-session",
+              "--",
+              "xvfb-run",
+              "-a",
+              "-s",
+              "-screen 0 1280x800x24"
+            ]
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 1,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        }
+      },
+      "groundhog.linux": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_NOSTR_GOBJECT=ON",
+            "-DBUILD_NOSTR_GTK=ON",
+            "-DBUILD_RELAYD=ON",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_MDK011_INTEROP=OFF",
+            "-DBUILD_MDK_INTEROP=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 2
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_NOSTR_GOBJECT=ON",
+            "-DBUILD_NOSTR_GTK=ON",
+            "-DBUILD_RELAYD=ON",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_MDK011_INTEROP=OFF",
+            "-DBUILD_MDK_INTEROP=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          },
+          "build_parallelism": 2,
+          "test_parallelism": 2
+        }
+      },
+      "groundhog.mdk08": {
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "docker",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_MDK_INTEROP=ON",
+            "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+            "-DBUILD_APPS=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/marmot-mdk-interop.yml",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "execution_domain": "mdk_original_linux_v1",
+          "build_parallelism": 2,
+          "test_parallelism": 2,
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        },
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "docker",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_MDK_INTEROP=ON",
+            "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+            "-DBUILD_APPS=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/marmot-mdk-interop.yml",
+          "source_dir": ".",
+          "timeout_seconds": 3600,
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          },
+          "normal_selected_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_selected_closure_executed",
+            "selection": "source_bound_dependency_plan"
+          },
+          "execution_domain": "mdk_original_linux_v1",
+          "build_parallelism": 2,
+          "test_parallelism": 2,
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          }
+        }
+      },
+      "homed.linux.ci": {
+        "before": null,
+        "after": {
+          "platform": "linux",
+          "architecture": "x86_64",
+          "compiler": "gcc",
+          "host_system": {
+            "ID": "ubuntu",
+            "VERSION_ID": "24.04"
+          },
+          "build_type": "RelWithDebInfo",
+          "instrumentation": "none",
+          "source_dir": "gnome/nostr-homed/tests/unit",
+          "setup": ".github/workflows/dependency-worker.yml:execute",
+          "local_availability": "host",
+          "capabilities": [],
+          "feature_variants": [],
+          "contexts": [
+            "ci"
+          ],
+          "parallelism": 2,
+          "build_parallelism": 2,
+          "test_parallelism": 1,
+          "timeout_seconds": 3600,
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+          ],
+          "environment": {
+            "CC": "gcc",
+            "CXX": "g++"
+          },
+          "phase_environments": {
+            "configure": {},
+            "build": {},
+            "test": {}
+          },
+          "scope": "standalone_manifest_cache_units",
+          "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test",
+          "normal_execution": {
+            "schema_version": 1,
+            "custody": "linux_pidns_v1",
+            "audit_scope": "full_configured_universe",
+            "registration_policy": "all_owned_and_executed"
+          }
+        }
+      }
+    },
+    "checks": {
+      "homed.units": {
+        "before": {
+          "kind": "ctest",
+          "cost": "ordinary",
+          "requirement": "blocking",
+          "expected_outcome": "pass",
+          "nodes": [
+            "gnome.nostr_homed",
+            "gnome.nostr_homed.test_inputs",
+            "execution.homed"
+          ],
+          "profiles": [
+            "homed.linux.units"
+          ],
+          "ctest_tests": {
+            "homed.linux.units": [
+              "homed_cache",
+              "homed_cache_config",
+              "homed_groups",
+              "homed_manifest",
+              "homed_uid_map"
+            ]
+          },
+          "build_targets": [
+            "test_cache",
+            "test_cache_config",
+            "test_groups",
+            "test_manifest",
+            "test_uid_map"
+          ],
+          "runtime_inputs": []
+        },
+        "after": {
+          "kind": "ctest",
+          "cost": "ordinary",
+          "requirement": "blocking",
+          "expected_outcome": "pass",
+          "nodes": [
+            "gnome.nostr_homed",
+            "gnome.nostr_homed.test_inputs",
+            "execution.homed"
+          ],
+          "profiles": [
+            "homed.linux.units",
+            "homed.linux.ci"
+          ],
+          "ctest_tests": {
+            "homed.linux.units": [
+              "homed_cache",
+              "homed_cache_config",
+              "homed_groups",
+              "homed_manifest",
+              "homed_uid_map"
+            ],
+            "homed.linux.ci": [
+              "homed_cache",
+              "homed_cache_config",
+              "homed_groups",
+              "homed_manifest",
+              "homed_uid_map"
+            ]
+          },
+          "build_targets": [
+            "test_cache",
+            "test_cache_config",
+            "test_groups",
+            "test_manifest",
+            "test_uid_map"
+          ],
+          "runtime_inputs": []
+        }
+      },
+      "homed.default_build": {
+        "before": {
+          "kind": "build_contract",
+          "cost": "ordinary",
+          "requirement": "blocking",
+          "expected_outcome": "pass",
+          "nodes": [
+            "gnome.nostr_homed",
+            "gnome.nostr_homed.test_inputs",
+            "execution.homed"
+          ],
+          "profiles": [
+            "homed.linux.units"
+          ],
+          "build_scope": "default",
+          "build_targets": [],
+          "command": [
+            "cmake",
+            "--build",
+            "{build}",
+            "--config",
+            "RelWithDebInfo"
+          ],
+          "working_directory": "{source}",
+          "environment": {},
+          "runtime_inputs": []
+        },
+        "after": {
+          "kind": "build_contract",
+          "cost": "ordinary",
+          "requirement": "blocking",
+          "expected_outcome": "pass",
+          "nodes": [
+            "gnome.nostr_homed",
+            "gnome.nostr_homed.test_inputs",
+            "execution.homed"
+          ],
+          "profiles": [
+            "homed.linux.units",
+            "homed.linux.ci"
+          ],
+          "build_scope": "default",
+          "build_targets": [],
+          "command": [
+            "cmake",
+            "--build",
+            "{build}",
+            "--config",
+            "RelWithDebInfo"
+          ],
+          "working_directory": "{source}",
+          "environment": {},
+          "runtime_inputs": []
+        }
+      }
+    },
+    "workflow_jobs": {
+      ".github/workflows/dependency-tests.yml:grotto_asan": {
+        "before": {
+          "matrix_source": "",
+          "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
+        },
+        "after": {
+          "matrix_source": "",
+          "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
+        }
+      },
+      ".github/workflows/dependency-tests.yml:mdk011": {
+        "before": {
+          "matrix_source": "",
+          "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
+        },
+        "after": {
+          "matrix_source": "",
+          "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
+        }
+      },
+      ".github/workflows/dependency-tests.yml:core_asan": {
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
+          "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
+          "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:core_native": {
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
+          "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
+          "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
+          "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
+          "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:select": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
+          "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
+          "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:core": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
+          "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
+          "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:grotto": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
+          "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
+          "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:groundhog": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
+          "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
+          "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:mdk08": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
+          "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
+          "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:libgo": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
+          "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
+          "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:libgo_native": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
+          "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
+          "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:policy": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
+          "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
+          "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:broad": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
+          "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
+          "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:gate": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "d716dbc492425391da996cc4bc475805de34d891a9065dd8126a7839b544d0b1",
+          "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "a0b23c92cae5090d7cd485ca7359791a8fbe53133596879bfac011ba31198f0d",
+          "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-worker.yml:execute": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "bbd663a642a0d219bbe87ca291263bd857ff1a0d1ce892c42a26c07a070e48db",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "fcf6ac4f6d1011bee1f4706360de3ccad87f0d2821dad67d18b5363b03cf273d",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9"
+        }
+      },
+      ".github/workflows/static-checks.yml:static-checks": {
+        "before": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "226fc05a778d84e8cf4d922c667db5a3fcbc442c918b83282bb8ee6cf3e9a2e5",
+          "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
+          "workflow_sha256": "9bb4045825b44193452b187f1e5d7ef80911a29bd531ffb787aa512255cbae4f"
+        },
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "source_sha256": "74d407dd489dbf824d30c8a341b6f4667a4deb3963dec4295d6092434a78885b",
+          "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
+          "workflow_sha256": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:policy_regressions": {
+        "before": {
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
+          "matrix_source": "",
+          "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
+          "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+        },
+        "after": {
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
+          "matrix_source": "",
+          "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      },
+      ".github/workflows/dependency-tests.yml:homed_units": {
+        "before": null,
+        "after": {
+          "matrix_source": "",
+          "profiles": [],
+          "coverage_gap": "workflow_profile_union",
+          "unsupported_reason": "Standalone five-unit homed CI dispatch is source-accounted only; no physical CI receipt, original four-distro root/systemd/FUSE validation or complete profile-union acceptance is inferred.",
+          "source_sha256": "5e470ea449945b085873bc31a1e21bfd5868154ea2625e0c9a403c943d42082b",
+          "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+        }
+      }
+    }
+  },
+  "runtime_inputs": [
+    "{source}/tests/selection/test_homed_ci_worker.py",
+    "{source}/tests/selection/post1640_integration_support.py",
+    "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
+    "{source}/tests/selection/test_post1640_integration.py"
+  ],
+  "sources": {
+    ".github/workflows/dependency-tests.yml": {
+      "before_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+      "after_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
+      "edits": [
+        {
+          "before": "      sha: ${{ needs.select.outputs.sha }}\n      plan_id: ${{ needs.select.outputs.plan_id }}\n      profile: libgo.macos.asan\n  policy_regressions:\n    needs: select\n    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')\n",
+          "after": "      sha: ${{ needs.select.outputs.sha }}\n      plan_id: ${{ needs.select.outputs.plan_id }}\n      profile: libgo.macos.asan\n  homed_units:\n    # Standalone five-unit homed manifest/cache CI profile; not the legacy\n    # nostr-homed-ci root/systemd/FUSE matrix cells, which remain separate.\n    needs: select\n    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'homed.linux.ci')\n    uses: ./.github/workflows/dependency-worker.yml\n    with:\n      sha: ${{ needs.select.outputs.sha }}\n      plan_id: ${{ needs.select.outputs.plan_id }}\n      profile: homed.linux.ci\n  policy_regressions:\n    needs: select\n    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')\n"
+        },
+        {
+          "before": "  gate:\n    name: Dependency gate\n    if: always()\n    needs: [select, core, core_asan, core_native, grotto, grotto_asan, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, policy, broad]\n    runs-on: ubuntu-24.04\n    outputs:\n      validation_artifact: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}\n",
+          "after": "  gate:\n    name: Dependency gate\n    if: always()\n    needs: [select, core, core_asan, core_native, grotto, grotto_asan, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, homed_units, policy, broad]\n    runs-on: ubuntu-24.04\n    outputs:\n      validation_artifact: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}\n"
+        }
+      ]
+    },
+    ".github/workflows/dependency-worker.yml": {
+      "before_sha256": "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac",
+      "after_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9",
+      "edits": [
+        {
+          "before": "        run: |\n          set -euo pipefail\n          case \"$PROFILE:${DEPENDENCY_ROUTE:-plan}\" in\n            static.policy:*|core.linux:*|grotto.linux:*|groundhog.linux:*|*:pidns)\n              # Only namespace-custody lanes; kernel settings are never changed.\n              bash tests/selection/namespace_apparmor_setup.sh \"$RUNNER_TEMP/dependency/namespace-apparmor\" ;;\n            *) echo \"not a namespace-custody lane: no AppArmor provisioning\" ;;\n",
+          "after": "        run: |\n          set -euo pipefail\n          case \"$PROFILE:${DEPENDENCY_ROUTE:-plan}\" in\n            static.policy:*|core.linux:*|grotto.linux:*|groundhog.linux:*|homed.linux.ci:*|*:pidns)\n              # Only namespace-custody lanes; kernel settings are never changed.\n              bash tests/selection/namespace_apparmor_setup.sh \"$RUNNER_TEMP/dependency/namespace-apparmor\" ;;\n            *) echo \"not a namespace-custody lane: no AppArmor provisioning\" ;;\n"
+        },
+        {
+          "before": "          # DEPENDENCY_ROUTE comes from the validated profile (verify step).\n          if [[ \"${DEPENDENCY_ROUTE:-plan}\" == pidns ]]; then lane=pidns; fi\n          case \"$lane\" in\n            pidns|core.linux|grotto.linux|groundhog.linux)\n              # The outer gate owns private services and post-namespace-exit\n              # sealing. Unsupported runner kernels retain refusal, not green.\n              # The per-job profile flows from its retained journal into the\n",
+          "after": "          # DEPENDENCY_ROUTE comes from the validated profile (verify step).\n          if [[ \"${DEPENDENCY_ROUTE:-plan}\" == pidns ]]; then lane=pidns; fi\n          case \"$lane\" in\n            pidns|homed.linux.ci|core.linux|grotto.linux|groundhog.linux)\n              # The outer gate owns private services and post-namespace-exit\n              # sealing. Unsupported runner kernels retain refusal, not green.\n              # The per-job profile flows from its retained journal into the\n"
+        }
+      ]
+    },
+    ".github/workflows/dependency_contract.py": {
+      "before_sha256": "039960034695ae9b3bacca17bb6598c1c798b711b1a54081fe4703ab9995bd0e",
+      "after_sha256": "a5077b81ed5b8a63417ead343d11b55d43e6f9e98e4d4f00b952a7a1633f7a10",
+      "edits": [
+        {
+          "before": "LANES = {\"core.linux\": \"core\", \"core.linux.asan\": \"core_asan\", \"core.macos.asan\": \"core_native\",\n         \"grotto.linux\": \"grotto\", \"grotto.linux.asan_ubsan\": \"grotto_asan\", \"groundhog.linux\": \"groundhog\",\n         \"groundhog.linux.sanitizers\": \"groundhog_sanitizers\", \"groundhog.mdk08\": \"mdk08\",\n         \"groundhog.mdk011\": \"mdk011\",\n         \"libgo.linux.asan\": \"libgo\", \"libgo.macos.asan\": \"libgo_native\", \"static.policy\": \"policy\"}\nBROAD_FAMILIES = {\n    \"core\": \"nostrc-ci\", \"libgo\": \"libgo-ci\", \"hanami\": \"libhanami-ci\", \"gi\": \"libnostr-gi\",\n",
+          "after": "LANES = {\"core.linux\": \"core\", \"core.linux.asan\": \"core_asan\", \"core.macos.asan\": \"core_native\",\n         \"grotto.linux\": \"grotto\", \"grotto.linux.asan_ubsan\": \"grotto_asan\", \"groundhog.linux\": \"groundhog\",\n         \"groundhog.linux.sanitizers\": \"groundhog_sanitizers\", \"groundhog.mdk08\": \"mdk08\",\n         \"groundhog.mdk011\": \"mdk011\", \"homed.linux.ci\": \"homed_units\",\n         \"libgo.linux.asan\": \"libgo\", \"libgo.macos.asan\": \"libgo_native\", \"static.policy\": \"policy\"}\nBROAD_FAMILIES = {\n    \"core\": \"nostrc-ci\", \"libgo\": \"libgo-ci\", \"hanami\": \"libhanami-ci\", \"gi\": \"libnostr-gi\",\n"
+        }
+      ]
+    },
+    ".github/workflows/static-checks.yml": {
+      "before_sha256": "9bb4045825b44193452b187f1e5d7ef80911a29bd531ffb787aa512255cbae4f",
+      "after_sha256": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2",
+      "edits": [
+        {
+          "before": "        uses: actions/checkout@v4\n        with:\n          ref: ${{ inputs.sha || github.sha }}\n          # Source-membership regressions hash the pinned nostrdb sources; no build is needed.\n          submodules: recursive\n          persist-credentials: false\n",
+          "after": "        uses: actions/checkout@v4\n        with:\n          ref: ${{ inputs.sha || github.sha }}\n          # The selection suite reads pinned ancestor commits (vector-family\n          # witnesses), so it needs full history like the regression controller.\n          fetch-depth: 0\n          # Source-membership regressions hash the pinned nostrdb sources; no build is needed.\n          submodules: recursive\n          persist-credentials: false\n"
+        }
+      ]
+    },
+    "scripts/test_selection_execution.py": {
+      "before_sha256": "70714e1c3978e67d31ff1bc83d83dc6c04c75a559a354e812eb5e0b40f3e8526",
+      "after_sha256": "9452ba91778426ee6e06c79f3c54f5cddf1fdc3586ce3cec95533d8514f6c400",
+      "edits": [
+        {
+          "before": "FIELD = 'normal_execution'\nMARKER = dict(schema_version=1, custody='linux_pidns_v1',\n              audit_scope='full_configured_universe', registration_policy='all_owned_and_executed')\n\n\nAPPARMOR_FILES = ('setup.json', 'teardown.json', 'profiles-before.txt', 'profiles-after.txt')\n",
+          "after": "FIELD = 'normal_execution'\nMARKER = dict(schema_version=1, custody='linux_pidns_v1',\n              audit_scope='full_configured_universe', registration_policy='all_owned_and_executed')\n# Separately authored selective contract (nostrc-0cfsg.36.11). It never changes\n# MARKER: only a profile that already authors the full contract may add it, and\n# it applies only to fresh, unrestricted, unbroadened affected plans whose exact\n# selection this qualifier re-derives from the same tested source history.\nSELECTED_FIELD = 'normal_selected_execution'\nSELECTED_MARKER = dict(schema_version=1, custody='linux_pidns_v1', audit_scope='full_configured_universe',\n                       registration_policy='all_owned_selected_closure_executed',\n                       selection='source_bound_dependency_plan')\nSELECTED_SCOPE = 'selected_dependency_closure'\n\n\nAPPARMOR_FILES = ('setup.json', 'teardown.json', 'profiles-before.txt', 'profiles-after.txt')\n"
+        },
+        {
+          "before": "\ndef validate_metadata(policy):\n    for pid, profile in policy.get('profiles', {}).items():\n        if FIELD not in profile:\n            continue\n        require(profile[FIELD] == MARKER and type(profile[FIELD].get('schema_version')) is int,\n",
+          "after": "\ndef validate_metadata(policy):\n    for pid, profile in policy.get('profiles', {}).items():\n        if SELECTED_FIELD in profile:\n            require(profile[SELECTED_FIELD] == SELECTED_MARKER and type(profile[SELECTED_FIELD].get('schema_version')) is int\n                    and profile.get(FIELD) == MARKER, 'selected-normal contract requires the authored full contract: ' + pid)\n        if FIELD not in profile:\n            continue\n        require(profile[FIELD] == MARKER and type(profile[FIELD].get('schema_version')) is int,\n"
+        },
+        {
+          "before": "                    'signer sanitizer/graceful shutdown failed')\n\n\ndef qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locator=None, transport=None):\n    from test_selection import (read_json, digest, validate_plan, coverage_state,\n                                validate_default_build_evidence, validate_phase_parallelism_evidence)\n    import test_selection_subset as subset\n",
+          "after": "                    'signer sanitizer/graceful shutdown failed')\n\n\ndef _require_no_mdk_lifecycle(raw, closure, descriptors, recovery):\n    \"\"\"Selected scope without original MDK: no image fixture, peer, runtime or journal may exist.\n\n    When MDK IS selected, qualify's existing image production/use/cleanup\n    validation stays mandatory; this never waives it.\"\"\"\n    from test_selection_mdk import CAPABILITY, IMAGE_TESTS\n    require('mdk_runtime' not in raw and CAPABILITY not in raw.get('runtime_capability_evidence', {})\n            and CAPABILITY not in raw.get('required_capabilities', []) and not recovery\n            and not set(closure) & set(IMAGE_TESTS.values())\n            and not any(CAPABILITY in descriptors.get(name, {}).get('requires', []) for name in closure),\n            'unselected original MDK lifecycle was provisioned or executed')\n\n\ndef _event_ancestry(plan, repo):\n    \"\"\"Persisted event identities must be the tested source's real Git ancestry.\n\n    A pull_request plan tests a two-parent merge: its PR head must be a non-first\n    parent of the tested merge and its event base an ancestor of it. Equal trees\n    never alias identities, and a forged field cannot hide behind an unchanged\n    selection.\"\"\"\n    from test_selection import git, commit_sha\n    head = commit_sha(repo, plan['head'])\n    events = plan.get('event')\n    for event in (events if isinstance(events, list) else [events or {}]):\n        if event.get('kind') != 'pull_request':\n            continue\n        parents = os.fsdecode(git(repo, 'rev-list', '--parents', '-n', '1', head).stdout).split()[1:]\n        require(commit_sha(repo, event['tested_sha']) == head and commit_sha(repo, event['pr_head_sha']) in parents[1:]\n                and git(repo, 'merge-base', '--is-ancestor', commit_sha(repo, event['base_sha']), head,\n                        check=False).returncode == 0,\n                'pull_request event identities are not the tested merge ancestry')\n\n\ndef _rederived_plan(policy, plan, repo):\n    \"\"\"The exact source-bound dependency plan, recomputed from the tested history.\"\"\"\n    from test_selection import git_plan\n    require(repo is not None, 'selected-normal qualification requires the exact tested checkout')\n    _event_ancestry(plan, repo)\n    event = plan.get('event') or None\n    again = git_plan(repo, policy, head=plan['head'], base=plan.get('base'), context=plan['context'],\n                     mode=plan['requested_mode'], event=event, profiles=plan.get('partial_profiles') or None)\n    require(again == plan, 'selective plan differs from the source-bound dependency plan re-derived from the tested history')\n    return again\n\n\ndef _scope(policy, plan, lane, profile, repo):\n    require(lane is not None and profile.get(FIELD) == MARKER, 'profile has no authored normal contract')\n    if plan['effective_mode'] == 'broad' or profile.get(SELECTED_FIELD) != SELECTED_MARKER:\n        # Exactly the pre-existing full-contract condition and message (1640 qualify).\n        require(plan['source_identity'].get('kind') == 'committed' and plan['effective_mode'] == 'broad',\n                'normal full-profile qualification requires a fresh committed broad plan')\n        return 'full'\n    require(plan['source_identity'].get('kind') == 'committed', 'selected-normal requires a committed source')\n    require(plan['effective_mode'] == plan['requested_mode'] == 'affected' and not plan.get('partial_profiles')\n            and not plan.get('broadening_reasons') and not plan.get('deleted_ref'),\n            'selected-normal requires an unrestricted, unbroadened affected plan')\n    _rederived_plan(policy, plan, repo)\n    return 'selected'\n\n\ndef qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locator=None, transport=None, repo=None):\n    from test_selection import (read_json, digest, validate_plan, coverage_state,\n                                validate_default_build_evidence, validate_phase_parallelism_evidence)\n    import test_selection_subset as subset\n"
+        },
+        {
+          "before": "    require(public.get('receipt_kind') not in ('lane_failure_v1', KIND), 'not an original execution receipt')\n    pid = public.get('profile')\n    lane = next((item for item in plan['lanes'] if item['profile'] == pid), None)\n    require(lane is not None and policy['profiles'][pid].get(FIELD) == MARKER, 'profile has no authored normal contract')\n    profile = policy['profiles'][pid]\n    require(all(public.get(key) == plan[key] for key in ('source_identity', 'inventory_hash', 'plan_id'))\n            and public.get('profile_hash') == lane['profile_hash'], 'public source/profile/plan binding differs')\n    require(plan['source_identity'].get('kind') == 'committed' and plan['effective_mode'] == 'broad',\n            'normal full-profile qualification requires a fresh committed broad plan')\n    require(not _omission(public) and not subset.active_contracts(policy).get(pid),\n            'historical omission authority cannot become normal')\n    require(not public.get('baseline_exclusions'), 'omitted registrations cannot become normal')\n",
+          "after": "    require(public.get('receipt_kind') not in ('lane_failure_v1', KIND), 'not an original execution receipt')\n    pid = public.get('profile')\n    lane = next((item for item in plan['lanes'] if item['profile'] == pid), None)\n    require(lane is not None and pid in policy['profiles'], 'profile has no authored normal contract')\n    profile = policy['profiles'][pid]\n    require(all(public.get(key) == plan[key] for key in ('source_identity', 'inventory_hash', 'plan_id'))\n            and public.get('profile_hash') == lane['profile_hash'], 'public source/profile/plan binding differs')\n    scope = _scope(policy, plan, lane, profile, repo)\n    require(not _omission(public) and not subset.active_contracts(policy).get(pid),\n            'historical omission authority cannot become normal')\n    require(not public.get('baseline_exclusions'), 'omitted registrations cannot become normal')\n"
+        },
+        {
+          "before": "            and raw.get('resolved_hash') == resolved.get('resolved_hash')\n            and resolved['resolved_hash'] == digest({k: v for k, v in resolved.items() if k != 'resolved_hash'}),\n            'resolved/plan binding differs')\n    checks = {ident: check for ident, check in policy['checks'].items() if pid in check['profiles']}\n    require(set(lane['checks']) == set(checks) == set(resolved['checks']) == set(raw.get('checks', {})),\n            'normal profile is missing authored checks')\n    tests, descriptors = backend_api._metadata(policy, real)\n    primaries = sorted(name for check in checks.values() if check['kind'] == 'ctest'\n                       for name in check['ctest_tests'][pid])\n    closure = backend_api._fixture_closure(primaries, tests, descriptors)\n    require(closure == sorted(tests) == resolved['tests'] == raw.get('tests')\n            and resolved['registration_hash'] == backend_api._registration_hash(real['tests']),\n            'whole configured registration/fixture universe was not executed')\n    pre, post = raw.get('input_audit_before_build'), raw.get('input_audit')\n    for audit, after in ((pre, False), (post, True)):\n        require(isinstance(audit, dict) and audit.get('passed') is True and audit.get('gaps') == []\n",
+          "after": "            and raw.get('resolved_hash') == resolved.get('resolved_hash')\n            and resolved['resolved_hash'] == digest({k: v for k, v in resolved.items() if k != 'resolved_hash'}),\n            'resolved/plan binding differs')\n    eligible = {ident: check for ident, check in policy['checks'].items() if pid in check['profiles']}\n    tests, descriptors = backend_api._metadata(policy, real)\n    def members(selection):\n        return sorted(name for check in selection.values() if check['kind'] == 'ctest' for name in check['ctest_tests'][pid])\n    # The whole configured universe must be owned (claimed primary or fixture of one) in BOTH scopes.\n    universe = backend_api._fixture_closure(members(eligible), tests, descriptors)\n    require(universe == sorted(tests) and resolved['registration_hash'] == backend_api._registration_hash(real['tests']),\n            'configured registration universe is not wholly owned')\n    if scope == 'full':\n        checks = eligible\n        require(set(lane['checks']) == set(checks) == set(resolved['checks']) == set(raw.get('checks', {})),\n                'normal profile is missing authored checks')\n    else:\n        checks = {ident: eligible[ident] for ident in lane['checks']}\n        require(checks and set(checks) <= set(eligible) and set(checks) == set(resolved['checks']) == set(raw.get('checks', {}))\n                and resolved.get('primary_tests') == members(checks),\n                'selected checks/primaries differ from the source-bound plan lane')\n    closure = backend_api._fixture_closure(members(checks), tests, descriptors)\n    require(closure == resolved['tests'] == raw.get('tests')\n            and (scope == 'selected' or closure == sorted(tests)),\n            'whole configured registration/fixture universe was not executed' if scope == 'full'\n            else 'executed registrations differ from the exact selected fixture closure')\n    pre, post = raw.get('input_audit_before_build'), raw.get('input_audit')\n    for audit, after in ((pre, False), (post, True)):\n        require(isinstance(audit, dict) and audit.get('passed') is True and audit.get('gaps') == []\n"
+        },
+        {
+          "before": "            require(audit.get(key) == resolved[key], 'audit identity differs: ' + key)\n    require(post.get('header_entries', 0) > 0 and isinstance(post.get('header_index_hash'), str)\n            and len(post['header_index_hash']) == 64 and post.get('input_hashes'), 'full discovered-header audit missing')\n    validate_default_build_evidence(profile, raw, checks, resolved=resolved)\n    require(any(check.get('build_scope') == 'default' for check in checks.values()), 'default build contract missing')\n    validate_phase_parallelism_evidence(profile, raw, require_test=bool(tests))\n    if pid in subset.full_profiles(policy):\n        subset.validate_full_receipt(public, raw, plan, lane, profile, checks=checks)\n    observed = raw.get('observed_executions', {})\n    require(set(observed) == set(resolved['expected_executions']) and raw.get('outcome') == 'passed'\n            and raw.get('ctest_exit_code') == 0 and raw.get('attempt') == 1 and not raw.get('previous_attempts'),\n            'selected physical executions missing, retried or failed')\n    expected_xfail = {name for check in checks.values() if isinstance(check.get('expected_outcome'), dict)\n                      and check['expected_outcome'] == dict(case='mdk09_incompatibility', exit_code=77)\n",
+          "after": "            require(audit.get(key) == resolved[key], 'audit identity differs: ' + key)\n    require(post.get('header_entries', 0) > 0 and isinstance(post.get('header_index_hash'), str)\n            and len(post['header_index_hash']) == 64 and post.get('input_hashes'), 'full discovered-header audit missing')\n    # Eligible default contracts stay required even when unselected (full audit + prerequisite build).\n    validate_default_build_evidence(profile, raw, eligible, resolved=resolved)\n    defaults = {ident: check for ident, check in eligible.items() if check.get('build_scope') == 'default'}\n    require(defaults, 'default build contract missing')\n    validate_phase_parallelism_evidence(profile, raw, require_test=bool(closure))\n    if pid in subset.full_profiles(policy):\n        subset.validate_full_receipt(public, raw, plan, lane, profile, checks=dict(defaults, **checks))\n    observed = raw.get('observed_executions', {})\n    # Independently derived: exact registration closure plus selected command checks.\n    expected_ids = sorted(closure + [ident for ident, check in checks.items() if check['kind'] != 'ctest'])\n    require(resolved.get('expected_executions') == expected_ids == raw.get('expected_executions')\n            and sorted(observed) == expected_ids and raw.get('outcome') == 'passed'\n            and (raw.get('ctest_exit_code') == 0 if closure else 'ctest_exit_code' not in raw)\n            and raw.get('attempt') == 1 and not raw.get('previous_attempts'),\n            'selected physical executions missing, retried or failed')\n    expected_xfail = {name for check in checks.values() if isinstance(check.get('expected_outcome'), dict)\n                      and check['expected_outcome'] == dict(case='mdk09_incompatibility', exit_code=77)\n"
+        },
+        {
+          "before": "                and all(result.get(key) == names for key in ('executions', 'expected_executions', 'observed_executions')),\n                'primary execution accounting differs: ' + ident)\n        _expected_check_outcome(check, result)\n    process, env = raw.get('ctest_process', {}), raw.get('ctest_environment', {})\n    require(raw.get('ctest_process_authority') == 'in_memory_executor_v1'\n            and process.get('outcome') == 'passed' and process.get('exit_code') == 0\n            and process.get('argv') in raw.get('commands', [])\n            and env.get('base_hash') == real['phase_context']['environment_hashes']['test']\n            and process.get('environment_hash') == env.get('effective_hash'), 'physical CTest argv/environment missing')\n    overlays = []\n    if 'docker' in raw['required_capabilities']:\n        overlays += ['NOSTRC_MDK_STATE', 'NOSTRC_MDK_PYTHON']\n    if 'signer_endpoint' in raw['required_capabilities']:\n        overlays += ['NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN']\n    require(env.get('overlay_names') == sorted(overlays)\n            and (overlays or env.get('effective_hash') == env.get('base_hash')),\n            'undeclared CTest environment overlay')\n    directory = Path(raw['evidence_dir'])\n    config = ['-C', real['configuration']] if real['configuration'] else []\n    expected_argv = ['ctest', '--test-dir', real['build_dir'], *config, '-I', str(directory / 'ctest-indices.txt'),\n                     '--output-on-failure', '--output-junit', str(directory / 'results.xml'),\n                     '--parallel', str(raw['execution_parallelism']['test'])]\n    argv = process['argv']\n    require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'\n            and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')\n    require(_file(locator, directory / 'ctest-indices.txt').read_text() == '0,0,1,' + ','.join(str(i + 1) for i in range(len(tests))) + '\\n',\n            'physical CTest selection does not cover whole registration universe')\n    logfile = directory / 'ctest.log'\n    require(logfile.is_relative_to(work), 'CTest output outside the sealed lane')\n    log_bytes = _file(locator, logfile).read_bytes()\n    require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')\n    require(not any(marker in log_bytes for marker in\n                    (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')\n    _signer(raw, profile, post, real['repo_root'])\n    if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:\n        from test_selection_mdk import validate_runtime\n        validate_mdk_graph(real, raw['runtime_capability_evidence']['docker'])\n",
+          "after": "                and all(result.get(key) == names for key in ('executions', 'expected_executions', 'observed_executions')),\n                'primary execution accounting differs: ' + ident)\n        _expected_check_outcome(check, result)\n    if not closure:\n        # Command-only selection: no CTest ran, so no CTest evidence may exist.\n        require(scope == 'selected' and not raw.get('ctest_process') and not raw.get('ctest_environment')\n                and 'ctest_process_authority' not in raw, 'command-only selection carries unexplained CTest evidence')\n    else:\n        process, env = raw.get('ctest_process', {}), raw.get('ctest_environment', {})\n        require(raw.get('ctest_process_authority') == 'in_memory_executor_v1'\n                and process.get('outcome') == 'passed' and process.get('exit_code') == 0\n                and process.get('argv') in raw.get('commands', [])\n                and env.get('base_hash') == real['phase_context']['environment_hashes']['test']\n                and process.get('environment_hash') == env.get('effective_hash'), 'physical CTest argv/environment missing')\n        overlays = []\n        if 'docker' in raw['required_capabilities']:\n            overlays += ['NOSTRC_MDK_STATE', 'NOSTRC_MDK_PYTHON']\n        if 'signer_endpoint' in raw['required_capabilities']:\n            overlays += ['NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN']\n        require(env.get('overlay_names') == sorted(overlays)\n                and (overlays or env.get('effective_hash') == env.get('base_hash')),\n                'undeclared CTest environment overlay')\n        directory = Path(raw['evidence_dir'])\n        config = ['-C', real['configuration']] if real['configuration'] else []\n        expected_argv = ['ctest', '--test-dir', real['build_dir'], *config, '-I', str(directory / 'ctest-indices.txt'),\n                         '--output-on-failure', '--output-junit', str(directory / 'results.xml'),\n                         '--parallel', str(raw['execution_parallelism']['test'])]\n        argv = process['argv']\n        require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'\n                and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')\n        indices = [str(i + 1) for i, test in enumerate(real['tests']) if test['name'] in set(closure)]\n        require(len(indices) == len(closure)\n                and _file(locator, directory / 'ctest-indices.txt').read_text() == '0,0,1,' + ','.join(indices) + '\\n',\n                'physical CTest selection does not cover whole registration universe' if scope == 'full'\n                else 'physical CTest selection differs from the exact selected closure')\n        logfile = directory / 'ctest.log'\n        require(logfile.is_relative_to(work), 'CTest output outside the sealed lane')\n        log_bytes = _file(locator, logfile).read_bytes()\n        require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')\n        require(not any(marker in log_bytes for marker in\n                        (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')\n    _signer(raw, profile, post, real['repo_root'])\n    if scope == 'selected' and not ('docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw):\n        _require_no_mdk_lifecycle(raw, closure, descriptors, recovery)\n    if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:\n        from test_selection_mdk import validate_runtime\n        validate_mdk_graph(real, raw['runtime_capability_evidence']['docker'])\n"
+        },
+        {
+          "before": "                  apparmor_evidence=extra, executed_registrations=closure,\n                  full_audit_hashes=dict(pre=pre['audit_hash'], post=post['audit_hash']),\n                  **coverage_state(policy))\n    if transport is not None:\n        result['transport'] = transport\n    result['qualification_hash'] = digest(result)\n",
+          "after": "                  apparmor_evidence=extra, executed_registrations=closure,\n                  full_audit_hashes=dict(pre=pre['audit_hash'], post=post['audit_hash']),\n                  **coverage_state(policy))\n    if scope == 'selected':\n        # Explicitly NOT executed and never passed/covered; this is not whole-universe execution.\n        result.update(normal_contract=SELECTED_MARKER, execution_scope=SELECTED_SCOPE,\n                      selected_checks=sorted(checks), not_executed_checks=sorted(set(eligible) - set(checks)),\n                      not_executed_registrations=sorted(set(tests) - set(closure)),\n                      universe_registrations=len(tests), plan_rederived=True,\n                      whole_universe_executed=False, full_profile_acceptance=False)\n    if transport is not None:\n        result['transport'] = transport\n    result['qualification_hash'] = digest(result)\n"
+        },
+        {
+          "before": "        require(entry is not None and entry['receipt'] == receipt and 'transport' in receipt,\n                'normal receipt was not loaded from its verified portable bundle')\n        expected = qualify(policy, plan, receipt['public_evidence']['path'], receipt['adapter_evidence']['path'],\n                           entry['apparmor'], locator=entry['locator'], transport=entry['transport'])\n        require(receipt == expected, 'normal qualification changed/forged')\n        verify_source_closure(entry['locator'], entry['repo'], plan)\n        return _json(entry['locator'], receipt['public_evidence']['path'])\n",
+          "after": "        require(entry is not None and entry['receipt'] == receipt and 'transport' in receipt,\n                'normal receipt was not loaded from its verified portable bundle')\n        expected = qualify(policy, plan, receipt['public_evidence']['path'], receipt['adapter_evidence']['path'],\n                           entry['apparmor'], locator=entry['locator'], transport=entry['transport'], repo=entry['repo'])\n        require(receipt == expected, 'normal qualification changed/forged')\n        verify_source_closure(entry['locator'], entry['repo'], plan)\n        return _json(entry['locator'], receipt['public_evidence']['path'])\n"
+        },
+        {
+          "before": "    if policy['profiles'].get(pid, {}).get(FIELD) != MARKER:\n        print('normal qualification: %s has no authored normal contract; raw receipt unchanged' % pid)\n        return None\n    evidence_root, receipts_dir = Path(evidence_root).resolve(strict=True), Path(receipts_dir).resolve(strict=True)\n    apparmor_dir = Path(apparmor_dir)\n    require(apparmor_dir == evidence_root.parent / 'namespace-apparmor', 'AppArmor evidence is not the job directory')\n",
+          "after": "    if policy['profiles'].get(pid, {}).get(FIELD) != MARKER:\n        print('normal qualification: %s has no authored normal contract; raw receipt unchanged' % pid)\n        return None\n    if plan['effective_mode'] != 'broad' and policy['profiles'][pid].get(SELECTED_FIELD) != SELECTED_MARKER:\n        # Selective plan without the separately authored selected contract: the raw\n        # receipt keeps its own (non-normal) accounting; nothing is promoted.\n        print('normal qualification: %s has no authored selected-normal contract; raw receipt unchanged' % pid)\n        return None\n    evidence_root, receipts_dir = Path(evidence_root).resolve(strict=True), Path(receipts_dir).resolve(strict=True)\n    apparmor_dir = Path(apparmor_dir)\n    require(apparmor_dir == evidence_root.parent / 'namespace-apparmor', 'AppArmor evidence is not the job directory')\n"
+        },
+        {
+          "before": "    require(provisioned == bool(adapter.get('namespace_apparmor_profile')),\n            'provisioned AppArmor profile and gate custody disagree')\n    apparmor = str(apparmor_dir) if provisioned else None\n    in_place = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor)\n    partial = receipts_dir / ('.' + ARCHIVE + '.partial')\n    temps = []\n    try:\n",
+          "after": "    require(provisioned == bool(adapter.get('namespace_apparmor_profile')),\n            'provisioned AppArmor profile and gate custody disagree')\n    apparmor = str(apparmor_dir) if provisioned else None\n    in_place = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor, repo=repo)\n    partial = receipts_dir / ('.' + ARCHIVE + '.partial')\n    temps = []\n    try:\n"
+        },
+        {
+          "before": "            mapping[str(roots['apparmor'])] = temp / 'apparmor'\n        locator = Locator(mapping)\n        relocated = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor,\n                            locator=locator, transport=transport)\n        require(_strip(relocated) == _strip(in_place), 'relocated qualification differs from in-place qualification')\n        verify_source_closure(locator, repo, plan)\n        raw = current.read_bytes()\n",
+          "after": "            mapping[str(roots['apparmor'])] = temp / 'apparmor'\n        locator = Locator(mapping)\n        relocated = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor,\n                            locator=locator, transport=transport, repo=repo)\n        require(_strip(relocated) == _strip(in_place), 'relocated qualification differs from in-place qualification')\n        verify_source_closure(locator, repo, plan)\n        raw = current.read_bytes()\n"
+        }
+      ]
+    },
+    "tests/selection/post608c_integration_support.py": {
+      "before_sha256": "e3b1bd33682aa88f8f07ce5eab3034805fb493cb43bd231d6019a7978cb15312",
+      "after_sha256": "b3637e9b20f91fcf13e54d81c8cb42c5ecca36eef9224a662ea64193ee9eb9ba",
+      "edits": [
+        {
+          "before": "\n\ndef before_hosted_source(path, raw):\n    return _source(hosted_witness(), path, raw)\n\n\ndef before_source(path, raw):\n",
+          "after": "\n\ndef before_hosted_source(path, raw):\n    data = hosted_witness()\n    record = data['sources'].get(path)\n    if record is not None and hashlib.sha256(raw).hexdigest() == record['before_sha256']:\n        return raw\n    from post1640_integration_support import before_source as before_post1640_source\n    return _source(data, path, before_post1640_source(path, raw))\n\n\ndef before_source(path, raw):\n"
+        },
+        {
+          "before": "\n\ndef before_hosted_jobs(records):\n    return _jobs(hosted_witness(), records)\n\n\ndef before_jobs(records):\n",
+          "after": "\n\ndef before_hosted_jobs(records):\n    from post1640_integration_support import before_jobs as before_post1640_jobs\n    return _jobs(hosted_witness(), before_post1640_jobs(records))\n\n\ndef before_jobs(records):\n"
+        },
+        {
+          "before": "\n\ndef before_hosted_policy(policy):\n    return _policy(hosted_witness(), policy)\n\n\ndef before_policy(policy):\n    return _policy(witness(), before_hosted_policy(policy))\n\n\ndef _policy(data, policy):\n",
+          "after": "\n\ndef before_hosted_policy(policy):\n    data = hosted_witness()\n    if s.digest(policy) == data['base_policy_hash']:\n        return copy.deepcopy(policy)\n    from post1640_integration_support import before_policy as before_post1640_policy\n    return _policy(data, before_post1640_policy(policy))\n\n\ndef before_policy(policy):\n    data = witness()\n    if s.digest(policy) == data['base_policy_hash']:\n        return copy.deepcopy(policy)\n    return _policy(data, before_hosted_policy(policy))\n\n\ndef _policy(data, policy):\n"
+        }
+      ]
+    },
+    "tests/selection/test_homed_profile_contract.py": {
+      "before_sha256": "87c8b191e3ce9c90e6a97d9ab41e854a51043e9f50d601175d4cc468ba6c1b5e",
+      "after_sha256": "4430ad5807c0214bf7744f4aaaa2b1c857811358f438f7192c50a02b68fb109f",
+      "edits": [
+        {
+          "before": "        self.assertEqual(self.profile[\"source_dir\"], \"gnome/nostr-homed/tests/unit\")\n        self.assertEqual(self.profile[\"configure_args\"], [\"-G\", \"Ninja\", \"-DCMAKE_BUILD_TYPE=RelWithDebInfo\"])\n        check = self.policy[\"checks\"][\"homed.units\"]\n        self.assertEqual(check[\"ctest_tests\"], {PROFILE: NAMES})\n        claims = [name for c in self.policy[\"checks\"].values() for name in c.get(\"ctest_tests\", {}).get(PROFILE, [])]\n        self.assertEqual(claims, NAMES)\n        self.assertEqual(check[\"build_targets\"], [\"test_cache\", \"test_cache_config\", \"test_groups\", \"test_manifest\", \"test_uid_map\"])\n",
+          "after": "        self.assertEqual(self.profile[\"source_dir\"], \"gnome/nostr-homed/tests/unit\")\n        self.assertEqual(self.profile[\"configure_args\"], [\"-G\", \"Ninja\", \"-DCMAKE_BUILD_TYPE=RelWithDebInfo\"])\n        check = self.policy[\"checks\"][\"homed.units\"]\n        # The CI realization (test_homed_ci_worker.py) owns the same five units.\n        self.assertEqual(check[\"ctest_tests\"], {PROFILE: NAMES, \"homed.linux.ci\": NAMES})\n        claims = [name for c in self.policy[\"checks\"].values() for name in c.get(\"ctest_tests\", {}).get(PROFILE, [])]\n        self.assertEqual(claims, NAMES)\n        self.assertEqual(check[\"build_targets\"], [\"test_cache\", \"test_cache_config\", \"test_groups\", \"test_manifest\", \"test_uid_map\"])\n"
+        }
+      ]
+    },
+    "tests/selection/test_namespace_policy_contract.py": {
+      "before_sha256": "69f4b7019ab05d07fe76689bd4824c9b7eee21c9dde07033c50af52f413f5173",
+      "after_sha256": "b950b306a8ac5d14985abc6b7b396ef0518cfd70bbe5d4273f4cabc909378b20",
+      "edits": [
+        {
+          "before": "        self.assertIn('    timeout-minutes: 45\\n', regression)\n        self.assertIn('REQUESTED_SHA: ${{ inputs.sha || github.sha }}', legacy)\n        self.assertIn('ref: ${{ inputs.sha || github.sha }}', legacy)\n        for found, expected, observed in (controller_steps(regression, 'Execute unchanged kernel matrix and full policy suite'),\n                                          controller_steps(legacy, 'Selection and workflow contract tests')):\n            self.assertEqual(observed, expected)\n",
+          "after": "        self.assertIn('    timeout-minutes: 45\\n', regression)\n        self.assertIn('REQUESTED_SHA: ${{ inputs.sha || github.sha }}', legacy)\n        self.assertIn('ref: ${{ inputs.sha || github.sha }}', legacy)\n        # Same full history as the controller's own checkout: the suite reads\n        # pinned ancestor commits (test_vector_family_integration witnesses).\n        checkout = legacy.split('- name: Checkout\\n', 1)[1].split('- name: Verify requested checkout', 1)[0]\n        self.assertIn('          fetch-depth: 0\\n', checkout)\n        self.assertIn('          fetch-depth: 0\\n', regression)\n        for found, expected, observed in (controller_steps(regression, 'Execute unchanged kernel matrix and full policy suite'),\n                                          controller_steps(legacy, 'Selection and workflow contract tests')):\n            self.assertEqual(observed, expected)\n"
+        }
+      ]
+    },
+    "tests/selection/test_normal_execution_contract.py": {
+      "before_sha256": "53f36450752e2285ea245ef282c9d2f0456e3db97be4185f83c23336b6321762",
+      "after_sha256": "48b32386fe3fb4fe6c561319c8b7a46ac61f18644746b63731130b9c068c8aba",
+      "edits": [
+        {
+          "before": "            expected_outcome='pass', build_scope='default', build_targets=[],\n            command=['cmake', '--build', '{build}', '--config', 'Debug'], working_directory='{source}',\n            environment={}, runtime_inputs=[])\n        self.identity = dict(kind='committed', sha=self.git('rev-parse', 'HEAD').decode().strip())\n        self.plan = s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,\n                                mode='broad', source_identity=self.identity)\n        self.real = r.configure_profile(self.root, self.build, 'synthetic', self.profile, self.identity,\n                                        s.digest(self.inventory), inventory=self.inventory, diagnostic_boundary='linux_pidns_v1')\n        self.resolved = r.resolve_checks(self.inventory, self.plan, self.real, 'synthetic')\n",
+          "after": "            expected_outcome='pass', build_scope='default', build_targets=[],\n            command=['cmake', '--build', '{build}', '--config', 'Debug'], working_directory='{source}',\n            environment={}, runtime_inputs=[])\n        self.prepare_source()\n        self.identity = dict(kind='committed', sha=self.git('rev-parse', 'HEAD').decode().strip())\n        self.plan = self.make_plan()\n        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')\n        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)\n        self.execute()\n        self.public_path = self.work / 'native-receipt.json'\n        self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'\n        self.adapter = dict(adapter='test-gate', custody_mode='pidns', status='partial', errors=[], bypasses={},\n            executions=[dict(plan_id=self.plan['plan_id'], source_identity=self.identity, status='partial',\n                lanes=[dict(profile='synthetic', status='passed', evidence=str(self.work),\n                    retained_evidence=str(self.work / 'native-final.json'), normalized_receipt=str(self.public_path),\n                    mdk_recovery=[])])])\n        self.seal()\n\n    def prepare_source(self):\n        \"\"\"Hook: committed source history before identity/plan (default: none).\"\"\"\n\n    def execute(self):\n        \"\"\"Default: direct engine sequence (existing full-normal fixture).\"\"\"\n        self.real = r.configure_profile(self.root, self.build, 'synthetic', self.profile, self.identity,\n                                        s.digest(self.inventory), inventory=self.inventory, diagnostic_boundary='linux_pidns_v1')\n        self.resolved = r.resolve_checks(self.inventory, self.plan, self.real, 'synthetic')\n"
+        },
+        {
+          "before": "        self.raw = r.run_resolved(self.resolved, self.build, self.evidence, input_audit=post,\n                                  input_audit_before_build=pre, build=False)\n        self.assertEqual(self.raw['outcome'], 'passed')\n        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')\n        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)\n        self.original = self.cli.normalize_receipt(self.inventory, self.plan, self.resolved, self.raw)\n        self.public_path = self.work / 'native-receipt.json'\n        self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'\n        self.adapter = dict(adapter='test-gate', custody_mode='pidns', status='partial', errors=[], bypasses={},\n            executions=[dict(plan_id=self.plan['plan_id'], source_identity=self.identity, status='partial',\n                lanes=[dict(profile='synthetic', status='passed', evidence=str(self.work),\n                    retained_evidence=str(self.work / 'native-final.json'), normalized_receipt=str(self.public_path),\n                    mdk_recovery=[])])])\n        self.seal()\n\n    def seal(self):\n        # Exercise real retained byte verification. The outer supervisor result\n",
+          "after": "        self.raw = r.run_resolved(self.resolved, self.build, self.evidence, input_audit=post,\n                                  input_audit_before_build=pre, build=False)\n        self.assertEqual(self.raw['outcome'], 'passed')\n        self.original = self.cli.normalize_receipt(self.inventory, self.plan, self.resolved, self.raw)\n\n    def execute_production(self):\n        \"\"\"The pidns gate's inner production sequence: test-plan.py main(resolve) then main(run).\"\"\"\n        plan_path = Path(self.temp.name).resolve() / 'selected-plan.json'\n        plan_path.write_text(json.dumps(self.plan))\n        # Same `common` as test-gate.sh:622-627: the pidns boundary goes to BOTH resolve and run.\n        common = ['--repo', str(self.root), '--profile', 'synthetic', '--plan', str(plan_path),\n                  '--build-dir', str(self.build), '--evidence-dir', str(self.evidence),\n                  '--diagnostic-boundary', 'linux_pidns_v1']\n        resolutions, results = [], []\n        self.assertEqual(self.cli.main(['resolve', *common, '--configure',\n                                        '--output', str(self.work / 'resolved.json')], result_observer=resolutions.append), 0)\n        self.assertEqual(self.cli.main(['run', *common, '--resolved', str(self.work / 'resolved.json'), '--phase', 'all',\n                                        '--timeout', str(self.profile['timeout_seconds']),\n                                        '--output', str(self.work / 'receipt.json')], result_observer=results.append), 0)\n        self.resolved, self.original = resolutions[-1], results[-1]\n        self.raw = self.original['backend_receipt']\n        self.real = r.load_realization(self.build, self.identity)\n\n    def make_plan(self):\n        return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,\n                           mode='broad', source_identity=self.identity)\n\n    def seal(self):\n        # Exercise real retained byte verification. The outer supervisor result\n"
+        },
+        {
+          "before": "            normal._expected_check_outcome(dict(expected_outcome='pass'),\n                dict(outcome='expected_incompatibility', exception_case='mdk09_incompatibility', exit_code=77))\n\n    def test_signer_uses_canonical_source_expansion_and_test_phase_projection(self):\n        profile = dict(environment={'ASAN_OPTIONS': 'detect_leaks=1', 'LSAN_OPTIONS': 'wrong'},\n                       phase_environments={'configure': {}, 'build': {},\n",
+          "after": "            normal._expected_check_outcome(dict(expected_outcome='pass'),\n                dict(outcome='expected_incompatibility', exception_case='mdk09_incompatibility', exit_code=77))\n\n    def test_committed_source_boundary_full_unchanged_selected_only_new(self):\n        full = {normal.FIELD: copy.deepcopy(normal.MARKER)}\n        selected = dict(full, **{normal.SELECTED_FIELD: copy.deepcopy(normal.SELECTED_MARKER)})\n        committed = dict(kind='committed', sha='a' * 40)\n        dirty = dict(kind='dirty', sha='a' * 40, snapshot_digest='d' * 64)\n        old = 'normal full-profile qualification requires a fresh committed broad plan'\n        for profile in (full, selected):\n            self.assertEqual(normal._scope({}, dict(effective_mode='broad', source_identity=committed), {}, profile, None), 'full')\n            with self.assertRaisesRegex(ValueError, old):      # exactly the 1640 full condition/message\n                normal._scope({}, dict(effective_mode='broad', source_identity=dirty), {}, profile, None)\n        for identity in (committed, dirty):\n            with self.assertRaisesRegex(ValueError, old):      # no selected contract: affected stays refused as before\n                normal._scope({}, dict(effective_mode='affected', requested_mode='affected', source_identity=identity), {}, full, None)\n        with self.assertRaisesRegex(ValueError, 'selected-normal requires a committed source'):\n            normal._scope({}, dict(effective_mode='affected', requested_mode='affected', source_identity=dirty), {}, selected, None)\n        with self.assertRaisesRegex(ValueError, 'portable normal proof requires a committed source'):\n            normal.verify_source_closure(None, '.', dict(source_identity=dirty))   # dirty never gets transport authority\n\n    def test_unselected_mdk_lifecycle_must_leave_no_trace(self):\n        descriptors = {'gui': {'requires': ['display']}, 'groundhog-mdk011-interop-image': {'requires': ['docker']}}\n        clean = dict(required_capabilities=['display'], runtime_capability_evidence={})\n        normal._require_no_mdk_lifecycle(clean, ['gui'], descriptors, [])\n        residues = {\n            'runtime state': (dict(clean, mdk_runtime={'status': 'passed'}), ['gui'], []),\n            'docker evidence': (dict(clean, runtime_capability_evidence={'docker': {}}), ['gui'], []),\n            'docker capability': (dict(clean, required_capabilities=['display', 'docker']), ['gui'], []),\n            'journal/recovery': (clean, ['gui'], [dict(closed_in_namespace=True)]),\n            'image fixture executed': (clean, ['gui', 'groundhog-mdk011-interop-image'], []),\n        }\n        for label, (raw, closure, recovery) in residues.items():\n            with self.subTest(label), self.assertRaisesRegex(ValueError, 'unselected original MDK lifecycle'):\n                normal._require_no_mdk_lifecycle(raw, closure, descriptors, recovery)\n\n    def test_signer_uses_canonical_source_expansion_and_test_phase_projection(self):\n        profile = dict(environment={'ASAN_OPTIONS': 'detect_leaks=1', 'LSAN_OPTIONS': 'wrong'},\n                       phase_environments={'configure': {}, 'build': {},\n"
+        }
+      ]
+    },
+    "tests/selection/test_normal_transport.py": {
+      "before_sha256": "8484156f16e748bcab125bb5df381b75880e3870dbaa3aa4d7d5717d558cf0c1",
+      "after_sha256": "4231066ac9de0072436313230aa9b86b75e91c3222dfaeae50ba56912ccb5118",
+      "edits": [
+        {
+          "before": "contract logic only: NOT Linux pidns, AppArmor kernel, hosted or MDK proof.\n\"\"\"\nimport copy\nimport json\nfrom pathlib import Path\nimport shutil\n",
+          "after": "contract logic only: NOT Linux pidns, AppArmor kernel, hosted or MDK proof.\n\"\"\"\nimport copy\nimport importlib.util\nimport json\nfrom pathlib import Path\nimport shutil\n"
+        },
+        {
+          "before": "import unittest\nfrom unittest import mock\n\nfrom realization_support import ROOT\nfrom selector_support import s\nfrom test_normal_execution_contract import NormalFixture\nimport test_selection_execution as normal\n\n",
+          "after": "import unittest\nfrom unittest import mock\n\nfrom realization_support import ROOT, Project\nfrom selector_support import s, change\nimport test_selection_realization as r   # after selector_support puts scripts/ on sys.path\nfrom test_normal_execution_contract import NormalFixture\nimport test_selection_execution as normal\n\n"
+        },
+        {
+          "before": "    return normal.MAGIC + len(raw).to_bytes(8, 'big') + raw + body, raw\n\n\nclass TransportTests(NormalFixture):\n    LANE = ('dependency', 'evidence', 'run1', '0', 'lane-synthetic')\n    ADAPTER_UP = 1\n\n",
+          "after": "    return normal.MAGIC + len(raw).to_bytes(8, 'big') + raw + body, raw\n\n\nclass TransportFixture(NormalFixture):\n    LANE = ('dependency', 'evidence', 'run1', '0', 'lane-synthetic')\n    ADAPTER_UP = 1\n\n"
+        },
+        {
+          "before": "\n    def aggregate(self, base, repo=None):\n        paths = sorted(base.glob('**/receipt.json'))\n        with normal.transported_receipts(paths, repo=repo or self.root, plan=self.plan) as receipts:\n            return paths, s.aggregate(self.inventory, self.plan, receipts, complete=True)\n\n    def assert_raw_retained(self):\n        self.assertEqual((self.receipts / 'receipt.json').read_bytes(), self.public_path.read_bytes())\n",
+          "after": "\n    def aggregate(self, base, repo=None):\n        paths = sorted(base.glob('**/receipt.json'))\n        # A CI-context plan needs the select result and independent worker conclusions,\n        # exactly as dependency_contract.aggregate supplies them from the job graph.\n        ci = dict(selection_conclusion='success', job_conclusions={lane['id']: 'success' for lane in self.plan['lanes']}) \\\n            if self.plan.get('context') == 'ci' else {}\n        with normal.transported_receipts(paths, repo=repo or self.root, plan=self.plan) as receipts:\n            return paths, s.aggregate(self.inventory, self.plan, receipts, complete=True, **ci)\n\n    def assert_raw_retained(self):\n        self.assertEqual((self.receipts / 'receipt.json').read_bytes(), self.public_path.read_bytes())\n"
+        },
+        {
+          "before": "            receipt['qualification_hash'] = s.digest({k: v for k, v in receipt.items() if k != 'qualification_hash'})\n            (lane / 'receipt.json').write_text(json.dumps(receipt))\n\n    # ------------------------------------------------------------------ cases --\n    def test_worker_publishes_one_portable_receipt_and_aggregate_never_reopens_worker_paths(self):\n        raw = self.public_path.read_bytes()\n        result = self.worker()\n",
+          "after": "            receipt['qualification_hash'] = s.digest({k: v for k, v in receipt.items() if k != 'qualification_hash'})\n            (lane / 'receipt.json').write_text(json.dumps(receipt))\n\n\n\nclass TransportTests(TransportFixture):\n    def test_worker_publishes_one_portable_receipt_and_aggregate_never_reopens_worker_paths(self):\n        raw = self.public_path.read_bytes()\n        result = self.worker()\n"
+        },
+        {
+          "before": "                self.assert_raw_retained()\n\n\nclass WorkflowWiring(unittest.TestCase):\n    def test_worker_qualifies_after_teardown_and_aggregate_owns_portable_loading(self):\n        worker = (ROOT / '.github/workflows/dependency-worker.yml').read_text()\n",
+          "after": "                self.assert_raw_retained()\n\n\nclass SelectedNormalTests(TransportFixture):\n    \"\"\"Real engine-backed selective lane: only selected primaries + exact fixture closure run.\"\"\"\n\n    def prepare_source(self):\n        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)\n        # Superset of the authored owners/impact edges (the full audit requires them) plus 'other'.\n        self.inventory['checks']['fixture.gui']['nodes'] = ['application', 'testing', 'other']\n        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))\n        (self.root / 'other.txt').write_text('base\\n')\n        inventory = self.root / 'tests/selection/inventory.json'\n        inventory.parent.mkdir(parents=True)\n        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))\n        self.git('add', '-A')\n        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'selected-normal base')\n        self.base_sha = self.git('rev-parse', 'HEAD').decode().strip()\n        (self.root / 'other.txt').write_text('changed\\n')\n        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', 'change only the other node')\n\n    def make_plan(self):\n        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')\n\n    def execute(self):\n        self.execute_production()\n\n    def test_plan_really_selects_a_strict_subset(self):\n        self.assertEqual(self.plan['effective_mode'], 'affected')\n        self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])\n        self.assertEqual(self.resolved['primary_tests'], ['gui'])\n        self.assertNotIn('a-model', self.resolved['tests'])\n\n    def test_production_run_built_the_unselected_default_prerequisite_without_passing_it(self):\n        # test-plan.py run: _build_commands emits the untargeted default build because\n        # resolve_checks sets default_build_required from the realization binding;\n        # _record_default_build + check_inputs(after_build) bind it into the post audit.\n        self.assertTrue(self.resolved['default_build_required'])\n        self.assertNotIn('default', self.resolved['checks'])\n        self.assertNotIn('default', self.raw['checks'])\n        execution = self.raw['input_audit']['default_build_execution']\n        self.assertEqual(execution['process']['outcome'], 'passed')\n        self.assertNotIn('--target', execution['process']['argv'])\n        result = self.worker()\n        self.assertIn('default', result['not_executed_checks'])\n        self.assertNotIn('default', result['checks'])\n\n    def test_missing_default_prerequisite_refuses(self):\n        audit = self.original['backend_receipt']['input_audit']\n        audit.pop('default_build_execution')\n        audit['audit_hash'] = s.digest({k: v for k, v in audit.items() if k != 'audit_hash'})\n        self.seal(); self.publish_raw()\n        with self.assertRaises(ValueError):\n            self.worker()\n        self.assert_raw_retained()\n\n    def test_selected_receipt_accounts_not_executed_and_aggregates_portably(self):\n        raw = self.public_path.read_bytes()\n        result = self.worker()\n        eligible = sorted(c for c, check in self.inventory['checks'].items() if 'synthetic' in check['profiles'])\n        universe = sorted(t['name'] for t in self.real['tests'])\n        self.assertEqual(result['execution_scope'], normal.SELECTED_SCOPE)\n        self.assertEqual(result['normal_contract'], normal.SELECTED_MARKER)\n        self.assertEqual(result['selected_checks'], ['fixture.gui'])\n        self.assertEqual(result['not_executed_checks'], sorted(set(eligible) - {'fixture.gui'}))\n        self.assertIn('default', result['not_executed_checks'])\n        self.assertEqual(sorted(result['executed_registrations'] + result['not_executed_registrations']), universe)\n        self.assertFalse(set(result['executed_registrations']) & set(result['not_executed_registrations']))\n        self.assertTrue({'a-model', 'omitted', 'z-first'} <= set(result['not_executed_registrations']))\n        self.assertEqual(sorted(result['checks']), ['fixture.gui'])          # never passed/covered\n        self.assertIs(result['whole_universe_executed'], False)\n        self.assertIs(result['full_profile_acceptance'], False)\n        self.assertEqual((self.receipts / normal.ORIGINAL).read_bytes(), raw)\n        base = self.download()\n        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))\n        paths, aggregate = self.aggregate(base)\n        self.assertEqual(len(paths), 1)\n        self.assertTrue(aggregate['passed'], aggregate['errors'])\n        # Duplicate raw + normal for the same lane never double-credits.\n        lane = next(base.glob('*/synthetic'))\n        (lane / 'nested').mkdir()\n        shutil.copyfile(lane / normal.ORIGINAL, lane / 'nested' / 'receipt.json')\n        self.assertFalse(self.aggregate(base)[1]['passed'])\n\n    def test_selection_must_equal_the_source_bound_rederived_plan(self):\n        other = s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='broad')\n        with mock.patch.object(s, 'git_plan', return_value=other):\n            with self.assertRaisesRegex(ValueError, 're-derived from the tested history'):\n                self.worker()\n        self.assert_raw_retained()\n        lane = self.plan['lanes'][0]\n        for change in (dict(partial_profiles=['synthetic']), dict(broadening_reasons=['manual']),\n                       dict(requested_mode='broad')):\n            with self.subTest(change=change):\n                with self.assertRaisesRegex(ValueError, 'unrestricted, unbroadened affected plan'):\n                    normal._scope(self.inventory, dict(self.plan, **change), lane, self.profile, self.root)\n        with self.assertRaisesRegex(ValueError, 'exact tested checkout'):\n            normal._scope(self.inventory, self.plan, lane, self.profile, None)\n\n    def test_missing_extra_or_skipped_selected_execution_refuses(self):\n        original = copy.deepcopy(self.original)\n        mutations = {\n            'missing fixture': lambda raw: raw['tests'].remove('reset'),\n            'extra unselected execution': lambda raw: raw['tests'].append('a-model'),\n            'skipped selected fixture': lambda raw: raw['observed_executions'].update(reset='skipped'),\n            'skipped selected primary': lambda raw: raw['observed_executions'].update(gui='skipped'),\n            'omission authority': lambda raw: raw.update(baseline_exclusions=[dict(authority='reviewed_diagnostic_nonmember_subset_v1')]),\n            'selected check dropped': lambda raw: raw['checks'].pop('fixture.gui'),\n        }\n        for label, mutate in mutations.items():\n            with self.subTest(label):\n                self.original = copy.deepcopy(original); mutate(self.original['backend_receipt'])\n                self.seal(); self.publish_raw()\n                with self.assertRaises((KeyError, ValueError, RuntimeError)):\n                    self.worker()\n                self.assert_raw_retained()\n\n    def test_consistently_rebound_accounting_still_binds_to_derived_closure(self):\n        original, resolved = copy.deepcopy(self.original), copy.deepcopy(self.resolved)\n        def rebind(edit):\n            self.original, self.resolved = copy.deepcopy(original), copy.deepcopy(resolved)\n            raw = self.original['backend_receipt']\n            edit(self.resolved['expected_executions'], raw['expected_executions'], raw['observed_executions'])\n            self.resolved['expected_executions'].sort(); raw['expected_executions'].sort()\n            self.resolved['resolved_hash'] = s.digest({k: v for k, v in self.resolved.items() if k != 'resolved_hash'})\n            raw['resolved_hash'] = self.resolved['resolved_hash']\n            self.seal(); self.publish_raw()\n        cases = {\n            'fixture dropped from every accounting field': lambda r, e, o: (r.remove('reset'), e.remove('reset'), o.pop('reset')),\n            'unrelated passed execution added everywhere': lambda r, e, o: (r.append('a-model'), e.append('a-model'),\n                                                                            o.update({'a-model': 'passed'})),\n        }\n        for label, edit in cases.items():\n            with self.subTest(label):\n                rebind(edit)\n                with self.assertRaisesRegex(ValueError, 'selected physical executions missing'):\n                    self.worker()\n                self.assert_raw_retained()\n\n    def test_unowned_universe_and_failed_cleanup_refuse(self):\n        import test_selection_realization as r\n        metadata = r._metadata\n        def stray(policy, realization):\n            tests, descriptors = metadata(policy, realization)\n            return dict(tests, stray=dict(name='stray')), descriptors\n        with mock.patch.object(r, '_metadata', side_effect=stray):\n            with self.assertRaisesRegex(ValueError, 'not wholly owned'):\n                self.worker()\n        self.assert_raw_retained()\n        self.adapter['executions'][0]['lanes'][0].update(mdk_recovery=[dict(closed_in_namespace=False, recovery_exit=0)])\n        self.adapter_path.write_text(json.dumps(self.adapter))\n        with self.assertRaises(ValueError):\n            self.worker()\n        self.assert_raw_retained()\n\n    def test_contract_must_be_separately_authored_linux_and_never_alone(self):\n        policy = copy.deepcopy(self.inventory)\n        policy['profiles']['synthetic'].pop(normal.SELECTED_FIELD)\n        self.assertIsNone(self.worker(policy))          # no selected contract: raw stays the lane receipt\n        self.assert_raw_retained()\n        for change in (dict(platform='macos'), dict(architecture='arm64')):\n            with self.subTest(change=change):\n                policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].update(change)\n                with self.assertRaises(ValueError):\n                    normal.validate_metadata(policy)\n        policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].pop(normal.FIELD)\n        with self.assertRaisesRegex(ValueError, 'requires the authored full contract'):\n            normal.validate_metadata(policy)\n        policy = copy.deepcopy(self.inventory)\n        policy['profiles']['synthetic'][normal.SELECTED_FIELD]['registration_policy'] = 'all_owned_and_executed'\n        with self.assertRaises(ValueError):\n            normal.validate_metadata(policy)\n\n\nclass PullRequestSelectedTests(TransportFixture):\n    \"\"\"Production CI pull_request event -> dependency_contract.metadata -> the select job's git_plan call.\"\"\"\n\n    def prepare_source(self):\n        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)\n        # Superset of the authored owners/impact edges (the full audit requires them) plus 'other'.\n        self.inventory['checks']['fixture.gui']['nodes'] = ['application', 'testing', 'other']\n        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))\n        (self.root / 'other.txt').write_text('base\\n')\n        inventory = self.root / 'tests/selection/inventory.json'\n        inventory.parent.mkdir(parents=True)\n        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))\n        commit = lambda message: self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', message)\n        self.git('add', '-A'); commit('pull request base')\n        self.pr_base = self.git('rev-parse', 'HEAD').decode().strip()\n        self.git('checkout', '-q', '-b', 'pr-branch')\n        (self.root / 'other.txt').write_text('changed in pull request\\n'); commit('pull request head')\n        self.pr_head = self.git('rev-parse', 'HEAD').decode().strip()\n        self.git('checkout', '-q', '-')\n        self.git('-c', 'core.hooksPath=/dev/null', 'merge', '-q', '--no-ff', '-m', 'tested merge', 'pr-branch')\n\n    def make_plan(self):\n        spec = importlib.util.spec_from_file_location('dependency_contract', ROOT / '.github/workflows/dependency_contract.py')\n        contract = importlib.util.module_from_spec(spec); spec.loader.exec_module(contract)\n        event = {'pull_request': {'base': {'sha': self.pr_base}, 'head': {'sha': self.pr_head}}}\n        info, mode, context = contract.metadata('pull_request', event, self.identity['sha'], 'affected')\n        self.event_info = info\n        # Exactly the select command's planning call.\n        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], context=context, mode=mode, event=info)\n\n    def execute(self):\n        self.execute_production()\n\n    def independent_checkout(self, revision=None, name='aggregate-checkout'):\n        clone = Path(self.temp.name).resolve() / name\n        subprocess.run(['git', 'clone', '-q', '--no-local', str(self.root), str(clone)], check=True)\n        subprocess.run(['git', '-C', str(clone), '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach',\n                        revision or self.identity['sha']], check=True)\n        return clone\n\n    def test_tested_two_parent_merge_is_the_identity_never_the_equal_tree_api_head(self):\n        # Mirrors PR23: tested synthetic merge (parents: base, PR head) has the SAME tree\n        # as the API PR head but a different identity; only the tested merge is bound.\n        merge = self.identity['sha']\n        parents = self.git('rev-list', '--parents', '-n', '1', merge).decode().split()[1:]\n        self.assertEqual(parents, [self.pr_base, self.pr_head])\n        tree = lambda rev: self.git('rev-parse', rev + '^{tree}').decode().strip()\n        self.assertEqual(tree(merge), tree(self.pr_head))\n        self.assertNotEqual(merge, self.pr_head)\n        self.assertEqual((self.plan['head'], self.plan['tested_sha'], self.plan['source_identity']['sha']), (merge,) * 3)\n        self.assertEqual((self.plan['event']['tested_sha'], self.plan['event']['pr_head_sha']), (merge, self.pr_head))\n        aliased = dict(self.plan, head=self.pr_head, tested_sha=self.pr_head,\n                       source_identity=dict(self.plan['source_identity'], sha=self.pr_head))\n        aliased.pop('plan_id'); aliased['plan_id'] = s.digest(aliased)\n        with self.assertRaises((ValueError, s.ContractError)):\n            normal._rederived_plan(self.inventory, aliased, self.root)   # event tested SHA != aliased head\n        result = self.worker()\n        self.assertEqual(result['source_identity']['sha'], merge)\n        base = self.download()\n        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))\n        api_head = self.independent_checkout(self.pr_head, 'api-head-checkout')    # equal tree, wrong identity\n        paths, aggregate = self.aggregate(base, repo=api_head)\n        self.assertFalse(aggregate['passed'])\n        self.assertTrue(any('aggregate checkout is not the tested source' in e for e in aggregate['errors']), aggregate['errors'])\n        self.assertTrue(self.aggregate(base, repo=self.independent_checkout(merge, 'tested-merge-checkout'))[1]['passed'])\n\n    def test_pull_request_plan_persists_event_and_both_checkouts_rederive_the_same_plan_id(self):\n        self.assertEqual(self.plan['event'], self.event_info)\n        self.assertEqual(self.plan['event']['kind'], 'pull_request')\n        self.assertEqual((self.plan['context'], self.plan['effective_mode'], self.plan['base']), ('ci', 'affected', None))\n        self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])\n        clone = self.independent_checkout()\n        for repo in (self.root, clone):\n            self.assertEqual(normal._rederived_plan(self.inventory, self.plan, repo)['plan_id'], self.plan['plan_id'])\n        result = self.worker()                               # worker re-derives in its checkout\n        self.assertEqual(result['plan_id'], self.plan['plan_id'])\n        base = self.download()\n        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))\n        self.assertTrue(self.aggregate(base, repo=clone)[1]['passed'])   # aggregate re-derives in its own checkout\n\n    def test_forged_or_dropped_event_fields_refuse_rederivation(self):\n        for label, event in (('pr head moved', dict(self.plan['event'], pr_head_sha=self.pr_base)),\n                             ('base moved off the ancestry', dict(self.plan['event'], base_sha=self.pr_head)),\n                             ('event dropped', {})):\n            with self.subTest(label):\n                forged = dict(self.plan, event=event)\n                forged.pop('plan_id')\n                forged['plan_id'] = s.digest(forged)\n                with self.assertRaisesRegex(ValueError, 're-derived from the tested history|tested merge ancestry'):\n                    normal._rederived_plan(self.inventory, forged, self.root)\n\n\nclass AffectedWholeProfileTests(TransportFixture):\n    \"\"\"Full-only profile (no selected marker), affected plan that selects EVERY eligible check.\"\"\"\n\n    def make_plan(self):\n        return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,\n                           mode='affected', source_identity=self.identity)\n\n    def load_1640_qualifier(self):\n        source = subprocess.run(['git', '-C', str(ROOT), 'show', '1640fc86de42f3b6d495847a83820eafb6dfbf4b:'\n                                 'scripts/test_selection_execution.py'], capture_output=True, check=True).stdout\n        path = Path(self.temp.name) / 'execution_1640.py'\n        path.write_bytes(source)\n        spec = importlib.util.spec_from_file_location('execution_1640', path)\n        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)\n        return module\n\n    def test_affected_whole_profile_without_selected_marker_is_refused_exactly_as_1640(self):\n        eligible = sorted(c for c, check in self.inventory['checks'].items() if 'synthetic' in check['profiles'])\n        self.assertEqual(self.plan['effective_mode'], 'affected')\n        self.assertEqual(self.plan['lanes'][0]['checks'], eligible)                  # whole eligible check set\n        self.assertEqual(self.resolved['tests'], sorted(t['name'] for t in self.real['tests']))  # whole universe ran\n        self.assertNotIn(normal.SELECTED_FIELD, self.profile)\n        message = 'normal full-profile qualification requires a fresh committed broad plan'\n        args = (self.inventory, self.plan, str(self.public_path), str(self.adapter_path))\n        with self.assertRaisesRegex(ValueError, message):\n            normal.qualify(*args)\n        with self.assertRaisesRegex(ValueError, message):\n            self.load_1640_qualifier().qualify(*args)                                # unchanged 1640 behaviour\n        self.assertIsNone(self.worker())                                             # worker: no-op, raw kept\n        self.assert_raw_retained()\n\n\nclass CommandOnlySelectedTests(TransportFixture):\n    \"\"\"A real affected plan selecting only the default build contract: no CTest, explicitly.\"\"\"\n\n    def prepare_source(self):\n        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)\n        self.inventory['checks']['default']['nodes'] = ['application', 'core', 'vectors', 'testing', 'other']\n        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))\n        (self.root / 'other.txt').write_text('base\\n')\n        inventory = self.root / 'tests/selection/inventory.json'\n        inventory.parent.mkdir(parents=True)\n        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))\n        self.git('add', '-A')\n        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'command-only base')\n        self.base_sha = self.git('rev-parse', 'HEAD').decode().strip()\n        (self.root / 'other.txt').write_text('changed\\n')\n        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', 'change only the other node')\n\n    def make_plan(self):\n        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')\n\n    def execute(self):\n        self.execute_production()\n\n    def test_command_only_selection_qualifies_without_ctest_and_aggregates(self):\n        self.assertEqual(self.plan['lanes'][0]['checks'], ['default'])\n        self.assertEqual(self.resolved['tests'], [])\n        result = self.worker()\n        self.assertEqual(result['execution_scope'], normal.SELECTED_SCOPE)\n        self.assertEqual(result['executed_registrations'], [])\n        self.assertEqual(sorted(result['not_executed_registrations']), sorted(t['name'] for t in self.real['tests']))\n        self.assertEqual(sorted(result['checks']), ['default'])\n        base = self.download()\n        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))\n        self.assertTrue(self.aggregate(base)[1]['passed'])\n\n    def test_command_only_lane_with_ctest_evidence_refuses(self):\n        self.original['backend_receipt']['ctest_process'] = dict(outcome='passed')\n        self.seal(); self.publish_raw()\n        with self.assertRaisesRegex(ValueError, 'unexplained CTest evidence'):\n            self.worker()\n        self.assert_raw_retained()\n\n\nclass MDKSelectionResolveTests(Project):\n    \"\"\"Real configure + resolve_checks for an original-MDK-domain profile (no Docker run here).\"\"\"\n\n    def setUp(self):\n        super().setUp()\n        cmake = self.root / 'CMakeLists.txt'\n        text = cmake.read_text().replace('nostrc_finalize_test_inventory()', '''add_test(NAME mdk-image COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/noop.cmake)\nset_tests_properties(mdk-image PROPERTIES FIXTURES_SETUP mdkimg)\nnostrc_describe_test(mdk-image OWNER testing INPUTS noop.cmake EXPECTED fixture REQUIRES docker)\nadd_test(NAME mdk-interop COMMAND shared)\nset_tests_properties(mdk-interop PROPERTIES FIXTURES_REQUIRED mdkimg)\nnostrc_describe_test(mdk-interop OWNER application TARGETS shared INPUTS vector.txt REQUIRES docker)\nnostrc_finalize_test_inventory()''')\n        cmake.write_text(text)\n        self.git('add', '-A')\n        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'synthetic original-MDK registrations')\n        self.profile.update(execution_domain='mdk_original_linux_v1', capabilities=['display', 'docker'])\n        self.inventory['checks']['mdk-interop'] = {'kind': 'ctest', 'profiles': ['synthetic'],\n            'ctest_tests': {'synthetic': ['mdk-interop']}, 'nodes': ['application', 'testing']}\n        self.realized = self.configure()\n\n    def resolve(self, checks):\n        return r.resolve_checks(self.inventory, dict(self.plan, selected_checks=checks), self.realized, 'synthetic')\n\n    def test_gui_selection_on_mdk_profile_provisions_no_mdk_lifecycle(self):\n        import test_selection_mdk as mdk\n        with mock.patch.object(mdk, 'contract', side_effect=AssertionError('MDK contract must not run')) as contract:\n            resolved = self.resolve(['gui'])\n        contract.assert_not_called()\n        self.assertNotIn('mdk-image', resolved['tests'])\n        self.assertNotIn('mdk-interop', resolved['tests'])\n        self.assertNotIn('docker', resolved['required_capabilities'])\n        self.assertNotIn('docker', resolved.get('runtime_capability_evidence', {}))\n        normal._require_no_mdk_lifecycle(dict(required_capabilities=resolved['required_capabilities'],\n            runtime_capability_evidence=resolved.get('runtime_capability_evidence', {})),\n            resolved['tests'], {d['name']: d for d in self.realized['descriptors']}, [])\n\n    def test_selected_mdk_consumer_pulls_image_fixture_and_requires_the_mdk_contract(self):\n        import test_selection_mdk as mdk\n        class Required(Exception):\n            pass\n        with mock.patch.object(mdk, 'contract', side_effect=Required) as contract:\n            with self.assertRaises(Required):\n                self.resolve(['mdk-interop'])\n        contract.assert_called_once()\n        tests, descriptors = r._metadata(self.inventory, self.realized)\n        self.assertIn('mdk-image', r._fixture_closure(['mdk-interop'], tests, descriptors))\n\n\nclass WorkflowWiring(unittest.TestCase):\n    def test_worker_qualifies_after_teardown_and_aggregate_owns_portable_loading(self):\n        worker = (ROOT / '.github/workflows/dependency-worker.yml').read_text()\n"
+        },
+        {
+          "before": "        contract = (ROOT / '.github/workflows/dependency_contract.py').read_text()\n        self.assertIn('with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:', contract)\n        self.assertIn('glob(\"**/receipt.json\")', contract)\n\n\nif __name__ == '__main__':\n",
+          "after": "        contract = (ROOT / '.github/workflows/dependency_contract.py').read_text()\n        self.assertIn('with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:', contract)\n        self.assertIn('glob(\"**/receipt.json\")', contract)\n        # The selected-normal re-derivation mirrors exactly this persisted producer call.\n        self.assertIn('plan = selection.git_plan(ROOT, policy, head=args.sha, context=context, mode=mode, event=info)', contract)\n\n\nif __name__ == '__main__':\n"
+        }
+      ]
+    },
+    "tests/selection/test_post608c_integration.py": {
+      "before_sha256": "4a8bacd7dcaee1c625b72b09314c47d0daaaba928f325cbbf2358d63fbd1fe52",
+      "after_sha256": "59659743b3258e398f962584ee4f094fdf8d4bf39e64e94c90098d84e51dd3bb",
+      "edits": [
+        {
+          "before": "import unittest\nfrom selector_support import ROOT, s\nimport post608c_integration_support as wave\n\n\nclass Post608cIntegration(unittest.TestCase):\n    def policy(self):\n        return s.load_inventory(ROOT / 'tests/selection/inventory.json')\n\n    def test_exact_policy_inverse_without_omission_witness_changes(self):\n        current = self.policy()\n",
+          "after": "import unittest\nfrom selector_support import ROOT, s\nimport post608c_integration_support as wave\nfrom post1640_integration_support import before_policy as before_post1640_policy, before_jobs as before_post1640_jobs\n\n\nclass Post608cIntegration(unittest.TestCase):\n    def policy(self):\n        return before_post1640_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))\n\n    def test_exact_policy_inverse_without_omission_witness_changes(self):\n        current = self.policy()\n"
+        },
+        {
+          "before": "\n    def test_actual_workflows_enrolled_and_unknown_jobs_not_projected(self):\n        from profile_contract_support import source_job_blocks\n        actual = source_job_blocks(ROOT)\n        policy = self.policy()\n        for ident, record in wave.witness()['maps']['workflow_jobs'].items():\n            for key in ('source_sha256', 'workflow_sha256', 'matrix_source'):\n",
+          "after": "\n    def test_actual_workflows_enrolled_and_unknown_jobs_not_projected(self):\n        from profile_contract_support import source_job_blocks\n        actual = before_post1640_jobs(source_job_blocks(ROOT))\n        policy = self.policy()\n        for ident, record in wave.witness()['maps']['workflow_jobs'].items():\n            for key in ('source_sha256', 'workflow_sha256', 'matrix_source'):\n"
+        },
+        {
+          "before": "class HostedCauseIntegration(unittest.TestCase):\n    \"\"\"Exact authored hosted repair enrollment; no Docker/runtime acceptance.\"\"\"\n    def policy(self):\n        return s.load_inventory(ROOT / 'tests/selection/inventory.json')\n\n    def test_exact_9062_policy_inverse_and_old_witnesses_stay_immutable(self):\n        current = self.policy()\n",
+          "after": "class HostedCauseIntegration(unittest.TestCase):\n    \"\"\"Exact authored hosted repair enrollment; no Docker/runtime acceptance.\"\"\"\n    def policy(self):\n        return before_post1640_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))\n\n    def test_exact_9062_policy_inverse_and_old_witnesses_stay_immutable(self):\n        current = self.policy()\n"
+        },
+        {
+          "before": "\n    def test_controller_owner_inputs_and_exact_workflow_hashes(self):\n        from profile_contract_support import source_job_blocks, validate_job_accounting\n        current = self.policy(); validate_job_accounting(current, ROOT)\n        actual = source_job_blocks(ROOT)\n        for ident, record in wave.hosted_witness()['maps']['workflow_jobs'].items():\n            for key in ('source_sha256', 'workflow_sha256', 'matrix_source'):\n                self.assertEqual(current['workflow_jobs'][ident][key], actual[ident][key])\n",
+          "after": "\n    def test_controller_owner_inputs_and_exact_workflow_hashes(self):\n        from profile_contract_support import source_job_blocks, validate_job_accounting\n        current = self.policy()\n        validate_job_accounting(s.load_inventory(ROOT / 'tests/selection/inventory.json'), ROOT)\n        actual = before_post1640_jobs(source_job_blocks(ROOT))\n        for ident, record in wave.hosted_witness()['maps']['workflow_jobs'].items():\n            for key in ('source_sha256', 'workflow_sha256', 'matrix_source'):\n                self.assertEqual(current['workflow_jobs'][ident][key], actual[ident][key])\n"
+        }
+      ]
+    },
+    "tests/selection/test_workflow_contracts.py": {
+      "before_sha256": "0bdc460d95696b1a889071b0a490f1ac04c4981c46d0fa00c4730b8980d422ee",
+      "after_sha256": "f0403171e8a46d6be22db49963fcfe9be9d577d06241ef8d7eda0076aa72635f",
+      "edits": [
+        {
+          "before": "            'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',\n            'groundhog.mdk011': 'mdk011',\n            'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',\n        }\n        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')\n        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')\n",
+          "after": "            'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',\n            'groundhog.mdk011': 'mdk011',\n            'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',\n            'homed.linux.ci': 'homed_units',\n        }\n        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')\n        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')\n"
+        }
+      ]
+    }
+  },
+  "protected_witnesses": {
+    "tests/selection/fixtures/closeout_interfaces.json": "876b33360c0d19313bbe0683a7d4a436ba7175e07ee6e6e8e45ee558184fa254",
+    "tests/selection/fixtures/core_source_producers_20261023.json": "a2f936b3c00f90ae4c8a7b4e94bf468a17aa6c997d1d98e7ca7bda955ba61d8a",
+    "tests/selection/fixtures/encrypted_media_exports.json": "5336a29b5145f08ed365cce9778cdb5af79a646ed60020e838e6e805e4cc47bf",
+    "tests/selection/fixtures/encrypted_media_subset_renewal_20261022.json": "fa30aa40a5598dfafdb070215481bbf617e395e33ad431d6c2ce8c9e8aed4228",
+    "tests/selection/fixtures/grotto_crypto_exports.json": "1a3ef6243238ed08bfb52ccb77594a5310a0ab6d6bae90b77f07554ac64cf138",
+    "tests/selection/fixtures/grotto_crypto_subset_renewal_20261022.json": "315c7a0cc8f16a646d474e095b6bd5edcf47b6825b5698b2a69e905738e34743",
+    "tests/selection/fixtures/grotto_nip49_exports.json": "4906dc39fae2ac220add4c9e0d3fb8a150c6b192c5ce7a2722e33b2cc46325a0",
+    "tests/selection/fixtures/grotto_nip49_subset_renewal_20261022.json": "4214ef00cbf5ef49e8ec6d5d3854f427c2992c47d3787250c63673e9e24b1253",
+    "tests/selection/fixtures/grotto_profile_exports.json": "7dcce9ca16e5cc55cd6502d1d2d4e4191f3c6f56be963a4892b19fd4d92d10cd",
+    "tests/selection/fixtures/headless_account_policy_exports.json": "9a615fbb98d4d2769510ff5e5823e71f59f5add215e9b598b556e9f48c72bb1c",
+    "tests/selection/fixtures/headless_account_policy_subset_renewal_20261022.json": "2fef2fb6697e1fc2776fe3d69948ba5f0215c755f154a63e81ab345aede159f1",
+    "tests/selection/fixtures/headless_identity_exports.json": "5b099ae15d5c5e5f7081976b0e1fba5274f7774777b68678372b054952269bfa",
+    "tests/selection/fixtures/headless_identity_subset_renewal_20261022.json": "231cefbfe92944f564377cebe03b9558f325165ed3bbbced96ef794844e9b9cd",
+    "tests/selection/fixtures/headless_model_exports.json": "e42337295fa1ebe76d5c45f682b7abed9d0fa9df1c30a344b7f842ae37bdc7ca",
+    "tests/selection/fixtures/headless_model_subset_renewal_20261022.json": "351296afb01d4abf815cbd2f38669c6aa9886782911a6f0d59926908848773e2",
+    "tests/selection/fixtures/headless_transport_exports.json": "f4c07572c3f7ebaaa311dcc04134dd9050eddbdf8d42f1720b7aa298a01374e9",
+    "tests/selection/fixtures/headless_transport_subset_renewal_20261022.json": "50a4f28a5f3e5d36e932a7a08f4e4cc5536d109b2f904b91f8ea491c1c72c745",
+    "tests/selection/fixtures/homed_profile_enrollment_20261023.json": "ca6cf530312d51b52df4242aacc2ff72c1ae7bb2dc0d47d9875c9f9b07a4440c",
+    "tests/selection/fixtures/hosted_audit_edges.json": "ed0b86935f411af0b129ead56d8f9c62167bcb85a7a0e535156433cbac62ed0a",
+    "tests/selection/fixtures/hosted_cause_integration_20261024.json": "d13f2572fe3dc9e8fdcc9d797bd8728fd98b8ac819b062838fa9a6108db1761b",
+    "tests/selection/fixtures/nip44_canonical_vectors_20261022.json": "17c4eb8164abdc7d54ebc708f3fcdd747900a7af685e188367894a7ccb24939f",
+    "tests/selection/fixtures/nip44_vector_renewal_20261022.json": "9db76242db20e27b8063814d62ace6fc20147c04ac580f6189aeb85c3f0be087",
+    "tests/selection/fixtures/nip49_descriptor_renewal_20261022.json": "78e6c2fed93894ad0f71e37207af28c642f425d57ddba7b21df47b5fb42bfcd7",
+    "tests/selection/fixtures/nonmember_audit_edges.json": "787717dfa59245b9c1f2d072808d1d37403a4fc31d2cafe197f7fb9addbd895b",
+    "tests/selection/fixtures/ordinary_go_full_ownership.json": "5b785df0e0fbe66d98f303730d4bbaf8c2ee05ee6f3911d24e33c04a20644bc6",
+    "tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json": "4809dbf3200ef8a0ddab3507c50e6ba08dc2f668d4cd9a8a366843a04aa9013a",
+    "tests/selection/fixtures/ordinary_subset_x86_exports.json": "74d4a310f945fe19d5f3c78487e692a07dd8afcd76172ab0b35f9e3a24653327",
+    "tests/selection/fixtures/post608c_integration_20261024.json": "86d1835782c978f37551b1ca33b28e4789aa9afc632599a9b607759312851b60",
+    "tests/selection/fixtures/profile_exports.json": "b35080e170a117bf680329d2d398c9dc54b1ee98525c06475182687f08608337",
+    "tests/selection/fixtures/resource_diagnostics_projection_20261022.json": "fe6caae1dacfcc5064f6f6018b5c4dce5b478ddf970d3082c51748a7220a8dc3",
+    "tests/selection/fixtures/resource_profile_exports.json": "74d2ddd36b0d3ea7ba49e358eea59de69aef151f11f73e5b17fccc0bb68fa160",
+    "tests/selection/fixtures/runtime_integration_20261023.json": "53658f0ebd04cf40e7886d7389b48edd37789a50e11658a0301cec66cc3952b7",
+    "tests/selection/fixtures/store_key_membership_exports.json": "f1c285da7bec291a13e650b0c9a809998a1a60309367eb018a53ee655a20134e",
+    "tests/selection/fixtures/supported_profile_membership.json": "7de6670380ae17adc0512fb390f50ff1269fb0b4856d865716c0ea20580de875",
+    "tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json": "d0df24b27dc0716cd488fc208965f1c9b1363583c9638bb425c10ed0a939edce",
+    "tests/selection/fixtures/w11_json_glib_enrollment_20261023.json": "39c64a9027aea0ec0b741bc1b008e3a9b5791f86f21a765d8b772ae02c4fcc33",
+    "tests/selection/fixtures/w11_placement_enrollment_20261023.json": "83eae9ab733e3d4e66358c3fb0829f700158a4ec75d59d7e4b151752cbb44f1e",
+    "tests/selection/fixtures/w11_policy_enrollment_20261023.json": "56ce45c79c2f277b8d522d2e91c6da0ed5e72dc851f5bcfbc0b1c54e0eb3d2d2",
+    "tests/selection/fixtures/w11_setup_enrollment_20261023.json": "20c26fe28584a6036436cb338358ec60e7cf2696e44cdc0487dbd257d69273d9",
+    "tests/selection/fixtures/w11_worker_enrollment_20261023.json": "25161bd4a7c2b599a5cee82402aabb646b2627122b884e6babf9f71034cf22a2",
+    "tests/selection/golden/selection.json": "5e8801bcc8506a9e3800848921118c44775baf7b4e8e46f17de89beab1125e83"
+  },
+  "author_sources": {
+    ".github/workflows/dependency-tests.yml": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
+    ".github/workflows/dependency-worker.yml": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9",
+    ".github/workflows/dependency_contract.py": "a5077b81ed5b8a63417ead343d11b55d43e6f9e98e4d4f00b952a7a1633f7a10",
+    ".github/workflows/static-checks.yml": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2",
+    "tests/selection/test_homed_ci_worker.py": "716c182c85f0bc10e2a7a868863f351b8f0a21df64d0d520a1acfae2693aef37",
+    "tests/selection/test_homed_profile_contract.py": "4430ad5807c0214bf7744f4aaaa2b1c857811358f438f7192c50a02b68fb109f",
+    "tests/selection/test_namespace_policy_contract.py": "b950b306a8ac5d14985abc6b7b396ef0518cfd70bbe5d4273f4cabc909378b20",
+    "tests/selection/test_workflow_contracts.py": "f0403171e8a46d6be22db49963fcfe9be9d577d06241ef8d7eda0076aa72635f",
+    "scripts/test_selection_execution.py": "9452ba91778426ee6e06c79f3c54f5cddf1fdc3586ce3cec95533d8514f6c400",
+    "tests/selection/test_normal_execution_contract.py": "48b32386fe3fb4fe6c561319c8b7a46ac61f18644746b63731130b9c068c8aba",
+    "tests/selection/test_normal_transport.py": "4231066ac9de0072436313230aa9b86b75e91c3222dfaeae50ba56912ccb5118"
+  }
+}

@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 
@@ -247,6 +248,80 @@ p.wait()
 
         def test_nested_namespace_cannot_escape_cleanup(self):
             self.tree('cancel', nested=True)
+
+        def test_supplementary_groups_survive_user_namespace_for_socket_access(self):
+            # setgroups=deny forbids changing groups, it does not drop them: the
+            # kernel keeps the caller's supplementary kgids (e.g. the docker
+            # socket group) for DAC checks. Observe from the ORIGINAL namespace.
+            marker = 'nostrc-groups-' + uuid.uuid4().hex
+            ready = self.work / 'groups-ready'
+            target = (f'import time; from pathlib import Path; Path({str(ready)!r}).write_text(open("/proc/self/uid_map").read()); '
+                      f'time.sleep(30)  # {marker}')
+            helper = subprocess.Popen([sys.executable, str(HELPER), sys.executable, '-c', target],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 20
+                while not ready.exists():
+                    self.assertLess(time.monotonic(), deadline, helper.stderr.read1(4096) if helper.poll() is not None else 'timeout')
+                    time.sleep(0.02)
+                # Helper and its init carry the marker too; the target is exactly `python -c TARGET`.
+                pids = []
+                for pid in filter(str.isdigit, os.listdir('/proc')):
+                    try:
+                        argv = Path('/proc', pid, 'cmdline').read_bytes().split(b'\0')
+                    except OSError:
+                        continue
+                    if len(argv) >= 3 and argv[1] == b'-c' and marker.encode() in argv[2]:
+                        pids.append(pid)
+                self.assertEqual(len(pids), 1, pids)
+                status = Path('/proc', pids[0], 'status').read_text().splitlines()
+                groups = next(row for row in status if row.startswith('Groups:')).split()[1:]
+                self.assertEqual(sorted(map(int, groups)), sorted(set(os.getgroups())))
+                self.assertNotEqual(Path('/proc', pids[0], 'ns/user').resolve(), Path('/proc/self/ns/user').resolve())
+                self.assertEqual(ready.read_text().split(), [str(os.geteuid()), str(os.geteuid()), '1'])
+            finally:
+                helper.terminate()
+                helper.wait(timeout=30)
+
+        def test_named_apparmor_profile_is_entered_or_refused_before_target(self):
+            # The per-job profile a provisioned container was launched in;
+            # elsewhere a valid but never-loaded name must refuse.
+            profile = os.environ.get('NOSTRC_NAMESPACE_APPARMOR_PROFILE', 'nostrc-ns-' + '0' * 32)
+            label = profile + ' (unconfined)'
+            current = Path('/proc/self/attr/apparmor/current')
+            current = current if current.exists() else Path('/proc/self/attr/current')
+            try:
+                loaded = label in Path('/sys/kernel/security/apparmor/profiles').read_text()
+            except PermissionError:
+                loaded = None  # AppArmor present; its policy view is root-only
+            except OSError:
+                loaded = False
+            try:  # EINVAL without an AppArmor LSM: not provisioned
+                if current.read_text().strip('\0\n ') == label:
+                    loaded = True
+            except OSError:
+                pass
+            marker = self.work / 'profile-target'
+            result = self.run_helper('--apparmor-profile', profile, sys.executable, '-c',
+                                     f'open({str(marker)!r}, "w").close()')
+            if loaded is None:  # unprivileged view: exact entry or typed refusal only
+                loaded = result.returncode == 0
+            if loaded:  # provisioned host or container launched in the profile
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(b'namespace custody apparmor: ' + label.encode(), result.stderr)
+                self.assertTrue(marker.exists())
+            else:  # no AppArmor or profile absent: typed refusal before unshare
+                self.assertEqual(result.returncode, 125, result.stderr)
+                self.assertIn(b'target not launched', result.stderr)
+                self.assertIn(b'AppArmor', result.stderr)
+                self.assertFalse(marker.exists())
+            for invalid in ('Bad/Name', '', 'x' * 65, 'unconfined profile'):
+                with self.subTest(invalid=invalid):
+                    result = self.run_helper('--apparmor-profile', invalid, sys.executable, '-c',
+                                             f'open({str(marker)!r} + "-invalid", "w").close()')
+                    self.assertEqual(result.returncode, 125, result.stderr)
+                    self.assertIn(b'invalid AppArmor profile name', result.stderr)
+                    self.assertFalse(Path(str(marker) + '-invalid').exists())
 
         def test_denied_namespace_setup_never_launches_target(self):
             source, binary = self.work / 'deny.c', self.work / 'deny'

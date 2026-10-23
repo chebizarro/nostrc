@@ -20,6 +20,72 @@
     ]
   },
   "checks": {
+    "homed.units": {
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "nodes": [
+        "gnome.nostr_homed",
+        "gnome.nostr_homed.test_inputs",
+        "execution.homed"
+      ],
+      "profiles": [
+        "homed.linux.units",
+        "homed.linux.ci"
+      ],
+      "ctest_tests": {
+        "homed.linux.units": [
+          "homed_cache",
+          "homed_cache_config",
+          "homed_groups",
+          "homed_manifest",
+          "homed_uid_map"
+        ],
+        "homed.linux.ci": [
+          "homed_cache",
+          "homed_cache_config",
+          "homed_groups",
+          "homed_manifest",
+          "homed_uid_map"
+        ]
+      },
+      "build_targets": [
+        "test_cache",
+        "test_cache_config",
+        "test_groups",
+        "test_manifest",
+        "test_uid_map"
+      ],
+      "runtime_inputs": []
+    },
+    "homed.default_build": {
+      "kind": "build_contract",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "nodes": [
+        "gnome.nostr_homed",
+        "gnome.nostr_homed.test_inputs",
+        "execution.homed"
+      ],
+      "profiles": [
+        "homed.linux.units",
+        "homed.linux.ci"
+      ],
+      "build_scope": "default",
+      "build_targets": [],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}",
+        "--config",
+        "RelWithDebInfo"
+      ],
+      "working_directory": "{source}",
+      "environment": {},
+      "runtime_inputs": []
+    },
     "grotto.signer.native": {
       "build_targets": [],
       "cost": "ordinary",
@@ -7586,6 +7652,7 @@
       "kind": "command",
       "nodes": [
         "selection.contract",
+        "execution.homed",
         "static.policy",
         "version.contract",
         "gnome.nostr_homed",
@@ -7735,6 +7802,7 @@
         "{source}/scripts/test-plan.py",
         "{source}/scripts/test_selection.py",
         "{source}/scripts/test_selection_custody.py",
+        "{source}/scripts/test_selection_macos_nip5f_tcp.py",
         "{source}/scripts/test_selection_realization.py",
         "{source}/scripts/test_selection_subset.py",
         "{source}/signet/meson.build",
@@ -7817,6 +7885,9 @@
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
         "{source}/tests/selection/test_profile_contracts.py",
+        "{source}/tests/selection/test_homed_profile_contract.py",
+        "{source}/tests/selection/homed_profile_support.py",
+        "{source}/tests/selection/fixtures/homed_profile_enrollment_20261023.json",
         "{source}/tests/selection/test_realization.py",
         "{source}/tests/selection/test_realization_exclusions.py",
         "{source}/tests/selection/test_realization_inputs.py",
@@ -7898,6 +7969,7 @@
         "{source}/tests/selection/test_w11_heartbeat_enrollment.py",
         "{source}/tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json",
         "{source}/tests/selection/test_worker_signer.py",
+        "{source}/tests/selection/test_worker_signer_prerequisites.py",
         "{source}/tests/selection/w11_worker_support.py",
         "{source}/tests/selection/test_w11_worker_enrollment.py",
         "{source}/tests/selection/fixtures/w11_worker_enrollment_20261023.json",
@@ -7929,7 +8001,38 @@
         "{source}/apps/grotto/tests/fuzz/json_glib_leak_probe.c",
         "{source}/tests/selection/test_fuzz_json_glib_setup.py",
         "{source}/tests/selection/w11_json_glib_support.py",
-        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json"
+        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json",
+        "{source}/scripts/mdk-docker",
+        "{source}/scripts/test_selection_mdk.py",
+        "{source}/scripts/test_selection_execution.py",
+        "{source}/tests/selection/apparmor/nostrc-namespace-custody",
+        "{source}/tests/selection/namespace_apparmor_setup.sh",
+        "{source}/tests/selection/namespace_apparmor_teardown.sh",
+        "{source}/tests/selection/test_mdk_selected_route.py",
+        "{source}/tests/selection/test_namespace_apparmor_provisioning.py",
+        "{source}/tests/selection/test_w11_measurement.py",
+        "{source}/tests/selection/test_normal_execution_contract.py",
+        "{source}/tests/selection/test_runtime_integration_contract.py",
+        "{source}/tests/selection/runtime_integration_support.py",
+        "{source}/tests/selection/fixtures/runtime_integration_20261023.json",
+        "{source}/scripts/adapter_darwin_custody.py",
+        "{source}/scripts/test_gate_darwin.py",
+        "{source}/tests/selection/test_darwin_custody.py",
+        "{source}/tests/selection/test_darwin_gate_wiring.py",
+        "{source}/tests/selection/test_darwin_boundary_contract.py",
+        "{source}/tests/selection/test_darwin_private_bus.py",
+        "{source}/tests/selection/test_macos_nip5f_tcp_applicability.py",
+        "{source}/tests/selection/test_macos_nip5f_tcp_engine.py",
+        "{source}/tests/selection/test_normal_transport.py",
+        "{source}/tests/selection/post608c_integration_support.py",
+        "{source}/tests/selection/fixtures/post608c_integration_20261024.json",
+        "{source}/tests/selection/test_post608c_integration.py",
+        "{source}/tests/selection/namespace_policy_controller.sh",
+        "{source}/tests/selection/fixtures/hosted_cause_integration_20261024.json",
+        "{source}/tests/selection/test_homed_ci_worker.py",
+        "{source}/tests/selection/post1640_integration_support.py",
+        "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
+        "{source}/tests/selection/test_post1640_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -14375,7 +14478,6 @@
       "profiles": [
         "core.linux",
         "core.linux.asan",
-        "core.macos.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.linux",
@@ -14406,9 +14508,6 @@
           "test_nip5f_tcp"
         ],
         "groundhog.mdk011": [
-          "test_nip5f_tcp"
-        ],
-        "core.macos.asan": [
           "test_nip5f_tcp"
         ]
       },
@@ -19220,7 +19319,7 @@
     {
       "id": "homed_unit_profile_contract",
       "tracking": "nostrc-0cfsg.9",
-      "reason": "Five actual opt-in homed unit registrations now exist and legacy workflow exact-list/no-tests guards run them. No distinct selective profile/worker or imported raw execution receipt is claimed here. Experimental roaming/auth/identity runtimes remain off.",
+      "reason": "The distinct standalone Ubuntu24.04 x86_64 GCC homed.linux.units contract owns all five manifest/cache registrations with full standalone default/prerequisite audits and shared canonical unit declarations. It is not legacy root-workflow parity (that configure registers140 tests). Physical selector receipts and worker enrollment are independently required; four legacy distro root and advisory systemd/FUSE/secret-decrypt contracts remain separate. Experimental runtimes remain off.",
       "status": "not_executed_by_selective_gate",
       "source_commit": "20810a780fb032589ebd3206e8c8e8f6f683c564",
       "not_selected_registrations": [
@@ -19284,6 +19383,23 @@
           "reason": "Local-only contained arm64 prepared peers; no x86/native/workflow alias."
         }
       }
+    },
+    {
+      "id": "core_macos_asan_nip5f_tcp_unconfigured",
+      "profile": "core.macos.asan",
+      "check": "supported.nips.nip5f.signer_endpoint",
+      "registrations": [
+        "test_nip5f_tcp"
+      ],
+      "reason": "Legacy nostrc-ci macOS ASan/UBSan (BUILD_APPS=OFF) provisions no NIP-5F TCP endpoint or token; test_nip5f_tcp then exits 77 (SKIP_RETURN_CODE 77), which never validated a live signer. Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage.",
+      "tracking": "nostrc-0cfsg.36.9",
+      "binding": {
+        "source_sha256": "618c01fdb6d46b0eae8902f1cf543472cac0e5691cbef4945502210a476acbe0",
+        "registration_sha256": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+        "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+        "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
+        "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
+      }
     }
   ],
   "enforcement_ready": false,
@@ -19315,6 +19431,13 @@
     ]
   },
   "nodes": {
+    "execution.homed": {
+      "id": "execution.homed",
+      "depends_on": [],
+      "owner_paths": [
+        ".github/workflows/nostr-homed-ci.yml"
+      ]
+    },
     "benchmarks": {
       "depends_on": [
         "libnostr"
@@ -21013,6 +21136,7 @@
         "scripts/test_selection.py",
         "scripts/test_selection_realization.py",
         "scripts/test_selection_subset.py",
+        "scripts/test_selection_macos_nip5f_tcp.py",
         "cmake/NostrcTestInventory.cmake",
         "gnome/groundhog/TestInventory.cmake"
       ]
@@ -21328,6 +21452,158 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23-rollback.patch",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact inert proposal or diagnostic source provenance; requires broad policy validation, grants no rollout or execution authority."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.patch",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact inert proposal or diagnostic source provenance; requires broad policy validation, grants no rollout or execution authority."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w11-darwin-private-bus-2026-10-23.json",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact inert proposal or diagnostic source provenance; requires broad policy validation, grants no rollout or execution authority."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-darwin-gate-wiring-2026-10-23.json",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_gate_darwin.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/adapter_darwin_custody.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-runtime-verification-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-json-glib-hosted-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-e-handoff-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-e-evidence-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-runtime-mdk-handoff-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "tests/selection/namespace_apparmor_teardown.sh",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "tests/selection/namespace_apparmor_setup.sh",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "tests/selection/apparmor/nostrc-namespace-custody",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_execution.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_mdk.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/mdk-docker",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "exact": ".github/workflows/nostr-homed-ci.yml",
+      "nodes": [
+        "execution.homed"
+      ],
+      "effect": "impact",
+      "reason": "Exact homed workflow setup and unit contract owner; no systemd/FUSE execution inferred."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json",
+      "nodes": [],
+      "effect": "global",
+      "reason": "Machine-readable acceptance provenance is not a prose exemption."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json",
+      "nodes": [],
+      "effect": "global",
+      "reason": "Machine-readable acceptance provenance is not a prose exemption."
+    },
     {
       "effect": "global",
       "exact": "scripts/test_selection_policy.py",
@@ -23732,6 +24008,14 @@
     },
     {
       "effect": "global",
+      "exact": "scripts/test_selection_macos_nip5f_tcp.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact legacy macOS NIP-5F TCP applicability changes require broad validation."
+    },
+    {
+      "effect": "global",
       "nodes": [
         "build.global"
       ],
@@ -25555,12 +25839,103 @@
     }
   ],
   "profiles": {
+    "homed.linux.units": {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "host_system": {
+        "ID": "ubuntu",
+        "VERSION_ID": "24.04"
+      },
+      "build_type": "RelWithDebInfo",
+      "instrumentation": "none",
+      "source_dir": "gnome/nostr-homed/tests/unit",
+      "setup": "standalone/nostr-homed-units-v1",
+      "local_availability": "host_or_container",
+      "capabilities": [],
+      "feature_variants": [],
+      "contexts": [
+        "local"
+      ],
+      "parallelism": 2,
+      "build_parallelism": 2,
+      "test_parallelism": 1,
+      "timeout_seconds": 3600,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+      ],
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "scope": "standalone_manifest_cache_units",
+      "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test",
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      }
+    },
+    "homed.linux.ci": {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "host_system": {
+        "ID": "ubuntu",
+        "VERSION_ID": "24.04"
+      },
+      "build_type": "RelWithDebInfo",
+      "instrumentation": "none",
+      "source_dir": "gnome/nostr-homed/tests/unit",
+      "setup": ".github/workflows/dependency-worker.yml:execute",
+      "local_availability": "host",
+      "capabilities": [],
+      "feature_variants": [],
+      "contexts": [
+        "ci"
+      ],
+      "parallelism": 2,
+      "build_parallelism": 2,
+      "test_parallelism": 1,
+      "timeout_seconds": 3600,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+      ],
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "scope": "standalone_manifest_cache_units",
+      "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test",
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      }
+    },
     "grotto.linux.asan_ubsan": {
       "architecture": "x86_64",
       "build_type": "Debug",
       "capabilities": [
         "display",
-        "private_bus"
+        "private_bus",
+        "signer_endpoint"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -25578,13 +25953,16 @@
         "-DBUILD_RELAYD=OFF",
         "-DSIGNET_ENABLE=OFF",
         "-DGNOSTR_ENABLE_ASAN=ON",
-        "-DGNOSTR_ENABLE_UBSAN=ON"
+        "-DGNOSTR_ENABLE_UBSAN=ON",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON"
       ],
       "environment": {
         "G_SLICE": "always-malloc",
         "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
         "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
-        "TSAN_OPTIONS": "halt_on_error=1"
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
       },
       "feature_variants": [],
       "instrumentation": "asan_ubsan",
@@ -25645,7 +26023,25 @@
         ]
       },
       "build_parallelism": 2,
-      "test_parallelism": 1
+      "test_parallelism": 1,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "groundhog.mdk011": {
       "architecture": "x86_64",
@@ -25653,7 +26049,10 @@
       "capabilities": [
         "display",
         "private_bus",
-        "docker"
+        "docker",
+        "nak",
+        "gnome_keyring",
+        "signer_endpoint"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -25664,13 +26063,21 @@
         "-DBUILD_GROUNDHOG=ON",
         "-DBUILD_NOSTR_GOBJECT=ON",
         "-DBUILD_NOSTR_GTK=ON",
-        "-DBUILD_APPS=OFF",
+        "-DBUILD_APPS=ON",
         "-DBUILD_RELAYD=ON",
         "-DSIGNET_ENABLE=OFF",
         "-DBUILD_MDK011_INTEROP=ON",
-        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice"
+        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice",
+        "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
       ],
-      "environment": {},
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
       "feature_variants": [
         "mdk011_live"
       ],
@@ -25680,13 +26087,36 @@
       "platform": "linux",
       "setup": ".github/workflows/groundhog-ci.yml:groundhog",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "execution_domain": "mdk_original_linux_v1",
+      "build_parallelism": 2,
+      "test_parallelism": 2,
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "core.linux.asan": {
       "architecture": "x86_64",
       "build_type": "Debug",
       "capabilities": [
-        "private_bus"
+        "display",
+        "private_bus",
+        "signer_endpoint"
       ],
       "compiler": "clang",
       "configure_args": [
@@ -25705,9 +26135,14 @@
         "-DLIBNOSTR_WITH_NOSTRDB=ON",
         "-DNIP04_STRICT_AEAD_ONLY=ON",
         "-DBUILD_NOSTR_GTK=OFF",
-        "-DBUILD_APPS=OFF",
+        "-DBUILD_APPS=ON",
         "-DBUILD_RELAYD=OFF",
-        "-DSIGNET_ENABLE=OFF"
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
       ],
       "environment": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -25719,7 +26154,8 @@
         "NOSTR_RELAY_SKEW_PAST": "0",
         "CC": "clang",
         "CXX": "clang++",
-        "LDFLAGS": "'-fuse-ld=lld'"
+        "LDFLAGS": "'-fuse-ld=lld'",
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
       },
       "feature_variants": [
         "nip19",
@@ -25797,7 +26233,27 @@
           "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
         },
         "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
-      }
+      },
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 2
     },
     "core.macos.asan": {
       "architecture": "arm64",
@@ -26116,7 +26572,25 @@
       "source_dir": ".",
       "timeout_seconds": 3600,
       "build_parallelism": 2,
-      "test_parallelism": 2
+      "test_parallelism": 2,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "grotto.linux": {
       "architecture": "x86_64",
@@ -26216,7 +26690,25 @@
         ]
       },
       "build_parallelism": 2,
-      "test_parallelism": 1
+      "test_parallelism": 1,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "groundhog.linux": {
       "architecture": "x86_64",
@@ -26258,15 +26750,38 @@
       "platform": "linux",
       "setup": ".github/workflows/groundhog-ci.yml:groundhog",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 2
     },
     "groundhog.mdk08": {
       "architecture": "x86_64",
       "build_type": "Debug",
       "capabilities": [
-        "docker",
         "display",
-        "private_bus"
+        "private_bus",
+        "docker",
+        "nak",
+        "gnome_keyring",
+        "signer_endpoint"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -26275,9 +26790,17 @@
         "-DCMAKE_BUILD_TYPE=Debug",
         "-DBUILD_TESTING=ON",
         "-DBUILD_GROUNDHOG=ON",
-        "-DBUILD_MDK_INTEROP=ON"
+        "-DBUILD_MDK_INTEROP=ON",
+        "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+        "-DBUILD_APPS=ON",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
       ],
-      "environment": {},
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
       "feature_variants": [],
       "instrumentation": "none",
       "local_availability": "host_or_container",
@@ -26285,7 +26808,28 @@
       "platform": "linux",
       "setup": ".github/workflows/marmot-mdk-interop.yml",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
+      "execution_domain": "mdk_original_linux_v1",
+      "build_parallelism": 2,
+      "test_parallelism": 2,
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "libgo.linux.asan": {
       "architecture": "x86_64",
@@ -26749,7 +27293,7 @@
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
       "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
@@ -26757,7 +27301,7 @@
     ".github/workflows/dependency-tests.yml:mdk011": {
       "matrix_source": "",
       "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724",
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
@@ -26928,7 +27472,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -26936,7 +27480,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -26944,7 +27488,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -26952,7 +27496,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -26960,7 +27504,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -26968,7 +27512,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -26976,7 +27520,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -26984,7 +27528,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -26992,7 +27536,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -27000,7 +27544,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -27008,7 +27552,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -27016,15 +27560,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "0d66cb4e7558d91115a9d3a61a55d7378bbfc85a3ca02304bc812f1789007ab3",
+      "source_sha256": "a0b23c92cae5090d7cd485ca7359791a8fbe53133596879bfac011ba31198f0d",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
@@ -27032,9 +27576,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "3b27a373baeea1bb88440c5da3a9be3aa8fd457669ae27c29fd3be14616bf2bb",
+      "source_sha256": "fcf6ac4f6d1011bee1f4706360de3ccad87f0d2821dad67d18b5363b03cf273d",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "78dd275d8d249ddc83918b1757da26167ab2f750ea15e109e09d8c169fe96f28"
+      "workflow_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -27320,7 +27864,7 @@
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
-      "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
+      "unsupported_reason": "Standalone Ubuntu five-unit headless profile is independently enrolled, not an alias for this legacy root configure (140 registrations including signer/runtime consumers). Four distro root setup/toolchain and advisory FUSE/secrets contracts remain separate; no privileged systemd session coverage is inferred.",
       "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
@@ -27338,9 +27882,9 @@
         "core.macos.asan"
       ],
       "coverage_gap": "root_asan_execution_contract",
-      "source_sha256": "34b4225c2530db6754c8121fc170973d7082987a38b0355667e79a48854ff85c",
+      "source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
       "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
-      "workflow_sha256": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef"
+      "workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",
@@ -27490,9 +28034,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "b559612b864c18579f98b4bafbaaa26cc65783d08ddae23e02ab37e20a3d035a",
+      "source_sha256": "74d407dd489dbf824d30c8a341b6f4667a4deb3963dec4295d6092434a78885b",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "1514feb9fac686f18bb07cc20dd5c5c2ba5d2a1f6fc1c983aae7ade3bc8de2f0"
+      "workflow_sha256": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
@@ -27548,15 +28092,23 @@
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
       "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
-      "workflow_sha256": "8ba05e6c4e84c439218a0dcaa6a0a65d782807f656f1583ef4ed84d54e30c724"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/namespace-policy-regression.yml:regressions": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
-      "source_sha256": "9f1eb066501148e4a0ef67bfd01f78e2d121fba8346fab496ad231384f3cf10e",
-      "workflow_sha256": "c1e397d41e3255b76f79fe8142642eeb86ea0a52b7bfff49b3db075e7860a884"
+      "source_sha256": "c712a814165514da86ef9e7399d0c78d4310ce6615536cf930d9b5e4d457a46c",
+      "workflow_sha256": "4ce40f1e0ea0b66dfd7580f8fc5344872c13672cf889a2dd5bcf098c3293f5aa"
+    },
+    ".github/workflows/dependency-tests.yml:homed_units": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Standalone five-unit homed CI dispatch is source-accounted only; no physical CI receipt, original four-distro root/systemd/FUSE validation or complete profile-union acceptance is inferred.",
+      "source_sha256": "5e470ea449945b085873bc31a1e21bfd5868154ea2625e0c9a403c943d42082b",
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     }
   },
   "schema_version": 1,

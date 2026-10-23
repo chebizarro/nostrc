@@ -11,6 +11,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import select
@@ -299,12 +300,252 @@ def namespace_services(capabilities, evidence_dir, resource_root, finalizer_fd=N
         yield state
 
 
+# Darwin custody private session bus. macOS has no tmpfs/mount namespace or
+# abstract sockets: the private root is the journaled owned 0700 directory
+# itself (allocated under canonical /private/tmp), removed by the outer
+# adapter only after a validated helper exit. sun_path holds 103 bytes + NUL.
+DARWIN_SOCKET_MAX = 103
+DARWIN_RESOURCE_BASES = ('/private/tmp',)
+DARWIN_BUS_CONFIG = ('<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" '
+                     '"http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+                     '<busconfig><type>session</type><listen>{address}</listen><auth>EXTERNAL</auth>'
+                     '<policy context="default"><allow send_destination="*" eavesdrop="true"/>'
+                     '<allow eavesdrop="true"/><allow own="*"/></policy></busconfig>\n')
+# Besides every inherited DBUS_* variable (session, system, launchd, starter,
+# activation): no ambient display/keyring route either.
+AMBIENT_NON_DBUS = ('DISPLAY', 'XAUTHORITY', 'GNOME_KEYRING_CONTROL')
+
+
+@contextlib.contextmanager
+def darwin_private_bus(evidence_dir, resource_root):
+    """Private session bus inside Darwin custody (the caller is a tag member).
+
+    The daemon is this process's direct, unreaped child and, like every
+    descendant, carries the custody tag; the helper's reap owns any escapee.
+    Its own minimal config has no launchd listen, service directories or
+    includes, so no launchd/XPC activation is involved or inferred.
+    """
+    if sys.platform != 'darwin':
+        raise ServiceError('Darwin private bus requires macOS')
+    root = Path(resource_root)
+    if not root.is_absolute() or root.is_symlink() or root.resolve(strict=True) != root:
+        raise ServiceError('private resource root must be a canonical absolute directory')
+    info = root.stat()
+    if not root.is_dir() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ServiceError('private resource root ownership/mode mismatch')
+    identities = {name: _identity(name) for name in ('dbus-daemon', 'dbus-send')}
+    evidence = Path(evidence_dir)
+    evidence.mkdir(parents=True, exist_ok=True)
+    state = {'schema_version': 1, 'kind': 'darwin_private_bus_v1', 'capabilities': ['private_bus'],
+             'executables': identities, 'services': [], 'status': 'failed', 'complete': False,
+             'cleanup_scope': 'direct daemon reaped here; descendants by custody tag; files by outer adapter'}
+    previous = dict(os.environ)
+    private = Path(tempfile.mkdtemp(prefix='bus-', dir=root))
+    socket_path = private / 'runtime' / 'bus'
+    if len(os.fsencode(str(socket_path))) > DARWIN_SOCKET_MAX:
+        raise ServiceError('private resource root leaves no room for the bus socket path: ' + str(socket_path))
+    process = log = None
+    original = None
+    try:
+        for name, path in {'HOME': private / 'home', 'XDG_RUNTIME_DIR': private / 'runtime',
+                           'XDG_CONFIG_HOME': private / 'config', 'XDG_DATA_HOME': private / 'data',
+                           'XDG_CACHE_HOME': private / 'cache'}.items():
+            path.mkdir(mode=0o700)
+            os.environ[name] = str(path)
+        for name in [key for key in os.environ if key.startswith('DBUS_')] + list(AMBIENT_NON_DBUS):
+            os.environ.pop(name, None)  # only the fresh private session address is set below
+        config = private / 'bus.conf'
+        config.write_text(DARWIN_BUS_CONFIG.format(address='unix:path=' + str(socket_path)))
+        log = (evidence / 'dbus-daemon.log').open('xb')
+        read_fd, write_fd = os.pipe()
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        try:
+            command = [identities['dbus-daemon']['path'], '--nofork', '--nopidfile', '--nosyslog',
+                       '--config-file=' + str(config), '--print-address=' + str(write_fd)]
+            launch_env = dict(os.environ)  # exact exec environment: no inherited DBUS_* at all
+            state['daemon_environment_dbus'] = sorted(k for k in launch_env if k.startswith('DBUS_'))
+            process = subprocess.Popen(command, env=launch_env, stdout=log, stderr=subprocess.STDOUT, pass_fds=(write_fd,),
+                                       restore_signals=True, start_new_session=True,
+                                       preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+            os.kill(process.pid, 0)  # direct, unreaped child: identity reserved
+            record = {'executable': 'dbus-daemon', 'argv': command, 'log': str(log.name), 'pid': process.pid}
+            state['services'].append(record)
+        finally:
+            os.close(write_fd)
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        try:
+            address = _ready(read_fd)
+        finally:
+            os.close(read_fd)
+        match = re.fullmatch(r'unix:path=(.+),guid=([0-9a-f]{32})', address)
+        if not match or match.group(1) != str(socket_path):
+            raise ServiceError('private bus did not report its exact private socket address')
+        socket_info = os.lstat(socket_path)
+        if not stat.S_ISSOCK(socket_info.st_mode) or socket_info.st_uid != os.geteuid():
+            raise ServiceError('private bus socket is not an owned Unix socket')
+        os.environ['DBUS_SESSION_BUS_ADDRESS'] = address
+        env = dict(os.environ)
+
+        def call(method, signature_check):
+            result = subprocess.run([identities['dbus-send']['path'], '--session', '--print-reply',
+                                     '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
+                                     'org.freedesktop.DBus.' + method], capture_output=True, timeout=15, env=env)
+            if result.returncode or signature_check not in result.stdout:
+                raise ServiceError('private bus did not answer its real ' + method + ' call')
+            return result.stdout.decode(errors='replace')
+        # The calls use the full printed address including guid=: libdbus
+        # refuses a server whose AUTH guid differs, so these replies come from
+        # exactly the daemon that reported this address on our private pipe.
+        # GetId is the bus UUID (distinct from the listening server's guid).
+        call('ListNames', b'org.freedesktop.DBus')
+        bus_id = re.search(r'string "([0-9a-f]{32})"', call('GetId', b'string "'))
+        if not bus_id:
+            raise ServiceError('private bus returned no bus identity')
+        state.update(bus_address=address, server_guid=match.group(2), bus_id=bus_id.group(1),
+                     socket={'path': str(socket_path), 'dev': socket_info.st_dev, 'ino': socket_info.st_ino,
+                             'mode': oct(stat.S_IMODE(socket_info.st_mode))},
+                     private_root=str(private), bus_readiness={'methods': ['ListNames', 'GetId']}, ready=True)
+        os.environ['NOSTRC_NATIVE_RESOURCE_ROOT'] = str(root)
+        yield state
+        exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if exited:
+            raise ServiceError('private bus exited during the lane')
+        state['status'] = 'passed'
+    except BaseException as exc:
+        original = exc
+        state['error'] = type(exc).__name__ + ': ' + str(exc)
+        raise
+    finally:
+        handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
+        errors = []
+        try:
+            if process is not None:
+                record = state['services'][-1]
+                try:
+                    process.send_signal(signal.SIGTERM)  # Popen refuses once reaped
+                    try:
+                        record['exit_code'] = process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()  # still unreaped: identity reserved
+                        record['forced_exit'] = True
+                        record['exit_code'] = process.wait(timeout=15)
+                    record['reaped'] = True
+                    if record.get('forced_exit'):
+                        # Reaped (cleanup proof kept above) but not a graceful
+                        # lifecycle: never a passing bus.
+                        errors.append('private bus ignored SIGTERM; forced SIGKILL after the grace period')
+                except Exception as exc:
+                    errors.append(type(exc).__name__ + ': ' + str(exc))
+            if log is not None:
+                log.close()
+            os.environ.clear()
+            os.environ.update(previous)
+            if errors:
+                state.update(status='failed', cleanup_errors=errors)
+            with (evidence / 'services.json').open('x') as stream:
+                json.dump(state, stream, sort_keys=True, indent=2)
+                stream.write('\n')
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+        if errors and original is None:
+            raise ServiceError('private bus cleanup unverified: ' + '; '.join(errors))
+
+
+def release_resource_directory(lane_dir):
+    """Outer Darwin cleanup of the journal-proven owned directory and its contents.
+
+    Call only after a validated custody exit (clean, or parent-bound recovery
+    proved no member remains). Removal is symlink-attack resistant and never
+    leaves the directory this journal proved it created (dev/ino/owner/mode).
+    """
+    journal = Path(lane_dir) / JOURNAL_NAME
+    records = read_resource_journal(journal)
+    if records[-1]['state'] in ('released', 'absent'):
+        return Path(records[-1]['path'])
+    if records[-1]['state'] != 'allocated' or len(records) != 2:
+        raise ServiceError('resource journal does not authorize recursive release: ' + records[-1]['state'])
+    allocation = _journal_allocation(records)
+    path = Path(allocation['path'])
+    info = os.lstat(path)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
+            or (info.st_dev, info.st_ino) != (allocation['dev'], allocation['ino'])):
+        raise ServiceError('private resource directory changed identity before release')
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ServiceError('platform rmtree is not symlink-attack resistant; refusing recursive release')
+    shutil.rmtree(path)
+    if path.exists():
+        raise ServiceError('private resource directory remained after release')
+    _journal_append(journal, {'state': 'released', 'path': str(path), 'absent_after': True, 'recursive': True})
+    return path
+
+
+def retain_resource_directory(lane_dir, reason):
+    """Record that the owned directory is intentionally retained (custody unverified)."""
+    journal = Path(lane_dir) / JOURNAL_NAME
+    records = read_resource_journal(journal)
+    if records[-1]['state'] == 'allocated':
+        _journal_append(journal, {'state': 'retained', 'path': records[-1]['path'], 'reason': reason})
+
+
 SIGNER_CONSENT = 'unidentified-get-public-key-once'
 SIGNER_INPUTS = ('tests/runtime/test_provisioned_nip5f.py', 'tests/runtime/nip5f_approver.c',
                  'gnome/groundhog/tests/app/test_secret_service.py',
                  'apps/grotto/data/org.nostr.Grotto.gschema.xml')
 SIGNER_BUILD_INPUTS = ('apps/grotto/grotto-daemon', 'nips/nip5f/test_nip5f_tcp',
                        'nips/nip5f/test_nip5f_approver', 'apps/grotto/gschemas.compiled')
+SIGNER_EXECUTABLES = SIGNER_BUILD_INPUTS[:3]
+# Authored instrumentation -> exact realized cache entries. GNOSTR_ENABLE_ASAN
+# forces GO_ENABLE_ASAN, whose Debug flags instrument every executable.
+SIGNER_INSTRUMENTATION = {'none': {'GO_ENABLE_ASAN': None},
+                          'asan_ubsan': {'GO_ENABLE_ASAN': 'GO_ENABLE_ASAN:BOOL=ON',
+                                         'CMAKE_BUILD_TYPE': 'CMAKE_BUILD_TYPE:STRING=Debug'}}
+SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')
+
+
+def elf_symbol_names(data, label='signer executable'):
+    """Names from ELF64 bytes' .symtab/.dynsym; no external tool or byte grep."""
+    if data[:4] != b'\x7fELF' or len(data) < 64 or data[4] != 2 or data[5] != 1:
+        raise ServiceError(label + ' is not a little-endian ELF64 file')
+    try:
+        shoff, = struct.unpack_from('<Q', data, 0x28)
+        shentsize, shnum = struct.unpack_from('<HH', data, 0x3a)
+        sections = [struct.unpack_from('<IIQQQQIIQQ', data, shoff + i * shentsize) for i in range(shnum)]
+        names = set()
+        for _, kind, _, _, offset, size, link, _, _, entsize in sections:
+            if kind not in (2, 11) or not entsize:
+                continue  # SHT_SYMTAB, SHT_DYNSYM
+            strings = sections[link]
+            base, limit = strings[4], strings[4] + strings[5]
+            for index in range(size // entsize):
+                name, = struct.unpack_from('<I', data, offset + index * entsize)
+                end = data.index(b'\0', base + name, limit)
+                names.add(data[base + name:end].decode('ascii', 'replace'))
+    except (struct.error, IndexError, ValueError) as exc:
+        raise ServiceError(label + ' has a malformed ELF symbol table') from exc
+    return names
+
+
+def signer_instrumentation_evidence(build, instrumentation, audited=None):
+    """Physical post-build proof that fixture executables match authored instrumentation.
+
+    ASan is required exactly as authored. UBSan is recorded as observed, not
+    required: the authored asan_ubsan profiles configure ASan only.
+    """
+    evidence = {}
+    for relative in SIGNER_EXECUTABLES:
+        path = Path(build) / relative
+        data = path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if audited is not None and audited.get(str(path)) != digest:
+            raise ServiceError('signer executable differs from its full-audit binding: ' + relative)
+        names = elf_symbol_names(data, relative)
+        asan = '__asan_init' in names
+        if asan != (instrumentation == 'asan_ubsan'):
+            raise ServiceError(f'signer executable instrumentation differs from authored {instrumentation}: {relative}')
+        evidence[str(path)] = {'sha256': digest, 'asan': asan,
+                               'ubsan_observed': any(n.startswith('__ubsan_handle_') for n in names)}
+    return evidence
 
 
 def signer_contract(realization, environment=None):
@@ -330,6 +571,18 @@ def signer_contract(realization, environment=None):
     for name, (kind, value) in expected.items():
         if [line for line in cache if line.startswith(name + ':')] != [name + ':' + kind + '=' + value]:
             raise ServiceError('signer fixture realized configuration mismatch: ' + name)
+    instrumentation = profile.get('instrumentation', 'none')
+    if instrumentation not in SIGNER_INSTRUMENTATION:
+        raise ServiceError('signer fixture has no runtime contract for instrumentation: ' + str(instrumentation))
+    if instrumentation != 'none':
+        authored = {'-DCMAKE_BUILD_TYPE=Debug'} <= set(args) and bool(
+            {'-DGO_ENABLE_ASAN=ON', '-DGNOSTR_ENABLE_ASAN=ON'} & set(args))
+        if not authored:
+            raise ServiceError('signer fixture instrumentation lacks authored Debug ASan configuration')
+    for name, line in SIGNER_INSTRUMENTATION[instrumentation].items():
+        realized = [row for row in cache if row.startswith(name + ':')]
+        if (realized != [line]) if line else any(row.endswith('=ON') for row in realized):
+            raise ServiceError('signer fixture realized instrumentation mismatch: ' + name)
     if 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(root) not in cache:
         raise ServiceError('signer fixture realized source root mismatch')
     inputs = {}
@@ -345,8 +598,17 @@ def signer_contract(realization, environment=None):
         raise ServiceError('signer fixture test-phase consent differs from authored one-shot approval')
     tools = {name: _identity(name, environment.get('PATH')) for name in ('dbus-daemon', 'gdbus')}
     tools['python'] = _identity(sys.executable)
+    from test_selection_realization import phase_environment
+    # Authored common + test-phase overlay, source-expanded, without ambient values.
+    overlay = phase_environment(profile, str(root), 'test', base_environment={})
+    authored_env = {key: value for key, value in overlay.items() if key in SANITIZER_ENVIRONMENT}
+    # The whole effective projection: an inherited unauthored LSAN_OPTIONS
+    # (e.g. a suppression file) must not reach fixture processes.
+    if {key: environment[key] for key in SANITIZER_ENVIRONMENT if key in environment} != authored_env:
+        raise ServiceError('signer fixture test-phase sanitizer environment differs from authored profile')
     return {'kind': 'nip5f_one_shot_provision_contract_v1', 'readiness': False,
-            'executables': tools,
+            'executables': tools, 'instrumentation': instrumentation,
+            'sanitizer_environment': authored_env,
             'source_identity': realization['source_identity'], 'consent': SIGNER_CONSENT,
             'operation': 'get_public_key', 'principal': 'unidentified', 'remember': False,
             'inputs': inputs, 'cache_sha256': hashlib.sha256(cache_path.read_bytes()).hexdigest(),
@@ -378,6 +640,8 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
             raise ServiceError('signer fixture input absent or indirect')
         if input_audit.get('input_hashes', {}).get(str(path)) != hashlib.sha256(path.read_bytes()).hexdigest():
             raise ServiceError('signer fixture input lacks exact full-audit binding: ' + str(path))
+    instrumented = signer_instrumentation_evidence(build, contract['instrumentation'],
+                                                   input_audit.get('input_hashes', {}))
     resource_root = _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
     require_socket_budget(resource_root)
     import runpy
@@ -388,6 +652,7 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
     owned = fixture['Signer']('worker', config=config)
     state = {'kind': 'nip5f_one_shot_runtime_v1', 'contract': contract, 'inputs': config.inputs,
              'executables': config.producer['executables'], 'status': 'failed',
+             'instrumented_executables': instrumented,
              'complete': False, 'complete_gate_eligible': False}
     try:
         owned.start()

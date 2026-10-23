@@ -99,7 +99,7 @@ def before_w11_setup_jobs(records):
 
 
 HEARTBEAT_WITNESS = 'tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json'
-HEARTBEAT_SHA256 = 'cfff9082550676990622e9719b2502518eb162b112ace9a22af89fb6cb4a0f5f'
+HEARTBEAT_SHA256 = 'd0df24b27dc0716cd488fc208965f1c9b1363583c9638bb425c10ed0a939edce'
 
 
 def heartbeat_witness():
@@ -127,7 +127,8 @@ def before_w11_setup_source(path, raw):
     from w11_worker_support import before_worker_source
     from w11_policy_support import before_policy_source
     if hashlib.sha256(raw).hexdigest() != record['after_sha256']:
-        raw = before_worker_source(path, before_policy_source(path, raw))
+        from homed_profile_support import before_homed_source
+        raw = before_worker_source(path, before_policy_source(path, before_homed_source(path, raw)))
     s.require(hashlib.sha256(raw).hexdigest() == record['after_sha256'],
               'W11 setup source changed: ' + path)
     for edit in record['edits']:
@@ -204,7 +205,8 @@ def before_native_custody_policy(policy):
     from w11_worker_support import before_worker_policy
     from w11_policy_support import before_policy_enrollment
     from test_selection_subset import before_full_ownership_policy
-    previous = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(policy)))
+    from homed_profile_support import before_homed_policy
+    previous = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(before_homed_policy(policy))))
     for gap in previous.get('coverage_gaps', []):
         if gap.get('id') == 'shadow_cutover' and 'classification' in gap:
             s.require(gap['classification'] == 'administrative_rollout_prerequisite'

@@ -139,7 +139,9 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
         status.update(outcome="passed" if process.returncode == 0 else "failed", exit_code=process.returncode)
         # Text consumers keep their existing interface without discarding any
         # byte. Logs below remain raw; no implicit locale/strict decoding occurs.
-        return subprocess.CompletedProcess(argv, process.returncode, output.decode("utf-8", errors="surrogateescape"))
+        result = subprocess.CompletedProcess(argv, process.returncode, output.decode("utf-8", errors="surrogateescape"))
+        result.execution_status = status  # finalized below, independent of a child-writable sidecar
+        return result
     except BaseException as exc:
         original = exc
         status.update(outcome="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
@@ -471,8 +473,48 @@ def _expand_source(value, source_root):
     return value.replace("{source_root}", str(source_root))
 
 
+def _host_system_contract(profile):
+    if "host_system" not in profile:
+        return None
+    expected = profile["host_system"]
+    if (profile.get("platform") != "linux" or not isinstance(expected, dict)
+            or not {"ID"} <= set(expected) <= {"ID", "VERSION_ID"}
+            or any(not isinstance(v, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", v)
+                   for v in expected.values())):
+        raise RealizationError("host_system requires a literal Linux ID and optional VERSION_ID")
+    return expected
+
+
+def _host_system_evidence(profile):
+    expected = _host_system_contract(profile)
+    if expected is None:
+        return None
+    if platform.system() != "Linux":
+        raise RealizationError("host_system requires an actual Linux host")
+    path = Path("/etc/os-release")
+    try:
+        raw = path.read_bytes()
+        values = {}
+        for line in raw.decode("utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            if key not in expected:
+                continue
+            parsed = shlex.split(value, comments=False, posix=True)
+            if key in values or len(parsed) != 1:
+                raise ValueError("duplicate/ambiguous host identity")
+            values[key] = parsed[0]
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RealizationError(f"unavailable/malformed host_system evidence: {exc}") from exc
+    if values != expected:
+        raise RealizationError(f"profile host_system {expected} differs from actual {values}")
+    return {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest(), "identity": values}
+
+
 def validate_phase_profile(profile):
     """Validate authored metadata without host checks or environment flattening."""
+    _host_system_contract(profile)
     authored = authored_phase_parallelism(profile)
     common = _environment_map(profile.get("environment", {}), "environment")
     phases = profile.get("phase_environments", {p: {} for p in PHASES})
@@ -556,12 +598,13 @@ def _phase_context(profile, root, source, configuration):
                 dict(profile.get("environment", {}), **profile.get("phase_environments", {}).get(p, {})).items()} for p in PHASES},
             "environment_hashes": {p: _hash(env) for p, env in environments.items()},
             "template_inputs": sorted(inputs),
+            **({"host_system": _host_system_evidence(profile)} if "host_system" in profile else {}),
             **({"execution_parallelism": authored} if authored is not None else {})}
 
 
 def _diagnostic_boundary(realization):
     boundary = realization.get('diagnostic_boundary')
-    if boundary not in (None, 'linux_pidns_v1', 'linux_ptrace_v1'):
+    if boundary not in (None, 'linux_pidns_v1', 'linux_ptrace_v1', 'darwin_seatbelt_v1'):
         raise RealizationError('unknown diagnostic execution boundary')
     return ({'diagnostic_boundary': boundary, 'complete': False, 'complete_gate_eligible': False,
              'untraced_profile_parity': False} if boundary else {})
@@ -629,6 +672,7 @@ def _validate_resolved_phase(resolved, realization):
 
 def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):
     validate_phase_profile(profile)
+    _host_system_evidence(profile)
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), platform.system().lower())
     requested = profile.get("platform")
     if requested and {"darwin": "macos"}.get(requested, requested) != system:
@@ -1186,6 +1230,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     (query / "cmakeFiles-v1").touch()
     token = uuid.uuid4().hex
     env = phase_environment(profile, root, "configure")
+    _legacy_macos_environment_guard(profile_id, profile, root, env)
     args = [_expand_source(x, root) for x in profile.get("configure_args", [])]
     if any(arg == "--trace-source" or arg.startswith("--trace-source=") for arg in args):
         raise RealizationError("filtered configure trace cannot establish output provenance")
@@ -1530,6 +1575,45 @@ def _diagnostic_nonmembers(inventory, realization, tests, descriptors):
                  binding=_nonmember_binding(realization, descriptors))]
 
 
+def _legacy_macos_environment_guard(profile_id, profile, root, *environments):
+    """Legacy macOS provisions no signer: any inherited endpoint/token refuses.
+
+    Checks every phase's actual effective environment (ambient + overlays) plus
+    any concrete process environment the caller is about to use."""
+    import test_selection_macos_nip5f_tcp as macos_tcp
+    if profile_id != macos_tcp.PROFILE:
+        return
+    try:
+        for phase in PHASES:
+            macos_tcp.require_unconfigured_environment(phase_environment(profile, root, phase))
+        for environment in environments:
+            macos_tcp.require_unconfigured_environment(environment)
+    except macos_tcp.ApplicabilityError as exc:
+        raise RealizationError(str(exc)) from exc
+
+
+def _legacy_macos_tcp_exclusion(inventory, realization, tests, descriptors):
+    """The one exact legacy macOS NIP-5F TCP authority (nostrc-0cfsg.36.9)."""
+    import test_selection_macos_nip5f_tcp as macos_tcp
+    try:
+        records = macos_tcp.records(inventory)
+        if realization["profile_id"] != macos_tcp.PROFILE:
+            return []
+        claimed = any(_eligible(check, macos_tcp.PROFILE) and macos_tcp.REGISTRATION in _membership(check, macos_tcp.PROFILE)
+                      for check in inventory["checks"].values())
+        if not records:
+            if macos_tcp.REGISTRATION in tests and not claimed:
+                raise RealizationError("legacy macOS test_nip5f_tcp has no exact applicability authority")
+            return []
+        macos_tcp.validate_policy(inventory, records[0], realization["repo_root"])
+        _legacy_macos_environment_guard(realization["profile_id"], realization["profile"], realization["repo_root"])
+        record = macos_tcp.validate_realization(inventory, records[0], realization, tests, descriptors,
+                                                _mapped_targets, _relative)
+    except macos_tcp.ApplicabilityError as exc:
+        raise RealizationError(str(exc)) from exc
+    return [record]
+
+
 def _baseline_exclusions(inventory, realization, tests, descriptors):
     """Account the native baseline gap and exact reviewed diagnostic nonmembers.
 
@@ -1548,7 +1632,7 @@ def _baseline_exclusions(inventory, realization, tests, descriptors):
         if not isinstance(record, dict):
             raise RealizationError("malformed coverage gap record")
         if record.get("id") != ident:
-            if "registrations" in record:
+            if "registrations" in record and record.get("id") != "core_macos_asan_nip5f_tcp_unconfigured":
                 raise RealizationError("unsupported registration exclusion coverage gap")
             continue
         if ident in seen:
@@ -1603,6 +1687,7 @@ def _baseline_exclusions(inventory, realization, tests, descriptors):
             raise RealizationError("baseline exclusion actual sanitizer instrumentation differs")
         applicable.append(dict(record, status="not_executed", authority="existing_workflow_baseline",
                                target_ids=target_ids, audit_build_targets=[targets[0]["name"]]))
+    applicable += _legacy_macos_tcp_exclusion(inventory, realization, tests, descriptors)
     import test_selection_subset as subset
     try:
         ordinary = subset.admit(inventory, realization, tests, descriptors)
@@ -2011,6 +2096,15 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
         try:
             evidence['signer_endpoint'] = signer_contract(realization)
         except (ServiceError, OSError) as exc:
+            raise RealizationError(str(exc)) from exc
+    if 'docker' in required:
+        from test_selection_mdk import contract
+        try:
+            evidence['docker'] = contract(realization,
+                phase_environment(realization['profile'], realization['repo_root'], 'test'))
+            from test_selection_execution import validate_mdk_graph
+            validate_mdk_graph(realization, evidence['docker'])
+        except (ValueError, OSError, KeyError) as exc:
             raise RealizationError(str(exc)) from exc
     if 'namespace_policy_controller' in required:
         from test_selection_policy import contract
@@ -2533,6 +2627,14 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             fingerprints.update({tool['path']: tool['sha256'] for tool in proof['signer_endpoint']['executables'].values()})
         except RealizationError as exc:
             gap('missing_runtime_capability', capability='signer_endpoint', reason=str(exc))
+    if realization['profile'].get('execution_domain') == 'mdk_original_linux_v1':
+        try:
+            proof = _runtime_capability_evidence(realization, ['docker'])
+            runtime_tools.update(proof)
+            fingerprints.update(proof['docker']['inputs'])
+            fingerprints.update({tool['path']: tool['sha256'] for tool in proof['docker']['tools'].values()})
+        except (RealizationError, ValueError, OSError) as exc:
+            gap('missing_runtime_capability', capability='docker', reason=str(exc))
     if 'namespace_policy_controller' in realization['profile'].get('capabilities', []) and any(
             'namespace_policy_controller' in spec['requires'] for spec in specs.values()):
         try:
@@ -2749,6 +2851,7 @@ def build_resolved(resolved, build_dir, parallel=None, *, build_parallel=None):
     _validate_resolved_phase(resolved, realization)
     jobs = effective_phase_parallelism(realization["profile"], parallel, build_parallel=build_parallel, phases=("build",))
     _diagnostic_execution_options(resolved, realization, jobs["build"], phase="build")
+    _legacy_macos_environment_guard(realization["profile_id"], realization["profile"], realization["repo_root"])
     commands, outputs = _build_commands(resolved, realization, jobs["build"]), []
     start = time.monotonic()
     for cmd in commands:
@@ -2939,8 +3042,14 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         if not isinstance(custody, PreparedContext):
             raise RealizationError("prepared profile requires live contained runtime custody")
         custody.validate(resolved)
-    elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer", "prepared_peer"}:
+    elif custody is not None or set(resolved["required_capabilities"]) & {"external_peer", "prepared_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
+    if 'docker' in resolved['required_capabilities']:
+        from test_selection_services import _namespace_resources
+        from test_selection_mdk import EXECUTION_DOMAIN
+        if realization['profile'].get('execution_domain') != EXECUTION_DOMAIN:
+            raise RealizationError('Docker requires the authored original MDK execution domain')
+        _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
     keyring_runtime = _command_keyring_runtime(realization, resolved, custody)
     runtime_capabilities = _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id'])
     if keyring_runtime is not None and keyring_runtime['executable'] != runtime_capabilities.get('gnome_keyring'):
@@ -2971,6 +3080,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "registration_audit": "passed", "job_conclusion": "running",
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
+        "tests": resolved['tests'],
         "started": started, "commands": commands, "evidence_dir": str(directory),
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
         **state,
@@ -3046,6 +3156,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     receipt["input_audit_status"] = "passed"
     env = phase_environment(realization["profile"], realization["repo_root"], "test")
     build_env = phase_environment(realization["profile"], realization["repo_root"], "build")
+    _legacy_macos_environment_guard(realization["profile_id"], realization["profile"], realization["repo_root"],
+                                    env, build_env)
     config = ["-C", resolved["configuration"]] if resolved["configuration"] else []
     if build:
         begin = time.monotonic()
@@ -3112,6 +3224,21 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
             if (sorted(ids) != exclusion["target_ids"] or targets != exclusion["audit_build_targets"]
                     or not set(targets).issubset(resolved["build_targets"])):
                 raise RealizationError("diagnostic nonmember audit target closure changed")
+        elif exclusion.get("authority") == "legacy_unconfigured_nonvalidation":
+            import test_selection_macos_nip5f_tcp as macos_tcp
+            descriptors = {d["name"]: d for d in realization["descriptors"]}
+            try:
+                macos_tcp.verify_sources(realization["repo_root"])
+                again = macos_tcp.validate_realization(
+                    {"profiles": {macos_tcp.PROFILE: realization["profile"]}},
+                    {k: exclusion.get(k) for k in macos_tcp.RECORD_KEYS}, realization, tests, descriptors,
+                    _mapped_targets, _relative)
+            except macos_tcp.ApplicabilityError as exc:
+                raise RealizationError(str(exc)) from exc
+            if (again != exclusion or set(exclusion["registrations"]) & set(resolved["tests"])
+                    or not set(exclusion["target_ids"]) <= set(resolved["target_ids"])
+                    or not set(exclusion["audit_build_targets"]) <= set(resolved["build_targets"])):
+                raise RealizationError("legacy macOS NIP-5F TCP accounting changed after resolution")
     for name, command in resolved["registered_commands"].items():
         if tests[name].get("command") != command:
             raise RealizationError(f"CTest command changed after resolution: {name}")
@@ -3142,12 +3269,34 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
-        resource = contextlib.nullcontext(({}, None))
-        if 'signer_endpoint' in resolved['required_capabilities']:
-            from test_selection_services import provisioned_signer
-            resource = provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env)
-        with resource as (overlay, signer_runtime):
-            process = _execute(cmd, env=dict(env, **overlay), log_path=directory / "ctest.log", timeout=timeout)
+        signer_runtime = mdk_runtime = None
+        with contextlib.ExitStack() as resources:
+            overlay = {}
+            if 'docker' in resolved['required_capabilities']:
+                from test_selection_mdk import lifecycle
+                mdk_overlay, mdk_runtime = resources.enter_context(
+                    lifecycle(realization, resolved, input_audit, directory, environment=env))
+                overlay.update(mdk_overlay)
+            if 'signer_endpoint' in resolved['required_capabilities']:
+                from test_selection_services import provisioned_signer
+                signer_overlay, signer_runtime = resources.enter_context(
+                    provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env))
+                if overlay.keys() & signer_overlay.keys():
+                    raise RealizationError('runtime environment authorities overlap')
+                overlay.update(signer_overlay)
+            effective_env = dict(env, **overlay)
+            _legacy_macos_environment_guard(realization["profile_id"], realization["profile"],
+                                            realization["repo_root"], effective_env)
+            process = _execute(cmd, env=effective_env, log_path=directory / "ctest.log", timeout=timeout)
+        receipt['ctest_process'] = dict(process.execution_status)
+        receipt['ctest_process_authority'] = 'in_memory_executor_v1'
+        receipt['ctest_environment'] = dict(base_hash=_hash(env), effective_hash=_hash(effective_env),
+                                            overlay_names=sorted(overlay))
+        if mdk_runtime is not None:
+            receipt['mdk_runtime'] = mdk_runtime
+            receipt['custody_mode'] = 'pidns'
+            receipt['complete'] = False
+            receipt['complete_gate_eligible'] = False
         if signer_runtime is not None:
             receipt['signer_runtime'] = signer_runtime
             receipt['complete'] = False

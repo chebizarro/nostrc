@@ -1,4 +1,297 @@
+## PR23 723 source-linked capture — 2026-10-23T20:14:05.521545Z
+
+Bounded closing census: **61 roots =59 failed +one cancelled +one pending**.
+All60 previous identities/snapshot bytes and earlier59-root history remain;
+1640 root40004170022 moved from pending to failure, new723 root40015363696 is
+pending. **0/20 reviewed qualifying PR comparisons,0/2 successful complete broad
+integrations; W11 NOT MET / W12 NOT RUN.** No quota increment.
+
+| Original source-bound evidence | Retained result, not later-source credit |
+|---|---|
+|[Static run40015363633 / job120625938011](https://github.com/chebizarro/nostrc/actions/runs/40015363633/job/120625938011)|Artifact:81 kernel OK; DEFAULT1205 /4 failures /2 errors /80 skips,844.638s. Six full original traces retained. Last job API observation still in_progress; no invented terminal API conclusion.|
+|[Policy120626068759](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068759)|Still in_progress at monitor stop; no later poll, terminal or success claim.|
+|[Homed120626068734](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068734)|SUCCESS once,20:11:54Z; independent production-loader validation binds exactly five units and default build, not broad completeness.|
+
+API head723e601ac1322ca0220cd88b3b0ed22b0a7fcd81 differs from tested merge
+84c36ac00cac0e5ccbc973f7c8cc48995d0b672b (parents44044fefe +723), equal tree
+5d9ae919a8053b3a283bbc3ac468b6c8e9d0fa2d. Monitoring ended20:12:49Z at the
+first critical terminal, not after waiting for all jobs. Closing census above is
+a separate bounded request; no retry/dispatch/cancellation occurred.
+
+Original ZIPs (API digest, CRC and every member SHA verified):
+
+| Artifact | Bytes | SHA256 |
+|---|---:|---|
+|12529197145 Static testhost|31,730,728|941459a4a587db08957308413e28d1e78dff567fefe06aee844e8f1786d29d0d|
+|12529595245 homed evidence|675,495|f4bb7543618b4e1d6d7475f120cc5c855995045a9f6246ec09380c6c7cc585cc|
+|12528925479 plan|24,907|454aeb6774f6324ebbcb5dbc63fb657efe61c295465c6ed5f3cc6114932ad388|
+|12528713721 normal receipt/portable bundle|642,066|d24e7fdda86ff728aeaff5c9dfcce202e158162c62fb32d0badbc57da0764ff5|
+
+Plan c9333f6b500e10cfce6042d4a0d0a28ef6c3bdb54c5482f9263e33b52d146ebe
+and bundle27452023e254f81f81e83e97a8f78b590beaefe55fbf0139a5e98b36cb26248a
+bind tested merge84c36ac, profile homed.linux.ci and original sealed bytes.
+C's fresh checkout production loader verifies five names (homed_cache,
+homed_cache_config, homed_groups, homed_manifest, homed_uid_map), default build,
+zero-gap106/219-input audits,765 headers, pidns seal and exact owned AppArmor
+removal/before-after equality. Missing-registration mutation refuses. Independent
+proof4b64989dbc012dc7c1c557d64eae5a7c64a8771b04ae7fe955feafbf03d4baeb
+is retained with its full verification and script. All complete/eligible/
+enforcement flags remain false; private services and original four-distro/root140
+homed parity are not claimed. Finite .36.7 closure remains parent's after landing.
+
+API723's137 focused cases and safe native434 pass/five skips/three guards are
+separate same-head proofs, not full DEFAULT success. All six hosted failures,
+prior interrupted1640 errors (still unknown), two-case diagnostic and older
+failed attempts remain. This dated amendment changes no requirement, witness,
+legacy omission authority, acceptance counter or version.
+
+## 2026-10-23 frozen hosted-cause source integration (not a hosted census)
+
+Checkpoint: 2026-10-23T17:15:00.397175+00:00.
+The exact `9062bceaa1132acbf1b4bd825dd796a17b279eff` local DEFAULT baseline
+completed 1,125 tests in 721.202 seconds with zero failures/errors and 59 explicit
+skips (52 Linux-only, six Docker opt-ins, one platform-negative case). Its full
+source manifests were identical before/after; minimum free space was
+3,262,615,552 bytes. Original logs and the independently verified parent approval
+proof remain retained. This is not physical Linux/MDK or native-profile proof.
+
+Parent-reviewed C source `f838a530e1eba407a93cd2cf0b83b7c2552ebc4b` is now
+integrated preserving ancestry: the nonroot testhost declares the missing homed
+dev packages; Darwin wiring uses a writable same-SHA shallow fixture and cleans
+failed setup; the existing physical namespace-controller operations are shared
+with the stable static job. Job names/triggers, the full DEFAULT suite and all
+nine following static gates remain. Only the job walltime is bounded at 20
+minutes; per-test/heartbeat timeouts and security guards are unchanged.
+`always()` requests owned cleanup while a runner is available; a hard timeout or
+VM-loss absence is unverified/failed, not cleanup success.
+
+B enrolled the exact two changed job fingerprints and controller input under its
+existing selection-contract owner. A separate exact test-only inverse restores
+9062 before the prior608c layers; original runtime and33/193 witnesses remain
+byte-identical. A named full-gate fixture import failure is retained and fixed by
+copying its actual normal-metadata validator module, with an isolated positive
+and missing-copy negative. No policy/guard or expected outcome was weakened.
+Focused workflow tests (35 cases), finite inverse/copy tests (11 cases), all nine
+static gates and Groundhog privacy checks pass. The original shell-wrapper
+status-variable error and initial inverse/static failures are retained separately.
+
+The next frozen-source DEFAULT attempt, safe native verification and landing
+remain pending at this checkpoint. Source beads `.36.8`/`.36.9` may be closed by
+the parent after their literal final gates and landing, without broader
+profile/W11 credit. No Docker execution, hosted retry or new API census was run.
+All prior dated census/history below remains intact and is not a live counter;
+W11 is not met, W12 is not run, and enforcement/default/protection cutover stays
+unauthorized.
+
 # Dependency-aware testing acceptance run ledger
+
+## PR23 bounded hosted triage — 2026-10-23T15:58:02Z
+
+Census result: **59 roots =57 failure +one cancelled +one queued**, zero success.
+All58 prior root identities/latest-attempt states match the preserved12:49
+snapshot. PR23 remains API-queued/pending; completed failed children do not turn
+that root into a finalized run. Counters remain **0/20 reviewed qualifying PR
+comparisons,0/2 successful complete broad integrations;W11 NOT MET/W12 NOT RUN**.
+This is one bounded source-linked observation, not dispatch/retry/polling or a
+claim for later integration code.
+
+| Source-linked check | Captured disposition and load-bearing finding |
+|---|---|
+|[PR23 root39977420607](https://github.com/chebizarro/nostrc/actions/runs/39977420607)|API head608c1fe20;actual plan/checkout305dbb638;rootqueued,attempt1|
+|[Policy120495699183](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699183)|FAIL:81 kernel tests/28fail;1121 default tests/31fail1error72skip.30failures missing copied `test_selection_mdk`;one Git128 Darwin fixture failure;one homed missing-jansson error|
+|[Legacy static39977420640 /120495561665](https://github.com/chebizarro/nostrc/actions/runs/39977420640/job/120495561665)|CANCELLED:API annotation maximum execution time10m0s. No same-name successful superseding run in capture; not a green replacement|
+|[Broad static120495700282](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495700282)|FAIL:same policy families;separate status identity,not legacy static success|
+|[Core Mac120495699151](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699151)|Explicit unavailable `signer_endpoint` capability refusal;C applicability seam,no inferred live-TCP coverage|
+|[GH sanitizer120495699180](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699180)|Fresh diagnostic registration partition differs;no immutable witness refresh or success credit|
+|[Core ASan120495699307](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699307),[Grotto ASan120495699352](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699352),[MDK08120495699740](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699740)|Outer-gate failure;job logs do not expose deeper cause. Large retained worker artifacts not inspected;no speculative runtime fix|
+
+API head is `608c1fe20d20121d68c9ea7f948ee7849057ce16`;actual synthetic merge is
+`305dbb638755a667b5495efcf242eb5ae7c32488`, parents master44044fefe and head608c.
+Tree `2da47ec0f0fdbf4fc014a670ec346df64528a597` equality is not SHA equality.
+The original plan ZIP12511113659 (22951bytes) verifies API SHA256
+`926320006703272a1c75f3567b5906236442e936991eb1181a4f62ac165e71f8`, CRC and
+its sole plan.json member. It binds tested/source305dbb and plan
+`114f94b6442b28399ef986cab3e4394a3994d918436034d96c288a8d38e32b83`.
+Original policy log SHA256`9d411f29aa47bbdbc82fc053fbfe79a6566f4de98e1287fed8339db348490ba8`;
+legacy log SHA256`ad7f1f291e8fd84962abca249019f157616b19548768784ce0e358b272792da5`.
+Job-log hashes prove captured bytes,not an API-supplied content checksum.
+
+Raw capture root:`/tmp/nostrc-w11-pr23-triage-20261024/`. Exact failure names,
+per-file hashes, source identities and separate job-snapshot timing are appended
+under `pr23_refresh_20261024` in the [existing evidence JSON](dependency-aware-testing-w11-e-evidence-2026-10-23.json).
+The original artifact12512542514 download timed out at60s:4078506 of29435373
+expected bytes retained, **no verified ZIP/member evidence**, no retry. This does
+not erase its failed collector attempt or establish the Darwin Git128 cause.
+
+B's only source repair is the miniature fixture copy list and import regression.
+Two bounded cases pass;Linux custody validation of that repair is NOT RUN.
+Jansson testhost and Darwin checkout findings are reported separately; no test
+skip,deadline change,source/cleanup/sanitizer guard relaxation or33/193 refresh.
+Every previous E top-level evidence field is preserved; historical JSON checksum
+`fbd905856ca73f35d88c20ab0399ce75811b1d0c42b2f49c584546dd66cd067e` identifies
+its bytes at608c,not the newly appended file. Earlier failures and `.29` actual
+closure stay unchanged. Cancelled E provider artifacts are not removed/overwritten
+or counted. `.5` remains CLOSED with a fresh comment;no W11 or W12 closure.
+Later approved A284d/C0f579 source is outside this hosted snapshot. No heavy
+local gate,Docker,push/merge/cutover;CI/test/docs only,no version bump.
+
+
+## Final finite hosted refresh — 2026-10-23T12:49:15.864836Z
+
+Fresh sequential census12:49:11Z–12:49:15.864836Z: **58 distinct dependency-test
+roots/latest attempts =57 failed/one cancelled;zero pending/zero successful**.
+One terminal refresh of the four previously pending roots, no dispatch/retry/
+waiting loop. The10:22 snapshot and all prior failed/cancelled attempts below are
+preserved. Qualifying counters remain **0/20 reviewed distinct real-PR physical
+comparisons;0/2 successful complete broad integrations;W11 NOT MET/W12 NOT RUN**.
+No new paired comparison has been reviewed; nested jobs are not integrations.
+
+| Terminal root, attempt1 | Actual tested source from original validation | Final jobs and result |
+|---|---|---|
+|[PR22 39922245779](https://github.com/chebizarro/nostrc/actions/runs/39922245779), [gate120367683658](https://github.com/chebizarro/nostrc/actions/runs/39922245779/job/120367683658)|`4527a06e8c57ea014499d6e64f548843584f83eb` (API head remains d29a5ac)|10:31:26Z failure;62 jobs:45 success,14 failure,two cancelled,one skipped|
+|[Master946 39922272251](https://github.com/chebizarro/nostrc/actions/runs/39922272251), [gate120372615130](https://github.com/chebizarro/nostrc/actions/runs/39922272251/job/120372615130)|`94647b282b1c26d8eed2a4fc2b7a1bf109479e65`|10:44:09Z failure;62 jobs:47 success,14 failure,one skipped|
+|[Manual broad39922309846](https://github.com/chebizarro/nostrc/actions/runs/39922309846), [gate120373005133](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120373005133)|`94647b282b1c26d8eed2a4fc2b7a1bf109479e65`|10:45:10Z failure;62 jobs:42 success,13 failure,six cancelled,one skipped|
+|[Master440 39923954670](https://github.com/chebizarro/nostrc/actions/runs/39923954670), [gate120374891396](https://github.com/chebizarro/nostrc/actions/runs/39923954670/job/120374891396)|`44044fefe9c40ac095044e9c22eb06f2678aab1f`|10:50:05Z failure;62 jobs:47 success,14 failure,one skipped|
+
+**Observed failure classes, not a new causal audit:** every final validation is
+`passed=false`, requested`complete=true`, `complete_gate_eligible=false` and
+`enforcement_ready=false`. Each retains nine physical coverage gaps and resolve
+failures in core Linux/macOS ASan,Grotto ASan,GH sanitizer,MDK08/011; ordinary
+core/Grotto/GH and static lanes are missing. Incomplete/diagnostic results cannot
+satisfy complete aggregation. Original error arrays contain1358/1356/1357/1356
+entries respectively: these are retained accounting errors, **not test cases or
+quota units**. Broad accounting fails core/static on PR22/master946/master440;
+PR22 also cancels GH/Grotto. Manual broad fails static and cancels GH/Grotto.
+Its [MDK08 job120314996533](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120314996533)
+is now terminal failure, not pending coverage. Selected ordinary/ASan/policy/native
+failures are preserved. [Libgo-native120314996669](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120314996669)
+and [libgo120314996705](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120314996705)
+remain successful bounded jobs, not complete broad integrations.
+
+Only load-bearing final validation/accounting ZIPs newly retained by this batch
+were downloaded (97538 bytes total), with API SHA256/size, ZIP CRC and every
+member hash verified:
+
+| Root | Artifact | Bytes | Original ZIP SHA256 |
+|---|---:|---:|---|
+|PR22 validation|12494972385|23313|`bf5c06976eace78fbc8025ef1f81ccd7080750b1c8a5a51fe016a8ef142987fc`|
+|PR22 broad accounting|12495417013|1468|`d3280e4ea3788a73ebfca634ea782db076252420d193b29b815582ca455e54af`|
+|Master946 validation|12495459179|23278|`6b9eecc87615af923aaf83882dcfa6b2d5aba83f3230c0ef2b688cad4a158dae`|
+|Master946 broad accounting|12491639364|1447|`d1d9e93b54b830a651b724c0f1c54dc72d47ab6df679a841627f15825605c27a`|
+|Manual broad validation|12496620411|23308|`ad05c2429302b90ef4ad1c57d77bfb39166fbdf1bf4c897b7f4848152b7d4fe9`|
+|Master440 validation|12496800267|23277|`28d2df8d937d1f137bd1a79be8dc15ee7656b2cff17245891a86921717cc0e35`|
+|Master440 broad accounting|12496072275|1447|`971ec2128f473fa55002f14e587a59ff8ed99325c76c885acfef0176724f1c9c`|
+
+Manual broad's unchanged failed accounting12493552566 was already retained below;
+no redownload. Parent raw11:39 run/jobs at
+`/tmp/nostrc-w11-w12-completion-20261023/` and fresh API agree on all62 terminal
+job IDs/outcomes/timestamps (run SHA256`e7622c0dd848bd671eb97f502a976eebbfd8166d070ddb275a1ade664c295d73`,
+jobs SHA256`8f35e6c0b079be54c34b14bd66ccf2a9f6dff028e418eef16c44efcdc449b449`).
+Fresh original API/jobs/archives are under
+`/tmp/nostrc-w11-e-final-refresh-20261023T1248/`; raw files may expire. The
+[existing E evidence JSON](dependency-aware-testing-w11-e-evidence-2026-10-23.json)
+appends `final_refresh_20261023` with every raw-file/member digest and root/job
+identity; appended-file SHA256 is
+`fbd905856ca73f35d88c20ab0399ce75811b1d0c42b2f49c584546dd66cd067e`.
+Its historical fields are unchanged; the earlier50ab6ef3 checksum is
+for the original file at762b09d6c, not the appended bytes.
+
+Standalone strict-fuzz39922316626 remains successful, `.29` CLOSED. Parent's
+291-entry independent verification reports zero errors, exact94647b2 and `.29`
+credit only (proof SHA256`38bb86038f72c5de4ec92e07c24d15f013e86ab10f220e2240a72476983b42bd`).
+No fuzz corpus/log redownload or broad-credit promotion. Original62179 exact
+replay remains NOT RUN/unrecoverable;51 other inputs are not replacements.
+
+Next integration remains B's unaccepted/unpushed normal checkpointa786f19e and
+bounded A44cb6b47…/Cb3bf8111… fixes, not new hosted proof. Public macOS CTest's
+admin/`_developer` seal refusal and core-macOS legacy-TCP applicability correction
+must stay visible nonvalidation, not provisioned TCP coverage. Docker remains
+unresponsive, no restart/prune authorized. See the matching audit section for
+exact tips. E's external-historical-engine restriction is its implementation
+boundary, **not an original20-prospective-PR requirement**; no new source-admission
+method or quota waiver is introduced here. `.5` remains CLOSED with fresh comment;
+official `bd export --all` preserves37 memories/comments and leaves interactions
+untouched. Documentation/tracker only,no bump,no protection/default/hook changes.
+
+
+## JSON-GLib real hosted remediation — finalized run39922316626
+
+[Literal `.29` closure evidence](dependency-aware-testing-json-glib-hosted-2026-10-23.md)
+now retains ORIGINAL logs for all five successful jobs at exact94647b282, not just
+API green status. JSON's actual official1.10.8 checksum/install/ASan probe/loaded
+library/ldd, Clang18.1.3 LIBFUZZER build/link, original `json_event` corpus and
+strict60s command finish5,892,314 runs/61s; NIP49325/62s and BIP3941,446/61s also
+succeed. Coverage pin verification and actual printed reports retained, existing
+advisory `|| true` semantics not promoted. Source blob/SHA256 bindings and original
+corpus ZIP API checksums/size/CRC/member hashes are in the
+[machine evidence](dependency-aware-testing-json-glib-hosted-2026-10-23.json),
+SHA256`fa8d7ec9c9971c94111bf51a7dc28553713dd98118ad662ad6c26cd22eaf4dc8`.
+Logs API has no content digest; log hashes are capture integrity, explicitly not
+API attestations. No independent fuzz-binary fingerprint was uploaded or claimed.
+
+Official `.29` is **CLOSED** for its literal compatible-dependency strict-fuzz
+remedy contract. Original62179 input/probe/log still UNRECOVERABLE/exact replay
+**NOT RUN**,51 distinct inputs not replacement. That unavailable historical input
+is not an invented permanent condition absent from the issue AC. Prior failed
+runs39132650260/39753293484 and previous receipts below remain unchanged.
+**Zero W11 comparison/broad quota credit** from this standalone success; dated
+58-root census below still has0/20 and0/2. A/B own manual broad's actual selected,
+policy/native runtime failures; no gate/default/protection/publication change.
+
+
+## E bounded execution collection — 2026-10-23T10:22:47.933138Z
+
+New collector actually executed; no dispatch, retry, waiting loop or historical
+archive sweep. Root census10:22:43.834229Z–10:22:47.933138Z: all58 distinct roots,
+**53 failed / one cancelled / three in progress / one queued;zero successful**.
+New push root39923954670 binds API head44044fefe; PR22 root39922245779 still queued
+at capture despite completed nested jobs. Manual broad39922309846 and master
+push39922272251 remain in progress. Prior57-root08:14 and54-root snapshots below
+are unchanged historical evidence, not overwritten counters.
+
+| Actual source/run attempt1 | Retained observation, not acceptance |
+|---|---|
+| [PR22 39922245779](https://github.com/chebizarro/nostrc/actions/runs/39922245779) | API head d29a5ac; original receipts bind tested4527a06e8. At original-ZIP capture60 jobs:44 success,12 failure,one cancelled,one skipped,two nonterminal. Ordinary GH/Grotto source-checkout git125, root macOS signer capability refusal, GH sanitizer partition refusal, MDK011 missing keyring/nak/signer remain failures. No new causal attribution or receipt promotion. |
+| [Manual broad39922309846](https://github.com/chebizarro/nostrc/actions/runs/39922309846) | API head and plan94647b2. At original-ZIP capture61 jobs:42 success,11 failure,six cancelled,one skip,one in progress. Original broad accounting12493552566 has `passed=false`:groundhog/grotto cancelled,static failed. Physical root is not complete. |
+| [Strict fuzz39922316626](https://github.com/chebizarro/nostrc/actions/runs/39922316626) | Terminal success, same94647b2 API head. Retained full job/step metadata; no corpus ZIP fetch needed. It is neither a legacy/selected comparison nor complete broad integration. |
+
+Original ZIP verification (API size/digest, CRC and every member SHA256):
+
+| Artifact ID | Bytes | Original ZIP SHA256 |
+|---|---:|---|
+|12489004053 PR22 MDK011 receipt/log|11571|`b24de997c80e760753437728eed8ba89cfa0eb05d68576fb1c2adadc503e9813`|
+|12488397904 PR22 root macOS ASan receipt/log|8856|`b19f641ec1761b0ed703890fe495bf95a7c965fb3a64350e2f3406d3b97eb38d`|
+|12490642140 PR22 GH sanitizer receipt/log|8219|`38f4473414c6af7ca5f00272e5f3398b2b5ba9184de1856b160c794ef79068bf`|
+|12493880301 PR22 ordinary GH **log only**|358|`95454c873b50faea30a035ca9ee2e442bca4258adcf4cbbd469991be48dc194d`|
+|12493161690 PR22 ordinary Grotto **log only**|354|`f6a48ec3fe55ca5be35b2139e2b687a9cf1213b9b6d93e49cd6de123e8beede7`|
+|12493552566 manual broad failed accounting|1463|`b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf`|
+|12488212907 manual broad original plan|16591|`13fb9103901ade05abd2676b5d5f7619bcca400cdb74b49b826ab3cf3f004c9e`|
+
+[Machine evidence manifest](dependency-aware-testing-w11-e-evidence-2026-10-23.json)
+SHA256 `50ab6ef3e96d749bbe18e2b2c827809a12c7845195feea276a9618953796a626`
+retains API/run/attempt/source identities, timestamps, job/step outcomes/durations,
+runner labels, original archive/member hashes and collector/Python fingerprints.
+Raw original bytes under the manifest's `/tmp/nostrc-w11-e-*` paths may expire;
+artifact IDs/GitHub source links and captured hashes are durable references.
+Missing cache/tool/capability identity is not inferred from job labels.
+
+Read-only discovery through10:18:30.768429Z:rulesets`[]`; master branch protection404; caller
+permissions include admin/push. Actual failed PR21 check `Dependency gate`, app
+`github-actions`15368 observed; PR22 had not emitted that check at capture. Full
+check-head pagination retained. This establishes no enabled merge queue or
+operator-approved protection baseline; no HTTP write was made.
+
+[E's actual implementation/protocol and conditional source-bound W12 patches](dependency-aware-testing-w11-e-protocol-2026-10-23.md)
+are distinct from product execution. Local fixture tests add **zero** credit.
+**0/20 qualifying reviewed distinct PR comparisons;0/2 successful complete broad
+integrations;W11 NOT MET/W12 NOT RUN.** Historical original-source PR execution
+needs parent-reviewed faithful recipes and complete native prerequisites; if those
+cannot satisfy original source criteria, genuine future PRs are necessary. No
+manufactured PRs, fixed-product-hash bypass, criterion waiver or dual-source
+framework. `.5` remains closed (evidence comment), `.36.6` open. No active default,
+trigger,schedule,protection or publication changes; internal tooling/tests/docs,
+no bump; local commits only,parent lands.
+
 
 ## PR22 postlanding finite snapshot — 2026-10-23T08:14:14.914574Z
 

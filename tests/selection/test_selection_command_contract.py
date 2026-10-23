@@ -84,11 +84,20 @@ SUPPORT_INPUTS = {
     "scripts/test-gate.sh",
     "scripts/adapter_custody.py",
     "scripts/adapter_namespace_custody.py",
+    "scripts/adapter_darwin_custody.py",
+    "scripts/test_gate_darwin.py",
     "scripts/test_selection_services.py",
+    "scripts/mdk-docker",
+    "scripts/test_selection_mdk.py",
+    "scripts/test_selection_execution.py",
+    "tests/selection/apparmor/nostrc-namespace-custody",
+    "tests/selection/namespace_apparmor_setup.sh",
+    "tests/selection/namespace_apparmor_teardown.sh",
     "scripts/test-plan.py",
     "scripts/test_selection.py",
     "scripts/test_selection_realization.py",
     "scripts/test_selection_subset.py",
+    "scripts/test_selection_macos_nip5f_tcp.py",
     "scripts/run_bp_matrix.py",
     "scripts/metrics_summary.py",
     "scripts/aggregate_bp_matrix.py",
@@ -267,7 +276,11 @@ class SelectionCommandInputAuditTests(unittest.TestCase):
                "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")
         self.identity = {"kind": "committed", "sha": r._git(self.root, "rev-parse", "HEAD").decode().strip()}
         profile = {"source_dir": ".", "configure_args": [], "environment": {}}
-        self.policy["profiles"]["closure.fixture"] = profile
+        self.policy['profiles']['closure.fixture'] = profile
+        # This isolated command-input fixture has no historical CTest partition;
+        # retain every actual source input, but not unrelated omission policies.
+        self.policy.pop('diagnostic_nonmembers', None)
+        self.policy.pop('diagnostic_nonmember_subsets', None)
         self.realized = r.configure_command_profile(self.root, self.build, "closure.fixture",
             profile, self.identity, s.digest(self.policy))
         self.resolved = r.resolve_checks(self.policy,
