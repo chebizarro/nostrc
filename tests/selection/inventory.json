@@ -25,12 +25,30 @@
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
-      "nodes": ["gnome.nostr_homed", "gnome.nostr_homed.test_inputs", "execution.homed"],
-      "profiles": ["homed.linux.units"],
+      "nodes": [
+        "gnome.nostr_homed",
+        "gnome.nostr_homed.test_inputs",
+        "execution.homed"
+      ],
+      "profiles": [
+        "homed.linux.units"
+      ],
       "ctest_tests": {
-        "homed.linux.units": ["homed_cache", "homed_cache_config", "homed_groups", "homed_manifest", "homed_uid_map"]
+        "homed.linux.units": [
+          "homed_cache",
+          "homed_cache_config",
+          "homed_groups",
+          "homed_manifest",
+          "homed_uid_map"
+        ]
       },
-      "build_targets": ["test_cache", "test_cache_config", "test_groups", "test_manifest", "test_uid_map"],
+      "build_targets": [
+        "test_cache",
+        "test_cache_config",
+        "test_groups",
+        "test_manifest",
+        "test_uid_map"
+      ],
       "runtime_inputs": []
     },
     "homed.default_build": {
@@ -38,11 +56,23 @@
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
-      "nodes": ["gnome.nostr_homed", "gnome.nostr_homed.test_inputs", "execution.homed"],
-      "profiles": ["homed.linux.units"],
+      "nodes": [
+        "gnome.nostr_homed",
+        "gnome.nostr_homed.test_inputs",
+        "execution.homed"
+      ],
+      "profiles": [
+        "homed.linux.units"
+      ],
       "build_scope": "default",
       "build_targets": [],
-      "command": ["cmake", "--build", "{build}", "--config", "RelWithDebInfo"],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}",
+        "--config",
+        "RelWithDebInfo"
+      ],
       "working_directory": "{source}",
       "environment": {},
       "runtime_inputs": []
@@ -7844,10 +7874,10 @@
         "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
-          "{source}/tests/selection/test_profile_contracts.py",
-          "{source}/tests/selection/test_homed_profile_contract.py",
-          "{source}/tests/selection/homed_profile_support.py",
-          "{source}/tests/selection/fixtures/homed_profile_enrollment_20261023.json",
+        "{source}/tests/selection/test_profile_contracts.py",
+        "{source}/tests/selection/test_homed_profile_contract.py",
+        "{source}/tests/selection/homed_profile_support.py",
+        "{source}/tests/selection/fixtures/homed_profile_enrollment_20261023.json",
         "{source}/tests/selection/test_realization.py",
         "{source}/tests/selection/test_realization_exclusions.py",
         "{source}/tests/selection/test_realization_inputs.py",
@@ -7961,6 +7991,19 @@
         "{source}/tests/selection/test_fuzz_json_glib_setup.py",
         "{source}/tests/selection/w11_json_glib_support.py",
         "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json",
+        "{source}/scripts/mdk-docker",
+        "{source}/scripts/test_selection_mdk.py",
+        "{source}/scripts/test_selection_execution.py",
+        "{source}/tests/selection/apparmor/nostrc-namespace-custody",
+        "{source}/tests/selection/namespace_apparmor_setup.sh",
+        "{source}/tests/selection/namespace_apparmor_teardown.sh",
+        "{source}/tests/selection/test_mdk_selected_route.py",
+        "{source}/tests/selection/test_namespace_apparmor_provisioning.py",
+        "{source}/tests/selection/test_w11_measurement.py",
+        "{source}/tests/selection/test_normal_execution_contract.py",
+        "{source}/tests/selection/test_runtime_integration_contract.py",
+        "{source}/tests/selection/runtime_integration_support.py",
+        "{source}/tests/selection/fixtures/runtime_integration_20261023.json",
         "{source}/scripts/adapter_darwin_custody.py",
         "{source}/scripts/test_gate_darwin.py",
         "{source}/tests/selection/test_darwin_custody.py",
@@ -19352,8 +19395,11 @@
   },
   "nodes": {
     "execution.homed": {
-      "id": "execution.homed", "depends_on": [],
-      "owner_paths": [".github/workflows/nostr-homed-ci.yml"]
+      "id": "execution.homed",
+      "depends_on": [],
+      "owner_paths": [
+        ".github/workflows/nostr-homed-ci.yml"
+      ]
     },
     "benchmarks": {
       "depends_on": [
@@ -21392,9 +21438,110 @@
       ],
       "reason": "Explicit diagnostic custody source/provenance; never native normal/profile acceptance."
     },
-    {"exact": ".github/workflows/nostr-homed-ci.yml", "nodes": ["execution.homed"], "effect": "impact", "reason": "Exact homed workflow setup and unit contract owner; no systemd/FUSE execution inferred."},
-    {"exact": "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json", "nodes": [], "effect": "global", "reason": "Machine-readable acceptance provenance is not a prose exemption."},
-    {"exact": "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json", "nodes": [], "effect": "global", "reason": "Machine-readable acceptance provenance is not a prose exemption."},
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-runtime-verification-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-json-glib-hosted-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-e-handoff-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-e-evidence-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-runtime-mdk-handoff-2026-10-23.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "tests/selection/namespace_apparmor_teardown.sh",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "tests/selection/namespace_apparmor_setup.sh",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "tests/selection/apparmor/nostrc-namespace-custody",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_execution.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_mdk.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/mdk-docker",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Explicit normal execution/runtime controller input; no capability or acceptance inferred from presence."
+    },
+    {
+      "exact": ".github/workflows/nostr-homed-ci.yml",
+      "nodes": [
+        "execution.homed"
+      ],
+      "effect": "impact",
+      "reason": "Exact homed workflow setup and unit contract owner; no systemd/FUSE execution inferred."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json",
+      "nodes": [],
+      "effect": "global",
+      "reason": "Machine-readable acceptance provenance is not a prose exemption."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json",
+      "nodes": [],
+      "effect": "global",
+      "reason": "Machine-readable acceptance provenance is not a prose exemption."
+    },
     {
       "effect": "global",
       "exact": "scripts/test_selection_policy.py",
@@ -25623,24 +25770,57 @@
   ],
   "profiles": {
     "homed.linux.units": {
-      "platform": "linux", "architecture": "x86_64", "compiler": "gcc",
-      "host_system": {"ID": "ubuntu", "VERSION_ID": "24.04"},
-      "build_type": "RelWithDebInfo", "instrumentation": "none", "source_dir": "gnome/nostr-homed/tests/unit",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "host_system": {
+        "ID": "ubuntu",
+        "VERSION_ID": "24.04"
+      },
+      "build_type": "RelWithDebInfo",
+      "instrumentation": "none",
+      "source_dir": "gnome/nostr-homed/tests/unit",
       "setup": "standalone/nostr-homed-units-v1",
-      "local_availability": "host_or_container", "capabilities": [], "feature_variants": [], "contexts": ["local"],
-      "parallelism": 2, "build_parallelism": 2, "test_parallelism": 1, "timeout_seconds": 3600,
-      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=RelWithDebInfo"],
-      "environment": {"CC": "gcc", "CXX": "g++"},
-      "phase_environments": {"configure": {}, "build": {}, "test": {}},
+      "local_availability": "host_or_container",
+      "capabilities": [],
+      "feature_variants": [],
+      "contexts": [
+        "local"
+      ],
+      "parallelism": 2,
+      "build_parallelism": 2,
+      "test_parallelism": 1,
+      "timeout_seconds": 3600,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+      ],
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
       "scope": "standalone_manifest_cache_units",
-      "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test"
+      "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test",
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      }
     },
     "grotto.linux.asan_ubsan": {
       "architecture": "x86_64",
       "build_type": "Debug",
       "capabilities": [
         "display",
-        "private_bus"
+        "private_bus",
+        "signer_endpoint"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -25658,13 +25838,16 @@
         "-DBUILD_RELAYD=OFF",
         "-DSIGNET_ENABLE=OFF",
         "-DGNOSTR_ENABLE_ASAN=ON",
-        "-DGNOSTR_ENABLE_UBSAN=ON"
+        "-DGNOSTR_ENABLE_UBSAN=ON",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON"
       ],
       "environment": {
         "G_SLICE": "always-malloc",
         "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
         "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
-        "TSAN_OPTIONS": "halt_on_error=1"
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
       },
       "feature_variants": [],
       "instrumentation": "asan_ubsan",
@@ -25725,7 +25908,18 @@
         ]
       },
       "build_parallelism": 2,
-      "test_parallelism": 1
+      "test_parallelism": 1,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "groundhog.mdk011": {
       "architecture": "x86_64",
@@ -25733,7 +25927,10 @@
       "capabilities": [
         "display",
         "private_bus",
-        "docker"
+        "docker",
+        "nak",
+        "gnome_keyring",
+        "signer_endpoint"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -25744,13 +25941,21 @@
         "-DBUILD_GROUNDHOG=ON",
         "-DBUILD_NOSTR_GOBJECT=ON",
         "-DBUILD_NOSTR_GTK=ON",
-        "-DBUILD_APPS=OFF",
+        "-DBUILD_APPS=ON",
         "-DBUILD_RELAYD=ON",
         "-DSIGNET_ENABLE=OFF",
         "-DBUILD_MDK011_INTEROP=ON",
-        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice"
+        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice",
+        "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
       ],
-      "environment": {},
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
       "feature_variants": [
         "mdk011_live"
       ],
@@ -25760,13 +25965,29 @@
       "platform": "linux",
       "setup": ".github/workflows/groundhog-ci.yml:groundhog",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "execution_domain": "mdk_original_linux_v1",
+      "build_parallelism": 2,
+      "test_parallelism": 2,
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "core.linux.asan": {
       "architecture": "x86_64",
       "build_type": "Debug",
       "capabilities": [
-        "private_bus"
+        "display",
+        "private_bus",
+        "signer_endpoint"
       ],
       "compiler": "clang",
       "configure_args": [
@@ -25785,9 +26006,14 @@
         "-DLIBNOSTR_WITH_NOSTRDB=ON",
         "-DNIP04_STRICT_AEAD_ONLY=ON",
         "-DBUILD_NOSTR_GTK=OFF",
-        "-DBUILD_APPS=OFF",
+        "-DBUILD_APPS=ON",
         "-DBUILD_RELAYD=OFF",
-        "-DSIGNET_ENABLE=OFF"
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
       ],
       "environment": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -25799,7 +26025,8 @@
         "NOSTR_RELAY_SKEW_PAST": "0",
         "CC": "clang",
         "CXX": "clang++",
-        "LDFLAGS": "'-fuse-ld=lld'"
+        "LDFLAGS": "'-fuse-ld=lld'",
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
       },
       "feature_variants": [
         "nip19",
@@ -25877,7 +26104,20 @@
           "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
         },
         "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
-      }
+      },
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 2
     },
     "core.macos.asan": {
       "architecture": "arm64",
@@ -26196,7 +26436,18 @@
       "source_dir": ".",
       "timeout_seconds": 3600,
       "build_parallelism": 2,
-      "test_parallelism": 2
+      "test_parallelism": 2,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "grotto.linux": {
       "architecture": "x86_64",
@@ -26296,7 +26547,18 @@
         ]
       },
       "build_parallelism": 2,
-      "test_parallelism": 1
+      "test_parallelism": 1,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "groundhog.linux": {
       "architecture": "x86_64",
@@ -26338,15 +26600,31 @@
       "platform": "linux",
       "setup": ".github/workflows/groundhog-ci.yml:groundhog",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 2
     },
     "groundhog.mdk08": {
       "architecture": "x86_64",
       "build_type": "Debug",
       "capabilities": [
-        "docker",
         "display",
-        "private_bus"
+        "private_bus",
+        "docker",
+        "nak",
+        "gnome_keyring",
+        "signer_endpoint"
       ],
       "compiler": "gcc",
       "configure_args": [
@@ -26355,9 +26633,17 @@
         "-DCMAKE_BUILD_TYPE=Debug",
         "-DBUILD_TESTING=ON",
         "-DBUILD_GROUNDHOG=ON",
-        "-DBUILD_MDK_INTEROP=ON"
+        "-DBUILD_MDK_INTEROP=ON",
+        "-DGROUNDHOG_DOCKER:FILEPATH={source_root}/scripts/mdk-docker",
+        "-DBUILD_APPS=ON",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
       ],
-      "environment": {},
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
       "feature_variants": [],
       "instrumentation": "none",
       "local_availability": "host_or_container",
@@ -26365,7 +26651,21 @@
       "platform": "linux",
       "setup": ".github/workflows/marmot-mdk-interop.yml",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "normal_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_and_executed"
+      },
+      "execution_domain": "mdk_original_linux_v1",
+      "build_parallelism": 2,
+      "test_parallelism": 2,
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      }
     },
     "libgo.linux.asan": {
       "architecture": "x86_64",
@@ -27112,9 +27412,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "3b27a373baeea1bb88440c5da3a9be3aa8fd457669ae27c29fd3be14616bf2bb",
+      "source_sha256": "fc0c139aa48ecf2260e6179b6a9fcea24503948d8de6cd94e4a647f130277d9e",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "78dd275d8d249ddc83918b1757da26167ab2f750ea15e109e09d8c169fe96f28"
+      "workflow_sha256": "914af0dff0f95c053ec4f7c34c799472313aab2ebe254daa2340b211e8c9adc0"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -27635,8 +27935,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
-      "source_sha256": "9f1eb066501148e4a0ef67bfd01f78e2d121fba8346fab496ad231384f3cf10e",
-      "workflow_sha256": "c1e397d41e3255b76f79fe8142642eeb86ea0a52b7bfff49b3db075e7860a884"
+      "source_sha256": "940ee3f4fbbb9cef8655c52f9dbe0632736917af7aaa6146edbb685027f24ecc",
+      "workflow_sha256": "428a5816fd6404d8c6d8d2b873c66f8a348eb59912110c501b10a5c8dbc4709f"
     }
   },
   "schema_version": 1,

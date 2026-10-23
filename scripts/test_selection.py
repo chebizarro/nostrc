@@ -243,6 +243,8 @@ def validate_inventory(policy):
             pattern = r"[a-z0-9]+(?:-[a-z0-9]+)*" if key == "release_components" else ID.pattern
             require(isinstance(ident, str) and re.fullmatch(pattern, ident) and isinstance(value, dict), f"invalid {key} ID: {ident}")
     coverage_state(policy)
+    from test_selection_execution import validate_metadata as validate_normal_metadata
+    validate_normal_metadata(policy)
     nodes, profiles, checks = (policy[k] for k in ("nodes", "profiles", "checks"))
     for ident, node in nodes.items():
         require(node.get("id", ident) == ident, f"node ID mismatch: {ident}")
@@ -765,6 +767,15 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             continue
         seen.add(lane_id)
         lane = expected[lane_id]
+        if receipt.get('receipt_kind') == 'normal_execution_v1':
+            try:
+                from test_selection_execution import validate_receipt as validate_normal_receipt
+                validate_normal_receipt(policy, plan, receipt)
+                if coverage_state(receipt)['physical_coverage_gaps']:
+                    incomplete_lanes.append(lane_id)
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                errors.append(f'{lane_id}: normal execution did not qualify: {exc}')
+            continue
         if receipt.get("receipt_kind") == "lane_failure_v1":
             failure = receipt.get("failure", {})
             errors.append(f"{lane_id}: lane failure at {failure.get('stage', 'unknown')}")
@@ -834,6 +845,12 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 validate_policy_runtime(backend, plan, lane, profile)
             except (ImportError, ValueError, KeyError, TypeError) as exc:
                 errors.append(f'{lane_id}: authored policy controller did not qualify: {exc}')
+        if 'docker' in backend.get('required_capabilities', []) or 'mdk_runtime' in backend:
+            try:
+                from test_selection_mdk import validate_runtime as validate_mdk_runtime
+                validate_mdk_runtime(backend, plan, lane, profile)
+            except (ImportError, ValueError, OSError, KeyError, TypeError) as exc:
+                errors.append(f'{lane_id}: original MDK runtime did not qualify: {exc}')
         required_caps = set(backend.get("required_capabilities", []))
         keyring_commands = [ident for ident in lane['checks'] if policy['checks'][ident]['kind'] != 'ctest'
                             and 'gnome_keyring' in policy['checks'][ident].get('requires', [])]

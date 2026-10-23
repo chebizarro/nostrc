@@ -6,6 +6,8 @@ from selector_support import ROOT, s
 
 
 def before_homed_source(path, raw):
+    from runtime_integration_support import before_runtime_source
+    raw = before_runtime_source(path, raw)
     data = json.loads((ROOT / "tests/selection/fixtures/homed_profile_enrollment_20261023.json").read_text())
     record = data.get("sources", {}).get(path)
     if record is None or hashlib.sha256(raw).hexdigest() == record["before_sha256"]:
@@ -20,7 +22,8 @@ def before_homed_source(path, raw):
 
 
 def before_homed_policy(policy):
-    previous = copy.deepcopy(policy)
+    from runtime_integration_support import before_runtime_policy
+    previous = before_runtime_policy(policy)
     if "homed.linux.units" not in previous.get("profiles", {}):
         return previous
     data = json.loads((ROOT / "tests/selection/fixtures/homed_profile_enrollment_20261023.json").read_text())

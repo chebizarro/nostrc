@@ -139,7 +139,9 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
         status.update(outcome="passed" if process.returncode == 0 else "failed", exit_code=process.returncode)
         # Text consumers keep their existing interface without discarding any
         # byte. Logs below remain raw; no implicit locale/strict decoding occurs.
-        return subprocess.CompletedProcess(argv, process.returncode, output.decode("utf-8", errors="surrogateescape"))
+        result = subprocess.CompletedProcess(argv, process.returncode, output.decode("utf-8", errors="surrogateescape"))
+        result.execution_status = status  # finalized below, independent of a child-writable sidecar
+        return result
     except BaseException as exc:
         original = exc
         status.update(outcome="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
@@ -2054,6 +2056,15 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
             evidence['signer_endpoint'] = signer_contract(realization)
         except (ServiceError, OSError) as exc:
             raise RealizationError(str(exc)) from exc
+    if 'docker' in required:
+        from test_selection_mdk import contract
+        try:
+            evidence['docker'] = contract(realization,
+                phase_environment(realization['profile'], realization['repo_root'], 'test'))
+            from test_selection_execution import validate_mdk_graph
+            validate_mdk_graph(realization, evidence['docker'])
+        except (ValueError, OSError, KeyError) as exc:
+            raise RealizationError(str(exc)) from exc
     if 'namespace_policy_controller' in required:
         from test_selection_policy import contract
         try:
@@ -2575,6 +2586,14 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             fingerprints.update({tool['path']: tool['sha256'] for tool in proof['signer_endpoint']['executables'].values()})
         except RealizationError as exc:
             gap('missing_runtime_capability', capability='signer_endpoint', reason=str(exc))
+    if realization['profile'].get('execution_domain') == 'mdk_original_linux_v1':
+        try:
+            proof = _runtime_capability_evidence(realization, ['docker'])
+            runtime_tools.update(proof)
+            fingerprints.update(proof['docker']['inputs'])
+            fingerprints.update({tool['path']: tool['sha256'] for tool in proof['docker']['tools'].values()})
+        except (RealizationError, ValueError, OSError) as exc:
+            gap('missing_runtime_capability', capability='docker', reason=str(exc))
     if 'namespace_policy_controller' in realization['profile'].get('capabilities', []) and any(
             'namespace_policy_controller' in spec['requires'] for spec in specs.values()):
         try:
@@ -2981,8 +3000,14 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         if not isinstance(custody, PreparedContext):
             raise RealizationError("prepared profile requires live contained runtime custody")
         custody.validate(resolved)
-    elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer", "prepared_peer"}:
+    elif custody is not None or set(resolved["required_capabilities"]) & {"external_peer", "prepared_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
+    if 'docker' in resolved['required_capabilities']:
+        from test_selection_services import _namespace_resources
+        from test_selection_mdk import EXECUTION_DOMAIN
+        if realization['profile'].get('execution_domain') != EXECUTION_DOMAIN:
+            raise RealizationError('Docker requires the authored original MDK execution domain')
+        _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
     keyring_runtime = _command_keyring_runtime(realization, resolved, custody)
     runtime_capabilities = _runtime_capability_evidence(realization, resolved["required_capabilities"], resolved['plan_id'])
     if keyring_runtime is not None and keyring_runtime['executable'] != runtime_capabilities.get('gnome_keyring'):
@@ -3013,6 +3038,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "registration_audit": "passed", "job_conclusion": "running",
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
+        "tests": resolved['tests'],
         "started": started, "commands": commands, "evidence_dir": str(directory),
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
         **state,
@@ -3184,12 +3210,32 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
-        resource = contextlib.nullcontext(({}, None))
-        if 'signer_endpoint' in resolved['required_capabilities']:
-            from test_selection_services import provisioned_signer
-            resource = provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env)
-        with resource as (overlay, signer_runtime):
-            process = _execute(cmd, env=dict(env, **overlay), log_path=directory / "ctest.log", timeout=timeout)
+        signer_runtime = mdk_runtime = None
+        with contextlib.ExitStack() as resources:
+            overlay = {}
+            if 'docker' in resolved['required_capabilities']:
+                from test_selection_mdk import lifecycle
+                mdk_overlay, mdk_runtime = resources.enter_context(
+                    lifecycle(realization, resolved, input_audit, directory, environment=env))
+                overlay.update(mdk_overlay)
+            if 'signer_endpoint' in resolved['required_capabilities']:
+                from test_selection_services import provisioned_signer
+                signer_overlay, signer_runtime = resources.enter_context(
+                    provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env))
+                if overlay.keys() & signer_overlay.keys():
+                    raise RealizationError('runtime environment authorities overlap')
+                overlay.update(signer_overlay)
+            effective_env = dict(env, **overlay)
+            process = _execute(cmd, env=effective_env, log_path=directory / "ctest.log", timeout=timeout)
+        receipt['ctest_process'] = dict(process.execution_status)
+        receipt['ctest_process_authority'] = 'in_memory_executor_v1'
+        receipt['ctest_environment'] = dict(base_hash=_hash(env), effective_hash=_hash(effective_env),
+                                            overlay_names=sorted(overlay))
+        if mdk_runtime is not None:
+            receipt['mdk_runtime'] = mdk_runtime
+            receipt['custody_mode'] = 'pidns'
+            receipt['complete'] = False
+            receipt['complete_gate_eligible'] = False
         if signer_runtime is not None:
             receipt['signer_runtime'] = signer_runtime
             receipt['complete'] = False
