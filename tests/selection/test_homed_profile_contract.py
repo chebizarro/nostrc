@@ -68,7 +68,26 @@ class HomedProfileContract(unittest.TestCase):
         from homed_profile_support import before_homed_policy, before_homed_source
         data = json.loads((ROOT / "tests/selection/fixtures/homed_profile_enrollment_20261023.json").read_text())
         historical = before_homed_policy(self.policy)
-        self.assertEqual(s.digest(historical), data["before_policy_hash"])
+        # Reverse this finite wave, not unrelated later source/workflow updates.
+        # Round-trip its exact records without renewing any old omission hashes.
+        restored = copy.deepcopy(historical)
+        for field, records in data["maps"].items():
+            for ident, record in records.items():
+                self.assertEqual(historical[field].get(ident), record["before"])
+                restored[field][ident] = copy.deepcopy(record["after"])
+        for before, after, added in (
+                (restored["path_rules"], self.policy["path_rules"], data["added_path_rules"]),
+                (restored["checks"]["selection.contract"]["runtime_inputs"],
+                 self.policy["checks"]["selection.contract"]["runtime_inputs"], data["runtime_inputs"]),
+                (restored["checks"]["selection.contract"]["nodes"],
+                 self.policy["checks"]["selection.contract"]["nodes"], data["selection_nodes"])):
+            self.assertEqual(before, [item for item in after if item not in added])
+            before[:] = copy.deepcopy(after)  # reinsert at original positions, preserving unrelated order
+        for record in data["gaps"]:
+            index = restored["coverage_gaps"].index(record["before"])
+            restored["coverage_gaps"][index] = copy.deepcopy(record["after"])
+        self.assertEqual(restored, self.policy)
+        self.assertEqual(before_homed_policy(historical), historical)
         self.assertEqual(self.policy["diagnostic_nonmember_subsets"], historical["diagnostic_nonmember_subsets"])
         self.assertEqual(self.policy["diagnostic_nonmembers"], historical["diagnostic_nonmembers"])
         for contract in self.policy["diagnostic_nonmember_subsets"].values():

@@ -1,5 +1,5 @@
 {
-  "approved_tip": "d232d31b71edc80aae25961d751e077ce914a4ae",
+  "approved_tip": "cbf3d14a32204f647e2a7157b8cbea3f42c128b5",
   "base": "663edcd70c0d313c98f87610aa41f1261bce4ee6",
   "workflow_jobs": {
     ".github/workflows/nostrc-ci.yml:build-and-test": {
@@ -10,15 +10,15 @@
       },
       "after": {
         "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
-        "source_sha256": "34b4225c2530db6754c8121fc170973d7082987a38b0355667e79a48854ff85c",
-        "workflow_sha256": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef"
+        "source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
+        "workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
       }
     }
   },
   "source_sha256": {
-    ".github/workflows/nostrc-ci.yml": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef",
-    "nostr-gobject/tests/test_main_thread_forbidden_calls.c": "863b58b187794fcb06ab4c1c56dcdb34c2d029a01c302df979b55a53af72b3c1",
-    "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh": "ed60f6c077ac2917a47736ca5e30920cf1cff85bd51b4117316b7a3b52920b73",
-    "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c": "0946e5008ae513503e6fb16568e604266fb610abfba227df50b7c852be2beb8a"
+    ".github/workflows/nostrc-ci.yml": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc",
+    "nostr-gobject/tests/test_main_thread_forbidden_calls.c": "f4508fb8f6b67aa1657ea002ba68ae24f9364cb589120251ebe3b6878566f404",
+    "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh": "6786029e3403e56270818da8e4d64d868f419ca60209dfe8f8adce816575bc83",
+    "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c": "9618c83c8518ae7b7258849efb4b999337d288e0f8a3ba9a70c2c6175bf297e3"
   }
 }
