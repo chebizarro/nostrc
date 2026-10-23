@@ -241,6 +241,7 @@ class EventToWorkerTests(GitCase):
         self.p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         self.write('tests/selection/inventory.json', s.canonical(self.p).decode())
         self.write('scripts/test_selection_realization.py', (ROOT / 'scripts/test_selection_realization.py').read_text())
+        self.write('scripts/test_selection_execution.py', (ROOT / 'scripts/test_selection_execution.py').read_text())
         self.head = self.commit()
         result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, args=('--mode', 'broad'))
         self.assertEqual(result.returncode, 0, result.stderr)

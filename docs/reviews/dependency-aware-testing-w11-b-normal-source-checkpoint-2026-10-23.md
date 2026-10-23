@@ -138,6 +138,22 @@ Final source and Git-derived/generated/control/runtime input changes require
 actual reconfigure and default-build revalidation, not relabeling that build;
 A's a786 CTest is not final-source proof.
 
+The later exact b0de397477a456a8d597ed9feafeb7461ef553bb full-default
+attempt3 completed 1,079 cases in 653.080s: **5 failures, 2 errors, 59 skips**,
+not green. Source stayed clean; the full log/result/capacity samples remain under
+`full-default-attempt-3`. Six owned failures identify explicit fixture call sites:
+the headless historical hash check lacked the homed inverse, a golden caller
+lacked the runtime/homed inverse, a shared source inverse was incorrectly applied
+twice, and a copied current-inventory package lacked its normal validator module.
+The two phase cancellations refused on exec environment identity before work.
+An explicit `XPC_SERVICE_NAME` counterfactual reproduces both failures with that
+single changed exec key; authoring Darwin's physical `0` in this test fixture
+makes both pass while ambient-drift negatives still refuse. No engine environment
+hash exception or historical omission-policy refresh is introduced. Nine focused
+fixture/call-site cases and both corrected counterfactual cases pass, but a new
+exact-source full run is still required. The seventh failure, MDK two-root fake
+controller `cleanup_failed`, is coordinated with its runtime owner, not waived.
+
 Mac optional TCP applicability is separately authorized and tracked in
 `nostrc-0cfsg.36.9`, but held outside this landing-repair batch. The exact legacy
 Mac workflow supplies no endpoint/token and uses `BUILD_APPS=OFF`; its optional

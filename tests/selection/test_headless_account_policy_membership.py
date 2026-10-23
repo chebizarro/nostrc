@@ -201,8 +201,10 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
         self.assertEqual(self.export['profile'], self.p['profiles'][PROFILE])
         self.assertEqual(self.witness['added_primary'], FAMILY)
         verify_historical_account_policy_fixtures()
+        from homed_profile_support import before_homed_source
         for path, expected in self.current_policy['diagnostic_nonmember_subsets'][PROFILE]['review']['source_inputs'].items():
-            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
+            raw = before_homed_source(path, (ROOT / path).read_bytes())
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, path)
 
 
 if __name__ == '__main__':

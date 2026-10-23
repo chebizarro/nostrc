@@ -111,8 +111,9 @@ class PolicyTests(unittest.TestCase):
         from test_selection_subset import before_full_ownership_policy
         from w11_worker_support import before_worker_policy
         from w11_policy_support import before_policy_enrollment
+        from homed_profile_support import before_homed_policy
         p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(
-            s.load_inventory(ROOT / "tests/selection/inventory.json"))))
+            before_homed_policy(s.load_inventory(ROOT / "tests/selection/inventory.json")))))
         cases = s.read_json(ROOT / "tests/selection/golden/selection.json")
         for case in cases:
             with self.subTest(case=case["name"]):
