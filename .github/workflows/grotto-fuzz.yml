@@ -125,6 +125,10 @@ jobs:
           sudo meson install -C "$work/build"
           blueprint-compiler --version | grep -x 0.22.2
 
+      - name: Install pinned JSON-GLib
+        if: matrix.target == 'json-event'
+        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh install "$RUNNER_TEMP/json-glib-1.10.8" "$GITHUB_ENV"
+
       - name: Configure with fuzz targets
         run: |
           cmake -S . -B build -G Ninja \
@@ -139,6 +143,10 @@ jobs:
       - name: Build fuzz targets
         run: |
           cmake --build build --target fuzz-${{ matrix.target }}
+
+      - name: Verify pinned JSON-GLib
+        if: matrix.target == 'json-event'
+        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh verify "$JSON_GLIB_PREFIX" build/apps/grotto/tests/fuzz/fuzz-json-event
 
       - name: Run fuzz-${{ matrix.target }}
         run: |
@@ -238,6 +246,9 @@ jobs:
           sudo meson install -C "$work/build"
           blueprint-compiler --version | grep -x 0.22.2
 
+      - name: Install pinned JSON-GLib
+        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh install "$RUNNER_TEMP/json-glib-1.10.8" "$GITHUB_ENV"
+
       - name: Configure with coverage
         run: |
           cmake -S . -B build -G Ninja \
@@ -252,6 +263,9 @@ jobs:
 
       - name: Build fuzz targets
         run: cmake --build build --target fuzz-targets
+
+      - name: Verify pinned JSON-GLib
+        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh verify "$JSON_GLIB_PREFIX" build/apps/grotto/tests/fuzz/fuzz-json-event
 
       - name: Run corpus for coverage
         run: |
