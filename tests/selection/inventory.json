@@ -7916,7 +7916,8 @@
         "{source}/tests/selection/namespace_testhost_lifecycle.py",
         "{source}/tests/selection/test_namespace_host_probe.py",
         "{source}/tests/selection/test_namespace_policy_contract.py",
-        "{source}/tests/selection/test_namespace_testhost_lifecycle.py"
+        "{source}/tests/selection/test_namespace_testhost_lifecycle.py",
+        "{source}/tests/selection/test_w11_submodule_materialization.py"
       ],
       "working_directory": "{source}",
       "requires": [

@@ -351,9 +351,45 @@ def materialize_submodules(source, directory, profile, initialized):
     candidates = ("third_party/nsync",) if profile.get("source_dir") == "libgo" else ("third_party/nsync", "third_party/nostrdb")
     required = [path for path in candidates if path not in initialized
                 and git("ls-files", "--stage", "--", path, repo=source).startswith(b"160000 ")]
+    records = []
+    def hydrate(parent, cache_parent, relative):
+        row = git('ls-files', '--stage', '-z', '--', relative, repo=parent).split(b'\0')[0]
+        fields, path = row.split(b'\t', 1)
+        mode, oid, stage = fields.decode().split()
+        if mode != '160000' or stage != '0' or os.fsdecode(path) != relative:
+            raise RuntimeError('submodule is not one exact selected gitlink: ' + relative)
+        config = shared.git(parent, 'config', '-f', '.gitmodules', '--get-regexp', r'^submodule\..*\.path$', check=False)
+        names = [line.split(None, 1)[0][len('submodule.'):-len('.path')]
+                 for line in config.stdout.decode().splitlines() if line.split(None, 1)[1] == relative]
+        if len(names) != 1:
+            raise RuntimeError('submodule lacks exact source-authored path/name: ' + relative)
+        cache = Path(cache_parent) / relative
+        usable = False
+        if cache.is_dir() and not cache.is_symlink() and cache.resolve().is_relative_to(Path(cache_parent).resolve()):
+            probe = shared.git(cache, 'rev-parse', '--show-toplevel', check=False)
+            usable = (probe.returncode == 0 and Path(os.fsdecode(probe.stdout).strip()).resolve() == cache.resolve()
+                      and shared.git(cache, 'cat-file', '-e', oid + '^{commit}', check=False).returncode == 0)
+        argv = ['git', '-c', 'core.hooksPath=/dev/null']
+        if usable:
+            # File transport is enabled for ONLY this exact overridden module;
+            # unknown/unavailable caches retain the original network route.
+            argv += ['-c', 'protocol.file.allow=always', '-c', 'submodule.' + names[0] + '.url=' + str(cache.resolve())]
+        argv += ['-C', parent, 'submodule', 'update', '--init', '--checkout', '--', relative]
+        destination = Path(parent) / relative
+        key = hashlib.sha256(os.fsencode(destination)).hexdigest()[:16]
+        command(argv, log=directory / ('submodule-' + key + '.log'))
+        if git('rev-parse', 'HEAD', repo=destination).decode().strip() != oid:
+            raise RuntimeError('materialized submodule differs from selected gitlink: ' + relative)
+        records.append(dict(path=str(destination), gitlink=oid, actual_head=oid,
+                            object_source=str(cache.resolve()) if usable else 'source-authored network URL'))
+        for entry in git('ls-files', '--stage', '-z', repo=destination).split(b'\0'):
+            if entry.startswith(b'160000 '):
+                hydrate(destination, cache, os.fsdecode(entry.split(b'\t', 1)[1]))
+    for relative in required:
+        hydrate(source, Path(args.repo), relative)
     if required:
-        command(["git", "-c", "core.hooksPath=/dev/null", "-C", source, "submodule", "update", "--init", "--", *required],
-                log=directory / "submodules.log")
+        shared.write_json(directory / 'submodules.json', {'kind': 'exact_gitlink_materialization_v1', 'modules': records,
+            'scope': 'source objects only; full configure/Ninja/header/runtime audits remain mandatory'})
     initialized.update(required)
 
 
