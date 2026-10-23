@@ -137,6 +137,27 @@ class AppArmorProvisioning(unittest.TestCase):
         self.assertIn('differs from the pre-setup snapshot', json.loads((self.out / 'teardown.json').read_text())['detail'])
         self.assertIn('unrelated-new (enforce)', self.policy.read_text())  # never touched
 
+    def test_unanticipated_teardown_failures_leave_a_typed_incomplete_record(self):
+        journal = self.setup_loaded()
+        (self.out / 'setup.json').write_text('{corrupt')
+        result = self.run_script(TEARDOWN)
+        self.assertNotEqual(result.returncode, 0)
+        record = json.loads((self.out / 'teardown.json').read_text())
+        self.assertEqual(record['status'], 'incomplete')
+        self.assertIn('teardown failed', record['detail'])
+        self.assertIn(journal['name'], self.policy.read_text())  # never removed blindly
+        (self.out / 'teardown.json').unlink()
+        (self.out / 'setup.json').write_text(json.dumps(journal))
+        failing = self.bin / 'sudo'
+        failing.rename(self.bin / 'sudo-real')
+        failing.write_text('#!/bin/sh\ncase "$*" in *--remove*) exit 5;; esac\nexec "$(dirname "$0")/sudo-real" "$@"\n')
+        failing.chmod(0o755)
+        result = self.run_script(TEARDOWN)
+        self.assertEqual(result.returncode, 5)
+        record = json.loads((self.out / 'teardown.json').read_text())
+        self.assertEqual(record['status'], 'incomplete')
+        self.assertIn('exit 5', record['detail'])
+
     def test_teardown_without_provisioning_or_load_is_explicit(self):
         result = self.run_script(TEARDOWN)
         self.assertEqual(result.returncode, 0)
