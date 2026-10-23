@@ -208,6 +208,21 @@ class NormalContractSemantics(unittest.TestCase):
             normal._expected_check_outcome(dict(expected_outcome='pass'),
                 dict(outcome='expected_incompatibility', exception_case='mdk09_incompatibility', exit_code=77))
 
+    def test_unselected_mdk_lifecycle_must_leave_no_trace(self):
+        descriptors = {'gui': {'requires': ['display']}, 'groundhog-mdk011-interop-image': {'requires': ['docker']}}
+        clean = dict(required_capabilities=['display'], runtime_capability_evidence={})
+        normal._require_no_mdk_lifecycle(clean, ['gui'], descriptors, [])
+        residues = {
+            'runtime state': (dict(clean, mdk_runtime={'status': 'passed'}), ['gui'], []),
+            'docker evidence': (dict(clean, runtime_capability_evidence={'docker': {}}), ['gui'], []),
+            'docker capability': (dict(clean, required_capabilities=['display', 'docker']), ['gui'], []),
+            'journal/recovery': (clean, ['gui'], [dict(closed_in_namespace=True)]),
+            'image fixture executed': (clean, ['gui', 'groundhog-mdk011-interop-image'], []),
+        }
+        for label, (raw, closure, recovery) in residues.items():
+            with self.subTest(label), self.assertRaisesRegex(ValueError, 'unselected original MDK lifecycle'):
+                normal._require_no_mdk_lifecycle(raw, closure, descriptors, recovery)
+
     def test_signer_uses_canonical_source_expansion_and_test_phase_projection(self):
         profile = dict(environment={'ASAN_OPTIONS': 'detect_leaks=1', 'LSAN_OPTIONS': 'wrong'},
                        phase_environments={'configure': {}, 'build': {},

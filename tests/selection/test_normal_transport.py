@@ -12,7 +12,8 @@ import subprocess
 import unittest
 from unittest import mock
 
-from realization_support import ROOT
+from realization_support import ROOT, Project
+import test_selection_realization as r
 from selector_support import s
 from test_normal_execution_contract import NormalFixture
 import test_selection_execution as normal
@@ -591,6 +592,55 @@ class CommandOnlySelectedTests(TransportFixture):
         with self.assertRaisesRegex(ValueError, 'unexplained CTest evidence'):
             self.worker()
         self.assert_raw_retained()
+
+
+class MDKSelectionResolveTests(Project):
+    """Real configure + resolve_checks for an original-MDK-domain profile (no Docker run here)."""
+
+    def setUp(self):
+        super().setUp()
+        cmake = self.root / 'CMakeLists.txt'
+        text = cmake.read_text().replace('nostrc_finalize_test_inventory()', '''add_test(NAME mdk-image COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/noop.cmake)
+set_tests_properties(mdk-image PROPERTIES FIXTURES_SETUP mdkimg)
+nostrc_describe_test(mdk-image OWNER testing INPUTS noop.cmake EXPECTED fixture REQUIRES docker)
+add_test(NAME mdk-interop COMMAND shared)
+set_tests_properties(mdk-interop PROPERTIES FIXTURES_REQUIRED mdkimg)
+nostrc_describe_test(mdk-interop OWNER application TARGETS shared INPUTS vector.txt REQUIRES docker)
+nostrc_finalize_test_inventory()''')
+        cmake.write_text(text)
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'synthetic original-MDK registrations')
+        self.profile.update(execution_domain='mdk_original_linux_v1', capabilities=['display', 'docker'])
+        self.inventory['checks']['mdk-interop'] = {'kind': 'ctest', 'profiles': ['synthetic'],
+            'ctest_tests': {'synthetic': ['mdk-interop']}, 'nodes': ['application', 'testing']}
+        self.realized = self.configure()
+
+    def resolve(self, checks):
+        return r.resolve_checks(self.inventory, dict(self.plan, selected_checks=checks), self.realized, 'synthetic')
+
+    def test_gui_selection_on_mdk_profile_provisions_no_mdk_lifecycle(self):
+        import test_selection_mdk as mdk
+        with mock.patch.object(mdk, 'contract', side_effect=AssertionError('MDK contract must not run')) as contract:
+            resolved = self.resolve(['gui'])
+        contract.assert_not_called()
+        self.assertNotIn('mdk-image', resolved['tests'])
+        self.assertNotIn('mdk-interop', resolved['tests'])
+        self.assertNotIn('docker', resolved['required_capabilities'])
+        self.assertNotIn('docker', resolved.get('runtime_capability_evidence', {}))
+        normal._require_no_mdk_lifecycle(dict(required_capabilities=resolved['required_capabilities'],
+            runtime_capability_evidence=resolved.get('runtime_capability_evidence', {})),
+            resolved['tests'], {d['name']: d for d in self.realized['descriptors']}, [])
+
+    def test_selected_mdk_consumer_pulls_image_fixture_and_requires_the_mdk_contract(self):
+        import test_selection_mdk as mdk
+        class Required(Exception):
+            pass
+        with mock.patch.object(mdk, 'contract', side_effect=Required) as contract:
+            with self.assertRaises(Required):
+                self.resolve(['mdk-interop'])
+        contract.assert_called_once()
+        tests, descriptors = r._metadata(self.inventory, self.realized)
+        self.assertIn('mdk-image', r._fixture_closure(['mdk-interop'], tests, descriptors))
 
 
 class WorkflowWiring(unittest.TestCase):

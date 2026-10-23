@@ -275,6 +275,19 @@ def _signer(backend, profile, post, source_root):
                     'signer sanitizer/graceful shutdown failed')
 
 
+def _require_no_mdk_lifecycle(raw, closure, descriptors, recovery):
+    """Selected scope without original MDK: no image fixture, peer, runtime or journal may exist.
+
+    When MDK IS selected, qualify's existing image production/use/cleanup
+    validation stays mandatory; this never waives it."""
+    from test_selection_mdk import CAPABILITY, IMAGE_TESTS
+    require('mdk_runtime' not in raw and CAPABILITY not in raw.get('runtime_capability_evidence', {})
+            and CAPABILITY not in raw.get('required_capabilities', []) and not recovery
+            and not set(closure) & set(IMAGE_TESTS.values())
+            and not any(CAPABILITY in descriptors.get(name, {}).get('requires', []) for name in closure),
+            'unselected original MDK lifecycle was provisioned or executed')
+
+
 def _rederived_plan(policy, plan, repo):
     """The exact source-bound dependency plan, recomputed from the tested history."""
     from test_selection import git_plan
@@ -485,6 +498,8 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         require(not any(marker in log_bytes for marker in
                         (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')
     _signer(raw, profile, post, real['repo_root'])
+    if scope == 'selected' and not ('docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw):
+        _require_no_mdk_lifecycle(raw, closure, descriptors, recovery)
     if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:
         from test_selection_mdk import validate_runtime
         validate_mdk_graph(real, raw['runtime_capability_evidence']['docker'])
