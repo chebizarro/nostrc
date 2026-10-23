@@ -7,6 +7,7 @@ RealizationError means a failed validation (exit 1); malformed calls use ValueEr
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -2005,7 +2006,13 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
         path = Path(executable).resolve()
         evidence['gnome_keyring'] = {'executable': 'gnome-keyring-daemon', 'path': str(path),
                                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer"}
+    if 'signer_endpoint' in required:
+        from test_selection_services import ServiceError, signer_contract
+        try:
+            evidence['signer_endpoint'] = signer_contract(realization)
+        except (ServiceError, OSError) as exc:
+            raise RealizationError(str(exc)) from exc
+    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer", "signer_endpoint"}
     if unknown:
         raise RealizationError(f"unsupported runtime capabilities: {sorted(unknown)}")
     if "nak" in required:
@@ -2153,6 +2160,10 @@ def resolve_checks(inventory, plan, realization, profile_id):
     available = set(realization["profile"].get("capabilities", []))
     if not capabilities.issubset(available):
         raise RealizationError(f"unavailable selected capabilities: {sorted(capabilities - available)}")
+    if 'signer_endpoint' in capabilities:
+        signer_consumers = {name for name in selected if 'signer_endpoint' in descriptors.get(name, {}).get('requires', [])}
+        if signer_consumers != {'test_nip5f_tcp'} or any('signer_endpoint' in spec['requires'] for spec in selected_commands.values()):
+            raise RealizationError('signer fixture supports only the exact test_nip5f_tcp consumer')
     runtime_capabilities = _runtime_capability_evidence(realization, capabilities, plan.get('plan_id', _hash(plan)))
     result = {"schema_version": 1, "profile_id": profile_id,
         "profile_fingerprint": realization["profile_fingerprint"],
@@ -2177,6 +2188,7 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "registered_commands": {t["name"]: t["command"] for t in realization["tests"] if "command" in t}}
     if runtime_capabilities:
         result["runtime_capability_evidence"] = runtime_capabilities
+    result.update(_signer_diagnostic_boundary(realization))
     if "default_build_binding" in realization:
         result.update(default_build_required=True, default_build_hash=_hash(realization["default_build_binding"]))
     if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
@@ -2187,6 +2199,33 @@ def resolve_checks(inventory, plan, realization, profile_id):
     result.update(_diagnostic_boundary(realization))
     result["resolved_hash"] = _hash(result)
     return result
+
+
+def _signer_diagnostic_boundary(realization):
+    # An authored signer-fixture profile remains diagnostic even when a subset
+    # does not select its signer. This never provisions an unselected resource.
+    return ({'complete': False, 'complete_gate_eligible': False}
+            if 'signer_endpoint' in realization['profile'].get('capabilities', []) else {})
+
+
+def _signer_generated_input(realization, name, desc, target_ids, value):
+    """Recognize only exact fixture artifacts with their declared producer closure."""
+    from test_selection_services import SIGNER_BUILD_INPUTS
+    if name != 'test_nip5f_tcp' or 'signer_endpoint' not in desc.get('requires', []):
+        return False
+    if value not in {str(Path(realization['build_dir']) / p) for p in SIGNER_BUILD_INPUTS}:
+        return False
+    producers = {path for key in target_ids for path in realization['targets'][key]['artifacts']}
+    schema = str(Path(realization['build_dir']) / 'apps/grotto/gschemas.compiled')
+    for key in target_ids:
+        target = realization['targets'][key]
+        # Ninja File API represents this custom output by its generated .rule
+        # source, not by a fabricated executable artifact or utility "all" target.
+        if target['name'] == 'grotto-schemas' and any(s['path'] == schema + '.rule' and s.get('generated') for s in target['sources']):
+            producers.add(schema)
+    if value not in producers:
+        raise RealizationError('signer runtime input lacks declared producer closure: ' + value)
+    return True
 
 
 def _owners(inventory, relative):
@@ -2384,6 +2423,11 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 # declared runtime source inputs. Unresolved provenance stays a gap.
                 if kind == "runtime" and value in configured:
                     fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+                elif kind == 'runtime' and after_build and _signer_generated_input(realization, name, desc, ids, value):
+                    if path.is_symlink() or path.resolve() != path or not path.is_file():
+                        gap('signer_runtime_artifact', test=name, input=value)
+                    else:
+                        fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
                 elif kind == "runtime" and not ids and not support:
                     gap("generated_runtime_without_target", test=name, input=value)
                 continue
@@ -2457,6 +2501,15 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 fingerprints[tool['setup_receipt']['path']] = tool['setup_receipt']['sha256']
         except RealizationError as exc:
             gap('missing_runtime_capability', capability=capability, reason=str(exc))
+    if 'signer_endpoint' in realization['profile'].get('capabilities', []) and any(
+            'signer_endpoint' in desc.get('requires', []) for desc in descriptors.values()):
+        try:
+            proof = _runtime_capability_evidence(realization, ['signer_endpoint'])
+            runtime_tools.update(proof)
+            fingerprints.update(proof['signer_endpoint']['inputs'])
+            fingerprints.update({tool['path']: tool['sha256'] for tool in proof['signer_endpoint']['executables'].values()})
+        except RealizationError as exc:
+            gap('missing_runtime_capability', capability='signer_endpoint', reason=str(exc))
     compatibility_gaps, compatibility_hashes = _audit_compatibility_targets(inventory, realization, after_build)
     gaps.extend(compatibility_gaps)
     fingerprints.update(compatibility_hashes)
@@ -2495,6 +2548,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         result["override_inventory_hash"] = _hash(realization["override_inventory"])
     if runtime_tools:
         result["runtime_capability_evidence"] = runtime_tools
+    result.update(_signer_diagnostic_boundary(realization))
     if default_execution is not None:
         result["default_build_execution"] = default_execution
     if prepared_inputs:
@@ -2880,7 +2934,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
         "coverage_gaps": resolved.get("coverage_gaps", []),
         "complete_gate_eligible": resolved.get("complete_gate_eligible", True),
-        **_diagnostic_boundary(resolved),
+        **_diagnostic_boundary(resolved), **_signer_diagnostic_boundary(realization),
         "audit_build_targets": resolved.get("audit_build_targets", []),
         "compatibility_build_targets": resolved.get("compatibility_build_targets", []),
         "required_capabilities": resolved["required_capabilities"],
@@ -3026,7 +3080,16 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
-        process = _execute(cmd, env=env, log_path=directory / "ctest.log", timeout=timeout)
+        resource = contextlib.nullcontext(({}, None))
+        if 'signer_endpoint' in resolved['required_capabilities']:
+            from test_selection_services import provisioned_signer
+            resource = provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env)
+        with resource as (overlay, signer_runtime):
+            process = _execute(cmd, env=dict(env, **overlay), log_path=directory / "ctest.log", timeout=timeout)
+        if signer_runtime is not None:
+            receipt['signer_runtime'] = signer_runtime
+            receipt['complete'] = False
+            receipt['complete_gate_eligible'] = False
         receipt["test_seconds"] = time.monotonic() - begin
         receipt["ctest_exit_code"] = process.returncode
         for value in evidence_paths:
