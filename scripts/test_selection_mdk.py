@@ -28,6 +28,54 @@ MODULE = 'scripts/test_selection_mdk.py'
 FIXED_TAGS = {'08': 'nostrc-mdk-interop:0.8.0', '09': 'nostrc-mdk-interop:0.9.0-probe'}
 DRIVER_OVERRIDES = {'08': 'MDK_INTEROP_DRIVER', '09': 'MDK09_PROBE_DRIVER', '011': 'MDK011_INTEROP_DRIVER'}
 TAG = re.compile(r'[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}')
+# Physically traced (configured CTestTestfile + build.ninja): Docker runs only in
+# these CTest image-producer fixtures and in consumers that require them; no
+# configure/build edge invokes GROUNDHOG_DOCKER.
+IMAGE_TESTS = {'08': 'groundhog-mdk-interop-image', '011': 'groundhog-mdk011-interop-image',
+               '09': 'groundhog-mdk011-interop-image-mdk09'}
+NON_CONSUMERS = set(IMAGE_TESTS.values()) | {'groundhog-mdk011-interop-artifacts-reset'}
+
+
+def required_versions(tests):
+    """Versions whose image production AND peer use the selected registrations require."""
+    images, peers = set(), set()
+    for name in tests:
+        images.update(v for v, image in IMAGE_TESTS.items() if name == image)
+        if name in NON_CONSUMERS:
+            continue
+        if name == 'groundhog-mdk-interop':
+            peers.add('08')
+        elif name == 'groundhog-mdk011-interop-mdk09-probe':
+            peers.add('09')
+        elif name.startswith('groundhog-mdk011-interop-'):
+            peers.add('011')
+    # A consumer without its producer fixture is an unowned image dependency.
+    require(peers <= images, 'selected MDK consumers lack their image-producer fixture: ' + str(sorted(peers - images)))
+    return {'images': sorted(images), 'peers': sorted(peers)}
+
+
+def docker_access(endpoint):
+    """Docker socket reachability evidence from inside the namespace; never a chmod.
+
+    The daemon/containerd/BuildKit broker processes are outside the PID
+    namespace and NOT owned: only exact API-created builder/CID/volume
+    resources are. Docker CLI/buildx clients are namespace descendants.
+    """
+    require(endpoint.startswith('unix://'), 'original MDK requires a local Unix Docker endpoint')
+    socket_path = Path(endpoint[len('unix://'):])
+    info = socket_path.stat()
+    def read(name):
+        try:
+            return Path('/proc/self/' + name).read_text()
+        except OSError as exc:
+            return 'unavailable: ' + type(exc).__name__
+    status = read('status').splitlines()
+    return {'socket': str(socket_path), 'socket_identity': {'dev': info.st_dev, 'ino': info.st_ino,
+            'uid': info.st_uid, 'gid': info.st_gid, 'mode': oct(info.st_mode & 0o7777)},
+            'credentials': [row for row in status if row.startswith(('Uid:', 'Gid:', 'Groups:', 'NoNewPrivs:', 'CapEff:'))],
+            'uid_map': read('uid_map'), 'gid_map': read('gid_map'), 'setgroups': read('setgroups'),
+            'writable': os.access(socket_path, os.W_OK),
+            'broker_processes': 'external_daemon_not_owned', 'client_processes': 'pidns_descendants'}
 
 
 class MDKError(ValueError):
@@ -149,18 +197,22 @@ def lifecycle(realization, resolved, input_audit, evidence_dir, *, environment=N
     except (ServiceError, OSError) as exc:
         raise MDKError('original MDK lifecycle requires live pidns custody: ' + str(exc)) from exc
     root = Path(realization['repo_root'])
+    needed = required_versions(resolved.get('tests', []))
+    require(set(needed['images']) <= set(proof['versions']), 'selected MDK image is not a realized version')
     helper = gate(root)
     state = Path(evidence_dir) / ('mdk-' + uuid.uuid4().hex)
     state.mkdir(mode=0o700, parents=False)
     for name in ('containers', 'clients', 'contexts'):
         (state / name).mkdir()
     record = {'kind': 'mdk_original_runtime_v1', 'contract': proof, 'state': str(state), 'status': 'failed',
+              'selected_tests': sorted(resolved.get('tests', [])), 'required': needed,
               'host_process_tree': 'outer_pidns_namespace_exit_seal_required',
               'complete': False, 'complete_gate_eligible': False, 'docker_cleanup_complete': False}
     owner = None
     try:
         real = proof['tools']['docker']['path']
-        daemon, endpoint = helper.local_daemon(real)
+        daemon, endpoint = helper.local_daemon(real)  # actual socket use from inside the namespace
+        record['docker_access'] = docker_access(endpoint)
         images = {version: {'tag': data['tag'], 'context': data['context'], 'digest': data['digest']}
                   for version, data in proof['versions'].items()}
         config = dict(schema_version=1, run_id=state.name, docker=real, docker_executable=proof['tools']['docker'],
@@ -204,7 +256,18 @@ def lifecycle(realization, resolved, input_audit, evidence_dir, *, environment=N
             record['images'] = helper.retained_records(state.glob('*-image.json'), errors)
             record['containers'] = helper.retained_records((state / 'containers').glob('*.json'), errors)
             record['journal_errors'] = errors
-            if not (record['docker_cleanup_complete'] and not errors
+            if 'docker_access' in record:
+                after = docker_access('unix://' + record['docker_access']['socket'])
+                record['docker_access_after'] = after
+                if after['socket_identity'] != record['docker_access']['socket_identity']:
+                    errors.append('Docker socket identity/mode changed during the lifecycle')
+            try:
+                production_evidence(record)
+                record['production_complete'] = True
+            except MDKError as exc:
+                record['production_complete'] = False
+                record['production_error'] = str(exc)
+            if not (record['docker_cleanup_complete'] and not errors and record['production_complete']
                     and all(c.get('removed') for c in record['containers'])):
                 record['status'] = 'failed' if record['status'] == 'passed' else record['status']
             if contract(realization, environment) != proof:
@@ -216,6 +279,38 @@ def lifecycle(realization, resolved, input_audit, evidence_dir, *, environment=N
                 stream.write('\n')
         if record['status'] != 'passed' and sys.exc_info()[0] is None:
             raise MDKError('original MDK lifecycle cleanup/identity failed: ' + str(state))
+
+
+def production_evidence(record):
+    """Each required version was really produced from its bound context and used by a peer."""
+    proof, needed = record['contract'], record['required']
+    images = {}
+    for image in record.get('images', []):
+        version = image.get('version')
+        require(version in proof['versions'] and version not in images, 'unexpected/duplicate MDK image record')
+        images[version] = image
+    for version in needed['images']:
+        image = images.get(version)
+        require(image is not None and image.get('build_complete') is True and image.get('logs_drained') is True,
+                'required MDK image was not produced: ' + version)
+        require(image.get('digest') == proof['versions'][version]['digest']
+                and image.get('tag') == proof['versions'][version]['tag']
+                and re.fullmatch(r'sha256:[0-9a-f]{64}', image.get('image_id', ''))
+                and re.fullmatch(r'sha256:[0-9a-f]{64}', image.get('export_digest', ''))
+                and all(re.fullmatch(r'[0-9a-f]{64}', image.get(key, {}).get('sha256', ''))
+                        for key in ('iid', 'metadata', 'inspection'))
+                and image.get('image_labels', {}).get('org.nostrc.mdk.context') == image.get('digest')
+                and image.get('image_labels', {}).get('org.nostrc.mdk.run') == Path(record['state']).name,
+                'MDK image producer identity differs from its bound context/run: ' + version)
+    for version in needed['peers']:
+        peers = [c for c in record.get('containers', []) if c.get('version') == version]
+        require(peers and all(re.fullmatch(r'[0-9a-f]{64}', c.get('container_id', ''))
+                              and c.get('image_id') == images[version]['image_id']
+                              and type(c.get('exit_code')) is int and c.get('logs_drained') is True
+                              and c.get('removed') is True for c in peers),
+                'required MDK peer use/removal unproved: ' + version)
+    require(not [c for c in record.get('containers', []) if c.get('version') not in needed['peers']],
+            'MDK peer from an unselected version')
 
 
 def recover_lane(evidence_root, helper, log_dir):
@@ -286,13 +381,18 @@ def validate_runtime(backend, plan, lane, profile):
             and state.get('host_process_tree') == 'outer_pidns_namespace_exit_seal_required'
             and state.get('complete') is False and state.get('complete_gate_eligible') is False,
             'original MDK runtime/cleanup receipt missing or failed')
+    require(state.get('selected_tests') == sorted(backend.get('tests', []))
+            and state.get('required') == required_versions(backend.get('tests', [])),
+            'original MDK runtime is not bound to the selected registrations')
+    production_evidence(state)
+    require(state.get('production_complete') is True, 'original MDK production evidence incomplete')
+    access = state.get('docker_access', {})
+    require(access.get('broker_processes') == 'external_daemon_not_owned'
+            and access.get('socket_identity') == state.get('docker_access_after', {}).get('socket_identity'),
+            'original MDK Docker access accounting missing or socket changed')
     lifecycle_result = state.get('docker_lifecycle', {})
     require(lifecycle_result.get('scope') == 'original_docker_build_and_recorded_peers_only'
             and lifecycle_result.get('cleanup_complete') is True and not lifecycle_result.get('errors'),
             'original MDK Docker cleanup unverified')
     require(all(c.get('removed') is True and re.fullmatch(r'[0-9a-f]{64}', c.get('container_id', ''))
                 for c in state.get('containers', [])), 'original MDK peer CID removal unproved')
-    for image in state.get('images', []):
-        require(image.get('digest') == proof['versions'].get(image.get('version'), {}).get('digest')
-                and (not image.get('build_complete') or re.fullmatch(r'sha256:[0-9a-f]{64}', image.get('image_id', ''))),
-                'original MDK image identity differs from the bound context')

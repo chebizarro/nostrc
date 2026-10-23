@@ -381,6 +381,9 @@ class OwnedBuilder:
         config["builder"] = {"name": self.name, "node": self.node, "image_id": image_info["Id"],
                              "image_reference": refs[0], "container_name": self.container_name, "volume": self.volume}
         self.started = True  # before create/bootstrap, including partial allocation
+        # Persist the exact builder identity BEFORE the first allocating request,
+        # so a lifecycle killed during setup remains recoverable from its journal.
+        write(self.state / "config.json", config)
         write(self.state / "builder.json", self.result)
         cli(config, ["buildx", "create", "--name", self.name, "--node", self.node,
                      "--driver", "docker-container", "--driver-opt", "image=" + refs[0],

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -32,7 +33,13 @@ class Harness(unittest.TestCase):
         (self.bin / 'docker').write_text(FAKE)
         (self.bin / 'docker').chmod(0o700)
         self.trace = self.base / 'trace'
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'], TRACE=str(self.trace))
+        # A real Unix socket stands in for the daemon endpoint (stat/access only).
+        self.socket_path = self.base / 'docker.sock'
+        self.listener = socket.socket(socket.AF_UNIX)
+        self.listener.bind(str(self.socket_path))
+        self.addCleanup(self.listener.close)
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'], TRACE=str(self.trace),
+                        DOCKER_HOST='unix://' + str(self.socket_path))
         self.root = self.base / 'source'
         (self.root / 'scripts').mkdir(parents=True)
         for name in (mdk.HELPER, mdk.WRAPPER, mdk.MODULE):
@@ -107,9 +114,23 @@ class ContractTests(Harness):
                     self.contract()
 
 
+SELECTED = ['groundhog-mdk011-interop-control', 'groundhog-mdk011-interop-image',
+            'groundhog-mdk011-interop-image-mdk09', 'groundhog-mdk011-interop-mdk09-probe']
+
+
+class RequiredVersionTests(unittest.TestCase):
+    def test_selected_registrations_define_required_production_and_use(self):
+        self.assertEqual(mdk.required_versions(SELECTED), {'images': ['011', '09'], 'peers': ['011', '09']})
+        self.assertEqual(mdk.required_versions(['groundhog-mdk-interop-image', 'groundhog-mdk-interop']),
+                         {'images': ['08'], 'peers': ['08']})
+        self.assertEqual(mdk.required_versions(['groundhog-mdk011-interop-image']), {'images': ['011'], 'peers': []})
+        with self.assertRaisesRegex(mdk.MDKError, 'lack their image-producer fixture'):
+            mdk.required_versions(['groundhog-mdk011-interop-control'])
+
+
 class LifecycleTests(Harness):
-    def start(self, proof):
-        resolved = {'runtime_capability_evidence': {'docker': proof}}
+    def start(self, proof, tests=SELECTED):
+        resolved = {'runtime_capability_evidence': {'docker': proof}, 'tests': list(tests)}
         evidence = self.base / ('evidence-' + str(len(list(self.base.glob('evidence-*')))))
         evidence.mkdir()
         return resolved, evidence
@@ -117,7 +138,7 @@ class LifecycleTests(Harness):
     def test_refuses_before_docker_without_audit_or_pidns_custody(self):
         proof = self.contract()
         resolved, evidence = self.start(proof)
-        with mock.patch.dict(os.environ, TRACE=str(self.trace)):
+        with mock.patch.dict(os.environ, TRACE=str(self.trace), DOCKER_HOST=self.env['DOCKER_HOST']):
             with self.assertRaisesRegex(mdk.MDKError, 'post-build input audit'):
                 with mdk.lifecycle(self.record, resolved, {'passed': True}, evidence, environment=self.env):
                     self.fail('unaudited lifecycle admitted')
@@ -132,10 +153,10 @@ class LifecycleTests(Harness):
                         self.fail('uncustodied lifecycle admitted')
         self.assertFalse(self.trace.exists())  # no Docker request at all
 
-    def run_lifecycle(self, body):
+    def run_lifecycle(self, body, tests=SELECTED):
         proof = self.contract()
-        resolved, evidence = self.start(proof)
-        with mock.patch.dict(os.environ, TRACE=str(self.trace)), \
+        resolved, evidence = self.start(proof, tests)
+        with mock.patch.dict(os.environ, TRACE=str(self.trace), DOCKER_HOST=self.env['DOCKER_HOST']), \
                 mock.patch.object(services, '_namespace_resources', return_value=self.base):
             try:
                 with mdk.lifecycle(self.record, resolved, self.audit(proof), evidence, environment=self.env) as (overlay, state):
@@ -168,9 +189,35 @@ class LifecycleTests(Harness):
         self.assertEqual(len(builds), 2)
         self.assertTrue(all(t[t.index('--builder') + 1] == runtime['builder']['name'] for t in builds))
         self.assertFalse(any('prune' in t or '--use' in t for t in traces))
+        self.assertTrue(runtime['production_complete'])
+        self.assertEqual(runtime['docker_access']['socket_identity'], runtime['docker_access_after']['socket_identity'])
+        self.assertEqual(runtime['docker_access']['broker_processes'], 'external_daemon_not_owned')
         backend = {'required_capabilities': ['docker'], 'runtime_capability_evidence': {'docker': proof},
-                   'input_audit': self.audit(proof), 'mdk_runtime': runtime, 'custody_mode': 'pidns'}
-        mdk.validate_runtime(backend, {'source_identity': self.record['source_identity']}, {}, self.profile)
+                   'input_audit': self.audit(proof), 'mdk_runtime': runtime, 'custody_mode': 'pidns',
+                   'tests': list(SELECTED)}
+        plan = {'source_identity': self.record['source_identity']}
+        mdk.validate_runtime(backend, plan, {}, self.profile)
+        def mutate(change):
+            state = json.loads(json.dumps(runtime))
+            change(state)
+            return dict(backend, mdk_runtime=state)
+        negatives = {
+            'image deleted': lambda s: s['images'].pop(),
+            'no images': lambda s: s.update(images=[]),
+            'no peers': lambda s: s.update(containers=[]),
+            'peer image swapped': lambda s: s['containers'][0].update(image_id='sha256:' + '0' * 64),
+            'peer not removed': lambda s: s['containers'][0].update(removed=False),
+            'image context changed': lambda s: s['images'][0].update(digest='f' * 64),
+            'image build incomplete': lambda s: s['images'][0].update(build_complete=False),
+            'other run label': lambda s: s['images'][0]['image_labels'].update({'org.nostrc.mdk.run': 'other'}),
+            'selected tests changed': lambda s: s.update(selected_tests=SELECTED[:2]),
+            'socket changed': lambda s: s['docker_access_after']['socket_identity'].update(mode='0o777'),
+        }
+        for name, change in negatives.items():
+            with self.subTest(negative=name), self.assertRaises(mdk.MDKError):
+                mdk.validate_runtime(mutate(change), plan, {}, self.profile)
+        with self.assertRaises(mdk.MDKError):
+            mdk.validate_runtime(dict(backend, tests=SELECTED + ['groundhog-mdk-interop']), plan, {}, self.profile)
         for key, value in (('status', 'failed'), ('docker_cleanup_complete', False), ('complete', True)):
             with self.subTest(promoted=key):
                 with self.assertRaises(mdk.MDKError):
@@ -188,6 +235,68 @@ class LifecycleTests(Harness):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b'original MDK lifecycle state required', result.stderr)
         self.assertFalse(self.trace.exists())
+
+    def test_missing_required_peer_fails_lifecycle_after_cleanup(self):
+        def body(env, proof):
+            for version in ('011', '09'):  # images produced, but no peer ever used
+                data = proof['versions'][version]
+                self.assertEqual(self.wrapper(env, 'build', '-t', data['tag'], data['context']).returncode, 0)
+        with self.assertRaisesRegex(mdk.MDKError, 'cleanup/identity failed'):
+            self.run_lifecycle(body)
+        runtime = json.loads(next(self.base.glob('evidence-*/mdk-runtime.json')).read_text())
+        self.assertEqual(runtime['status'], 'failed')
+        self.assertFalse(runtime['production_complete'])
+        self.assertIn('peer use/removal unproved', runtime['production_error'])
+        self.assertTrue(runtime['docker_cleanup_complete'])
+        self.assertEqual(self.daemon_resources(), {'containers': [], 'volumes': []})
+
+    def test_lifecycle_killed_during_builder_setup_is_recoverable(self):
+        # Block the bootstrap AFTER the builder container/volume exist, then kill.
+        blocking = self.bin / 'docker'
+        (self.bin / 'docker-fake').write_text(FAKE)
+        (self.bin / 'docker-fake').chmod(0o700)
+        blocking.write_text('#!' + sys.executable + '\n' + r"""import os, pathlib, subprocess, sys, time
+code = subprocess.call([os.path.join(os.path.dirname(sys.argv[0]), 'docker-fake'), *sys.argv[1:]])
+if sys.argv[1:3] == ['buildx', 'inspect'] and os.environ.get('BLOCK_BOOTSTRAP'):
+    pathlib.Path(os.environ['BLOCK_BOOTSTRAP']).touch()
+    time.sleep(60)
+sys.exit(code)
+""")
+        blocking.chmod(0o700)
+        proof = self.contract()
+        evidence = self.base / 'killed-setup'
+        evidence.mkdir()
+        ready = self.base / 'bootstrap-ready'
+        script = f'''
+import json, sys
+from pathlib import Path
+from unittest import mock
+sys.path[:0] = [{str(ROOT / 'scripts')!r}]
+import test_selection_mdk as mdk, test_selection_services as services
+record, proof, env = (json.loads(v) for v in sys.argv[1:4])
+with mock.patch.object(mdk.sys, 'platform', 'linux'), mock.patch.object(services, '_namespace_resources', return_value=Path('/')):
+    with mdk.lifecycle(record, {{'runtime_capability_evidence': {{'docker': proof}}, 'tests': []}},
+                       {{'passed': True, 'after_build': True, 'input_hashes': proof['inputs']}},
+                       {str(evidence)!r}, environment=env):
+        pass
+'''
+        env = dict(self.env, BLOCK_BOOTSTRAP=str(ready))
+        child = subprocess.Popen([sys.executable, '-c', script, json.dumps(self.record), json.dumps(proof), json.dumps(env)],
+                                 env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + 20
+        while not ready.exists():
+            self.assertLess(time.monotonic(), deadline, 'bootstrap never reached')
+            self.assertIsNone(child.poll())
+            time.sleep(0.02)
+        child.send_signal(signal.SIGKILL)
+        child.wait(timeout=10)
+        self.assertTrue(self.daemon_resources()['containers'])  # allocated builder leaked
+        state, = [p.parent for p in evidence.glob('mdk-*/config.json')]
+        self.assertIn('builder', json.loads((state / 'config.json').read_text()))  # journaled pre-allocation
+        result = subprocess.run([sys.executable, str(self.root / mdk.HELPER), 'recover', '--state', str(state)],
+                                env=self.env, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.daemon_resources(), {'containers': [], 'volumes': []})
 
     def test_failed_consumer_still_cleans_up_and_retains_failure(self):
         def body(env, proof):
