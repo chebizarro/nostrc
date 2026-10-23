@@ -1,5 +1,28 @@
 # Dependency-aware testing acceptance run ledger
 
+## Postlanding bounded snapshot — 2026-10-23T01:36:36.747178Z
+
+Final query window01:35:57.553122Z–01:36:36.747178Z, not a live counter.
+[PR20 root39884384021](https://github.com/chebizarro/nostrc/actions/runs/39884384021)
+API head `7319d339…`, verified plan artifact12471967279 tested merge
+`7ff720d9709672cb60a7b7b50b3294de337ee186`; exact tree matches landed master
+`d9c9c8808b2611fc179ed4ed3640e63920f4683f`. [Windows120189097982](https://github.com/chebizarro/nostrc/actions/runs/39884384021/job/120189097982)
+checkout/verification/Configure CMake **PASS**, job in progress; [libgo120189097071](https://github.com/chebizarro/nostrc/actions/runs/39884384021/job/120189097071)
+queued, corrected CMake PATH step NOT RUN. [Master39884406426](https://github.com/chebizarro/nostrc/actions/runs/39884406426)
+selector120189092163 queued at requested/API SHA `d9c9c8808…`; no emitted
+plan/physical tested-source receipt yet. These are not former-source failures.
+
+52 root dispositions:48 failure/one cancelled/two queued/one in progress;
+zero successful roots, standalone broad/worker/release0/0/0.20 observed PR API
+heads are not qualifying comparisons. **0/20 qualifying comparisons;0/2 complete
+broad integrations; W11 NOT MET/W12 NOT RUN.** No new code, retry, cold broad
+workload or cutover. `.5` stays closed/.36 in progress; comments updated under root.
+Raw proof: `/tmp/nostrc-w11-postlanding-20261023/hosted-proof-manifest.json`, SHA256
+`82ffcee5790274ccf953e6a4a846d99e7bc33d16ae7ce43b9f38e0e06605ea46`.
+[Short postlanding receipt](dependency-aware-testing-ci-2026-10-23-w11.md#bounded-postlanding-follow-through--2026-10-23t013636747178z).
+No new repository index; prior failed receipts/checksum history retained unchanged.
+
+
 ## W11 refresh — 2026-10-23T00:48:54.695786Z
 
 Dated sequential snapshot, **not a live counter**. Full source-linked capture

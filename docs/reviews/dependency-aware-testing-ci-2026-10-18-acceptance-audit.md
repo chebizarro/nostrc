@@ -1,5 +1,26 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Postlanding W11 observation — 2026-10-23T01:36:36.747178Z
+
+Dated bounded follow-through, not a live counter. [Short source/job/step
+receipt](dependency-aware-testing-ci-2026-10-23-w11.md#bounded-postlanding-follow-through--2026-10-23t013636747178z):
+PR20 root39884384021 plan-tested merge `7ff720d9709672cb60a7b7b50b3294de337ee186`
+shares the exact landed tree with head `7319d339…`/master `d9c9c8808…`.
+Windows job120189097982 **checkout/verification/Configure CMake PASS**, job still
+in progress; libgo120189097071 queued, corrected CMake PATH step NOT RUN.
+Master39884406426/selector120189092163 queued: requested SHA is `d9c9c8808…`,
+no emitted plan/physical tested-source receipt yet. No old-source failure is
+attributed to these corrected-source pending lanes.
+
+Fresh histories52 roots:48 failed/one cancelled/two queued/one in progress;
+zero successful roots.20 observed PR heads do not qualify: **0/20 comparisons,
+0/2 complete broad integrations; W11 NOT MET/W12 NOT RUN**. No code fix, retry,
+cold broad dispatch or cutover. Full older snapshots/index remain unchanged.
+Raw proof `/tmp/nostrc-w11-postlanding-20261023/hosted-proof-manifest.json`, SHA256
+`82ffcee5790274ccf953e6a4a846d99e7bc33d16ae7ce43b9f38e0e06605ea46`.
+Docs/tracker only, no bump; `.5` closed/.36 in progress; parent lands follow-up.
+
+
 ## W11 source-linked hosted measurement — 2026-10-23T00:48:54.695786Z
 
 This dated observation supersedes older **current/latest** labels below without
