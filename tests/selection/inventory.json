@@ -8035,7 +8035,10 @@
         "{source}/tests/selection/test_post1640_integration.py",
         "{source}/tests/selection/mdk011_app_enrollment_support.py",
         "{source}/tests/selection/fixtures/mdk011_app_enrollment_20261024.json",
-        "{source}/tests/selection/test_mdk011_app_enrollment.py"
+        "{source}/tests/selection/test_mdk011_app_enrollment.py",
+        "{source}/tests/selection/coreasan_app_enrollment_support.py",
+        "{source}/tests/selection/fixtures/coreasan_app_enrollment_20261024.json",
+        "{source}/tests/selection/test_coreasan_app_enrollment.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -16398,6 +16401,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
@@ -16412,6 +16416,9 @@
           "test-bc-blob-store"
         ],
         "core.linux": [
+          "test-bc-blob-store"
+        ],
+        "core.linux.asan": [
           "test-bc-blob-store"
         ],
         "grotto.linux.asan_ubsan": [
@@ -16438,6 +16445,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
@@ -16452,6 +16460,9 @@
           "grelay_ingress_security"
         ],
         "core.linux": [
+          "grelay_ingress_security"
+        ],
+        "core.linux.asan": [
           "grelay_ingress_security"
         ],
         "grotto.linux.asan_ubsan": [
@@ -16480,6 +16491,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
@@ -16495,6 +16507,10 @@
           "grotto_dbus_service_configured"
         ],
         "core.linux": [
+          "grotto_app_dbus_service_configured",
+          "grotto_dbus_service_configured"
+        ],
+        "core.linux.asan": [
           "grotto_app_dbus_service_configured",
           "grotto_dbus_service_configured"
         ],
@@ -16524,6 +16540,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
@@ -16539,6 +16556,15 @@
           "nostr_signer_webext_extension_webln"
         ],
         "core.linux": [
+          "nostr_signer_webext_extension_policy",
+          "nostr_signer_webext_extension_webln",
+          "nostr_signer_webext_host_errors",
+          "nostr_signer_webext_host_framing",
+          "nostr_signer_webext_host_policy",
+          "nostr_signer_webext_host_router",
+          "nostr_signer_webext_host_webln"
+        ],
+        "core.linux.asan": [
           "nostr_signer_webext_extension_policy",
           "nostr_signer_webext_extension_webln",
           "nostr_signer_webext_host_errors",
@@ -18170,6 +18196,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
         "groundhog.mdk011"
@@ -18180,6 +18207,9 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "nostr_signer_webext_host_e2e"
+        ],
+        "core.linux.asan": [
           "nostr_signer_webext_host_e2e"
         ],
         "grotto.linux.asan_ubsan": [
@@ -18217,6 +18247,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
         "groundhog.mdk011"
@@ -18227,6 +18258,22 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "signer/blueprint-drift",
+          "signer/bunker",
+          "signer/bunker-startup",
+          "signer/core",
+          "signer/crypto",
+          "signer/hsm-provider",
+          "signer/identity",
+          "signer/legacy-dirs",
+          "signer/profile-guard",
+          "signer/rate-limiter",
+          "signer/secure-mem",
+          "signer/session",
+          "signer/signer-core",
+          "signer/social-recovery"
+        ],
+        "core.linux.asan": [
           "signer/blueprint-drift",
           "signer/bunker",
           "signer/bunker-startup",
@@ -18319,6 +18366,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
         "groundhog.mdk011"
@@ -18329,6 +18377,11 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "signer/approval-dialog",
+          "signer/qr-scanner",
+          "signer/ui"
+        ],
+        "core.linux.asan": [
           "signer/approval-dialog",
           "signer/qr-scanner",
           "signer/ui"
@@ -18381,6 +18434,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
         "groundhog.mdk011"
@@ -18391,6 +18445,15 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/desktop-contract",
+          "signer/identity-model",
+          "signer/onboarding",
+          "signer/ui-accessibility",
+          "signer/ui-layout"
+        ],
+        "core.linux.asan": [
           "signer/approval-controller",
           "signer/approval-integration",
           "signer/desktop-contract",
@@ -18462,6 +18525,7 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
         "groundhog.mdk08",
         "groundhog.mdk011"
@@ -18472,6 +18536,17 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "signer/activity",
+          "signer/background",
+          "signer/bunker-e2e",
+          "signer/bunker-headless",
+          "signer/clients",
+          "signer/dbus",
+          "signer/home-model",
+          "signer/identity-management",
+          "signer/session-lock"
+        ],
+        "core.linux.asan": [
           "signer/activity",
           "signer/background",
           "signer/bunker-e2e",
