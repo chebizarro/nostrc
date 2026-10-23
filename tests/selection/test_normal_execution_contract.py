@@ -52,9 +52,9 @@ class NormalFixture(Project):
             expected_outcome='pass', build_scope='default', build_targets=[],
             command=['cmake', '--build', '{build}', '--config', 'Debug'], working_directory='{source}',
             environment={}, runtime_inputs=[])
+        self.prepare_source()
         self.identity = dict(kind='committed', sha=self.git('rev-parse', 'HEAD').decode().strip())
-        self.plan = s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
-                                mode='broad', source_identity=self.identity)
+        self.plan = self.make_plan()
         self.real = r.configure_profile(self.root, self.build, 'synthetic', self.profile, self.identity,
                                         s.digest(self.inventory), inventory=self.inventory, diagnostic_boundary='linux_pidns_v1')
         self.resolved = r.resolve_checks(self.inventory, self.plan, self.real, 'synthetic')
@@ -77,6 +77,13 @@ class NormalFixture(Project):
                     retained_evidence=str(self.work / 'native-final.json'), normalized_receipt=str(self.public_path),
                     mdk_recovery=[])])])
         self.seal()
+
+    def prepare_source(self):
+        """Hook: committed source history before identity/plan (default: none)."""
+
+    def make_plan(self):
+        return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
+                           mode='broad', source_identity=self.identity)
 
     def seal(self):
         # Exercise real retained byte verification. The outer supervisor result

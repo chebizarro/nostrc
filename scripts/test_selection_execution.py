@@ -32,6 +32,15 @@ KIND = 'normal_execution_v1'
 FIELD = 'normal_execution'
 MARKER = dict(schema_version=1, custody='linux_pidns_v1',
               audit_scope='full_configured_universe', registration_policy='all_owned_and_executed')
+# Separately authored selective contract (nostrc-0cfsg.36.11). It never changes
+# MARKER: only a profile that already authors the full contract may add it, and
+# it applies only to fresh, unrestricted, unbroadened affected plans whose exact
+# selection this qualifier re-derives from the same tested source history.
+SELECTED_FIELD = 'normal_selected_execution'
+SELECTED_MARKER = dict(schema_version=1, custody='linux_pidns_v1', audit_scope='full_configured_universe',
+                       registration_policy='all_owned_selected_closure_executed',
+                       selection='source_bound_dependency_plan')
+SELECTED_SCOPE = 'selected_dependency_closure'
 
 
 APPARMOR_FILES = ('setup.json', 'teardown.json', 'profiles-before.txt', 'profiles-after.txt')
@@ -44,6 +53,9 @@ def require(value, message):
 
 def validate_metadata(policy):
     for pid, profile in policy.get('profiles', {}).items():
+        if SELECTED_FIELD in profile:
+            require(profile[SELECTED_FIELD] == SELECTED_MARKER and type(profile[SELECTED_FIELD].get('schema_version')) is int
+                    and profile.get(FIELD) == MARKER, 'selected-normal contract requires the authored full contract: ' + pid)
         if FIELD not in profile:
             continue
         require(profile[FIELD] == MARKER and type(profile[FIELD].get('schema_version')) is int,
@@ -263,7 +275,32 @@ def _signer(backend, profile, post, source_root):
                     'signer sanitizer/graceful shutdown failed')
 
 
-def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locator=None, transport=None):
+def _rederived_plan(policy, plan, repo):
+    """The exact source-bound dependency plan, recomputed from the tested history."""
+    from test_selection import git_plan
+    require(repo is not None, 'selected-normal qualification requires the exact tested checkout')
+    event = plan.get('event') or None
+    again = git_plan(repo, policy, head=plan['head'], base=plan.get('base'), context=plan['context'],
+                     mode=plan['requested_mode'], event=event, profiles=plan.get('partial_profiles') or None)
+    require(again == plan, 'selective plan differs from the source-bound dependency plan re-derived from the tested history')
+    return again
+
+
+def _scope(policy, plan, lane, profile, repo):
+    require(lane is not None and profile.get(FIELD) == MARKER, 'profile has no authored normal contract')
+    require(plan['source_identity'].get('kind') == 'committed', 'normal qualification requires a committed source')
+    if plan['effective_mode'] == 'broad':
+        return 'full'
+    require(profile.get(SELECTED_FIELD) == SELECTED_MARKER,
+            'normal full-profile qualification requires a fresh committed broad plan')
+    require(plan['effective_mode'] == plan['requested_mode'] == 'affected' and not plan.get('partial_profiles')
+            and not plan.get('broadening_reasons') and not plan.get('deleted_ref'),
+            'selected-normal requires an unrestricted, unbroadened affected plan')
+    _rederived_plan(policy, plan, repo)
+    return 'selected'
+
+
+def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locator=None, transport=None, repo=None):
     from test_selection import (read_json, digest, validate_plan, coverage_state,
                                 validate_default_build_evidence, validate_phase_parallelism_evidence)
     import test_selection_subset as subset
@@ -277,12 +314,11 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
     require(public.get('receipt_kind') not in ('lane_failure_v1', KIND), 'not an original execution receipt')
     pid = public.get('profile')
     lane = next((item for item in plan['lanes'] if item['profile'] == pid), None)
-    require(lane is not None and policy['profiles'][pid].get(FIELD) == MARKER, 'profile has no authored normal contract')
+    require(lane is not None and pid in policy['profiles'], 'profile has no authored normal contract')
     profile = policy['profiles'][pid]
     require(all(public.get(key) == plan[key] for key in ('source_identity', 'inventory_hash', 'plan_id'))
             and public.get('profile_hash') == lane['profile_hash'], 'public source/profile/plan binding differs')
-    require(plan['source_identity'].get('kind') == 'committed' and plan['effective_mode'] == 'broad',
-            'normal full-profile qualification requires a fresh committed broad plan')
+    scope = _scope(policy, plan, lane, profile, repo)
     require(not _omission(public) and not subset.active_contracts(policy).get(pid),
             'historical omission authority cannot become normal')
     require(not public.get('baseline_exclusions'), 'omitted registrations cannot become normal')
@@ -348,16 +384,28 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
             and raw.get('resolved_hash') == resolved.get('resolved_hash')
             and resolved['resolved_hash'] == digest({k: v for k, v in resolved.items() if k != 'resolved_hash'}),
             'resolved/plan binding differs')
-    checks = {ident: check for ident, check in policy['checks'].items() if pid in check['profiles']}
-    require(set(lane['checks']) == set(checks) == set(resolved['checks']) == set(raw.get('checks', {})),
-            'normal profile is missing authored checks')
+    eligible = {ident: check for ident, check in policy['checks'].items() if pid in check['profiles']}
     tests, descriptors = backend_api._metadata(policy, real)
-    primaries = sorted(name for check in checks.values() if check['kind'] == 'ctest'
-                       for name in check['ctest_tests'][pid])
-    closure = backend_api._fixture_closure(primaries, tests, descriptors)
-    require(closure == sorted(tests) == resolved['tests'] == raw.get('tests')
-            and resolved['registration_hash'] == backend_api._registration_hash(real['tests']),
-            'whole configured registration/fixture universe was not executed')
+    def members(selection):
+        return sorted(name for check in selection.values() if check['kind'] == 'ctest' for name in check['ctest_tests'][pid])
+    # The whole configured universe must be owned (claimed primary or fixture of one) in BOTH scopes.
+    universe = backend_api._fixture_closure(members(eligible), tests, descriptors)
+    require(universe == sorted(tests) and resolved['registration_hash'] == backend_api._registration_hash(real['tests']),
+            'configured registration universe is not wholly owned')
+    if scope == 'full':
+        checks = eligible
+        require(set(lane['checks']) == set(checks) == set(resolved['checks']) == set(raw.get('checks', {})),
+                'normal profile is missing authored checks')
+    else:
+        checks = {ident: eligible[ident] for ident in lane['checks']}
+        require(checks and set(checks) <= set(eligible) and set(checks) == set(resolved['checks']) == set(raw.get('checks', {}))
+                and resolved.get('primary_tests') == members(checks),
+                'selected checks/primaries differ from the source-bound plan lane')
+    closure = backend_api._fixture_closure(members(checks), tests, descriptors)
+    require(closure == resolved['tests'] == raw.get('tests')
+            and (scope == 'selected' or closure == sorted(tests)),
+            'whole configured registration/fixture universe was not executed' if scope == 'full'
+            else 'executed registrations differ from the exact selected fixture closure')
     pre, post = raw.get('input_audit_before_build'), raw.get('input_audit')
     for audit, after in ((pre, False), (post, True)):
         require(isinstance(audit, dict) and audit.get('passed') is True and audit.get('gaps') == []
@@ -369,14 +417,20 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
             require(audit.get(key) == resolved[key], 'audit identity differs: ' + key)
     require(post.get('header_entries', 0) > 0 and isinstance(post.get('header_index_hash'), str)
             and len(post['header_index_hash']) == 64 and post.get('input_hashes'), 'full discovered-header audit missing')
-    validate_default_build_evidence(profile, raw, checks, resolved=resolved)
-    require(any(check.get('build_scope') == 'default' for check in checks.values()), 'default build contract missing')
-    validate_phase_parallelism_evidence(profile, raw, require_test=bool(tests))
+    # Eligible default contracts stay required even when unselected (full audit + prerequisite build).
+    validate_default_build_evidence(profile, raw, eligible, resolved=resolved)
+    defaults = {ident: check for ident, check in eligible.items() if check.get('build_scope') == 'default'}
+    require(defaults, 'default build contract missing')
+    validate_phase_parallelism_evidence(profile, raw, require_test=bool(closure))
     if pid in subset.full_profiles(policy):
-        subset.validate_full_receipt(public, raw, plan, lane, profile, checks=checks)
+        subset.validate_full_receipt(public, raw, plan, lane, profile, checks=dict(defaults, **checks))
     observed = raw.get('observed_executions', {})
-    require(set(observed) == set(resolved['expected_executions']) and raw.get('outcome') == 'passed'
-            and raw.get('ctest_exit_code') == 0 and raw.get('attempt') == 1 and not raw.get('previous_attempts'),
+    # Independently derived: exact registration closure plus selected command checks.
+    expected_ids = sorted(closure + [ident for ident, check in checks.items() if check['kind'] != 'ctest'])
+    require(resolved.get('expected_executions') == expected_ids == raw.get('expected_executions')
+            and sorted(observed) == expected_ids and raw.get('outcome') == 'passed'
+            and (raw.get('ctest_exit_code') == 0 if closure else 'ctest_exit_code' not in raw)
+            and raw.get('attempt') == 1 and not raw.get('previous_attempts'),
             'selected physical executions missing, retried or failed')
     expected_xfail = {name for check in checks.values() if isinstance(check.get('expected_outcome'), dict)
                       and check['expected_outcome'] == dict(case='mdk09_incompatibility', exit_code=77)
@@ -392,36 +446,44 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
                 and all(result.get(key) == names for key in ('executions', 'expected_executions', 'observed_executions')),
                 'primary execution accounting differs: ' + ident)
         _expected_check_outcome(check, result)
-    process, env = raw.get('ctest_process', {}), raw.get('ctest_environment', {})
-    require(raw.get('ctest_process_authority') == 'in_memory_executor_v1'
-            and process.get('outcome') == 'passed' and process.get('exit_code') == 0
-            and process.get('argv') in raw.get('commands', [])
-            and env.get('base_hash') == real['phase_context']['environment_hashes']['test']
-            and process.get('environment_hash') == env.get('effective_hash'), 'physical CTest argv/environment missing')
-    overlays = []
-    if 'docker' in raw['required_capabilities']:
-        overlays += ['NOSTRC_MDK_STATE', 'NOSTRC_MDK_PYTHON']
-    if 'signer_endpoint' in raw['required_capabilities']:
-        overlays += ['NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN']
-    require(env.get('overlay_names') == sorted(overlays)
-            and (overlays or env.get('effective_hash') == env.get('base_hash')),
-            'undeclared CTest environment overlay')
-    directory = Path(raw['evidence_dir'])
-    config = ['-C', real['configuration']] if real['configuration'] else []
-    expected_argv = ['ctest', '--test-dir', real['build_dir'], *config, '-I', str(directory / 'ctest-indices.txt'),
-                     '--output-on-failure', '--output-junit', str(directory / 'results.xml'),
-                     '--parallel', str(raw['execution_parallelism']['test'])]
-    argv = process['argv']
-    require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'
-            and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')
-    require(_file(locator, directory / 'ctest-indices.txt').read_text() == '0,0,1,' + ','.join(str(i + 1) for i in range(len(tests))) + '\n',
-            'physical CTest selection does not cover whole registration universe')
-    logfile = directory / 'ctest.log'
-    require(logfile.is_relative_to(work), 'CTest output outside the sealed lane')
-    log_bytes = _file(locator, logfile).read_bytes()
-    require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')
-    require(not any(marker in log_bytes for marker in
-                    (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')
+    if not closure:
+        # Command-only selection: no CTest ran, so no CTest evidence may exist.
+        require(scope == 'selected' and not raw.get('ctest_process') and not raw.get('ctest_environment')
+                and 'ctest_process_authority' not in raw, 'command-only selection carries unexplained CTest evidence')
+    else:
+        process, env = raw.get('ctest_process', {}), raw.get('ctest_environment', {})
+        require(raw.get('ctest_process_authority') == 'in_memory_executor_v1'
+                and process.get('outcome') == 'passed' and process.get('exit_code') == 0
+                and process.get('argv') in raw.get('commands', [])
+                and env.get('base_hash') == real['phase_context']['environment_hashes']['test']
+                and process.get('environment_hash') == env.get('effective_hash'), 'physical CTest argv/environment missing')
+        overlays = []
+        if 'docker' in raw['required_capabilities']:
+            overlays += ['NOSTRC_MDK_STATE', 'NOSTRC_MDK_PYTHON']
+        if 'signer_endpoint' in raw['required_capabilities']:
+            overlays += ['NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN']
+        require(env.get('overlay_names') == sorted(overlays)
+                and (overlays or env.get('effective_hash') == env.get('base_hash')),
+                'undeclared CTest environment overlay')
+        directory = Path(raw['evidence_dir'])
+        config = ['-C', real['configuration']] if real['configuration'] else []
+        expected_argv = ['ctest', '--test-dir', real['build_dir'], *config, '-I', str(directory / 'ctest-indices.txt'),
+                         '--output-on-failure', '--output-junit', str(directory / 'results.xml'),
+                         '--parallel', str(raw['execution_parallelism']['test'])]
+        argv = process['argv']
+        require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'
+                and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')
+        indices = [str(i + 1) for i, test in enumerate(real['tests']) if test['name'] in set(closure)]
+        require(len(indices) == len(closure)
+                and _file(locator, directory / 'ctest-indices.txt').read_text() == '0,0,1,' + ','.join(indices) + '\n',
+                'physical CTest selection does not cover whole registration universe' if scope == 'full'
+                else 'physical CTest selection differs from the exact selected closure')
+        logfile = directory / 'ctest.log'
+        require(logfile.is_relative_to(work), 'CTest output outside the sealed lane')
+        log_bytes = _file(locator, logfile).read_bytes()
+        require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')
+        require(not any(marker in log_bytes for marker in
+                        (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')
     _signer(raw, profile, post, real['repo_root'])
     if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:
         from test_selection_mdk import validate_runtime
@@ -436,6 +498,13 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
                   apparmor_evidence=extra, executed_registrations=closure,
                   full_audit_hashes=dict(pre=pre['audit_hash'], post=post['audit_hash']),
                   **coverage_state(policy))
+    if scope == 'selected':
+        # Explicitly NOT executed and never passed/covered; this is not whole-universe execution.
+        result.update(normal_contract=SELECTED_MARKER, execution_scope=SELECTED_SCOPE,
+                      selected_checks=sorted(checks), not_executed_checks=sorted(set(eligible) - set(checks)),
+                      not_executed_registrations=sorted(set(tests) - set(closure)),
+                      universe_registrations=len(tests), plan_rederived=True,
+                      whole_universe_executed=False, full_profile_acceptance=False)
     if transport is not None:
         result['transport'] = transport
     result['qualification_hash'] = digest(result)
@@ -452,7 +521,7 @@ def validate_receipt(policy, plan, receipt):
         require(entry is not None and entry['receipt'] == receipt and 'transport' in receipt,
                 'normal receipt was not loaded from its verified portable bundle')
         expected = qualify(policy, plan, receipt['public_evidence']['path'], receipt['adapter_evidence']['path'],
-                           entry['apparmor'], locator=entry['locator'], transport=entry['transport'])
+                           entry['apparmor'], locator=entry['locator'], transport=entry['transport'], repo=entry['repo'])
         require(receipt == expected, 'normal qualification changed/forged')
         verify_source_closure(entry['locator'], entry['repo'], plan)
         return _json(entry['locator'], receipt['public_evidence']['path'])
@@ -801,6 +870,11 @@ def worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_d
     if policy['profiles'].get(pid, {}).get(FIELD) != MARKER:
         print('normal qualification: %s has no authored normal contract; raw receipt unchanged' % pid)
         return None
+    if plan['effective_mode'] != 'broad' and policy['profiles'][pid].get(SELECTED_FIELD) != SELECTED_MARKER:
+        # Selective plan without the separately authored selected contract: the raw
+        # receipt keeps its own (non-normal) accounting; nothing is promoted.
+        print('normal qualification: %s has no authored selected-normal contract; raw receipt unchanged' % pid)
+        return None
     evidence_root, receipts_dir = Path(evidence_root).resolve(strict=True), Path(receipts_dir).resolve(strict=True)
     apparmor_dir = Path(apparmor_dir)
     require(apparmor_dir == evidence_root.parent / 'namespace-apparmor', 'AppArmor evidence is not the job directory')
@@ -818,7 +892,7 @@ def worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_d
     require(provisioned == bool(adapter.get('namespace_apparmor_profile')),
             'provisioned AppArmor profile and gate custody disagree')
     apparmor = str(apparmor_dir) if provisioned else None
-    in_place = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor)
+    in_place = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor, repo=repo)
     partial = receipts_dir / ('.' + ARCHIVE + '.partial')
     temps = []
     try:
@@ -831,7 +905,7 @@ def worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_d
             mapping[str(roots['apparmor'])] = temp / 'apparmor'
         locator = Locator(mapping)
         relocated = qualify(policy, plan, str(public_path), str(roots['run'] / 'adapter-receipt.json'), apparmor,
-                            locator=locator, transport=transport)
+                            locator=locator, transport=transport, repo=repo)
         require(_strip(relocated) == _strip(in_place), 'relocated qualification differs from in-place qualification')
         verify_source_closure(locator, repo, plan)
         raw = current.read_bytes()

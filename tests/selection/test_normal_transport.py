@@ -37,7 +37,7 @@ def join(manifest, contents):
     return normal.MAGIC + len(raw).to_bytes(8, 'big') + raw + body, raw
 
 
-class TransportTests(NormalFixture):
+class TransportFixture(NormalFixture):
     LANE = ('dependency', 'evidence', 'run1', '0', 'lane-synthetic')
     ADAPTER_UP = 1
 
@@ -101,7 +101,9 @@ class TransportTests(NormalFixture):
             receipt['qualification_hash'] = s.digest({k: v for k, v in receipt.items() if k != 'qualification_hash'})
             (lane / 'receipt.json').write_text(json.dumps(receipt))
 
-    # ------------------------------------------------------------------ cases --
+
+
+class TransportTests(TransportFixture):
     def test_worker_publishes_one_portable_receipt_and_aggregate_never_reopens_worker_paths(self):
         raw = self.public_path.read_bytes()
         result = self.worker()
@@ -376,6 +378,190 @@ class TransportTests(NormalFixture):
                 with self.assertRaises(ValueError):
                     self.worker(policy)
                 self.assert_raw_retained()
+
+
+class SelectedNormalTests(TransportFixture):
+    """Real engine-backed selective lane: only selected primaries + exact fixture closure run."""
+
+    def prepare_source(self):
+        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
+        self.inventory['checks']['fixture.gui']['nodes'] = ['other']
+        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
+        (self.root / 'other.txt').write_text('base\n')
+        inventory = self.root / 'tests/selection/inventory.json'
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'selected-normal base')
+        self.base_sha = self.git('rev-parse', 'HEAD').decode().strip()
+        (self.root / 'other.txt').write_text('changed\n')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', 'change only the other node')
+
+    def make_plan(self):
+        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')
+
+    def test_plan_really_selects_a_strict_subset(self):
+        self.assertEqual(self.plan['effective_mode'], 'affected')
+        self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])
+        self.assertEqual(self.resolved['primary_tests'], ['gui'])
+        self.assertNotIn('a-model', self.resolved['tests'])
+
+    def test_selected_receipt_accounts_not_executed_and_aggregates_portably(self):
+        raw = self.public_path.read_bytes()
+        result = self.worker()
+        eligible = sorted(c for c, check in self.inventory['checks'].items() if 'synthetic' in check['profiles'])
+        universe = sorted(t['name'] for t in self.real['tests'])
+        self.assertEqual(result['execution_scope'], normal.SELECTED_SCOPE)
+        self.assertEqual(result['normal_contract'], normal.SELECTED_MARKER)
+        self.assertEqual(result['selected_checks'], ['fixture.gui'])
+        self.assertEqual(result['not_executed_checks'], sorted(set(eligible) - {'fixture.gui'}))
+        self.assertIn('default', result['not_executed_checks'])
+        self.assertEqual(sorted(result['executed_registrations'] + result['not_executed_registrations']), universe)
+        self.assertFalse(set(result['executed_registrations']) & set(result['not_executed_registrations']))
+        self.assertTrue({'a-model', 'omitted', 'z-first'} <= set(result['not_executed_registrations']))
+        self.assertEqual(sorted(result['checks']), ['fixture.gui'])          # never passed/covered
+        self.assertIs(result['whole_universe_executed'], False)
+        self.assertIs(result['full_profile_acceptance'], False)
+        self.assertEqual((self.receipts / normal.ORIGINAL).read_bytes(), raw)
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        paths, aggregate = self.aggregate(base)
+        self.assertEqual(len(paths), 1)
+        self.assertTrue(aggregate['passed'], aggregate['errors'])
+        # Duplicate raw + normal for the same lane never double-credits.
+        lane = next(base.glob('*/synthetic'))
+        (lane / 'nested').mkdir()
+        shutil.copyfile(lane / normal.ORIGINAL, lane / 'nested' / 'receipt.json')
+        self.assertFalse(self.aggregate(base)[1]['passed'])
+
+    def test_selection_must_equal_the_source_bound_rederived_plan(self):
+        other = s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='broad')
+        with mock.patch.object(s, 'git_plan', return_value=other):
+            with self.assertRaisesRegex(ValueError, 're-derived from the tested history'):
+                self.worker()
+        self.assert_raw_retained()
+        lane = self.plan['lanes'][0]
+        for change in (dict(partial_profiles=['synthetic']), dict(broadening_reasons=['manual']),
+                       dict(requested_mode='broad')):
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(ValueError, 'unrestricted, unbroadened affected plan'):
+                    normal._scope(self.inventory, dict(self.plan, **change), lane, self.profile, self.root)
+        with self.assertRaisesRegex(ValueError, 'exact tested checkout'):
+            normal._scope(self.inventory, self.plan, lane, self.profile, None)
+
+    def test_missing_extra_or_skipped_selected_execution_refuses(self):
+        original = copy.deepcopy(self.original)
+        mutations = {
+            'missing fixture': lambda raw: raw['tests'].remove('reset'),
+            'extra unselected execution': lambda raw: raw['tests'].append('a-model'),
+            'skipped selected fixture': lambda raw: raw['observed_executions'].update(reset='skipped'),
+            'skipped selected primary': lambda raw: raw['observed_executions'].update(gui='skipped'),
+            'omission authority': lambda raw: raw.update(baseline_exclusions=[dict(authority='reviewed_diagnostic_nonmember_subset_v1')]),
+            'selected check dropped': lambda raw: raw['checks'].pop('fixture.gui'),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label):
+                self.original = copy.deepcopy(original); mutate(self.original['backend_receipt'])
+                self.seal(); self.publish_raw()
+                with self.assertRaises((KeyError, ValueError, RuntimeError)):
+                    self.worker()
+                self.assert_raw_retained()
+
+    def test_consistently_rebound_accounting_still_binds_to_derived_closure(self):
+        original, resolved = copy.deepcopy(self.original), copy.deepcopy(self.resolved)
+        def rebind(edit):
+            self.original, self.resolved = copy.deepcopy(original), copy.deepcopy(resolved)
+            raw = self.original['backend_receipt']
+            edit(self.resolved['expected_executions'], raw['expected_executions'], raw['observed_executions'])
+            self.resolved['expected_executions'].sort(); raw['expected_executions'].sort()
+            self.resolved['resolved_hash'] = s.digest({k: v for k, v in self.resolved.items() if k != 'resolved_hash'})
+            raw['resolved_hash'] = self.resolved['resolved_hash']
+            self.seal(); self.publish_raw()
+        cases = {
+            'fixture dropped from every accounting field': lambda r, e, o: (r.remove('reset'), e.remove('reset'), o.pop('reset')),
+            'unrelated passed execution added everywhere': lambda r, e, o: (r.append('a-model'), e.append('a-model'),
+                                                                            o.update({'a-model': 'passed'})),
+        }
+        for label, edit in cases.items():
+            with self.subTest(label):
+                rebind(edit)
+                with self.assertRaisesRegex(ValueError, 'selected physical executions missing'):
+                    self.worker()
+                self.assert_raw_retained()
+
+    def test_unowned_universe_and_failed_cleanup_refuse(self):
+        import test_selection_realization as r
+        metadata = r._metadata
+        def stray(policy, realization):
+            tests, descriptors = metadata(policy, realization)
+            return dict(tests, stray=dict(name='stray')), descriptors
+        with mock.patch.object(r, '_metadata', side_effect=stray):
+            with self.assertRaisesRegex(ValueError, 'not wholly owned'):
+                self.worker()
+        self.assert_raw_retained()
+        self.adapter['executions'][0]['lanes'][0].update(mdk_recovery=[dict(closed_in_namespace=False, recovery_exit=0)])
+        self.adapter_path.write_text(json.dumps(self.adapter))
+        with self.assertRaises(ValueError):
+            self.worker()
+        self.assert_raw_retained()
+
+    def test_contract_must_be_separately_authored_linux_and_never_alone(self):
+        policy = copy.deepcopy(self.inventory)
+        policy['profiles']['synthetic'].pop(normal.SELECTED_FIELD)
+        self.assertIsNone(self.worker(policy))          # no selected contract: raw stays the lane receipt
+        self.assert_raw_retained()
+        for change in (dict(platform='macos'), dict(architecture='arm64')):
+            with self.subTest(change=change):
+                policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].update(change)
+                with self.assertRaises(ValueError):
+                    normal.validate_metadata(policy)
+        policy = copy.deepcopy(self.inventory); policy['profiles']['synthetic'].pop(normal.FIELD)
+        with self.assertRaisesRegex(ValueError, 'requires the authored full contract'):
+            normal.validate_metadata(policy)
+        policy = copy.deepcopy(self.inventory)
+        policy['profiles']['synthetic'][normal.SELECTED_FIELD]['registration_policy'] = 'all_owned_and_executed'
+        with self.assertRaises(ValueError):
+            normal.validate_metadata(policy)
+
+
+class CommandOnlySelectedTests(TransportFixture):
+    """A real affected plan selecting only the default build contract: no CTest, explicitly."""
+
+    def prepare_source(self):
+        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
+        self.inventory['checks']['default']['nodes'] = ['application', 'core', 'vectors', 'testing', 'other']
+        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
+        (self.root / 'other.txt').write_text('base\n')
+        inventory = self.root / 'tests/selection/inventory.json'
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'command-only base')
+        self.base_sha = self.git('rev-parse', 'HEAD').decode().strip()
+        (self.root / 'other.txt').write_text('changed\n')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', 'change only the other node')
+
+    def make_plan(self):
+        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')
+
+    def test_command_only_selection_qualifies_without_ctest_and_aggregates(self):
+        self.assertEqual(self.plan['lanes'][0]['checks'], ['default'])
+        self.assertEqual(self.resolved['tests'], [])
+        result = self.worker()
+        self.assertEqual(result['execution_scope'], normal.SELECTED_SCOPE)
+        self.assertEqual(result['executed_registrations'], [])
+        self.assertEqual(sorted(result['not_executed_registrations']), sorted(t['name'] for t in self.real['tests']))
+        self.assertEqual(sorted(result['checks']), ['default'])
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        self.assertTrue(self.aggregate(base)[1]['passed'])
+
+    def test_command_only_lane_with_ctest_evidence_refuses(self):
+        self.original['backend_receipt']['ctest_process'] = dict(outcome='passed')
+        self.seal(); self.publish_raw()
+        with self.assertRaisesRegex(ValueError, 'unexplained CTest evidence'):
+            self.worker()
+        self.assert_raw_retained()
 
 
 class WorkflowWiring(unittest.TestCase):
