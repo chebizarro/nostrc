@@ -25972,6 +25972,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26028,6 +26035,13 @@
         "custody": "linux_pidns_v1",
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
       },
       "execution_domain": "mdk_original_linux_v1",
       "build_parallelism": 2,
@@ -26167,6 +26181,13 @@
         "custody": "linux_pidns_v1",
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
       },
       "phase_environments": {
         "configure": {},
@@ -26500,6 +26521,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26611,6 +26639,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26664,6 +26699,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26714,6 +26756,13 @@
         "custody": "linux_pidns_v1",
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
       },
       "execution_domain": "mdk_original_linux_v1",
       "build_parallelism": 2,
