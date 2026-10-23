@@ -182,8 +182,9 @@ jobs:
       # >5 beat guard, 50 cycles, TIMEOUT 90 and sanitizers unchanged. This step
       # re-runs the SAME binary with the same command line under explicit
       # child-local process policies (inherited / foreground / background
-      # control), quiet and with busy-loop siblings approximating (not equal to)
-      # `ctest -j2`, and prints the Darwin policy and thread-CPU evidence for each.
+      # control), sequentially and quietly (it does not reproduce `ctest -j2`;
+      # the real `Test` step's own `SchedEnv:` lines show that state), and
+      # prints the Darwin policy and thread-CPU evidence for each.
       # The no-work control thread is opt-in and only set by the probe script's
       # `*-control` runs; the gating `Test` step never starts it.
       # `continue-on-error` + an always-zero script keep it from masking or

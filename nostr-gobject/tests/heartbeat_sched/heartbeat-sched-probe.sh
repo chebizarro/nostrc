@@ -8,8 +8,6 @@
 #   inherit          policy exactly as the CI step handed it down (the control)
 #   fg               child-local setpriority(PRIO_DARWIN_PROCESS,0,0) —
 #                    unprivileged, this process only, no global policy
-#   inherit-loaded   inherit / fg with $loaders busy-loop siblings that
-#   fg-loaded        approximate (NOT equal) the concurrency of `ctest -j2`
 #   inherit-control  inherit / fg with the opt-in no-work control sleeper
 #   fg-control       thread (NOSTRC_HEARTBEAT_CONTROL=1). ONLY these runs set it.
 #   bg-positive      positive control: PRIO_DARWIN_BG on this process only
@@ -21,6 +19,12 @@
 # `probe-env:`. Normal CTest sets neither and keeps the original 8 cases and
 # the original single-thread workload.
 #
+# Runs are sequential and quiet. The probe deliberately does NOT try to
+# reproduce `ctest -j2` contention (no background load generators, no PID
+# bookkeeping): the real concurrent state is observed by the gating test's own
+# `SchedEnv:` lines in the actual `Test` step, and this probe answers only the
+# policy question (does the inherited process policy matter?).
+#
 # It never changes a test, threshold, sleep, retry or exit status of the real
 # `Test` step; it ALWAYS exits 0 and every failure is printed, not hidden.
 # A failing `inherit` run is not retried into a pass: every run is reported.
@@ -30,7 +34,6 @@ set -u
 
 bin=${1:?usage: $0 <test binary> [repetitions]}
 reps=${2:-3}
-loaders=${HEARTBEAT_PROBE_LOADERS:-2}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hb-sched.XXXXXX")
 launch="$work/heartbeat_sched_launch"
@@ -68,43 +71,23 @@ export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:strict_string_checks=1}"
 
 declare -a rows=()
 declare -a rcs=()
-loader_pids=()
-start_loaders() {
-    local n
-    for ((n = 0; n < loaders; n++)); do
-        ( while :; do :; done ) &
-        loader_pids+=("$!")
-    done
-}
-stop_loaders() {
-    local pid
-    for pid in ${loader_pids[@]+"${loader_pids[@]}"}; do
-        kill "$pid" 2>/dev/null
-        wait "$pid" 2>/dev/null
-    done
-    loader_pids=()
-}
-trap stop_loaders EXIT
-
-# run_one label policy index loaded(0|1) control(0|1) [test args...]
+# run_one label policy index control(0|1) [test args...]
 run_one() {
-    local label=$1 policy=$2 idx=$3 loaded=$4 control=$5
-    shift 5
+    local label=$1 policy=$2 idx=$3 control=$4
+    shift 4
     local log="$work/$label-$idx.log" rc diag=unset
     local -a diag_env=(-u NOSTRC_HEARTBEAT_DIAGNOSTICS)
     if [[ $label == diag-case ]]; then
         diag=1
         diag_env=(NOSTRC_HEARTBEAT_DIAGNOSTICS=1)
     fi
-    [[ $loaded == 1 ]] && start_loaders
     {
-        echo "probe-env: label=$label policy=$policy loaded=$loaded NOSTRC_HEARTBEAT_CONTROL=$control NOSTRC_HEARTBEAT_DIAGNOSTICS=$diag args=${*:-<none>}"
+        echo "probe-env: label=$label policy=$policy NOSTRC_HEARTBEAT_CONTROL=$control NOSTRC_HEARTBEAT_DIAGNOSTICS=$diag args=${*:-<none>}"
         env "${diag_env[@]}" NOSTRC_HEARTBEAT_CONTROL="$control" \
             "$launch" --policy "$policy" -- "$bin" "$@"
     } >"$log" 2>&1
     rc=$?
-    [[ $loaded == 1 ]] && stop_loaders
-    echo "== $label run $idx policy=$policy loaded=$loaded control=$control rc=$rc"
+    echo "== $label run $idx policy=$policy control=$control rc=$rc"
     grep -E 'probe-env:|sched-probe: (before|after|setpriority|requested)|^1\.\.|Heartbeat:|Attribution:|SchedEnv:|^not ok|Bail out' "$log"
     local before after setrc bgflag hb cases
     before=$(grep -m1 'sched-probe: before' "$log" | grep -o 'darwin_bg_process=[-0-9]*')
@@ -125,15 +108,13 @@ run_one() {
 }
 
 for ((i = 1; i <= reps; i++)); do
-    run_one inherit inherit "$i" 0 0
-    run_one fg fg "$i" 0 0
-    run_one inherit-loaded inherit "$i" 1 0
-    run_one fg-loaded fg "$i" 1 0
-    run_one inherit-control inherit "$i" 0 1
-    run_one fg-control fg "$i" 0 1
+    run_one inherit inherit "$i" 0
+    run_one fg fg "$i" 0
+    run_one inherit-control inherit "$i" 1
+    run_one fg-control fg "$i" 1
 done
-run_one bg-positive bg 1 0 0
-run_one diag-case inherit 1 0 0 -p /nostr-gobject/latency-diagnostic/sched-env-thread-cpu
+run_one bg-positive bg 1 0
+run_one diag-case inherit 1 0 -p /nostr-gobject/latency-diagnostic/sched-env-thread-cpu
 
 echo "== summary (label|run|rc|TAP cases|policy before|after|setpriority|in-test bg flag|heartbeat)"
 printf '%s\n' "${rows[@]}"

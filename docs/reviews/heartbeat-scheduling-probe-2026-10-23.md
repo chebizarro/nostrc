@@ -45,8 +45,12 @@ against 93 ms wall plain (`glibcpu.c`). The late wakes are process-wide wake lat
 | plain | pass (missed 0, max gap 12.5–15 ms) |
 | `taskpolicy -b` (more than 11 runs across three builds of the test) | FAIL every time: `post_burst_missed=5–6`, max gap 108–210 ms |
 | `taskpolicy -b` then `taskpolicy -B -p $$` | FAIL 3/3. `-B` returned 0 but `darwin_bg_process` stayed 1, so it is **ineffective**. |
-| outer `-b`, then child-local `setpriority(PRIO_DARWIN_PROCESS,0,0)` | **pass 2/2 plain, 2/2 loaded** (final run); 3/3 earlier |
-| outer `-b`, inherited (control) | FAIL 2/2 plain, 2/2 loaded |
+| outer `-b`, then child-local `setpriority(PRIO_DARWIN_PROCESS,0,0)` | **pass** 2/2 quiet in the final script run; 3/3 earlier |
+| outer `-b`, inherited (control) | FAIL 2/2 quiet in the final script run |
+
+Historical, not deleted: earlier script versions also ran busy-loop "loaded" variants (inherit FAIL 2/2, fg pass 2/2 under
+outer `-b`; all pass plain). Those variants were removed from the probe (see Limits); the logs stay in the evidence directory
+(`runs/final-*`, `runs/probe-under-outer-bg.log`, `runs/v2-probe-*.log`) as history only.
 
 The supported child-local prerequisite is `setpriority(PRIO_DARWIN_PROCESS, 0, 0)`. It is unprivileged, affects only the
 calling process, and survives `exec`. It does not change global policy or any threshold. It demonstrates that a
@@ -81,16 +85,13 @@ Step "Heartbeat scheduling probe (macOS, record-only)" in the legacy `nostrc-ci.
 macOS+asan_ubsan only, `continue-on-error`, script always exits 0. The `Test` step stays the only gate. Command:
 `bash nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh build/nostr-gobject/test_nostr_gobject_main_thread_latency 3`.
 
-Per repetition it runs `inherit`, `fg`, `inherit-loaded`, `fg-loaded` (busy-loop siblings, an approximation of `ctest -j2`),
+Per repetition it runs `inherit`, `fg`,
 and `inherit-control`, `fg-control` (the only runs that set `NOSTRC_HEARTBEAT_CONTROL=1`). Once it runs `bg-positive`
 (expected to fail: a positive control) and `diag-case`. Every run logs a `probe-env:` line with the opt-in values it set
 explicitly, the policy before and after, the `setpriority` return code, the TAP case count, the in-test background flag
 and the heartbeat line. The summary ends with `all return codes:`. Failures are printed in full and never retried.
 
-Local result of the same script, under an outer `taskpolicy -b` (2 repetitions): `inherit`, `inherit-loaded`,
-`inherit-control` all rc=134 (`darwin_bg_process=1`, 5–6 misses, ~208 ms). `fg`, `fg-loaded`, `fg-control` all rc=0
-(policy 1 -> 0, setpriority rc=0). `bg-positive` rc=134. `diag-case` rc=0. Plain: every run rc=0 except `bg-positive`.
-Logs: `runs/v2-probe-plain.log`, `runs/v2-probe-outer-bg.log`.
+Local result of the final script, under an outer `taskpolicy -b` and plain: see "Final verification" below.
 
 Reading the next hosted job (decision rules, not results):
 
@@ -99,8 +100,15 @@ Reading the next hosted job (decision rules, not results):
 - `fg` also fails: the cause is not the process background flag.
 - `inherit` passes but `inherit-control` fails: the control thread itself perturbs timing. That is why it is opt-in.
 
-Limits: the probe runs after `Test`, not under the real `ctest -j2`, and only the process flag is cleared by `fg`. The real
-failing ctest run prints its own `SchedEnv:` lines, which is the most direct evidence.
+Limits, exactly:
+- The probe runs sequentially and quietly, after `Test`. It does **not** reproduce `ctest -j2` contention. Optional
+  busy-loop "loaded" variants were removed: they did not faithfully reproduce `-j2` (prior plain CPU contention, 28 busy
+  loops on 14 cores, never reproduced the signature), and cleaning them up needed kill/wait on PIDs that the shell cannot
+  reserve. The real concurrent state is observed by the gating test's own `SchedEnv:` lines in the actual `Test` step.
+- Only the process-level background flag is cleared by `fg`; thread-level or QoS inheritance is printed, not changed.
+- The control thread, when opted in, is an observer effect; the quiet `inherit`/`fg` runs are the unperturbed answer.
+- `thread_cpu_us()` returns -1 (printed as such, case skipped) where thread CPU time is unavailable, e.g. Windows; the
+  gating test never depends on it. Non-Apple branches are not compiled here; parent integration compiles Linux.
 
 ## Version assessment
 

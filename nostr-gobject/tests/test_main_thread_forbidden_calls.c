@@ -259,7 +259,8 @@ typedef struct {
     gint64 max_late_us;
 } SchedControl;
 
-/* Calling-thread CPU time in microseconds, or -1 if unavailable. On Darwin this
+/* Calling-thread CPU time in microseconds, or -1 if unavailable (including
+ * platforms without CLOCK_THREAD_CPUTIME_ID; the gating test never depends on it). On Darwin this
  * uses thread_info(): clock_gettime(CLOCK_THREAD_CPUTIME_ID) returned
  * wall-clock epoch time in this test binary on macOS 27, so it is not used. */
 static gint64
@@ -275,11 +276,13 @@ thread_cpu_us(void)
         return -1;
     return ((gint64)info.user_time.seconds + info.system_time.seconds) * G_USEC_PER_SEC +
            info.user_time.microseconds + info.system_time.microseconds;
-#else
+#elif !defined(G_OS_WIN32) && defined(CLOCK_THREAD_CPUTIME_ID)
     struct timespec ts;
     if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0)
         return -1;
     return (gint64)ts.tv_sec * G_USEC_PER_SEC + ts.tv_nsec / 1000;
+#else
+    return -1; /* unavailable on this platform; record-only output prints -1 */
 #endif
 }
 
@@ -501,6 +504,10 @@ static void
 test_sched_env_thread_cpu_excludes_sleep(void)
 {
     gint64 cpu_start = thread_cpu_us();
+    if (cpu_start < 0) {
+        g_test_skip("thread CPU time unavailable on this platform");
+        return;
+    }
     gint64 wall_start = g_get_monotonic_time();
     g_usleep(30 * G_TIME_SPAN_MILLISECOND);
     gint64 cpu_end = thread_cpu_us();
