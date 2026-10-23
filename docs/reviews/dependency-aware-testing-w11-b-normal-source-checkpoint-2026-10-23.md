@@ -151,8 +151,15 @@ single changed exec key; authoring Darwin's physical `0` in this test fixture
 makes both pass while ambient-drift negatives still refuse. No engine environment
 hash exception or historical omission-policy refresh is introduced. Nine focused
 fixture/call-site cases and both corrected counterfactual cases pass, but a new
-exact-source full run is still required. The seventh failure, MDK two-root fake
-controller `cleanup_failed`, is coordinated with its runtime owner, not waived.
+exact-source full run is still required. A's exact approved
+`b7bd548c3a5a5772a8ab82ab3edc974ad6ac52ff` fixes the seventh failure in
+`test_mdk_gate.py` only: the fake inventory raced a sibling's file removal between
+listing and reading. Only `FileNotFoundError` for that vanished fake entry is
+ignored; parse/permission errors still fail. Its deterministic before/after
+regression and 19 module cases pass on A's source, with the original failed cases
+retained. The exact tip is merged with ancestry. Production MDK source, expected
+statuses, cleanup guards and deadlines are unchanged; no real Docker proof is
+inferred. One new full-default run follows all seven causal corrections.
 
 Mac optional TCP applicability is separately authorized and tracked in
 `nostrc-0cfsg.36.9`, but held outside this landing-repair batch. The exact legacy
