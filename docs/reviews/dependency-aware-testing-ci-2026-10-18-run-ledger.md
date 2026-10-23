@@ -1,5 +1,83 @@
 # Dependency-aware testing acceptance run ledger
 
+## Final finite hosted refresh — 2026-10-23T12:49:15.864836Z
+
+Fresh sequential census12:49:11Z–12:49:15.864836Z: **58 distinct dependency-test
+roots/latest attempts =57 failed/one cancelled;zero pending/zero successful**.
+One terminal refresh of the four previously pending roots, no dispatch/retry/
+waiting loop. The10:22 snapshot and all prior failed/cancelled attempts below are
+preserved. Qualifying counters remain **0/20 reviewed distinct real-PR physical
+comparisons;0/2 successful complete broad integrations;W11 NOT MET/W12 NOT RUN**.
+No new paired comparison has been reviewed; nested jobs are not integrations.
+
+| Terminal root, attempt1 | Actual tested source from original validation | Final jobs and result |
+|---|---|---|
+|[PR22 39922245779](https://github.com/chebizarro/nostrc/actions/runs/39922245779), [gate120367683658](https://github.com/chebizarro/nostrc/actions/runs/39922245779/job/120367683658)|`4527a06e8c57ea014499d6e64f548843584f83eb` (API head remains d29a5ac)|10:31:26Z failure;62 jobs:45 success,14 failure,two cancelled,one skipped|
+|[Master946 39922272251](https://github.com/chebizarro/nostrc/actions/runs/39922272251), [gate120372615130](https://github.com/chebizarro/nostrc/actions/runs/39922272251/job/120372615130)|`94647b282b1c26d8eed2a4fc2b7a1bf109479e65`|10:44:09Z failure;62 jobs:47 success,14 failure,one skipped|
+|[Manual broad39922309846](https://github.com/chebizarro/nostrc/actions/runs/39922309846), [gate120373005133](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120373005133)|`94647b282b1c26d8eed2a4fc2b7a1bf109479e65`|10:45:10Z failure;62 jobs:42 success,13 failure,six cancelled,one skipped|
+|[Master440 39923954670](https://github.com/chebizarro/nostrc/actions/runs/39923954670), [gate120374891396](https://github.com/chebizarro/nostrc/actions/runs/39923954670/job/120374891396)|`44044fefe9c40ac095044e9c22eb06f2678aab1f`|10:50:05Z failure;62 jobs:47 success,14 failure,one skipped|
+
+**Observed failure classes, not a new causal audit:** every final validation is
+`passed=false`, requested`complete=true`, `complete_gate_eligible=false` and
+`enforcement_ready=false`. Each retains nine physical coverage gaps and resolve
+failures in core Linux/macOS ASan,Grotto ASan,GH sanitizer,MDK08/011; ordinary
+core/Grotto/GH and static lanes are missing. Incomplete/diagnostic results cannot
+satisfy complete aggregation. Original error arrays contain1358/1356/1357/1356
+entries respectively: these are retained accounting errors, **not test cases or
+quota units**. Broad accounting fails core/static on PR22/master946/master440;
+PR22 also cancels GH/Grotto. Manual broad fails static and cancels GH/Grotto.
+Its [MDK08 job120314996533](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120314996533)
+is now terminal failure, not pending coverage. Selected ordinary/ASan/policy/native
+failures are preserved. [Libgo-native120314996669](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120314996669)
+and [libgo120314996705](https://github.com/chebizarro/nostrc/actions/runs/39922309846/job/120314996705)
+remain successful bounded jobs, not complete broad integrations.
+
+Only load-bearing final validation/accounting ZIPs newly retained by this batch
+were downloaded (97538 bytes total), with API SHA256/size, ZIP CRC and every
+member hash verified:
+
+| Root | Artifact | Bytes | Original ZIP SHA256 |
+|---|---:|---:|---|
+|PR22 validation|12494972385|23313|`bf5c06976eace78fbc8025ef1f81ccd7080750b1c8a5a51fe016a8ef142987fc`|
+|PR22 broad accounting|12495417013|1468|`d3280e4ea3788a73ebfca634ea782db076252420d193b29b815582ca455e54af`|
+|Master946 validation|12495459179|23278|`6b9eecc87615af923aaf83882dcfa6b2d5aba83f3230c0ef2b688cad4a158dae`|
+|Master946 broad accounting|12491639364|1447|`d1d9e93b54b830a651b724c0f1c54dc72d47ab6df679a841627f15825605c27a`|
+|Manual broad validation|12496620411|23308|`ad05c2429302b90ef4ad1c57d77bfb39166fbdf1bf4c897b7f4848152b7d4fe9`|
+|Master440 validation|12496800267|23277|`28d2df8d937d1f137bd1a79be8dc15ee7656b2cff17245891a86921717cc0e35`|
+|Master440 broad accounting|12496072275|1447|`971ec2128f473fa55002f14e587a59ff8ed99325c76c885acfef0176724f1c9c`|
+
+Manual broad's unchanged failed accounting12493552566 was already retained below;
+no redownload. Parent raw11:39 run/jobs at
+`/tmp/nostrc-w11-w12-completion-20261023/` and fresh API agree on all62 terminal
+job IDs/outcomes/timestamps (run SHA256`e7622c0dd848bd671eb97f502a976eebbfd8166d070ddb275a1ade664c295d73`,
+jobs SHA256`8f35e6c0b079be54c34b14bd66ccf2a9f6dff028e418eef16c44efcdc449b449`).
+Fresh original API/jobs/archives are under
+`/tmp/nostrc-w11-e-final-refresh-20261023T1248/`; raw files may expire. The
+[existing E evidence JSON](dependency-aware-testing-w11-e-evidence-2026-10-23.json)
+appends `final_refresh_20261023` with every raw-file/member digest and root/job
+identity; appended-file SHA256 is
+`fbd905856ca73f35d88c20ab0399ce75811b1d0c42b2f49c584546dd66cd067e`.
+Its historical fields are unchanged; the earlier50ab6ef3 checksum is
+for the original file at762b09d6c, not the appended bytes.
+
+Standalone strict-fuzz39922316626 remains successful, `.29` CLOSED. Parent's
+291-entry independent verification reports zero errors, exact94647b2 and `.29`
+credit only (proof SHA256`38bb86038f72c5de4ec92e07c24d15f013e86ab10f220e2240a72476983b42bd`).
+No fuzz corpus/log redownload or broad-credit promotion. Original62179 exact
+replay remains NOT RUN/unrecoverable;51 other inputs are not replacements.
+
+Next integration remains B's unaccepted/unpushed normal checkpointa786f19e and
+bounded A44cb6b47…/Cb3bf8111… fixes, not new hosted proof. Public macOS CTest's
+admin/`_developer` seal refusal and core-macOS legacy-TCP applicability correction
+must stay visible nonvalidation, not provisioned TCP coverage. Docker remains
+unresponsive, no restart/prune authorized. See the matching audit section for
+exact tips. E's external-historical-engine restriction is its implementation
+boundary, **not an original20-prospective-PR requirement**; no new source-admission
+method or quota waiver is introduced here. `.5` remains CLOSED with fresh comment;
+official `bd export --all` preserves37 memories/comments and leaves interactions
+untouched. Documentation/tracker only,no bump,no protection/default/hook changes.
+
+
 ## JSON-GLib real hosted remediation — finalized run39922316626
 
 [Literal `.29` closure evidence](dependency-aware-testing-json-glib-hosted-2026-10-23.md)
