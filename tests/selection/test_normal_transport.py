@@ -387,7 +387,8 @@ class SelectedNormalTests(TransportFixture):
 
     def prepare_source(self):
         self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
-        self.inventory['checks']['fixture.gui']['nodes'] = ['other']
+        # Superset of the authored owners/impact edges (the full audit requires them) plus 'other'.
+        self.inventory['checks']['fixture.gui']['nodes'] = ['application', 'testing', 'other']
         self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
         (self.root / 'other.txt').write_text('base\n')
         inventory = self.root / 'tests/selection/inventory.json'
@@ -557,7 +558,8 @@ class PullRequestSelectedTests(TransportFixture):
 
     def prepare_source(self):
         self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
-        self.inventory['checks']['fixture.gui']['nodes'] = ['other']
+        # Superset of the authored owners/impact edges (the full audit requires them) plus 'other'.
+        self.inventory['checks']['fixture.gui']['nodes'] = ['application', 'testing', 'other']
         self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
         (self.root / 'other.txt').write_text('base\n')
         inventory = self.root / 'tests/selection/inventory.json'
