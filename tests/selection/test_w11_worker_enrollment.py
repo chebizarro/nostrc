@@ -81,9 +81,11 @@ class WorkerEnrollmentTests(unittest.TestCase):
         for path in ('tests/runtime/test_provisioned_nip5f.py', 'tests/runtime/nip5f_approver.c',
                      'gnome/groundhog/tests/app/test_secret_service.py',
                      'apps/grotto/data/org.nostr.Grotto.gschema.xml', 'apps/grotto/daemon/main_daemon.c',
-                     'gnome/seahorse/secret_store.c', 'gnome/seahorse/secret_store.h'):
+                     'gnome/seahorse/secret_store.c', 'gnome/seahorse/secret_store.h',
+                     'apps/relayd/include/relayd_async_storage.h', 'nips/nip55l/dbus/org.nostr.Signer.xml'):
             self.assertTrue(set(s.classify(p, path)['nodes']) & covered, path)
-        self.assertEqual(p['nodes']['nip5f.fixture_inputs']['depends_on'], ['gnome.seahorse'])
+        self.assertEqual(p['nodes']['nip5f.fixture_inputs']['depends_on'],
+                         ['gnome.seahorse', 'relayd.async_storage_api', 'nip55l.dbus_contract'])
         self.assertIn('nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs nip5f.fixture_inputs)',
                       (ROOT / 'nips/nip5f/TestInventory.cmake').read_text())
 

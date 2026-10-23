@@ -21312,7 +21312,9 @@
     },
     "nip5f.fixture_inputs": {
       "depends_on": [
-        "gnome.seahorse"
+        "gnome.seahorse",
+        "relayd.async_storage_api",
+        "nip55l.dbus_contract"
       ],
       "id": "nip5f.fixture_inputs",
       "owner_paths": [
