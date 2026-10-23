@@ -25,7 +25,8 @@ class GrottoProfiles(unittest.TestCase):
         from test_selection_subset import before_full_ownership_policy
         from w11_worker_support import before_worker_policy
         from w11_policy_support import before_policy_enrollment
-        self.policy = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(s.load_inventory(INVENTORY))))
+        from homed_profile_support import before_homed_policy
+        self.policy = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(before_homed_policy(s.load_inventory(INVENTORY)))))
         self.workflow = WORKFLOW.read_text()
 
     def capture(self, script, mode):

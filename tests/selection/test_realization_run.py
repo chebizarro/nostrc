@@ -176,5 +176,5 @@ class ExecutionTests(Project):
     def test_live_image_lifecycle_is_not_faked(self):
         resolved, audit = self.ready()
         resolved["required_capabilities"].append("docker")
-        with self.assertRaisesRegex(r.RealizationError, "guarded adapter"):
+        with self.assertRaisesRegex(r.RealizationError, 'Docker requires the authored original MDK execution domain'):
             r.run_resolved(resolved, self.build, self.evidence, input_audit=audit)

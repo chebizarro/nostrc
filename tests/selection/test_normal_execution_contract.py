@@ -145,6 +145,22 @@ class NormalExecutionTests(Project):
 
 
 class NormalContractSemantics(unittest.TestCase):
+    def test_legacy_minimal_cli_does_not_require_unused_optional_normal_module(self):
+        import builtins
+        from selector_support import policy
+        original = builtins.__import__
+        def missing_extension(name, *args, **kwargs):
+            if name == 'test_selection_execution':
+                raise ModuleNotFoundError('normal extension deliberately absent')
+            return original(name, *args, **kwargs)
+        legacy = policy()
+        with mock.patch('builtins.__import__', side_effect=missing_extension):
+            s.validate_inventory(legacy)
+            legacy['profiles']['linux']['normal_execution'] = copy.deepcopy(normal.MARKER)
+            with self.assertRaisesRegex(ModuleNotFoundError, 'deliberately absent'):
+                s.validate_inventory(legacy)
+
+
     def test_expected_incompatibility_cannot_become_unexpected_success(self):
         check = dict(expected_outcome=dict(case='mdk09_incompatibility', exit_code=77))
         normal._expected_check_outcome(check, dict(outcome='expected_incompatibility',

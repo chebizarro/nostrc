@@ -16,7 +16,8 @@ def witness():
 
 def before_policy_jobs(records):
     from w11_json_glib_support import before_jobs
-    previous = before_jobs(records)
+    from runtime_integration_support import before_runtime_jobs
+    previous = before_jobs(before_runtime_jobs(records))
     for ident, change in witness()['records']['workflow_jobs'].items():
         if ident not in previous:
             continue

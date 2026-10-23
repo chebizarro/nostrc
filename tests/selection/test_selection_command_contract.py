@@ -275,7 +275,11 @@ class SelectionCommandInputAuditTests(unittest.TestCase):
                "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")
         self.identity = {"kind": "committed", "sha": r._git(self.root, "rev-parse", "HEAD").decode().strip()}
         profile = {"source_dir": ".", "configure_args": [], "environment": {}}
-        self.policy["profiles"]["closure.fixture"] = profile
+        self.policy['profiles']['closure.fixture'] = profile
+        # This isolated command-input fixture has no historical CTest partition;
+        # retain every actual source input, but not unrelated omission policies.
+        self.policy.pop('diagnostic_nonmembers', None)
+        self.policy.pop('diagnostic_nonmember_subsets', None)
         self.realized = r.configure_command_profile(self.root, self.build, "closure.fixture",
             profile, self.identity, s.digest(self.policy))
         self.resolved = r.resolve_checks(self.policy,

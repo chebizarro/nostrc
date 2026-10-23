@@ -8008,7 +8008,8 @@
         "{source}/scripts/test_gate_darwin.py",
         "{source}/tests/selection/test_darwin_custody.py",
         "{source}/tests/selection/test_darwin_gate_wiring.py",
-        "{source}/tests/selection/test_darwin_boundary_contract.py"
+        "{source}/tests/selection/test_darwin_boundary_contract.py",
+        "{source}/tests/selection/test_darwin_private_bus.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -21414,6 +21415,30 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23-rollback.patch",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact inert proposal or diagnostic source provenance; requires broad policy validation, grants no rollout or execution authority."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.patch",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact inert proposal or diagnostic source provenance; requires broad policy validation, grants no rollout or execution authority."
+    },
+    {
+      "exact": "docs/reviews/dependency-aware-testing-w11-darwin-private-bus-2026-10-23.json",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact inert proposal or diagnostic source provenance; requires broad policy validation, grants no rollout or execution authority."
+    },
     {
       "effect": "global",
       "exact": "docs/reviews/dependency-aware-testing-w11-darwin-gate-wiring-2026-10-23.json",

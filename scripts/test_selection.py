@@ -243,8 +243,9 @@ def validate_inventory(policy):
             pattern = r"[a-z0-9]+(?:-[a-z0-9]+)*" if key == "release_components" else ID.pattern
             require(isinstance(ident, str) and re.fullmatch(pattern, ident) and isinstance(value, dict), f"invalid {key} ID: {ident}")
     coverage_state(policy)
-    from test_selection_execution import validate_metadata as validate_normal_metadata
-    validate_normal_metadata(policy)
+    if any('normal_execution' in profile for profile in policy.get('profiles', {}).values()):
+        from test_selection_execution import validate_metadata as validate_normal_metadata
+        validate_normal_metadata(policy)
     nodes, profiles, checks = (policy[k] for k in ("nodes", "profiles", "checks"))
     for ident, node in nodes.items():
         require(node.get("id", ident) == ident, f"node ID mismatch: {ident}")

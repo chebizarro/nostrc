@@ -9,7 +9,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/runtime_integration_20261023.json'
-SHA256 = 'acbd8e251cb04f70d653c9e031385e3299da32c56529a905d18dc3cb495bf2d7'
+SHA256 = '75094358ddec84b0a86072bcf279e9e2dbaea18ad557812f9efe8678b18d56dc'
 
 
 def witness():
@@ -29,6 +29,24 @@ def before_runtime_source(path, raw):
         raw = raw.replace(after, before, 1)
     s.require(hashlib.sha256(raw).hexdigest() == record['before_sha256'], 'runtime historical source changed: ' + path)
     return raw
+
+
+def before_runtime_jobs(records):
+    previous = copy.deepcopy(records)
+    fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
+    for ident, record in witness()['maps'].get('workflow_jobs', {}).items():
+        if ident in previous and all(previous[ident].get(key) == record['after'].get(key) for key in fields):
+            previous[ident].update({key: record['before'][key] for key in fields})
+    return previous
+
+
+def before_approved_diagnostic_policy(policy):
+    previous = copy.deepcopy(policy)
+    for ident, record in witness()['approved_diagnostic_jobs'].items():
+        s.require(previous['workflow_jobs'][ident] in (record['before'], record['after']),
+                  'approved heartbeat diagnostic enrollment changed: ' + ident)
+        previous['workflow_jobs'][ident] = copy.deepcopy(record['before'])
+    return previous
 
 
 def before_runtime_policy(policy):

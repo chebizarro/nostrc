@@ -307,7 +307,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         self.assertIn("{source}/" + renewal_path, policy["checks"]["selection.contract"]["runtime_inputs"])
         self.assertEqual(renewal["source_review_scope"], ["apps/grotto/CMakeLists.txt", "cmake/NostrcConfigureProvenance.cmake"])
         self.assertFalse(any(renewal["limits"].values()))
-        records = subset.contracts(policy)
+        from runtime_integration_support import before_runtime_policy
+        records = subset.contracts(before_runtime_policy(policy))
         self.assertEqual(set(records), set(subset.PROFILES))
         for pid, contract in records.items():
             witness = fixture["profiles"][pid]
@@ -369,7 +370,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertFalse(witness["postaudit"]["passed"])
             self.assertEqual(witness["candidate_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
             for name, expected in records[pid]["review"]["source_inputs"].items():
-                self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
+                from homed_profile_support import before_homed_source
+                self.assertEqual(hashlib.sha256(before_homed_source(name, (ROOT / name).read_bytes())).hexdigest(), expected, name)
 
     def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):
         policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
@@ -515,7 +517,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertEqual(result["resolved"]["baseline_exclusions"][0]["status"], "not_executed")
 
     def test_historical_production_policy_cannot_promote_ordinary_evidence(self):
-        policy = subset.before_full_ownership_policy(s.load_inventory(ROOT / "tests/selection/inventory.json"))
+        from runtime_integration_support import before_runtime_policy
+        policy = subset.before_full_ownership_policy(before_runtime_policy(s.load_inventory(ROOT / "tests/selection/inventory.json")))
         release = s.release_plan(ROOT, policy, head="HEAD", component="libgo", dry_run=True, run_id="ordinary-production-negative")
         self.assertEqual(release["diagnostic_nonmember_subset_profiles"], sorted(subset.PROFILES))
         validation = dict(passed=True, complete=True, mode="broad", partial_profiles=[], tag=release["tag"],

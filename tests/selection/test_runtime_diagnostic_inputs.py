@@ -76,7 +76,8 @@ class RuntimeDiagnosticInputs(unittest.TestCase):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         self.assertEqual({ident for ident, profile in policy['profiles'].items()
                           if 'signer_endpoint' in profile.get('capabilities', [])},
-                         {'core.linux', 'groundhog.linux', 'grotto.linux'})
+                         {'core.linux', 'groundhog.linux', 'grotto.linux', 'core.linux.asan',
+                          'grotto.linux.asan_ubsan', 'groundhog.mdk08', 'groundhog.mdk011'})
         schema = ROOT / 'apps/grotto/data/org.nostr.Grotto.gschema.xml'
         self.assertTrue(ET.parse(schema).getroot().findall('schema'))
         for runner in ('test_provisioned_nip5f.py', 'test_mdk011_cache_contract.py',

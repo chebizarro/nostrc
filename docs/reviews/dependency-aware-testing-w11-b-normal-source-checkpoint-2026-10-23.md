@@ -78,3 +78,47 @@ updated 2026-10-23T10:45:10Z. Preserve E's earlier snapshot as history; no dupli
 run/retry or broad count credit. PR22 HEAD d29a5ac5 and tested synthetic merge
 4527a06e8 remain distinct identities; a same-tree master is not the same SHA.
 Original measurement62179 remains NOT RUN; E owns the audit/ledger and .29 proof.
+
+## Finite default-suite repair integration
+
+The exact a786f19e969bf68dc2bdfe5a8b21301d4d212734 default attempt completed
+1,056 cases in 856.947s: **43 failures, 73 errors, 59 explicit skips**. It is NOT
+test-green. Source remained clean; the monitored free-space floor stayed above
+4.6 GiB. Its original suite log, capacity samples and source/result receipt remain
+under `/tmp/w11-b-runtime-integration-20261023/full-default-attempt-1`.
+
+The coherent repair takes exact reviewed A44cb6b47afa22614dc1b746f9d1e66ac4e30310f,
+Cb3bf81118b6e98da24ee8c5e1379f375f357c669 and E5f99544d6844d37c47b49961a5894c696665fc1d
+with ancestry. A's final source owns private-bus isolation and live-victim,
+fail-closed seal admission; the admin host still refuses public CTest custody.
+C's test-only symbolizer correction addresses the reproduced external `atos`
+authorization hang; production sanitizer options/leak guards and helper policy
+remain unchanged. Neither source nor bounded diagnostic cases establish .23.
+E's original snapshot/history stays intact; the merge regenerated the tracker
+with official `bd export --all` and verified preservation of 700 comment IDs and
+all 37 unchanged memories, rather than accepting a stale tracker snapshot.
+
+Owned corrections preserve strict engine guards: the normal extension is loaded
+only when authored (legacy minimal CLI packages cannot require an unused new
+module); test-only phase fixtures explicitly bind macOS's exec-normalized
+`XPC_SERVICE_NAME`; actual MDK template inputs are copied into configure fixtures;
+Docker without its authored domain now refuses earlier during resolution. Exact
+historical source/job/profile comparisons compose finite reviewed inverses rather
+than renewing any old omission authority. Removing a fullGo declaration from a
+new normal profile **refuses stale legacy admission**; only its exact historical
+profile still exercises the old incomplete route. Full command-source fixtures
+retain all current inputs and separately scoped native baseline definitions.
+
+One new exact-source full-default attempt follows the real corrections. A owns
+the sole reserved native default build; no concurrent second root build is
+started here. Native CTest waits for selection-test quiet, and final source,
+Git-derived/generated/control/runtime input changes require actual reconfigure
+and default-build revalidation, not relabeling the a786 build.
+
+Mac optional TCP applicability is separately authorized and tracked in
+`nostrc-0cfsg.36.9`, but held outside this landing-repair batch. The exact legacy
+Mac workflow supplies no endpoint/token and uses `BUILD_APPS=OFF`; its optional
+TCP registration returns77 when unconfigured. Any later applicability contract
+must retain visible `not_executed/nonvalidation` TCP accounting, mandatory
+loopback/negative tests and full audits; it cannot admit configured/live TCP or
+Linux profiles without genuine signer proof. The present Mac refusal remains.

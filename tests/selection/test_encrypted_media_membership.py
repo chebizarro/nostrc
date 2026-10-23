@@ -176,7 +176,8 @@ class EncryptedMediaMembership(unittest.TestCase):
         verify_historical_media_fixtures()
         # Source controls remain live and hash-bound, not inferred from the export.
         for path, expected in self.current_policy['diagnostic_nonmember_subsets'][PROFILE]['review']['source_inputs'].items():
-            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
+            from homed_profile_support import before_homed_source
+            self.assertEqual(hashlib.sha256(before_homed_source(path, (ROOT / path).read_bytes())).hexdigest(), expected, path)
 
 
 if __name__ == '__main__':

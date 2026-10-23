@@ -660,10 +660,13 @@ print('command executed', flush=True)
     def test_declared_live_capability_is_not_adapter_attestation(self):
         self.command(requires=["docker"])
         self.profile["capabilities"].append("docker")
-        resolved, audit = self.ready()
-        with self.assertRaisesRegex(r.RealizationError, "guarded adapter"):
-            r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        # The authored original-MDK contract now refuses arbitrary Docker
+        # declarations during resolution, before building or executing a target.
+        realized = self.configure()
+        with self.assertRaisesRegex(r.RealizationError, 'authored execution domain and docker capability'):
+            r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
         self.assertFalse(list(self.evidence.rglob("receipt.json")))
+        self.assertFalse((self.build / 'proof.txt').exists())
 
     def test_command_source_mutation_after_start_is_failed_evidence(self):
         self.command("from pathlib import Path; Path('vector.txt').write_text('mutated')\n", required_evidence=[])

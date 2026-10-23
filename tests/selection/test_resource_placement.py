@@ -394,7 +394,8 @@ class PlacementEnrollmentTests(unittest.TestCase):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         data = wave.witness()
         for path, record in data['sources'].items():
-            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), record['after_sha256'], path)
+            from homed_profile_support import before_homed_source
+            self.assertEqual(hashlib.sha256(before_homed_source(path, (ROOT / path).read_bytes())).hexdigest(), record['after_sha256'], path)
             self.assertIn('{source}/' + path, policy['checks']['selection.contract']['runtime_inputs'])
         for value in data['input_additions']:
             self.assertEqual(policy['checks']['selection.contract']['runtime_inputs'].count(value), 1)
@@ -408,7 +409,8 @@ class PlacementEnrollmentTests(unittest.TestCase):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         data = wave.witness()
         from homed_profile_support import before_homed_policy
-        policy = before_homed_policy(policy)
+        from runtime_integration_support import before_approved_diagnostic_policy
+        policy = before_approved_diagnostic_policy(before_homed_policy(policy))
         previous = wave.before_policy(policy)
         self.assertEqual(s.digest(previous), data['before_policy_hash'])
         restored = copy.deepcopy(previous)
@@ -418,7 +420,8 @@ class PlacementEnrollmentTests(unittest.TestCase):
         self.assertEqual(s.digest(restored), s.digest(policy))
         self.assertEqual(wave.before_policy(previous), previous)
         for path, record in data['sources'].items():
-            historical = wave.before_source(path, (ROOT / path).read_bytes())
+            from homed_profile_support import before_homed_source
+            historical = wave.before_source(path, before_homed_source(path, (ROOT / path).read_bytes()))
             self.assertEqual(hashlib.sha256(historical).hexdigest(), record['before_sha256'])
             self.assertEqual(wave.before_source(path, historical), historical)
         self.assertEqual(wave.before_source('scripts/unrelated.py', b'x'), b'x')

@@ -66,6 +66,8 @@ class HomedProfileContract(unittest.TestCase):
 
     def test_historical_policy_and_sources_reverse_exactly_without_authority_renewal(self):
         from homed_profile_support import before_homed_policy, before_homed_source
+        from runtime_integration_support import before_runtime_policy
+        self.policy = before_runtime_policy(self.policy)
         data = json.loads((ROOT / "tests/selection/fixtures/homed_profile_enrollment_20261023.json").read_text())
         historical = before_homed_policy(self.policy)
         # Reverse this finite wave, not unrelated later source/workflow updates.
