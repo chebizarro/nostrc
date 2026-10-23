@@ -1,5 +1,58 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## PR23 723 source-linked capture — 2026-10-23T20:14:05.521545Z
+
+The bounded closing API census has **61 roots: 59 failed, one cancelled and one
+pending**, with zero successful roots. All 60 identities and the complete prior
+60-root snapshot are retained privately; the previously pending1640 root
+`40004170022` is now failed and the new723 root `40015363696` remains pending at
+this observation. The earlier59-root snapshot and all earlier failures remain
+unchanged below. **0/20 reviewed qualifying PR comparisons; 0/2 successful
+complete broad integrations; W11 NOT MET / W12 NOT RUN.** No nested job, partial
+receipt, skip or local test is a quota unit.
+
+PR23 API head `723e601ac1322ca0220cd88b3b0ed22b0a7fcd81` and tested synthetic
+merge `84c36ac00cac0e5ccbc973f7c8cc48995d0b672b` remain distinct identities.
+Merge parents are master `44044fefe9c40ac095044e9c22eb06f2678aab1f` and723;
+both trees are `5d9ae919a8053b3a283bbc3ac468b6c8e9d0fa2d`. The original
+[Static testhost artifact](https://github.com/chebizarro/nostrc/actions/runs/40015363633)
+binds the tested merge: **81 kernel tests OK; full DEFAULT1205 tests,
+four failures, two errors,80 skips (844.638s)**. This is not green. Three failures
+are exact homed lane/job cardinalities; two errors and the remaining failure
+come from a new test-only inverse's whole-policy digest preempting unrelated
+historical mutations. All six original IDs and tracebacks are retained, not
+replaced by later fixes. At the last job API observation Static checks and
+policy_regressions were still running; no later API terminal status is inferred
+from the artifact. Monitoring stopped at the first critical terminal, without
+retry, dispatch or cancellation.
+
+The [homed_units job120626068734](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068734)
+succeeded once on that tested merge. Original plan, normal receipt, portable
+bundle, raw native receipt and all member hashes are retained. Independent C
+verification used the production transported-receipts/validation/qualification/
+source-closure path on a fresh exact tested-merge checkout: **homed_cache,
+homed_cache_config, homed_groups, homed_manifest, homed_uid_map** and the default
+build passed. Pre/post audits have zero gaps,106/219 inputs and765 discovered
+headers; the pidns seal/original bytes verify, and owned AppArmor teardown leaves
+identical before/after policy lists. Removing one registration refuses. Profile
+capabilities are empty; private-service coverage is not inferred. Proof SHA256
+`4b64989dbc012dc7c1c557d64eae5a7c64a8771b04ae7fe955feafbf03d4baeb`.
+This is narrowly qualified **five-unit homed.linux.ci proof**, not the legacy
+four-distro/root140/systemd/FUSE contract or complete W11 acceptance. All
+complete/eligible/enforcement flags remain false; the original legacy homed gap
+is unchanged. Parent retains closure authority after landing, not before.
+
+On API723 itself, the prior137 focused tests passed without skips; safe native
+verification passed434 tests with five explicit skips and all three guards.
+Parent source/JUnit proofs are `parent-723-focused-approval.json` and
+`parent-723-native-approval.json`; neither is relabeled as tested-merge full
+DEFAULT success or proof for later repaired source. Dated hashes and original
+ZIP identities are in `pr23_723_refresh_20261024` of the
+[evidence JSON](dependency-aware-testing-w11-e-evidence-2026-10-23.json) and the
+[matching ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr23-723-source-linked-capture--2026-10-23t201405521545z).
+CI/test/docs only: no shipped artifact or component version bump. No W12,
+requirement, default, enforcement, protection or cutover change.
+
 ## PR23 bounded hosted triage — 2026-10-23T15:58:02Z
 
 One fresh, non-polling census adds PR23 to the preserved historical snapshot:

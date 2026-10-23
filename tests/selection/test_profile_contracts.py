@@ -13,7 +13,7 @@ from unittest import mock
 
 from selector_support import ROOT, s, change
 from realization_support import Project, r
-from profile_contract_support import source_jobs, step_script, validate_job_accounting
+from profile_contract_support import source_job_blocks, source_jobs, step_script, validate_job_accounting
 
 INVENTORY = ROOT / "tests/selection/inventory.json"
 EXPORTS = ROOT / "tests/selection/fixtures/profile_exports.json"
@@ -371,7 +371,13 @@ class WorkflowMatrixAccounting(unittest.TestCase):
     def test_every_existing_job_matrix_has_a_mapping_or_explicit_gap(self):
         policy = s.load_inventory(INVENTORY)
         observed = validate_job_accounting(policy, ROOT)
-        self.assertEqual(len(observed), 91)
+        self.assertEqual(len(observed), 92)
+        self.assertIn('.github/workflows/dependency-tests.yml:homed_units', observed)
+        from post1640_integration_support import before_jobs
+        historical = before_jobs(source_job_blocks(ROOT))
+        self.assertEqual(len(historical), 91)
+        self.assertEqual(set(observed) - set(historical),
+                         {'.github/workflows/dependency-tests.yml:homed_units'})
         self.assertIn('.github/workflows/namespace-policy-regression.yml:regressions', observed)
         self.assertIn('.github/workflows/dependency-tests.yml:policy_regressions', observed)
         unsupported = [key for key, record in policy["workflow_jobs"].items() if not record["profiles"]]

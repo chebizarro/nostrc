@@ -185,7 +185,12 @@ class ProductionInventory(unittest.TestCase):
 
     def test_every_job_binds_its_setup_and_has_an_explicit_remainder(self):
         blocks = source_job_blocks(ROOT)
-        self.assertEqual(len(blocks), 91)
+        self.assertEqual(len(blocks), 92)
+        from post1640_integration_support import before_jobs
+        historical = before_jobs(blocks)
+        self.assertEqual(len(historical), 91)
+        self.assertEqual(set(blocks) - set(historical),
+                         {'.github/workflows/dependency-tests.yml:homed_units'})
         self.assertIn("{source}/tests/selection/test_broad_setup_contracts.py",
                       self.policy["checks"]["selection.contract"]["runtime_inputs"])
         self.assertEqual(validate_job_accounting(self.policy, ROOT),

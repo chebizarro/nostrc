@@ -1,3 +1,50 @@
+## PR23 723 source-linked capture — 2026-10-23T20:14:05.521545Z
+
+Bounded closing census: **61 roots =59 failed +one cancelled +one pending**.
+All60 previous identities/snapshot bytes and earlier59-root history remain;
+1640 root40004170022 moved from pending to failure, new723 root40015363696 is
+pending. **0/20 reviewed qualifying PR comparisons,0/2 successful complete broad
+integrations; W11 NOT MET / W12 NOT RUN.** No quota increment.
+
+| Original source-bound evidence | Retained result, not later-source credit |
+|---|---|
+|[Static run40015363633 / job120625938011](https://github.com/chebizarro/nostrc/actions/runs/40015363633/job/120625938011)|Artifact:81 kernel OK; DEFAULT1205 /4 failures /2 errors /80 skips,844.638s. Six full original traces retained. Last job API observation still in_progress; no invented terminal API conclusion.|
+|[Policy120626068759](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068759)|Still in_progress at monitor stop; no later poll, terminal or success claim.|
+|[Homed120626068734](https://github.com/chebizarro/nostrc/actions/runs/40015363696/job/120626068734)|SUCCESS once,20:11:54Z; independent production-loader validation binds exactly five units and default build, not broad completeness.|
+
+API head723e601ac1322ca0220cd88b3b0ed22b0a7fcd81 differs from tested merge
+84c36ac00cac0e5ccbc973f7c8cc48995d0b672b (parents44044fefe +723), equal tree
+5d9ae919a8053b3a283bbc3ac468b6c8e9d0fa2d. Monitoring ended20:12:49Z at the
+first critical terminal, not after waiting for all jobs. Closing census above is
+a separate bounded request; no retry/dispatch/cancellation occurred.
+
+Original ZIPs (API digest, CRC and every member SHA verified):
+
+| Artifact | Bytes | SHA256 |
+|---|---:|---|
+|12529197145 Static testhost|31,730,728|941459a4a587db08957308413e28d1e78dff567fefe06aee844e8f1786d29d0d|
+|12529595245 homed evidence|675,495|f4bb7543618b4e1d6d7475f120cc5c855995045a9f6246ec09380c6c7cc585cc|
+|12528925479 plan|24,907|454aeb6774f6324ebbcb5dbc63fb657efe61c295465c6ed5f3cc6114932ad388|
+|12528713721 normal receipt/portable bundle|642,066|d24e7fdda86ff728aeaff5c9dfcce202e158162c62fb32d0badbc57da0764ff5|
+
+Plan c9333f6b500e10cfce6042d4a0d0a28ef6c3bdb54c5482f9263e33b52d146ebe
+and bundle27452023e254f81f81e83e97a8f78b590beaefe55fbf0139a5e98b36cb26248a
+bind tested merge84c36ac, profile homed.linux.ci and original sealed bytes.
+C's fresh checkout production loader verifies five names (homed_cache,
+homed_cache_config, homed_groups, homed_manifest, homed_uid_map), default build,
+zero-gap106/219-input audits,765 headers, pidns seal and exact owned AppArmor
+removal/before-after equality. Missing-registration mutation refuses. Independent
+proof4b64989dbc012dc7c1c557d64eae5a7c64a8771b04ae7fe955feafbf03d4baeb
+is retained with its full verification and script. All complete/eligible/
+enforcement flags remain false; private services and original four-distro/root140
+homed parity are not claimed. Finite .36.7 closure remains parent's after landing.
+
+API723's137 focused cases and safe native434 pass/five skips/three guards are
+separate same-head proofs, not full DEFAULT success. All six hosted failures,
+prior interrupted1640 errors (still unknown), two-case diagnostic and older
+failed attempts remain. This dated amendment changes no requirement, witness,
+legacy omission authority, acceptance counter or version.
+
 ## 2026-10-23 frozen hosted-cause source integration (not a hosted census)
 
 Checkpoint: 2026-10-23T17:15:00.397175+00:00.

@@ -22,6 +22,33 @@ class Post1640Integration(unittest.TestCase):
         self.assertEqual(s.digest(older.before_policy(policy)), older.witness()['base_policy_hash'])
         self.assertFalse(policy['enforcement_ready'])
 
+    def test_unrelated_libgo_mutation_survives_and_original_subset_refusal_applies(self):
+        import test_selection_subset as subset
+        from runtime_integration_support import before_runtime_policy
+        policy = self.policy()
+        check = policy['checks']['supported.libgo']
+        check.pop(subset.FULL_FIELD)
+        for ident in subset.PROFILES:
+            check['profiles'].remove(ident)
+            del check['ctest_tests'][ident]
+        before = wave.before_policy(policy)
+        self.assertEqual(before['checks']['supported.libgo'], check)
+        self.assertEqual(wave.before_policy(before), before)
+        with self.assertRaisesRegex(ValueError, 'stale profile hash'):
+            subset.active_contracts(policy)
+        historical = before_runtime_policy(policy)
+        self.assertEqual(set(subset.active_contracts(historical)), set(subset.PROFILES))
+
+    def test_unrelated_node_mutation_reaches_original_closeout_refusal(self):
+        from closeout_support import before_closeout_policy
+        policy = self.policy()
+        policy['nodes']['groundhog.gresource_inputs']['owner_paths'].append('unrelated/input.h')
+        before = wave.before_policy(policy)
+        self.assertEqual(before['nodes'], policy['nodes'])
+        self.assertEqual(wave.before_policy(before), before)
+        with self.assertRaisesRegex(ValueError, 'closeout nodes changed'):
+            before_closeout_policy(policy)
+
     def test_exact_seven_author_markers_not_homed_or_other_profiles(self):
         policy = self.policy()
         observed = {ident for ident, profile in policy['profiles'].items()

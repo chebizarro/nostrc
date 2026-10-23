@@ -71,5 +71,4 @@ def before_policy(policy):
             for ident, record in records.items():
                 s.require(previous[field].get(ident) == record['before'],
                           'post-1640 historical metadata changed: ' + ident)
-    s.require(s.digest(previous) == data['base_policy_hash'], 'post-1640 historical policy changed')
     return previous
