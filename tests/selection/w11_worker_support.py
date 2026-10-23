@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_worker_enrollment_20261023.json'
-SHA256 = '67a41aff91b85e6341df03d8625d96bea364cff8a8cd6faa5a9a72c79321cd6d'
+SHA256 = '47efe6af29ccb207aa4bdbd788f17905023abf6a9540c77ccad27900dfa6996a'
 
 
 def witness():
@@ -22,6 +22,22 @@ def current_source_hash(path, historical):
     s.require(historical == data['source_before_sha256'][path],
               'worker historical source provenance changed: ' + path)
     return data.get('integration_source_changes', {}).get(path, {}).get('after', data['source_sha256'][path])
+
+
+def before_fixture_owners_source(path, raw):
+    if path != 'nips/nip5f/TestInventory.cmake':
+        return raw
+    record = witness()['integration_source_changes'][path]
+    actual = hashlib.sha256(raw).hexdigest()
+    if actual == record['before']:
+        return raw
+    s.require(actual == record['after'], 'fixture owner source changed')
+    after = b'nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs nip5f.fixture_inputs)'
+    before = b'nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs)'
+    s.require(raw.count(after) == 1, 'fixture owner insertion changed')
+    raw = raw.replace(after, before, 1)
+    s.require(hashlib.sha256(raw).hexdigest() == record['before'], 'historical fixture owner source changed')
+    return raw
 
 
 def before_worker_source(path, raw):

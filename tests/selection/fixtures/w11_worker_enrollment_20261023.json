@@ -192,6 +192,7 @@
       "core.linux": {
         "after": {
           "architecture": "x86_64",
+          "build_parallelism": 2,
           "build_type": "Debug",
           "capabilities": [
             "display",
@@ -221,6 +222,7 @@
           "platform": "linux",
           "setup": ".github/workflows/nostrc-ci.yml",
           "source_dir": ".",
+          "test_parallelism": 2,
           "timeout_seconds": 3600
         },
         "before": {

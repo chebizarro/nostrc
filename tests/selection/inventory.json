@@ -26109,7 +26109,9 @@
       "platform": "linux",
       "setup": ".github/workflows/nostrc-ci.yml",
       "source_dir": ".",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "build_parallelism": 2,
+      "test_parallelism": 2
     },
     "grotto.linux": {
       "architecture": "x86_64",
