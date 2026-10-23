@@ -11,6 +11,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import select
@@ -297,6 +298,187 @@ def namespace_services(capabilities, evidence_dir, resource_root, finalizer_fd=N
         state['resource_mount'] = {'root': str(root), 'filesystem': 'tmpfs',
                                    'private_x11': 'display' in capabilities}
         yield state
+
+
+# Darwin custody private session bus. macOS has no tmpfs/mount namespace or
+# abstract sockets: the private root is the journaled owned 0700 directory
+# itself (allocated under canonical /private/tmp), removed by the outer
+# adapter only after a validated helper exit. sun_path holds 103 bytes + NUL.
+DARWIN_SOCKET_MAX = 103
+DARWIN_RESOURCE_BASES = ('/private/tmp',)
+DARWIN_BUS_CONFIG = ('<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" '
+                     '"http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+                     '<busconfig><type>session</type><listen>{address}</listen><auth>EXTERNAL</auth>'
+                     '<policy context="default"><allow send_destination="*" eavesdrop="true"/>'
+                     '<allow eavesdrop="true"/><allow own="*"/></policy></busconfig>\n')
+AMBIENT_SESSION = ('DBUS_SESSION_BUS_ADDRESS', 'DBUS_SESSION_BUS_PID', 'DBUS_LAUNCHD_SESSION_BUS_SOCKET',
+                   'DBUS_STARTER_ADDRESS', 'DBUS_STARTER_BUS_TYPE', 'DISPLAY', 'XAUTHORITY', 'GNOME_KEYRING_CONTROL')
+
+
+@contextlib.contextmanager
+def darwin_private_bus(evidence_dir, resource_root):
+    """Private session bus inside Darwin custody (the caller is a tag member).
+
+    The daemon is this process's direct, unreaped child and, like every
+    descendant, carries the custody tag; the helper's reap owns any escapee.
+    Its own minimal config has no launchd listen, service directories or
+    includes, so no launchd/XPC activation is involved or inferred.
+    """
+    if sys.platform != 'darwin':
+        raise ServiceError('Darwin private bus requires macOS')
+    root = Path(resource_root)
+    if not root.is_absolute() or root.is_symlink() or root.resolve(strict=True) != root:
+        raise ServiceError('private resource root must be a canonical absolute directory')
+    info = root.stat()
+    if not root.is_dir() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ServiceError('private resource root ownership/mode mismatch')
+    identities = {name: _identity(name) for name in ('dbus-daemon', 'dbus-send')}
+    evidence = Path(evidence_dir)
+    evidence.mkdir(parents=True, exist_ok=True)
+    state = {'schema_version': 1, 'kind': 'darwin_private_bus_v1', 'capabilities': ['private_bus'],
+             'executables': identities, 'services': [], 'status': 'failed', 'complete': False,
+             'cleanup_scope': 'direct daemon reaped here; descendants by custody tag; files by outer adapter'}
+    previous = dict(os.environ)
+    private = Path(tempfile.mkdtemp(prefix='bus-', dir=root))
+    socket_path = private / 'runtime' / 'bus'
+    if len(os.fsencode(str(socket_path))) > DARWIN_SOCKET_MAX:
+        raise ServiceError('private resource root leaves no room for the bus socket path: ' + str(socket_path))
+    process = log = None
+    original = None
+    try:
+        for name, path in {'HOME': private / 'home', 'XDG_RUNTIME_DIR': private / 'runtime',
+                           'XDG_CONFIG_HOME': private / 'config', 'XDG_DATA_HOME': private / 'data',
+                           'XDG_CACHE_HOME': private / 'cache'}.items():
+            path.mkdir(mode=0o700)
+            os.environ[name] = str(path)
+        for name in AMBIENT_SESSION:
+            os.environ.pop(name, None)
+        config = private / 'bus.conf'
+        config.write_text(DARWIN_BUS_CONFIG.format(address='unix:path=' + str(socket_path)))
+        log = (evidence / 'dbus-daemon.log').open('xb')
+        read_fd, write_fd = os.pipe()
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        try:
+            command = [identities['dbus-daemon']['path'], '--nofork', '--nopidfile', '--nosyslog',
+                       '--config-file=' + str(config), '--print-address=' + str(write_fd)]
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, pass_fds=(write_fd,),
+                                       restore_signals=True, start_new_session=True,
+                                       preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask))
+            os.kill(process.pid, 0)  # direct, unreaped child: identity reserved
+            record = {'executable': 'dbus-daemon', 'argv': command, 'log': str(log.name), 'pid': process.pid}
+            state['services'].append(record)
+        finally:
+            os.close(write_fd)
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        try:
+            address = _ready(read_fd)
+        finally:
+            os.close(read_fd)
+        match = re.fullmatch(r'unix:path=(.+),guid=([0-9a-f]{32})', address)
+        if not match or match.group(1) != str(socket_path):
+            raise ServiceError('private bus did not report its exact private socket address')
+        socket_info = os.lstat(socket_path)
+        if not stat.S_ISSOCK(socket_info.st_mode) or socket_info.st_uid != os.geteuid():
+            raise ServiceError('private bus socket is not an owned Unix socket')
+        os.environ['DBUS_SESSION_BUS_ADDRESS'] = address
+        env = dict(os.environ)
+
+        def call(method, signature_check):
+            result = subprocess.run([identities['dbus-send']['path'], '--session', '--print-reply',
+                                     '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
+                                     'org.freedesktop.DBus.' + method], capture_output=True, timeout=15, env=env)
+            if result.returncode or signature_check not in result.stdout:
+                raise ServiceError('private bus did not answer its real ' + method + ' call')
+            return result.stdout.decode(errors='replace')
+        # The calls use the full printed address including guid=: libdbus
+        # refuses a server whose AUTH guid differs, so these replies come from
+        # exactly the daemon that reported this address on our private pipe.
+        # GetId is the bus UUID (distinct from the listening server's guid).
+        call('ListNames', b'org.freedesktop.DBus')
+        bus_id = re.search(r'string "([0-9a-f]{32})"', call('GetId', b'string "'))
+        if not bus_id:
+            raise ServiceError('private bus returned no bus identity')
+        state.update(bus_address=address, server_guid=match.group(2), bus_id=bus_id.group(1),
+                     socket={'path': str(socket_path), 'dev': socket_info.st_dev, 'ino': socket_info.st_ino,
+                             'mode': oct(stat.S_IMODE(socket_info.st_mode))},
+                     private_root=str(private), bus_readiness={'methods': ['ListNames', 'GetId']}, ready=True)
+        os.environ['NOSTRC_NATIVE_RESOURCE_ROOT'] = str(root)
+        yield state
+        exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if exited:
+            raise ServiceError('private bus exited during the lane')
+        state['status'] = 'passed'
+    except BaseException as exc:
+        original = exc
+        state['error'] = type(exc).__name__ + ': ' + str(exc)
+        raise
+    finally:
+        handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
+        errors = []
+        try:
+            if process is not None:
+                record = state['services'][-1]
+                try:
+                    process.send_signal(signal.SIGTERM)  # Popen refuses once reaped
+                    try:
+                        record['exit_code'] = process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()  # still unreaped: identity reserved
+                        record['forced_exit'] = True
+                        record['exit_code'] = process.wait(timeout=15)
+                    record['reaped'] = True
+                except Exception as exc:
+                    errors.append(type(exc).__name__ + ': ' + str(exc))
+            if log is not None:
+                log.close()
+            os.environ.clear()
+            os.environ.update(previous)
+            if errors:
+                state.update(status='failed', cleanup_errors=errors)
+            with (evidence / 'services.json').open('x') as stream:
+                json.dump(state, stream, sort_keys=True, indent=2)
+                stream.write('\n')
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+        if errors and original is None:
+            raise ServiceError('private bus cleanup unverified: ' + '; '.join(errors))
+
+
+def release_resource_directory(lane_dir):
+    """Outer Darwin cleanup of the journal-proven owned directory and its contents.
+
+    Call only after a validated custody exit (clean, or parent-bound recovery
+    proved no member remains). Removal is symlink-attack resistant and never
+    leaves the directory this journal proved it created (dev/ino/owner/mode).
+    """
+    journal = Path(lane_dir) / JOURNAL_NAME
+    records = read_resource_journal(journal)
+    if records[-1]['state'] in ('released', 'absent'):
+        return Path(records[-1]['path'])
+    if records[-1]['state'] != 'allocated' or len(records) != 2:
+        raise ServiceError('resource journal does not authorize recursive release: ' + records[-1]['state'])
+    allocation = _journal_allocation(records)
+    path = Path(allocation['path'])
+    info = os.lstat(path)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
+            or (info.st_dev, info.st_ino) != (allocation['dev'], allocation['ino'])):
+        raise ServiceError('private resource directory changed identity before release')
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ServiceError('platform rmtree is not symlink-attack resistant; refusing recursive release')
+    shutil.rmtree(path)
+    if path.exists():
+        raise ServiceError('private resource directory remained after release')
+    _journal_append(journal, {'state': 'released', 'path': str(path), 'absent_after': True, 'recursive': True})
+    return path
+
+
+def retain_resource_directory(lane_dir, reason):
+    """Record that the owned directory is intentionally retained (custody unverified)."""
+    journal = Path(lane_dir) / JOURNAL_NAME
+    records = read_resource_journal(journal)
+    if records[-1]['state'] == 'allocated':
+        _journal_append(journal, {'state': 'retained', 'path': records[-1]['path'], 'reason': reason})
 
 
 SIGNER_CONSENT = 'unidentified-get-public-key-once'
