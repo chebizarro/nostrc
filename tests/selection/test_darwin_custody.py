@@ -514,6 +514,75 @@ class DarwinCustodySupervisorTests(unittest.TestCase):
                 self.assertEqual(process.returncode, 130 if cancel else 125, output)
                 self.assertFalse(marker.exists())
 
+    def seal_helper(self, root, **popen):
+        read_fd, write_fd = os.pipe()
+        try:
+            process = subprocess.Popen([sys.executable, str(HELPER), sys.executable, '-c', root],
+                                       pass_fds=(write_fd,), env=self.env(NOSTRC_NATIVE_SEAL_FD=str(write_fd)),
+                                       start_new_session=True, **popen)
+        finally:
+            os.close(write_fd)
+        self.addCleanup(os.close, read_fd)
+        return process, read_fd
+
+    def test_native_seal_fd_is_retained_only_by_the_root(self):
+        root = textwrap.dedent('''\
+            import os, sys
+            fd = int(os.environ['NOSTRC_NATIVE_SEAL_FD'])
+            os.write(fd, b'anchor-digest')
+            os.close(fd)
+            sys.stdin.buffer.read(1)
+        ''')
+        process, read_fd = self.seal_helper(root, stdin=subprocess.PIPE)
+        try:
+            data = b''
+            while True:
+                chunk = os.read(read_fd, 64)  # EOF while the supervisor still runs
+                if not chunk:
+                    break
+                data += chunk
+            self.assertEqual(data, b'anchor-digest')
+            self.assertIsNone(process.poll(), 'EOF must not depend on supervisor exit')
+            process.communicate(b'1', timeout=GUARD)
+            self.assertEqual(process.returncode, 0)
+            self.assertTrue(self.evidence()['cleanup_complete'])
+        finally:
+            if process.returncode is None:
+                process.kill()
+                process.communicate(timeout=GUARD)
+
+    def test_native_seal_eof_follows_the_cleanup_barrier(self):
+        path, server = self.endpoint()
+        root = textwrap.dedent('''\
+            import os, subprocess, sys
+            fd = int(os.environ['NOSTRC_NATIVE_SEAL_FD'])
+            # A careless root lets an escaped descendant inherit the seal FD.
+            subprocess.Popen([sys.executable, '-c', CHILD], pass_fds=(fd,)).wait()
+            os.write(fd, b'anchor-digest')
+        ''').replace('CHILD', repr(ESCAPE.replace('ENDPOINT', repr(path))))
+        process, read_fd = self.seal_helper(root)
+        try:
+            peer = self.accept_ready(server)
+            self.assertEqual(process.wait(timeout=GUARD), 0)
+            self.assertTrue(self.evidence()['cleanup_complete'])
+            # The escaped holder was killed before the supervisor exited, so
+            # the anchor and EOF are already available: no wait is needed.
+            self.assertEqual(select.select([read_fd], [], [], 0)[0], [read_fd])
+            self.assertEqual(os.read(read_fd, 64), b'anchor-digest')
+            self.assertEqual(os.read(read_fd, 64), b'')
+            self.assertEqual(peer.recv(1), b'')
+        finally:
+            if process.returncode is None:
+                process.kill()
+                process.wait(timeout=GUARD)
+
+    def test_invalid_seal_fd_refuses_before_launch(self):
+        marker = self.work / 'never-executed'
+        result = self.run_helper(sys.executable, '-c', f'open({str(marker)!r}, "w").close()',
+                                 NOSTRC_NATIVE_SEAL_FD='987')
+        self.assertEqual(result.returncode, 125, result.stderr)
+        self.assertFalse(marker.exists())
+
     def test_private_resource_wrappers_refuse_before_launch(self):
         marker = self.work / 'never-executed'
         result = self.run_helper('--private-resource-root', str(self.work), sys.executable, '-c',

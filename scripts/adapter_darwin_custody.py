@@ -363,6 +363,10 @@ def run_root(kernel, tag, argv, queue, adapter_parent, old_mask, evidence):
         os._exit(125)
     os.close(go_read)
     os.close(ack_write)
+    # Only the root keeps the adapter's native seal FD (it inherited it at
+    # fork); the supervisor drops its copy so EOF on the adapter's read end
+    # cannot precede the root's and every member's exit.
+    drop_seal()
     reaped = False
     try:
         if os.read(ack_read, 1) != b'T':
@@ -417,6 +421,12 @@ def run_root(kernel, tag, argv, queue, adapter_parent, old_mask, evidence):
             os.waitpid(root, 0)
 
 
+def drop_seal():
+    seal = os.environ.pop('NOSTRC_NATIVE_SEAL_FD', None)
+    if seal is not None:
+        os.close(int(seal))  # popped first: a second call is a no-op
+
+
 def supervise(argv, adapter_parent=None, gate=None):
     kernel = Kernel()
     if not argv:
@@ -462,6 +472,7 @@ def supervise(argv, adapter_parent=None, gate=None):
         evidence['error'] = str(exc)
         raise
     finally:
+        drop_seal()  # also on refusal before any root was forked
         queue.close()
         write_evidence(evidence)
 
