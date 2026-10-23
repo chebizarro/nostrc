@@ -14,6 +14,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import re
+import select
+import time
 import uuid
 
 adapter = Path(sys.argv.pop(1)).resolve()
@@ -29,8 +32,9 @@ parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--plan", help="execute exact retained committed plan identity; --profile selects physical lanes without rewriting the plan")
 parser.add_argument("--broad", action="store_true")
-parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
-                    help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
+parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns", "darwin"), default="legacy",
+                    help="explicit native custody: Linux ptrace (no instrumentation) or user/mount/PID namespaces; macOS-only "
+                         "darwin seatbelt-tag diagnostic (no wrappers/keyring/instrumentation); none is profile parity")
 parser.add_argument("--namespace-apparmor-profile", metavar="NAME",
                     help="pidns only: provisioned path-unattached AppArmor profile the custody helper explicitly enters before unshare; host policy unchanged")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
@@ -206,9 +210,203 @@ def linux_command(argv, *, cwd=None, env=None, log=None, resource_root=None, pri
                 os.close(seal_read)
 
 
+DARWIN_TAG = re.compile(rb'\{"denied": "org\.nostrc\.custody\.([0-9a-f]{32})\.a", '
+                        rb'"allowed": "org\.nostrc\.custody\.([0-9a-f]{32})\.b"\}\n')
+DARWIN_HANDSHAKE_SECONDS = 30  # failure guard for a helper that never issues its tag
+darwin_records = []
+
+
+def darwin_evidence(path):
+    try:
+        with open(path) as stream:
+            return json.load(stream)
+    except (OSError, ValueError):
+        return None
+
+
+def darwin_recover(helper, tag_line, tag_sha, log):
+    """Exactly one recovery with the ORIGINAL handshake tag; never lane success."""
+    evidence_path = Path(str(log) + '.darwin-recovery.json')
+    read_fd, write_fd = os.pipe()
+    try:
+        with open(str(log) + '.darwin-recovery.log', 'xb') as stream:
+            recovery = subprocess.Popen([sys.executable, str(helper), '--reap-tag-fd', str(read_fd)],
+                                        env=dict({k: v for k, v in os.environ.items() if k != 'NOSTRC_DARWIN_CUSTODY_TAG_FILE'},
+                                                 NOSTRC_DARWIN_CUSTODY_EVIDENCE=str(evidence_path)),
+                                        pass_fds=(read_fd,), stdout=stream, stderr=subprocess.STDOUT)
+            os.close(read_fd)
+            read_fd = -1
+            os.write(write_fd, tag_line)
+            os.close(write_fd)
+            write_fd = -1
+            try:
+                code = recovery.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                recovery.kill()  # direct, unreaped child: identity reserved
+                recovery.wait()
+                code = None
+    finally:
+        for fd in (read_fd, write_fd):
+            if fd != -1:
+                os.close(fd)
+    result = darwin_evidence(evidence_path)
+    recovered = bool(code == 0 and isinstance(result, dict) and result.get('recovery') is True
+                     and result.get('cleanup_complete') is True and 'error' not in result
+                     and result.get('tag_sha256') == tag_sha)
+    return {'recovery_exit': code, 'recovery_evidence': str(evidence_path), 'recovered': recovered}
+
+
+def darwin_command(argv, *, cwd=None, env=None, log=None, native_lane=None):
+    """Explicit macOS seatbelt-tag custody (C helper); diagnostic, never parity.
+
+    The helper is this adapter's direct, unreaped child, so liveness checks and
+    Popen signals are identity-safe until it is waited. The adapter holds the
+    helper-issued tag from a pre-gate handshake: no target can run before that,
+    and recovery uses only those bytes, never a target-writable file.
+    """
+    global active
+    if log is None:
+        raise RuntimeError('darwin custody requires a retained log/evidence path; target not launched')
+    helper = adapter.parent / 'adapter_darwin_custody.py'
+    evidence_path = Path(str(log) + '.darwin-custody.json')
+    record = {'kind': 'darwin_custody_adapter_v1', 'evidence': str(evidence_path), 'status': 'refused_before_launch',
+              'complete': False, 'complete_gate_eligible': False, 'untraced_profile_parity': False}
+    darwin_records.append(record)
+    stream = open(log, 'xb')
+    gate_read, gate_write = os.pipe()
+    tag_read, tag_write = os.pipe()
+    seal_read, seal_write = os.pipe() if native_lane else (-1, -1)
+    tag_line = tag_sha = None
+    waited, code, failure = False, None, None
+    try:
+        try:
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+            try:
+                child_env = {k: v for k, v in (os.environ if env is None else env).items()
+                             if k != 'NOSTRC_DARWIN_CUSTODY_TAG_FILE'}
+                child_env['NOSTRC_DARWIN_CUSTODY_EVIDENCE'] = str(evidence_path)
+                if native_lane:
+                    child_env['NOSTRC_NATIVE_SEAL_FD'] = str(seal_write)
+                active = subprocess.Popen([sys.executable, str(helper), '--parent-ready-fd', str(gate_read),
+                                           '--parent-pid', str(os.getpid()), '--tag-fd', str(tag_write),
+                                           *map(str, argv)], cwd=cwd, env=child_env,
+                                          pass_fds=tuple(fd for fd in (gate_read, tag_write, seal_write) if fd != -1),
+                                          stdout=stream, stderr=subprocess.STDOUT)
+                for fd in (tag_write, seal_write):
+                    if fd != -1:
+                        os.close(fd)
+                tag_write = seal_write = -1
+                data, deadline = b'', time.monotonic() + DARWIN_HANDSHAKE_SECONDS
+                while len(data) <= 512:
+                    ready, _, _ = select.select([tag_read], [], [], max(0.0, deadline - time.monotonic()))
+                    if not ready:
+                        raise RuntimeError('darwin custody tag handshake missing; target not launched')
+                    block = os.read(tag_read, 513 - len(data))
+                    if not block:
+                        break
+                    data += block
+                match = DARWIN_TAG.fullmatch(data)
+                if match is None or match.group(1) == match.group(2):
+                    raise RuntimeError('darwin custody tag handshake invalid; target not launched')
+                tag_line, tag_sha = data, hashlib.sha256(data).hexdigest()
+                record['tag_sha256'] = tag_sha
+                os.kill(active.pid, 0)  # direct, unreaped child: PID still reserved
+                if signal.sigpending() & {signal.SIGTERM, signal.SIGINT}:
+                    raise KeyboardInterrupt()
+                os.write(gate_write, b'1')
+                record['status'] = 'launched'
+            finally:
+                for fd in (gate_read, gate_write, tag_read):
+                    os.close(fd)
+                gate_read = gate_write = tag_read = -1
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            code = active.wait()
+            waited = True
+        except BaseException as exc:
+            failure = exc
+            cancellation_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+            handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
+            signal.pthread_sigmask(signal.SIG_SETMASK, cancellation_mask)
+            try:
+                if active is not None:
+                    active.send_signal(signal.SIGTERM)  # Popen refuses once reaped: identity-safe
+                    try:
+                        code = active.wait(timeout=120)
+                    except subprocess.TimeoutExpired:
+                        active.kill()  # still unreaped
+                        code = active.wait()
+                    waited = True
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
+        evidence = darwin_evidence(evidence_path)
+        record.update(helper_exit=code, evidence_present=evidence is not None)
+        clean = bool(isinstance(evidence, dict) and evidence.get('cleanup_complete') is True
+                     and 'error' not in evidence and tag_sha is not None and evidence.get('tag_sha256') == tag_sha)
+        launched_or_unknown = tag_line is not None and (not isinstance(evidence, dict) or evidence.get('launched')
+                                                        or (code is not None and code < 0))
+        if not clean and launched_or_unknown:
+            record.update(darwin_recover(helper, tag_line, tag_sha, log))
+            record['status'] = 'recovered_lane_failed' if record['recovered'] else 'cleanup_unverified'
+        elif clean:
+            record['status'] = 'clean'
+        elif tag_line is not None:
+            record['status'] = 'refused_before_launch'
+        record['cleanup_complete'] = clean
+        if failure is not None:
+            raise failure
+        if not clean:
+            raise RuntimeError(f'darwin custody {record["status"]}: helper exit {code}; evidence={evidence_path}')
+        if code:
+            raise RuntimeError(f"command exited {code}: {Path(str(argv[0])).name}; log={log}")
+    finally:
+        for fd in (gate_read, gate_write, tag_read, tag_write, seal_write):
+            if fd != -1:
+                os.close(fd)
+        active = None
+        stream.close()
+        try:
+            with open(str(log) + '.darwin-adapter.json', 'x') as output:
+                json.dump(record, output, sort_keys=True, indent=2)
+        except OSError:
+            pass
+        if seal_read != -1:
+            original = sys.exc_info()[1]
+            try:
+                # The seal anchor is read only after helper exit with clean,
+                # tag-bound evidence; seal EOF itself is not the barrier.
+                if not waited or record.get('status') != 'clean':
+                    raise RuntimeError('darwin custody cleanup barrier was not observed')
+                from test_selection_services import attest_native_lane
+                anchor = os.read(seal_read, 65).decode('ascii')
+                final = attest_native_lane(native_lane, anchor)
+                with (native_lane / 'native-final.json').open('x') as output:
+                    json.dump(final, output, sort_keys=True, indent=2)
+                    output.write('\n')
+            except Exception as exc:
+                try:
+                    with (native_lane / 'native-final.json').open('x') as output:
+                        json.dump({'status': 'failed', 'error': str(exc), 'complete': False,
+                                   'complete_gate_eligible': False}, output, sort_keys=True)
+                        output.write('\n')
+                except FileExistsError:
+                    pass
+                if original is None:
+                    raise RuntimeError('native final evidence refused: ' + str(exc)) from exc
+                receipt['errors'].append('native final evidence refused: ' + str(exc))
+            finally:
+                os.close(seal_read)
+
+
 def command(argv, *, cwd=None, env=None, log=None, resource_root=None, private_display=False, native_lane=None):
     # macOS remains the inherited legacy compatibility path, NOT safe unified
     # arbitrary-descendant custody. Do not substitute a reserved-group-only path.
+    if args.linux_custody == "darwin":
+        if platform.system() != "Darwin":
+            raise RuntimeError("darwin custody is an explicit macOS-only diagnostic; target not launched")
+        if resource_root is not None or private_display:
+            raise RuntimeError("darwin custody hosts no private display/bus resources; target not launched")
+        return darwin_command(argv, cwd=cwd, env=env, log=log, native_lane=native_lane)
     if args.linux_custody != "legacy":
         if platform.system() != "Linux":
             raise RuntimeError("native kernel custody unavailable on macOS: EndpointSecurity descendant client requires com.apple.developer.endpoint-security.client (not provisioned); kqueue NOTE_TRACK is ENOTSUP; target not launched"
@@ -419,6 +617,14 @@ def host_guard(profile, checks, policy, profile_id):
                                               for check in profile_checks)
     caps = set(profile.get("capabilities", []))
     caps.update(cap for ident in checks for cap in policy["checks"][ident].get("requires", []))
+    if args.linux_custody == "darwin":
+        if host != "macos":
+            raise RuntimeError("darwin custody is an explicit macOS-only diagnostic; lane not launched")
+        if profile.get("instrumentation") != "none":
+            raise RuntimeError("darwin custody instrumentation is unproven (pending strict ASan compatibility proof); lane not launched")
+        refused = caps & {"display", "private_bus", "gnome_keyring", "signer_endpoint", "docker"}
+        if refused:
+            raise RuntimeError(f"darwin custody does not implement {sorted(refused)}; lane not launched")
     if 'gnome_keyring' in caps:
         if any(policy['checks'][ident]['kind'] != 'ctest' and
                'gnome_keyring' in policy['checks'][ident].get('requires', []) for ident in checks):
@@ -583,7 +789,9 @@ def execute(head, events, number, dirty=False):
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 common = ["--repo", source, "--profile", profile_id, "--plan", directory / "plan.json",
                           "--build-dir", lane_dir / "build", "--evidence-dir", lane_dir / "evidence"]
-                if args.linux_custody != 'legacy':
+                if args.linux_custody == 'darwin':
+                    common += ['--diagnostic-boundary', 'darwin_seatbelt_v1']
+                elif args.linux_custody != 'legacy':
                     common += ['--diagnostic-boundary', 'linux_' + args.linux_custody + '_v1']
                 resolved = lane_dir / "resolved.json"
                 result = lane_dir / "receipt.json"
@@ -601,11 +809,19 @@ seal_fd = os.environ.pop('NOSTRC_NATIVE_SEAL_FD', None)
 if seal_fd is not None:
     seal_fd = int(seal_fd)
     os.set_inheritable(seal_fd, False)
-    # Same-UID workers must not reopen this private pipe through procfs.
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(3, 0, 0, 0, 0) != 0:
-        raise RuntimeError('native finalizer nondumpable boundary unavailable')
+    if sys.platform == 'linux':
+        # Same-UID workers must not reopen this private pipe through procfs.
+        if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(3, 0, 0, 0, 0) != 0:
+            raise RuntimeError('native finalizer nondumpable boundary unavailable')
+    else:
+        # macOS has no procfs descriptor-reopen path; a same-UID process could
+        # reach this pipe only through this task's port or ptrace attach.
+        # PT_DENY_ATTACH refuses debugger attach for this finalizer.
+        libc.ptrace.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        if libc.ptrace(31, 0, None, 0) != 0:
+            raise RuntimeError('native finalizer PT_DENY_ATTACH boundary unavailable')
 observed, original_resolution = [], []
 def observe(result):
     observed.append(json.loads(json.dumps(result)))
@@ -671,7 +887,7 @@ finally:
                                       "--output", result],
                             env=env, log=lane_dir / "lane.log", resource_root=resource_root,
                             private_display="display" in service_caps,
-                            native_lane=lane_dir if args.linux_custody == 'pidns' else None)
+                            native_lane=lane_dir if args.linux_custody in ('pidns', 'darwin') else None)
                 finally:
                     # After the helper's wait barrier only the empty host
                     # mountpoint remains; private HOME/socket bytes were tmpfs.
@@ -686,7 +902,7 @@ finally:
                 if any(not item['closed_in_namespace'] for item in state.get('mdk_recovery', [])):
                     raise RuntimeError('original MDK lifecycle required out-of-namespace recovery; lane failed: '
                                        + json.dumps(state['mdk_recovery'], sort_keys=True))
-                if args.linux_custody == 'pidns':
+                if args.linux_custody in ('pidns', 'darwin'):
                     import test_selection_realization as realization_backend
                     realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')
                     state['retained_evidence'] = str(lane_dir / 'native-final.json')
@@ -703,6 +919,10 @@ finally:
             state["error"] = str(exc)
             print(f"test-gate: {profile_id}: {exc}", file=sys.stderr, flush=True)
         finally:
+            if args.linux_custody == 'darwin':
+                # Every custody invocation for this lane, including refusals,
+                # recovery and cleanup_unverified outcomes.
+                state['darwin_custody'] = [r for r in darwin_records if r['evidence'].startswith(str(lane_dir) + os.sep)]
             if platform.system() == "Darwin":
                 # Read-only, even on failure/cancellation. Never attempt repair.
                 command(["bash", guard], log=lane_dir / "keychain-after.log")
@@ -779,6 +999,8 @@ finally:
         # --force is Git's explicit permission for this private checkout only.
         subprocess.run(["git", "-C", args.repo, "worktree", "remove", "--force", "--force", str(source)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if args.linux_custody == "darwin":
+        receipt["darwin_custody"] = darwin_records  # every invocation, including checkout/guards/refusals
     if run_dir:
         shared.write_json(run_dir / "adapter-receipt.json", receipt)
         print(f"test-gate: {receipt['status']}; NOT complete CI/push coverage; receipt={run_dir / 'adapter-receipt.json'}", flush=True)
