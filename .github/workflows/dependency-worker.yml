@@ -295,6 +295,20 @@ jobs:
         # Unconditional (failure/cancellation too); a never-provisioned lane
         # records not_provisioned. Any surviving consumer or policy delta fails.
         run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/dependency/namespace-apparmor"
+      # Only after the pidns gate exited and the teardown above removed this job's
+      # profile. Profiles without the authored normal contract are a no-op. The
+      # raw receipt stays the lane receipt unless in-place AND relocated portable
+      # requalification pass; then receipt.json is atomically replaced (raw bytes
+      # kept as original-native-receipt.json and inside the sealed bundle).
+      - name: Qualify normal lane after pidns exit and AppArmor teardown
+        if: success() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 scripts/test_selection_execution.py worker-qualify --repo "$GITHUB_WORKSPACE" \
+            --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
+            --evidence-root "$RUNNER_TEMP/dependency/evidence" \
+            --apparmor-evidence "$RUNNER_TEMP/dependency/namespace-apparmor" \
+            --receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE"
       - name: Retain incomplete evidence on failure or cancellation
         if: always()
         uses: actions/upload-artifact@v4

@@ -14,11 +14,16 @@ import test_selection_services as services
 import test_selection_execution as normal
 
 
-class NormalExecutionTests(Project):
+class NormalFixture(Project):
+    # Lane layout hook: the default is the original synthetic layout; the
+    # portable-transport tests use the worker's <run>/0/lane-<id> layout.
+    LANE = ('lane',)
+    ADAPTER_UP = 0
+
     def setUp(self):
         super().setUp()
-        self.work = Path(self.temp.name).resolve() / 'lane'
-        self.work.mkdir()
+        self.work = Path(self.temp.name).resolve().joinpath(*self.LANE)
+        self.work.mkdir(parents=True)
         self.build, self.evidence = self.work / 'build', self.work / 'evidence'
         original = r._validate_native_profile
         def native(profile, *args, **kwargs):
@@ -64,7 +69,8 @@ class NormalExecutionTests(Project):
         spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')
         self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)
         self.original = self.cli.normalize_receipt(self.inventory, self.plan, self.resolved, self.raw)
-        self.public_path, self.adapter_path = self.work / 'native-receipt.json', self.work.parent / 'adapter-receipt.json'
+        self.public_path = self.work / 'native-receipt.json'
+        self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'
         self.adapter = dict(adapter='test-gate', custody_mode='pidns', status='partial', errors=[], bypasses={},
             executions=[dict(plan_id=self.plan['plan_id'], source_identity=self.identity, status='partial',
                 lanes=[dict(profile='synthetic', status='passed', evidence=str(self.work),
@@ -89,6 +95,8 @@ class NormalExecutionTests(Project):
     def qualify(self):
         return normal.qualify(self.inventory, self.plan, str(self.public_path), str(self.adapter_path))
 
+
+class NormalExecutionTests(NormalFixture):
     def test_independent_normal_receipt_and_aggregation_keep_original_bytes(self):
         before = self.public_path.read_bytes()
         result = self.qualify()

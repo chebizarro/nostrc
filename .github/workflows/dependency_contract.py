@@ -328,10 +328,15 @@ def main():
         needs = selection.read_json(args.needs)
         if args.command == "aggregate":
             plan = selection.read_json(directory / "plan.json")
-            receipts = [selection.read_json(p) for p in sorted((directory / "receipts").glob("**/receipt.json"))]
             broad_path = directory / "broad.json"
             broad_receipt = selection.read_json(broad_path) if broad_path.exists() else None
-            result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)
+            # This job alone owns the aggregate result. Exactly one receipt.json per
+            # lane artifact; normal receipts resolve only inside their own verified
+            # portable bundle against this exact-SHA (submodule) checkout.
+            from test_selection_execution import transported_receipts
+            paths = sorted((directory / "receipts").glob("**/receipt.json"))
+            with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:
+                result = aggregate(ROOT, policy, plan, needs, receipts, broad_receipt)
             selection.write_json(directory / "validation.json", result)
         else:
             release = selection.read_json(directory / "release.json")
