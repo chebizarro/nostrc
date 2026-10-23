@@ -1,5 +1,48 @@
 # Dependency-aware testing acceptance run ledger
 
+## PR22 postlanding finite snapshot — 2026-10-23T08:14:14.914574Z
+
+Sequential authenticated API capture **08:11:46.634875Z–08:14:14.914574Z**;
+21 successful queries,not a live counter. [PR22](https://github.com/chebizarro/nostrc/pull/22)
+merged08:06:01Z: master `94647b282b1c26d8eed2a4fc2b7a1bf109479e65`, reviewed
+head `d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626`, common tree
+`d0972d7c9d3ff21e950befc2bb5a1ef14a08ea1b`. Clean ff-only advance verified
+prior local11def03f is an ancestor. Root listing: **57=53 failed/one cancelled/
+three queued;zero successful**. The prior06:34 census54(53 failed/one cancelled)
+and all older failed attempts remain historical and unchanged below.
+
+| Source-linked run (attempt1 only) | API root / complete job census at capture | Finalized artifacts |
+|---|---|---|
+| [PR22 shadow39922245779](https://github.com/chebizarro/nostrc/actions/runs/39922245779), API head d29a5ac | Queued;55 jobs:1 selector success,49 queued,5 in progress. | Original plan12488121444 only;no validation receipt. |
+| [master push39922272251](https://github.com/chebizarro/nostrc/actions/runs/39922272251), actual API head94647b2 | Queued;one selector job queued. | None. |
+| [manual broad39922309846](https://github.com/chebizarro/nostrc/actions/runs/39922309846), actual API head94647b2 | Queued;one selector job queued. | None. |
+| [manual strict fuzz39922316626](https://github.com/chebizarro/nostrc/actions/runs/39922316626), actual API head94647b2 | Queued;selector success,three fuzz jobs queued. | None;not fuzz execution/strict-remedy acceptance. |
+
+Original ZIP12488121444:21607 bytes,SHA256
+`3e4d9822e90d4b94e61a85170278d4d6c7d73b9d5f9dcb7aebc7d93bf324de90`;
+API size/digest and ZIP CRC pass. Sole member `plan.json`:205284 bytes,SHA256
+`ada75c16e6c3ac7474bcb407858169a41b4725f2f8786b51b1e055c4cea7bca5`.
+Plan5b9b549f binds tested synthetic merge
+`4527a06e8c57ea014499d6e64f548843584f83eb`, **not** API head d29a5ac; independent
+commit API confirms parents663edcd/d29a5ac and the exact common tree above.
+Broad391 checks/12 lanes retain nine physical gaps plus shadow_cutover pending,
+`enforcement_ready=false`/`ready=false`. Same tree is not interchangeable commit
+identity; emitted plan/nested jobs do not establish physical complete coverage.
+
+**0/20 qualifying comparisons;0/2 successful complete broad integrations;
+W11 NOT MET/W12 NOT RUN.** No queued/running,nested,component,retry,planner or
+performance/five-sample credit. `.36.5` socket fix is landed; actual emulated
+public StoreKey failure remains before CTest. Native ARM direct fixture6/6 is
+not profile proof ([retained addendum](dependency-aware-testing-w11-closure-integration-2026-10-23.md#addendum-private-nip5f-bus-socket-placement-nostrc-0cfsg365)).
+Nine technical gaps still block; criteria/default/protection/publication unchanged.
+`.5` CLOSED,evidence comment only. No waits,reruns,SSH/provider retry or build.
+
+Exact API bytes,source bindings,job/artifact lists,one original ZIP and member
+hashes: `/tmp/nostrc-w11-pr22-postlanding-20261023/proof-manifest.json`, SHA256
+`73155763e79781bd3c99cbfc046819cd8e09e2b98b090ef2a17d30fb0aef0fd0`.
+Only relevant finalized archive downloaded;no all54 replay/redownload.
+Docs/tracker only,no component bump;one local commit,parent lands.
+
 ## Closure integration refresh — 2026-10-23T06:34:08.709047Z–06:34:42.397955Z
 
 Fresh existing-workflow API listing: all54 shadow roots returned,53 failed and

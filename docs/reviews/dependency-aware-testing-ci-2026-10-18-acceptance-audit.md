@@ -1,5 +1,42 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## PR22 postlanding finite snapshot — 2026-10-23T08:14:14.914574Z
+
+Authenticated sequential GitHub API window **08:11:46.634875Z–08:14:14.914574Z**:
+[PR22](https://github.com/chebizarro/nostrc/pull/22) merged at08:06:01Z to master
+`94647b282b1c26d8eed2a4fc2b7a1bf109479e65`; reviewed head
+`d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626` and master have identical tree
+`d0972d7c9d3ff21e950befc2bb5a1ef14a08ea1b`. Our prior `11def03f…` is an
+ancestor; this worktree advanced cleanly by fast-forward only.
+
+The [dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr22-postlanding-finite-snapshot--2026-10-23t081414914574z)
+records **57 shadow roots:53 failed,one cancelled,three queued;zero successful**.
+PR22 root39922245779, master push39922272251 and manual broad39922309846 are
+queued. Manual strict fuzz39922316626 also reports queued (selector success,
+three fuzz jobs queued); both manual runs' actual API head is94647b2, with no
+artifacts at capture. Nested/component/selector success is not root acceptance.
+No waiting, dispatch, retry, historical replay or all54-archive redownload.
+
+PR22's finalized original plan ZIP12488121444 is retained:21607 bytes, SHA256
+`3e4d9822e90d4b94e61a85170278d4d6c7d73b9d5f9dcb7aebc7d93bf324de90`;
+API digest/size, ZIP CRC and member hash verified. It binds actual tested merge
+`4527a06e8c57ea014499d6e64f548843584f83eb` (API-confirmed parents663edcd/d29a5ac,
+same tree as946),391 checks/12 lanes,broad mode,**nine physical gaps**, and
+`enforcement_ready=false`/`ready=false`. A plan is not execution or validation.
+
+The landed [socket-placement addendum](dependency-aware-testing-w11-closure-integration-2026-10-23.md#addendum-private-nip5f-bus-socket-placement-nostrc-0cfsg365)
+fixes `.36.5`; the actual emulated public route now fails `StoreKey` **before
+CTest**. Native ARM direct fixture6/6 is not profile/hosted proof. Nine technical
+gaps still block. **0/20 qualifying comparisons;0/2 successful complete broad
+integrations;W11 NOT MET/W12 NOT RUN**. No new paired performance/five-sample
+matrix credit, criterion change, publication/default/protection cutover or approval.
+The 06:34 snapshot54(53 failed/one cancelled) below remains unchanged historical
+evidence. `.5` stays CLOSED, evidence comment only; docs/tracker only,no bump.
+
+Frozen raw API/source/original-ZIP proof:
+`/tmp/nostrc-w11-pr22-postlanding-20261023/proof-manifest.json`, SHA256
+`73155763e79781bd3c99cbfc046819cd8e09e2b98b090ef2a17d30fb0aef0fd0`.
+
 ## Concrete closure implementation and refreshed evidence — 2026-10-23
 
 [Final integration and frozen hosted handoff](dependency-aware-testing-w11-closure-integration-2026-10-23.md)
