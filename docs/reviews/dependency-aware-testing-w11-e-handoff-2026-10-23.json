@@ -1,0 +1,83 @@
+{
+  "base_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+  "files": {
+    "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md": "2ffe1498141392ca40c671db87f1a6c7be64613ad75f4f49f19bab913f73f84d",
+    "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md": "a80e3ca3099521d1042cafac0bddb63baf051916cf415397144a2a3d78287e13",
+    "docs/reviews/dependency-aware-testing-json-glib-hosted-2026-10-23.json": "fa8d7ec9c9971c94111bf51a7dc28553713dd98118ad662ad6c26cd22eaf4dc8",
+    "docs/reviews/dependency-aware-testing-json-glib-hosted-2026-10-23.md": "dbdee4dc7892a164225b377e1f7c453e8a4f7a1eb14d12011da61983c596a6f1",
+    "docs/reviews/dependency-aware-testing-w11-e-evidence-2026-10-23.json": "50ab6ef3e96d749bbe18e2b2c827809a12c7845195feea276a9618953796a626",
+    "docs/reviews/dependency-aware-testing-w11-e-protocol-2026-10-23.md": "0ebf659896edb0a1a55ae7f3311cec303310dee3bd0fb9b59086870b6cc6ed72",
+    "docs/reviews/dependency-aware-testing-w11-execution-2026-10-23.md": "9af0cee6221325077fed0d55411eefc21f216bf705cb16df54ca7ac1f1399a5a",
+    "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23-rollback.patch": "1ea9b212ea1b8002a7fb5d398b85c6393008678a008ae3a090de479427b18581",
+    "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.json": "3e66d084bd3deae410a5da792bbd113f73e2b09c83f7c2ded90c33235508ea8e",
+    "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.patch": "763373033b7e205854ef16e4b27dec9b3b6e25621b6c12db5bc8e19a76a16be7",
+    "scripts/w11-evidence.py": "e2c72f4abf052961c3035ff847d7793ec58be81570d5974605a35f809b54ed20",
+    "tests/selection/test_w11_measurement.py": "cf4167dd4126f78477177dd2db75dcb4e3325d835fdb17d10a9f92e274554afe"
+  },
+  "gates": {
+    "docker": "NOT RUN: daemon ping times out; no restart/prune",
+    "full_root_build": "NOT RUN: explicit resource restriction",
+    "patch_applicability": "git apply --check PASS against original frozen source",
+    "static_checks": [
+      "check-unsequenced-args.py:PASS",
+      "check-gui-test-gdk-frame.py:PASS",
+      "check-linux-ci-packages.py:PASS",
+      "Groundhog check_privacy.py:PASS"
+    ],
+    "test_w11_evidence": {
+      "command": "python3 -m unittest discover -s tests/selection -p test_w11_evidence.py -v",
+      "passed": 7
+    },
+    "test_w11_measurement": {
+      "command": "python3 -m unittest discover -s tests/selection -p test_w11_measurement.py -v",
+      "passed": 18
+    },
+    "whitespace": "git diff --check PASS; blank patch context normalized, no guard changes"
+  },
+  "implementation_commit": "facdeb09c94ec62655d9f3161d79213ef4d5a794",
+  "interfaces": {
+    "collector": "w11_hosted_attempt_collection_v1",
+    "cutover": "w12_unapplied_patch_v1",
+    "execute_contract": "w11_physical_contract_v1",
+    "report": "w11_unreviewed_paired_measurements_v1",
+    "sample": "w11_physical_sample_v1"
+  },
+  "kind": "w11_e_frozen_handoff_20261023_v1",
+  "limits": [
+    "Endpoint physical byte/mode checks are not source immutability or within-phase modify/restore custody.",
+    "Owned process-group supervision is not kernel descendant cleanup.",
+    "No fixed historical product hash whitelist, transplanted source/modern engine replay, manufactured PRs or automatic quota.",
+    "Actual commands/coverage/cache/versions and historical comparison method require parent review; faithful original-source cases only.",
+    "No independent uploaded fuzz-binary fingerprint; source-bound authored sanitizer/build/link/runtime proof retained.",
+    "No overlap edits to B metadata/engine, A runtime/MDK, C native/helper/heartbeat, active hooks/workflows/AGENTS/TESTING or protections.",
+    "Parent assesses diagnostic control-file enrollment and integrates local commits; no moving-tip merges or push here."
+  ],
+  "review": {
+    "findings": [
+      "within-phase immutability overclaim -> endpoint-only flags/docs and modify-restore regression",
+      "PR diff provenance -> retained merge-base/head diff and diverged-branch regression",
+      "cleanup-timeout output loss -> retain later cumulative streams and interruption/timeout regressions"
+    ],
+    "oracle_chat": "untitled-chat-7FC3DB",
+    "scope": "one substantive explicit source-capsule review after selection exporter supplied no files"
+  },
+  "scope": {
+    "nostrc-0cfsg.29": "CLOSED: actual finalized hosted compatible dependency/strict fuzz proof, original62179 replay NOT RUN",
+    "nostrc-0cfsg.36.6": "IN_PROGRESS: original W11 acceptance still unmet",
+    "nostrc-0cfsg.5": "CLOSED finite baseline; fresh evidence comments only"
+  },
+  "version": "No bump: internal tooling/tests/docs/evidence; actual CI-only JSON-GLib remedy was already landed.",
+  "w11": {
+    "complete_broad_integrations": 0,
+    "reviewed_distinct_pr_comparisons": 0,
+    "snapshot": "2026-10-23T10:22:47.933138+00:00",
+    "status": "NOT MET"
+  },
+  "w12": {
+    "patches_applied": false,
+    "protection_snapshot": "rulesets []; master404; no invented protected baseline",
+    "schedule_policy": "No scheduled tier; remove legacy cron only after complete master/release/manual broad replacement proof",
+    "server_mutations": false,
+    "status": "NOT RUN"
+  }
+}
