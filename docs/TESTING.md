@@ -16,6 +16,16 @@
 > policy controller attempts retain local tool/socket setup failures, no receipt.
 > Parent dispatches the frozen landed source through existing workflows with these
 > exact limits. W11 NOT MET/W12 NOT RUN; defaults/protection/publication unchanged.
+>
+> **Addendum (2026-10-23, nostrc-0cfsg.36.5):** the private NIP5F bus socket
+> failure is fixed at code `744d2b4eddd5` (a short, owned, journaled
+> `/tmp/nostrc-rr-<token>` tmpfs mountpoint; intent-only journals never authorize
+> deletion). Native ARM real-signer fixture 6/6 with a deep evidence path (old
+> placement: 12 errors); 84/84 real Linux cells. The actual amd64-emulated public
+> gate now passes audits/build/bus startup, then fails in the approver
+> (`fixture API failed: StoreKey`) before CTest, a newly named failure not proven
+> to be emulation-caused. No native/hosted acceptance; W11 NOT MET. See the
+> [socket-placement handoff](reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json).
 
 > **Staged dependency-aware tooling (updated 2026-10-23): finite integration verified, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,

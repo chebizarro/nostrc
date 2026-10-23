@@ -1,0 +1,73 @@
+{
+ "ancestry": {
+  "code_sha_final": "744d2b4eddd5bae22f160604e45ab67bf67240d1",
+  "docs_only_commit_on_top": "the commit carrying this file; no code bytes differ from code_sha_final",
+  "frozen_code": "0e3601eab21ca480a7d80c72d6c29ac29155f5aa",
+  "integration_doc_tip": "8b7d730a16032728fba445a95563dd9329c9e03f",
+  "json_glib_remedy": "4a55397bbaf9fc0103068e18d466564ed2bd6fc7",
+  "placement_fix_1": "4529c0111daf46e2ef22aa31740095a5d8a70b8a"
+ },
+ "evidence_root": "/tmp/nostrc-w11-claude-20261023",
+ "evidence_sha256": {
+  "linux_cells_84_log": "591825b52f160dfaf7384796c4efafd49116029f8928a90a20039d543854c4c6",
+  "native_signer_deep_negative_log": "51a7b2a8117bd35533702621759e67422406918e4a97c9936c26031c9821b45e",
+  "native_signer_journal": "28b0b6f798bc3ff53034b46f52af61f35b344414e26139b235a71715b59b9851",
+  "native_signer_short_log": "8a82f2cc7c3bc7a6d1256f4f34482f732ea6d828c2c407d0f466b979b4144ba3",
+  "public_attempt3_744d2b4_tar": "8a703ee85be9832df6d34f4303457bde704b1795aa2934bb5992a64e9588cce8",
+  "public_attempt3_approver_log": "5c7af80e3232680faaacef21c48854cf907264d5d78e1b872eee464b07430a40",
+  "public_attempt3_gate_log": "d259825a5f2c5660c4cb2e8cc1793b6726945beaada2fe53f437593a8fcfff30",
+  "public_attempt3_plan": "ad4e62a0c769396abe73e5d163936a0bbfacb6e82dc65d6550497767b36d7a85",
+  "public_attempt3_resource_placement_journal": "e8639ac02c9821a06a20aa9e66988a884fbccc71886bc0fca7165498a92df2d4",
+  "public_attempt3_signer_runtime": "e1baa233a4adc6e12828c7726bdbe08ed859170d5528335af74475019de14d03",
+  "selection_suite_base_8b7": "1b406a9fc8a771e04eae18c25abde823c8d63dc51b7c090a40499a1235287aa8",
+  "selection_suite_final": "61e20f8d0afe1013511efe86af62d5b8973cd7471f68edf29cf7044b81eb38ad",
+  "sources": {
+   "scripts/test-gate.sh": "82e92b776239073c8090d41da9f64576ee54046c05c7219acb0b158a5ea678ec",
+   "scripts/test_selection_services.py": "fb5f2b41585dd8d9620bc64196b2bc3e7af0cdfce078ca2ef293b90b400ca426",
+   "tests/selection/fixtures/w11_placement_enrollment_20261023.json": "83eae9ab733e3d4e66358c3fb0829f700158a4ec75d59d7e4b151752cbb44f1e",
+   "tests/selection/inventory.json": "0e1eb836a2c9cb48820a75353e0dd9de4ab6634e34595731a342a4db57cdabb9",
+   "tests/selection/test_resource_placement.py": "a464a039fd12be3764c2af288d94a662ce4ada73cd86f292a564df7c9b13f801",
+   "tests/selection/w11_placement_support.py": "dad1eae8af06b39f520ad3e58e361af8536a5fe804929e786e940726b0eb1659"
+  }
+ },
+ "fix": {
+  "files": [
+   "scripts/test_selection_services.py",
+   "scripts/test-gate.sh (3 call sites)",
+   "tests/selection/test_resource_placement.py",
+   "tests/selection/w11_placement_support.py",
+   "tests/selection/fixtures/w11_placement_enrollment_20261023.json",
+   "tests/selection/w11_policy_support.py (chain hook)",
+   "tests/selection/inventory.json (3 runtime inputs)"
+  ],
+  "not_done": "No abstract/global socket, no consent bypass, no skip/flag/waiver, no shortened or dropped retained evidence, no host PID cleanup, no Git ownership bypass, no inventory authority/golden reset. CI/test-fixture only: no version bump.",
+  "summary": "Mountpoint for the namespace private-resource tmpfs now lives at /tmp/nostrc-rr-<128-bit token> (<=107-byte socket budget, 74 bytes with the fixture suffix) instead of <lane>/resources below deep retained evidence. Append-only hash-chained fsynced journal resource-placement.jsonl in the lane dir: intent -> allocated(dev/ino) -> released. Release removes only a directory proven created by that journal (token/base/name agreement, owner, 0700, dev+ino, unmounted, empty), never recursively. Intent-only journals never authorize deletion (present dir => recovery_refused and retained; absent => recorded absent, allocation_proved=false). provisioned_signer refuses a root without socket budget."
+ },
+ "proofs": {
+  "native_real_signer_fixture_arm64": "Native aarch64 build of test_nip5f_tcp/test_nip5f_approver/grotto-daemon/grotto-schemas (core.linux configure flags). Real provisioned fixture (libsecret StoreKey, one-shot unidentified consent, TCP) with a 151-char evidence path: old deep private root => 6 tests, 12 errors; allocated short root => 6/6 OK, 0 skips, journal released, directory gone. Direct fixture run, NOT the public gate and NOT hosted/native-x86.",
+  "public_route_actual_emulated": "Actual test-gate.sh --native-custody pidns, core.linux, plan 9c1e561f..., source 744d2b4e... under linux/amd64 emulation: full audits and default build pass, private bus/Secret Service/daemon start under the short root (journal intent/allocated/released), then the approver aborts \"fixture API failed: StoreKey\" (SIGTRAP) before CTest. NEW named failure, attributed only by correlation: the same StoreKey failure was retained for the amd64-emulated fixture earlier (.36.1) while the native ARM fixture passes; it is NOT proven to be emulation-caused. The socket defect itself is cleared on this route. No native/hosted success is claimed.",
+  "real_cells_native_arm64_linux": "84/84 pass, 0 skips (test_resource_placement 25 incl. 7 Linux-only real cells, test_namespace_wrapper_adapter 40, test_native_services 9, test_namespace_custody 10): deep-root negative control reproduces \"Socket name too long\"; short root real dbus-daemon+gdbus roundtrip; nonzero exit; SIGTERM cancel; gate-level pidns positive/nonzero/cancel assert journal released and nothing under the lane.",
+  "selection_suite": "Whole tests/selection on final bytes in a real-git clone with submodules equals the 8b7d730 baseline suite file-for-file except the new test passing and a baseline-only test_mdk_gate failure that passes with the change; shared pre-existing environment failures (realization_*, selector, supported_profile_membership, cleanup-opt-in) are identical in both."
+ },
+ "purpose": "Addendum to the sealed W11 closure handoff: nostrc-0cfsg.36.5 private NIP5F bus socket placement fix. Supersedes only the internal_remaining_defect line of dependency-aware-testing-w11-closure-handoff-2026-10-23.json; everything else there still stands.",
+ "retained_attempts": {
+  "attempt1_FAILED": "/tmp/nostrc-w11-claude-20261023/public/FAILED-attempt1-nested-submodule-offline : my snapshot lacked the nested third_party/nostrdb/deps/secp256k1 gitlink (container has no network). Setup error, not a product result.",
+  "attempt2_CANCELLED": "/tmp/nostrc-w11-claude-20261023/public/CANCELLED-attempt2-inventory-reorder : source 4529c0111 (pre-review); cancelled by me ~1 minute in via SIGTERM to the runner (container removed, cleanup_exit 0) after I found a runtime-input ordering issue; produced no result and is not proof. Its snapshot (public/source) is unmodified.",
+  "attempt3": "/tmp/nostrc-w11-claude-20261023/public2 : source 744d2b4e, StoreKey failure above.",
+  "original_0e360_failure": "/tmp/nostrc-w11-closure-20261023/final-integration/frozen-edges/tcp-public (unchanged)"
+ },
+ "schema_version": 1,
+ "still_open_honestly": [
+  "hosted/native x86 acceptance",
+  "StoreKey under amd64 emulation (cause not established)",
+  "Source G/API/H1/full W11",
+  "W12/defaults/protection/publication unchanged"
+ ],
+ "tracker": {
+  "fixed_issue": "nostrc-0cfsg.36.5 (kept open until the parent lands and a native/hosted run confirms)",
+  "related": [
+   "nostrc-0cfsg.36.1",
+   "nostrc-0cfsg.29"
+  ]
+ }
+}
