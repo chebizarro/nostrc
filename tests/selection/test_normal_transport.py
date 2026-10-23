@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 from realization_support import ROOT, Project
-from selector_support import s
+from selector_support import s, change
 import test_selection_realization as r   # after selector_support puts scripts/ on sys.path
 from test_normal_execution_contract import NormalFixture
 import test_selection_execution as normal
@@ -640,6 +640,38 @@ class PullRequestSelectedTests(TransportFixture):
                 forged['plan_id'] = s.digest(forged)
                 with self.assertRaisesRegex(ValueError, 're-derived from the tested history'):
                     normal._rederived_plan(self.inventory, forged, self.root)
+
+
+class AffectedWholeProfileTests(TransportFixture):
+    """Full-only profile (no selected marker), affected plan that selects EVERY eligible check."""
+
+    def make_plan(self):
+        return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
+                           mode='affected', source_identity=self.identity)
+
+    def load_1640_qualifier(self):
+        source = subprocess.run(['git', '-C', str(ROOT), 'show', '1640fc86de42f3b6d495847a83820eafb6dfbf4b:'
+                                 'scripts/test_selection_execution.py'], capture_output=True, check=True).stdout
+        path = Path(self.temp.name) / 'execution_1640.py'
+        path.write_bytes(source)
+        spec = importlib.util.spec_from_file_location('execution_1640', path)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        return module
+
+    def test_affected_whole_profile_without_selected_marker_is_refused_exactly_as_1640(self):
+        eligible = sorted(c for c, check in self.inventory['checks'].items() if 'synthetic' in check['profiles'])
+        self.assertEqual(self.plan['effective_mode'], 'affected')
+        self.assertEqual(self.plan['lanes'][0]['checks'], eligible)                  # whole eligible check set
+        self.assertEqual(self.resolved['tests'], sorted(t['name'] for t in self.real['tests']))  # whole universe ran
+        self.assertNotIn(normal.SELECTED_FIELD, self.profile)
+        message = 'normal full-profile qualification requires a fresh committed broad plan'
+        args = (self.inventory, self.plan, str(self.public_path), str(self.adapter_path))
+        with self.assertRaisesRegex(ValueError, message):
+            normal.qualify(*args)
+        with self.assertRaisesRegex(ValueError, message):
+            self.load_1640_qualifier().qualify(*args)                                # unchanged 1640 behaviour
+        self.assertIsNone(self.worker())                                             # worker: no-op, raw kept
+        self.assert_raw_retained()
 
 
 class CommandOnlySelectedTests(TransportFixture):
