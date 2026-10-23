@@ -133,7 +133,7 @@ jobs:
           printf '%s\n' "$version" | grep -Eq '(^|[[:space:]])v?0\.19\.7([[:space:]]|$)'
           echo "$tool_bin" >> "$GITHUB_PATH"
       - name: Install pinned Blueprint compiler for application profiles
-        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'core.linux.asan' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')
+        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'core.linux.asan' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.linux' || inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')
         run: |
           set -euo pipefail
           curl -fL https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o "$RUNNER_TEMP/blueprint.tar.xz"

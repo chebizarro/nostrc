@@ -15,7 +15,7 @@ import re
 import unittest
 
 from selector_support import ROOT, s
-from test_worker_signer_prerequisites import EXECUTE, selects, steps
+from test_worker_signer_prerequisites import BLUEPRINT_PIN, EXECUTE, selects, steps
 import worker_prerequisite_support as wave
 
 WORKER = '.github/workflows/dependency-worker.yml'
@@ -146,6 +146,116 @@ class WorkerMicrohttpdPrerequisiteTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             unguarded_mhd_sources(conditional, self.read)
 
+
+
+def version(text):
+    return tuple(int(part) for part in text.split('.'))
+
+
+def grotto_blueprint_pin(cmake_text):
+    """The exact version Grotto's configure accepts when it finds any compiler."""
+    pins = re.findall(r'if\(NOT _blueprint_version STREQUAL "([0-9.]+)"\)\s*\n\s*message\(FATAL_ERROR', cmake_text)
+    if len(pins) != 1:
+        raise ValueError('Grotto Blueprint pin not found exactly once')
+    return pins[0]
+
+
+def grotto_profiles(inventory):
+    """Linux root-tree profiles with the default-ON BUILD_APPS, which configure Grotto."""
+    return {name for name, p in inventory['profiles'].items()
+            if p.get('platform') == 'linux' and p.get('source_dir') == '.'
+            and p.get('configure_args') and '-DBUILD_APPS=OFF' not in p['configure_args']}
+
+
+def blueprint_missing(worker_text, inventory, pinned):
+    """Profiles lacking exactly one pre-execution, unmasked install of `pinned`."""
+    found = steps(worker_text)
+    names = [step['name'] for step in found]
+    if EXECUTE not in names:
+        return ['execution step missing']
+    execute = names.index(EXECUTE)
+    pin = (f'blueprint-compiler-{pinned}.tar.xz', f'blueprint-compiler --version | grep -x {pinned}',
+           *BLUEPRINT_PIN[1:3])
+    errors = []
+    for profile in sorted(grotto_profiles(inventory)):
+        covering = [i for i, step in enumerate(found)
+                    if i < execute and selects(step['if'], profile) and all(part in step['body'] for part in pin)
+                    and 'continue-on-error' not in step['body'] and '|| true' not in step['body']]
+        if len(covering) != 1:
+            errors.append(f'{profile}: needs exactly one pre-execution pinned Blueprint {pinned}, got {len(covering)}')
+    return errors
+
+
+class WorkerBlueprintPrerequisiteTests(unittest.TestCase):
+    """PR23 groundhog.linux job 120653339921 refused configure at
+    apps/grotto/CMakeLists.txt:123: pinned to 0.22.2, found distro 0.12.0."""
+
+    def setUp(self):
+        self.worker = (ROOT / WORKER).read_text()
+        self.inventory = json.loads((ROOT / 'tests/selection/inventory.json').read_text())
+        self.grotto = (ROOT / 'apps/grotto/CMakeLists.txt').read_text()
+        self.pinned = grotto_blueprint_pin(self.grotto)
+
+    def test_requirement_is_derived_from_actual_grotto_and_groundhog_source(self):
+        self.assertEqual(self.pinned, '0.22.2')
+        root = (ROOT / 'CMakeLists.txt').read_text()
+        self.assertIn('option(BUILD_APPS "Build application binaries under apps/" ON)', root)
+        self.assertIn('if (GTK4_FOUND AND GLIB_FOUND)\n  add_subdirectory(grotto)',
+                      (ROOT / 'apps/CMakeLists.txt').read_text())
+        # The worker also installs the distro compiler, so Grotto always finds one.
+        setup = next(step for step in steps(self.worker) if step['name'] == SETUP)
+        self.assertIn('blueprint-compiler', apt_packages(setup['body']))
+        self.assertEqual(grotto_profiles(self.inventory), {
+            'core.linux', 'core.linux.asan', 'grotto.linux', 'grotto.linux.asan_ubsan',
+            'groundhog.linux', 'groundhog.mdk08', 'groundhog.mdk011'})
+        # The pin satisfies, and does not lower, Groundhog's own minimum.
+        minimum = re.search(r'set\(GROUNDHOG_BLUEPRINT_MIN_VERSION ([0-9.]+)\)',
+                            (ROOT / 'gnome/groundhog/CMakeLists.txt').read_text()).group(1)
+        self.assertEqual(minimum, '0.12.0')
+        self.assertGreaterEqual(version(self.pinned), version(minimum))
+        # Same pinned tarball/digest/version check as the legacy Grotto route.
+        legacy = (ROOT / '.github/workflows/grotto-ci.yml').read_text()
+        for part in (f'blueprint-compiler-{self.pinned}.tar.xz', BLUEPRINT_PIN[1],
+                     f'blueprint-compiler --version | grep -x {self.pinned}'):
+            self.assertIn(part, legacy)
+
+    def test_every_grotto_profile_gets_the_pinned_compiler_before_execution(self):
+        self.assertEqual(blueprint_missing(self.worker, self.inventory, self.pinned), [])
+
+    def test_hosted_failing_worker_bytes_lack_groundhog_linux_only(self):
+        failing = wave.before_source(WORKER, (ROOT / WORKER).read_bytes()).decode()
+        self.assertEqual(blueprint_missing(failing, self.inventory, self.pinned), [
+            f'groundhog.linux: needs exactly one pre-execution pinned Blueprint {self.pinned}, got 0'])
+        self.assertEqual(wave.witness()['blueprint_hosted_failure']['found_version'], '0.12.0')
+
+    def test_missing_drifted_masked_or_duplicated_pin_is_refused(self):
+        dropped = self.worker.replace("inputs.profile == 'groundhog.linux' || inputs.profile == 'groundhog.mdk08'",
+                                      "inputs.profile == 'groundhog.mdk08'", 1)
+        self.assertEqual(blueprint_missing(dropped, self.inventory, self.pinned),
+                         [f'groundhog.linux: needs exactly one pre-execution pinned Blueprint {self.pinned}, got 0'])
+        drifted = self.worker.replace('grep -x 0.22.2', 'grep -x 0.12.0', 1)
+        self.assertEqual(len(blueprint_missing(drifted, self.inventory, self.pinned)), 7)
+        # A Grotto pin that no longer matches the provisioned compiler refuses too.
+        self.assertEqual(len(blueprint_missing(self.worker, self.inventory, '0.12.0')), 7)
+        masked = self.worker.replace('blueprint-compiler --version | grep -x 0.22.2',
+                                     'blueprint-compiler --version | grep -x 0.22.2 || true', 1)
+        self.assertEqual(len(blueprint_missing(masked, self.inventory, self.pinned)), 7)
+        execute = '      - name: ' + EXECUTE
+        block = self.worker.split('      - name: Install pinned Blueprint compiler', 1)[1].split('      - name:', 1)[0]
+        duplicate = self.worker.replace(execute, '      - name: Again Install pinned Blueprint compiler'
+                                        + block + execute, 1)
+        self.assertIn('groundhog.linux: needs exactly one pre-execution pinned Blueprint 0.22.2, got 2',
+                      blueprint_missing(duplicate, self.inventory, self.pinned))
+        with self.assertRaises(ValueError):
+            grotto_blueprint_pin(self.grotto.replace('message(FATAL_ERROR "Grotto Blueprint',
+                                                     'message(WARNING "Grotto Blueprint', 1))
+
+    def test_apps_disabled_profiles_carry_no_requirement(self):
+        inventory = json.loads(json.dumps(self.inventory))
+        inventory['profiles']['groundhog.linux']['configure_args'].append('-DBUILD_APPS=OFF')
+        self.assertNotIn('groundhog.linux', grotto_profiles(inventory))
+        self.assertIn('groundhog.linux.sanitizers', self.inventory['profiles'])
+        self.assertNotIn('groundhog.linux.sanitizers', grotto_profiles(self.inventory))
 
 class WorkerPrerequisiteEnrollmentTests(unittest.TestCase):
     """The finite inverse reverses exactly this repair; it admits nothing."""
