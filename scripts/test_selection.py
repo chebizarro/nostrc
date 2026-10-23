@@ -807,6 +807,11 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
                 errors.append(f"{lane_id}: contained lifecycle did not qualify: {exc}")
             if complete:
                 errors.append(f"{lane_id}: prepared contained route is diagnostic only; original image builds unexecuted")
+        from test_selection_policy import validate_runtime as validate_policy_runtime
+        try:
+            validate_policy_runtime(backend, plan, lane, profile)
+        except (ValueError, KeyError, TypeError) as exc:
+            errors.append(f'{lane_id}: authored policy controller did not qualify: {exc}')
         required_caps = set(backend.get("required_capabilities", []))
         keyring_commands = [ident for ident in lane['checks'] if policy['checks'][ident]['kind'] != 'ctest'
                             and 'gnome_keyring' in policy['checks'][ident].get('requires', [])]

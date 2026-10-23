@@ -14,6 +14,7 @@ from unittest.mock import patch
 import closeout_support as c
 from w11_worker_support import before_worker_policy
 from w11_policy_support import before_policy_enrollment
+from test_selection_subset import before_full_ownership_policy
 from profile_contract_support import source_job_blocks
 from realization_support import r
 from selector_support import ROOT, s
@@ -22,7 +23,7 @@ from selector_support import ROOT, s
 class CloseoutInterfaces(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.p = before_worker_policy(before_policy_enrollment(s.load_inventory(ROOT / 'tests/selection/inventory.json')))
+        cls.p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))))
         cls.data = c.witness()
 
     def test_lossless_exact_policy_projection_and_input_enrollment(self):

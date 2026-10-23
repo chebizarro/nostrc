@@ -157,8 +157,8 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: dependency-
   policy:
-    # Regression-container success is NOT a native static.policy receipt.
-    # Keep the selected native worker and its fail-closed profile admission.
+    # Predecessor regression success is not selected-check evidence.
+    # The selected worker owns the authored policy controller and its custody.
     needs: [select, policy_regressions]
     if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')
     uses: ./.github/workflows/dependency-worker.yml

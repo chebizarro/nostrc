@@ -5,6 +5,7 @@ production full_marker, unique membership and live validation stay unchanged.
 The separate physical Go33 receipt uses the actual repository and Linux GCC.
 """
 import copy
+import importlib.util
 import hashlib
 import json
 import platform
@@ -142,6 +143,8 @@ class FullGraphTests(Project):
             name = next(iter(check["ctest_tests"].values()))
             check.update(profiles=list(subset.PROFILES), ctest_tests={pid: name for pid in subset.PROFILES},
                          requirement="blocking", expected_outcome="pass", cost="ordinary")
+        self.inventory['checks'] = {'fixture.' + name.replace('-', '_'): check
+                                    for name, check in self.inventory['checks'].items()}
         self.inventory["checks"]["supported.libgo"] = {
             "kind": "ctest", "profiles": sorted(subset.PROFILES), "nodes": ["libgo"], "cost": "ordinary",
             "requirement": "blocking", "expected_outcome": "pass", "runtime_inputs": [],
@@ -152,6 +155,12 @@ class FullGraphTests(Project):
             "requirement": "blocking", "expected_outcome": "pass", "cost": "ordinary", "build_scope": "default",
             "build_targets": [], "command": ["cmake", "--build", "{build}", "--config", "Debug"],
             "working_directory": "{source}", "environment": {}, "runtime_inputs": []}
+        for name, node in self.inventory['nodes'].items():
+            node.update(owner_paths=[name], rationale='synthetic dependency')
+        for rule in self.inventory['path_rules']:
+            rule.setdefault('effect', 'impact')
+            rule.setdefault('reason', 'synthetic ownership')
+        self.inventory.update(schema_version=1, release_components={})
         self.refresh_identity()
         self.pid = "groundhog.linux"
         self.plan.update(selected_checks=list(self.inventory["checks"]), inventory_hash=s.digest(self.inventory))
@@ -186,23 +195,32 @@ class FullGraphTests(Project):
 
     def test_real_full_default_build_ctest_receipt_and_adversarial_promotion(self):
         full = subset.full_evidence(self.inventory, self.real, self.tests, self.descriptors)
+        lane = dict(id='fixture-full-go', profile=self.pid, profile_hash=s.digest(self.profile),
+                    checks=list(self.inventory['checks']))
+        self.plan.update(plan_id='fixture-full-go', lanes=[lane])
         resolved = r.resolve_checks(self.inventory, self.plan, self.real, self.pid)
         before = r.check_inputs(self.inventory, self.real)
         self.assertTrue(before["passed"], before["gaps"])
-        # Simulate the parent's additive retention interface, not its policy:
-        # these are real backend audits and physical build/CTest results.
-        before[subset.FULL_FIELD] = full
-        before["audit_hash"] = s.digest({k: v for k, v in before.items() if k != "audit_hash"})
+        self.assertEqual(resolved[subset.FULL_FIELD], full)
+        self.assertEqual(before[subset.FULL_FIELD], full)
         r.build_resolved(resolved, self.build)
         after = r.check_inputs(self.inventory, self.real, after_build=True)
         self.assertTrue(after["passed"], after["gaps"])
-        after[subset.FULL_FIELD] = full
-        after["audit_hash"] = s.digest({k: v for k, v in after.items() if k != "audit_hash"})
-        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=after, build=False)
+        self.assertEqual(after[subset.FULL_FIELD], full)
+        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=after,
+                             input_audit_before_build=before, build=False)
         self.assertEqual(raw["outcome"], "passed", raw)
-        raw[subset.FULL_FIELD] = full
-        raw["input_audit_before_build"] = before
-        lane = {"profile": self.pid, "profile_hash": s.digest(self.profile)}
+        self.assertEqual(raw[subset.FULL_FIELD], full)
+        self.assertEqual(raw["input_audit_before_build"], before)
+        spec = importlib.util.spec_from_file_location('full_go_adapter', ROOT / 'scripts/test-plan.py')
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        normalized = adapter.normalize_receipt(self.inventory, self.plan, resolved, raw)
+        self.assertEqual(normalized[subset.FULL_FIELD], full)
+        for key in s.COVERAGE_STATE_FIELDS:
+            self.assertEqual(normalized[key], resolved[key])
+            self.assertEqual(raw[key], before[key])
+            self.assertEqual(raw[key], after[key])
         subset.validate_full_receipt(raw, raw, self.plan, lane, self.profile, checks=self.inventory["checks"])
         mutations = [
             lambda value: value.pop(subset.FULL_FIELD),
@@ -230,6 +248,72 @@ class FullGraphTests(Project):
         with self.assertRaisesRegex(ValueError, "historical partial authority"):
             subset.validate_full_receipt(outer, backend, self.plan, lane, self.profile,
                                          checks=self.inventory["checks"])
+
+    def test_unselected_go_keeps_full_graph_audits_without_broadening_execution(self):
+        selected = [ident for ident in self.inventory['checks'] if ident != 'supported.libgo']
+        lane = dict(id='fixture-no-go', profile=self.pid, profile_hash=s.digest(self.profile), checks=selected)
+        self.plan.update(plan_id='fixture-no-go', selected_checks=selected, lanes=[lane])
+        resolved = r.resolve_checks(self.inventory, self.plan, self.real, self.pid)
+        self.assertNotIn('supported.libgo', resolved['checks'])
+        self.assertFalse(set(subset.REGISTRATIONS) & set(resolved['tests']))
+        pre = r.check_inputs(self.inventory, self.real)
+        r.build_resolved(resolved, self.build)
+        post = r.check_inputs(self.inventory, self.real, after_build=True)
+        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=post,
+                             input_audit_before_build=pre, build=False)
+        self.assertEqual(raw['outcome'], 'passed', raw)
+        self.assertNotIn('supported.libgo', raw['checks'])
+        self.assertFalse(set(subset.REGISTRATIONS) & set(raw['observed_executions']))
+        spec = importlib.util.spec_from_file_location('no_go_adapter', ROOT / 'scripts/test-plan.py')
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        normalized = adapter.normalize_receipt(self.inventory, self.plan, resolved, raw)
+        self.assertEqual(normalized[subset.FULL_FIELD], resolved[subset.FULL_FIELD])
+        self.assertEqual(set(normalized['checks']), set(selected))
+
+    def test_test_only_cli_cannot_synthesize_original_prebuild_audit(self):
+        plan = s.make_plan(self.inventory, [change('libgo/runner.c')], head=self.identity['sha'],
+                           base='b' * 40, source_identity=self.identity, mode='broad')
+        path = self.build.parent / 'plan.json'
+        path.write_text(json.dumps(plan))
+        spec = importlib.util.spec_from_file_location('test_only_adapter', ROOT / 'scripts/test-plan.py')
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        args = adapter.parser().parse_args(['run', '--repo', str(self.root), '--plan', str(path),
+            '--build-dir', str(self.build), '--profile', self.pid, '--phase', 'test', '--evidence-dir', str(self.evidence)])
+        with mock.patch.object(r, 'check_inputs', wraps=r.check_inputs) as audit:
+            with self.assertRaisesRegex(s.CheckFailure, 'full ownership test-only phase is unsupported'):
+                adapter.realization_command(args, self.inventory, r)
+            audit.assert_not_called()
+
+    def test_missing_or_forged_retained_full_audit_refuses_before_target_execution(self):
+        resolved = r.resolve_checks(self.inventory, self.plan, self.real, self.pid)
+        before = r.check_inputs(self.inventory, self.real)
+        r.build_resolved(resolved, self.build)
+        after = r.check_inputs(self.inventory, self.real, after_build=True)
+        cases = []
+        cases.append((copy.deepcopy(resolved), None, copy.deepcopy(after)))
+        for key in s.COVERAGE_STATE_FIELDS:
+            stale = copy.deepcopy(before)
+            stale.pop(key)
+            stale['audit_hash'] = s.digest({k: v for k, v in stale.items() if k != 'audit_hash'})
+            cases.append((copy.deepcopy(resolved), stale, copy.deepcopy(after)))
+        stale = copy.deepcopy(after)
+        stale.pop(subset.FULL_FIELD)
+        stale['audit_hash'] = s.digest({k: v for k, v in stale.items() if k != 'audit_hash'})
+        cases.append((copy.deepcopy(resolved), copy.deepcopy(before), stale))
+        changed = copy.deepcopy(resolved)
+        changed[subset.FULL_FIELD]['graph_sha256'] = '0' * 64
+        cases.append((changed, copy.deepcopy(before), copy.deepcopy(after)))
+        for index, (selected, pre, post) in enumerate(cases):
+            with self.subTest(index=index), mock.patch.object(r, '_execute', wraps=r._execute) as execute:
+                with self.assertRaises((ValueError, KeyError, r.RealizationError)):
+                    r.run_resolved(selected, self.build, self.evidence / str(index), input_audit=post,
+                                   input_audit_before_build=pre, build=False)
+                # Real read-only graph/tool queries are allowed; no target CTest
+                # or prerequisite build may execute with invalid retained audits.
+                self.assertFalse(any('--output-junit' in call.args[0] or '--build' in call.args[0]
+                                     for call in execute.call_args_list))
 
     def test_inherited_worker_override_refuses_even_with_unchanged_ctest_graph(self):
         env = r.phase_environment(self.profile, self.root, "test")

@@ -495,8 +495,8 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertIs(result["complete_gate_eligible"], False)
             self.assertEqual(result["resolved"]["baseline_exclusions"][0]["status"], "not_executed")
 
-    def test_active_production_policy_cannot_promote_ordinary_evidence(self):
-        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+    def test_historical_production_policy_cannot_promote_ordinary_evidence(self):
+        policy = subset.before_full_ownership_policy(s.load_inventory(ROOT / "tests/selection/inventory.json"))
         release = s.release_plan(ROOT, policy, head="HEAD", component="libgo", dry_run=True, run_id="ordinary-production-negative")
         self.assertEqual(release["diagnostic_nonmember_subset_profiles"], sorted(subset.PROFILES))
         validation = dict(passed=True, complete=True, mode="broad", partial_profiles=[], tag=release["tag"],
@@ -540,7 +540,9 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         # Independent broad validation keeps its existing release route; it
         # cannot be pasted over an embedded ordinary receipt missing omissions.
         validation.pop("attempts")
-        guarded_release = dict(release, diagnostic_nonmember_subset_profiles=[self.pid])
+        ready = s.coverage_state({'coverage_gaps': [], 'enforcement_ready': True})
+        guarded_release = dict(release, diagnostic_nonmember_subset_profiles=[self.pid], **ready)
+        validation.update(ready, complete_gate_eligible=True)
         self.assertTrue(s.aggregate_release(guarded_release, validation, {})["passed"])
         for wrapper in ({"profile": self.pid}, {"profile_id": self.pid},
                         {"attempts": [{"profile": self.pid, "complete": True, "passed": True}]}):

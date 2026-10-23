@@ -230,14 +230,17 @@ def controller(realization, resolved, spec, audit):
                 and binds['/evidence']['Source'] == str(evidence) and binds['/evidence']['RW'] is True
                 and all(item['Type'] in {'bind', 'tmpfs'} for item in before['Mounts'])
                 and set(host['Tmpfs']) == {'/tmp', '/tmp/.X11-unix'}
-                and set(host['SecurityOpt']) == {'no-new-privileges', 'seccomp=unconfined',
-                                               'systempaths=unconfined', 'apparmor=unconfined'},
+                and host['MaskedPaths'] == [] and host['ReadonlyPaths'] == []
+                and set(host['SecurityOpt']) == {'no-new-privileges', 'seccomp=unconfined', 'apparmor=unconfined'},
+
                 'policy container effective isolation/mounts differ before target launch')
         write(control / 'controller.json', dict(docker=proof['tools']['docker'], cid=cid))
         state['create_argv'] = argv
+        state['container_before'] = before
         yield state
         observed = json.loads(run([docker, 'container', 'inspect', cid]))[0]
         write(control / 'container-after.json', observed)
+        state['container_after'] = observed
         require(all(observed[key] == before[key] for key in ('Id', 'Image', 'Name', 'Config', 'HostConfig', 'Mounts'))
                 and observed['State']['Running'] is False and observed['State']['ExitCode'] == 0,
                 'policy container did not physically exit successfully')
@@ -267,6 +270,99 @@ def controller(realization, resolved, spec, audit):
         else:
             write(directory / 'receipt.json', state)
         require(contract(realization, env) == proof, 'policy source/tool/image inputs changed during execution')
+
+
+def _validate_contract_shape(proof, identity):
+    fields = {'kind', 'source_identity', 'inputs', 'tools', 'image', 'setup_inputs', 'readiness', 'scope'}
+    require(isinstance(proof, dict) and set(proof) == fields
+            and proof['kind'] == 'policy_controller_contract_v1' and proof['source_identity'] == identity
+            and proof['readiness'] is False and proof['scope'] == 'authored_provisioned_policy_workload_not_native_profile'
+            and set(proof['inputs']) == set(INPUTS)
+            and all(re.fullmatch('[0-9a-f]{64}', sha) for sha in proof['inputs'].values())
+            and re.fullmatch('sha256:[0-9a-f]{64}', proof['image']), 'policy source/image producer contract missing')
+    require(set(proof['tools']) == {'docker', 'git', 'python'}
+            and all(set(item) == {'path', 'sha256'} and Path(item['path']).is_absolute()
+                    and re.fullmatch('[0-9a-f]{64}', item['sha256']) for item in proof['tools'].values()),
+            'policy host executable bindings missing')
+    setup = proof['setup_inputs']
+    require(isinstance(setup, dict) and len(setup) == 3
+            and {Path(path).name for path in setup} == {'policy-testhost-setup.json', 'image-build.log', 'image-build.log.process.json'}
+            and all(Path(path).is_absolute() and re.fullmatch('[0-9a-f]{64}', sha) for path, sha in setup.items()),
+            'policy physical producer evidence bindings missing')
+    log = next(Path(path) for path in setup if Path(path).name == 'image-build.log')
+    require(str(log) + '.process.json' in setup, 'policy producer process/log custody differs')
+
+
+def validate_runtime(backend, plan, lane, profile):
+    """Validate the retained controller boundary, never a raw regression status."""
+    required = (profile.get('execution_domain') == 'policy_controller_linux_v1'
+                or CAPABILITY in profile.get('capabilities', []) or CAPABILITY in backend.get('required_capabilities', []))
+    state = backend.get('policy_controller_runtime')
+    if not required:
+        require(state is None, 'undeclared policy controller runtime')
+        return
+    require(lane['profile'] == 'static.policy' and profile.get('execution_domain') == 'policy_controller_linux_v1'
+            and profile.get('capabilities') == [CAPABILITY]
+            and backend.get('required_capabilities') == [CAPABILITY], 'policy runtime on an unauthored profile')
+    proof = backend.get('runtime_capability_evidence', {}).get(CAPABILITY)
+    _validate_contract_shape(proof, plan['source_identity'])
+    from test_selection import digest
+    audit = backend.get('input_audit_details', backend.get('input_audit'))
+    require(isinstance(audit, dict) and audit.get('passed') is True and audit.get('after_build') is True
+            and audit.get('gaps') == [] and audit.get('source_identity') == plan['source_identity']
+            and audit.get('inventory_hash') == plan['inventory_hash']
+            and audit.get('runtime_capability_evidence', {}).get(CAPABILITY) == proof
+            and audit.get('audit_hash') == digest({k: v for k, v in audit.items() if k != 'audit_hash'}),
+            'policy original full post-build audit missing/stale')
+    hashes = audit.get('input_hashes', {})
+    require(all(hashes.get(item['path']) == item['sha256'] for item in proof['tools'].values())
+            and all(hashes.get(path) == sha for path, sha in proof['setup_inputs'].items()),
+            'policy producer/host tools differ from full audit')
+    roots = [path[:-len(INPUTS[0])] for path in hashes if path.endswith('/' + INPUTS[0])]
+    require(len(roots) == 1 and all(hashes.get(roots[0] + name) == sha for name, sha in proof['inputs'].items()),
+            'policy full source input bindings differ')
+    require(isinstance(state, dict) and state.get('kind') == 'authored_policy_controller_v1'
+            and state.get('contract') == proof and state.get('status') == 'passed'
+            and state.get('scope') == 'provisioned_policy_workload_not_native_profile'
+            and state.get('complete') is False and state.get('complete_gate_eligible') is False
+            and state.get('cleanup_complete') is True
+            and re.fullmatch('[0-9a-f]{64}', state.get('source_manifest_sha256', '')),
+            'policy owned source/workload/cleanup receipt missing')
+    before, after, cleanup = state.get('container_before', {}), state.get('container_after', {}), state.get('cleanup', {})
+    cid = before.get('Id', '')
+    require(re.fullmatch('[0-9a-f]{64}', cid) and before.get('Image') == proof['image']
+            and all(after.get(k) == before.get(k) for k in ('Id', 'Image', 'Name', 'Config', 'HostConfig', 'Mounts'))
+            and after.get('State', {}).get('Running') is False and after['State'].get('ExitCode') == 0
+            and cleanup.get('kind') == 'namespace_testhost_cleanup_v1' and cleanup.get('cleanup_complete') is True
+            and cleanup.get('removed_cid') == cid
+            and all(cleanup.get('observed', {}).get(k) == after.get(k) for k in ('Id', 'Image', 'Name', 'Config', 'HostConfig', 'Mounts')),
+            'policy physical container/custody exit evidence differs')
+    config, host = before.get('Config', {}), before.get('HostConfig', {})
+    label = config.get('Labels', {}).get('nostrc.namespace-policy', '')
+    require(re.fullmatch('[0-9a-f]{32}', label) and before.get('Name') == '/nostrc-namespace-policy-' + label
+            and config.get('User') == '1001:1001' and not config.get('Volumes')
+            and config.get('Entrypoint') == ['/bin/bash'] and config.get('Cmd') == ['-c', ENTRY_COMMAND]
+            and host.get('Privileged') is False and not host.get('CapAdd') and host.get('CapDrop') == ['ALL']
+            and host.get('NetworkMode') == 'none' and host.get('PidMode') != 'host'
+            and host.get('ReadonlyRootfs') is True and not host.get('Binds')
+            and host.get('MaskedPaths') == [] and host.get('ReadonlyPaths') == []
+            and set(host.get('SecurityOpt', [])) == {'no-new-privileges', 'seccomp=unconfined', 'apparmor=unconfined'}
+            and set(host.get('Tmpfs', {})) == {'/tmp', '/tmp/.X11-unix'}, 'policy effective isolation differs')
+    mounts = before.get('Mounts', [])
+    binds = {item.get('Destination'): item for item in mounts if item.get('Type') == 'bind'}
+    require(set(binds) == {'/source', '/evidence'} and len([item for item in mounts if item.get('Type') == 'bind']) == 2
+            and binds['/source'].get('RW') is False and binds['/evidence'].get('RW') is True
+            and all(item.get('Type') in {'bind', 'tmpfs'} for item in mounts), 'policy source/evidence mounts differ')
+    workload = state.get('workload', {})
+    require(workload.get('source_sha') == plan['source_identity'].get('sha') and workload.get('passed') is True
+            and set(workload.get('commands', {})) == REQUIRED
+            and all(type(v) is int and v == 0 for v in workload['commands'].values())
+            and workload.get('kernel_matrix', {}).get('tests', 0) >= 79 and workload['kernel_matrix'].get('skipped') == 0
+            and workload.get('native_profile_acceptance') is False and workload.get('complete') is False,
+            'policy full authored workload/kernel proof missing')
+    require(set(workload.get('tools', {})) == {'python3', 'git', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'}
+            and all(re.fullmatch('[0-9a-f]{64}', tool['sha256']) and Path(tool['path']).is_absolute()
+                    for tool in workload['tools'].values()), 'policy physical container tools missing')
 
 
 def main():

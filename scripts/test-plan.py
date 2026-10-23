@@ -345,9 +345,13 @@ def _realization_command_owned(args, policy, backend, *, custody=None, state=Non
         args.timeout = diagnostic_options["timeout_seconds"]
     if state is not None:
         state["stage"] = "capability"
-    if args.phase == "test" and any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1"
-                                     for e in resolved.get("baseline_exclusions", [])):
-        raise selection.CheckFailure("ordinary diagnostic subset test-only phase is unsupported; use --phase all to retain physical build proof")
+    if args.phase == "test":
+        import test_selection_subset as subset
+        if subset.FULL_FIELD in resolved:
+            raise selection.CheckFailure('ordinary full ownership test-only phase is unsupported; use --phase all to retain original pre-build audit and physical build proof')
+        if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1"
+               for e in resolved.get("baseline_exclusions", [])):
+            raise selection.CheckFailure("ordinary diagnostic subset test-only phase is unsupported; use --phase all to retain physical build proof")
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
     if custody is not None:
         custody.validate(resolved)
@@ -369,6 +373,7 @@ def _realization_command_owned(args, policy, backend, *, custody=None, state=Non
     incomplete = ({"complete": False, "complete_gate_eligible": False} if resolved.get("complete") is False else {})
     if args.phase == "configure":
         return {"schema_version": 1, "phase": "configure", "resolved": resolved, "input_audit": audit, "execution_complete": False, **incomplete}, 0
+    preaudit = audit
     build_seconds, build_commands, build_evidence = 0.0, [], []
     if args.phase in {"all", "build"} and (resolved["build_targets"] or resolved.get("default_build_required")):
         if state is not None:
@@ -423,7 +428,7 @@ def _realization_command_owned(args, policy, backend, *, custody=None, state=Non
         path = backend._attempt_directory(resolved, args.evidence_dir, args.attempt) / "receipt.json"
         if not path.parent.exists():
             state["backend_receipt_path"] = str(path)
-    raw = backend.run_resolved(resolved, args.build_dir, args.evidence_dir, args.attempt, input_audit=audit,
+    raw = backend.run_resolved(resolved, args.build_dir, args.evidence_dir, args.attempt, input_audit=audit, input_audit_before_build=preaudit,
                                build=False, parallel=args.parallel, timeout=args.timeout, evidence_paths=args.evidence_path,
                                build_parallel=getattr(args, "build_parallel", None), test_parallel=getattr(args, "test_parallel", None),
                                **({"custody": custody} if custody is not None else {}))
@@ -475,6 +480,9 @@ def normalize_receipt(policy, plan, resolved, raw):
     selection.require(post.get("passed") and post.get("after_build"), "backend did not retain passing post-build audit")
     for key in ("phase_context", "phase_context_hash"):
         selection.require(post.get(key) == resolved.get(key), f"backend input audit identity mismatch: {key}")
+    state = selection.coverage_state(policy)
+    for value in (resolved, raw, post):
+        selection.require_coverage_state(value, state)
     checks = {}
     for ident, record in raw["checks"].items():
         check = policy["checks"][ident]
@@ -501,7 +509,16 @@ def normalize_receipt(policy, plan, resolved, raw):
             **({'diagnostic_boundary': raw['diagnostic_boundary'], 'untraced_profile_parity': False}
                if 'diagnostic_boundary' in raw else {})}
     import test_selection_subset as subset
-    contract = subset.contracts(policy).get(profile_id)
+    result.update({key: raw[key] for key in selection.COVERAGE_STATE_FIELDS})
+    if subset.FULL_FIELD in resolved:
+        selection.require(raw.get(subset.FULL_FIELD) == resolved[subset.FULL_FIELD],
+                          'backend full ownership differs from fresh resolution')
+        result[subset.FULL_FIELD] = raw[subset.FULL_FIELD]
+        subset.validate_full_receipt(result, raw, plan, lane, phase_profile,
+                                     checks={ident: policy['checks'][ident] for ident in lane['checks']})
+    else:
+        selection.require(subset.FULL_FIELD not in raw, 'undeclared backend full ownership evidence')
+    contract = subset.active_contracts(policy).get(profile_id)
     if contract is not None:
         selection.require(raw.get("baseline_exclusions") == resolved.get("baseline_exclusions"),
                           "backend ordinary subset accounting differs from fresh resolution")

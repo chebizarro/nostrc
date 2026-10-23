@@ -282,18 +282,22 @@ def validate_full_receipt(receipt, backend, plan, lane, profile, *, checks):
                     ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context_hash")),
                 "full audit identity differs")
     require(_sha(post.get("header_index_hash")), "full discovered-header audit missing")
-    record = evidence.get("checks", {}).get("supported.libgo", {})
-    require(record.get("outcome") == "passed" and all(record.get(k) == list(REGISTRATIONS)
-            for k in ("executions", "expected_executions", "observed_executions"))
-            and all(evidence.get("observed_executions", {}).get(n) == "passed" for n in REGISTRATIONS)
-            and type(evidence.get("ctest_exit_code")) is int and evidence["ctest_exit_code"] == 0,
-            "full Go33 physical execution missing/failed/skipped")
-    require(any(cmd and Path(cmd[0]).name == "ctest" for cmd in evidence.get("commands", [])),
-            "full physical CTest command missing")
+    if 'supported.libgo' in checks:
+        record = evidence.get("checks", {}).get("supported.libgo", {})
+        require(record.get("outcome") == "passed" and all(record.get(k) == list(REGISTRATIONS)
+                for k in ("executions", "expected_executions", "observed_executions"))
+                and all(evidence.get("observed_executions", {}).get(n) == "passed" for n in REGISTRATIONS)
+                and type(evidence.get("ctest_exit_code")) is int and evidence["ctest_exit_code"] == 0,
+                "full Go33 physical execution missing/failed/skipped")
+        require(any(cmd and Path(cmd[0]).name == "ctest" for cmd in evidence.get("commands", [])),
+                "full physical CTest command missing")
+    else:
+        require('supported.libgo' not in evidence.get('checks', {}), 'unselected full Go execution cannot broaden lane')
     defaults = {ident: check for ident, check in checks.items() if check.get("build_scope") == "default"}
     require(bool(defaults), "full default build contract missing")
     validate_default_build_evidence(profile, dict(evidence, input_audit=post), defaults)
-    validate_phase_parallelism_evidence(profile, evidence, require_test=True)
+    validate_phase_parallelism_evidence(profile, evidence,
+        require_test=any(check.get('kind') == 'ctest' for check in checks.values()))
 
 
 def marked(value):

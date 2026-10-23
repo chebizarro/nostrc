@@ -203,7 +203,8 @@ def before_native_custody_policy(policy):
     """Reverse only the exact additive input record, never renew old authority."""
     from w11_worker_support import before_worker_policy
     from w11_policy_support import before_policy_enrollment
-    previous = before_worker_policy(before_policy_enrollment(policy))
+    from test_selection_subset import before_full_ownership_policy
+    previous = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(policy)))
     for gap in previous.get('coverage_gaps', []):
         if gap.get('id') == 'shadow_cutover' and 'classification' in gap:
             s.require(gap['classification'] == 'administrative_rollout_prerequisite'

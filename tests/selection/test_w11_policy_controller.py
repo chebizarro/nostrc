@@ -53,6 +53,43 @@ class PolicyControllerTests(unittest.TestCase):
                 with self.assertRaises(controller.PolicyError):
                     controller.contract(realized, {})
 
+    def test_retained_contract_shape_requires_host_tools_and_physical_producer_hashes(self):
+        # Schema-only fixture: not Docker execution, input audit or acceptance.
+        identity = {'kind': 'committed', 'sha': 'a' * 40}
+        proof = dict(kind='policy_controller_contract_v1', source_identity=identity,
+            inputs={name: 'b' * 64 for name in controller.INPUTS}, image='sha256:' + 'c' * 64,
+            tools={name: {'path': '/fixture/bin/' + name, 'sha256': 'd' * 64} for name in ('docker', 'git', 'python')},
+            setup_inputs={name: 'e' * 64 for name in ('/fixture/policy-testhost-setup.json',
+                '/fixture/build/image-build.log', '/fixture/build/image-build.log.process.json')},
+            readiness=False, scope='authored_provisioned_policy_workload_not_native_profile')
+        controller._validate_contract_shape(proof, identity)
+        for mutate in (
+            lambda p: p.pop('tools'), lambda p: p.pop('setup_inputs'),
+            lambda p: p['tools'].pop('git'), lambda p: p['tools']['docker'].update(sha256='not-a-hash'),
+            lambda p: p['tools']['python'].update(path='relative/python'),
+            lambda p: p['setup_inputs'].pop('/fixture/build/image-build.log.process.json'),
+            lambda p: p['setup_inputs'].update({'/different/image-build.log.process.json': p['setup_inputs'].pop('/fixture/build/image-build.log.process.json')}),
+        ):
+            modified = copy.deepcopy(proof)
+            mutate(modified)
+            with self.subTest(mutate=mutate), self.assertRaises(controller.PolicyError):
+                controller._validate_contract_shape(modified, identity)
+
+    def test_aggregate_refuses_predecessor_status_or_bool_only_policy_proof(self):
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        profile = policy['profiles']['static.policy']
+        plan, lane = {'source_identity': {'kind': 'committed', 'sha': 'a' * 40}}, {'profile': 'static.policy'}
+        controller.validate_runtime({}, plan, {'profile': 'unrelated'}, {})
+        for backend in (
+            {},
+            {'policy_controller_runtime': {'passed': True}},
+            {'required_capabilities': [controller.CAPABILITY]},
+            {'required_capabilities': [controller.CAPABILITY], 'policy_controller_runtime': {'status': 'passed', 'cleanup_complete': True}},
+            {'required_capabilities': [controller.CAPABILITY], 'policy_controller_runtime': {'passed': True, 'native_profile_acceptance': False}},
+        ):
+            with self.subTest(backend=backend), self.assertRaises(controller.PolicyError):
+                controller.validate_runtime(backend, plan, lane, profile)
+
     def test_full_source_clone_has_independent_git_objects_and_symlink_text(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
