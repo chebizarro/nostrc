@@ -149,8 +149,17 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       plan_id: ${{ needs.select.outputs.plan_id }}
       profile: libgo.macos.asan
-  policy:
+  policy_regressions:
     needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')
+    uses: ./.github/workflows/namespace-policy-regression.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: dependency-
+  policy:
+    # Regression-container success is NOT a native static.policy receipt.
+    # Keep the selected native worker and its fail-closed profile admission.
+    needs: [select, policy_regressions]
     if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')
     uses: ./.github/workflows/dependency-worker.yml
     with:
