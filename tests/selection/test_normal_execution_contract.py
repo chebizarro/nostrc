@@ -89,10 +89,12 @@ class NormalFixture(Project):
         """The pidns gate's inner production sequence: test-plan.py main(resolve) then main(run)."""
         plan_path = Path(self.temp.name).resolve() / 'selected-plan.json'
         plan_path.write_text(json.dumps(self.plan))
+        # Same `common` as test-gate.sh:622-627: the pidns boundary goes to BOTH resolve and run.
         common = ['--repo', str(self.root), '--profile', 'synthetic', '--plan', str(plan_path),
-                  '--build-dir', str(self.build), '--evidence-dir', str(self.evidence)]
+                  '--build-dir', str(self.build), '--evidence-dir', str(self.evidence),
+                  '--diagnostic-boundary', 'linux_pidns_v1']
         resolutions, results = [], []
-        self.assertEqual(self.cli.main(['resolve', *common, '--configure', '--diagnostic-boundary', 'linux_pidns_v1',
+        self.assertEqual(self.cli.main(['resolve', *common, '--configure',
                                         '--output', str(self.work / 'resolved.json')], result_observer=resolutions.append), 0)
         self.assertEqual(self.cli.main(['run', *common, '--resolved', str(self.work / 'resolved.json'), '--phase', 'all',
                                         '--timeout', str(self.profile['timeout_seconds']),
