@@ -37,6 +37,15 @@ Signals. Members are signalled only with proc_signal_with_audittoken() for
 Exits are awaited with kqueue NOTE_EXIT registered while the same identity is
 live; timeouts are failure guards, never synchronization.
 
+Trust boundary for results. Files are same-UID writable by the target, so
+the tag file and evidence file are informational only. The adapter passes a
+private pipe with ``--control-fd``; the target never holds it. Before the
+target is released the helper writes the authoritative tag on it, and at the
+end a bounded final outcome. Recovery after supervisor death must use the
+tag the adapter read there (``--reap-tag DENIED ALLOWED``, parent-bound);
+``--reap-tag-file`` is manual recovery with an untrusted, substitutable tag
+and is labelled so. Target environments never see NOSTRC_DARWIN_CUSTODY_*.
+
 Refused or failing, never inferred away: nested custody (sandbox_init EPERM
 before exec); private display/bus wrappers; members that become another user
 (signal EPERM fails cleanup); work done by launchd/XPC brokers (not a
@@ -49,6 +58,7 @@ import ctypes
 import errno
 import json
 import os
+import re
 import secrets
 import select
 import signal
@@ -165,13 +175,20 @@ class Kernel:
         return self.signal_token(ctypes.byref(token), sig)
 
 
+TAG_NAME = re.compile(r'org\.nostrc\.custody\.[0-9a-f]{32}\.(a|b)\Z')
+
+
 class Tag:
     def __init__(self, denied=None, allowed=None):
         self.denied = denied or ('org.nostrc.custody.' + secrets.token_hex(16) + '.a')
         self.allowed = allowed or ('org.nostrc.custody.' + secrets.token_hex(16) + '.b')
-        for name in (self.denied, self.allowed):
-            if not name.startswith('org.nostrc.custody.') or not all(c.isalnum() or c == '.' for c in name):
+        # Equal names would make every scan empty: refuse, never "succeed".
+        for name, suffix in ((self.denied, 'a'), (self.allowed, 'b')):
+            match = TAG_NAME.fullmatch(name) if isinstance(name, str) else None
+            if not match or match.group(1) != suffix:
                 raise CustodyError('invalid custody tag name')
+        if self.denied[:-2] == self.allowed[:-2]:
+            raise CustodyError('custody tag names must be independent')
 
     def profile(self):
         return f'(version 1)(allow default)(deny mach-lookup (global-name "{self.denied}"))'.encode()
@@ -339,11 +356,39 @@ def reap(kernel, tag, deadline, evidence, observe=None):
             raise CustodyError('custody members kept appearing until the guard; cleanup unverified')
 
 
-def write_evidence(evidence):
+CONTROL_FD = None
+CONTROL_KEYS = ('backend', 'tag_authority', 'launched', 'cancelled', 'adapter_parent_exit', 'root_pid',
+                'exit_code', 'reap_rounds', 'uncertain_rounds', 'cleanup_complete', 'error',
+                'evidence_file_error')
+
+
+def control_send(message):
+    """Bounded JSON line on the adapter's private control pipe, if any."""
+    if CONTROL_FD is None:
+        return
+    data = (json.dumps(message, sort_keys=True) + '\n').encode()
+    while data:
+        data = data[os.write(CONTROL_FD, data):]
+
+
+def finish(evidence):
+    """Write the informational file, then the authoritative final line.
+
+    A pre-existing or unwritable evidence file is a failure (it may be a
+    forgery planted by the target), reported on the control pipe."""
     path = os.environ.get('NOSTRC_DARWIN_CUSTODY_EVIDENCE')
     if path:
-        with open(path, 'x') as handle:
-            json.dump(evidence, handle, sort_keys=True)
+        try:
+            with open(path, 'x') as handle:
+                json.dump(evidence, handle, sort_keys=True)
+        except OSError as exc:
+            evidence['evidence_file_error'] = str(exc)
+            evidence['cleanup_complete'] = False
+    final = {key: evidence[key] for key in CONTROL_KEYS if key in evidence}
+    final['killed_count'] = len(evidence.get('killed', ()))
+    control_send(dict(final, event='final'))
+    if 'evidence_file_error' in evidence:
+        raise CustodyError('custody evidence file refused: ' + evidence['evidence_file_error'])
 
 
 def run_root(kernel, tag, argv, queue, adapter_parent, old_mask, evidence):
@@ -365,7 +410,9 @@ def run_root(kernel, tag, argv, queue, adapter_parent, old_mask, evidence):
             for sig in CANCEL_SIGNALS + (signal.SIGPIPE, signal.SIGCHLD):
                 signal.signal(sig, signal.SIG_DFL)
             signal.pthread_sigmask(signal.SIG_SETMASK, old_mask - set(CANCEL_SIGNALS))
-            os.execvpe(argv[0], argv, os.environ)
+            # The control FD is close-on-exec; custody paths are not advertised.
+            env = {k: v for k, v in os.environ.items() if not k.startswith('NOSTRC_DARWIN_CUSTODY_')}
+            os.execvpe(argv[0], argv, env)
         except BaseException as exc:
             os.write(2, ('darwin custody root: ' + str(exc) + '\n').encode())
         os._exit(125)
@@ -390,6 +437,9 @@ def run_root(kernel, tag, argv, queue, adapter_parent, old_mask, evidence):
         if classify(kernel, tag, os.getpid())[0] != 'other':
             raise CustodyError('supervisor classified as a custody member; target not launched')
         evidence.update(root_pid=root, root_pregate_pidversion=identity[0])
+        # Authoritative binding, written before the target can run.
+        control_send({'event': 'tag', 'denied': tag.denied, 'allowed': tag.allowed,
+                      'root_pid': root, 'root_pregate_pidversion': identity[0]})
         if set(signal.sigpending()) & set(CANCEL_SIGNALS):
             evidence['cancelled'] = True
             return 130  # the root is still gated; finally kills and reaps it
@@ -443,9 +493,9 @@ def supervise(argv, adapter_parent=None, gate=None):
     old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(CANCEL_SIGNALS))
     queue = select.kqueue()
     tag = Tag()
-    evidence = {'backend': 'darwin-seatbelt-tag', 'complete': False, 'untraced_profile_parity': False,
-                'cleanup_complete': False, 'cancelled': False, 'adapter_parent_exit': False,
-                'launched': False}
+    evidence = {'backend': 'darwin-seatbelt-tag', 'tag_authority': 'supervisor', 'complete': False,
+                'untraced_profile_parity': False, 'cleanup_complete': False, 'cancelled': False,
+                'adapter_parent_exit': False, 'launched': False}
     try:
         for sig in CANCEL_SIGNALS:
             queue.control([select.kevent(sig, filter=select.KQ_FILTER_SIGNAL, flags=select.KQ_EV_ADD)], 0)
@@ -462,7 +512,7 @@ def supervise(argv, adapter_parent=None, gate=None):
             finally:
                 os.close(gate)
         if set(signal.sigpending()) & set(CANCEL_SIGNALS):
-            evidence['cancelled'] = True
+            evidence.update(cancelled=True, exit_code=130)
             return 130
         tag_file = os.environ.get('NOSTRC_DARWIN_CUSTODY_TAG_FILE')
         if tag_file:
@@ -483,37 +533,59 @@ def supervise(argv, adapter_parent=None, gate=None):
     finally:
         drop_seal()  # also on refusal before any root was forked
         queue.close()
-        write_evidence(evidence)
+        finish(evidence)
 
 
-def reap_tag_file(path):
-    kernel = Kernel()
-    with open(path) as handle:
-        tag = Tag.from_json(handle.read())
-    evidence = {'backend': 'darwin-seatbelt-tag', 'recovery': True, 'cleanup_complete': False}
+def recover(read_tag, authority):
+    """Reap a tag after supervisor death.
+
+    authority 'parent-bound': names the adapter read from the control pipe
+    before the target ran. 'untrusted-file': a same-UID writable file the
+    target may have replaced; an empty result proves nothing about the
+    original tree and must not turn a failed lane into a clean one."""
+    evidence = {'backend': 'darwin-seatbelt-tag', 'recovery': True, 'tag_authority': authority,
+                'cleanup_complete': False}
     try:
-        reap(kernel, tag, time.monotonic() + REAP_GUARD_SECONDS, evidence)
+        tag = read_tag()
+        reap(Kernel(), tag, time.monotonic() + REAP_GUARD_SECONDS, evidence)
         evidence['cleanup_complete'] = True
     except BaseException as exc:
         evidence['error'] = str(exc)
         raise
     finally:
-        write_evidence(evidence)
+        finish(evidence)
     return 0
 
 
 def main():
+    global CONTROL_FD
     args = sys.argv[1:]
+    gate = parent = None
+    while args[:1] in (['--control-fd'], ['--parent-ready-fd']):
+        if args[0] == '--control-fd':
+            if len(args) < 2:
+                raise CustodyError('missing control FD')
+            CONTROL_FD = int(args[1])
+            os.fstat(CONTROL_FD)  # invalid FD refuses before anything runs
+            os.set_inheritable(CONTROL_FD, False)
+            args = args[2:]
+        else:
+            if len(args) < 4 or args[2] != '--parent-pid':
+                raise CustodyError('missing adapter parent identity')
+            gate, parent = int(args[1]), int(args[3])
+            args = args[4:]
+    if args[:1] == ['--reap-tag']:
+        if len(args) != 3:
+            raise CustodyError('usage: [--control-fd N] --reap-tag DENIED ALLOWED')
+        return recover(lambda: Tag(args[1], args[2]), 'parent-bound')
     if args[:1] == ['--reap-tag-file']:
         if len(args) != 2:
-            raise CustodyError('usage: --reap-tag-file PATH')
-        return reap_tag_file(args[1])
-    gate = parent = None
-    if args[:1] == ['--parent-ready-fd']:
-        if len(args) < 4 or args[2] != '--parent-pid':
-            raise CustodyError('missing adapter parent identity')
-        gate, parent = int(args[1]), int(args[3])
-        args = args[4:]
+            raise CustodyError('usage: [--control-fd N] --reap-tag-file PATH')
+
+        def from_file():
+            with open(args[1]) as handle:
+                return Tag.from_json(handle.read())
+        return recover(from_file, 'untrusted-file')
     if args[:1] == ['--private-resource-root']:
         raise CustodyError('darwin custody does not host private display/bus resources; target not launched')
     return supervise(args, parent, gate)
