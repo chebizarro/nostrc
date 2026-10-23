@@ -14,6 +14,7 @@ fallback. Unsupported setup refuses before executing the requested program.
 import ctypes
 import os
 from pathlib import Path
+import re
 import select
 import signal
 import sys
@@ -23,6 +24,31 @@ from adapter_custody import CustodyError, GRACE_SECONDS
 
 NEWUSER, NEWNS, NEWPID = 0x10000000, 0x20000, 0x20000000
 SIGNALS = {signal.SIGCHLD, signal.SIGTERM, signal.SIGINT}
+
+
+def enter_apparmor_profile(name):
+    """Explicitly change this single-threaded task into a loaded named profile.
+
+    Ubuntu's restrict_unprivileged_userns moves unconfined tasks into
+    unprivileged_userns at user-namespace creation, denying every capability
+    needed below. Only a provisioned, path-unattached profile granting userns is
+    accepted; the global sysctl is never changed and nothing is retried.
+    """
+    if not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', name):
+        raise CustodyError('invalid AppArmor profile name; target not launched')
+    base = Path('/proc/thread-self/attr')
+    attr = base / 'apparmor/current' if (base / 'apparmor/current').exists() else base / 'current'
+    try:
+        label = attr.read_text().strip('\0\n ')
+        if label != name + ' (unconfined)':  # e.g. a container already launched in it
+            with open(attr, 'w') as stream:
+                stream.write('changeprofile ' + name)
+            label = attr.read_text().strip('\0\n ')
+    except OSError as exc:
+        raise CustodyError(f'AppArmor change_profile to {name} refused ({exc}); target not launched') from exc
+    if label != name + ' (unconfined)':
+        raise CustodyError(f'AppArmor label {label!r} is not provisioned profile {name}; target not launched')
+    return label
 
 
 def checked(result, operation):
@@ -143,7 +169,7 @@ def init_namespace(libc, parent_handle, gate, argv, old_mask, resource_root=None
         os.close(proc)
 
 
-def supervise(argv, adapter_parent=None, resource_root=None, private_display=False):
+def supervise(argv, adapter_parent=None, resource_root=None, private_display=False, apparmor_profile=None):
     if sys.platform != 'linux':
         raise CustodyError('native kernel custody unavailable on macOS: EndpointSecurity descendant client requires '
                            'com.apple.developer.endpoint-security.client (not provisioned); '
@@ -161,6 +187,9 @@ def supervise(argv, adapter_parent=None, resource_root=None, private_display=Fal
         signal.signal(sig, lambda *_: None)
     if signal.sigpending() & {signal.SIGTERM, signal.SIGINT}:
         return 130
+    if apparmor_profile is not None:
+        label = enter_apparmor_profile(apparmor_profile)
+        print('namespace custody apparmor: ' + label, file=sys.stderr, flush=True)
     uid, gid = os.geteuid(), os.getegid()
     parent_handle = os.pidfd_open(os.getpid())
     child_handle = None
@@ -248,6 +277,12 @@ def main():
                 raise CustodyError('parent pidfd reservation missing; target not launched')
         finally:
             os.close(gate)
+    apparmor_profile = None
+    if sys.argv[1:2] == ['--apparmor-profile']:
+        if len(sys.argv) < 4:
+            raise CustodyError('missing AppArmor profile/command')
+        apparmor_profile = sys.argv[2]
+        del sys.argv[1:3]
     resource_root, private_display = None, False
     if sys.argv[1:2] == ['--private-resource-root']:
         if len(sys.argv) < 4:
@@ -258,7 +293,7 @@ def main():
             private_display = True
             del sys.argv[1]
     try:
-        return supervise(sys.argv[1:], parent_handle, resource_root, private_display)
+        return supervise(sys.argv[1:], parent_handle, resource_root, private_display, apparmor_profile)
     finally:
         if parent_handle is not None:
             os.close(parent_handle)

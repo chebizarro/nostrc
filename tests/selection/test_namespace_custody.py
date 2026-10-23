@@ -248,6 +248,44 @@ p.wait()
         def test_nested_namespace_cannot_escape_cleanup(self):
             self.tree('cancel', nested=True)
 
+        def test_named_apparmor_profile_is_entered_or_refused_before_target(self):
+            profile = 'nostrc-namespace-custody'
+            label = profile + ' (unconfined)'
+            current = Path('/proc/self/attr/apparmor/current')
+            current = current if current.exists() else Path('/proc/self/attr/current')
+            try:
+                loaded = label in Path('/sys/kernel/security/apparmor/profiles').read_text()
+            except PermissionError:
+                loaded = None  # AppArmor present; its policy view is root-only
+            except OSError:
+                loaded = False
+            try:  # EINVAL without an AppArmor LSM: not provisioned
+                if current.read_text().strip('\0\n ') == label:
+                    loaded = True
+            except OSError:
+                pass
+            marker = self.work / 'profile-target'
+            result = self.run_helper('--apparmor-profile', profile, sys.executable, '-c',
+                                     f'open({str(marker)!r}, "w").close()')
+            if loaded is None:  # unprivileged view: exact entry or typed refusal only
+                loaded = result.returncode == 0
+            if loaded:  # provisioned host or container launched in the profile
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(b'namespace custody apparmor: ' + label.encode(), result.stderr)
+                self.assertTrue(marker.exists())
+            else:  # no AppArmor or profile absent: typed refusal before unshare
+                self.assertEqual(result.returncode, 125, result.stderr)
+                self.assertIn(b'target not launched', result.stderr)
+                self.assertIn(b'AppArmor', result.stderr)
+                self.assertFalse(marker.exists())
+            for invalid in ('Bad/Name', '', 'x' * 65, 'unconfined profile'):
+                with self.subTest(invalid=invalid):
+                    result = self.run_helper('--apparmor-profile', invalid, sys.executable, '-c',
+                                             f'open({str(marker)!r} + "-invalid", "w").close()')
+                    self.assertEqual(result.returncode, 125, result.stderr)
+                    self.assertIn(b'invalid AppArmor profile name', result.stderr)
+                    self.assertFalse(Path(str(marker) + '-invalid').exists())
+
         def test_denied_namespace_setup_never_launches_target(self):
             source, binary = self.work / 'deny.c', self.work / 'deny'
             source.write_text('''#define _GNU_SOURCE

@@ -16,7 +16,13 @@ import uuid
 CAPABILITY = 'namespace_policy_controller'
 INPUTS = ('scripts/test_selection_policy.py', 'tests/selection/namespace-testhost.Dockerfile',
           'tests/selection/namespace_policy_entry.sh', 'tests/selection/namespace_testhost_lifecycle.py',
-          'tests/selection/namespace_host_probe.py', 'scripts/adapter_namespace_custody.py')
+          'tests/selection/namespace_host_probe.py', 'scripts/adapter_namespace_custody.py',
+          'tests/selection/apparmor/nostrc-namespace-custody')
+# Provisioned path-unattached profile granting only userns (see its source).
+# An unconfined Docker workload is still moved into Ubuntu's
+# unprivileged_userns profile at unshare; kernel settings are never changed.
+APPARMOR_PROFILE = 'nostrc-namespace-custody'
+SECURITY_OPT = {'no-new-privileges', 'seccomp=unconfined', 'apparmor=' + APPARMOR_PROFILE}
 REQUIRED = {'environment', 'mapping-probe', 'kernel-prerequisite', 'kernel-matrix', 'policy-suite',
             'unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate', 'linux-smoke',
             'sanitizer', 'signer-names', 'keychain-guard'}
@@ -97,6 +103,22 @@ def prepare_image(root, output):
         state.update(image=image, image_inspect=observed, passed=True)
     finally:
         write(output, state)
+
+
+def workload_apparmor(evidence):
+    """Physical in-workload labels around unshare, never a host/policy claim."""
+    labels = {}
+    for line in (Path(evidence) / 'logs/mapping-probe.log').read_text().splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get('stage') in ('before-unshare', 'after-unshare'):
+            labels[record['stage']] = record.get('apparmor')
+    expected = APPARMOR_PROFILE + ' (unconfined)'
+    require(labels == {'before-unshare': expected, 'after-unshare': expected},
+            'policy workload did not run in provisioned AppArmor profile ' + APPARMOR_PROFILE)
+    return labels
 
 
 def contract(realization, env):
@@ -204,7 +226,7 @@ def controller(realization, resolved, spec, audit):
         argv = [docker, 'create', '--cidfile', str(control / 'container.cid'), '--name', owner['name'],
             '--label', 'nostrc.namespace-policy=' + owner['token'], '--user', '1001:1001', '--cap-drop=ALL',
             '--security-opt=no-new-privileges', '--security-opt=seccomp=unconfined',
-            '--security-opt=systempaths=unconfined', '--security-opt=apparmor=unconfined',
+            '--security-opt=systempaths=unconfined', '--security-opt=apparmor=' + APPARMOR_PROFILE,
             '--network', 'none', '--read-only', '--tmpfs', '/tmp:rw,exec,nosuid,nodev,mode=1777',
             '--tmpfs', '/tmp/.X11-unix:rw,nosuid,nodev,mode=1777',
             '--mount', f'type=bind,source={directory / "source"},target=/source,readonly',
@@ -231,7 +253,7 @@ def controller(realization, resolved, spec, audit):
                 and all(item['Type'] in {'bind', 'tmpfs'} for item in before['Mounts'])
                 and set(host['Tmpfs']) == {'/tmp', '/tmp/.X11-unix'}
                 and host['MaskedPaths'] == [] and host['ReadonlyPaths'] == []
-                and set(host['SecurityOpt']) == {'no-new-privileges', 'seccomp=unconfined', 'apparmor=unconfined'},
+                and set(host['SecurityOpt']) == SECURITY_OPT and before['AppArmorProfile'] == APPARMOR_PROFILE,
 
                 'policy container effective isolation/mounts differ before target launch')
         write(control / 'controller.json', dict(docker=proof['tools']['docker'], cid=cid))
@@ -253,7 +275,7 @@ def controller(realization, resolved, spec, audit):
         require(set(workload['tools']) == {'python3', 'git', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'}
                 and all(re.fullmatch('[0-9a-f]{64}', t['sha256']) and Path(t['path']).is_absolute()
                         for t in workload['tools'].values()), 'policy container tool bindings missing')
-        state.update(status='passed', workload=workload)
+        state.update(status='passed', workload=workload, workload_apparmor=workload_apparmor(evidence))
     finally:
         # Parent-owned cleanup runs even when the command is nonzero/cancelled.
         if owner is not None:
@@ -346,7 +368,9 @@ def validate_runtime(backend, plan, lane, profile):
             and host.get('NetworkMode') == 'none' and host.get('PidMode') != 'host'
             and host.get('ReadonlyRootfs') is True and not host.get('Binds')
             and host.get('MaskedPaths') == [] and host.get('ReadonlyPaths') == []
-            and set(host.get('SecurityOpt', [])) == {'no-new-privileges', 'seccomp=unconfined', 'apparmor=unconfined'}
+            and set(host.get('SecurityOpt', [])) == SECURITY_OPT and before.get('AppArmorProfile') == APPARMOR_PROFILE
+            and state.get('workload_apparmor') == {stage: APPARMOR_PROFILE + ' (unconfined)'
+                                                   for stage in ('before-unshare', 'after-unshare')}
             and set(host.get('Tmpfs', {})) == {'/tmp', '/tmp/.X11-unix'}, 'policy effective isolation differs')
     mounts = before.get('Mounts', [])
     binds = {item.get('Destination'): item for item in mounts if item.get('Type') == 'bind'}

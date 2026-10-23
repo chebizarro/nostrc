@@ -178,6 +178,17 @@ jobs:
         run: |
           brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc json-glib libgit2 dbus
           command -v dbus-daemon
+      - name: Provision named namespace-custody AppArmor profile
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PROFILE:${DEPENDENCY_ROUTE:-plan}" in
+            static.policy:*|core.linux:*|grotto.linux:*|groundhog.linux:*|*:pidns)
+              # Only namespace-custody lanes; kernel settings are never changed.
+              bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/dependency/namespace-apparmor" ;;
+            *) echo "not a namespace-custody lane: no AppArmor provisioning" ;;
+          esac
       - name: Prepare source-bound provisioned policy image
         if: runner.os == 'Linux' && inputs.profile == 'static.policy'
         shell: bash
@@ -199,7 +210,8 @@ jobs:
               set +e
               bash scripts/test-gate.sh --head "$REQUESTED_SHA" \
                 --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
-                --native-custody pidns --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
+                --native-custody pidns --namespace-apparmor-profile nostrc-namespace-custody \
+                --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
                 2>&1 | tee "$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log"
               gate_status=${PIPESTATUS[0]}
               set -e
@@ -262,6 +274,7 @@ jobs:
             ${{ runner.temp }}/dependency/evidence
             ${{ runner.temp }}/dependency/ordinary-tool-setup.json
             ${{ runner.temp }}/dependency/policy-testhost-setup.json
+            ${{ runner.temp }}/dependency/namespace-apparmor
             ${{ runner.temp }}/dependency/policy-image-*
             ${{ runner.temp }}/dependency-build/namespace-policy
             ${{ runner.temp }}/dependency-build/nostrc-test-inventory*

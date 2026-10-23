@@ -31,6 +31,8 @@ parser.add_argument("--plan", help="execute exact retained committed plan identi
 parser.add_argument("--broad", action="store_true")
 parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
                     help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
+parser.add_argument("--namespace-apparmor-profile", metavar="NAME",
+                    help="pidns only: provisioned path-unattached AppArmor profile the custody helper explicitly enters before unshare; host policy unchanged")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -45,6 +47,10 @@ receipt["bypasses"] = {name: os.environ[name] for name in
     ("NOSTRC_SKIP_PRE_PUSH", "NOSTRC_SKIP_LINUX_GATE", "NOSTRC_SKIP_SANITIZER_GATE", "NOSTRC_GATE_LINUX_TESTS")
     if os.environ.get(name) == ("0" if name == "NOSTRC_GATE_LINUX_TESTS" else "1")}
 receipt["custody_mode"] = args.linux_custody
+if args.namespace_apparmor_profile is not None:
+    if args.linux_custody != "pidns":
+        parser.error("--namespace-apparmor-profile requires --native-custody pidns")
+    receipt["namespace_apparmor_profile"] = args.namespace_apparmor_profile
 receipt["complete_gate_eligible"] = False
 if args.linux_custody != "legacy":
     receipt["untraced_profile_parity"] = False
@@ -102,6 +108,8 @@ def linux_command(argv, *, cwd=None, env=None, log=None, resource_root=None, pri
                 helper = "adapter_namespace_custody.py" if args.linux_custody == "pidns" else "adapter_custody.py"
                 resources = (["--private-resource-root", str(resource_root)] +
                              (["--private-display"] if private_display else [])) if resource_root else []
+                if args.linux_custody == "pidns" and args.namespace_apparmor_profile is not None:
+                    resources = ["--apparmor-profile", args.namespace_apparmor_profile, *resources]
                 active = subprocess.Popen([sys.executable, str(adapter.parent / helper),
                                            "--parent-ready-fd", str(read_fd), "--parent-pid", str(os.getpid()),
                                            *resources, *map(str, argv)],

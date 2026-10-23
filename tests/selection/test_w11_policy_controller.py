@@ -113,11 +113,12 @@ class PolicyControllerTests(unittest.TestCase):
     def test_unchanged_workload_and_scoped_custody_are_explicit(self):
         source = (ROOT / 'scripts/test_selection_policy.py').read_text()
         for token in ('--cap-drop=ALL', '--security-opt=no-new-privileges', '--network',
-                      '--read-only', '--cidfile', '--security-opt=apparmor=unconfined',
+                      '--read-only', '--cidfile', "'--security-opt=apparmor=' + APPARMOR_PROFILE",
+                      "APPARMOR_PROFILE = 'nostrc-namespace-custody'", 'workload_apparmor(evidence)',
                       'target=/source,readonly', "lifecycle['cleanup'](control)"):
             self.assertIn(token, source)
         for token in ('--privileged', '--cap-add', '--pid=host', '/var/run/docker.sock',
-                      'sudo ', 'apparmor_parser'):
+                      'sudo ', 'apparmor_parser', 'apparmor=unconfined', 'sysctl'):
             self.assertNotIn(token, source)
         entry = (ROOT / 'tests/selection/namespace_policy_entry.sh').read_text()
         self.assertIn('run policy-suite python3 -m unittest discover -s tests/selection -v', entry)

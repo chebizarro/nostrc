@@ -64,6 +64,21 @@ class NamespaceHostProbeTests(unittest.TestCase):
             self.assertEqual(stages[1]['original_userns_proc_owners']['setgroups']['uid'], 0)
             self.assertEqual(stages[0]['uid'], [os.geteuid()] * 3)
 
+        def test_named_profile_child_enters_exact_label_or_refuses_before_unshare(self):
+            result, records = self.invoke('--apparmor-profile', 'nostrc-namespace-custody')
+            self.assertEqual(records[0]['apparmor_profile_requested'], 'nostrc-namespace-custody')
+            first = next(r for r in records if 'stage' in r)
+            if first['stage'] == 'profile-refused':
+                self.assertEqual(result.returncode, 125, result.stderr)
+                self.assertNotIn('before-unshare', [r.get('stage') for r in records])
+                self.assertIn('target not launched', first['error'])
+            else:
+                self.assertEqual(first['stage'], 'profile-entered')
+                self.assertEqual(first['label'], 'nostrc-namespace-custody (unconfined)')
+                after = next(r for r in records if r.get('stage') == 'after-unshare')
+                self.assertIn('nostrc-namespace-custody', after['apparmor'])
+                self.assertEqual(result.returncode, 0, records)
+
 
 if __name__ == '__main__':
     unittest.main()

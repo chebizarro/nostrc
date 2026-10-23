@@ -42,18 +42,36 @@ class NamespacePolicyContractTests(unittest.TestCase):
     def test_only_scoped_disposable_container_policy_is_relaxed(self):
         workflow = read('.github/workflows/namespace-policy-regression.yml')
         for token in ('--user 1001:1001', '--cap-drop=ALL', '--security-opt=no-new-privileges',
-                      '--security-opt=apparmor=unconfined', '--security-opt=seccomp=unconfined',
+                      '--security-opt=apparmor=nostrc-namespace-custody', '--security-opt=seccomp=unconfined',
+                      'bash tests/selection/namespace_apparmor_setup.sh',
                       '--network none --read-only', 'target=/source,readonly',
                       '--tmpfs /tmp:', '--tmpfs /tmp/.X11-unix:',
                       'target=/evidence', '--cidfile', 'docker inspect', 'docker wait',
                       'namespace_testhost_lifecycle.py cleanup', 'if: always()'):
             self.assertIn(token, workflow)
         for token in ('--privileged', '--cap-add', '--pid=host', '/var/run/docker.sock',
-                      'sudo ', 'sysctl ', 'apparmor_parser', 'continue-on-error'):
+                      'sudo ', 'sysctl ', 'apparmor_parser', 'continue-on-error', 'apparmor=unconfined'):
             self.assertNotIn(token, workflow)
         self.assertIn('namespace_testhost_lifecycle.py prepare', workflow)
         self.assertIn('--name "$(cat "$control/container.name")"', workflow)
         self.assertIn('native-host-probe.exit', workflow)
+
+    def test_only_privileged_setup_is_loading_the_named_userns_profile(self):
+        script = read('tests/selection/namespace_apparmor_setup.sh')
+        privileged = [line.strip() for line in script.splitlines() if 'sudo' in line and not line.lstrip().startswith('#')]
+        self.assertEqual(privileged, ['sudo "$parser" --replace --warn=all "$profile_file" 2>&1 | tee "$out/apparmor-load.log"'])
+        self.assertIn('profile_file="$root/tests/selection/apparmor/nostrc-namespace-custody"', script)
+        self.assertIn('cmp "$out/apparmor-settings-before.txt" "$out/apparmor-settings-after.txt"', script)
+        self.assertIn('namespace_host_probe.py" > "$out/probe-unconfined.jsonl"', script)
+        self.assertIn('test "$status" -eq 0', script)
+        for token in ('sysctl', '--remove', ' -R ', 'aa-disable', 'aa-complain', 'complain', '/proc/sys/kernel/' + 'apparmor_restrict_unprivileged_userns >',
+                      'echo 0', 'continue-on-error', '|| true'):
+            self.assertNotIn(token, script)
+        profile = [line.strip() for line in read('tests/selection/apparmor/nostrc-namespace-custody').splitlines()
+                   if line.strip() and not line.lstrip().startswith('#')]
+        # Path-unattached, unconfined-mode, and the userns permission only.
+        self.assertEqual(profile, ['abi <abi/4.0>,', 'profile nostrc-namespace-custody flags=(unconfined) {',
+                                   'userns,', '}'])
 
     def test_original_matrix_and_nonacceptance_receipt_are_explicit(self):
         entry = read('tests/selection/namespace_policy_entry.sh')

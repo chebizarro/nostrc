@@ -1,0 +1,13 @@
+# Named, path-unattached AppArmor profile for explicitly provisioned
+# namespace-custody tests on Ubuntu hosts where
+# kernel.apparmor_restrict_unprivileged_userns=1 moves unconfined tasks into
+# the unprivileged_userns profile when they create a user namespace.
+# Only a task explicitly placed in this profile (docker --security-opt
+# apparmor=nostrc-namespace-custody, or adapter_namespace_custody.py
+# --apparmor-profile before unshare) gains the userns permission. The sysctl
+# and every other unconfined task stay restricted; nothing attaches by path.
+abi <abi/4.0>,
+
+profile nostrc-namespace-custody flags=(unconfined) {
+  userns,
+}

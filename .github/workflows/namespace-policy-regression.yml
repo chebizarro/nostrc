@@ -52,12 +52,17 @@ jobs:
           control = Path(os.environ['RUNNER_TEMP']) / 'namespace-policy/control'
           security = json.loads((control / 'docker-security.json').read_text())
           state = dict(kind='namespace_testhost_setup_v1', docker_security=security,
-              container_apparmor='unconfined', source_sha=os.environ['REQUESTED_SHA'],
+              container_apparmor='nostrc-namespace-custody', source_sha=os.environ['REQUESTED_SHA'],
               scope='provisioned_container_regressions_not_authored_native_profile',
               complete=False, complete_gate_eligible=False,
-              policy_authority='explicit dedicated disposable regression container only; host policy unchanged')
+              policy_authority='explicit dedicated disposable regression container only; named path-unattached userns profile, kernel settings unchanged')
           (control / 'setup.json').write_text(json.dumps(state, indent=2) + '\n')
           PY
+      - name: Provision named namespace-custody AppArmor profile
+        shell: bash
+        # An unconfined container still enters unprivileged_userns at unshare
+        # on Ubuntu 24.04 (PR22 hosted evidence); only this named profile is added.
+        run: bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
       - name: Build dedicated nonroot regression image
         shell: bash
         run: |
@@ -80,7 +85,7 @@ jobs:
             --label "nostrc.namespace-policy=$(cat "$control/owner.token")" \
             --user 1001:1001 --cap-drop=ALL --security-opt=no-new-privileges \
             --security-opt=seccomp=unconfined --security-opt=systempaths=unconfined \
-            --security-opt=apparmor=unconfined --network none --read-only \
+            --security-opt=apparmor=nostrc-namespace-custody --network none --read-only \
             --tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777 \
             --tmpfs /tmp/.X11-unix:rw,nosuid,nodev,mode=1777 \
             --mount "type=bind,source=$GITHUB_WORKSPACE,target=/source,readonly" \
