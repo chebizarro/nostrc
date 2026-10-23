@@ -134,6 +134,8 @@ def before_w11_setup_source(path, raw):
 
 
 RUNTIME_SOURCE_RULES = [
+    {'effect': 'global', 'exact': 'scripts/w11-evidence.py', 'nodes': ['selection.contract'],
+     'reason': 'Source-bound diagnostic replay helper consumed by policy tests; no replay acceptance credit.'},
     {'effect': 'impact', 'exact': path, 'nodes': [owner, 'selection.contract'],
      'reason': 'Standalone runtime diagnostic source closure; preserve product ownership without profile admission.'}
     for owner, path in [('grotto.gui', 'apps/grotto/data/org.nostr.Grotto.gschema.xml')] +
@@ -185,6 +187,8 @@ NATIVE_RUNTIME_INPUTS = [
     '{source}/tests/selection/fixtures/w11_worker_enrollment_20261023.json',
     '{source}/tests/selection/test_w11_worker_host_guard.py',
     '{source}/tests/selection/test_w11_retained_plan_adapter.py',
+    '{source}/scripts/w11-evidence.py',
+    '{source}/tests/selection/test_w11_evidence.py',
 ]
 
 

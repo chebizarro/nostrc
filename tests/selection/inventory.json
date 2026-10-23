@@ -7903,7 +7903,9 @@
         "{source}/tests/selection/test_w11_worker_enrollment.py",
         "{source}/tests/selection/fixtures/w11_worker_enrollment_20261023.json",
         "{source}/tests/selection/test_w11_worker_host_guard.py",
-        "{source}/tests/selection/test_w11_retained_plan_adapter.py"
+        "{source}/tests/selection/test_w11_retained_plan_adapter.py",
+        "{source}/scripts/w11-evidence.py",
+        "{source}/tests/selection/test_w11_evidence.py"
       ],
       "working_directory": "{source}"
     },
@@ -21205,6 +21207,14 @@
     }
   },
   "path_rules": [
+    {
+      "effect": "global",
+      "exact": "scripts/w11-evidence.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Source-bound diagnostic replay helper consumed by policy tests; no replay acceptance credit."
+    },
     {
       "exact": "gnome/groundhog/tests/app/test_secret_service.py",
       "effect": "impact",
