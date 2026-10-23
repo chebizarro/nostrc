@@ -78,6 +78,15 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
   set_tests_properties(test_nip5f_tcp PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# The worker fixture approver is test-only and uses the real daemon approval API.
+# It is built by the same audited graph, never compiled ad hoc during execution.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND BUILD_TESTING AND ENABLE_TCP_IPC
+   AND NIP55L_TEST_TRUST_ENV AND GIO_FOUND)
+  pkg_check_modules(NIP5F_APPROVER_GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.50)
+  add_executable(test_nip5f_approver ${CMAKE_SOURCE_DIR}/tests/runtime/nip5f_approver.c)
+  target_link_libraries(test_nip5f_approver PRIVATE PkgConfig::NIP5F_APPROVER_GIO)
+endif()
+
 # Examples
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_client_example.c)
   add_executable(nip5f_client_example ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_client_example.c)
