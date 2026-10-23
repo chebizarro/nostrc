@@ -55,20 +55,9 @@ class NormalFixture(Project):
         self.prepare_source()
         self.identity = dict(kind='committed', sha=self.git('rev-parse', 'HEAD').decode().strip())
         self.plan = self.make_plan()
-        self.real = r.configure_profile(self.root, self.build, 'synthetic', self.profile, self.identity,
-                                        s.digest(self.inventory), inventory=self.inventory, diagnostic_boundary='linux_pidns_v1')
-        self.resolved = r.resolve_checks(self.inventory, self.plan, self.real, 'synthetic')
-        pre = r.check_inputs(self.inventory, self.real)
-        self.assertTrue(pre['passed'], pre['gaps'])
-        r.build_resolved(self.resolved, self.build)
-        post = r.check_inputs(self.inventory, self.real, after_build=True)
-        self.assertTrue(post['passed'], post['gaps'])
-        self.raw = r.run_resolved(self.resolved, self.build, self.evidence, input_audit=post,
-                                  input_audit_before_build=pre, build=False)
-        self.assertEqual(self.raw['outcome'], 'passed')
         spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')
         self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)
-        self.original = self.cli.normalize_receipt(self.inventory, self.plan, self.resolved, self.raw)
+        self.execute()
         self.public_path = self.work / 'native-receipt.json'
         self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'
         self.adapter = dict(adapter='test-gate', custody_mode='pidns', status='partial', errors=[], bypasses={},
@@ -80,6 +69,37 @@ class NormalFixture(Project):
 
     def prepare_source(self):
         """Hook: committed source history before identity/plan (default: none)."""
+
+    def execute(self):
+        """Default: direct engine sequence (existing full-normal fixture)."""
+        self.real = r.configure_profile(self.root, self.build, 'synthetic', self.profile, self.identity,
+                                        s.digest(self.inventory), inventory=self.inventory, diagnostic_boundary='linux_pidns_v1')
+        self.resolved = r.resolve_checks(self.inventory, self.plan, self.real, 'synthetic')
+        pre = r.check_inputs(self.inventory, self.real)
+        self.assertTrue(pre['passed'], pre['gaps'])
+        r.build_resolved(self.resolved, self.build)
+        post = r.check_inputs(self.inventory, self.real, after_build=True)
+        self.assertTrue(post['passed'], post['gaps'])
+        self.raw = r.run_resolved(self.resolved, self.build, self.evidence, input_audit=post,
+                                  input_audit_before_build=pre, build=False)
+        self.assertEqual(self.raw['outcome'], 'passed')
+        self.original = self.cli.normalize_receipt(self.inventory, self.plan, self.resolved, self.raw)
+
+    def execute_production(self):
+        """The pidns gate's inner production sequence: test-plan.py main(resolve) then main(run)."""
+        plan_path = Path(self.temp.name).resolve() / 'selected-plan.json'
+        plan_path.write_text(json.dumps(self.plan))
+        common = ['--repo', str(self.root), '--profile', 'synthetic', '--plan', str(plan_path),
+                  '--build-dir', str(self.build), '--evidence-dir', str(self.evidence)]
+        resolutions, results = [], []
+        self.assertEqual(self.cli.main(['resolve', *common, '--configure', '--diagnostic-boundary', 'linux_pidns_v1',
+                                        '--output', str(self.work / 'resolved.json')], result_observer=resolutions.append), 0)
+        self.assertEqual(self.cli.main(['run', *common, '--resolved', str(self.work / 'resolved.json'), '--phase', 'all',
+                                        '--timeout', str(self.profile['timeout_seconds']),
+                                        '--output', str(self.work / 'receipt.json')], result_observer=results.append), 0)
+        self.resolved, self.original = resolutions[-1], results[-1]
+        self.raw = self.original['backend_receipt']
+        self.real = r.load_realization(self.build, self.identity)
 
     def make_plan(self):
         return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,

@@ -400,11 +400,37 @@ class SelectedNormalTests(TransportFixture):
     def make_plan(self):
         return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')
 
+    def execute(self):
+        self.execute_production()
+
     def test_plan_really_selects_a_strict_subset(self):
         self.assertEqual(self.plan['effective_mode'], 'affected')
         self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])
         self.assertEqual(self.resolved['primary_tests'], ['gui'])
         self.assertNotIn('a-model', self.resolved['tests'])
+
+    def test_production_run_built_the_unselected_default_prerequisite_without_passing_it(self):
+        # test-plan.py run: _build_commands emits the untargeted default build because
+        # resolve_checks sets default_build_required from the realization binding;
+        # _record_default_build + check_inputs(after_build) bind it into the post audit.
+        self.assertTrue(self.resolved['default_build_required'])
+        self.assertNotIn('default', self.resolved['checks'])
+        self.assertNotIn('default', self.raw['checks'])
+        execution = self.raw['input_audit']['default_build_execution']
+        self.assertEqual(execution['process']['outcome'], 'passed')
+        self.assertNotIn('--target', execution['process']['argv'])
+        result = self.worker()
+        self.assertIn('default', result['not_executed_checks'])
+        self.assertNotIn('default', result['checks'])
+
+    def test_missing_default_prerequisite_refuses(self):
+        audit = self.original['backend_receipt']['input_audit']
+        audit.pop('default_build_execution')
+        audit['audit_hash'] = s.digest({k: v for k, v in audit.items() if k != 'audit_hash'})
+        self.seal(); self.publish_raw()
+        with self.assertRaises(ValueError):
+            self.worker()
+        self.assert_raw_retained()
 
     def test_selected_receipt_accounts_not_executed_and_aggregates_portably(self):
         raw = self.public_path.read_bytes()
@@ -543,6 +569,9 @@ class CommandOnlySelectedTests(TransportFixture):
 
     def make_plan(self):
         return s.git_plan(self.root, self.inventory, head=self.identity['sha'], base=self.base_sha, mode='affected')
+
+    def execute(self):
+        self.execute_production()
 
     def test_command_only_selection_qualifies_without_ctest_and_aggregates(self):
         self.assertEqual(self.plan['lanes'][0]['checks'], ['default'])
