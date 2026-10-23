@@ -69,12 +69,14 @@ Source `723e601ac1322ca0220cd88b3b0ed22b0a7fcd81` (tree `5d9ae919`):
   `normal_execution` contract. It applies only to a fresh, committed, unrestricted,
   unbroadened affected plan. The qualifier re-derives that plan from the tested
   history, and pull_request event identities must match the tested two-parent
-  merge. Only the selected checks' registration/fixture closure executes.
-  Whole-universe ownership, eligible default prerequisite builds and full pre/post
-  source/Ninja/header/runtime audits remain required. The receipt records
-  `not_executed` checks/registrations with `whole_universe_executed=false` and
-  `full_profile_acceptance=false`. That is never whole-profile, complete or W11
-  credit. Broad plans, and profiles without the marker, use the full contract.
+  merge. Only the selected command checks and the selected CTest
+  registration/fixture closure execute. Whole-universe ownership and full pre/post
+  source/Ninja/header/runtime audits remain required, and eligible unselected
+  default/prerequisite builds still physically run, though they are not
+  selected-test coverage. The receipt records `not_executed` checks/registrations
+  with `whole_universe_executed=false` and `full_profile_acceptance=false`. Such a
+  receipt does not by itself establish whole-profile, complete-gate or W11
+  acceptance. Broad plans, and profiles without the marker, use the full contract.
 - **`homed.linux.ci`**: CI-only; the same five standalone units as local-only
   `homed.linux.units`. It runs through the `homed_units` dependency worker, the
   pidns gate, per-job AppArmor and post-teardown qualification. It has no selected
