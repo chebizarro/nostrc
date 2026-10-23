@@ -108,6 +108,13 @@ for env_name in NOSTRC_SKIP_PRE_PUSH NOSTRC_SELECTIVE_GATE; do
     if grep -q -e SKIPPED -e SELECTIVE "$tmp/out"; then echo "full override ran a different path ($env_name)" >&2; exit 1; fi
 done
 
+# All three switches at once: the override still takes the full-gate path only.
+# shellcheck disable=SC2016 # the inner script expands its own arguments
+NOSTRC_FULL_GATE=1 NOSTRC_SKIP_PRE_PUSH=1 NOSTRC_SELECTIVE_GATE=1 bash -c 'cd "$1" && shift && scripts/pre-push "$@"' _ "$repo" origin url \
+    <<< "$refs_clean" > "$tmp/out" 2>&1
+grep -qF "FULL_GATE_RAN args=[origin url] stdin=[$refs_clean]" "$tmp/out"
+if grep -q -e SKIPPED -e SELECTIVE "$tmp/out"; then echo "full override ran a different path (all switches)" >&2; exit 1; fi
+
 # The documented contract stays in step with the hook: legacy default, the
 # opt-in diagnostic is additive, and the full-gate override exists.
 root="$(cd "$scripts/.." && pwd)"
