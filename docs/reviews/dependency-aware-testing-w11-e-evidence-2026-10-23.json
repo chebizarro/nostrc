@@ -7102,6 +7102,1534 @@
       "original_zip_sha256": "b3e9217676d0176c8336f844330a241b2f232d09ff31777a98bed52d4c521fbf"
     }
   ],
+  "pr23_refresh_20261024": {
+    "captures": [
+      {
+        "directory": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture",
+        "files": {
+          "artifacts.json": {
+            "bytes": 23488,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/artifacts.json",
+            "sha256": "ee0000f72db939d244493d310bcee7de3cfd6973b965870aeecf12c5a62b0954"
+          },
+          "head-checks.json": {
+            "bytes": 314420,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/head-checks.json",
+            "sha256": "76389de24bcf276b6c098a36b1a0ce7f1d0b7b1f397ce64523f7ca4b13e07034"
+          },
+          "head-runs.json": {
+            "bytes": 144458,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/head-runs.json",
+            "sha256": "863b324a2dd6261e8d0d2276078416c4ae1d3390596282ae02fc3bdd56ac1bfb"
+          },
+          "legacy-annotations.json": {
+            "bytes": 1112,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/legacy-annotations.json",
+            "sha256": "b0649011ea3c5b044d82b5a62f431417b7373bafc8471fbb1d578e17f1620a23"
+          },
+          "legacy-job.log": {
+            "bytes": 20995,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/legacy-job.log",
+            "sha256": "ad7f1f291e8fd84962abca249019f157616b19548768784ce0e358b272792da5"
+          },
+          "legacy-jobs.json": {
+            "bytes": 3527,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/legacy-jobs.json",
+            "sha256": "4800cb78ce030266c724f684bd6aa12f66067851707551e23c7a1f510a0c354f"
+          },
+          "legacy-run.json": {
+            "bytes": 12465,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/legacy-run.json",
+            "sha256": "eefeed1366443bf83e7ea1c44824c156617a665181a6a8f5943487ccc66a642b"
+          },
+          "policy-job.json": {
+            "bytes": 3139,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/policy-job.json",
+            "sha256": "69697215db9e19a6e31df9aa14e4f06526f65ba927a5d1b66860381e4ea8880a"
+          },
+          "policy-job.log": {
+            "bytes": 816898,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/policy-job.log",
+            "sha256": "9d411f29aa47bbdbc82fc053fbfe79a6566f4de98e1287fed8339db348490ba8"
+          },
+          "policy-run.json": {
+            "bytes": 15951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/policy-run.json",
+            "sha256": "f97a96b81c8f716d1d5a78576177c859d9119c0688051112afdf5965299114b7"
+          },
+          "pr23.json": {
+            "bytes": 17203,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/pr23.json",
+            "sha256": "6760ae88dcc4b355a183c4edf87fe2c734cc4b89c656e0e22ca88c135e5a37de"
+          },
+          "regression-names.json": {
+            "bytes": 6830,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/regression-names.json",
+            "sha256": "b4dc97a0e116e0f4f9d0ef372fac8b279e06ecc520b49648afb0e196490b2efe"
+          },
+          "tested-merge-commit.json": {
+            "bytes": 2588,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/tested-merge-commit.json",
+            "sha256": "29c5287d6b4509ee77cc89e11a87f9c6c634da6e7ae033ff7174d01e62c8b177"
+          }
+        }
+      },
+      {
+        "directory": "/tmp/nostrc-w11-pr23-triage-20261024/census-final",
+        "files": {
+          "result.json": {
+            "bytes": 20398,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/census-final/result.json",
+            "sha256": "380289ae51b582f526fd9217e4f8bd2dd5db90566eaa9a3ed23b3ddfe16e57cf"
+          },
+          "roots-1.json": {
+            "bytes": 915342,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/census-final/roots-1.json",
+            "sha256": "cf294a13bbfc80f3f5a5f7758d17319915d5356499f8167170d5e63df9fd2bf6"
+          },
+          "roots-1.process.json": {
+            "bytes": 575,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/census-final/roots-1.process.json",
+            "sha256": "82f7fb95e6960859d40997cce7e98768f28458200f95744f8c8c873de7130957"
+          },
+          "roots-1.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/census-final/roots-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "roots-1.stdout": {
+            "bytes": 915342,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/census-final/roots-1.stdout",
+            "sha256": "cf294a13bbfc80f3f5a5f7758d17319915d5356499f8167170d5e63df9fd2bf6"
+          },
+          "runner.json": {
+            "bytes": 618,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/census-final/runner.json",
+            "sha256": "3a876387c4dd9187afa9763db9ff04eafdd27c2ec12e07350d15740a2412a6ee"
+          }
+        }
+      },
+      {
+        "directory": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification",
+        "files": {
+          "archive-12511113659.process.json": {
+            "bytes": 564,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/archive-12511113659.process.json",
+            "sha256": "48c6c6492a8e3a3f12ab15cfb2887bae50380014cc286d1f06429679a63ec99e"
+          },
+          "archive-12511113659.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/archive-12511113659.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "archive-12511113659.stdout": {
+            "bytes": 22951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/archive-12511113659.stdout",
+            "sha256": "926320006703272a1c75f3567b5906236442e936991eb1181a4f62ac165e71f8"
+          },
+          "artifact-12511113659-proof.json": {
+            "bytes": 139,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifact-12511113659-proof.json",
+            "sha256": "9e4233e1d2248f75e80420d50bff723e7ec03d6326589ec518b5ce4133b0e425"
+          },
+          "artifact-12511113659.zip": {
+            "bytes": 22951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifact-12511113659.zip",
+            "sha256": "926320006703272a1c75f3567b5906236442e936991eb1181a4f62ac165e71f8"
+          },
+          "artifacts-1.json": {
+            "bytes": 23488,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifacts-1.json",
+            "sha256": "ee0000f72db939d244493d310bcee7de3cfd6973b965870aeecf12c5a62b0954"
+          },
+          "artifacts-1.process.json": {
+            "bytes": 586,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifacts-1.process.json",
+            "sha256": "4610bd125d1faa3254accaa1701b94e4244331498a049f3847a6f6b9d6d6c227"
+          },
+          "artifacts-1.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifacts-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "artifacts-1.stdout": {
+            "bytes": 23488,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifacts-1.stdout",
+            "sha256": "ee0000f72db939d244493d310bcee7de3cfd6973b965870aeecf12c5a62b0954"
+          },
+          "attempt-after.json": {
+            "bytes": 15973,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt-after.json",
+            "sha256": "a8612122ed235dac60a82d07f5b62e1ce5fe49e6bfa211398b2bc8efa8cdfd6d"
+          },
+          "attempt-after.process.json": {
+            "bytes": 567,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt-after.process.json",
+            "sha256": "dd6573fee9a288e1f8181a88966fd0d0c1451e04f84b318567aed152daef7540"
+          },
+          "attempt-after.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt-after.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "attempt-after.stdout": {
+            "bytes": 15973,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt-after.stdout",
+            "sha256": "a8612122ed235dac60a82d07f5b62e1ce5fe49e6bfa211398b2bc8efa8cdfd6d"
+          },
+          "attempt.json": {
+            "bytes": 15973,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt.json",
+            "sha256": "a8612122ed235dac60a82d07f5b62e1ce5fe49e6bfa211398b2bc8efa8cdfd6d"
+          },
+          "attempt.process.json": {
+            "bytes": 567,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt.process.json",
+            "sha256": "55083f6d6148d66bf7d13ac6d232799a8cf1a4b8475427044e616693ea2daea7"
+          },
+          "attempt.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "attempt.stdout": {
+            "bytes": 15973,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/attempt.stdout",
+            "sha256": "a8612122ed235dac60a82d07f5b62e1ce5fe49e6bfa211398b2bc8efa8cdfd6d"
+          },
+          "job-120495699151.log": {
+            "bytes": 55739,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699151.log",
+            "sha256": "0022ee5e22351f292562156a999cda38820ffbf4f3be173163e294c0050773a2"
+          },
+          "job-120495699180.log": {
+            "bytes": 289433,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699180.log",
+            "sha256": "ee835bbdc2a1899e2e1bdeefb6354bc9eb39dab7facc850101abe20d6c462f54"
+          },
+          "job-120495699307.log": {
+            "bytes": 315195,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699307.log",
+            "sha256": "b0a35301b336ba38bedf93711a5442a06c975c992d6257fa968f29bd730e9f7a"
+          },
+          "job-120495699352.log": {
+            "bytes": 338888,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699352.log",
+            "sha256": "c2003ab8805c1021776e318d58fd151ff5c22a674fdae9e2f69b013eae729679"
+          },
+          "job-120495699740.log": {
+            "bytes": 328543,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699740.log",
+            "sha256": "e0a282af0ae1012cd8b018ef2cbfa4ba250c84b2198b6628b52417f531bc79fc"
+          },
+          "job-120495700282.log": {
+            "bytes": 817122,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495700282.log",
+            "sha256": "ecb3f904c192eaeda5354d7bf23b237805d03393394ca1c2fe328c107334db84"
+          },
+          "job-log-120495699151.process.json": {
+            "bytes": 561,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699151.process.json",
+            "sha256": "838bfbb240c6c292636845a3c5568111b520376f579c79721d57af643568a02f"
+          },
+          "job-log-120495699151.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699151.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "job-log-120495699151.stdout": {
+            "bytes": 55739,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699151.stdout",
+            "sha256": "0022ee5e22351f292562156a999cda38820ffbf4f3be173163e294c0050773a2"
+          },
+          "job-log-120495699180.process.json": {
+            "bytes": 561,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699180.process.json",
+            "sha256": "e0698167444df2880e2f36543db96e7156676f31c61e20adee0ac84aad237ca6"
+          },
+          "job-log-120495699180.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699180.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "job-log-120495699180.stdout": {
+            "bytes": 289433,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699180.stdout",
+            "sha256": "ee835bbdc2a1899e2e1bdeefb6354bc9eb39dab7facc850101abe20d6c462f54"
+          },
+          "job-log-120495699307.process.json": {
+            "bytes": 561,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699307.process.json",
+            "sha256": "7250e321654d30cd5b281a84abdac569cdec8ca965a496350495f06c6a92ffb2"
+          },
+          "job-log-120495699307.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699307.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "job-log-120495699307.stdout": {
+            "bytes": 315195,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699307.stdout",
+            "sha256": "b0a35301b336ba38bedf93711a5442a06c975c992d6257fa968f29bd730e9f7a"
+          },
+          "job-log-120495699352.process.json": {
+            "bytes": 561,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699352.process.json",
+            "sha256": "8358791a60c0aaf95a1a339d883a1a57abf9b151364a7d0c52eecc837e4081d8"
+          },
+          "job-log-120495699352.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699352.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "job-log-120495699352.stdout": {
+            "bytes": 338888,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699352.stdout",
+            "sha256": "c2003ab8805c1021776e318d58fd151ff5c22a674fdae9e2f69b013eae729679"
+          },
+          "job-log-120495699740.process.json": {
+            "bytes": 561,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699740.process.json",
+            "sha256": "485eec5658a341979b906ee4fc42aa9b573e3a70d30b7299568e5bb69bc8fe1e"
+          },
+          "job-log-120495699740.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699740.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "job-log-120495699740.stdout": {
+            "bytes": 328543,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495699740.stdout",
+            "sha256": "e0a282af0ae1012cd8b018ef2cbfa4ba250c84b2198b6628b52417f531bc79fc"
+          },
+          "job-log-120495700282.process.json": {
+            "bytes": 561,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495700282.process.json",
+            "sha256": "703fb61715c8c408109611aa22ed903545cff482f9241fa4ce9bbcc79d447457"
+          },
+          "job-log-120495700282.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495700282.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "job-log-120495700282.stdout": {
+            "bytes": 817122,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-log-120495700282.stdout",
+            "sha256": "ecb3f904c192eaeda5354d7bf23b237805d03393394ca1c2fe328c107334db84"
+          },
+          "jobs-1.json": {
+            "bytes": 204260,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/jobs-1.json",
+            "sha256": "0afda342b23857c16c153b5f6abd0d088730e61951f6d0c36129f0db4c5b41e4"
+          },
+          "jobs-1.process.json": {
+            "bytes": 592,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/jobs-1.process.json",
+            "sha256": "d5197e288f3891d406dad24414ff622624b4cd503e518fdf12b5b8de054dd639"
+          },
+          "jobs-1.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/jobs-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "jobs-1.stdout": {
+            "bytes": 204260,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/jobs-1.stdout",
+            "sha256": "0afda342b23857c16c153b5f6abd0d088730e61951f6d0c36129f0db4c5b41e4"
+          },
+          "result.json": {
+            "bytes": 219351,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/result.json",
+            "sha256": "e4b576f3f108e8e23f4b5faf2895ec894ec0eba0603d450d5f8eaac7de75d316"
+          },
+          "run-before.json": {
+            "bytes": 15951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/run-before.json",
+            "sha256": "f97a96b81c8f716d1d5a78576177c859d9119c0688051112afdf5965299114b7"
+          },
+          "run-before.process.json": {
+            "bytes": 555,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/run-before.process.json",
+            "sha256": "d9540d6716d3636412ad6de8a0c5d50f42cc49ad914b621f1c56628d3f3f9b4a"
+          },
+          "run-before.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/run-before.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "run-before.stdout": {
+            "bytes": 15951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/run-before.stdout",
+            "sha256": "f97a96b81c8f716d1d5a78576177c859d9119c0688051112afdf5965299114b7"
+          },
+          "runner.json": {
+            "bytes": 998,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/runner.json",
+            "sha256": "3e4b3a3d40cc492e9387563a92cd928f851b914e3fbe6cec04efb75ba5f0fe43"
+          }
+        }
+      },
+      {
+        "directory": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture",
+        "files": {
+          "archive-12512542514.process.json": {
+            "bytes": 582,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/archive-12512542514.process.json",
+            "sha256": "049c4ca623d44c2855ce22e266c2ea02407b672850a44b742ca4dc9102729bd0"
+          },
+          "archive-12512542514.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/archive-12512542514.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "archive-12512542514.stdout": {
+            "bytes": 4078506,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/archive-12512542514.stdout",
+            "sha256": "877fa69a89176554da6ba9c8be03cbd89e3f86aebf36f6f9b915d8a5f097b1e7"
+          },
+          "artifacts-1.json": {
+            "bytes": 23488,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/artifacts-1.json",
+            "sha256": "ee0000f72db939d244493d310bcee7de3cfd6973b965870aeecf12c5a62b0954"
+          },
+          "artifacts-1.process.json": {
+            "bytes": 578,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/artifacts-1.process.json",
+            "sha256": "17cb9f5d6b61c190d60745217662d7bea55593c490d9eda54474ffea39486304"
+          },
+          "artifacts-1.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/artifacts-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "artifacts-1.stdout": {
+            "bytes": 23488,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/artifacts-1.stdout",
+            "sha256": "ee0000f72db939d244493d310bcee7de3cfd6973b965870aeecf12c5a62b0954"
+          },
+          "attempt.json": {
+            "bytes": 15973,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/attempt.json",
+            "sha256": "a8612122ed235dac60a82d07f5b62e1ce5fe49e6bfa211398b2bc8efa8cdfd6d"
+          },
+          "attempt.process.json": {
+            "bytes": 559,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/attempt.process.json",
+            "sha256": "662ce311080bd7b6401a2e17bfc0456d17c3ead1bb88cd8f1d4dd0dbd2246944"
+          },
+          "attempt.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/attempt.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "attempt.stdout": {
+            "bytes": 15973,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/attempt.stdout",
+            "sha256": "a8612122ed235dac60a82d07f5b62e1ce5fe49e6bfa211398b2bc8efa8cdfd6d"
+          },
+          "failure.json": {
+            "bytes": 179,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/failure.json",
+            "sha256": "90dc30e9e529769a794f4e590b3099b0ca2fcfb990efa0657627858794b84ad7"
+          },
+          "jobs-1.json": {
+            "bytes": 204217,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/jobs-1.json",
+            "sha256": "83f298d125728979aa777bd57c557e86e0ccb50b8deb44c3ff7e9bf8f74b3e8f"
+          },
+          "jobs-1.process.json": {
+            "bytes": 584,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/jobs-1.process.json",
+            "sha256": "d32c8741b52aceb46ee022086fc17fbf15b428b9995f8af8f063a896f3e94593"
+          },
+          "jobs-1.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/jobs-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "jobs-1.stdout": {
+            "bytes": 204217,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/jobs-1.stdout",
+            "sha256": "83f298d125728979aa777bd57c557e86e0ccb50b8deb44c3ff7e9bf8f74b3e8f"
+          },
+          "run-before.json": {
+            "bytes": 15951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/run-before.json",
+            "sha256": "f97a96b81c8f716d1d5a78576177c859d9119c0688051112afdf5965299114b7"
+          },
+          "run-before.process.json": {
+            "bytes": 548,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/run-before.process.json",
+            "sha256": "787b87b9c00486f8d54db25dcb26f8ef52ae0c41c884b4e3a7806313cf97c791"
+          },
+          "run-before.stderr": {
+            "bytes": 0,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/run-before.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "run-before.stdout": {
+            "bytes": 15951,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/run-before.stdout",
+            "sha256": "f97a96b81c8f716d1d5a78576177c859d9119c0688051112afdf5965299114b7"
+          },
+          "runner.json": {
+            "bytes": 770,
+            "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/runner.json",
+            "sha256": "ca8bd502c5b27b5de5efe19936ba9cc18f00e9b33649e45f951130387c9c8408"
+          }
+        }
+      }
+    ],
+    "census": {
+      "complete": false,
+      "complete_gate_eligible": false,
+      "kind": "w11_root_census_v1",
+      "limits": "Dated sequential API census of distinct roots/latest attempts, not reviewed acceptance. Prior attempts/failures in older retained snapshots are not erased.",
+      "qualifying_broad_integrations": 0,
+      "qualifying_comparisons": 0,
+      "repository": "chebizarro/nostrc",
+      "root_count": 59,
+      "root_states": {
+        "cancelled": 1,
+        "failure": 57,
+        "queued": 1
+      },
+      "roots": [
+        {
+          "conclusion": null,
+          "event": "pull_request",
+          "head_sha": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39977420607",
+          "id": 39977420607,
+          "run_attempt": 1,
+          "status": "queued",
+          "updated_at": "2026-10-23T15:20:43Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39923954670",
+          "id": 39923954670,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T10:50:05Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "workflow_dispatch",
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39922309846",
+          "id": 39922309846,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T10:45:10Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39922272251",
+          "id": 39922272251,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T10:44:09Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39922245779",
+          "id": 39922245779,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T10:31:25Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "663edcd70c0d313c98f87610aa41f1261bce4ee6",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39885713147",
+          "id": 39885713147,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T03:41:22Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "5641f8b0bade465fee093925aa29443e791c4ae9",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39885673421",
+          "id": 39885673421,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T02:12:17Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "d9c9c8808b2611fc179ed4ed3640e63920f4683f",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39884406426",
+          "id": 39884406426,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T03:13:46Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "7319d339365d74efe0e26577d0055b91153707fd",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39884384021",
+          "id": 39884384021,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T03:40:59Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39872363501",
+          "id": 39872363501,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T01:20:50Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "cc56887a7b433f6391d13be5ef1688035de7de88",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39872346136",
+          "id": 39872346136,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-23T02:08:30Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "0ce430299060a09e4a2db250be1a2cac4df2c212",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39851489448",
+          "id": 39851489448,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T23:01:39Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "88d36526af2c913d9d7a93dce6078d7ce5259418",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39851463581",
+          "id": 39851463581,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T22:48:11Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39765146565",
+          "id": 39765146565,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T17:01:56Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "decef538f1b3cdddbffdb6695eae085b54c548fd",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39765128286",
+          "id": 39765128286,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T12:39:11Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "f646db033031a32ad0f6283f881d8506eafbcc4b",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39753293484",
+          "id": 39753293484,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T10:28:32Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "2a1513ade043da9612f1b9a7c4c35037c43049ed",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39753280286",
+          "id": 39753280286,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T10:20:17Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39740131392",
+          "id": 39740131392,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T08:45:56Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "fc3bf15792110c095a13049eb4f471e612af07cb",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39740044784",
+          "id": 39740044784,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T08:24:25Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "ed70631704778a7fbe31d45b24161570a91abb53",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39721223143",
+          "id": 39721223143,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T05:12:29Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "c5509f6c184e56f6c7d08049257cb0bcad8374ae",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39721202319",
+          "id": 39721202319,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T05:02:04Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "53f2e822d04bd32e243a9cf969396f2f241af83e",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39712305258",
+          "id": 39712305258,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T04:02:18Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "bb001a70c53f713baa63fac435c4f5f103e68e63",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39712294835",
+          "id": 39712294835,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T03:33:24Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39709833505",
+          "id": 39709833505,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T03:21:27Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39709815551",
+          "id": 39709815551,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T03:12:35Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "3c7c42c08cf1fade80da1355e4392847060abdb2",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39706136042",
+          "id": 39706136042,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T02:37:02Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "81a907d187a735e69c1bbde0840fe5fb4b9b51a8",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39706114829",
+          "id": 39706114829,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T02:33:22Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "d953c37fb7705eae76342c78222308f1290995ec",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39696802787",
+          "id": 39696802787,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T01:06:56Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "3930033b573b953b3e3e0d9f2dfa5ed503292017",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39696789681",
+          "id": 39696789681,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T00:46:45Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "37e144cab898e942d2875d903670ccaf4335158b",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39691368155",
+          "id": 39691368155,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-22T00:28:18Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "e65063eb5c9dd42bf77395245d50b4b695c29b35",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39691347591",
+          "id": 39691347591,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T23:27:13Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39685711754",
+          "id": 39685711754,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T23:36:17Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "e8ad431f1b5866bf40dadcd12d41716e487e4463",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39685690707",
+          "id": 39685690707,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T23:03:36Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39680092640",
+          "id": 39680092640,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T22:52:42Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39680066929",
+          "id": 39680066929,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T22:18:24Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39639305885",
+          "id": 39639305885,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T18:18:10Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "3632336068340b842cc1c76a5d89014c3c1e430a",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39639281932",
+          "id": 39639281932,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T17:54:26Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "7219eb4b5dd7e3bd046dd96f846baa26ed08ddbf",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39635020066",
+          "id": 39635020066,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T17:41:39Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "1f34a3bdf326bda6c2f2e15d2f26b11f97dbc230",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39634993581",
+          "id": 39634993581,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T17:43:03Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "f9d1e853794d81037e8dcf177e40b9bc83178b9c",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39522032401",
+          "id": 39522032401,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T02:17:31Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "172139a92e617d19d8d1aa3e0b9bd3fe5937e52d",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39522018295",
+          "id": 39522018295,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T01:56:28Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "f39401e12eaac24cbf86e903cdc37198fb332479",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39520208404",
+          "id": 39520208404,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T01:39:53Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "4ea308cc2c888c6e0b8a6de842a621cecd66ea93",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39520195345",
+          "id": 39520195345,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T01:45:15Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "096091aaa758468a8338e9cf0646acee432cfba1",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39519285551",
+          "id": 39519285551,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T01:37:10Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "9271b0667d141f979f196e59fd5d617117bc81d8",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39519271161",
+          "id": 39519271161,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-21T01:37:08Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "1fad10a239f9cef72b7b056b8ab99679337d53c4",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39280051357",
+          "id": 39280051357,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T16:44:33Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "pull_request",
+          "head_sha": "d120bc972bbb0f4c09951e376bcc229b41931e0e",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39280037488",
+          "id": 39280037488,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T16:44:31Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "b72b9ec70f4aee51a4a5f42447bc763cce5cc516",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39271217772",
+          "id": 39271217772,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T15:32:42Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "6ce261c4234c35d5f6c95822edeab83fdae48b60",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39202094613",
+          "id": 39202094613,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T05:56:03Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "fb7335cb0e9546463293b6adf2044fe54178f5ac",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39198909741",
+          "id": 39198909741,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T05:17:52Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "e57ef16ed1aeff152d808aec407c1b6f86bfc6be",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39196963896",
+          "id": 39196963896,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T04:39:15Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "2c5b18c23344b3a4c32faf2738e6c34064ab1af7",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39194781902",
+          "id": 39194781902,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T04:04:41Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "5280ea324ec474e9d0644638565a2e5a01748b51",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39194059430",
+          "id": 39194059430,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-19T04:04:23Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "2743f17354ac13527d8d8919f81abc711396c959",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/39132650260",
+          "id": 39132650260,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-18T14:24:47Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "249f9657fb230947ba486fb3cd92894316f9acc3",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38878691465",
+          "id": 38878691465,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-16T09:53:52Z"
+        },
+        {
+          "conclusion": "cancelled",
+          "event": "workflow_dispatch",
+          "head_sha": "a478070509569c26917dd5fb13a548b1f68eade9",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38873978927",
+          "id": 38873978927,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-16T09:19:49Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "8a031f443ac84850345a4cf0fb6ab5a8c3b32814",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38856570439",
+          "id": 38856570439,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-16T06:18:19Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "33a1012767c9db5a46057280178134a544b86af7",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38845886339",
+          "id": 38845886339,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-16T03:32:15Z"
+        },
+        {
+          "conclusion": "failure",
+          "event": "push",
+          "head_sha": "5467c02d11f74efc1a85c833024efb654bbf98b5",
+          "html_url": "https://github.com/chebizarro/nostrc/actions/runs/38833746063",
+          "id": 38833746063,
+          "run_attempt": 1,
+          "status": "completed",
+          "updated_at": "2026-10-16T01:56:42Z"
+        }
+      ],
+      "snapshot_completed_at": "2026-10-23T15:58:02.281864+00:00"
+    },
+    "collector": {
+      "implementation_base": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+      "no_dispatch_retry_or_poll": true,
+      "script": "scripts/w11-evidence.py",
+      "sha256": "e2c72f4abf052961c3035ff847d7793ec58be81570d5974605a35f809b54ed20"
+    },
+    "complete": false,
+    "complete_gate_eligible": false,
+    "enforcement_ready": false,
+    "failed_policy_artifact_capture": {
+      "artifact_id": 12512542514,
+      "expected_bytes": 29435373,
+      "failure": {
+        "bytes": 179,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/failure.json",
+        "sha256": "90dc30e9e529769a794f4e590b3099b0ca2fcfb990efa0657627858794b84ad7"
+      },
+      "no_original_zip_or_member_verification_claim": true,
+      "no_retry": true,
+      "partial": {
+        "bytes": 4078506,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/archive-12512542514.stdout",
+        "sha256": "877fa69a89176554da6ba9c8be03cbd89e3f86aebf36f6f9b915d8a5f097b1e7"
+      },
+      "process": {
+        "bytes": 582,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/archive-12512542514.process.json",
+        "sha256": "049c4ca623d44c2855ce22e266c2ea02407b672850a44b742ca4dc9102729bd0"
+      },
+      "seconds_limit": 60,
+      "state": "timeout_incomplete_unverified"
+    },
+    "fixture_repair": {
+      "after_sha256": "c4a419a9bed337bd27fcc067c55c801b73aa19169c907ddb989aada33c05f8ca",
+      "before_reproducer": {
+        "bytes": 645,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/fixture-import-before.json",
+        "sha256": "6c0bfdc7aba1bd414dc9cff145220a63ea96d9d9602da5019f59c5054c6032d6"
+      },
+      "before_sha256": "ee57e7ce81de8fb7e69c8054afbaed6be26895881325b7ba96177a61d5003145",
+      "change": "Copy actual test_selection_mdk.py required by the Linux finalizer; positive isolated import plus remove-module negative",
+      "file": "tests/selection/test_local_command_adapter.py",
+      "focused_log": {
+        "bytes": 446,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/fixture-targeted-after.log",
+        "sha256": "f92ed08fd3023ce971b3ff67017d7001b26d64632b51cd058e4cfad604265976"
+      },
+      "no_runtime_guard_or_expected_result_changes": true,
+      "physical_Linux_namespace_rerun": "NOT RUN; no Docker/heavy gate authorized"
+    },
+    "historical_E_evidence": {
+      "bytes": 298222,
+      "path": "/tmp/nostrc-w11-pr23-triage-20261024/inherited-E-evidence-608c.json",
+      "sha256": "fbd905856ca73f35d88c20ab0399ce75811b1d0c42b2f49c584546dd66cd067e"
+    },
+    "history_preservation": {
+      "all_58_prior_root_latest_attempt_states_unchanged": true,
+      "all_historical_top_level_fields_preserved": true,
+      "cancelled_E_refresh": "Parent reported provider reconnect2/2 then cancellation with clean608c worktree. Artifact location requested; no prior artifact is overwritten, deleted, imported or counted by this capture.",
+      "original_json_source": "608c1fe20d20121d68c9ea7f948ee7849057ce16"
+    },
+    "job_snapshot": {
+      "counts": {
+        "failure": 7,
+        "in_progress": 8,
+        "queued": 1,
+        "skipped": 1,
+        "success": 43
+      },
+      "path": "/tmp/nostrc-w11-pr23-triage-20261024/policy-artifact-capture/jobs-1.json",
+      "scope": "Dated separate API capture, not simultaneous with final root census; nested jobs not roots/comparisons",
+      "total": 60
+    },
+    "kind": "w11_pr23_finite_hosted_triage_v1",
+    "legacy_static": {
+      "annotations": [
+        {
+          "annotation_level": "failure",
+          "blob_href": "https://github.com/chebizarro/nostrc/blob/608c1fe20d20121d68c9ea7f948ee7849057ce16/.github",
+          "end_column": null,
+          "end_line": 1,
+          "message": "The job has exceeded the maximum execution time of 10m0s",
+          "path": ".github",
+          "raw_details": "",
+          "start_column": null,
+          "start_line": 1,
+          "title": ""
+        },
+        {
+          "annotation_level": "warning",
+          "blob_href": "https://github.com/chebizarro/nostrc/blob/608c1fe20d20121d68c9ea7f948ee7849057ce16/.github",
+          "end_column": null,
+          "end_line": 3,
+          "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+          "path": ".github",
+          "raw_details": "",
+          "start_column": null,
+          "start_line": 3,
+          "title": ""
+        },
+        {
+          "annotation_level": "failure",
+          "blob_href": "https://github.com/chebizarro/nostrc/blob/608c1fe20d20121d68c9ea7f948ee7849057ce16/.github",
+          "end_column": null,
+          "end_line": 13,
+          "message": "The operation was canceled.",
+          "path": ".github",
+          "raw_details": "",
+          "start_column": null,
+          "start_line": 13,
+          "title": ""
+        }
+      ],
+      "cause": "maximum execution time10m0s, established by API annotations",
+      "conclusion": "cancelled",
+      "job_id": 120495561665,
+      "log": {
+        "bytes": 20995,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/legacy-job.log",
+        "sha256": "ad7f1f291e8fd84962abca249019f157616b19548768784ce0e358b272792da5"
+      },
+      "run_id": 39977420640,
+      "same_head_static_runs_at_capture": [
+        39977420640
+      ],
+      "superseding_check": "No successful same-name replacement in this dated capture; separate broad/static120495700282 failed, not an equivalent replacement status"
+    },
+    "limits": [
+      "Census is a dated sequential snapshot; PR23 root remains pending, not counted as a failed or complete integration.",
+      "Original logs and all prior failed/cancelled attempts retained. No retries-to-green or synthetic PR credit.",
+      "One disjoint fixture-copy repair only. Jansson image prerequisite and Darwin checkout128 are separately reported, not skipped or claimed fixed.",
+      "A284 transport and C0f579 applicability were parent-approved later but are not merged in this report source. Original hosted results remain bound to608c/305dbb.",
+      "No hosted proof for this fixture repair, no source-authority renewal of immutable33/193, no source pin refresh.",
+      "Raw logs/archives remain private external artifacts; repository evidence contains identities/hashes only, no raw environment.",
+      "No push/merge/default/protection/W12/cutover or heavy local gate. CI/test/docs-only no component bump."
+    ],
+    "other_shadow_failure_classification": [
+      {
+        "classification": "explicit_profile_capability_refusal",
+        "job_id": 120495699151,
+        "log": {
+          "bytes": 55739,
+          "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699151.log",
+          "sha256": "0022ee5e22351f292562156a999cda38820ffbf4f3be173163e294c0050773a2"
+        },
+        "name": "core_native / execute",
+        "observed": "unavailable selected capabilities: ['signer_endpoint']",
+        "ownership": "C exact Mac TCP applicability; no live signer waiver"
+      },
+      {
+        "classification": "immutable_diagnostic_partition_refusal",
+        "job_id": 120495699180,
+        "log": {
+          "bytes": 289433,
+          "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699180.log",
+          "sha256": "ee835bbdc2a1899e2e1bdeefb6354bc9eb39dab7facc850101abe20d6c462f54"
+        },
+        "name": "groundhog_sanitizers / execute",
+        "observed": "diagnostic nonmember fresh registration partition differs",
+        "ownership": "B future source/partition investigation; no old193 renewal"
+      },
+      {
+        "classification": "outer_gate_failure_cause_not_exposed",
+        "job_id": 120495699307,
+        "log": {
+          "bytes": 315195,
+          "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699307.log",
+          "sha256": "b0a35301b336ba38bedf93711a5442a06c975c992d6257fa968f29bd730e9f7a"
+        },
+        "name": "core_asan / execute",
+        "observed": "test-gate failed, retained adapter receipt; deeper cause not printed in job log",
+        "ownership": "A/runtime; uninspected large evidence, no claimed repair"
+      },
+      {
+        "classification": "outer_gate_failure_cause_not_exposed",
+        "job_id": 120495699352,
+        "log": {
+          "bytes": 338888,
+          "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699352.log",
+          "sha256": "c2003ab8805c1021776e318d58fd151ff5c22a674fdae9e2f69b013eae729679"
+        },
+        "name": "grotto_asan / execute",
+        "observed": "test-gate failed, retained adapter receipt; deeper cause not printed in job log",
+        "ownership": "A/runtime; uninspected large evidence, no claimed repair"
+      },
+      {
+        "classification": "outer_gate_failure_cause_not_exposed",
+        "job_id": 120495699740,
+        "log": {
+          "bytes": 328543,
+          "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495699740.log",
+          "sha256": "e0a282af0ae1012cd8b018ef2cbfa4ba250c84b2198b6628b52417f531bc79fc"
+        },
+        "name": "mdk08 / execute",
+        "observed": "test-gate failed, retained adapter receipt; deeper cause not printed in job log",
+        "ownership": "A/MDK; uninspected large evidence, no claimed repair"
+      },
+      {
+        "classification": "same_policy_regression_families",
+        "job_id": 120495700282,
+        "log": {
+          "bytes": 817122,
+          "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/job-120495700282.log",
+          "sha256": "ecb3f904c192eaeda5354d7bf23b237805d03393394ca1c2fe328c107334db84"
+        },
+        "name": "broad / static / regressions",
+        "observed": "81 kernel cases/28fail;1121 full cases/31fail1error72skip",
+        "ownership": "B disjoint fixture; jansson and checkout issues remain separate"
+      }
+    ],
+    "policy": {
+      "cases": [
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_build_contract_real_target_positive (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_build_contract_real_target_positive)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_mixed_command_and_ctest_use_same_private_resources (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_mixed_command_and_ctest_use_same_private_resources)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_mixed_lane_cancel_retains_negative_receipt_and_sibling (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_mixed_lane_cancel_retains_negative_receipt_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_command_cancel_retains_finalizer_and_sibling (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_wrapped_command_cancel_retains_finalizer_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_command_positive (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_wrapped_command_positive)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_ctest_cancel_retains_finalizer_and_sibling (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_wrapped_ctest_cancel_retains_finalizer_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_lsan_pass_and_real_leak_failure_without_ptrace (test_namespace_wrapper_adapter.BusNamespaceWrapperAdapterTests.test_wrapped_lsan_pass_and_real_leak_failure_without_ptrace)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_build_contract_real_target_positive (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_build_contract_real_target_positive)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_mixed_command_and_ctest_use_same_private_resources (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_mixed_command_and_ctest_use_same_private_resources)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_mixed_lane_cancel_retains_negative_receipt_and_sibling (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_mixed_lane_cancel_retains_negative_receipt_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_command_cancel_retains_finalizer_and_sibling (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_wrapped_command_cancel_retains_finalizer_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_command_positive (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_wrapped_command_positive)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_ctest_cancel_retains_finalizer_and_sibling (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_wrapped_ctest_cancel_retains_finalizer_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_lsan_pass_and_real_leak_failure_without_ptrace (test_namespace_wrapper_adapter.DisplayNamespaceWrapperAdapterTests.test_wrapped_lsan_pass_and_real_leak_failure_without_ptrace)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_build_contract_real_target_positive (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_build_contract_real_target_positive)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_mixed_command_and_ctest_use_same_private_resources (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_mixed_command_and_ctest_use_same_private_resources)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_mixed_lane_cancel_retains_negative_receipt_and_sibling (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_mixed_lane_cancel_retains_negative_receipt_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_command_cancel_retains_finalizer_and_sibling (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_wrapped_command_cancel_retains_finalizer_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_command_positive (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_wrapped_command_positive)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_ctest_cancel_retains_finalizer_and_sibling (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_wrapped_ctest_cancel_retains_finalizer_and_sibling)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_wrapped_lsan_pass_and_real_leak_failure_without_ptrace (test_namespace_wrapper_adapter.NamespaceWrapperAdapterTests.test_wrapped_lsan_pass_and_real_leak_failure_without_ptrace)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_command_escaped_child_cancellation (test_adapter_custody.AdapterCustodyTests.test_pidns_command_escaped_child_cancellation)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_ctest_escaped_child_cancellation (test_adapter_custody.AdapterCustodyTests.test_pidns_ctest_escaped_child_cancellation)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_positive_and_failure_preserve_receipts_and_raw_bytes (test_adapter_custody.AdapterCustodyTests.test_pidns_positive_and_failure_preserve_receipts_and_raw_bytes) (ctest=False, code=0)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_positive_and_failure_preserve_receipts_and_raw_bytes (test_adapter_custody.AdapterCustodyTests.test_pidns_positive_and_failure_preserve_receipts_and_raw_bytes) (ctest=True, code=0)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete (test_adapter_custody.AdapterCustodyTests.test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete) (capabilities=['display'])"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete (test_adapter_custody.AdapterCustodyTests.test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete) (capabilities=['private_bus'])"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete (test_adapter_custody.AdapterCustodyTests.test_pidns_wrapped_ctest_uses_real_services_and_retains_incomplete) (capabilities=['display', 'private_bus'])"
+        },
+        {
+          "cause": "missing_jansson_prerequisite",
+          "kind": "ERROR",
+          "test": "test_real_units_full_default_and_source_header_runtime_audits (test_homed_profile_contract.ActualHomedUnitGraph.test_real_units_full_default_and_source_header_runtime_audits)"
+        },
+        {
+          "cause": "git_checkout_128_unresolved",
+          "kind": "FAIL",
+          "test": "test_darwin_value_is_explicit_and_legacy_stays_default (test_darwin_gate_wiring.DarwinGateWiring.test_darwin_value_is_explicit_and_legacy_stays_default)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_cancellation_releases_short_mountpoint (test_resource_placement.PublicGatePlacementTests.test_cancellation_releases_short_mountpoint)"
+        },
+        {
+          "cause": "missing_copied_mdk_module",
+          "kind": "FAIL",
+          "test": "test_positive_run_uses_short_mountpoint_and_releases_it (test_resource_placement.PublicGatePlacementTests.test_positive_run_uses_short_mountpoint_and_releases_it)"
+        }
+      ],
+      "full_suite": {
+        "errors": 1,
+        "failures": 31,
+        "seconds": 473.99,
+        "skips": 72,
+        "tests": 1121
+      },
+      "job_conclusion": "failure",
+      "job_id": 120495699183,
+      "kernel_suite": {
+        "failures": 28,
+        "tests": 81
+      },
+      "log": {
+        "bytes": 816898,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/first-capture/policy-job.log",
+        "sha256": "9d411f29aa47bbdbc82fc053fbfe79a6566f4de98e1287fed8339db348490ba8"
+      },
+      "root_status_at_census": "queued",
+      "run_id": 39977420607
+    },
+    "qualifying_comparisons": 0,
+    "qualifying_complete_broad_integrations": 0,
+    "report_created_at": "2026-10-23T16:05:47.967363+00:00",
+    "reviewed_base": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+    "snapshot_completed_at": "2026-10-23T15:58:02.281864+00:00",
+    "source": {
+      "api_head": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+      "base": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+      "merge_parents": [
+        "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+        "608c1fe20d20121d68c9ea7f948ee7849057ce16"
+      ],
+      "plan_artifact_id": 12511113659,
+      "plan_id": "114f94b6442b28399ef986cab3e4394a3994d918436034d96c288a8d38e32b83",
+      "plan_inventory_hash": "b74401be4907a2a959912466198d8eb1bf34cd99af85a89bf4d183250e5be02b",
+      "same_tree_does_not_alias_identity": true,
+      "tested_synthetic_merge": "305dbb638755a667b5495efcf242eb5ae7c32488",
+      "tree": "2da47ec0f0fdbf4fc014a670ec346df64528a597"
+    },
+    "verified_original_plan_archive": {
+      "api_digest_size_and_member_CRC_verified": true,
+      "identity": {
+        "digest": "sha256:926320006703272a1c75f3567b5906236442e936991eb1181a4f62ac165e71f8",
+        "id": 12511113659,
+        "name": "dependency-plan-114f94b6442b28399ef986cab3e4394a3994d918436034d96c288a8d38e32b83-1",
+        "size_in_bytes": 22951,
+        "workflow_run": {
+          "head_branch": "ci/w11-profile-completion-20261023",
+          "head_repository_id": 867931223,
+          "head_sha": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+          "id": 39977420607,
+          "repository_id": 867931223
+        }
+      },
+      "member_proof": {
+        "bytes": 139,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifact-12511113659-proof.json",
+        "sha256": "9e4233e1d2248f75e80420d50bff723e7ec03d6326589ec518b5ce4133b0e425"
+      },
+      "zip": {
+        "bytes": 22951,
+        "path": "/tmp/nostrc-w11-pr23-triage-20261024/completed-shadow-classification/artifact-12511113659.zip",
+        "sha256": "926320006703272a1c75f3567b5906236442e936991eb1181a4f62ac165e71f8"
+      }
+    },
+    "w11": "NOT MET",
+    "w12": "NOT RUN"
+  },
   "qualifying_broad_integrations": 0,
   "qualifying_comparisons": 0
 }

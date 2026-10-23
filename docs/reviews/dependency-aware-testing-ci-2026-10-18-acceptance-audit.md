@@ -1,5 +1,56 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## PR23 bounded hosted triage — 2026-10-23T15:58:02Z
+
+One fresh, non-polling census adds PR23 to the preserved historical snapshot:
+**59 distinct roots/latest attempts:57 failed,one cancelled,one queued;zero
+successful**. PR23 root `39977420607` is still API-queued, despite completed failed
+children; it remains **pending**, not a terminal broad integration. Every earlier
+58 root identity/latest-attempt disposition and all prior snapshots remain.
+**0/20 reviewed qualifying real-PR comparisons;0/2 successful complete broad
+integrations;W11 NOT MET/W12 NOT RUN.** Nested jobs, skips, retries and test cases
+are not quota units. See the [matching ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr23-bounded-hosted-triage--2026-10-23t155802z)
+and appended `pr23_refresh_20261024` in the [source/hash evidence](dependency-aware-testing-w11-e-evidence-2026-10-23.json).
+
+PR23 API head `608c1fe20d20121d68c9ea7f948ee7849057ce16` differs from actual
+tested synthetic merge `305dbb638755a667b5495efcf242eb5ae7c32488`, whose parents
+are master `44044fefe9c40ac095044e9c22eb06f2678aab1f` and that head. Both source
+trees are `2da47ec0f0fdbf4fc014a670ec346df64528a597`; equal trees do not alias
+source identities. Original plan artifact12511113659 independently binds305dbb,
+plan `114f94b6442b28399ef986cab3e4394a3994d918436034d96c288a8d38e32b83`.
+Its22951-byte ZIP/API digest/CRC/member hash are verified, not inferred from API head.
+
+Policy job120495699183 fails:81 kernel cases/28 failures, then1121 default cases/
+31 failures/one error/72 skips. Thirty full-suite failures expose the missing
+`test_selection_mdk` module in a deliberately copied miniature fixture; B adds
+that actual dependency plus positive-import/removal-negative regression without
+editing runtime/custody code. The two bounded fixture/ordinary-command cases pass;
+actual Linux namespace execution of the repair is **NOT RUN**. Separate failures
+remain: homed requires absent `jansson` in the testhost, and the Darwin wiring
+fixture fails source checkout with Git128 (exact checkout cause unresolved).
+These are reported, not skipped or claimed repaired. No assertion, deadline,
+sanitizer, cleanup, source hash or immutable33/193 authority is relaxed.
+
+Legacy Static checks39977420640/job120495561665 is cancelled by the annotated
+**10-minute execution limit**, not demonstrated supersession. The dated head
+capture has no successful same-name replacement; separate shadow broad/static
+job120495700282 also fails the policy families, not an equivalent green status.
+Core-macOS refuses `signer_endpoint`; GH sanitizer refuses its fresh partition;
+core/Grotto ASan and MDK08 fail the outer gate without a deeper cause printed in
+job logs. Those classifications are not speculative fixes. The29.4MB policy
+artifact fetch timed out at60s with4078506 bytes: preserved **incomplete/unverified**,
+no retry/member-proof claim. Original job logs and partial capture remain private
+outside Git; the evidence contains paths and hashes, not raw environment values.
+
+The original E evidence fields, seven verified ZIPs and `.29` closure are unchanged.
+Parent's cancelled E provider-reconnect capture is not imported or counted; no
+prior artifact is removed/overwritten. `.5` stays CLOSED with a dated comment, not
+W11 closure. A284d002ef and C0f579a7ea were approved for a later integration, but
+neither is a result of this hosted source or merged into this triage snapshot.
+PR23's reviewed feature branch remains608c. CI/test/docs only,no component bump;
+no heavy gate,Docker,host-policy,push/merge/default/protection/cutover mutation.
+
+
 ## Final finite hosted refresh — 2026-10-23T12:49:15.864836Z
 
 One bounded fresh API census and terminal job/artifact collection, not a waiting

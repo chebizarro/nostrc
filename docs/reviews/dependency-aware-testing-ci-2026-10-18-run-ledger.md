@@ -1,5 +1,56 @@
 # Dependency-aware testing acceptance run ledger
 
+## PR23 bounded hosted triage — 2026-10-23T15:58:02Z
+
+Census result: **59 roots =57 failure +one cancelled +one queued**, zero success.
+All58 prior root identities/latest-attempt states match the preserved12:49
+snapshot. PR23 remains API-queued/pending; completed failed children do not turn
+that root into a finalized run. Counters remain **0/20 reviewed qualifying PR
+comparisons,0/2 successful complete broad integrations;W11 NOT MET/W12 NOT RUN**.
+This is one bounded source-linked observation, not dispatch/retry/polling or a
+claim for later integration code.
+
+| Source-linked check | Captured disposition and load-bearing finding |
+|---|---|
+|[PR23 root39977420607](https://github.com/chebizarro/nostrc/actions/runs/39977420607)|API head608c1fe20;actual plan/checkout305dbb638;rootqueued,attempt1|
+|[Policy120495699183](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699183)|FAIL:81 kernel tests/28fail;1121 default tests/31fail1error72skip.30failures missing copied `test_selection_mdk`;one Git128 Darwin fixture failure;one homed missing-jansson error|
+|[Legacy static39977420640 /120495561665](https://github.com/chebizarro/nostrc/actions/runs/39977420640/job/120495561665)|CANCELLED:API annotation maximum execution time10m0s. No same-name successful superseding run in capture; not a green replacement|
+|[Broad static120495700282](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495700282)|FAIL:same policy families;separate status identity,not legacy static success|
+|[Core Mac120495699151](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699151)|Explicit unavailable `signer_endpoint` capability refusal;C applicability seam,no inferred live-TCP coverage|
+|[GH sanitizer120495699180](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699180)|Fresh diagnostic registration partition differs;no immutable witness refresh or success credit|
+|[Core ASan120495699307](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699307),[Grotto ASan120495699352](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699352),[MDK08120495699740](https://github.com/chebizarro/nostrc/actions/runs/39977420607/job/120495699740)|Outer-gate failure;job logs do not expose deeper cause. Large retained worker artifacts not inspected;no speculative runtime fix|
+
+API head is `608c1fe20d20121d68c9ea7f948ee7849057ce16`;actual synthetic merge is
+`305dbb638755a667b5495efcf242eb5ae7c32488`, parents master44044fefe and head608c.
+Tree `2da47ec0f0fdbf4fc014a670ec346df64528a597` equality is not SHA equality.
+The original plan ZIP12511113659 (22951bytes) verifies API SHA256
+`926320006703272a1c75f3567b5906236442e936991eb1181a4f62ac165e71f8`, CRC and
+its sole plan.json member. It binds tested/source305dbb and plan
+`114f94b6442b28399ef986cab3e4394a3994d918436034d96c288a8d38e32b83`.
+Original policy log SHA256`9d411f29aa47bbdbc82fc053fbfe79a6566f4de98e1287fed8339db348490ba8`;
+legacy log SHA256`ad7f1f291e8fd84962abca249019f157616b19548768784ce0e358b272792da5`.
+Job-log hashes prove captured bytes,not an API-supplied content checksum.
+
+Raw capture root:`/tmp/nostrc-w11-pr23-triage-20261024/`. Exact failure names,
+per-file hashes, source identities and separate job-snapshot timing are appended
+under `pr23_refresh_20261024` in the [existing evidence JSON](dependency-aware-testing-w11-e-evidence-2026-10-23.json).
+The original artifact12512542514 download timed out at60s:4078506 of29435373
+expected bytes retained, **no verified ZIP/member evidence**, no retry. This does
+not erase its failed collector attempt or establish the Darwin Git128 cause.
+
+B's only source repair is the miniature fixture copy list and import regression.
+Two bounded cases pass;Linux custody validation of that repair is NOT RUN.
+Jansson testhost and Darwin checkout findings are reported separately; no test
+skip,deadline change,source/cleanup/sanitizer guard relaxation or33/193 refresh.
+Every previous E top-level evidence field is preserved; historical JSON checksum
+`fbd905856ca73f35d88c20ab0399ce75811b1d0c42b2f49c584546dd66cd067e` identifies
+its bytes at608c,not the newly appended file. Earlier failures and `.29` actual
+closure stay unchanged. Cancelled E provider artifacts are not removed/overwritten
+or counted. `.5` remains CLOSED with a fresh comment;no W11 or W12 closure.
+Later approved A284d/C0f579 source is outside this hosted snapshot. No heavy
+local gate,Docker,push/merge/cutover;CI/test/docs only,no version bump.
+
+
 ## Final finite hosted refresh — 2026-10-23T12:49:15.864836Z
 
 Fresh sequential census12:49:11Z–12:49:15.864836Z: **58 distinct dependency-test

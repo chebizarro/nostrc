@@ -8,6 +8,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -24,7 +25,7 @@ class LocalCommandAdapterTests(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "user.name", "Adapter fixture")
         self.git("config", "user.email", "adapter@example.invalid")
-        for name in ("test-gate.sh", "adapter_custody.py", "adapter_namespace_custody.py", "test_selection_services.py", "test_selection_custody.py", "test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py",
+        for name in ("test-gate.sh", "adapter_custody.py", "adapter_namespace_custody.py", "test_selection_services.py", "test_selection_custody.py", "test-plan.py", "test_selection.py", "test_selection_realization.py", "test_selection_subset.py", "test_selection_mdk.py",
                      "check-macos-keychain.sh"):
             target = self.repo / "scripts" / name
             target.parent.mkdir(exist_ok=True)
@@ -92,6 +93,19 @@ print('actual command: ' + content, end='', flush=True)
         lane = receipt["executions"][0]["lanes"][0]
         self.assertEqual(lane["status"], "passed", lane)
         return json.loads((Path(lane["evidence"]) / "receipt.json").read_text())["backend_receipt"]
+
+    def test_fixture_owns_linux_finalizer_mdk_recovery_module(self):
+        # The real gate imports this recovery module even for non-MDK pidns
+        # lanes. Exercise the actual copied bytes without claiming kernel proof.
+        code = ("import sys;sys.path.insert(0,sys.argv[1]);"
+                "from test_selection_mdk import recover_lane;assert callable(recover_lane)")
+        argv = [sys.executable, "-I", "-c", code, str(self.repo / "scripts")]
+        ready = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        self.assertEqual(ready.returncode, 0, ready.stderr)
+        (self.repo / "scripts/test_selection_mdk.py").unlink()
+        absent = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(absent.returncode, 0)
+        self.assertIn("No module named 'test_selection_mdk'", absent.stderr)
 
     def test_exact_sha_and_dirty_snapshot_have_real_bound_evidence(self):
         self.write("app/vector.txt", "caller dirt must not execute\n")
