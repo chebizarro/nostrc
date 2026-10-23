@@ -7876,24 +7876,29 @@
         "{source}/scripts/test_selection_services.py",
         "{source}/tests/selection/test_native_services.py",
         "{source}/tests/selection/test_namespace_wrapper_adapter.py",
-      "{source}/tests/selection/test_runtime_diagnostic_inputs.py",
-      "{source}/scripts/mdk011-cache-build.py",
-      "{source}/tests/runtime/mdk011-fetch.Dockerfile",
+        "{source}/tests/selection/test_runtime_diagnostic_inputs.py",
+        "{source}/scripts/mdk011-cache-build.py",
+        "{source}/tests/runtime/mdk011-fetch.Dockerfile",
         "{source}/tests/runtime/test_mdk011_cache_contract.py",
         "{source}/tests/runtime/test_mdk011_export_custody.py",
-      "{source}/tests/runtime/test_provisioned_nip5f.py",
-      "{source}/tests/runtime/nip5f_approver.c",
-      "{source}/gnome/groundhog/tests/app/test_secret_service.py",
-      "{source}/apps/grotto/data/org.nostr.Grotto.gschema.xml",
-      "{source}/tests/interop/mdk/driver-0.11/Dockerfile",
-      "{source}/tests/interop/mdk/driver-0.11/Cargo.toml",
-      "{source}/tests/interop/mdk/driver-0.11/Cargo.lock",
-      "{source}/tests/interop/mdk/driver-0.11/rust-toolchain.toml",
-      "{source}/tests/interop/mdk/driver-0.11/src/main.rs",
-            "{source}/tests/selection/test_w11_worker_setup.py",
-            "{source}/tests/selection/fixtures/w11_setup_enrollment_20261023.json",
-            "{source}/nips/nip44/tests/nip44.vectors.json"
-          ],
+        "{source}/tests/runtime/test_provisioned_nip5f.py",
+        "{source}/tests/runtime/nip5f_approver.c",
+        "{source}/gnome/groundhog/tests/app/test_secret_service.py",
+        "{source}/apps/grotto/data/org.nostr.Grotto.gschema.xml",
+        "{source}/tests/interop/mdk/driver-0.11/Dockerfile",
+        "{source}/tests/interop/mdk/driver-0.11/Cargo.toml",
+        "{source}/tests/interop/mdk/driver-0.11/Cargo.lock",
+        "{source}/tests/interop/mdk/driver-0.11/rust-toolchain.toml",
+        "{source}/tests/interop/mdk/driver-0.11/src/main.rs",
+        "{source}/tests/selection/test_w11_worker_setup.py",
+        "{source}/tests/selection/fixtures/w11_setup_enrollment_20261023.json",
+        "{source}/nips/nip44/tests/nip44.vectors.json",
+        "{source}/nostr-gobject/tests/test_main_thread_forbidden_calls.c",
+        "{source}/nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
+        "{source}/nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c",
+        "{source}/tests/selection/test_w11_heartbeat_enrollment.py",
+        "{source}/tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json"
+      ],
       "working_directory": "{source}"
     },
     "prepared011.matrix": {
@@ -21179,14 +21184,104 @@
     }
   },
   "path_rules": [
-    {"effect": "global", "exact": "docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json", "nodes": ["selection.contract"], "reason": "Hosted diagnostic evidence index; explicit broad validation, not executable admission."},
-    {"effect": "impact", "exact": "nips/nip44/tests/nip44.vectors.json", "nodes": ["nip44.test_inputs", "selection.contract"], "reason": "W11 checkout regression consumes pinned vector bytes; preserve vector ownership."},
-    {"effect": "impact", "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml", "nodes": ["grotto.gui", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
-    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Dockerfile", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
-    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
-    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/Cargo.lock", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
-    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/rust-toolchain.toml", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
-    {"effect": "impact", "exact": "tests/interop/mdk/driver-0.11/src/main.rs", "nodes": ["mdk011.peer_inputs", "selection.contract"], "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."},
+    {
+      "effect": "impact",
+      "exact": "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
+      "nodes": [
+        "nostr.gobject",
+        "selection.contract"
+      ],
+      "reason": "Heartbeat diagnostic consumes actual test/probe bytes; preserve product ownership without changing the normal gate."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
+      "nodes": [
+        "nostr.gobject",
+        "selection.contract"
+      ],
+      "reason": "Heartbeat diagnostic consumes actual test/probe bytes; preserve product ownership without changing the normal gate."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c",
+      "nodes": [
+        "nostr.gobject",
+        "selection.contract"
+      ],
+      "reason": "Heartbeat diagnostic consumes actual test/probe bytes; preserve product ownership without changing the normal gate."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Hosted diagnostic evidence index; explicit broad validation, not executable admission."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/nip44/tests/nip44.vectors.json",
+      "nodes": [
+        "nip44.test_inputs",
+        "selection.contract"
+      ],
+      "reason": "W11 checkout regression consumes pinned vector bytes; preserve vector ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/interop/mdk/driver-0.11/Dockerfile",
+      "nodes": [
+        "mdk011.peer_inputs",
+        "selection.contract"
+      ],
+      "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/interop/mdk/driver-0.11/Cargo.toml",
+      "nodes": [
+        "mdk011.peer_inputs",
+        "selection.contract"
+      ],
+      "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/interop/mdk/driver-0.11/Cargo.lock",
+      "nodes": [
+        "mdk011.peer_inputs",
+        "selection.contract"
+      ],
+      "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/interop/mdk/driver-0.11/rust-toolchain.toml",
+      "nodes": [
+        "mdk011.peer_inputs",
+        "selection.contract"
+      ],
+      "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/interop/mdk/driver-0.11/src/main.rs",
+      "nodes": [
+        "mdk011.peer_inputs",
+        "selection.contract"
+      ],
+      "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+    },
     {
       "effect": "impact",
       "exact": "apps/grotto/data/org.nostr.Grotto.service.in",
@@ -27003,9 +27098,9 @@
         "core.macos.asan"
       ],
       "coverage_gap": "root_asan_execution_contract",
-      "source_sha256": "3a62b2b339298b5348300b93179a3b7e94666521972433af299a92ca10a0ed06",
+      "source_sha256": "34b4225c2530db6754c8121fc170973d7082987a38b0355667e79a48854ff85c",
       "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
-      "workflow_sha256": "96fd1c4b95f6320466fc9c8f4791c357a49bbc95fccc2d9904561388a9c7dd87"
+      "workflow_sha256": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",

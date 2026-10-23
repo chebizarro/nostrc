@@ -85,11 +85,33 @@ def w11_setup_witness():
 
 def before_w11_setup_jobs(records):
     """Project only reviewed fingerprint fields for immutable historical tests."""
-    previous = copy.deepcopy(records)
+    previous = before_heartbeat_jobs(records)
     for ident, record in w11_setup_witness()['workflow_jobs'].items():
         fields = {field: previous[ident][field] for field in record['after']}
         s.require(fields in (record['before'], record['after']),
                   'W11 setup job source changed: ' + ident)
+        previous[ident].update(record['before'])
+    return previous
+
+
+HEARTBEAT_WITNESS = 'tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json'
+HEARTBEAT_SHA256 = 'cfff9082550676990622e9719b2502518eb162b112ace9a22af89fb6cb4a0f5f'
+
+
+def heartbeat_witness():
+    raw = (ROOT / HEARTBEAT_WITNESS).read_bytes()
+    s.require(hashlib.sha256(raw).hexdigest() == HEARTBEAT_SHA256,
+              'heartbeat enrollment witness bytes changed')
+    return json.loads(raw)
+
+
+def before_heartbeat_jobs(records):
+    """Historical test projection only; never used by runtime admission."""
+    previous = copy.deepcopy(records)
+    for ident, record in heartbeat_witness()['workflow_jobs'].items():
+        fields = {field: previous[ident][field] for field in record['after']}
+        s.require(fields in (record['before'], record['after']),
+                  'heartbeat workflow source changed: ' + ident)
         previous[ident].update(record['before'])
     return previous
 
@@ -120,7 +142,13 @@ RUNTIME_SOURCE_RULES = [
       'reason': 'W11 checkout regression consumes pinned vector bytes; preserve vector ownership.'},
      {'effect': 'global', 'exact': 'docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json',
       'nodes': ['selection.contract'],
-      'reason': 'Hosted diagnostic evidence index; explicit broad validation, not executable admission.'}]
+      'reason': 'Hosted diagnostic evidence index; explicit broad validation, not executable admission.'}] + [
+    {'effect': 'impact', 'exact': path, 'nodes': ['nostr.gobject', 'selection.contract'],
+     'reason': 'Heartbeat diagnostic consumes actual test/probe bytes; preserve product ownership without changing the normal gate.'}
+    for path in ('nostr-gobject/tests/test_main_thread_forbidden_calls.c',
+                 'nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh',
+                 'nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c')
+]
 NATIVE_RUNTIME_INPUTS = [
     '{source}/scripts/adapter_namespace_custody.py',
     '{source}/tests/selection/test_namespace_custody.py',
@@ -144,6 +172,11 @@ NATIVE_RUNTIME_INPUTS = [
     '{source}/tests/selection/test_w11_worker_setup.py',
     '{source}/tests/selection/fixtures/w11_setup_enrollment_20261023.json',
     '{source}/nips/nip44/tests/nip44.vectors.json',
+    '{source}/nostr-gobject/tests/test_main_thread_forbidden_calls.c',
+    '{source}/nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh',
+    '{source}/nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c',
+    '{source}/tests/selection/test_w11_heartbeat_enrollment.py',
+    '{source}/tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json',
 ]
 
 

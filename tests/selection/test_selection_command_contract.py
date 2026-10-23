@@ -17,6 +17,9 @@ from selector_support import change, s
 # Workflows, version sources and selection helpers have separately enumerated
 # discovery boundaries below. Never recursively audit mutable __pycache__.
 SUPPORT_INPUTS = {
+    "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
+    "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
+    "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c",
     ".github/workflows/dependency_contract.py",
     "CMakeLists.txt",
     "VERSION_MANIFEST.md",
