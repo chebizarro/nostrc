@@ -872,6 +872,7 @@ SAN_FIXTURE = r'''
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -928,8 +929,19 @@ static void spawn_escapee(const char *endpoint) {
     waitpid(p, &status, 0);
 }
 
+extern char **environ;
+
 int main(int argc, char **argv) {
     const char *mode = argv[1];
+    if (!strcmp(mode, "spawn")) { /* watcher positive control: one child */
+        pid_t child;
+        char *args[] = {"/usr/bin/true", NULL};
+        int status;
+        if (posix_spawn(&child, args[0], NULL, NULL, args, environ) != 0)
+            return 3;
+        waitpid(child, &status, 0);
+        return 0;
+    }
     if (!strcmp(mode, "ok")) {
         write(1, "san ok \xff\n", 9);
         return 0;
@@ -968,6 +980,61 @@ AUTHORED_SANITIZER_ENV = {'ASAN_OPTIONS': 'detect_leaks=0:strict_string_checks=1
                           'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1'}
 
 
+def fixture_sanitizer_env(asan=AUTHORED_SANITIZER_ENV['ASAN_OPTIONS'],
+                          ubsan=AUTHORED_SANITIZER_ENV['UBSAN_OPTIONS']):
+    """Authored options for the tiny diagnostic fixture ONLY, plus symbolize=0.
+
+    Symbolizing a report makes the runtime spawn ``atos -i -p <pid>``, which
+    needs the crashing process's task port: on hosts without developer debug
+    authority it can block indefinitely (retained out-of-custody timeouts).
+    Symbolization is host debug authority, not a custody property, so these
+    fixtures neither use nor claim it. Detection, halting, leak policy and
+    every production/CTest environment are unchanged."""
+    return {'ASAN_OPTIONS': asan + ':symbolize=0', 'UBSAN_OPTIONS': ubsan + ':symbolize=0'}
+
+
+# Starts its argument suspended, registers kqueue NOTE_FORK/NOTE_EXEC on that
+# direct child, then resumes it: every fork/spawn by the fixture (including a
+# symbolizer launch) is counted. Reports on stderr; signal deaths as 128+N.
+SPAWN_WATCH = r'''
+#include <signal.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <sys/event.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char **environ;
+int main(int argc, char **argv) {
+    (void)argc;
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED);
+    pid_t pid;
+    if (posix_spawn(&pid, argv[1], NULL, &attr, argv + 1, environ) != 0)
+        return 127;
+    int kq = kqueue();
+    struct kevent ev;
+    EV_SET(&ev, pid, EVFILT_PROC, EV_ADD | EV_CLEAR, NOTE_FORK | NOTE_EXEC | NOTE_EXIT, 0, NULL);
+    if (kq < 0 || kevent(kq, &ev, 1, NULL, 0, NULL) != 0)
+        return 126;
+    kill(pid, SIGCONT); /* our direct, unreaped, suspended child */
+    int forks = 0, execs = 0, done = 0;
+    while (!done) {
+        struct kevent out;
+        if (kevent(kq, NULL, 0, &out, 1, NULL) != 1)
+            continue;
+        forks += (out.fflags & NOTE_FORK) != 0;
+        execs += (out.fflags & NOTE_EXEC) != 0;
+        done = (out.fflags & NOTE_EXIT) != 0;
+    }
+    int status;
+    waitpid(pid, &status, 0);
+    fprintf(stderr, "spawn-watch: forks=%d execs=%d\n", forks, execs);
+    return WIFSIGNALED(status) ? 128 + WTERMSIG(status) : WEXITSTATUS(status);
+}
+'''
+
+
 @unittest.skipUnless(sys.platform == 'darwin', 'native macOS custody; other platforms run the refusal test')
 class DarwinCustodyInstrumentedTests(DarwinCustodySupervisorTests):
     """Tiny ASan/UBSan compatibility proof, NOT production root/profile parity.
@@ -985,58 +1052,74 @@ class DarwinCustodyInstrumentedTests(DarwinCustodySupervisorTests):
         subprocess.run(['cc', '-g', '-O0', '-fsanitize=address', '-fno-omit-frame-pointer',
                         '-fsanitize=undefined', str(source), '-o', str(cls.fixture)],
                        check=True, capture_output=True, timeout=GUARD)
+        watch = Path(cls.build.name) / 'spawn_watch.c'
+        watch.write_text(SPAWN_WATCH)
+        cls.watch = Path(cls.build.name) / 'spawn_watch'
+        subprocess.run(['cc', '-O1', str(watch), '-o', str(cls.watch)], check=True, capture_output=True,
+                       timeout=GUARD)
 
     @classmethod
     def tearDownClass(cls):
         cls.build.cleanup()
 
     def san_env(self, **extra):
-        return self.env(**dict(AUTHORED_SANITIZER_ENV, **extra))
-
-    @staticmethod
-    def as_helper_status(returncode):
-        """The helper's documented encoding of a signal death: 128+N."""
-        return 128 - returncode if returncode < 0 else returncode
+        return self.env(**dict(fixture_sanitizer_env(), **extra))
 
     def both(self, *argv, **extra):
-        direct = subprocess.run([str(self.fixture), *argv], capture_output=True, timeout=GUARD,
-                                env=dict(os.environ, **dict(AUTHORED_SANITIZER_ENV, **extra)))
-        held = subprocess.run([sys.executable, str(HELPER), str(self.fixture), *argv], capture_output=True,
+        """Same watched fixture directly and under custody; no child may start."""
+        target = [str(self.watch), str(self.fixture), *argv]
+        direct = subprocess.run(target, capture_output=True, timeout=GUARD,
+                                env=dict(os.environ, **dict(fixture_sanitizer_env(), **extra)))
+        held = subprocess.run([sys.executable, str(HELPER), *target], capture_output=True,
                               timeout=GUARD, env=self.san_env(**extra))
         for label, result in (('direct', direct), ('custody', held)):
             (self.work / f'{argv[0]}-{label}.stdout').write_bytes(result.stdout)
             (self.work / f'{argv[0]}-{label}.stderr').write_bytes(result.stderr)
         self.assertTrue(self.evidence()['cleanup_complete'], self.evidence())
+        for result in (direct, held):
+            # No symbolizer (or any other) child was launched by the fixture.
+            self.assertIn(b'spawn-watch: forks=0 execs=0\n', result.stderr)
         return direct, held
+
+    def test_spawn_watch_counts_a_real_child_launch(self):
+        """Positive control: the watcher sees the fixture's own posix_spawn."""
+        result = subprocess.run([str(self.watch), str(self.fixture), 'spawn'], capture_output=True,
+                                timeout=GUARD, env=dict(os.environ, **fixture_sanitizer_env()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b'spawn-watch: forks=1 execs=0\n', result.stderr)
 
     def test_instrumented_clean_run_matches_direct_run(self):
         direct, held = self.both('ok')
-        self.assertEqual((direct.returncode, direct.stdout, direct.stderr), (0, b'san ok \xff\n', b''))
-        self.assertEqual((held.returncode, held.stdout, held.stderr), (0, b'san ok \xff\n', b''))
+        clean = (0, b'san ok \xff\n', b'spawn-watch: forks=0 execs=0\n')
+        self.assertEqual((direct.returncode, direct.stdout, direct.stderr), clean)
+        self.assertEqual((held.returncode, held.stdout, held.stderr), clean)
 
-    def test_asan_finding_fails_identically_and_is_symbolized(self):
+    def test_asan_finding_fails_identically_without_external_symbolizer(self):
+        # Raw report and nonzero outcome only: symbolization is not claimed.
         direct, held = self.both('heap')
         self.assertNotEqual(direct.returncode, 0)
-        self.assertEqual(held.returncode, self.as_helper_status(direct.returncode))
+        self.assertEqual(held.returncode, direct.returncode)
         for result in (direct, held):
             self.assertIn(b'ERROR: AddressSanitizer: heap-buffer-overflow', result.stderr)
-            self.assertIn(b'heap_overflow', result.stderr)  # symbolized under custody too
+            self.assertIn(b'SUMMARY: AddressSanitizer: heap-buffer-overflow', result.stderr)
+            self.assertNotIn(b'heap_overflow', result.stderr)  # symbolize=0 took effect
 
     def test_strict_ubsan_finding_fails_identically(self):
         direct, held = self.both('ubsan')
         self.assertNotEqual(direct.returncode, 0)
-        self.assertEqual(held.returncode, self.as_helper_status(direct.returncode))
+        self.assertEqual(held.returncode, direct.returncode)
         for result in (direct, held):
             self.assertIn(b'runtime error: signed integer overflow', result.stderr)
 
     def test_leak_detection_is_a_toolchain_limit_not_a_custody_effect(self):
         # Apple clang's ASan refuses detect_leaks on macOS; the authored macOS
         # policy therefore sets detect_leaks=0. Custody must not change that.
-        direct, held = self.both('leak', ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1')
+        direct, held = self.both('leak', **{'ASAN_OPTIONS': fixture_sanitizer_env(
+            asan='detect_leaks=1:strict_string_checks=1')['ASAN_OPTIONS']})
         for result in (direct, held):
             self.assertIn(b'detect_leaks is not supported on this platform', result.stderr)
         self.assertNotEqual(direct.returncode, 0)
-        self.assertEqual(held.returncode, self.as_helper_status(direct.returncode))
+        self.assertEqual(held.returncode, direct.returncode)
 
     def instrumented_tree(self, action, *extra):
         path, server = self.endpoint()
