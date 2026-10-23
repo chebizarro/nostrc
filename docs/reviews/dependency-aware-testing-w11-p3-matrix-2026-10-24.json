@@ -1,0 +1,1500 @@
+{
+  "complete": false,
+  "complete_gate_eligible": false,
+  "entries": [],
+  "entry_contract_rule": "Add reviewed contract references only. Do not turn null slots into guessed commands, synthetic PRs, renamed retries or historical-current dual-source mode.",
+  "entry_schema": {
+    "contract": "absolute approved w11_physical_contract_v1 file",
+    "contract_sha256": "actual SHA256 of those exact bytes",
+    "pull": "actual original PR number",
+    "repo": "absolute provisioned exact-source checkout path"
+  },
+  "kind": "w11_physical_matrix_v1",
+  "minimum_samples_per_cache": 5,
+  "outstanding_recipe_cells": [
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [
+        {
+          "disposition": "PR7 changes CMake producer plus engine; PR8 changes inventory. Neither is an isolated product sample; neither original policy has normal selected execution.",
+          "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+          "merge_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+          "number": 7
+        },
+        {
+          "disposition": "PR7 changes CMake producer plus engine; PR8 changes inventory. Neither is an isolated product sample; neither original policy has normal selected execution.",
+          "head_sha": "e8ad431f1b5866bf40dadcd12d41716e487e4463",
+          "merge_sha": "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+          "number": 8
+        }
+      ],
+      "condition": "grotto",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "grotto-ci.yml",
+        "grotto-fuzz.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "apps/grotto/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine isolated Grotto product implementation change; no graph/control-path change",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [
+        {
+          "disposition": "PR7 changes CMake producer plus engine; PR8 changes inventory. Neither is an isolated product sample; neither original policy has normal selected execution.",
+          "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+          "merge_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+          "number": 7
+        },
+        {
+          "disposition": "PR7 changes CMake producer plus engine; PR8 changes inventory. Neither is an isolated product sample; neither original policy has normal selected execution.",
+          "head_sha": "e8ad431f1b5866bf40dadcd12d41716e487e4463",
+          "merge_sha": "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+          "number": 8
+        }
+      ],
+      "condition": "grotto",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "grotto-ci.yml",
+        "grotto-fuzz.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "apps/grotto/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine isolated Grotto product implementation change; no graph/control-path change",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "grotto-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [
+        {
+          "disposition": "PR6/10 are ownership/inventory changes, not isolated Groundhog UI product diffs. No unrelated live MDK may execute in selected route.",
+          "head_sha": "3632336068340b842cc1c76a5d89014c3c1e430a",
+          "merge_sha": "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+          "number": 6
+        },
+        {
+          "disposition": "PR6/10 are ownership/inventory changes, not isolated Groundhog UI product diffs. No unrelated live MDK may execute in selected route.",
+          "head_sha": "3930033b573b953b3e3e0d9f2dfa5ed503292017",
+          "merge_sha": "d953c37fb7705eae76342c78222308f1290995ec",
+          "number": 10
+        }
+      ],
+      "condition": "groundhog-ui",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "groundhog-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "gnome/groundhog/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine isolated non-MLS Groundhog UI implementation change",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [
+        {
+          "disposition": "PR6/10 are ownership/inventory changes, not isolated Groundhog UI product diffs. No unrelated live MDK may execute in selected route.",
+          "head_sha": "3632336068340b842cc1c76a5d89014c3c1e430a",
+          "merge_sha": "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+          "number": 6
+        },
+        {
+          "disposition": "PR6/10 are ownership/inventory changes, not isolated Groundhog UI product diffs. No unrelated live MDK may execute in selected route.",
+          "head_sha": "3930033b573b953b3e3e0d9f2dfa5ed503292017",
+          "merge_sha": "d953c37fb7705eae76342c78222308f1290995ec",
+          "number": 10
+        }
+      ],
+      "condition": "groundhog-ui",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "groundhog-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "gnome/groundhog/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine isolated non-MLS Groundhog UI implementation change",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "groundhog-ui-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [
+        {
+          "disposition": "PR19/23 MDK changes are helper/control/CI changes, not isolated MLS product work. Original-image parity belongs to P2; prepared/cached/local-only routes cannot replace original legacy workload.",
+          "head_sha": "cc56887a7b433f6391d13be5ef1688035de7de88",
+          "merge_sha": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+          "number": 19
+        },
+        {
+          "disposition": "PR19/23 MDK changes are helper/control/CI changes, not isolated MLS product work. Original-image parity belongs to P2; prepared/cached/local-only routes cannot replace original legacy workload.",
+          "head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+          "merge_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+          "number": 23
+        }
+      ],
+      "condition": "mls",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "groundhog-ci.yml",
+        "marmot-mdk-interop.yml",
+        "marmot-mdk011-interop.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "libmarmot/",
+        "gnome/groundhog/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine MLS implementation change and actual required live compatibility closure",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [
+        {
+          "disposition": "PR19/23 MDK changes are helper/control/CI changes, not isolated MLS product work. Original-image parity belongs to P2; prepared/cached/local-only routes cannot replace original legacy workload.",
+          "head_sha": "cc56887a7b433f6391d13be5ef1688035de7de88",
+          "merge_sha": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+          "number": 19
+        },
+        {
+          "disposition": "PR19/23 MDK changes are helper/control/CI changes, not isolated MLS product work. Original-image parity belongs to P2; prepared/cached/local-only routes cannot replace original legacy workload.",
+          "head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+          "merge_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+          "number": 23
+        }
+      ],
+      "condition": "mls",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "groundhog-ci.yml",
+        "marmot-mdk-interop.yml",
+        "marmot-mdk011-interop.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "libmarmot/",
+        "gnome/groundhog/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine MLS implementation change and actual required live compatibility closure",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "mls-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [
+        {
+          "disposition": "PR9 signer fix and PR17 NIP44 vector/CMake changes are real exact-source possibilities for review, but original policies have no normal selected marker; mixed trigger/coverage recipes unapproved. Current engine overlay refuses.",
+          "head_sha": "e65063eb5c9dd42bf77395245d50b4b695c29b35",
+          "merge_sha": "37e144cab898e942d2875d903670ccaf4335158b",
+          "number": 9
+        },
+        {
+          "disposition": "PR9 signer fix and PR17 NIP44 vector/CMake changes are real exact-source possibilities for review, but original policies have no normal selected marker; mixed trigger/coverage recipes unapproved. Current engine overlay refuses.",
+          "head_sha": "decef538f1b3cdddbffdb6695eae085b54c548fd",
+          "merge_sha": "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+          "number": 17
+        }
+      ],
+      "condition": "shared-core",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "nostrc-ci.yml",
+        "libgo-ci.yml",
+        "groundhog-ci.yml",
+        "grotto-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "libnostr/",
+        "nostr-gobject/",
+        "libgo/",
+        "nips/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine shared core product change with complete dependent closure",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [
+        {
+          "disposition": "PR9 signer fix and PR17 NIP44 vector/CMake changes are real exact-source possibilities for review, but original policies have no normal selected marker; mixed trigger/coverage recipes unapproved. Current engine overlay refuses.",
+          "head_sha": "e65063eb5c9dd42bf77395245d50b4b695c29b35",
+          "merge_sha": "37e144cab898e942d2875d903670ccaf4335158b",
+          "number": 9
+        },
+        {
+          "disposition": "PR9 signer fix and PR17 NIP44 vector/CMake changes are real exact-source possibilities for review, but original policies have no normal selected marker; mixed trigger/coverage recipes unapproved. Current engine overlay refuses.",
+          "head_sha": "decef538f1b3cdddbffdb6695eae085b54c548fd",
+          "merge_sha": "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+          "number": 17
+        }
+      ],
+      "condition": "shared-core",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "nostrc-ci.yml",
+        "libgo-ci.yml",
+        "groundhog-ci.yml",
+        "grotto-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "libnostr/",
+        "nostr-gobject/",
+        "libgo/",
+        "nips/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine shared core product change with complete dependent closure",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-core-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [
+        {
+          "disposition": "PR11/12/13 enroll ownership/test contracts, not isolated store/media product implementation. Current engine overlay cannot manufacture missing historical normal execution.",
+          "head_sha": "81a907d187a735e69c1bbde0840fe5fb4b9b51a8",
+          "merge_sha": "3c7c42c08cf1fade80da1355e4392847060abdb2",
+          "number": 11
+        },
+        {
+          "disposition": "PR11/12/13 enroll ownership/test contracts, not isolated store/media product implementation. Current engine overlay cannot manufacture missing historical normal execution.",
+          "head_sha": "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec",
+          "merge_sha": "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+          "number": 12
+        },
+        {
+          "disposition": "PR11/12/13 enroll ownership/test contracts, not isolated store/media product implementation. Current engine overlay cannot manufacture missing historical normal execution.",
+          "head_sha": "bb001a70c53f713baa63fac435c4f5f103e68e63",
+          "merge_sha": "53f2e822d04bd32e243a9cf969396f2f241af83e",
+          "number": 13
+        }
+      ],
+      "condition": "shared-store-media",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "groundhog-ci.yml",
+        "nostrc-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "gnome/groundhog/",
+        "libmarmot/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine shared store/media product change with full dependent closure",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [
+        {
+          "disposition": "PR11/12/13 enroll ownership/test contracts, not isolated store/media product implementation. Current engine overlay cannot manufacture missing historical normal execution.",
+          "head_sha": "81a907d187a735e69c1bbde0840fe5fb4b9b51a8",
+          "merge_sha": "3c7c42c08cf1fade80da1355e4392847060abdb2",
+          "number": 11
+        },
+        {
+          "disposition": "PR11/12/13 enroll ownership/test contracts, not isolated store/media product implementation. Current engine overlay cannot manufacture missing historical normal execution.",
+          "head_sha": "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec",
+          "merge_sha": "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+          "number": 12
+        },
+        {
+          "disposition": "PR11/12/13 enroll ownership/test contracts, not isolated store/media product implementation. Current engine overlay cannot manufacture missing historical normal execution.",
+          "head_sha": "bb001a70c53f713baa63fac435c4f5f103e68e63",
+          "merge_sha": "53f2e822d04bd32e243a9cf969396f2f241af83e",
+          "number": 13
+        }
+      ],
+      "condition": "shared-store-media",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "groundhog-ci.yml",
+        "nostrc-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "gnome/groundhog/",
+        "libmarmot/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine shared store/media product change with full dependent closure",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "shared-store-media-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [
+        {
+          "disposition": "PR7 has a genuine producer graph change but lacks original normal selected route; PR23 is CI/control work and expressly NOT representative product workload. Graph work must broaden rather than hide audits.",
+          "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+          "merge_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+          "number": 7
+        },
+        {
+          "disposition": "PR7 has a genuine producer graph change but lacks original normal selected route; PR23 is CI/control work and expressly NOT representative product workload. Graph work must broaden rather than hide audits.",
+          "head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+          "merge_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+          "number": 23
+        }
+      ],
+      "condition": "graph-change",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "nostrc-ci.yml",
+        "grotto-ci.yml",
+        "groundhog-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "CMakeLists.txt",
+        "cmake/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine CMake/Meson graph change with required broad coverage",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [
+        {
+          "disposition": "PR7 has a genuine producer graph change but lacks original normal selected route; PR23 is CI/control work and expressly NOT representative product workload. Graph work must broaden rather than hide audits.",
+          "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+          "merge_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+          "number": 7
+        },
+        {
+          "disposition": "PR7 has a genuine producer graph change but lacks original normal selected route; PR23 is CI/control work and expressly NOT representative product workload. Graph work must broaden rather than hide audits.",
+          "head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+          "merge_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+          "number": 23
+        }
+      ],
+      "condition": "graph-change",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "nostrc-ci.yml",
+        "grotto-ci.yml",
+        "groundhog-ci.yml"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "CMakeLists.txt",
+        "cmake/"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine CMake/Meson graph change with required broad coverage",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "graph-change-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independent absent-build/cache manifest before setup, tool/dependency image identity and final producer state.",
+      "cache_state": "clean",
+      "candidate_observations": [],
+      "condition": "unknown-path",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "all legacy workflows actually triggered by that real diff"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "original exact diff containing unclassified path"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine previously unclassified changed path whose original planner broadens",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-clean-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-clean-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-clean-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-clean-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-clean-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    },
+    {
+      "cache_evidence_required": "Independently retained exact-source preceding successful build/cache producer and unchanged input/tool/graph manifest; no previous failed run masquerading as warm baseline.",
+      "cache_state": "incremental",
+      "candidate_observations": [],
+      "condition": "unknown-path",
+      "failed_attempts_must_be_retained": true,
+      "legacy_recipe_sources_to_review_not_an_asserted_trigger_union": [
+        "all legacy workflows actually triggered by that real diff"
+      ],
+      "native_feasibility": "No parent heavy slot. Original selected normal profile markers are Linux/x86_64 only at PR23; host Darwin/arm64/emulated containers cannot substitute for native Linux/x86_64 or complete legacy native runner union.",
+      "path_scope_for_candidate_review_only": [
+        "original exact diff containing unclassified path"
+      ],
+      "phase_recipe_required": "Exact original setup/configure/build/test argv or one intact workload adapter. No invented phase splits/no-ops. Full triggered native runner/profile union must be separately accounted; one local profile cannot establish aggregate savings.",
+      "recipe_approved": false,
+      "required_change": "genuine previously unclassified changed path whose original planner broadens",
+      "selected_recipe_required": "Same original candidate commit and its own unrestricted affected/broad selection, complete selected command/CTest fixture closure plus whole-universe/default/prerequisite audits. No profile-restricted partial substitutes or current engine overlay.",
+      "slots": [
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-incremental-1",
+          "sample": 1,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-incremental-2",
+          "sample": 2,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-incremental-3",
+          "sample": 3,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-incremental-4",
+          "sample": 4,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        },
+        {
+          "legacy_contract": null,
+          "legacy_sample": null,
+          "metrics": {
+            "aggregate_runner_minutes": null,
+            "critical_path_seconds": null,
+            "phase_seconds": null
+          },
+          "pair_id": "unknown-path-incremental-5",
+          "sample": 5,
+          "selected_contract": null,
+          "selected_sample": null,
+          "status": "blocked_unapproved_recipe_and_no_slot"
+        }
+      ],
+      "status": "bounded_refusal_no_physical_recipe_authority"
+    }
+  ],
+  "purpose": "Executable blocked schedule and concrete outstanding recipe/sample matrix, not runnable product recipe approval. matrix --manifest THIS --output NEW returns1 with all14 cells until real reviewed contract entries are supplied.",
+  "repository": "chebizarro/nostrc",
+  "seven_classes": [
+    "grotto",
+    "groundhog-ui",
+    "mls",
+    "shared-core",
+    "shared-store-media",
+    "graph-change",
+    "unknown-path"
+  ],
+  "source_sha": "eaa918a0ab5ffb757171922a690c629d919d4025"
+}

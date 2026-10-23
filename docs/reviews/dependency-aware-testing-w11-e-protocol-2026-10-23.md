@@ -130,6 +130,89 @@ never promotes `complete=true`, local fixtures, planner cases or job colours.
 If faithful original-source cases cannot satisfy the contract, genuine future
 PRs are required; do not manufacture PRs or waive the criteria.
 
+## P3 serial matrix capture — 2026-10-24 local
+
+`matrix` consumes an explicit `w11_physical_matrix_v1` manifest. Its `entries`
+array contains **only already reviewed** exact physical contracts:
+
+```json
+{
+  "kind": "w11_physical_matrix_v1",
+  "repository": "chebizarro/nostrc",
+  "entries": [
+    {"repo": "/ABSOLUTE/EXACT_SOURCE_CHECKOUT", "pull": 23,
+     "contract": "/ABSOLUTE/REVIEWED_CONTRACT.json", "contract_sha256": "ACTUAL_SHA256"}
+  ]
+}
+```
+
+This is schema illustration, **not an approved PR23 recipe**. A single entry is
+insufficient and refuses before running anything. The driver binds/retains every
+contract's original bytes before execution, requires >=five complete paired
+sample identities for each of all 14 cells, rejects duplicate route/sample slots
+even if `pair_id` is renamed, and requires paired original candidate/PR/profile/
+environment/tool-probe identities. Default invocation validates the schedule only;
+`schedule_ready=true` means **structural completeness**, not source/capability,
+cache, physical readiness, recipe approval, sample coverage or parent slot grant.
+The existing `execute_locked` path still performs actual same-source admission.
+
+```sh
+python3 scripts/w11-evidence.py matrix \
+  --manifest docs/reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json \
+  --output /tmp/w11-readiness-NEW
+# Expected exit 1: explicit outstanding 70 pairs / 140 invocations; no approved entries.
+
+# Only after parent approves real recipes and grants an exclusive heavy slot:
+python3 scripts/w11-evidence.py matrix --manifest "$REVIEWED_COMPLETE_SCHEDULE" \
+  --execute --output "$NEW_COHORT_EVIDENCE"
+```
+
+`--execute` performs no provisioning, recipe generation, checkout copying,
+source overlay or cache reset. Those remain explicitly reviewed prerequisites.
+It takes **all repository-common locks for the entire serial cohort**; contention
+refuses rather than overlapping samples. First failed/preflight/cancelled child
+stops the cohort, retaining its exact contract, process/streams or error; later
+entries stay `not_run`. Cohort-level preparation/aggregation cancellation also
+writes explicit failure state and preserves completed child paths. There is no
+retry/resume/replacement mode. An unsatisfied nested measurement report propagates
+to CLI exit 1 even if all children exited zero. Standalone `measurements` likewise
+returns nonzero for missing/failed coverage, retaining the descriptive report.
+Statistics are emitted only for genuine supplied measurements with >=five pairs;
+fixtures remain labelled fixtures and cannot establish product coverage.
+
+The checked-in outstanding matrix is intentionally executable **as a refusal**.
+For every clean and incremental class it specifies five sample slots, required
+legacy/selected recipe evidence, candidate/refusal identities, cache producer
+proof and native feasibility. All actual recipe/sample/timing fields are null:
+
+| Class | Exact candidate disposition, not recipe approval | Remaining physical recipe/sample work |
+|---|---|---|
+| Grotto-only | PR7 `705d7b051` mixes producer/engine graph changes; PR8 `493aaa20e` is inventory-only. Neither has original normal selected markers. | Genuine isolated Grotto product diff; exact triggered signer/native/distro/sanitizer/Meson/fuzz union; >=30% aggregate savings; five clean + five incremental pairs. |
+| Isolated non-MLS Groundhog UI | PR6 `a14b8b38c` / PR10 `d953c37fb` change ownership, not UI product code. | Genuine UI diff; exact native/GUI/sanitizer/keyring/perf trigger union; selected unrelated live MDK count zero; >=25% aggregate savings; 5+5 pairs. |
+| MLS | PR19 `587ebea25` / PR23 `e8a1a571c` contain MDK helper/CI work, not representative MLS product changes. | Genuine MLS diff; P2 original-image producer/peer parity and real legacy compatibility fixtures; 5+5 pairs. Prepared/emulated/cache-only work cannot substitute. |
+| Shared core | PR9 `37e144cab` signer fix / PR17 `dd949e4b7` NIP44 vector/CMake work are exact-source review candidates, but lack original normal selected markers and approved mixed-trigger recipes. | Approved original-source dependent-union recipe or future genuine PR; no current-engine overlay; 5+5 pairs. |
+| Shared store/media | PR11 `3c7c42c08` / PR12 `93970ed48` / PR13 `53f2e822d` enroll ownership/test contracts. | Genuine implementation diff, full dependent native/GUI/media/MLS union as actually triggered; 5+5 pairs. |
+| Graph change | PR7 has actual graph work but no original normal selected route. PR23 CI/control proof is expressly not a representative product benchmark. | Genuine graph diff, original broadening and full default/prerequisite/source/header/runtime audits, complete runner union; 5+5 pairs. |
+| Unknown path | No approved genuine previously unclassified PR. Existing fixture mutations are not PRs. | Future genuine diff and retained original broadening reason, whole required union; 5+5 pairs. Never manufacture an unknown path/PR to meet quota. |
+
+PR1–22 original inventories have zero normal selected profile markers; PR23
+original inventory has seven, **Linux/x86_64 only**. This does not assert every
+older diagnostic is impossible; it refuses promoting them to complete original
+normal-selected measurements. On this **Darwin/arm64** host, Linux/x86_64 native
+profile execution is not supplied by an emulated container. A separately native
+legacy macOS measurement also cannot fill that Linux profile or the full triggered
+runner union. Current-source repairs need genuine future candidate provenance;
+no implicit historical engine mode exists. Parent confirmed no exact pair is
+approved and no heavy slot exists yet; real collection follows P1/P2 parity.
+
+The dated [P3 evidence](dependency-aware-testing-w11-p3-evidence-2026-10-24.json)
+retains all 23 API PR identities/diffs and fresh failed job/artifact accounting.
+The closing census is 64 roots at **2026-10-23T22:36:46.730361Z**; the prior
+63-root snapshot is untouched. There are **zero product sample pairs**, not
+synthetic statistics. **20 distinct reviewed PRs, two complete broad roots,
+five samples for seven clean/incremental classes, 30%/25% savings and 10% limits
+remain mandatory. W11 NOT MET / W12 NOT RUN.**
+
 ## Exact conditional W12 support — not applied
 
 ```sh

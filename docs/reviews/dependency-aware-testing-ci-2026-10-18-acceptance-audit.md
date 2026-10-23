@@ -1,5 +1,54 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## P3 finite measurement capture — 2026-10-24 local / 2026-10-23 UTC
+
+Against source `eaa918a0ab5ffb757171922a690c629d919d4025`, the new
+[dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#p3-finite-capture-and-dated-measurement-readiness--2026-10-24-local)
+and [source-linked evidence](dependency-aware-testing-w11-p3-evidence-2026-10-24.json)
+record the closing **22:36:46.730361Z** census: **64 roots, 61 failed, one cancelled,
+one pending, one queued**. The old **63-root / 21:38:19Z** evidence remains
+unchanged; all previous identities survive, with only current-source root
+[40029853925](https://github.com/chebizarro/nostrc/actions/runs/40029853925) added.
+Neither snapshot is a live counter. Single-pass collections retain 3,757 job
+rows / 2,739 artifact metadata rows; one final TLS failure is retained without
+retry or a false stable-capture claim. Later PR23 observation is failed, not
+inferred success from its earlier successful policy job.
+
+The finite source change adds a serial, fail-closed **14-cell/five-pair matrix
+capture driver**, not another planner replay or authority mode. Every class has
+explicit required change, candidate-source refusal, legacy recipe source anchors,
+selected whole-universe requirements, cache producer evidence, native feasibility,
+and ten unfilled route slots in the
+[executable outstanding manifest](dependency-aware-testing-w11-p3-matrix-2026-10-24.json).
+The checked-in blocked manifest actually returns **exit 1** with all 14 cells;
+no physical timing is invented. Parent confirms no approved exact recipe pair
+and no heavy slot. Fixture-only execution demonstrates the driver; no product
+benchmark ran. A future approved same-source recipe is required where original
+policy cannot measure a historical candidate. PR23 CI/control work is expressly
+not representative product workload. Native macOS/arm64, native Linux/x86_64,
+emulation and full triggered runner union remain separate feasibility questions.
+
+Five fresh original PR23 archives have API digest/size/ZIP CRC/member proof;
+three worker log archives retain adapter failures and the static-policy receipt
+retains missing execution/incomplete coverage. **623.95 observed job-minutes**
+for that failed root is diagnostic allocation time, not successful benchmark
+coverage, billed cost, critical path or paired savings. Shared P1/P2 execution,
+worker/profile and original MDK sources were not changed.
+
+One substantive bounded source review found nested-report exit propagation and
+cohort cancellation-finalization gaps; both were fixed with regressions. The
+initial Oracle attachment attempt had zero selected file tokens, so its refusal
+is not counted as a clean review. **36 matrix/measurement and seven collector
+tests pass**, all nonacceptance fixtures. No heavy gate/build was authorized.
+No component bump: internal CI/tests/docs only.
+
+**W11 NOT MET: 0/20 reviewed qualifying distinct PR comparisons, 0/2 successful
+complete broad integrations, zero real physical product sample pairs. W12 NOT
+RUN.** No threshold, five-sample/seven-class requirement, default, protection,
+publisher, legacy trigger or acceptance scope changed. `.36.14` retains the
+physical collection work pending approved recipes, P1/P2 parity and parent slot.
+
+
 ## PR23 final source and merge — 2026-10-23
 
 PR23 merged as `e8a1a571ca40792882cd07ce1ddec5cf9eb398f3` at 21:28:52Z.
