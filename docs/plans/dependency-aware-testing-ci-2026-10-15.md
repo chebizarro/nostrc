@@ -1521,3 +1521,39 @@ only the finite `3lofk` closure after final checkpoint/gate evidence; it is now
 and all-29 omitted-target build/backend execution remain **NOT RUN**; W11
 **NOT MET** / W12 **NOT RUN**, no ledger/default/workflow/release/protection credit.
 Local commits only; parent lands and cleans up.
+
+### P3 finite matrix capture — 2026-10-24 local (2026-10-23 UTC)
+
+`nostrc-0cfsg.36.14`, source `eaa918a0a`: added serial explicit-contract
+seven-class × clean/incremental × >=five-pair capture to `scripts/w11-evidence.py`.
+No engine/worker/profile or original MDK sibling source changed. Structural
+readiness is not recipe approval; same original PR source remains mandatory.
+Missing/failed schedules and reports refuse; duplicate/renamed retries refuse;
+first failure/cancellation retains evidence and stops later entries. One bounded
+review's nested-report exit and cohort-finalization findings were fixed with
+regressions. Dedicated local fixture tests pass; no product benchmark/heavy gate
+ran and no component bump is needed (internal CI/tests/docs only).
+
+The [concrete executable outstanding recipe/sample matrix](../reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json)
+contains 14 cells / 70 pair slots / 140 route invocations, all blocked rather
+than fabricated. It includes per-class exact candidate dispositions, original
+legacy recipe anchors, selected/audit/cache requirements and native feasibility.
+Parent confirms no approved exact recipe pair/no heavy slot; PR23 CI/control work
+is not representative product workload. Original PR1–22 inventories have no
+normal selected markers; current-engine overlays refuse. Native macOS/arm64,
+native Linux/x86_64, emulated Docker and full triggered runner union stay distinct.
+Physical collection follows P1/P2 parity, accepted genuine recipes and parent slot.
+
+The [dated ledger refresh](../reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md#p3-finite-capture-and-dated-measurement-readiness--2026-10-24-local)
+closes at **2026-10-23T22:36:46.730361Z: 64 roots = 61 failed + one cancelled +
+one pending + one queued**. The previous63-root snapshot/identities remain
+unchanged. Retained single-pass collection: 3,757 job rows / 2,739 artifact
+metadata rows, 63 stable collections and one un-retried TLS final-read failure.
+Five original PR23 ZIPs independently pass API digest/size/CRC/member hashes;
+failed adapter logs and missing policy execution remain failed. Later completed
+PR23 failure and its allocated job-minutes are not benchmark samples or coverage.
+**0/20 reviewed qualifying distinct PRs; 0/2 successful complete broad roots;
+zero real product pairs. W11 NOT MET / W12 NOT RUN.** All five-sample/seven-class,
+30%/25% savings and10% limits remain. No default, protection, publisher, release,
+legacy trigger or acceptance cutover. Physical work remains in `.36.14`; parent
+integrates/pushes the finite local commit.
