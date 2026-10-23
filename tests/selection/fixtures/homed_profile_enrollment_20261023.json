@@ -1,0 +1,266 @@
+{
+  "added_path_rules": [
+    {
+      "effect": "impact",
+      "exact": ".github/workflows/nostr-homed-ci.yml",
+      "nodes": [
+        "execution.homed"
+      ],
+      "reason": "Exact homed workflow setup and unit contract owner; no systemd/FUSE execution inferred."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json",
+      "nodes": [],
+      "reason": "Machine-readable acceptance provenance is not a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json",
+      "nodes": [],
+      "reason": "Machine-readable acceptance provenance is not a prose exemption."
+    }
+  ],
+  "base_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+  "before_policy_hash": "9ceb797c82a2813960ee4135e31a80ba74cbefeb7b5473d9390a345895680cf8",
+  "gaps": [
+    {
+      "after": {
+        "id": "homed_unit_profile_contract",
+        "not_selected_registrations": [
+          "homed_manifest",
+          "homed_cache",
+          "homed_cache_config",
+          "homed_uid_map",
+          "homed_groups"
+        ],
+        "not_selected_status": "not_executed",
+        "reason": "The distinct standalone Ubuntu24.04 x86_64 GCC homed.linux.units contract owns all five manifest/cache registrations with full standalone default/prerequisite audits and shared canonical unit declarations. It is not legacy root-workflow parity (that configure registers140 tests). Physical selector receipts and worker enrollment are independently required; four legacy distro root and advisory systemd/FUSE/secret-decrypt contracts remain separate. Experimental runtimes remain off.",
+        "source_commit": "20810a780fb032589ebd3206e8c8e8f6f683c564",
+        "status": "not_executed_by_selective_gate",
+        "tracking": "nostrc-0cfsg.9"
+      },
+      "before": {
+        "id": "homed_unit_profile_contract",
+        "not_selected_registrations": [
+          "homed_manifest",
+          "homed_cache",
+          "homed_cache_config",
+          "homed_uid_map",
+          "homed_groups"
+        ],
+        "not_selected_status": "not_executed",
+        "reason": "Five actual opt-in homed unit registrations now exist and legacy workflow exact-list/no-tests guards run them. No distinct selective profile/worker or imported raw execution receipt is claimed here. Experimental roaming/auth/identity runtimes remain off.",
+        "source_commit": "20810a780fb032589ebd3206e8c8e8f6f683c564",
+        "status": "not_executed_by_selective_gate",
+        "tracking": "nostrc-0cfsg.9"
+      }
+    }
+  ],
+  "maps": {
+    "checks": {
+      "homed.default_build": {
+        "after": {
+          "build_scope": "default",
+          "build_targets": [],
+          "command": [
+            "cmake",
+            "--build",
+            "{build}",
+            "--config",
+            "RelWithDebInfo"
+          ],
+          "cost": "ordinary",
+          "environment": {},
+          "expected_outcome": "pass",
+          "kind": "build_contract",
+          "nodes": [
+            "gnome.nostr_homed",
+            "gnome.nostr_homed.test_inputs",
+            "execution.homed"
+          ],
+          "profiles": [
+            "homed.linux.units"
+          ],
+          "requirement": "blocking",
+          "runtime_inputs": [],
+          "working_directory": "{source}"
+        },
+        "before": null
+      },
+      "homed.units": {
+        "after": {
+          "build_targets": [
+            "test_cache",
+            "test_cache_config",
+            "test_groups",
+            "test_manifest",
+            "test_uid_map"
+          ],
+          "cost": "ordinary",
+          "ctest_tests": {
+            "homed.linux.units": [
+              "homed_cache",
+              "homed_cache_config",
+              "homed_groups",
+              "homed_manifest",
+              "homed_uid_map"
+            ]
+          },
+          "expected_outcome": "pass",
+          "kind": "ctest",
+          "nodes": [
+            "gnome.nostr_homed",
+            "gnome.nostr_homed.test_inputs",
+            "execution.homed"
+          ],
+          "profiles": [
+            "homed.linux.units"
+          ],
+          "requirement": "blocking",
+          "runtime_inputs": []
+        },
+        "before": null
+      }
+    },
+    "nodes": {
+      "execution.homed": {
+        "after": {
+          "depends_on": [],
+          "id": "execution.homed",
+          "owner_paths": [
+            ".github/workflows/nostr-homed-ci.yml"
+          ]
+        },
+        "before": null
+      }
+    },
+    "profiles": {
+      "homed.linux.units": {
+        "after": {
+          "architecture": "x86_64",
+          "build_parallelism": 2,
+          "build_type": "RelWithDebInfo",
+          "capabilities": [],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+          ],
+          "contexts": [
+            "local"
+          ],
+          "environment": {
+            "CC": "gcc",
+            "CXX": "g++"
+          },
+          "feature_variants": [],
+          "host_system": {
+            "ID": "ubuntu",
+            "VERSION_ID": "24.04"
+          },
+          "instrumentation": "none",
+          "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "phase_environments": {
+            "build": {},
+            "configure": {},
+            "test": {}
+          },
+          "platform": "linux",
+          "scope": "standalone_manifest_cache_units",
+          "setup": "standalone/nostr-homed-units-v1",
+          "source_dir": "gnome/nostr-homed/tests/unit",
+          "test_parallelism": 1,
+          "timeout_seconds": 3600
+        },
+        "before": null
+      }
+    },
+    "workflow_jobs": {
+      ".github/workflows/nostr-homed-ci.yml:build-and-test": {
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
+          "profiles": [],
+          "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
+          "unsupported_reason": "Standalone Ubuntu five-unit headless profile is independently enrolled, not an alias for this legacy root configure (140 registrations including signer/runtime consumers). Four distro root setup/toolchain and advisory FUSE/secrets contracts remain separate; no privileged systemd session coverage is inferred.",
+          "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
+        },
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
+          "profiles": [],
+          "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
+          "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
+          "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
+        }
+      }
+    }
+  },
+  "runtime_inputs": [
+    "{source}/tests/selection/test_homed_profile_contract.py",
+    "{source}/tests/selection/homed_profile_support.py",
+    "{source}/tests/selection/fixtures/homed_profile_enrollment_20261023.json"
+  ],
+  "schema_version": 1,
+  "selection_nodes": [
+    "execution.homed"
+  ],
+  "sources": {
+    "gnome/nostr-homed/CMakeLists.txt": {
+      "after_sha256": "4946eda24065f64df41f37f5fcf87696504aea9deb709b39ba4675984531f6f9",
+      "before_sha256": "c79afca1b4d1a5fb95424a6ef90b0eeda05c402f4270f81656849ea265a7f7e7",
+      "edits": [
+        {
+          "after": "# no production target or API is added or changed.\nif(NOSTR_HOMED_BUILD_TESTS)\n  include(${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/ManifestCacheTests.cmake)\nendif()\n\n",
+          "before": "# no production target or API is added or changed.\nif(NOSTR_HOMED_BUILD_TESTS)\n  find_package(PkgConfig REQUIRED)\n  pkg_check_modules(NH_UNIT_JANSSON REQUIRED IMPORTED_TARGET jansson)\n  find_package(SQLite3 REQUIRED)\n  if(NOT TARGET SQLite3::SQLite3)\n    add_library(SQLite3::SQLite3 INTERFACE IMPORTED)\n    target_include_directories(SQLite3::SQLite3 INTERFACE ${SQLite3_INCLUDE_DIRS})\n    target_link_libraries(SQLite3::SQLite3 INTERFACE ${SQLite3_LIBRARIES})\n  endif()\n  find_package(OpenSSL REQUIRED)\n\n  add_executable(test_manifest tests/unit/test_manifest.c src/common/nostr_manifest.c)\n  target_include_directories(test_manifest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)\n  target_link_libraries(test_manifest PRIVATE PkgConfig::NH_UNIT_JANSSON)\n  add_test(NAME homed_manifest COMMAND test_manifest)\n\n  foreach(nh_cache_unit cache cache_config uid_map groups)\n    add_executable(test_${nh_cache_unit}\n      tests/unit/test_${nh_cache_unit}.c src/common/nostr_cache.c)\n    target_include_directories(test_${nh_cache_unit} PRIVATE\n      ${CMAKE_CURRENT_SOURCE_DIR}/include)\n    target_link_libraries(test_${nh_cache_unit} PRIVATE\n      SQLite3::SQLite3 OpenSSL::Crypto)\n    add_test(NAME homed_${nh_cache_unit} COMMAND test_${nh_cache_unit})\n  endforeach()\n  set_tests_properties(homed_manifest homed_cache homed_cache_config\n    homed_uid_map homed_groups\n    PROPERTIES LABELS \"nostr-homed;portable;manifest-cache\" TIMEOUT 60)\nendif()\n\n"
+        }
+      ]
+    },
+    "gnome/nostr-homed/TestInventory.cmake": {
+      "after_sha256": "b8ecfa1c20eacd567bd20c08594eccedca02bf183f279f0cfaecb5110da3b779",
+      "before_sha256": "085050ce749a17846db806144715ccb3d6700a7b73e477f9cdf77da359d4304e",
+      "edits": [
+        {
+          "after": "if(NOT COMMAND nostrc_describe_test)\n  return()\nendif()\n\nif(TEST homed_acceptance_runner_contract)\n  nostrc_describe_test(homed_acceptance_runner_contract\n    OWNER gnome.nostr_homed gnome.nostr_homed.test_inputs\n    INPUTS tests/acceptance/test_acceptance_runner.py tests/acceptance/run_acceptance.py\n           tests/acceptance/matrix.json EXPECTED pass)\nendif()\n\n",
+          "before": "if(NOT COMMAND nostrc_describe_test)\n  return()\nendif()\n\n"
+        }
+      ]
+    },
+    "scripts/test_selection.py": {
+      "after_sha256": "4701ac8fa33dd6f9459d9462f16ddf3210a94e9b95ef2ac1217d73cb114fe555",
+      "before_sha256": "a3e77d92b521a03a66cfdaca681bbc58073fb9149b1ec201be9400eebddd80ea",
+      "edits": [
+        {
+          "after": "                \"unreviewed/malformed administrative rollout prerequisite\")\n        prerequisites.append(gap)\n    # Source job/matrix snapshots are not validation contracts. Their unresolved\n    # obligations cannot disappear merely by deleting the human-readable row.\n    jobs = policy.get(\"workflow_jobs\", {})\n    require(isinstance(jobs, dict), \"workflow_jobs must be a map\")\n    technical_ids = {g.get(\"id\") for g in technical if isinstance(g, dict)}\n    for job, record in jobs.items():\n        require(isinstance(record, dict), f\"malformed workflow job contract: {job}\")\n        gap = record.get(\"coverage_gap\")\n        require(not gap or (isinstance(gap, str) and gap in technical_ids),\n                f\"workflow job has an untracked technical coverage obligation: {job}\")\n        if gap:\n            require(isinstance(record.get(\"unsupported_reason\"), str)\n                    and bool(record[\"unsupported_reason\"].strip()),\n                    f\"workflow job lacks a concrete coverage remainder: {job}\")\n        else:\n            require(isinstance(record.get(\"profiles\"), list) and bool(record[\"profiles\"])\n                    and not record.get(\"unsupported_reason\"),\n                    f\"workflow job has neither a supported contract nor a coverage obligation: {job}\")\n    return {\"coverage_gaps\": gaps, \"physical_coverage_gaps\": technical,\n            \"rollout_prerequisites\": prerequisites, \"enforcement_ready\": enforcement,\n",
+          "before": "                \"unreviewed/malformed administrative rollout prerequisite\")\n        prerequisites.append(gap)\n    return {\"coverage_gaps\": gaps, \"physical_coverage_gaps\": technical,\n            \"rollout_prerequisites\": prerequisites, \"enforcement_ready\": enforcement,\n"
+        },
+        {
+          "after": "        if profile.get('execution_domain') == 'prepared_peer_linux_v1':\n            require(contexts == ['local'], f'{ident}: prepared runtime is local-only')\n        if any(key in profile for key in (\"phase_environments\", \"sanitizer_compatibility\", \"build_parallelism\", \"test_parallelism\", \"host_system\")):\n            from test_selection_realization import RealizationError, validate_phase_profile\n            try:\n",
+          "before": "        if profile.get('execution_domain') == 'prepared_peer_linux_v1':\n            require(contexts == ['local'], f'{ident}: prepared runtime is local-only')\n        if any(key in profile for key in (\"phase_environments\", \"sanitizer_compatibility\", \"build_parallelism\", \"test_parallelism\")):\n            from test_selection_realization import RealizationError, validate_phase_profile\n            try:\n"
+        }
+      ]
+    },
+    "scripts/test_selection_realization.py": {
+      "after_sha256": "1824b8093f972ba813e83c6e9854c42d807e36be3a7c01e1a5d59cb2fd79af86",
+      "before_sha256": "bc3f5649a00a49b9efb44ae96c489602b5c13ec680161057764bed73e39eb754",
+      "edits": [
+        {
+          "after": "\n\ndef _host_system_contract(profile):\n    expected = profile.get(\"host_system\")\n    if expected is None:\n        return None\n    if (profile.get(\"platform\") != \"linux\" or not isinstance(expected, dict)\n            or not {\"ID\"} <= set(expected) <= {\"ID\", \"VERSION_ID\"}\n            or any(not isinstance(v, str) or not re.fullmatch(r\"[a-z0-9][a-z0-9._-]*\", v)\n                   for v in expected.values())):\n        raise RealizationError(\"host_system requires a literal Linux ID and optional VERSION_ID\")\n    return expected\n\n\ndef _host_system_evidence(profile):\n    expected = _host_system_contract(profile)\n    if expected is None:\n        return None\n    if platform.system() != \"Linux\":\n        raise RealizationError(\"host_system requires an actual Linux host\")\n    path = Path(\"/etc/os-release\")\n    try:\n        raw = path.read_bytes()\n        values = {}\n        for line in raw.decode(\"utf-8\").splitlines():\n            if not line.strip() or line.lstrip().startswith(\"#\"):\n                continue\n            key, value = line.split(\"=\", 1)\n            if key not in expected:\n                continue\n            parsed = shlex.split(value, comments=False, posix=True)\n            if key in values or len(parsed) != 1:\n                raise ValueError(\"duplicate/ambiguous host identity\")\n            values[key] = parsed[0]\n    except (OSError, UnicodeError, ValueError) as exc:\n        raise RealizationError(f\"unavailable/malformed host_system evidence: {exc}\") from exc\n    if values != expected:\n        raise RealizationError(f\"profile host_system {expected} differs from actual {values}\")\n    return {\"path\": str(path), \"sha256\": hashlib.sha256(raw).hexdigest(), \"identity\": values}\n\n\ndef validate_phase_profile(profile):\n    \"\"\"Validate authored metadata without host checks or environment flattening.\"\"\"\n    _host_system_contract(profile)\n    authored = authored_phase_parallelism(profile)\n    common = _environment_map(profile.get(\"environment\", {}), \"environment\")\n",
+          "before": "\n\ndef validate_phase_profile(profile):\n    \"\"\"Validate authored metadata without host checks or environment flattening.\"\"\"\n    authored = authored_phase_parallelism(profile)\n    common = _environment_map(profile.get(\"environment\", {}), \"environment\")\n"
+        },
+        {
+          "after": "            \"environment_hashes\": {p: _hash(env) for p, env in environments.items()},\n            \"template_inputs\": sorted(inputs),\n            **({\"host_system\": _host_system_evidence(profile)} if \"host_system\" in profile else {}),\n            **({\"execution_parallelism\": authored} if authored is not None else {})}\n\n",
+          "before": "            \"environment_hashes\": {p: _hash(env) for p, env in environments.items()},\n            \"template_inputs\": sorted(inputs),\n            **({\"execution_parallelism\": authored} if authored is not None else {})}\n\n"
+        },
+        {
+          "after": "def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):\n    validate_phase_profile(profile)\n    _host_system_evidence(profile)\n    system = {\"Darwin\": \"macos\", \"Linux\": \"linux\", \"Windows\": \"windows\"}.get(platform.system(), platform.system().lower())\n    requested = profile.get(\"platform\")\n",
+          "before": "def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):\n    validate_phase_profile(profile)\n    system = {\"Darwin\": \"macos\", \"Linux\": \"linux\", \"Windows\": \"windows\"}.get(platform.system(), platform.system().lower())\n    requested = profile.get(\"platform\")\n"
+        }
+      ]
+    }
+  }
+}

@@ -46,6 +46,19 @@ class RolloutPrerequisiteTests(unittest.TestCase):
                     inventory_hash=release["inventory_hash"], tag=release["tag"], mode="broad", passed=True,
                     complete=True, complete_gate_eligible=True, partial_profiles=[], **s.coverage_state(release))
 
+    def test_job_remainders_cannot_be_erased_by_clearing_inventory_rows(self):
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        policy["coverage_gaps"] = [copy.deepcopy(ADMIN)]
+        with self.assertRaisesRegex(s.ContractError, "untracked technical coverage obligation"):
+            s.coverage_state(policy)
+        policy["workflow_jobs"] = {"fixture:job": {"profiles": [], "coverage_gap": "shadow_cutover",
+                                                  "unsupported_reason": "unexecuted source workload"}}
+        with self.assertRaisesRegex(s.ContractError, "untracked technical coverage obligation"):
+            s.coverage_state(policy)
+        policy["workflow_jobs"] = {"fixture:job": {"profiles": []}}
+        with self.assertRaisesRegex(s.ContractError, "neither a supported contract"):
+            s.coverage_state(policy)
+
     def test_complete_physical_shadow_preserves_unready_rollout(self):
         result = self.aggregate()
         self.assertTrue(result["passed"], result["errors"])

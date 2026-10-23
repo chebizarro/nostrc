@@ -471,8 +471,48 @@ def _expand_source(value, source_root):
     return value.replace("{source_root}", str(source_root))
 
 
+def _host_system_contract(profile):
+    expected = profile.get("host_system")
+    if expected is None:
+        return None
+    if (profile.get("platform") != "linux" or not isinstance(expected, dict)
+            or not {"ID"} <= set(expected) <= {"ID", "VERSION_ID"}
+            or any(not isinstance(v, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", v)
+                   for v in expected.values())):
+        raise RealizationError("host_system requires a literal Linux ID and optional VERSION_ID")
+    return expected
+
+
+def _host_system_evidence(profile):
+    expected = _host_system_contract(profile)
+    if expected is None:
+        return None
+    if platform.system() != "Linux":
+        raise RealizationError("host_system requires an actual Linux host")
+    path = Path("/etc/os-release")
+    try:
+        raw = path.read_bytes()
+        values = {}
+        for line in raw.decode("utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            if key not in expected:
+                continue
+            parsed = shlex.split(value, comments=False, posix=True)
+            if key in values or len(parsed) != 1:
+                raise ValueError("duplicate/ambiguous host identity")
+            values[key] = parsed[0]
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RealizationError(f"unavailable/malformed host_system evidence: {exc}") from exc
+    if values != expected:
+        raise RealizationError(f"profile host_system {expected} differs from actual {values}")
+    return {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest(), "identity": values}
+
+
 def validate_phase_profile(profile):
     """Validate authored metadata without host checks or environment flattening."""
+    _host_system_contract(profile)
     authored = authored_phase_parallelism(profile)
     common = _environment_map(profile.get("environment", {}), "environment")
     phases = profile.get("phase_environments", {p: {} for p in PHASES})
@@ -556,6 +596,7 @@ def _phase_context(profile, root, source, configuration):
                 dict(profile.get("environment", {}), **profile.get("phase_environments", {}).get(p, {})).items()} for p in PHASES},
             "environment_hashes": {p: _hash(env) for p, env in environments.items()},
             "template_inputs": sorted(inputs),
+            **({"host_system": _host_system_evidence(profile)} if "host_system" in profile else {}),
             **({"execution_parallelism": authored} if authored is not None else {})}
 
 
@@ -629,6 +670,7 @@ def _validate_resolved_phase(resolved, realization):
 
 def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):
     validate_phase_profile(profile)
+    _host_system_evidence(profile)
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), platform.system().lower())
     requested = profile.get("platform")
     if requested and {"darwin": "macos"}.get(requested, requested) != system:

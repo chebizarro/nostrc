@@ -20,6 +20,33 @@
     ]
   },
   "checks": {
+    "homed.units": {
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "nodes": ["gnome.nostr_homed", "gnome.nostr_homed.test_inputs", "execution.homed"],
+      "profiles": ["homed.linux.units"],
+      "ctest_tests": {
+        "homed.linux.units": ["homed_cache", "homed_cache_config", "homed_groups", "homed_manifest", "homed_uid_map"]
+      },
+      "build_targets": ["test_cache", "test_cache_config", "test_groups", "test_manifest", "test_uid_map"],
+      "runtime_inputs": []
+    },
+    "homed.default_build": {
+      "kind": "build_contract",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "nodes": ["gnome.nostr_homed", "gnome.nostr_homed.test_inputs", "execution.homed"],
+      "profiles": ["homed.linux.units"],
+      "build_scope": "default",
+      "build_targets": [],
+      "command": ["cmake", "--build", "{build}", "--config", "RelWithDebInfo"],
+      "working_directory": "{source}",
+      "environment": {},
+      "runtime_inputs": []
+    },
     "grotto.signer.native": {
       "build_targets": [],
       "cost": "ordinary",
@@ -7586,6 +7613,7 @@
       "kind": "command",
       "nodes": [
         "selection.contract",
+        "execution.homed",
         "static.policy",
         "version.contract",
         "gnome.nostr_homed",
@@ -7816,7 +7844,10 @@
         "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
-        "{source}/tests/selection/test_profile_contracts.py",
+          "{source}/tests/selection/test_profile_contracts.py",
+          "{source}/tests/selection/test_homed_profile_contract.py",
+          "{source}/tests/selection/homed_profile_support.py",
+          "{source}/tests/selection/fixtures/homed_profile_enrollment_20261023.json",
         "{source}/tests/selection/test_realization.py",
         "{source}/tests/selection/test_realization_exclusions.py",
         "{source}/tests/selection/test_realization_inputs.py",
@@ -19220,7 +19251,7 @@
     {
       "id": "homed_unit_profile_contract",
       "tracking": "nostrc-0cfsg.9",
-      "reason": "Five actual opt-in homed unit registrations now exist and legacy workflow exact-list/no-tests guards run them. No distinct selective profile/worker or imported raw execution receipt is claimed here. Experimental roaming/auth/identity runtimes remain off.",
+      "reason": "The distinct standalone Ubuntu24.04 x86_64 GCC homed.linux.units contract owns all five manifest/cache registrations with full standalone default/prerequisite audits and shared canonical unit declarations. It is not legacy root-workflow parity (that configure registers140 tests). Physical selector receipts and worker enrollment are independently required; four legacy distro root and advisory systemd/FUSE/secret-decrypt contracts remain separate. Experimental runtimes remain off.",
       "status": "not_executed_by_selective_gate",
       "source_commit": "20810a780fb032589ebd3206e8c8e8f6f683c564",
       "not_selected_registrations": [
@@ -19315,6 +19346,10 @@
     ]
   },
   "nodes": {
+    "execution.homed": {
+      "id": "execution.homed", "depends_on": [],
+      "owner_paths": [".github/workflows/nostr-homed-ci.yml"]
+    },
     "benchmarks": {
       "depends_on": [
         "libnostr"
@@ -21328,6 +21363,9 @@
     }
   },
   "path_rules": [
+    {"exact": ".github/workflows/nostr-homed-ci.yml", "nodes": ["execution.homed"], "effect": "impact", "reason": "Exact homed workflow setup and unit contract owner; no systemd/FUSE execution inferred."},
+    {"exact": "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json", "nodes": [], "effect": "global", "reason": "Machine-readable acceptance provenance is not a prose exemption."},
+    {"exact": "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json", "nodes": [], "effect": "global", "reason": "Machine-readable acceptance provenance is not a prose exemption."},
     {
       "effect": "global",
       "exact": "scripts/test_selection_policy.py",
@@ -25555,6 +25593,19 @@
     }
   ],
   "profiles": {
+    "homed.linux.units": {
+      "platform": "linux", "architecture": "x86_64", "compiler": "gcc",
+      "host_system": {"ID": "ubuntu", "VERSION_ID": "24.04"},
+      "build_type": "RelWithDebInfo", "instrumentation": "none", "source_dir": "gnome/nostr-homed/tests/unit",
+      "setup": "standalone/nostr-homed-units-v1",
+      "local_availability": "host_or_container", "capabilities": [], "feature_variants": [], "contexts": ["local"],
+      "parallelism": 2, "build_parallelism": 2, "test_parallelism": 1, "timeout_seconds": 3600,
+      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=RelWithDebInfo"],
+      "environment": {"CC": "gcc", "CXX": "g++"},
+      "phase_environments": {"configure": {}, "build": {}, "test": {}},
+      "scope": "standalone_manifest_cache_units",
+      "legacy_workflow": ".github/workflows/nostr-homed-ci.yml:build-and-test"
+    },
     "grotto.linux.asan_ubsan": {
       "architecture": "x86_64",
       "build_type": "Debug",
@@ -27320,7 +27371,7 @@
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
-      "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
+      "unsupported_reason": "Standalone Ubuntu five-unit headless profile is independently enrolled, not an alias for this legacy root configure (140 registrations including signer/runtime consumers). Four distro root setup/toolchain and advisory FUSE/secrets contracts remain separate; no privileged systemd session coverage is inferred.",
       "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {

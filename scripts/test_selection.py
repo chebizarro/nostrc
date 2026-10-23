@@ -131,6 +131,24 @@ def coverage_state(policy):
                 and isinstance(gap.get("reason"), str) and bool(gap["reason"].strip()),
                 "unreviewed/malformed administrative rollout prerequisite")
         prerequisites.append(gap)
+    # Source job/matrix snapshots are not validation contracts. Their unresolved
+    # obligations cannot disappear merely by deleting the human-readable row.
+    jobs = policy.get("workflow_jobs", {})
+    require(isinstance(jobs, dict), "workflow_jobs must be a map")
+    technical_ids = {g.get("id") for g in technical if isinstance(g, dict)}
+    for job, record in jobs.items():
+        require(isinstance(record, dict), f"malformed workflow job contract: {job}")
+        gap = record.get("coverage_gap")
+        require(not gap or (isinstance(gap, str) and gap in technical_ids),
+                f"workflow job has an untracked technical coverage obligation: {job}")
+        if gap:
+            require(isinstance(record.get("unsupported_reason"), str)
+                    and bool(record["unsupported_reason"].strip()),
+                    f"workflow job lacks a concrete coverage remainder: {job}")
+        else:
+            require(isinstance(record.get("profiles"), list) and bool(record["profiles"])
+                    and not record.get("unsupported_reason"),
+                    f"workflow job has neither a supported contract nor a coverage obligation: {job}")
     return {"coverage_gaps": gaps, "physical_coverage_gaps": technical,
             "rollout_prerequisites": prerequisites, "enforcement_ready": enforcement,
             "rollout_readiness": {"schema_version": 1, "enforcement_ready": enforcement,
@@ -257,7 +275,7 @@ def validate_inventory(policy):
                 and all(x in {'local', 'ci', 'release'} for x in contexts), f'{ident}: invalid contexts')
         if profile.get('execution_domain') == 'prepared_peer_linux_v1':
             require(contexts == ['local'], f'{ident}: prepared runtime is local-only')
-        if any(key in profile for key in ("phase_environments", "sanitizer_compatibility", "build_parallelism", "test_parallelism")):
+        if any(key in profile for key in ("phase_environments", "sanitizer_compatibility", "build_parallelism", "test_parallelism", "host_system")):
             from test_selection_realization import RealizationError, validate_phase_profile
             try:
                 validate_phase_profile(profile)
