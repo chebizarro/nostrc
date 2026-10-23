@@ -301,11 +301,12 @@ def _rederived_plan(policy, plan, repo):
 
 def _scope(policy, plan, lane, profile, repo):
     require(lane is not None and profile.get(FIELD) == MARKER, 'profile has no authored normal contract')
-    require(plan['source_identity'].get('kind') == 'committed', 'normal qualification requires a committed source')
-    if plan['effective_mode'] == 'broad':
+    if plan['effective_mode'] == 'broad' or profile.get(SELECTED_FIELD) != SELECTED_MARKER:
+        # Exactly the pre-existing full-contract condition and message (1640 qualify).
+        require(plan['source_identity'].get('kind') == 'committed' and plan['effective_mode'] == 'broad',
+                'normal full-profile qualification requires a fresh committed broad plan')
         return 'full'
-    require(profile.get(SELECTED_FIELD) == SELECTED_MARKER,
-            'normal full-profile qualification requires a fresh committed broad plan')
+    require(plan['source_identity'].get('kind') == 'committed', 'selected-normal requires a committed source')
     require(plan['effective_mode'] == plan['requested_mode'] == 'affected' and not plan.get('partial_profiles')
             and not plan.get('broadening_reasons') and not plan.get('deleted_ref'),
             'selected-normal requires an unrestricted, unbroadened affected plan')

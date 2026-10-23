@@ -208,6 +208,24 @@ class NormalContractSemantics(unittest.TestCase):
             normal._expected_check_outcome(dict(expected_outcome='pass'),
                 dict(outcome='expected_incompatibility', exception_case='mdk09_incompatibility', exit_code=77))
 
+    def test_committed_source_boundary_full_unchanged_selected_only_new(self):
+        full = {normal.FIELD: copy.deepcopy(normal.MARKER)}
+        selected = dict(full, **{normal.SELECTED_FIELD: copy.deepcopy(normal.SELECTED_MARKER)})
+        committed = dict(kind='committed', sha='a' * 40)
+        dirty = dict(kind='dirty', sha='a' * 40, snapshot_digest='d' * 64)
+        old = 'normal full-profile qualification requires a fresh committed broad plan'
+        for profile in (full, selected):
+            self.assertEqual(normal._scope({}, dict(effective_mode='broad', source_identity=committed), {}, profile, None), 'full')
+            with self.assertRaisesRegex(ValueError, old):      # exactly the 1640 full condition/message
+                normal._scope({}, dict(effective_mode='broad', source_identity=dirty), {}, profile, None)
+        for identity in (committed, dirty):
+            with self.assertRaisesRegex(ValueError, old):      # no selected contract: affected stays refused as before
+                normal._scope({}, dict(effective_mode='affected', requested_mode='affected', source_identity=identity), {}, full, None)
+        with self.assertRaisesRegex(ValueError, 'selected-normal requires a committed source'):
+            normal._scope({}, dict(effective_mode='affected', requested_mode='affected', source_identity=dirty), {}, selected, None)
+        with self.assertRaisesRegex(ValueError, 'portable normal proof requires a committed source'):
+            normal.verify_source_closure(None, '.', dict(source_identity=dirty))   # dirty never gets transport authority
+
     def test_unselected_mdk_lifecycle_must_leave_no_trace(self):
         descriptors = {'gui': {'requires': ['display']}, 'groundhog-mdk011-interop-image': {'requires': ['docker']}}
         clean = dict(required_capabilities=['display'], runtime_capability_evidence={})

@@ -5,6 +5,7 @@ synthetic supervisor/AppArmor records. Proves the worker->artifact->aggregate
 contract logic only: NOT Linux pidns, AppArmor kernel, hosted or MDK proof.
 """
 import copy
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -551,6 +552,70 @@ class SelectedNormalTests(TransportFixture):
             normal.validate_metadata(policy)
 
 
+class PullRequestSelectedTests(TransportFixture):
+    """Production CI pull_request event -> dependency_contract.metadata -> the select job's git_plan call."""
+
+    def prepare_source(self):
+        self.profile[normal.SELECTED_FIELD] = copy.deepcopy(normal.SELECTED_MARKER)
+        self.inventory['checks']['fixture.gui']['nodes'] = ['other']
+        self.inventory['path_rules'].append(dict(exact='other.txt', nodes=['other'], effect='impact', reason='synthetic other'))
+        (self.root / 'other.txt').write_text('base\n')
+        inventory = self.root / 'tests/selection/inventory.json'
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps(self.inventory, indent=1, sort_keys=True))
+        commit = lambda message: self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qam', message)
+        self.git('add', '-A'); commit('pull request base')
+        self.pr_base = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('checkout', '-q', '-b', 'pr-branch')
+        (self.root / 'other.txt').write_text('changed in pull request\n'); commit('pull request head')
+        self.pr_head = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('checkout', '-q', '-')
+        self.git('-c', 'core.hooksPath=/dev/null', 'merge', '-q', '--no-ff', '-m', 'tested merge', 'pr-branch')
+
+    def make_plan(self):
+        spec = importlib.util.spec_from_file_location('dependency_contract', ROOT / '.github/workflows/dependency_contract.py')
+        contract = importlib.util.module_from_spec(spec); spec.loader.exec_module(contract)
+        event = {'pull_request': {'base': {'sha': self.pr_base}, 'head': {'sha': self.pr_head}}}
+        info, mode, context = contract.metadata('pull_request', event, self.identity['sha'], 'affected')
+        self.event_info = info
+        # Exactly the select command's planning call.
+        return s.git_plan(self.root, self.inventory, head=self.identity['sha'], context=context, mode=mode, event=info)
+
+    def execute(self):
+        self.execute_production()
+
+    def independent_checkout(self):
+        clone = Path(self.temp.name).resolve() / 'aggregate-checkout'
+        subprocess.run(['git', 'clone', '-q', '--no-local', str(self.root), str(clone)], check=True)
+        subprocess.run(['git', '-C', str(clone), '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach',
+                        self.identity['sha']], check=True)
+        return clone
+
+    def test_pull_request_plan_persists_event_and_both_checkouts_rederive_the_same_plan_id(self):
+        self.assertEqual(self.plan['event'], self.event_info)
+        self.assertEqual(self.plan['event']['kind'], 'pull_request')
+        self.assertEqual((self.plan['context'], self.plan['effective_mode'], self.plan['base']), ('ci', 'affected', None))
+        self.assertEqual(self.plan['lanes'][0]['checks'], ['fixture.gui'])
+        clone = self.independent_checkout()
+        for repo in (self.root, clone):
+            self.assertEqual(normal._rederived_plan(self.inventory, self.plan, repo)['plan_id'], self.plan['plan_id'])
+        result = self.worker()                               # worker re-derives in its checkout
+        self.assertEqual(result['plan_id'], self.plan['plan_id'])
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))
+        self.assertTrue(self.aggregate(base, repo=clone)[1]['passed'])   # aggregate re-derives in its own checkout
+
+    def test_forged_or_dropped_event_fields_refuse_rederivation(self):
+        for label, event in (('pr head moved', dict(self.plan['event'], pr_head_sha=self.pr_base)),
+                             ('event dropped', {})):
+            with self.subTest(label):
+                forged = dict(self.plan, event=event)
+                forged.pop('plan_id')
+                forged['plan_id'] = s.digest(forged)
+                with self.assertRaisesRegex(ValueError, 're-derived from the tested history'):
+                    normal._rederived_plan(self.inventory, forged, self.root)
+
+
 class CommandOnlySelectedTests(TransportFixture):
     """A real affected plan selecting only the default build contract: no CTest, explicitly."""
 
@@ -661,6 +726,8 @@ class WorkflowWiring(unittest.TestCase):
         contract = (ROOT / '.github/workflows/dependency_contract.py').read_text()
         self.assertIn('with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:', contract)
         self.assertIn('glob("**/receipt.json")', contract)
+        # The selected-normal re-derivation mirrors exactly this persisted producer call.
+        self.assertIn('plan = selection.git_plan(ROOT, policy, head=args.sha, context=context, mode=mode, event=info)', contract)
 
 
 if __name__ == '__main__':
