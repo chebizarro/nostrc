@@ -55,7 +55,9 @@ jobs:
       sha: ${{ inputs.sha }}
       artifact_prefix: validation-
   static:
-    uses: ./.github/workflows/static-checks.yml
+    # Provisioned regression coverage; selected native static.policy remains separate.
+    # The legacy standalone static-checks workflow is unchanged.
+    uses: ./.github/workflows/namespace-policy-regression.yml
     with:
       sha: ${{ inputs.sha }}
       artifact_prefix: validation-
