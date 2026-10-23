@@ -319,12 +319,12 @@ class AuthoredDebugConfigureContracts(Project):
 
 
 class OrdinaryLiveProfileContracts(unittest.TestCase):
-    def test_ordinary_groundhog_has_no_live_registration_or_capability(self):
+    def test_ordinary_groundhog_has_no_mdk_live_registration_or_capability(self):
         policy = s.load_inventory(INVENTORY)
         ordinary = policy['profiles']['groundhog.linux']
         live = policy['profiles']['groundhog.mdk011']
-        self.assertEqual(ordinary['capabilities'], ['display', 'private_bus', 'nak', 'gnome_keyring'])
-        self.assertNotIn('signer_endpoint', ordinary['capabilities'])
+        self.assertEqual(ordinary['capabilities'], ['display', 'private_bus', 'nak', 'gnome_keyring', 'signer_endpoint'])
+        self.assertEqual(ordinary['environment']['NOSTRC_TEST_NIP5F_APPROVAL'], 'unidentified-get-public-key-once')
         self.assertNotIn('docker', ordinary['capabilities'])
         self.assertEqual(live['capabilities'], ['display', 'private_bus', 'docker'])
         self.assertIn('-DBUILD_MDK011_INTEROP=OFF', ordinary['configure_args'])

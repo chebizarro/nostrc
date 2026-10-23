@@ -1,0 +1,61 @@
+"""Current fixture input ownership, distinct from complete-profile admission."""
+import copy
+import hashlib
+import unittest
+
+from selector_support import ROOT, s
+from realization_support import r
+import w11_worker_support as w
+
+
+class WorkerEnrollmentTests(unittest.TestCase):
+    def test_current_authored_fixture_profiles_are_not_boolean_only(self):
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        for ident in ('core.linux', 'groundhog.linux', 'grotto.linux'):
+            v = p['profiles'][ident]
+            for flag in ('-DENABLE_TCP_IPC=ON', '-DNIP55L_TEST_TRUST_ENV=ON',
+                         '-DNIP55L_SECRET_BACKEND=libsecret', '-DBUILD_APPS=ON',
+                         '-DBUILD_GNOSTR_APP=OFF', '-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service'):
+                self.assertEqual(v['configure_args'].count(flag), 1)
+            self.assertIn('signer_endpoint', v['capabilities'])
+            self.assertEqual(v['environment']['NOSTRC_TEST_NIP5F_APPROVAL'],
+                             'unidentified-get-public-key-once')
+            self.assertEqual(r._signer_diagnostic_boundary({'profile': v}),
+                             {'complete': False, 'complete_gate_eligible': False})
+
+    def test_exact_source_refresh_preserves_original_omission_authority(self):
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        old = w.before_worker_policy(p)
+        for ident in ('groundhog.linux', 'grotto.linux'):
+            a, b = p['diagnostic_nonmember_subsets'][ident], old['diagnostic_nonmember_subsets'][ident]
+            self.assertEqual(set(a['review']['source_inputs']), set(b['review']['source_inputs']))
+            self.assertEqual(len(a['review']['source_inputs']), 193)
+            for field in ('registrations', 'required_closure', 'primary_registrations',
+                          'registration_universe', 'candidate_contract_hash', 'toolchain_contract_hash'):
+                self.assertEqual(a[field], b[field], field)
+            self.assertEqual(len(a['registrations']), 33)
+            for key, value in b['review'].items():
+                if key != 'source_inputs':
+                    self.assertEqual(a['review'][key], value, key)
+        changed = copy.deepcopy(p)
+        changed['profiles']['core.linux']['environment']['NOSTRC_TEST_NIP5F_APPROVAL'] = 'allow-all'
+        with self.assertRaises(s.ContractError):
+            w.before_worker_policy(changed)
+
+    def test_live_sources_and_semantic_prerequisites_are_owned(self):
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        for path, expected in w.witness()['source_sha256'].items():
+            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
+        check = p['checks']['supported.nips.nip5f.signer_endpoint']
+        self.assertEqual(set(check['build_targets']),
+                         {'test_nip5f_tcp', 'test_nip5f_approver', 'grotto-daemon', 'grotto-schemas'})
+        covered = r._impact_prerequisites(p, check['nodes'])
+        for path in ('tests/runtime/test_provisioned_nip5f.py', 'tests/runtime/nip5f_approver.c',
+                     'gnome/groundhog/tests/app/test_secret_service.py',
+                     'apps/grotto/data/org.nostr.Grotto.gschema.xml', 'apps/grotto/daemon/main_daemon.c'):
+            self.assertTrue(set(s.classify(p, path)['nodes']) & covered, path)
+        self.assertEqual(p['nodes']['nip5f.fixture_inputs']['depends_on'], [])
+
+
+if __name__ == '__main__':
+    unittest.main()

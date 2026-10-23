@@ -47,6 +47,8 @@ def before_core_producer_source(path, content):
 
 
 def before_closeout_contract(contract, profile):
+    from w11_worker_support import before_worker_contract
+    contract = before_worker_contract(contract, profile)
     record = witness()['contracts'].get(profile)
     if record is None:
         return copy.deepcopy(contract)
@@ -177,12 +179,19 @@ NATIVE_RUNTIME_INPUTS = [
     '{source}/nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c',
     '{source}/tests/selection/test_w11_heartbeat_enrollment.py',
     '{source}/tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json',
+    '{source}/tests/selection/test_worker_signer.py',
+    '{source}/tests/selection/w11_worker_support.py',
+    '{source}/tests/selection/test_w11_worker_enrollment.py',
+    '{source}/tests/selection/fixtures/w11_worker_enrollment_20261023.json',
+    '{source}/tests/selection/test_w11_worker_host_guard.py',
+    '{source}/tests/selection/test_w11_retained_plan_adapter.py',
 ]
 
 
 def before_native_custody_policy(policy):
     """Reverse only the exact additive input record, never renew old authority."""
-    previous = copy.deepcopy(policy)
+    from w11_worker_support import before_worker_policy
+    previous = before_worker_policy(policy)
     check = previous['checks']['selection.contract']
     if set(NATIVE_RUNTIME_INPUTS) & set(check.get('runtime_inputs', [])):
         previous['workflow_jobs'] = before_w11_setup_jobs(previous['workflow_jobs'])
