@@ -608,9 +608,9 @@ try:
     with contextlib.ExitStack() as resources:
         if service_caps:
             sys.path.insert(0, service_scripts)
-            from test_selection_services import namespace_services
+            from test_selection_services import namespace_services, resource_mountpoint
             resources.enter_context(namespace_services(service_caps.split(','), service_evidence,
-                                    pathlib.Path(service_evidence).parent / 'resources', finalizer_fd=seal_fd))
+                                    resource_mountpoint(pathlib.Path(service_evidence).parent), finalizer_fd=seal_fd))
         with (directory / "resolve.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             status = cli["main"](resolve, **({'result_observer': observe_resolution} if seal_fd is not None else {}))
         if status:
@@ -643,9 +643,11 @@ finally:
                 service_caps = service_caps & {"display", "private_bus"} if args.linux_custody == "pidns" else set()
                 if service_caps:
                     state["private_services"] = str(lane_dir / "services/services.json")
-                resource_root = lane_dir / "resources" if service_caps else None
-                if resource_root:
-                    resource_root.mkdir(mode=0o700)
+                resource_root = None
+                if service_caps:
+                    # Short owned mountpoint: sockets cannot live under deep evidence roots.
+                    from test_selection_services import allocate_resource_mountpoint
+                    resource_root = allocate_resource_mountpoint(lane_dir)
                 try:
                     command(prefix + [sys.executable, "-c", run_api, source / "scripts", adapter.parent,
                                       ','.join(sorted(service_caps)), lane_dir / "services", "run", *common,
@@ -658,7 +660,8 @@ finally:
                     # After the helper's wait barrier only the empty host
                     # mountpoint remains; private HOME/socket bytes were tmpfs.
                     if resource_root:
-                        resource_root.rmdir()
+                        from test_selection_services import release_resource_mountpoint
+                        release_resource_mountpoint(lane_dir)
                 if args.linux_custody == 'pidns':
                     import test_selection_realization as realization_backend
                     realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')

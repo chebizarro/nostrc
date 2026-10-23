@@ -31,7 +31,8 @@ def before_policy_jobs(records):
 
 def before_policy_source(path, raw):
     from w11_json_glib_support import before_source
-    raw = before_source(path, raw)
+    from w11_placement_support import before_source as before_placement_source
+    raw = before_source(path, before_placement_source(path, raw))
     change = witness()['source_edits'].get(path)
     if change is None or hashlib.sha256(raw).hexdigest() == change['before_sha256']:
         return raw
@@ -46,7 +47,8 @@ def before_policy_source(path, raw):
 
 def before_policy_enrollment(policy):
     from w11_json_glib_support import before_policy
-    previous = before_policy(policy)
+    from w11_placement_support import before_policy as before_placement_policy
+    previous = before_policy(before_placement_policy(policy))
     data = witness()
     if previous['profiles'].get('static.policy') != data['records']['profiles']['static.policy']['after']:
         return previous

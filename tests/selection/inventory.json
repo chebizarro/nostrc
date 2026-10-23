@@ -7926,7 +7926,10 @@
         "{source}/apps/grotto/tests/fuzz/json_glib_leak_probe.c",
         "{source}/tests/selection/test_fuzz_json_glib_setup.py",
         "{source}/tests/selection/w11_json_glib_support.py",
-        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json"
+        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json",
+        "{source}/tests/selection/test_resource_placement.py",
+        "{source}/tests/selection/w11_placement_support.py",
+        "{source}/tests/selection/fixtures/w11_placement_enrollment_20261023.json"
       ],
       "working_directory": "{source}",
       "requires": [

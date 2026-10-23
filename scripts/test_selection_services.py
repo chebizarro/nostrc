@@ -17,6 +17,7 @@ import select
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -69,6 +70,136 @@ def _display_ready(number, cookie):
             response += data
         if response[0] != 1:
             raise ServiceError('private display authentication failed')
+
+
+# AF_UNIX sun_path holds 107 bytes plus NUL. Retained evidence roots are deep
+# (container /workspace/evidence/<run>/<lane>/..., host /private/tmp/...), so a
+# socket below them fails in bind(): "Socket name too long". The tmpfs mountpoint
+# therefore lives under a short owned directory, never below retained evidence.
+UNIX_SOCKET_MAX = 107
+RESOURCE_BASES = ('/tmp', '/var/tmp', '/dev/shm')
+RESOURCE_PREFIX = 'nostrc-rr-'
+# tempfile.mkdtemp('nip5f-private-') appends 8 characters; the bus is "bus" below.
+FIXTURE_SOCKET_TAIL = len('/nip5f-private-') + 8 + len('/bus')
+JOURNAL_NAME = 'resource-placement.jsonl'
+
+
+def require_socket_budget(root, tail=FIXTURE_SOCKET_TAIL):
+    """Refuse before launching a service whose socket path cannot be bound."""
+    if len(os.fsencode(str(root))) + tail > UNIX_SOCKET_MAX:
+        raise ServiceError('private resource root leaves no room for a UNIX socket path: ' + str(root))
+
+
+def _journal_append(path, record, *, create=False):
+    """Append-only, hash-chained, fsynced journal (O_EXCL on creation)."""
+    previous = ''
+    if not create:
+        lines = path.read_bytes().splitlines()
+        previous = hashlib.sha256(lines[-1]).hexdigest()
+    record = dict(record, prev=previous)
+    raw = (json.dumps(record, sort_keys=True) + '\n').encode()
+    flags = os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | (os.O_CREAT | os.O_EXCL if create else 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if os.write(fd, raw) != len(raw):
+            raise ServiceError('resource placement journal short write')
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def read_resource_journal(path):
+    path = Path(path)
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise ServiceError('resource placement journal is not an owned private regular file')
+    records, previous = [], ''
+    for line in path.read_bytes().splitlines():
+        record = json.loads(line)
+        if record.get('prev') != previous:
+            raise ServiceError('resource placement journal chain broken')
+        previous = hashlib.sha256(line).hexdigest()
+        records.append(record)
+    if not records or records[0].get('state') != 'intent':
+        raise ServiceError('resource placement journal lacks its intent record')
+    return records
+
+
+def allocate_resource_mountpoint(lane_dir, *, bases=RESOURCE_BASES):
+    """Create the short, owned, empty 0700 mountpoint for the namespace tmpfs.
+
+    The mountpoint is journaled before and after creation. The tmpfs, HOME,
+    runtime and sockets live only in the namespace mount and vanish with it;
+    release_resource_mountpoint removes the empty host directory.
+    """
+    journal = Path(lane_dir) / JOURNAL_NAME
+    token = secrets.token_hex(16)
+    for base in bases:
+        candidate = Path(base)
+        try:
+            info = candidate.lstat()
+            usable = (stat.S_ISDIR(info.st_mode) and candidate.resolve(strict=True) == candidate
+                      and os.access(candidate, os.W_OK | os.X_OK))
+        except OSError:
+            usable = False
+        path = candidate / (RESOURCE_PREFIX + token[:8])
+        if usable and len(os.fsencode(str(path))) + FIXTURE_SOCKET_TAIL <= UNIX_SOCKET_MAX:
+            break
+    else:
+        raise ServiceError('no short owned directory available for the private resource mountpoint')
+    _journal_append(journal, {'state': 'intent', 'token': token, 'path': str(path),
+                              'uid': os.geteuid(), 'pid': os.getpid()}, create=True)
+    os.mkdir(path, 0o700)
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ServiceError('private resource mountpoint was not created owned/0700')
+    _journal_append(journal, {'state': 'allocated', 'token': token, 'path': str(path),
+                              'dev': info.st_dev, 'ino': info.st_ino})
+    return path
+
+
+def resource_mountpoint(lane_dir):
+    """The allocated mountpoint named by the journal (namespace side)."""
+    records = read_resource_journal(Path(lane_dir) / JOURNAL_NAME)
+    if records[-1].get('state') != 'allocated':
+        raise ServiceError('resource placement journal is not in the allocated state')
+    return Path(records[-1]['path'])
+
+
+def release_resource_mountpoint(lane_dir):
+    """Outer cleanup after the namespace barrier; verified, journaled, idempotent."""
+    journal = Path(lane_dir) / JOURNAL_NAME
+    records = read_resource_journal(journal)
+    last = records[-1]
+    if last['state'] == 'released':
+        return Path(last['path'])
+    if last['state'] == 'intent':
+        # Crash between intent and mkdir: remove only an empty directory that
+        # this journal's exact name could have produced.
+        allocation = None
+    elif last['state'] == 'allocated':
+        allocation = last
+    else:
+        raise ServiceError('unknown resource placement journal state')
+    path = Path(last['path'])
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        if allocation is not None:
+            raise ServiceError('private resource mountpoint vanished before release')
+        _journal_append(journal, {'state': 'released', 'path': str(path), 'absent_after': True})
+        return path
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise ServiceError('private resource mountpoint changed identity before release')
+    if allocation is not None and (info.st_dev, info.st_ino) != (allocation['dev'], allocation['ino']):
+        raise ServiceError('private resource mountpoint was replaced before release')
+    if os.path.ismount(path):
+        raise ServiceError('private resource mountpoint is still mounted; namespace not gone')
+    os.rmdir(path)  # ENOTEMPTY/EBUSY remain failures, never recursive deletion
+    if path.exists():
+        raise ServiceError('private resource mountpoint remained after release')
+    _journal_append(journal, {'state': 'released', 'path': str(path), 'absent_after': True})
+    return path
 
 
 def prepare_resources(resource_root, display):
@@ -222,6 +353,7 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
         if input_audit.get('input_hashes', {}).get(str(path)) != hashlib.sha256(path.read_bytes()).hexdigest():
             raise ServiceError('signer fixture input lacks exact full-audit binding: ' + str(path))
     resource_root = _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
+    require_socket_budget(resource_root)
     import runpy
     fixture = runpy.run_path(str(root / SIGNER_INPUTS[0]))
     config = fixture['prepare_fixture'](root, build, evidence_dir, consent=True,
