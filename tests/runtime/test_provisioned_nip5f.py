@@ -38,6 +38,30 @@ def identity(path):
     return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+# Reports from owned instrumented fixture processes fail the fixture; recovery
+# options never turn a daemon/approver/client sanitizer report into success.
+SANITIZER_REPORTS = (b"ERROR: AddressSanitizer", b"ERROR: LeakSanitizer", b": runtime error: ")
+INSTRUMENTED = ("daemon", "approver", "client")
+
+
+def caller_attestation(name, process, expected):
+    """The daemon trusts an approver by its exact /proc/<pid>/exe path and inode.
+
+    A binfmt interpreter (for example Rosetta or qemu-user emulation) makes the
+    kernel report the interpreter instead, so the real attestation cannot hold.
+    The bus-stage check is the typed refusal before any key mutation; the later
+    daemon/approver records are post-hoc evidence (the daemon itself denies a
+    mismatched approver's StoreKey). Never a relaxed check."""
+    link = f"/proc/{process.process.pid}/exe"
+    observed = os.readlink(link)
+    actual, wanted = os.stat(link), os.stat(expected)
+    record = {"process": name, "expected": str(expected), "observed": observed,
+              "same_inode": (actual.st_dev, actual.st_ino) == (wanted.st_dev, wanted.st_ino)}
+    if observed != str(expected) or not record["same_inode"]:
+        raise RuntimeError("caller_executable_identity_unavailable: " + json.dumps(record, sort_keys=True))
+    return record
+
+
 class Process:
     def __init__(self, argv, env, log):
         self.record = {'argv': [str(value) for value in argv],
@@ -142,10 +166,12 @@ class Signer:
         self.env["DBUS_SESSION_BUS_ADDRESS"] = address
         bus = self.start_process("bus", [self.config.tools['dbus-daemon']['path'], "--nofork", "--config-file=" + str(config), "--print-address=1"])
         bus.until(address)
+        self.result["caller_attestation"] = [caller_attestation("bus", bus, self.config.tools['dbus-daemon']['path'])]
         self.start_process("secrets", [self.config.tools['python']['path'], str(self.config.source_root / "gnome/groundhog/tests/app/test_secret_service.py"), str(self.private / "secrets.json")])
         self.tool([self.config.tools['gdbus']['path'], "wait", "--session", "--timeout", "30", "org.freedesktop.secrets"], check=True, timeout=35)
         self.daemon = self.start_process("daemon", [str(self.config.daemon)])
         self.daemon.until("tcp ipc server started on 127.0.0.1:")
+        self.result["caller_attestation"].append(caller_attestation("daemon", self.daemon, self.config.daemon))
         self.tool([self.config.tools['gdbus']['path'], "wait", "--session", "--timeout", "30", "org.nostr.Signer"], check=True, timeout=35)
         token = Path(self.env["XDG_RUNTIME_DIR"]) / "gnostr/token"
         if token.is_symlink() or not stat.S_ISREG(token.stat().st_mode) or stat.S_IMODE(token.stat().st_mode) != 0o600:
@@ -160,6 +186,7 @@ class Signer:
         self.approver = self.start_process("approver", [str(self.config.approver), "--approve-unidentified-get-public-key", self.decision, str(key)])
         ready = self.approver.until("ready:")
         key.unlink()
+        self.result["caller_attestation"].append(caller_attestation("approver", self.approver, self.config.approver))
         if ready != "ready:npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d":
             raise RuntimeError("stored identity differs from the public fixture vector")
         self.result.update(endpoint=self.env["NOSTR_SIGNER_ENDPOINT"], identity=ready.split("ready:", 1)[1], token_mode="0600", stored_via="StoreKey/libsecret", approval_api="GetApprovalInfo/ApproveRequest", remember=False)
@@ -199,8 +226,14 @@ class Signer:
                         errors.append(name + " exited before fixture cleanup")
                     if stopped["forced_kill"] or stopped["exit_code"] not in (0, -15):
                         errors.append(name + " did not complete expected fixture shutdown")
-                    if name == "daemon" and stopped["exit_code"] != 0:
-                        errors.append("daemon did not complete graceful fixture shutdown")
+                    if name in ("daemon", "approver") and stopped["exit_code"] != 0:
+                        errors.append(name + " did not complete graceful fixture shutdown")
+                if name in INSTRUMENTED:
+                    output = (self.out / (name + ".log")).read_bytes()
+                    reports = [marker.decode() for marker in SANITIZER_REPORTS if marker in output]
+                    stopped["sanitizer_reports"] = reports
+                    if reports:
+                        errors.append(name + " emitted sanitizer reports: " + ", ".join(reports))
             except Exception as exc: errors.append(f"{name}: {type(exc).__name__}")
         shutil.rmtree(self.private)
         self.result["private_namespace_absent"] = not self.private.exists()

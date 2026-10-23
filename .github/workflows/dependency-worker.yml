@@ -48,6 +48,12 @@ jobs:
           profile = policy['profiles'][os.environ['PROFILE']]
           actual_platform = {'Darwin': 'macos', 'Linux': 'linux'}.get(platform.system())
           s.require(profile['platform'] == actual_platform and profile['architecture'] == platform.machine(), 'runner/profile mismatch')
+          # The provisioned signer fixture exists only inside the outer pidns
+          # gate: any profile authoring signer_endpoint (including sanitizer
+          # variants) takes that route, never ambient wrapper services.
+          route = 'pidns' if 'signer_endpoint' in profile.get('capabilities', []) else 'plan'
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('DEPENDENCY_ROUTE=' + route + '\n')
           PY
       - name: Install Linux profile prerequisites
         if: runner.os == 'Linux'
@@ -183,8 +189,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dependency/receipts/$PROFILE"
-          case "$PROFILE" in
-            core.linux|grotto.linux|groundhog.linux)
+          lane="$PROFILE"
+          # DEPENDENCY_ROUTE comes from the validated profile (verify step).
+          if [[ "${DEPENDENCY_ROUTE:-plan}" == pidns ]]; then lane=pidns; fi
+          case "$lane" in
+            pidns|core.linux|grotto.linux|groundhog.linux)
               # The outer gate owns private services and post-namespace-exit
               # sealing. Unsupported runner kernels retain refusal, not green.
               set +e
