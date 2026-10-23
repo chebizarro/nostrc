@@ -101,6 +101,7 @@ if grep -q SELECTIVE "$tmp/out"; then echo "diagnostic ran after static failure"
 # The full override wins over the static skip and the diagnostic opt-in, and
 # receives git's arguments and the pushed ref lines unchanged.
 for env_name in NOSTRC_SKIP_PRE_PUSH NOSTRC_SELECTIVE_GATE; do
+    # shellcheck disable=SC2016 # the inner script expands its own arguments
     env NOSTRC_FULL_GATE=1 "$env_name=1" bash -c 'cd "$1" && shift && scripts/pre-push "$@"' _ "$repo" origin url \
         <<< "$refs_clean" > "$tmp/out" 2>&1
     grep -qF "FULL_GATE_RAN args=[origin url] stdin=[$refs_clean]" "$tmp/out"
