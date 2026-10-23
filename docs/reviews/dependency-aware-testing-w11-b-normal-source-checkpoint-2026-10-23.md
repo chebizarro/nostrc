@@ -48,11 +48,23 @@ prove any production configured universe is complete or physically executed.
 
 ## Finite integration dependencies
 
-A/parent worker followup must provision actual Nak for both MDK profiles and
-Blueprint for core ASan/MDK011 before those newly enabled real signer producers
-can build. B does not modify A's worker. A/parent can invoke the post-exit normal
-interface above after full execution and teardown. The MDK runtime remains held
-pending Docker availability and actual image-production/use/cleanup proof.
+C exclusively owns the small worker dependency followup from exact A44 worker
+source: provision the existing pinned Nak for both MDK profiles and Blueprint for
+core ASan/MDK011, with a dedicated regression and exact job fingerprints. B does
+not edit that workflow; source enrollment follows C's frozen tip. The MDK runtime
+remains held pending Docker availability and actual image-production/use/cleanup
+proof.
+
+**Production normal migration is not wired.** `qualify-normal` currently has only
+CLI/test callers; the worker does not invoke it after pidns exit and AppArmor
+teardown. Normal aggregation also reopens original-worker absolute retained
+paths. A separately coordinated finite integration must supply the production
+caller and portable artifact packaging/resolution, preserving original sealed
+bytes, per-run source/tool/profile identities and post-exit evidence. Rewriting
+path strings is not proof. The aggregate must consume one qualified lane receipt,
+not count raw and normal receipts twice; raw diagnostic flags remain unchanged.
+Until then this is a source/API checkpoint, not usable cross-job CI normal-profile
+execution or acceptance. These blockers remain on `nostrc-0cfsg.36.8`.
 Homed standalone remains local-only; it is not the legacy root-homed workflow.
 Darwin .23/native scope and C's seal-readiness regression remain separate.
 
@@ -109,11 +121,18 @@ new normal profile **refuses stale legacy admission**; only its exact historical
 profile still exercises the old incomplete route. Full command-source fixtures
 retain all current inputs and separately scoped native baseline definitions.
 
-One new exact-source full-default attempt follows the real corrections. A owns
-the sole reserved native default build; no concurrent second root build is
-started here. Native CTest waits for selection-test quiet, and final source,
-Git-derived/generated/control/runtime input changes require actual reconfigure
-and default-build revalidation, not relabeling the a786 build.
+The exact 5e2ea4774edc8e0a37f4108875d9e9162aa17d4a full-default attempt2
+was interrupted for A's reserved native CTest quiet window. Its wrapper interrupt
+left a separately sessioned unittest child alive; B verified the exact child
+command/cwd, interrupted it and confirmed exit. The log, capacity samples and
+interruption receipt remain under `full-default-attempt-2`, not green credit.
+The next attempt must use a new directory after A explicitly releases the window.
+
+A owns the sole native root build, which passed on a786 in 90.6s with a 519 MiB
+footprint and read-only guards. No concurrent second root build is started here.
+Final source and Git-derived/generated/control/runtime input changes require
+actual reconfigure and default-build revalidation, not relabeling that build;
+A's a786 CTest is not final-source proof.
 
 Mac optional TCP applicability is separately authorized and tracked in
 `nostrc-0cfsg.36.9`, but held outside this landing-repair batch. The exact legacy
