@@ -99,5 +99,45 @@ class FuzzJsonGlibSetupTests(unittest.TestCase):
         subprocess.run(["bash", "-n", str(FUZZ / "json-glib-setup.sh")], check=True)
 
 
+class FuzzJsonGlibEnrollmentTests(unittest.TestCase):
+    def test_exact_sources_jobs_and_finite_historical_inverse(self):
+        import hashlib
+        from selector_support import s
+        from profile_contract_support import validate_job_accounting
+        import w11_json_glib_support as wave
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        data = wave.witness()
+        validate_job_accounting(policy, ROOT)
+        for name, expected in data['source_inputs'].items():
+            self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected, name)
+            self.assertIn('{source}/' + name, policy['checks']['selection.contract']['runtime_inputs'])
+        for rule in data['rules']:
+            self.assertEqual(set(s.classify(policy, rule['exact'])['nodes']), {'grotto.gui', 'selection.contract'})
+        previous = wave.before_policy(policy)
+        self.assertEqual(s.digest(previous), data['before_policy_hash'])
+        self.assertEqual(wave.before_policy(previous), previous)
+        source = wave.before_source(data['workflow']['path'], WORKFLOW.read_bytes())
+        self.assertEqual(hashlib.sha256(source).hexdigest(), data['workflow']['before_sha256'])
+        self.assertEqual(data['producer']['tarball_sha256'], PINNED_SHA256)
+
+    def test_changed_or_stripped_enrollment_never_resets_historical_goldens(self):
+        import copy
+        from selector_support import s
+        import w11_json_glib_support as wave
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        data = wave.witness()
+        for mutate in (
+            lambda p: p['checks']['selection.contract']['runtime_inputs'].remove(data['input_additions'][0]),
+            lambda p: p['workflow_jobs'][next(iter(data['jobs']))].update(source_sha256='0' * 64),
+            lambda p: p['path_rules'].remove(data['rules'][0]),
+        ):
+            changed = copy.deepcopy(policy)
+            mutate(changed)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                wave.before_policy(changed)
+        with self.assertRaises(ValueError):
+            wave.before_source(data['workflow']['path'], WORKFLOW.read_bytes() + b'\n# unknown change\n')
+
+
 if __name__ == "__main__":
     unittest.main()

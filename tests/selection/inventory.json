@@ -7921,7 +7921,12 @@
         "{source}/tests/selection/test_ordinary_go_full_ownership.py",
         "{source}/tests/selection/fixtures/ordinary_go_full_ownership.json",
         "{source}/tests/selection/test_rollout_prerequisites.py",
-        "{source}/tests/selection/test_w11_receipt_retention.py"
+        "{source}/tests/selection/test_w11_receipt_retention.py",
+        "{source}/apps/grotto/tests/fuzz/json-glib-setup.sh",
+        "{source}/apps/grotto/tests/fuzz/json_glib_leak_probe.c",
+        "{source}/tests/selection/test_fuzz_json_glib_setup.py",
+        "{source}/tests/selection/w11_json_glib_support.py",
+        "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -25522,6 +25527,24 @@
       ],
       "effect": "impact",
       "reason": "Exact configure template read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "apps/grotto/tests/fuzz/json-glib-setup.sh",
+      "effect": "impact",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Official hash-pinned fuzz toolchain producer/probe inputs retain component impact and full policy source auditing; no fuzz ownership or waiver promotion."
+    },
+    {
+      "exact": "apps/grotto/tests/fuzz/json_glib_leak_probe.c",
+      "effect": "impact",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Official hash-pinned fuzz toolchain producer/probe inputs retain component impact and full policy source auditing; no fuzz ownership or waiver promotion."
     }
   ],
   "profiles": {
@@ -27097,23 +27120,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f"
+      "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
     },
     ".github/workflows/grotto-fuzz.yml:fuzz-test": {
       "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "de0e240f9ce89756ae9060068581ea2bc67dbcf3ef999e45e731841acb5f471b",
+      "source_sha256": "e1907153b3dd6067e9610cde2860257695edbd50808aff56bcb01186ffc193f4",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f"
+      "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
     },
     ".github/workflows/grotto-fuzz.yml:coverage-report": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "89ed7e8181538d122f3eb12b68322eef65cb2817431cca5939cbb49ae1d55e6e",
+      "source_sha256": "8edafa24a77fdaa7921a72012f4650d9506f284a982c1c58d0c96858e988622c",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f"
+      "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
     },
     ".github/workflows/groundhog-ci.yml:groundhog": {
       "matrix_source": "",
