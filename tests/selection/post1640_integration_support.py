@@ -49,8 +49,9 @@ def before_jobs(records):
 
 
 def before_policy(policy):
+    from mdk011_app_enrollment_support import before_policy as before_mdk011_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_mdk011_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     if present:

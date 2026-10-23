@@ -8032,7 +8032,10 @@
         "{source}/tests/selection/test_homed_ci_worker.py",
         "{source}/tests/selection/post1640_integration_support.py",
         "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
-        "{source}/tests/selection/test_post1640_integration.py"
+        "{source}/tests/selection/test_post1640_integration.py",
+        "{source}/tests/selection/mdk011_app_enrollment_support.py",
+        "{source}/tests/selection/fixtures/mdk011_app_enrollment_20261024.json",
+        "{source}/tests/selection/test_mdk011_app_enrollment.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -16397,7 +16400,8 @@
         "core.linux",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16414,6 +16418,9 @@
           "test-bc-blob-store"
         ],
         "groundhog.mdk08": [
+          "test-bc-blob-store"
+        ],
+        "groundhog.mdk011": [
           "test-bc-blob-store"
         ]
       },
@@ -16433,7 +16440,8 @@
         "core.linux",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16450,6 +16458,9 @@
           "grelay_ingress_security"
         ],
         "groundhog.mdk08": [
+          "grelay_ingress_security"
+        ],
+        "groundhog.mdk011": [
           "grelay_ingress_security"
         ]
       },
@@ -16471,7 +16482,8 @@
         "core.linux",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16493,6 +16505,10 @@
         "groundhog.mdk08": [
           "grotto_app_dbus_service_configured",
           "grotto_dbus_service_configured"
+        ],
+        "groundhog.mdk011": [
+          "grotto_app_dbus_service_configured",
+          "grotto_dbus_service_configured"
         ]
       },
       "build_targets": [],
@@ -16510,7 +16526,8 @@
         "core.linux",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16540,6 +16557,15 @@
           "nostr_signer_webext_host_webln"
         ],
         "groundhog.mdk08": [
+          "nostr_signer_webext_extension_policy",
+          "nostr_signer_webext_extension_webln",
+          "nostr_signer_webext_host_errors",
+          "nostr_signer_webext_host_framing",
+          "nostr_signer_webext_host_policy",
+          "nostr_signer_webext_host_router",
+          "nostr_signer_webext_host_webln"
+        ],
+        "groundhog.mdk011": [
           "nostr_signer_webext_extension_policy",
           "nostr_signer_webext_extension_webln",
           "nostr_signer_webext_host_errors",
@@ -18145,7 +18171,8 @@
       "profiles": [
         "core.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18159,6 +18186,9 @@
           "nostr_signer_webext_host_e2e"
         ],
         "groundhog.mdk08": [
+          "nostr_signer_webext_host_e2e"
+        ],
+        "groundhog.mdk011": [
           "nostr_signer_webext_host_e2e"
         ]
       },
@@ -18188,7 +18218,8 @@
       "profiles": [
         "core.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18227,6 +18258,22 @@
           "signer/social-recovery"
         ],
         "groundhog.mdk08": [
+          "signer/blueprint-drift",
+          "signer/bunker",
+          "signer/bunker-startup",
+          "signer/core",
+          "signer/crypto",
+          "signer/hsm-provider",
+          "signer/identity",
+          "signer/legacy-dirs",
+          "signer/profile-guard",
+          "signer/rate-limiter",
+          "signer/secure-mem",
+          "signer/session",
+          "signer/signer-core",
+          "signer/social-recovery"
+        ],
+        "groundhog.mdk011": [
           "signer/blueprint-drift",
           "signer/bunker",
           "signer/bunker-startup",
@@ -18273,7 +18320,8 @@
       "profiles": [
         "core.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18291,6 +18339,11 @@
           "signer/ui"
         ],
         "groundhog.mdk08": [
+          "signer/approval-dialog",
+          "signer/qr-scanner",
+          "signer/ui"
+        ],
+        "groundhog.mdk011": [
           "signer/approval-dialog",
           "signer/qr-scanner",
           "signer/ui"
@@ -18329,7 +18382,8 @@
       "profiles": [
         "core.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18352,6 +18406,16 @@
           "signer/ui-layout"
         ],
         "groundhog.mdk08": [
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/desktop-contract",
+          "signer/identity-model",
+          "signer/onboarding",
+          "signer/room-flow",
+          "signer/ui-accessibility",
+          "signer/ui-layout"
+        ],
+        "groundhog.mdk011": [
           "signer/approval-controller",
           "signer/approval-integration",
           "signer/desktop-contract",
@@ -18399,7 +18463,8 @@
       "profiles": [
         "core.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18425,6 +18490,17 @@
           "signer/session-lock"
         ],
         "groundhog.mdk08": [
+          "signer/activity",
+          "signer/background",
+          "signer/bunker-e2e",
+          "signer/bunker-headless",
+          "signer/clients",
+          "signer/dbus",
+          "signer/home-model",
+          "signer/identity-management",
+          "signer/session-lock"
+        ],
+        "groundhog.mdk011": [
           "signer/activity",
           "signer/background",
           "signer/bunker-e2e",
