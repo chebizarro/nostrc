@@ -176,6 +176,25 @@ jobs:
             ctest --test-dir build --output-on-failure -j2 \
               -E "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
 
+      # Record-only hosted diagnostic (nostrc-0cfsg.11.1). It never gates and
+      # never replaces the `Test` step above: that step alone decides pass/fail
+      # for test_nostr_gobject_main_thread_latency, with its 50 ms / <=2 miss /
+      # >5 beat guard, 50 cycles, TIMEOUT 90 and sanitizers unchanged. This step
+      # re-runs the SAME binary with the same command line under explicit
+      # child-local process policies (inherited / foreground / background
+      # control), quiet and with busy-loop siblings approximating (not equal to)
+      # `ctest -j2`, and prints the Darwin policy and thread-CPU evidence for each.
+      # The no-work control thread is opt-in and only set by the probe script's
+      # `*-control` runs; the gating `Test` step never starts it.
+      # `continue-on-error` + an always-zero script keep it from masking or
+      # creating failures; failed probe runs are printed in full, not retried.
+      - name: Heartbeat scheduling probe (macOS, record-only)
+        if: ${{ !cancelled() && startsWith(matrix.os, 'macos') && matrix.sanitizer == 'asan_ubsan' }}
+        continue-on-error: true
+        run: |
+          bash nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh \
+            build/nostr-gobject/test_nostr_gobject_main_thread_latency 3
+
       - name: Short fuzz (libFuzzer)
         if: runner.os == 'Linux' && matrix.sanitizer == 'asan_ubsan'
         env:

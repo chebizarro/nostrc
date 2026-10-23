@@ -14,6 +14,13 @@
  */
 
 #include <glib.h>
+#include <time.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <pthread.h>
+#include <pthread/qos.h>
+#include <sys/resource.h>
+#endif
 #include "gnostr-testkit.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_store.h>
@@ -170,6 +177,8 @@ typedef struct {
      * never changes missed_count or the pass/fail policy. */
     guint post_burst_missed_count;
     gint64 post_burst_max_gap_us;
+    gint64 post_burst_wall_us;
+    gint64 post_burst_main_cpu_us;
     HeartbeatWork work;
     gpointer work_data;
     GMainLoop *loop;
@@ -218,6 +227,99 @@ heartbeat_cb(gpointer user_data)
     return G_SOURCE_CONTINUE;
 }
 
+
+/* ── Record-only scheduling evidence (nostrc-0cfsg.11.1) ──────────────
+ *
+ * Observes, never asserts, and never changes the gating workload:
+ *  - always (nonintrusive: a few syscalls outside the timed bursts): the
+ *    Darwin background/QoS state this process inherited, and main-thread CPU
+ *    versus wall time over the post-burst idle phase;
+ *  - ONLY when NOSTRC_HEARTBEAT_CONTROL=1 (set explicitly by
+ *    heartbeat_sched/heartbeat-sched-probe.sh, never by CTest): a no-work
+ *    control sleeper thread. Its effect on wake latency is not proven
+ *    negligible, so default CTest never starts it and keeps the original
+ *    single-thread workload and timing. A late control sleeper alongside near-zero
+ *    main-thread CPU points at process/host wake latency rather than store
+ *    code. Nothing here feeds missed_count or any assertion.
+ * The metric-validity case below is registered only when
+ * NOSTRC_HEARTBEAT_DIAGNOSTICS=1, so the gating registration stays the
+ * original 8 cases. */
+
+static gboolean
+env_opt_in(const char *name)
+{
+    return g_strcmp0(g_getenv(name), "1") == 0;
+}
+
+#define CONTROL_INTERVAL_US (10 * G_TIME_SPAN_MILLISECOND)
+
+typedef struct {
+    gint stop;
+    guint wakes;            /* written by the control thread; read after join */
+    gint64 max_late_us;
+} SchedControl;
+
+/* Calling-thread CPU time in microseconds, or -1 if unavailable. On Darwin this
+ * uses thread_info(): clock_gettime(CLOCK_THREAD_CPUTIME_ID) returned
+ * wall-clock epoch time in this test binary on macOS 27, so it is not used. */
+static gint64
+thread_cpu_us(void)
+{
+#ifdef __APPLE__
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    mach_port_t self = mach_thread_self();
+    kern_return_t kr = thread_info(self, THREAD_BASIC_INFO, (thread_info_t)&info, &count);
+    mach_port_deallocate(mach_task_self(), self);
+    if (kr != KERN_SUCCESS)
+        return -1;
+    return ((gint64)info.user_time.seconds + info.system_time.seconds) * G_USEC_PER_SEC +
+           info.user_time.microseconds + info.system_time.microseconds;
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0)
+        return -1;
+    return (gint64)ts.tv_sec * G_USEC_PER_SEC + ts.tv_nsec / 1000;
+#endif
+}
+
+static gpointer
+sched_control_thread(gpointer data)
+{
+    SchedControl *control = data;
+    while (!g_atomic_int_get(&control->stop)) {
+        gint64 start = g_get_monotonic_time();
+        g_usleep(CONTROL_INTERVAL_US);
+        gint64 late = g_get_monotonic_time() - start - CONTROL_INTERVAL_US;
+        control->wakes++;
+        control->max_late_us = MAX(control->max_late_us, late);
+    }
+    return NULL;
+}
+
+static void
+report_sched_env(const HeartbeatData *hb, const SchedControl *control)
+{
+#ifdef __APPLE__
+    qos_class_t qos = QOS_CLASS_UNSPECIFIED;
+    int relprio = 0;
+    pthread_get_qos_class_np(pthread_self(), &qos, &relprio);
+    g_test_message("SchedEnv: darwin_bg_process=%d darwin_bg_thread=%d qos=0x%x",
+                   getpriority(PRIO_DARWIN_PROCESS, 0),
+                   getpriority(PRIO_DARWIN_THREAD, 0), (unsigned)qos);
+#else
+    g_test_message("SchedEnv: darwin_bg=n/a");
+#endif
+    g_test_message("SchedEnv: post_burst_wall=%.1f ms main_thread_cpu=%.3f ms",
+                   hb->post_burst_wall_us / 1000.0,
+                   hb->post_burst_main_cpu_us / 1000.0);
+    if (control)
+        g_test_message("SchedEnv: control_thread=on control_wakes=%u control_max_late=%.1f ms",
+                       control->wakes, control->max_late_us / 1000.0);
+    else
+        g_test_message("SchedEnv: control_thread=off");
+}
+
 static void
 run_heartbeat(HeartbeatWork work, gpointer data)
 {
@@ -238,10 +340,27 @@ run_heartbeat(HeartbeatWork work, gpointer data)
     hb.final_gap_us = end - hb.last_beat_us;
     heartbeat_record_at(&hb, end);
     hb.burst_complete = TRUE;
-    if (hb.heartbeat_count > 5)
+    SchedControl control = {0};
+    gboolean control_ran = FALSE;
+    if (hb.heartbeat_count > 5) {
         g_source_remove(hb_id);
-    else
+    } else {
+        GThread *control_thread = NULL;
+        if (env_opt_in("NOSTRC_HEARTBEAT_CONTROL")) {
+            control_thread = g_thread_new("hb-control", sched_control_thread, &control);
+            control_ran = TRUE;
+        }
+        gint64 wall_start = g_get_monotonic_time();
+        gint64 cpu_start = thread_cpu_us();
         g_main_loop_run(loop); /* Post-burst liveness only; no work pacing. */
+        hb.post_burst_wall_us = g_get_monotonic_time() - wall_start;
+        gint64 cpu_end = thread_cpu_us();
+        hb.post_burst_main_cpu_us = (cpu_start >= 0 && cpu_end >= 0) ? cpu_end - cpu_start : -1;
+        if (control_thread) {
+            g_atomic_int_set(&control.stop, 1);
+            g_thread_join(control_thread);
+        }
+    }
 
     g_test_message("Heartbeat: count=%u, missed=%u, max_gap=%.1f ms, cycles=%u",
                    hb.heartbeat_count, hb.missed_count,
@@ -252,6 +371,7 @@ run_heartbeat(HeartbeatWork work, gpointer data)
                    hb.missed_count - hb.post_burst_missed_count,
                    hb.post_burst_missed_count,
                    hb.post_burst_max_gap_us / 1000.0);
+    report_sched_env(&hb, control_ran ? &control : NULL);
     for (guint i = 0; i < hb.work_count; i++) {
         g_test_message("cycle=%u operation=%.3f ms%s",
                        i + 1, hb.work_us[i] / 1000.0,
@@ -373,6 +493,25 @@ test_heartbeat_detects_burst_pressure(void)
     g_test_trap_assert_stderr("*assertion failed (hb.missed_count <= 2)*");
 }
 
+/* Locks the validity of the record-only CPU metric: a sleeping thread must
+ * report far less CPU than wall time. (clock_gettime(CLOCK_THREAD_CPUTIME_ID)
+ * failed this on macOS 27 by returning wall-clock time.) Observation only; it
+ * does not touch the heartbeat policy. */
+static void
+test_sched_env_thread_cpu_excludes_sleep(void)
+{
+    gint64 cpu_start = thread_cpu_us();
+    gint64 wall_start = g_get_monotonic_time();
+    g_usleep(30 * G_TIME_SPAN_MILLISECOND);
+    gint64 cpu_end = thread_cpu_us();
+    gint64 wall = g_get_monotonic_time() - wall_start;
+    g_assert_cmpint(cpu_start, >=, 0);
+    g_assert_cmpint(cpu_end, >=, 0);
+    gint64 cpu = cpu_end - cpu_start;
+    g_assert_cmpint(wall, >=, 30 * G_TIME_SPAN_MILLISECOND);
+    g_assert_cmpint(cpu, <, wall / 2);
+}
+
 static void
 test_heartbeat_gap_boundary(void)
 {
@@ -420,6 +559,12 @@ main(int argc, char *argv[])
                     test_heartbeat_detects_burst_pressure);
     g_test_add_func("/nostr-gobject/latency/heartbeat-gap-boundary",
                     test_heartbeat_gap_boundary);
+
+    /* Opt-in diagnostic regression, separate from the gating registration and
+     * never counted in it. Run by heartbeat-sched-probe.sh. */
+    if (env_opt_in("NOSTRC_HEARTBEAT_DIAGNOSTICS"))
+        g_test_add_func("/nostr-gobject/latency-diagnostic/sched-env-thread-cpu",
+                        test_sched_env_thread_cpu_excludes_sleep);
 
     return g_test_run();
 }
