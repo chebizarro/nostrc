@@ -201,17 +201,34 @@ except BaseException as exc:
             self.assertFalse(alive(escaped))
             self.assertNotEqual(record['informational_evidence'], record['recovery_informational_evidence'])
 
-        def test_missing_or_tampered_seal_is_retained_failure(self):
+        def test_native_seal_requires_admitted_host_then_missing_or_tampered_seal_fails(self):
+            from test_gate_darwin import seal_admission
+            probe = self.work / 'admission'
+            probe.mkdir()
+            admitted = seal_admission(probe)['admitted']
             for name, target in (('missing', 'pass'),
                                  ('tampered', "import os; os.write(int(os.environ['NOSTRC_NATIVE_SEAL_FD']), b'f' * 64)")):
-                with self.subTest(seal=name):
+                with self.subTest(seal=name, admitted=admitted):
                     lane = self.work / ('lane-' + name)
                     lane.mkdir()
-                    record, outcome, _ = self.custody([sys.executable, '-c', target], 'seal-' + name, native_lane=lane)
-                    self.assertEqual(record['status'], 'clean')
-                    self.assertIn('native final evidence refused', str(outcome))
-                    final = json.loads((lane / 'native-final.json').read_text())
-                    self.assertEqual((final['status'], final['complete']), ('failed', False))
+                    marker = lane / 'target-ran'
+                    record, outcome, _ = self.custody([sys.executable, '-c', f'open({str(marker)!r}, "w").close(); ' + target],
+                                                      'seal-' + name, native_lane=lane)
+                    self.assertIs(record['seal_admission']['admitted'], admitted)
+                    if not admitted:
+                        # Host policy cannot establish same-UID task-port denial:
+                        # refuse before the helper/target, never a seal claim.
+                        self.assertIn('trust boundary not established', str(outcome))
+                        self.assertEqual(record['status'], 'refused_before_launch')
+                        self.assertTrue(record['seal_admission']['refusals'])
+                        self.assertFalse(marker.exists())
+                        self.assertFalse((lane / 'native-final.json').exists())
+                        self.assertNotIn('helper_exit', record)
+                    else:
+                        self.assertEqual(record['status'], 'clean')
+                        self.assertIn('native final evidence refused', str(outcome))
+                        final = json.loads((lane / 'native-final.json').read_text())
+                        self.assertEqual((final['status'], final['complete']), ('failed', False))
     else:
         def test_darwin_refuses_on_linux_before_launch(self):
             result = gate('--head', 'HEAD', '--native-custody', 'darwin', '--evidence-dir', str(self.evidence))

@@ -646,9 +646,10 @@ if seal_fd is not None:
         if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(3, 0, 0, 0, 0) != 0:
             raise RuntimeError('native finalizer nondumpable boundary unavailable')
     else:
-        # macOS has no procfs descriptor-reopen path; a same-UID process could
-        # reach this pipe only through this task's port or ptrace attach.
-        # PT_DENY_ATTACH refuses debugger attach for this finalizer.
+        # macOS has no procfs descriptor-reopen path. PT_DENY_ATTACH closes
+        # ptrace attach only; task-port access is AMFI/taskgated host policy,
+        # which the adapter's fail-closed seal admission must have established
+        # (test_gate_darwin.seal_admission) before this finalizer was launched.
         libc.ptrace.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
         if libc.ptrace(31, 0, None, 0) != 0:
             raise RuntimeError('native finalizer PT_DENY_ATTACH boundary unavailable')
