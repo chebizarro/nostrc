@@ -14,6 +14,7 @@ import tempfile
 from collections import deque
 
 import test_selection_subset as subset
+import test_selection_macos_nip5f_tcp as macos_tcp
 
 SCHEMA_VERSION = 1
 ID = re.compile(r"[a-z0-9_]+(?:\.[a-z0-9_]+)*\Z")
@@ -918,6 +919,13 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             if isinstance(exclusion, dict) and exclusion.get("authority") == NONMEMBER_AUTHORITY:
                 if contract is None:
                     errors.append(f"{lane_id}: unsupported diagnostic nonmember profile")
+                continue
+            if isinstance(exclusion, dict) and exclusion.get("authority") == macos_tcp.AUTHORITY:
+                # Separate exact authority; the libgo record below stays immutable.
+                try:
+                    macos_tcp.validate_receipt_record(exclusion, policy, lane["profile"])
+                except macos_tcp.ApplicabilityError as exc:
+                    errors.append(f"{lane_id}: {exc}")
                 continue
             known = next((g for g in policy.get("coverage_gaps", []) if g.get("id") == "libgo_macos_asan_stress_exclusion"), None)
             if (not isinstance(exclusion, dict) or known is None

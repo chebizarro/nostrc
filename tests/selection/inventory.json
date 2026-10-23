@@ -7793,6 +7793,7 @@
         "{source}/scripts/test-plan.py",
         "{source}/scripts/test_selection.py",
         "{source}/scripts/test_selection_custody.py",
+        "{source}/scripts/test_selection_macos_nip5f_tcp.py",
         "{source}/scripts/test_selection_realization.py",
         "{source}/scripts/test_selection_subset.py",
         "{source}/signet/meson.build",
@@ -8010,7 +8011,9 @@
         "{source}/tests/selection/test_darwin_custody.py",
         "{source}/tests/selection/test_darwin_gate_wiring.py",
         "{source}/tests/selection/test_darwin_boundary_contract.py",
-        "{source}/tests/selection/test_darwin_private_bus.py"
+        "{source}/tests/selection/test_darwin_private_bus.py",
+        "{source}/tests/selection/test_macos_nip5f_tcp_applicability.py",
+        "{source}/tests/selection/test_macos_nip5f_tcp_engine.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -14456,7 +14459,6 @@
       "profiles": [
         "core.linux",
         "core.linux.asan",
-        "core.macos.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
         "groundhog.linux",
@@ -14487,9 +14489,6 @@
           "test_nip5f_tcp"
         ],
         "groundhog.mdk011": [
-          "test_nip5f_tcp"
-        ],
-        "core.macos.asan": [
           "test_nip5f_tcp"
         ]
       },
@@ -19365,6 +19364,23 @@
           "reason": "Local-only contained arm64 prepared peers; no x86/native/workflow alias."
         }
       }
+    },
+    {
+      "id": "core_macos_asan_nip5f_tcp_unconfigured",
+      "profile": "core.macos.asan",
+      "check": "supported.nips.nip5f.signer_endpoint",
+      "registrations": [
+        "test_nip5f_tcp"
+      ],
+      "reason": "Legacy nostrc-ci macOS ASan/UBSan (BUILD_APPS=OFF) provisions no NIP-5F TCP endpoint or token; test_nip5f_tcp then exits 77 (SKIP_RETURN_CODE 77), which never validated a live signer. Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage.",
+      "tracking": "nostrc-0cfsg.36.9",
+      "binding": {
+        "source_sha256": "618c01fdb6d46b0eae8902f1cf543472cac0e5691cbef4945502210a476acbe0",
+        "registration_sha256": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+        "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+        "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
+        "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
+      }
     }
   ],
   "enforcement_ready": false,
@@ -21101,6 +21117,7 @@
         "scripts/test_selection.py",
         "scripts/test_selection_realization.py",
         "scripts/test_selection_subset.py",
+        "scripts/test_selection_macos_nip5f_tcp.py",
         "cmake/NostrcTestInventory.cmake",
         "gnome/groundhog/TestInventory.cmake"
       ]
@@ -23969,6 +23986,14 @@
         "selection.contract"
       ],
       "reason": "Exact ordinary subset admission changes require broad validation."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_macos_nip5f_tcp.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Exact legacy macOS NIP-5F TCP applicability changes require broad validation."
     },
     {
       "effect": "global",

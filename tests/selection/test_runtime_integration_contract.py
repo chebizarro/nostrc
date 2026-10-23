@@ -94,7 +94,11 @@ class RuntimeEnrollmentTests(unittest.TestCase):
                          'prepared_peer_linux_v1')
         self.assertNotIn(normal.FIELD, self.policy['profiles']['groundhog.linux.sanitizers'])
         self.assertFalse(self.policy['enforcement_ready'])
-        self.assertEqual(len(self.policy['coverage_gaps']), 10)
+        # The ten runtime-era gaps plus only the exact legacy macOS NIP-5F TCP
+        # nonvalidation record (nostrc-0cfsg.36.9); no other gap appears.
+        gaps = [g['id'] for g in self.policy['coverage_gaps']]
+        self.assertEqual(len(gaps), 11)
+        self.assertEqual(gaps[-1], 'core_macos_asan_nip5f_tcp_unconfigured')
 
     def test_homed_normal_contract_requires_every_owned_unit_not_root_alias(self):
         profile = self.policy['profiles']['homed.linux.units']
