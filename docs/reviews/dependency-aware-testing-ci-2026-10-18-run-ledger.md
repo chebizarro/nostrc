@@ -1,5 +1,37 @@
 # Dependency-aware testing acceptance run ledger
 
+## W11 finite execution snapshot — 2026-10-23T02:12:28.940355Z
+
+[Executable replay/census and current-head gap register](dependency-aware-testing-w11-execution-2026-10-23.md).
+Sequential queries02:12:04.578186Z–02:12:28.940355Z, not a live counter:
+54 roots=49 failed/one cancelled/two queued/one in progress/one pending.
+Zero successful roots; **0/20 qualifying reviewed distinct PR comparisons and
+0/2 successful complete broad integrations; W11 NOT MET/W12 NOT RUN**.
+
+| Exact root/source | Dated disposition |
+|---|---|
+| [PR20 39884384021](https://github.com/chebizarro/nostrc/actions/runs/39884384021), plan-tested `7ff720d9709672cb60a7b7b50b3294de337ee186` |58 jobs,38 success/9 failure/1 cancellation/10 nonterminal. Windows120189097982 and libgo120189097071 now terminal PASS; selected resources/partition and broad macOS fail. No terminal root gate. |
+| [master20 39884406426](https://github.com/chebizarro/nostrc/actions/runs/39884406426), tested `d9c9c8808b2611fc179ed4ed3640e63920f4683f` |59 jobs,35 success/5 failure/1 cancellation/1 unselected skip/17 nonterminal. No terminal gate. |
+| [PR21 39885673421](https://github.com/chebizarro/nostrc/actions/runs/39885673421), plan-tested `a86aae499c3770a7e84b3d6479ad78977346d683` |Terminal failed gate120200327073. Plan12472608978:zero lanes; validation12473820942:`passed=false`, `complete=true`, `complete_gate_eligible=false`; global inventory/profile-gap refusal.13 unselected skips are not broad acceptance. Independent commit API later confirms actual tested tree equals master663, not interchangeable commit identity. |
+| [master21 39885713147](https://github.com/chebizarro/nostrc/actions/runs/39885713147), plan-tested `663edcd70c0d313c98f87610aa41f1261bce4ee6` |58 jobs,17 success/1 cancellation/40 nonterminal. No terminal gate or complete integration. |
+
+21 real merged PRs verified against immutable base/head/two-parent merge;
+original policy/planner run twice each, byte-stable:19 broad, PR9 shared
+Signer/resources72 checks, PR21 docs-only0 checks. **Logical diagnostics ONLY**,
+not21 comparisons or a five-sample performance matrix. Ten current inventory
+gap rows unconditionally block complete aggregation, including no-op PR21;
+ordinary GH/Grotto have0/33 reviewed Go claims, despite descriptors/other-profile
+ownership. Exact33 diagnostic authority remains unchanged/incomplete; genuine
+full ownership/admission tracked as `nostrc-0cfsg.9.1`, interface sent to parent.
+No dual-source framework, fabricated PRs, authority/criteria changes or cold
+broad retry. `.5` stays CLOSED (comment only), W12/cutover unchanged.
+
+Raw queries/proofs `/tmp/nostrc-w11-execution-20261023/`; final query manifest
+SHA256 `86a6c0a59e09e4a3c7af8d75dba933777bca6b1025fefed2910c41d894869582`.
+The report preserves every candidate's immutable replay merge and source/hash
+bindings; earlier snapshots/failures below are retained, not reinterpreted.
+Internal diagnostic tools/tests/docs: no bump; local commits only, parent lands.
+
 ## Postlanding bounded snapshot — 2026-10-23T01:36:36.747178Z
 
 Final query window01:35:57.553122Z–01:36:36.747178Z, not a live counter.
