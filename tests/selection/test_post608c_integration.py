@@ -4,11 +4,12 @@ import hashlib
 import unittest
 from selector_support import ROOT, s
 import post608c_integration_support as wave
+from post1640_integration_support import before_policy as before_post1640_policy, before_jobs as before_post1640_jobs
 
 
 class Post608cIntegration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        return before_post1640_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_exact_policy_inverse_without_omission_witness_changes(self):
         current = self.policy()
@@ -56,7 +57,7 @@ class Post608cIntegration(unittest.TestCase):
 
     def test_actual_workflows_enrolled_and_unknown_jobs_not_projected(self):
         from profile_contract_support import source_job_blocks
-        actual = source_job_blocks(ROOT)
+        actual = before_post1640_jobs(source_job_blocks(ROOT))
         policy = self.policy()
         for ident, record in wave.witness()['maps']['workflow_jobs'].items():
             for key in ('source_sha256', 'workflow_sha256', 'matrix_source'):
@@ -71,7 +72,7 @@ class Post608cIntegration(unittest.TestCase):
 class HostedCauseIntegration(unittest.TestCase):
     """Exact authored hosted repair enrollment; no Docker/runtime acceptance."""
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        return before_post1640_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_exact_9062_policy_inverse_and_old_witnesses_stay_immutable(self):
         current = self.policy()
@@ -110,8 +111,9 @@ class HostedCauseIntegration(unittest.TestCase):
 
     def test_controller_owner_inputs_and_exact_workflow_hashes(self):
         from profile_contract_support import source_job_blocks, validate_job_accounting
-        current = self.policy(); validate_job_accounting(current, ROOT)
-        actual = source_job_blocks(ROOT)
+        current = self.policy()
+        validate_job_accounting(s.load_inventory(ROOT / 'tests/selection/inventory.json'), ROOT)
+        actual = before_post1640_jobs(source_job_blocks(ROOT))
         for ident, record in wave.hosted_witness()['maps']['workflow_jobs'].items():
             for key in ('source_sha256', 'workflow_sha256', 'matrix_source'):
                 self.assertEqual(current['workflow_jobs'][ident][key], actual[ident][key])

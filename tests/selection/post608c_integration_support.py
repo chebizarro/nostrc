@@ -27,7 +27,12 @@ def hosted_witness():
 
 
 def before_hosted_source(path, raw):
-    return _source(hosted_witness(), path, raw)
+    data = hosted_witness()
+    record = data['sources'].get(path)
+    if record is not None and hashlib.sha256(raw).hexdigest() == record['before_sha256']:
+        return raw
+    from post1640_integration_support import before_source as before_post1640_source
+    return _source(data, path, before_post1640_source(path, raw))
 
 
 def before_source(path, raw):
@@ -55,7 +60,8 @@ def _source(data, path, raw):
 
 
 def before_hosted_jobs(records):
-    return _jobs(hosted_witness(), records)
+    from post1640_integration_support import before_jobs as before_post1640_jobs
+    return _jobs(hosted_witness(), before_post1640_jobs(records))
 
 
 def before_jobs(records):
@@ -72,11 +78,18 @@ def _jobs(data, records):
 
 
 def before_hosted_policy(policy):
-    return _policy(hosted_witness(), policy)
+    data = hosted_witness()
+    if s.digest(policy) == data['base_policy_hash']:
+        return copy.deepcopy(policy)
+    from post1640_integration_support import before_policy as before_post1640_policy
+    return _policy(data, before_post1640_policy(policy))
 
 
 def before_policy(policy):
-    return _policy(witness(), before_hosted_policy(policy))
+    data = witness()
+    if s.digest(policy) == data['base_policy_hash']:
+        return copy.deepcopy(policy)
+    return _policy(data, before_hosted_policy(policy))
 
 
 def _policy(data, policy):

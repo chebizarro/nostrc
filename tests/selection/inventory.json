@@ -8028,7 +8028,11 @@
         "{source}/tests/selection/fixtures/post608c_integration_20261024.json",
         "{source}/tests/selection/test_post608c_integration.py",
         "{source}/tests/selection/namespace_policy_controller.sh",
-        "{source}/tests/selection/fixtures/hosted_cause_integration_20261024.json"
+        "{source}/tests/selection/fixtures/hosted_cause_integration_20261024.json",
+        "{source}/tests/selection/test_homed_ci_worker.py",
+        "{source}/tests/selection/post1640_integration_support.py",
+        "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
+        "{source}/tests/selection/test_post1640_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -26026,6 +26030,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26082,6 +26093,13 @@
         "custody": "linux_pidns_v1",
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
       },
       "execution_domain": "mdk_original_linux_v1",
       "build_parallelism": 2,
@@ -26221,6 +26239,13 @@
         "custody": "linux_pidns_v1",
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
       },
       "phase_environments": {
         "configure": {},
@@ -26554,6 +26579,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26665,6 +26697,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26718,6 +26757,13 @@
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
       },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
+      },
       "phase_environments": {
         "configure": {},
         "build": {},
@@ -26768,6 +26814,13 @@
         "custody": "linux_pidns_v1",
         "audit_scope": "full_configured_universe",
         "registration_policy": "all_owned_and_executed"
+      },
+      "normal_selected_execution": {
+        "schema_version": 1,
+        "custody": "linux_pidns_v1",
+        "audit_scope": "full_configured_universe",
+        "registration_policy": "all_owned_selected_closure_executed",
+        "selection": "source_bound_dependency_plan"
       },
       "execution_domain": "mdk_original_linux_v1",
       "build_parallelism": 2,
@@ -27240,7 +27293,7 @@
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
       "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
@@ -27248,7 +27301,7 @@
     ".github/workflows/dependency-tests.yml:mdk011": {
       "matrix_source": "",
       "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9",
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
@@ -27419,7 +27472,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -27427,7 +27480,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -27435,7 +27488,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -27443,7 +27496,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -27451,7 +27504,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -27459,7 +27512,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -27467,7 +27520,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -27475,7 +27528,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -27483,7 +27536,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -27491,7 +27544,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -27499,7 +27552,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -27507,15 +27560,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "d716dbc492425391da996cc4bc475805de34d891a9065dd8126a7839b544d0b1",
+      "source_sha256": "a0b23c92cae5090d7cd485ca7359791a8fbe53133596879bfac011ba31198f0d",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
@@ -27523,9 +27576,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "bbd663a642a0d219bbe87ca291263bd857ff1a0d1ce892c42a26c07a070e48db",
+      "source_sha256": "fcf6ac4f6d1011bee1f4706360de3ccad87f0d2821dad67d18b5363b03cf273d",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac"
+      "workflow_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -27981,9 +28034,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "226fc05a778d84e8cf4d922c667db5a3fcbc442c918b83282bb8ee6cf3e9a2e5",
+      "source_sha256": "74d407dd489dbf824d30c8a341b6f4667a4deb3963dec4295d6092434a78885b",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "9bb4045825b44193452b187f1e5d7ef80911a29bd531ffb787aa512255cbae4f"
+      "workflow_sha256": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
@@ -28039,7 +28092,7 @@
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
       "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
-      "workflow_sha256": "cd7a6ac12257accc4750ba0ba3644c2a6717189c86364be5bee56df7afe363d9"
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     },
     ".github/workflows/namespace-policy-regression.yml:regressions": {
       "profiles": [],
@@ -28048,6 +28101,14 @@
       "matrix_source": "",
       "source_sha256": "c712a814165514da86ef9e7399d0c78d4310ce6615536cf930d9b5e4d457a46c",
       "workflow_sha256": "4ce40f1e0ea0b66dfd7580f8fc5344872c13672cf889a2dd5bcf098c3293f5aa"
+    },
+    ".github/workflows/dependency-tests.yml:homed_units": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Standalone five-unit homed CI dispatch is source-accounted only; no physical CI receipt, original four-distro root/systemd/FUSE validation or complete profile-union acceptance is inferred.",
+      "source_sha256": "5e470ea449945b085873bc31a1e21bfd5868154ea2625e0c9a403c943d42082b",
+      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
     }
   },
   "schema_version": 1,

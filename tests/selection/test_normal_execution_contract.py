@@ -52,9 +52,26 @@ class NormalFixture(Project):
             expected_outcome='pass', build_scope='default', build_targets=[],
             command=['cmake', '--build', '{build}', '--config', 'Debug'], working_directory='{source}',
             environment={}, runtime_inputs=[])
+        self.prepare_source()
         self.identity = dict(kind='committed', sha=self.git('rev-parse', 'HEAD').decode().strip())
-        self.plan = s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
-                                mode='broad', source_identity=self.identity)
+        self.plan = self.make_plan()
+        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')
+        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)
+        self.execute()
+        self.public_path = self.work / 'native-receipt.json'
+        self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'
+        self.adapter = dict(adapter='test-gate', custody_mode='pidns', status='partial', errors=[], bypasses={},
+            executions=[dict(plan_id=self.plan['plan_id'], source_identity=self.identity, status='partial',
+                lanes=[dict(profile='synthetic', status='passed', evidence=str(self.work),
+                    retained_evidence=str(self.work / 'native-final.json'), normalized_receipt=str(self.public_path),
+                    mdk_recovery=[])])])
+        self.seal()
+
+    def prepare_source(self):
+        """Hook: committed source history before identity/plan (default: none)."""
+
+    def execute(self):
+        """Default: direct engine sequence (existing full-normal fixture)."""
         self.real = r.configure_profile(self.root, self.build, 'synthetic', self.profile, self.identity,
                                         s.digest(self.inventory), inventory=self.inventory, diagnostic_boundary='linux_pidns_v1')
         self.resolved = r.resolve_checks(self.inventory, self.plan, self.real, 'synthetic')
@@ -66,17 +83,29 @@ class NormalFixture(Project):
         self.raw = r.run_resolved(self.resolved, self.build, self.evidence, input_audit=post,
                                   input_audit_before_build=pre, build=False)
         self.assertEqual(self.raw['outcome'], 'passed')
-        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')
-        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)
         self.original = self.cli.normalize_receipt(self.inventory, self.plan, self.resolved, self.raw)
-        self.public_path = self.work / 'native-receipt.json'
-        self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'
-        self.adapter = dict(adapter='test-gate', custody_mode='pidns', status='partial', errors=[], bypasses={},
-            executions=[dict(plan_id=self.plan['plan_id'], source_identity=self.identity, status='partial',
-                lanes=[dict(profile='synthetic', status='passed', evidence=str(self.work),
-                    retained_evidence=str(self.work / 'native-final.json'), normalized_receipt=str(self.public_path),
-                    mdk_recovery=[])])])
-        self.seal()
+
+    def execute_production(self):
+        """The pidns gate's inner production sequence: test-plan.py main(resolve) then main(run)."""
+        plan_path = Path(self.temp.name).resolve() / 'selected-plan.json'
+        plan_path.write_text(json.dumps(self.plan))
+        # Same `common` as test-gate.sh:622-627: the pidns boundary goes to BOTH resolve and run.
+        common = ['--repo', str(self.root), '--profile', 'synthetic', '--plan', str(plan_path),
+                  '--build-dir', str(self.build), '--evidence-dir', str(self.evidence),
+                  '--diagnostic-boundary', 'linux_pidns_v1']
+        resolutions, results = [], []
+        self.assertEqual(self.cli.main(['resolve', *common, '--configure',
+                                        '--output', str(self.work / 'resolved.json')], result_observer=resolutions.append), 0)
+        self.assertEqual(self.cli.main(['run', *common, '--resolved', str(self.work / 'resolved.json'), '--phase', 'all',
+                                        '--timeout', str(self.profile['timeout_seconds']),
+                                        '--output', str(self.work / 'receipt.json')], result_observer=results.append), 0)
+        self.resolved, self.original = resolutions[-1], results[-1]
+        self.raw = self.original['backend_receipt']
+        self.real = r.load_realization(self.build, self.identity)
+
+    def make_plan(self):
+        return s.make_plan(self.inventory, [change('main.c')], head=self.identity['sha'], base='b' * 40,
+                           mode='broad', source_identity=self.identity)
 
     def seal(self):
         # Exercise real retained byte verification. The outer supervisor result
@@ -180,6 +209,39 @@ class NormalContractSemantics(unittest.TestCase):
         with self.assertRaises(ValueError):
             normal._expected_check_outcome(dict(expected_outcome='pass'),
                 dict(outcome='expected_incompatibility', exception_case='mdk09_incompatibility', exit_code=77))
+
+    def test_committed_source_boundary_full_unchanged_selected_only_new(self):
+        full = {normal.FIELD: copy.deepcopy(normal.MARKER)}
+        selected = dict(full, **{normal.SELECTED_FIELD: copy.deepcopy(normal.SELECTED_MARKER)})
+        committed = dict(kind='committed', sha='a' * 40)
+        dirty = dict(kind='dirty', sha='a' * 40, snapshot_digest='d' * 64)
+        old = 'normal full-profile qualification requires a fresh committed broad plan'
+        for profile in (full, selected):
+            self.assertEqual(normal._scope({}, dict(effective_mode='broad', source_identity=committed), {}, profile, None), 'full')
+            with self.assertRaisesRegex(ValueError, old):      # exactly the 1640 full condition/message
+                normal._scope({}, dict(effective_mode='broad', source_identity=dirty), {}, profile, None)
+        for identity in (committed, dirty):
+            with self.assertRaisesRegex(ValueError, old):      # no selected contract: affected stays refused as before
+                normal._scope({}, dict(effective_mode='affected', requested_mode='affected', source_identity=identity), {}, full, None)
+        with self.assertRaisesRegex(ValueError, 'selected-normal requires a committed source'):
+            normal._scope({}, dict(effective_mode='affected', requested_mode='affected', source_identity=dirty), {}, selected, None)
+        with self.assertRaisesRegex(ValueError, 'portable normal proof requires a committed source'):
+            normal.verify_source_closure(None, '.', dict(source_identity=dirty))   # dirty never gets transport authority
+
+    def test_unselected_mdk_lifecycle_must_leave_no_trace(self):
+        descriptors = {'gui': {'requires': ['display']}, 'groundhog-mdk011-interop-image': {'requires': ['docker']}}
+        clean = dict(required_capabilities=['display'], runtime_capability_evidence={})
+        normal._require_no_mdk_lifecycle(clean, ['gui'], descriptors, [])
+        residues = {
+            'runtime state': (dict(clean, mdk_runtime={'status': 'passed'}), ['gui'], []),
+            'docker evidence': (dict(clean, runtime_capability_evidence={'docker': {}}), ['gui'], []),
+            'docker capability': (dict(clean, required_capabilities=['display', 'docker']), ['gui'], []),
+            'journal/recovery': (clean, ['gui'], [dict(closed_in_namespace=True)]),
+            'image fixture executed': (clean, ['gui', 'groundhog-mdk011-interop-image'], []),
+        }
+        for label, (raw, closure, recovery) in residues.items():
+            with self.subTest(label), self.assertRaisesRegex(ValueError, 'unselected original MDK lifecycle'):
+                normal._require_no_mdk_lifecycle(raw, closure, descriptors, recovery)
 
     def test_signer_uses_canonical_source_expansion_and_test_phase_projection(self):
         profile = dict(environment={'ASAN_OPTIONS': 'detect_leaks=1', 'LSAN_OPTIONS': 'wrong'},
