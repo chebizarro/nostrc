@@ -83,15 +83,43 @@ def gate(repo, *argv, timeout=180):
                           env=dict(os.environ, XPC_SERVICE_NAME='0'))
 
 
+class FixtureSetupFailureCleanup(unittest.TestCase):
+    def test_failed_same_sha_setup_still_removes_its_allocation(self):
+        import io
+        from unittest import mock
+        seen = []
+
+        def failing(work):
+            # A partial source copy exists when fetch/checkout/SHA check fails.
+            (work / 'repo').mkdir()
+            (work / 'repo' / 'partial').write_text('partial copy')
+            seen.append(work)
+            raise subprocess.CalledProcessError(128, ['git', 'fetch'])
+
+        class Forced(DarwinGateWiring):
+            pass
+
+        suite = unittest.TestSuite([Forced('test_darwin_value_is_explicit_and_legacy_stays_default')])
+        result = unittest.TestResult()
+        with mock.patch(__name__ + '.same_sha_repository', side_effect=failing):
+            suite.run(result)
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(seen[0].name.startswith('nostrc-darwin-gate-repo-'))
+        # setUpClass failed (no test ran) and the class cleanup still ran.
+        self.assertEqual(result.testsRun, 0)
+        self.assertEqual(len(result.errors), 1, result.errors)
+        self.assertIn('CalledProcessError', result.errors[0][1])
+        self.assertFalse(seen[0].exists())
+
+
 class DarwinGateWiring(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._repo_tmp = tempfile.TemporaryDirectory(prefix='nostrc-darwin-gate-repo-')
+        # Registered before any fetch/checkout/SHA check so a setup failure,
+        # which skips tearDownClass, still removes the source-copy allocation.
+        cls.addClassCleanup(cls._repo_tmp.cleanup)
         cls.repo = same_sha_repository(Path(cls._repo_tmp.name))
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._repo_tmp.cleanup()
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix='nostrc-darwin-gate-')
