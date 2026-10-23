@@ -31,6 +31,8 @@ parser.add_argument("--plan", help="execute exact retained committed plan identi
 parser.add_argument("--broad", action="store_true")
 parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
                     help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
+parser.add_argument("--namespace-apparmor-profile", metavar="NAME",
+                    help="pidns only: provisioned path-unattached AppArmor profile the custody helper explicitly enters before unshare; host policy unchanged")
 parser.add_argument("--explain", action="store_true", help="plan only; no configure/build/test")
 parser.add_argument("--profile", action="append", help="explicit partial profile projection")
 parser.add_argument("--pre-push", action="store_true", help="read all ref updates; union ranges per SHA")
@@ -45,6 +47,10 @@ receipt["bypasses"] = {name: os.environ[name] for name in
     ("NOSTRC_SKIP_PRE_PUSH", "NOSTRC_SKIP_LINUX_GATE", "NOSTRC_SKIP_SANITIZER_GATE", "NOSTRC_GATE_LINUX_TESTS")
     if os.environ.get(name) == ("0" if name == "NOSTRC_GATE_LINUX_TESTS" else "1")}
 receipt["custody_mode"] = args.linux_custody
+if args.namespace_apparmor_profile is not None:
+    if args.linux_custody != "pidns":
+        parser.error("--namespace-apparmor-profile requires --native-custody pidns")
+    receipt["namespace_apparmor_profile"] = args.namespace_apparmor_profile
 receipt["complete_gate_eligible"] = False
 if args.linux_custody != "legacy":
     receipt["untraced_profile_parity"] = False
@@ -102,6 +108,8 @@ def linux_command(argv, *, cwd=None, env=None, log=None, resource_root=None, pri
                 helper = "adapter_namespace_custody.py" if args.linux_custody == "pidns" else "adapter_custody.py"
                 resources = (["--private-resource-root", str(resource_root)] +
                              (["--private-display"] if private_display else [])) if resource_root else []
+                if args.linux_custody == "pidns" and args.namespace_apparmor_profile is not None:
+                    resources = ["--apparmor-profile", args.namespace_apparmor_profile, *resources]
                 active = subprocess.Popen([sys.executable, str(adapter.parent / helper),
                                            "--parent-ready-fd", str(read_fd), "--parent-pid", str(os.getpid()),
                                            *resources, *map(str, argv)],
@@ -439,6 +447,14 @@ def host_guard(profile, checks, policy, profile_id):
                 raise RuntimeError('signer fixture supports only exact test_nip5f_tcp; lane not launched')
         if not {'display', 'private_bus'} <= caps:
             raise RuntimeError('signer fixture requires authored namespace-owned display/private bus resources')
+    if 'docker' in caps:
+        # Original MDK images/peers: Docker scope by the selected controller,
+        # host tree by the PID namespace. Never legacy/ptrace or other domains.
+        if (host != 'linux' or args.linux_custody != 'pidns' or profile['architecture'] != platform.machine()
+                or profile.get('execution_domain') != 'mdk_original_linux_v1'):
+            raise RuntimeError('original MDK image/peer lifecycle requires its authored domain, exact native '
+                               'Linux architecture and pidns custody; lane not launched')
+        caps = caps - {'docker'}
     unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring", "signer_endpoint"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
@@ -662,6 +678,14 @@ finally:
                     if resource_root:
                         from test_selection_services import release_resource_mountpoint
                         release_resource_mountpoint(lane_dir)
+                    if args.linux_custody == 'pidns' and (lane_dir / 'evidence').is_dir():
+                        # Docker resources outlive a namespace kill: replay exact
+                        # journaled cleanup outside it, never as success.
+                        from test_selection_mdk import recover_lane
+                        state['mdk_recovery'] = recover_lane(lane_dir / 'evidence', source / 'scripts/mdk-gate.py', lane_dir)
+                if any(not item['closed_in_namespace'] for item in state.get('mdk_recovery', [])):
+                    raise RuntimeError('original MDK lifecycle required out-of-namespace recovery; lane failed: '
+                                       + json.dumps(state['mdk_recovery'], sort_keys=True))
                 if args.linux_custody == 'pidns':
                     import test_selection_realization as realization_backend
                     realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')

@@ -59,12 +59,16 @@ class PolicyControllerTests(unittest.TestCase):
         proof = dict(kind='policy_controller_contract_v1', source_identity=identity,
             inputs={name: 'b' * 64 for name in controller.INPUTS}, image='sha256:' + 'c' * 64,
             tools={name: {'path': '/fixture/bin/' + name, 'sha256': 'd' * 64} for name in ('docker', 'git', 'python')},
+            apparmor={'name': 'nostrc-ns-' + 'f' * 32},
             setup_inputs={name: 'e' * 64 for name in ('/fixture/policy-testhost-setup.json',
-                '/fixture/build/image-build.log', '/fixture/build/image-build.log.process.json')},
+                '/fixture/build/image-build.log', '/fixture/build/image-build.log.process.json',
+                '/fixture/dependency/namespace-apparmor/setup.json')},
             readiness=False, scope='authored_provisioned_policy_workload_not_native_profile')
         controller._validate_contract_shape(proof, identity)
         for mutate in (
-            lambda p: p.pop('tools'), lambda p: p.pop('setup_inputs'),
+            lambda p: p.pop('tools'), lambda p: p.pop('setup_inputs'), lambda p: p.pop('apparmor'),
+            lambda p: p['apparmor'].update(name='nostrc-namespace-custody'),
+            lambda p: p['setup_inputs'].pop('/fixture/dependency/namespace-apparmor/setup.json'),
             lambda p: p['tools'].pop('git'), lambda p: p['tools']['docker'].update(sha256='not-a-hash'),
             lambda p: p['tools']['python'].update(path='relative/python'),
             lambda p: p['setup_inputs'].pop('/fixture/build/image-build.log.process.json'),
@@ -113,11 +117,15 @@ class PolicyControllerTests(unittest.TestCase):
     def test_unchanged_workload_and_scoped_custody_are_explicit(self):
         source = (ROOT / 'scripts/test_selection_policy.py').read_text()
         for token in ('--cap-drop=ALL', '--security-opt=no-new-privileges', '--network',
-                      '--read-only', '--cidfile', '--security-opt=apparmor=unconfined',
+                      '--read-only', '--cidfile',
+                      "'--security-opt=apparmor=' + proof['apparmor']['name']",
+                      "APPARMOR_SETUP = 'dependency/namespace-apparmor/setup.json'",
+                      "workload_apparmor(evidence, proof['apparmor']['name'])",
+                      "'NOSTRC_NAMESPACE_APPARMOR_PROFILE=' + proof['apparmor']['name']",
                       'target=/source,readonly', "lifecycle['cleanup'](control)"):
             self.assertIn(token, source)
         for token in ('--privileged', '--cap-add', '--pid=host', '/var/run/docker.sock',
-                      'sudo ', 'apparmor_parser'):
+                      'sudo ', 'apparmor_parser', 'apparmor=unconfined', 'sysctl'):
             self.assertNotIn(token, source)
         entry = (ROOT / 'tests/selection/namespace_policy_entry.sh').read_text()
         self.assertIn('run policy-suite python3 -m unittest discover -s tests/selection -v', entry)

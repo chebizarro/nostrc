@@ -3,6 +3,7 @@
  * Consent is explicit, one-shot, and bound to the real pending request metadata.
  */
 #include <gio/gio.h>
+#include <glib-unix.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -90,6 +91,12 @@ static void snapshot(GDBusConnection *connection, const gchar *sender,
 }
 static const GDBusInterfaceVTable status_vtable = {.method_call = snapshot};
 
+/* Owned fixture shutdown is a normal exit, so sanitizer exit checks run. */
+static gboolean quit_on_signal(gpointer loop) {
+  g_main_loop_quit(loop);
+  return G_SOURCE_CONTINUE;  /* removed explicitly after the loop */
+}
+
 int main(int argc, char **argv) {
   if (argc != 4 || strcmp(argv[1], "--approve-unidentified-get-public-key") ||
       (strcmp(argv[2], "allow") && strcmp(argv[2], "deny") && strcmp(argv[2], "hold"))) {
@@ -125,10 +132,15 @@ int main(int argc, char **argv) {
   if (!status || !g_dbus_connection_register_object(bus, "/org/nostr/test/nip5f_approver",
       status->interfaces[0], &status_vtable, NULL, NULL, &error))
     g_error("fixture status export failed");
+  /* Graceful shutdown handlers exist before readiness is announced. */
+  g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+  guint term = g_unix_signal_add(SIGTERM, quit_on_signal, loop);
+  guint interrupt = g_unix_signal_add(SIGINT, quit_on_signal, loop);
   /* Roundtrip on the same connection fences AddMatch before client launch. */
   bus_fence();
   g_print("ready:%s\n", identity); fflush(stdout);
-  g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE); g_main_loop_run(loop);
+  g_main_loop_run(loop);
+  g_source_remove(term); g_source_remove(interrupt);
   g_dbus_connection_signal_unsubscribe(bus, subscription); g_object_unref(bus);
   return 0;
 }

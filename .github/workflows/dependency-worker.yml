@@ -48,6 +48,14 @@ jobs:
           profile = policy['profiles'][os.environ['PROFILE']]
           actual_platform = {'Darwin': 'macos', 'Linux': 'linux'}.get(platform.system())
           s.require(profile['platform'] == actual_platform and profile['architecture'] == platform.machine(), 'runner/profile mismatch')
+          # The provisioned signer fixture exists only inside the outer pidns
+          # gate: any profile authoring signer_endpoint (including sanitizer
+          # variants) takes that route, never ambient wrapper services; so do
+          # original MDK image/peer lanes, whose host tree only pidns owns.
+          route = 'pidns' if ('signer_endpoint' in profile.get('capabilities', [])
+                              or profile.get('execution_domain') == 'mdk_original_linux_v1') else 'plan'
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('DEPENDENCY_ROUTE=' + route + '\n')
           PY
       - name: Install Linux profile prerequisites
         if: runner.os == 'Linux'
@@ -172,6 +180,17 @@ jobs:
         run: |
           brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc json-glib libgit2 dbus
           command -v dbus-daemon
+      - name: Provision per-job namespace-custody AppArmor profile
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PROFILE:${DEPENDENCY_ROUTE:-plan}" in
+            static.policy:*|core.linux:*|grotto.linux:*|groundhog.linux:*|*:pidns)
+              # Only namespace-custody lanes; kernel settings are never changed.
+              bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/dependency/namespace-apparmor" ;;
+            *) echo "not a namespace-custody lane: no AppArmor provisioning" ;;
+          esac
       - name: Prepare source-bound provisioned policy image
         if: runner.os == 'Linux' && inputs.profile == 'static.policy'
         shell: bash
@@ -183,14 +202,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dependency/receipts/$PROFILE"
-          case "$PROFILE" in
-            core.linux|grotto.linux|groundhog.linux)
+          lane="$PROFILE"
+          # DEPENDENCY_ROUTE comes from the validated profile (verify step).
+          if [[ "${DEPENDENCY_ROUTE:-plan}" == pidns ]]; then lane=pidns; fi
+          case "$lane" in
+            pidns|core.linux|grotto.linux|groundhog.linux)
               # The outer gate owns private services and post-namespace-exit
               # sealing. Unsupported runner kernels retain refusal, not green.
+              # The per-job profile flows from its retained journal into the
+              # helper argv; without provisioning the helper keeps its refusal.
+              apparmor_args=()
+              apparmor_setup="$RUNNER_TEMP/dependency/namespace-apparmor/setup.json"
+              if [[ -f "$apparmor_setup" ]]; then
+                apparmor_args=(--namespace-apparmor-profile
+                  "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["name"])' "$apparmor_setup")")
+              fi
               set +e
               bash scripts/test-gate.sh --head "$REQUESTED_SHA" \
                 --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
-                --native-custody pidns --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
+                --native-custody pidns ${apparmor_args[@]+"${apparmor_args[@]}"} \
+                --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
                 2>&1 | tee "$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log"
               gate_status=${PIPESTATUS[0]}
               set -e
@@ -237,6 +268,12 @@ jobs:
       # The CLI consumes the exact profile args/environment/phase metadata from the plan's
       # inventory. Unsupported runtimes/live-peer lifecycles fail only this selected lane;
       # neither a failed command nor a missing receipt is promoted to success.
+      - name: Remove only this job's AppArmor profile after its consumers exited
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        # Unconditional (failure/cancellation too); a never-provisioned lane
+        # records not_provisioned. Any surviving consumer or policy delta fails.
+        run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/dependency/namespace-apparmor"
       - name: Retain incomplete evidence on failure or cancellation
         if: always()
         uses: actions/upload-artifact@v4
@@ -253,6 +290,7 @@ jobs:
             ${{ runner.temp }}/dependency/evidence
             ${{ runner.temp }}/dependency/ordinary-tool-setup.json
             ${{ runner.temp }}/dependency/policy-testhost-setup.json
+            ${{ runner.temp }}/dependency/namespace-apparmor
             ${{ runner.temp }}/dependency/policy-image-*
             ${{ runner.temp }}/dependency-build/namespace-policy
             ${{ runner.temp }}/dependency-build/nostrc-test-inventory*

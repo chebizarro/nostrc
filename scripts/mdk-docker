@@ -1,0 +1,7 @@
+#!/bin/sh
+# GROUNDHOG_DOCKER for the selected original MDK route (scripts/test_selection_mdk.py).
+# Only a bound lifecycle may run Docker through it: without its state and
+# interpreter this refuses; there is no fallback to an unguarded docker CLI.
+: "${NOSTRC_MDK_STATE:?original MDK lifecycle state required}"
+: "${NOSTRC_MDK_PYTHON:?original MDK lifecycle interpreter required}"
+exec "$NOSTRC_MDK_PYTHON" "$(dirname "$0")/mdk-gate.py" docker "$@"

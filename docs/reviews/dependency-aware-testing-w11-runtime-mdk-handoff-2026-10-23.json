@@ -1,0 +1,82 @@
+{
+ "base": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+ "code_tip": "8c385e460771b503d30131af0ad9433b791ff4fc",
+ "commits": {
+  "82fe09ff7": "D MDK controller",
+  "877bc14ba": "A sanitizer env projection",
+  "8c385e460": "D seams + recovery",
+  "9c7a82c5f": "A signer (frozen)",
+  "b5de1dae0": "AppArmor v1 (not approved; superseded)",
+  "c872f8da2": "AppArmor safety revision"
+ },
+ "evidence_root": "/tmp/nostrc-w11-runtime-20261023",
+ "evidence_sha256": {
+  "b-enrollment-tip.json": "7114753e556fa27b6b2b302790cedabaf6a9b58659eddc09a3d25f5b0015c741",
+  "capacity-boundary.json": "430fd63a277e5c94861f88a211415eb2121a05064f94ed6d56acbc5e17e3af8f",
+  "d-configure/b011-configure.log": "ce7d7316f373be04647c8f8eda54ff208fb424e60324f0d00d0e843f29dfea3c",
+  "d-configure/b08-configure.log": "f5c651874053596f046bbc6539bc764c0315814786636afaed37bb046f3d9105",
+  "d-configure/ctest-mdk-trace.json": "e580e16f530041f00469a71998c50f8bed3399458e755e86fa3da7db8f932f27",
+  "emulated/evidence/fixture.log": "10e446a79c67950e05c34b13aade797ebf414c379d3c1e40ae64ceae6599349c",
+  "hosted/SHA256SUMS": "66b929cf956a9374ff96d57b7f7210ffeec5694c6f584455816c47eb540939cc",
+  "interface-mdk-original-v1.json": "452f43358079f149370694acf730ec10f1a53e3a9a1839e99a76afd221b87588",
+  "interface-signer-runtime-v1.json": "141d1f601bc1dfd05d2565cfde77aaae891d629bfb2ce4b840744d2360c0b727",
+  "linux/run2-fixture/evidence/asan-fixture.log": "cb2b17d9cb26a37afa3b8aee75cf0ec02ed0f251426bbf68945258984d395d8f",
+  "linux/run2-fixture/evidence/asan-instrumentation.json": "390891f3d20086af3649c2f67340b1d5bf9aee289a53230cf68434d3bdbc7658",
+  "linux/run2-fixture/evidence/commands.tsv": "ca99183a98a05fe60b784d8fa101e32aa4c5fe5f1edc26588f310e50f914e779",
+  "linux/run2-fixture/evidence/leak-fixture.log": "5264299102d4fa0695e75c549d55ed35ca4b1fdf6fc36d47f3c66eef64bfd146",
+  "linux/run2-kernel/evidence/cells.log": "c07de2497fd1c38a26db4784f6e05cc6d718232f991f2d8f4f374f87a9aa63d2",
+  "oracle-review-20261023.md": "c21f82862766c2f38ed687fa18d8757e3cd9dde60ff842c5676a658baeb74b41",
+  "storekey-cause/readlink-control-arm64.txt": "cf88c44112edec500509f3af1c6fa688fec26dbafee6baf3149e31470b0f2d5d",
+  "storekey-cause/readlink-proof-amd64.txt": "20614fe6ee81bd1d5ea77617d239479b988cae6cd0b1755c3197ce2ccafaab2e",
+  "suite/base.log": "ee3c60f85edf7787ca252077faae1198f900ebd5c2fb3a4891393213cecff717",
+  "suite/final.log": "961a18d3712ee5eab18dddd33d3e91cba6af375cf226d041008841f2fcb27617"
+ },
+ "hosted": {
+  "api_head": "d29a5ac5b",
+  "artifacts_sha256": {
+   "dependency-namespace-policy-regressions": "9a7c8049be748c65b314f034b6ef0d2df8826b72c74afaa128cfb447e629eb39",
+   "validation-namespace-policy-regressions": "b0dc783311e826211bded9abc161cb51268fcdc8a31410594f0aecbc736bb5d6"
+  },
+  "jobs": {
+   "broad_static_regressions": 120310802627,
+   "core_asan": 120310801461,
+   "grotto_asan": 120310801692,
+   "mdk011": 120310801961,
+   "mdk08": 120310801546,
+   "policy_regressions": 120310801700
+  },
+  "run": 39922245779,
+  "tested": "4527a06e8c57ea014499d6e64f548843584f83eb"
+ },
+ "invalid_attempts": [
+  "linux/INVALID-run1-no-passwd-1001-evidence",
+  "linux/run3-kernel",
+  "linux/run3-fixture",
+  "suite/slice1-focused.log",
+  "suite/final.log (ENOSPC)"
+ ],
+ "kind": "w11_runtime_mdk_handoff_v1",
+ "not_run_on_final": [
+  "linux kernel/fixture proof",
+  "supplementary-group cell",
+  "full selection suite",
+  "real Docker MDK",
+  "hosted AppArmor"
+ ],
+ "owned_docker_present": [
+  "5944b10795079ed6ed2214e1ca4fa6839ad332b3b4ff5ccc784195ca509461ae",
+  "de340b27dd13480cb6560af7b74d9ed66f17011dc4b0a7cf756d45ea706396bb"
+ ],
+ "schema_version": 1,
+ "superseded_unreferenced": [
+  "38aeb6aed",
+  "c66ba6668",
+  "dad07a8fe (wip)",
+  "4deb1a1df",
+  "91d7772be",
+  "c4edc4cff (wip)"
+ ],
+ "version_bump": "none (CI/test tooling)",
+ "w11": "NOT MET",
+ "w12": "NOT RUN"
+}

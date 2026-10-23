@@ -305,6 +305,58 @@ SIGNER_INPUTS = ('tests/runtime/test_provisioned_nip5f.py', 'tests/runtime/nip5f
                  'apps/grotto/data/org.nostr.Grotto.gschema.xml')
 SIGNER_BUILD_INPUTS = ('apps/grotto/grotto-daemon', 'nips/nip5f/test_nip5f_tcp',
                        'nips/nip5f/test_nip5f_approver', 'apps/grotto/gschemas.compiled')
+SIGNER_EXECUTABLES = SIGNER_BUILD_INPUTS[:3]
+# Authored instrumentation -> exact realized cache entries. GNOSTR_ENABLE_ASAN
+# forces GO_ENABLE_ASAN, whose Debug flags instrument every executable.
+SIGNER_INSTRUMENTATION = {'none': {'GO_ENABLE_ASAN': None},
+                          'asan_ubsan': {'GO_ENABLE_ASAN': 'GO_ENABLE_ASAN:BOOL=ON',
+                                         'CMAKE_BUILD_TYPE': 'CMAKE_BUILD_TYPE:STRING=Debug'}}
+SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')
+
+
+def elf_symbol_names(data, label='signer executable'):
+    """Names from ELF64 bytes' .symtab/.dynsym; no external tool or byte grep."""
+    if data[:4] != b'\x7fELF' or len(data) < 64 or data[4] != 2 or data[5] != 1:
+        raise ServiceError(label + ' is not a little-endian ELF64 file')
+    try:
+        shoff, = struct.unpack_from('<Q', data, 0x28)
+        shentsize, shnum = struct.unpack_from('<HH', data, 0x3a)
+        sections = [struct.unpack_from('<IIQQQQIIQQ', data, shoff + i * shentsize) for i in range(shnum)]
+        names = set()
+        for _, kind, _, _, offset, size, link, _, _, entsize in sections:
+            if kind not in (2, 11) or not entsize:
+                continue  # SHT_SYMTAB, SHT_DYNSYM
+            strings = sections[link]
+            base, limit = strings[4], strings[4] + strings[5]
+            for index in range(size // entsize):
+                name, = struct.unpack_from('<I', data, offset + index * entsize)
+                end = data.index(b'\0', base + name, limit)
+                names.add(data[base + name:end].decode('ascii', 'replace'))
+    except (struct.error, IndexError, ValueError) as exc:
+        raise ServiceError(label + ' has a malformed ELF symbol table') from exc
+    return names
+
+
+def signer_instrumentation_evidence(build, instrumentation, audited=None):
+    """Physical post-build proof that fixture executables match authored instrumentation.
+
+    ASan is required exactly as authored. UBSan is recorded as observed, not
+    required: the authored asan_ubsan profiles configure ASan only.
+    """
+    evidence = {}
+    for relative in SIGNER_EXECUTABLES:
+        path = Path(build) / relative
+        data = path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if audited is not None and audited.get(str(path)) != digest:
+            raise ServiceError('signer executable differs from its full-audit binding: ' + relative)
+        names = elf_symbol_names(data, relative)
+        asan = '__asan_init' in names
+        if asan != (instrumentation == 'asan_ubsan'):
+            raise ServiceError(f'signer executable instrumentation differs from authored {instrumentation}: {relative}')
+        evidence[str(path)] = {'sha256': digest, 'asan': asan,
+                               'ubsan_observed': any(n.startswith('__ubsan_handle_') for n in names)}
+    return evidence
 
 
 def signer_contract(realization, environment=None):
@@ -330,6 +382,18 @@ def signer_contract(realization, environment=None):
     for name, (kind, value) in expected.items():
         if [line for line in cache if line.startswith(name + ':')] != [name + ':' + kind + '=' + value]:
             raise ServiceError('signer fixture realized configuration mismatch: ' + name)
+    instrumentation = profile.get('instrumentation', 'none')
+    if instrumentation not in SIGNER_INSTRUMENTATION:
+        raise ServiceError('signer fixture has no runtime contract for instrumentation: ' + str(instrumentation))
+    if instrumentation != 'none':
+        authored = {'-DCMAKE_BUILD_TYPE=Debug'} <= set(args) and bool(
+            {'-DGO_ENABLE_ASAN=ON', '-DGNOSTR_ENABLE_ASAN=ON'} & set(args))
+        if not authored:
+            raise ServiceError('signer fixture instrumentation lacks authored Debug ASan configuration')
+    for name, line in SIGNER_INSTRUMENTATION[instrumentation].items():
+        realized = [row for row in cache if row.startswith(name + ':')]
+        if (realized != [line]) if line else any(row.endswith('=ON') for row in realized):
+            raise ServiceError('signer fixture realized instrumentation mismatch: ' + name)
     if 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(root) not in cache:
         raise ServiceError('signer fixture realized source root mismatch')
     inputs = {}
@@ -345,8 +409,17 @@ def signer_contract(realization, environment=None):
         raise ServiceError('signer fixture test-phase consent differs from authored one-shot approval')
     tools = {name: _identity(name, environment.get('PATH')) for name in ('dbus-daemon', 'gdbus')}
     tools['python'] = _identity(sys.executable)
+    from test_selection_realization import phase_environment
+    # Authored common + test-phase overlay, source-expanded, without ambient values.
+    overlay = phase_environment(profile, str(root), 'test', base_environment={})
+    authored_env = {key: value for key, value in overlay.items() if key in SANITIZER_ENVIRONMENT}
+    # The whole effective projection: an inherited unauthored LSAN_OPTIONS
+    # (e.g. a suppression file) must not reach fixture processes.
+    if {key: environment[key] for key in SANITIZER_ENVIRONMENT if key in environment} != authored_env:
+        raise ServiceError('signer fixture test-phase sanitizer environment differs from authored profile')
     return {'kind': 'nip5f_one_shot_provision_contract_v1', 'readiness': False,
-            'executables': tools,
+            'executables': tools, 'instrumentation': instrumentation,
+            'sanitizer_environment': authored_env,
             'source_identity': realization['source_identity'], 'consent': SIGNER_CONSENT,
             'operation': 'get_public_key', 'principal': 'unidentified', 'remember': False,
             'inputs': inputs, 'cache_sha256': hashlib.sha256(cache_path.read_bytes()).hexdigest(),
@@ -378,6 +451,8 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
             raise ServiceError('signer fixture input absent or indirect')
         if input_audit.get('input_hashes', {}).get(str(path)) != hashlib.sha256(path.read_bytes()).hexdigest():
             raise ServiceError('signer fixture input lacks exact full-audit binding: ' + str(path))
+    instrumented = signer_instrumentation_evidence(build, contract['instrumentation'],
+                                                   input_audit.get('input_hashes', {}))
     resource_root = _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
     require_socket_budget(resource_root)
     import runpy
@@ -388,6 +463,7 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
     owned = fixture['Signer']('worker', config=config)
     state = {'kind': 'nip5f_one_shot_runtime_v1', 'contract': contract, 'inputs': config.inputs,
              'executables': config.producer['executables'], 'status': 'failed',
+             'instrumented_executables': instrumented,
              'complete': False, 'complete_gate_eligible': False}
     try:
         owned.start()

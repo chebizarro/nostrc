@@ -42,18 +42,58 @@ class NamespacePolicyContractTests(unittest.TestCase):
     def test_only_scoped_disposable_container_policy_is_relaxed(self):
         workflow = read('.github/workflows/namespace-policy-regression.yml')
         for token in ('--user 1001:1001', '--cap-drop=ALL', '--security-opt=no-new-privileges',
-                      '--security-opt=apparmor=unconfined', '--security-opt=seccomp=unconfined',
+                      '--security-opt="apparmor=$profile"', '-e "NOSTRC_NAMESPACE_APPARMOR_PROFILE=$profile"',
+                      '--security-opt=seccomp=unconfined', 'bash tests/selection/namespace_apparmor_setup.sh',
+                      'bash tests/selection/namespace_apparmor_teardown.sh',
                       '--network none --read-only', 'target=/source,readonly',
                       '--tmpfs /tmp:', '--tmpfs /tmp/.X11-unix:',
                       'target=/evidence', '--cidfile', 'docker inspect', 'docker wait',
                       'namespace_testhost_lifecycle.py cleanup', 'if: always()'):
             self.assertIn(token, workflow)
         for token in ('--privileged', '--cap-add', '--pid=host', '/var/run/docker.sock',
-                      'sudo ', 'sysctl ', 'apparmor_parser', 'continue-on-error'):
+                      'sudo ', 'sysctl ', 'apparmor_parser', 'continue-on-error', 'apparmor=unconfined'):
             self.assertNotIn(token, workflow)
         self.assertIn('namespace_testhost_lifecycle.py prepare', workflow)
         self.assertIn('--name "$(cat "$control/container.name")"', workflow)
         self.assertIn('native-host-probe.exit', workflow)
+        # Teardown runs unconditionally, only after the container was removed.
+        removal = workflow.index("name: Remove only this job's recorded immutable container")
+        teardown = workflow.index("name: Remove only this job's AppArmor profile after its consumers exited")
+        self.assertLess(removal, teardown)
+        self.assertIn('if: always()', workflow[teardown:teardown + 200])
+
+    def test_only_privileged_actions_are_owned_profile_add_scan_and_exact_removal(self):
+        setup = read('tests/selection/namespace_apparmor_setup.sh')
+        teardown = read('tests/selection/namespace_apparmor_teardown.sh')
+        def privileged(script):
+            return [line.strip() for line in script.splitlines() if 'sudo' in line and not line.lstrip().startswith('#')]
+        self.assertEqual(privileged(setup), [
+            'policy() { sudo cat /sys/kernel/security/apparmor/profiles | LC_ALL=C sort; }',
+            'sudo "$parser" --add --warn=all "$out/profile" 2>&1 | tee "$out/apparmor-load.log"'])
+        self.assertEqual(privileged(teardown), [
+            'policy() { sudo cat /sys/kernel/security/apparmor/profiles | LC_ALL=C sort; }',
+            'if ! users="$(sudo python3 -I - "$name" <<\'PY\'',
+            'sudo "$parser" --remove "$out/profile" 2>&1 | tee "$out/apparmor-remove.log"'])
+        self.assertIn('RUNNER_ENVIRONMENT:-}" != github-hosted', setup)
+        self.assertIn('secrets.token_hex(16)', setup)
+        self.assertIn('cmp "$out/apparmor-settings-before.txt" "$out/apparmor-settings-after.txt"', setup)
+        self.assertIn('test ! -s "$out/profiles-removed.txt"', setup)
+        self.assertIn('namespace_host_probe.py" > "$out/probe-unconfined.jsonl"', setup)
+        self.assertIn('cmp -s "$out/profiles-before.txt" "$out/profiles-after.txt"', teardown)
+        for line in privileged(setup) + privileged(teardown):
+            self.assertNotIn('--replace', line)
+            self.assertNotIn(' -r ', line)
+        for script in (setup, teardown):
+            for token in ('sysctl', '--replace', ' -R ', 'aa-disable', 'aa-complain', 'complain',
+                          '/proc/sys/kernel/' + 'apparmor_restrict_unprivileged_userns >',
+                          'echo 0', 'continue-on-error', '|| true'):
+                self.assertNotIn(token, script)
+        self.assertNotIn('--remove', setup)
+        template = [line.strip() for line in read('tests/selection/apparmor/nostrc-namespace-custody').splitlines()
+                    if line.strip() and not line.lstrip().startswith('#')]
+        # Path-unattached, unconfined-mode, and the userns permission only.
+        self.assertEqual(template, ['abi <abi/4.0>,', 'profile @PROFILE_NAME@ flags=(unconfined) {',
+                                    'userns,', '}'])
 
     def test_original_matrix_and_nonacceptance_receipt_are_explicit(self):
         entry = read('tests/selection/namespace_policy_entry.sh')
