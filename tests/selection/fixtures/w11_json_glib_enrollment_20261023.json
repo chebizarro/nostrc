@@ -1,0 +1,112 @@
+{
+  "approved_component": "4a55397bbaf9fc0103068e18d466564ed2bd6fc7",
+  "before_policy_hash": "da683dbea21e7f7628993f21f98385a683d039d3021d30ccc44d919f0141b188",
+  "input_additions": [
+    "{source}/apps/grotto/tests/fuzz/json-glib-setup.sh",
+    "{source}/apps/grotto/tests/fuzz/json_glib_leak_probe.c",
+    "{source}/tests/selection/test_fuzz_json_glib_setup.py",
+    "{source}/tests/selection/w11_json_glib_support.py",
+    "{source}/tests/selection/fixtures/w11_json_glib_enrollment_20261023.json"
+  ],
+  "jobs": {
+    ".github/workflows/grotto-fuzz.yml:coverage-report": {
+      "after": {
+        "coverage_gap": "workflow_profile_union",
+        "matrix_source": "",
+        "profiles": [],
+        "source_sha256": "8edafa24a77fdaa7921a72012f4650d9506f284a982c1c58d0c96858e988622c",
+        "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+        "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+      },
+      "before": {
+        "coverage_gap": "workflow_profile_union",
+        "matrix_source": "",
+        "profiles": [],
+        "source_sha256": "89ed7e8181538d122f3eb12b68322eef65cb2817431cca5939cbb49ae1d55e6e",
+        "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+        "workflow_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f"
+      }
+    },
+    ".github/workflows/grotto-fuzz.yml:fuzz-test": {
+      "after": {
+        "coverage_gap": "workflow_profile_union",
+        "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
+        "profiles": [],
+        "source_sha256": "e1907153b3dd6067e9610cde2860257695edbd50808aff56bcb01186ffc193f4",
+        "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+        "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+      },
+      "before": {
+        "coverage_gap": "workflow_profile_union",
+        "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
+        "profiles": [],
+        "source_sha256": "de0e240f9ce89756ae9060068581ea2bc67dbcf3ef999e45e731841acb5f471b",
+        "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+        "workflow_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f"
+      }
+    },
+    ".github/workflows/grotto-fuzz.yml:select-fuzz": {
+      "after": {
+        "coverage_gap": "workflow_profile_union",
+        "matrix_source": "",
+        "profiles": [],
+        "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
+        "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+        "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+      },
+      "before": {
+        "coverage_gap": "workflow_profile_union",
+        "matrix_source": "",
+        "profiles": [],
+        "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
+        "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+        "workflow_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f"
+      }
+    }
+  },
+  "producer": {
+    "binding": "consumed workflow setup, exact pkg-config 1.10.8, rpath and /proc/self/maps/ldd verified library; full physical tool/producer replay in parent-J-verification.json; hosted NOT RUN",
+    "compiler": "clang -g -fsanitize=address",
+    "exact_original_input_replay": "NOT RUN; unavailable original identity is not replaced by 51 distinct retained inputs",
+    "kind": "official_fuzz_dependency_recipe_not_hosted_acceptance",
+    "source": "https://download.gnome.org/sources/json-glib/1.10/json-glib-1.10.8.tar.xz",
+    "tarball_sha256": "55c5c141a564245b8f8fbe7698663c87a45a7333c2a2c56f06f811ab73b212dd",
+    "version": "1.10.8"
+  },
+  "rules": [
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/tests/fuzz/json-glib-setup.sh",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Official hash-pinned fuzz toolchain producer/probe inputs retain component impact and full policy source auditing; no fuzz ownership or waiver promotion."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/tests/fuzz/json_glib_leak_probe.c",
+      "nodes": [
+        "grotto.gui",
+        "selection.contract"
+      ],
+      "reason": "Official hash-pinned fuzz toolchain producer/probe inputs retain component impact and full policy source auditing; no fuzz ownership or waiver promotion."
+    }
+  ],
+  "source_inputs": {
+    "apps/grotto/tests/fuzz/json-glib-setup.sh": "087010f8047b46550299058d282a11af52c07c1bb82a0e12cca6048d7b2f766a",
+    "apps/grotto/tests/fuzz/json_glib_leak_probe.c": "d6ada70b6b6331e02cdf8bd2496cd4ac383397ecdc94926855fa6c48ea6a592a",
+    "tests/selection/test_fuzz_json_glib_setup.py": "c8c2acdeea34c705a78d2427a6a9c16d96ad07663317e7c3447673320f0b8ba0"
+  },
+  "workflow": {
+    "additions": [
+      "      - name: Install pinned JSON-GLib\n        if: matrix.target == 'json-event'\n        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh install \"$RUNNER_TEMP/json-glib-1.10.8\" \"$GITHUB_ENV\"\n\n",
+      "      - name: Verify pinned JSON-GLib\n        if: matrix.target == 'json-event'\n        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh verify \"$JSON_GLIB_PREFIX\" build/apps/grotto/tests/fuzz/fuzz-json-event\n\n",
+      "      - name: Install pinned JSON-GLib\n        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh install \"$RUNNER_TEMP/json-glib-1.10.8\" \"$GITHUB_ENV\"\n\n",
+      "      - name: Verify pinned JSON-GLib\n        run: bash apps/grotto/tests/fuzz/json-glib-setup.sh verify \"$JSON_GLIB_PREFIX\" build/apps/grotto/tests/fuzz/fuzz-json-event\n\n"
+    ],
+    "after_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12",
+    "before_sha256": "8e74d9785a309393489e42ef0d018aba358a29d9253c154ff1d5abefb758407f",
+    "path": ".github/workflows/grotto-fuzz.yml"
+  }
+}

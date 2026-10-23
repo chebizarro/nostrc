@@ -1,0 +1,104 @@
+{
+  "artifacts": {
+    "dependency-broad-${SHA}-${ATTEMPT}": "broad.json",
+    "dependency-evidence-${PLAN_ID}-${PROFILE}-${ATTEMPT}": [
+      "dependency/evidence/** (public ordinary gate raw namespace/source/receipts)",
+      "dependency/ordinary-tool-setup.json",
+      "dependency/policy-testhost-setup.json",
+      "dependency/policy-image-*/**",
+      "dependency-build/namespace-policy/{receipt.json,source-manifest.json,control/**,workload/**}",
+      "dependency-build/nostrc-test-inventory*",
+      "dependency-build/nostrc-test-descriptors*"
+    ],
+    "dependency-namespace-policy-regressions-${SHA}-${ATTEMPT}": "control/** and evidence/{regression.json,logs/**,custody/**}; predecessor only, not selected receipt",
+    "dependency-plan-${PLAN_ID}-${ATTEMPT}": "plan.json and optional release.json; bind tested_sha/source_identity/inventory_hash/expected_lane_ids",
+    "dependency-receipt-${PLAN_ID}-${PROFILE}-${ATTEMPT}": "${PROFILE}/receipt.json and worker.log; exact native receipt copied only after verification",
+    "dependency-validation-${PLAN_ID}-${ATTEMPT}": "validation.json",
+    "fuzz-corpus-${TARGET}": "successful standalone corpus; broad call uses caller artifact_prefix",
+    "fuzz-crashes-${TARGET}": "failed standalone artifacts/log, never replace missing original identity",
+    "validation-${RUNNER_OS}-${SANITIZER}-monorepo-logs": "Broad/core failure-only build/Testing logs and CMakeCache; Test gate SchedEnv is here, quiet after-Test probe is separate console diagnostic",
+    "validation-fuzz-corpus-${TARGET}": "Successful broad/fuzz corpus (caller artifact_prefix=validation-)",
+    "validation-fuzz-crashes-${TARGET}": "Failed broad/fuzz raw artifacts/log",
+    "validation-namespace-policy-regressions-${SHA}-${ATTEMPT}": "Broad/static reusable regression counterpart; control/** and evidence/**, not selected policy receipt"
+  },
+  "checks": [
+    "Do not expect public signer success until the tracked internal deep-path bus defect is fixed and physically validated; this is not emulation attribution or an external enrollment deferral.",
+    "Require full passing pre/post non-test source/Ninja/header/runtime/default/omitted audits before signer fixture admission; exact TCP target/approver/daemon/schema export and real consent/token/service evidence. Other keyring fixtures retain their HOME/bus isolation.",
+    "Require ordinary_go_full_ownership on normalized top/raw/pre/post; selected supported.libgo executes all33 including6W4; unselected Go owns graph but cannot invent executions. No old subset/nested promotion.",
+    "Require all five bound coverage/readiness fields. Only marked shadow_cutover administrative; nine technical gaps still block. enforcement_ready=false and all cutover/protection/publication guards unchanged.",
+    "Require policy / execute typed authored_policy_controller_v1 with complete unchanged workload, immutable producer/source/tool bindings and exact CID cleanup, not predecessor regression status or native masquerade.",
+    "Retain successful/failed/cancelled original attempts separately. Hosted cancellation: gh run cancel RUN_ID only for intended diagnostic attempt; inspect retained always-uploaded raw lifecycle/failure evidence, never assume cleanup from job conclusion.",
+    "Normal heartbeat Test remains original8/control off; after-Test quiet scheduling probe is diagnostic-only, not actual parallel gate evidence.",
+    "JSON-GLib official1.10.8 has concrete local remedy; original62179 input exact replay NOT RUN, retained51 distinct inputs are not its replacement.",
+    "No W11 quota credit from these local diagnostics, raw default CTest, PR replay or partial hosted results."
+  ],
+  "code_sha": "0e3601eab21ca480a7d80c72d6c29ac29155f5aa",
+  "evidence_indexes": [
+    "local-proof-summary.json",
+    "parent-evidence-index.json",
+    "source-manifest-post-verification.json",
+    "tracker-preservation.json",
+    "FINAL-SHA256SUMS"
+  ],
+  "evidence_root": "/tmp/nostrc-w11-closure-20261023/final-integration",
+  "hosted_acceptance": "NOT RUN; parent dispatches after landing, no endpoint/SSH/approval request remains",
+  "inspection_commands": [
+    "gh run list --workflow dependency-tests.yml --event workflow_dispatch --branch \"$LANDED_REF\" --limit 5 --json databaseId,headSha,status,createdAt",
+    "gh run view \"$RUN_ID\" --log > \"run-${RUN_ID}-attempt-${ATTEMPT}.log\"",
+    "gh run download \"$RUN_ID\" --dir \"run-${RUN_ID}-attempt-${ATTEMPT}-artifacts\""
+  ],
+  "internal_remaining_defect": "nostrc-0cfsg.36.5",
+  "local_terminal_dispositions": {
+    "native_default": "PASS fresh all default/full439,0 failures,5 visible skips,469.71s,keychain guards0,original8 heartbeat/control off",
+    "policy_arm_component": "PASS source189fcc223 all14 commands,79 kernel0skip,915 selector0fail/6 MDK opt-ins,owned workload CID removed; NOT selected receipt",
+    "public_tcp": "FAIL after full pre2357/post6921 audits0gaps and actual default build: private bus Socket name too long before CTest; no native final receipt",
+    "selected_policy_controller": "FAIL local setup: no buildx; then nonexecutable plugin; then socket DAC. No typed selected receipt. Raw attempts and exact outer cleanup/recovery retained. No further local retry."
+  },
+  "no_further_local_retry": "Bounded same-session stop; all existing terminal command outcomes retained. Parent lands/continues exact native/hosted criteria; no SSH/new endpoint/approval or native alias.",
+  "ref_guard": "Use existing branch/ref containing the landed batch; verify actual run headSha equals LANDED_SHA. No sha input on workflow_dispatch, no tag/publication/cutover. dependency-worker.yml, dependency-broad.yml, namespace-policy-regression.yml and nostrc-ci.yml are reusable-only, not direct workflow_dispatch targets.",
+  "report": "dependency-aware-testing-w11-closure-integration-2026-10-23.md",
+  "workflow_dispatch": [
+    {
+      "command": "gh workflow run dependency-tests.yml --ref \"$LANDED_REF\" -f mode=broad",
+      "expected_jobs": [
+        "select",
+        "core / execute",
+        "grotto / execute",
+        "groundhog / execute",
+        "policy_regressions / regressions",
+        "policy / execute",
+        "broad / core / build-and-test",
+        "broad / static / regressions",
+        "broad / fuzz / fuzz-test",
+        "broad / broad_gate",
+        "gate"
+      ],
+      "inputs": {
+        "mode": "broad"
+      },
+      "ref": "$LANDED_REF",
+      "workflow": "dependency-tests.yml"
+    },
+    {
+      "command": "gh workflow run grotto-fuzz.yml --ref \"$LANDED_REF\" -f target=all -f fuzz_duration=60",
+      "expected_display_names": [
+        "Fuzz nip49",
+        "Fuzz bip39",
+        "Fuzz json-event"
+      ],
+      "expected_jobs": [
+        "select-fuzz",
+        "fuzz-test (nip49)",
+        "fuzz-test (bip39)",
+        "fuzz-test (json-event)",
+        "coverage-report"
+      ],
+      "inputs": {
+        "fuzz_duration": "60",
+        "target": "all"
+      },
+      "ref": "$LANDED_REF",
+      "workflow": "grotto-fuzz.yml"
+    }
+  ]
+}

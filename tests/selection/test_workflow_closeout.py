@@ -159,7 +159,7 @@ class BroadUnionWiringTests(unittest.TestCase):
             'nip55l': ('nip55l-libsecret-ci', {'refusing-session'}),
             'homed': ('nostr-homed-ci', {'build-and-test', 'systemd-opensession'}),
             'signet': ('signet-ci', {'build-and-test'}),
-            'static': ('static-checks', {'static-checks'}),
+            'static': ('namespace-policy-regression', {'regressions'}),
             'appimage': ('gnostr-appimage', {'build-appimage'}),
             'windows': ('windows-validation', {'build'}),
             'bp': ('bp-matrix', {'bp-matrix'}),

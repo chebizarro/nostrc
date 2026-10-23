@@ -1,0 +1,637 @@
+{
+  "approved_component": "68da0e7b3afe1796bd1aaba2dc1ed22a7ff8863b",
+  "base_inventory_commit": "940a5d9bd8cf7b96577a423106276e450d0885ef",
+  "contract_refresh": {
+    "grotto.linux": {
+      "after_hash": "9588630728dfa8b1145f8b49f6983cce057d24238620a77fe0614e3e60e2e8be",
+      "before_hash": "cd36fa4065258e8a55d38cc5a3be76257f119fc68c69d2d42ff65b8ce7ffc0a0",
+      "profile_hash": {
+        "after": "96d7caebeb6595f4fd530a394f3287fbeea00441ce96823ccf6fdc38deaeac77",
+        "before": "dfc396b5015213ca6a7c2706341afe8ec7310eaab8a5b5edbef7dfec09171ab0"
+      },
+      "source_changes": {
+        "nips/nip5f/CMakeLists.txt": {
+          "after": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+          "before": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4"
+        },
+        "nips/nip5f/TestInventory.cmake": {
+          "after": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+          "before": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da"
+        }
+      }
+    },
+    "groundhog.linux": {
+      "after_hash": "a00d36434a6bb4f42231178dcb979219f55f7744fb0ddc44a44a419053bec4b8",
+      "before_hash": "7cf6711e7f7e4d63c7201f836e2aa07ea653f16131b89a14f3c8928a2505a2f1",
+      "profile_hash": {
+        "after": "df29a94170f0f6ec8064ae31c7e4836a3b64874ceac727b15f7970a6214412ba",
+        "before": "a08935a71aaa3686635c38f23589ed57b72a1e185b8ce9edc3ed1554e3f1cd53"
+      },
+      "source_changes": {
+        "nips/nip5f/CMakeLists.txt": {
+          "after": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+          "before": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4"
+        },
+        "nips/nip5f/TestInventory.cmake": {
+          "after": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+          "before": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da"
+        }
+      }
+    }
+  },
+  "integration_source_changes": {
+    "nips/nip5f/TestInventory.cmake": {
+      "after": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
+      "before": "c8caf0689e55db765a8f42a064fce8dfe54b95059ba45da564eac7f9335c41fc"
+    },
+    "scripts/test_selection_realization.py": {
+      "after": "bc3f5649a00a49b9efb44ae96c489602b5c13ec680161057764bed73e39eb754",
+      "before": "790f7523cc3514078aa16d68facc18e75d74239b95cb1971c193ea7107d5aa25"
+    }
+  },
+  "records": {
+    "checks": {
+      "supported.nips.nip5f.signer_endpoint": {
+        "after": {
+          "build_targets": [
+            "test_nip5f_tcp",
+            "test_nip5f_approver",
+            "grotto-daemon",
+            "grotto-schemas"
+          ],
+          "cost": "ordinary",
+          "ctest_tests": {
+            "core.linux": [
+              "test_nip5f_tcp"
+            ],
+            "core.linux.asan": [
+              "test_nip5f_tcp"
+            ],
+            "core.macos.asan": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux.asan_ubsan": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.linux": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk011": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk08": [
+              "test_nip5f_tcp"
+            ]
+          },
+          "expected_outcome": "pass",
+          "kind": "ctest",
+          "nodes": [
+            "execution.core",
+            "execution.grotto",
+            "execution.groundhog",
+            "nip5f",
+            "nip5f.test_inputs",
+            "grotto.daemon",
+            "grotto.gui",
+            "nip5f.fixture_inputs"
+          ],
+          "profiles": [
+            "core.linux",
+            "core.linux.asan",
+            "core.macos.asan",
+            "grotto.linux",
+            "grotto.linux.asan_ubsan",
+            "groundhog.linux",
+            "groundhog.mdk011",
+            "groundhog.mdk08"
+          ],
+          "requirement": "blocking",
+          "requires": [
+            "signer_endpoint"
+          ],
+          "runtime_inputs": []
+        },
+        "before": {
+          "build_targets": [
+            "test_nip5f_tcp"
+          ],
+          "cost": "ordinary",
+          "ctest_tests": {
+            "core.linux": [
+              "test_nip5f_tcp"
+            ],
+            "core.linux.asan": [
+              "test_nip5f_tcp"
+            ],
+            "core.macos.asan": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux": [
+              "test_nip5f_tcp"
+            ],
+            "grotto.linux.asan_ubsan": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.linux": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk011": [
+              "test_nip5f_tcp"
+            ],
+            "groundhog.mdk08": [
+              "test_nip5f_tcp"
+            ]
+          },
+          "expected_outcome": "pass",
+          "kind": "ctest",
+          "nodes": [
+            "execution.core",
+            "execution.grotto",
+            "execution.groundhog",
+            "nip5f",
+            "nip5f.test_inputs"
+          ],
+          "profiles": [
+            "core.linux",
+            "core.linux.asan",
+            "core.macos.asan",
+            "grotto.linux",
+            "grotto.linux.asan_ubsan",
+            "groundhog.linux",
+            "groundhog.mdk011",
+            "groundhog.mdk08"
+          ],
+          "requirement": "blocking",
+          "requires": [
+            "signer_endpoint"
+          ],
+          "runtime_inputs": []
+        }
+      }
+    },
+    "nodes": {
+      "nip5f.fixture_inputs": {
+        "after": {
+          "depends_on": [
+            "gnome.seahorse",
+            "relayd.async_storage_api",
+            "nip55l.dbus_contract"
+          ],
+          "id": "nip5f.fixture_inputs",
+          "owner_paths": [
+            "tests/runtime/test_provisioned_nip5f.py",
+            "tests/runtime/nip5f_approver.c"
+          ],
+          "rationale": "Fixture-only daemon Secret Service prerequisites; not a dependency of the product NIP-5F library or readiness attestation."
+        },
+        "before": null
+      }
+    },
+    "profiles": {
+      "core.linux": {
+        "after": {
+          "architecture": "x86_64",
+          "build_parallelism": 2,
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=ON",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/nostrc-ci.yml",
+          "source_dir": ".",
+          "test_parallelism": 2,
+          "timeout_seconds": 3600
+        },
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON"
+          ],
+          "environment": {},
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/nostrc-ci.yml",
+          "source_dir": ".",
+          "timeout_seconds": 3600
+        }
+      },
+      "grotto.linux": {
+        "after": {
+          "architecture": "x86_64",
+          "build_parallelism": 2,
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "G_SLICE": "always-malloc",
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 1,
+          "platform": "linux",
+          "setup": ".github/workflows/grotto-ci.yml:signer",
+          "source_dir": ".",
+          "test_parallelism": 1,
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "--parallel",
+              "2"
+            ],
+            "build_parallelism": 2,
+            "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+            "matrix": {
+              "mode": "native",
+              "runner": "ubuntu-24.04"
+            },
+            "required_minimum": [
+              "signer/bunker",
+              "signer/bunker-e2e",
+              "signer/approval-controller",
+              "signer/approval-integration",
+              "signer/permissions",
+              "signer/background",
+              "signer/onboarding",
+              "signer/clients",
+              "signer/activity",
+              "signer/ui-layout",
+              "signer/desktop-contract",
+              "signer/blueprint-drift",
+              "signer/qr-scanner",
+              "signer/trust-tiers",
+              "signer/home-model",
+              "nip55l_approval_service",
+              "nip55l_dbus_contract"
+            ],
+            "runtime_wrapper": [
+              "dbus-run-session",
+              "--",
+              "xvfb-run",
+              "-a",
+              "-s",
+              "-screen 0 1280x800x24"
+            ],
+            "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "-j1",
+              "-R",
+              "^(signer/|nip55l_|nostr_signer_webext_host_)",
+              "--no-tests=error",
+              "--output-on-failure"
+            ],
+            "test_parallelism": 1
+          }
+        },
+        "before": {
+          "architecture": "x86_64",
+          "build_parallelism": 2,
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_SIGNER_TESTS=ON",
+            "-DBUILD_NATIVE_HOST=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+            "-DBUILD_RELAYD=OFF",
+            "-DSIGNET_ENABLE=OFF"
+          ],
+          "environment": {
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+            "G_SLICE": "always-malloc",
+            "TSAN_OPTIONS": "halt_on_error=1",
+            "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 1,
+          "platform": "linux",
+          "setup": ".github/workflows/grotto-ci.yml:signer",
+          "source_dir": ".",
+          "test_parallelism": 1,
+          "timeout_seconds": 3600,
+          "workflow_contract": {
+            "build_command": [
+              "cmake",
+              "--build",
+              "{build}",
+              "--parallel",
+              "2"
+            ],
+            "build_parallelism": 2,
+            "execution_gap": "Default-all legacy build execution/coverage is not attested by the selector (.34); signer-tests compile aggregate and selected-target builds are distinct. Full input audits and profile admission remain required.",
+            "matrix": {
+              "mode": "native",
+              "runner": "ubuntu-24.04"
+            },
+            "required_minimum": [
+              "signer/bunker",
+              "signer/bunker-e2e",
+              "signer/approval-controller",
+              "signer/approval-integration",
+              "signer/permissions",
+              "signer/background",
+              "signer/onboarding",
+              "signer/clients",
+              "signer/activity",
+              "signer/ui-layout",
+              "signer/desktop-contract",
+              "signer/blueprint-drift",
+              "signer/qr-scanner",
+              "signer/trust-tiers",
+              "signer/home-model",
+              "nip55l_approval_service",
+              "nip55l_dbus_contract"
+            ],
+            "runtime_wrapper": [
+              "dbus-run-session",
+              "--",
+              "xvfb-run",
+              "-a",
+              "-s",
+              "-screen 0 1280x800x24"
+            ],
+            "skip_pattern": "\\*\\*\\*Skipped|Not Run",
+            "test_command": [
+              "ctest",
+              "--test-dir",
+              "{build}",
+              "-j1",
+              "-R",
+              "^(signer/|nip55l_|nostr_signer_webext_host_)",
+              "--no-tests=error",
+              "--output-on-failure"
+            ],
+            "test_parallelism": 1
+          }
+        }
+      },
+      "groundhog.linux": {
+        "after": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring",
+            "signer_endpoint"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_NOSTR_GOBJECT=ON",
+            "-DBUILD_NOSTR_GTK=ON",
+            "-DBUILD_RELAYD=ON",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_MDK011_INTEROP=OFF",
+            "-DBUILD_MDK_INTEROP=OFF",
+            "-DBUILD_APPS=ON",
+            "-DBUILD_GNOSTR_APP=OFF",
+            "-DENABLE_TCP_IPC=ON",
+            "-DNIP55L_TEST_TRUST_ENV=ON",
+            "-DNIP55L_SECRET_BACKEND=libsecret",
+            "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+          ],
+          "environment": {
+            "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+          },
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+          "source_dir": ".",
+          "timeout_seconds": 3600
+        },
+        "before": {
+          "architecture": "x86_64",
+          "build_type": "Debug",
+          "capabilities": [
+            "display",
+            "private_bus",
+            "nak",
+            "gnome_keyring"
+          ],
+          "compiler": "gcc",
+          "configure_args": [
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DBUILD_TESTING=ON",
+            "-DBUILD_GROUNDHOG=ON",
+            "-DBUILD_NOSTR_GOBJECT=ON",
+            "-DBUILD_NOSTR_GTK=ON",
+            "-DBUILD_APPS=OFF",
+            "-DBUILD_RELAYD=ON",
+            "-DSIGNET_ENABLE=OFF",
+            "-DBUILD_MDK011_INTEROP=OFF",
+            "-DBUILD_MDK_INTEROP=OFF"
+          ],
+          "environment": {},
+          "feature_variants": [],
+          "instrumentation": "none",
+          "local_availability": "host_or_container",
+          "parallelism": 2,
+          "platform": "linux",
+          "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+          "source_dir": ".",
+          "timeout_seconds": 3600
+        }
+      }
+    },
+    "workflow_jobs": {
+      ".github/workflows/dependency-worker.yml:execute": {
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "b07baf9d145b31faac0c865f216196913fd0d11865b1b80de4988eb8ef4f9454",
+          "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
+          "workflow_sha256": "a7575e49b5038a10c92ab1020d4885d3a38fe370764a40031e684d61308637bd"
+        },
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "577d2a31ea4057a91db0bd71c50501f91a6e416292c74b4817797ef841a80de3",
+          "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
+          "workflow_sha256": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df"
+        }
+      }
+    }
+  },
+  "rules": [
+    {
+      "after": {
+        "effect": "impact",
+        "exact": "gnome/groundhog/tests/app/test_secret_service.py",
+        "nodes": [
+          "groundhog.unclassified",
+          "nip5f.fixture_inputs",
+          "selection.contract"
+        ],
+        "reason": "Actual TCP fixture consumes this input; preserve original consumer ownership and independent selector source audit."
+      },
+      "before": null
+    },
+    {
+      "after": {
+        "effect": "impact",
+        "exact": "tests/runtime/nip5f_approver.c",
+        "nodes": [
+          "shared.tests",
+          "nip5f.fixture_inputs",
+          "selection.contract"
+        ],
+        "reason": "Actual TCP fixture consumes this input; preserve original consumer ownership and independent selector source audit."
+      },
+      "before": null
+    },
+    {
+      "after": {
+        "effect": "impact",
+        "exact": "tests/runtime/test_provisioned_nip5f.py",
+        "nodes": [
+          "shared.tests",
+          "nip5f.fixture_inputs",
+          "selection.contract"
+        ],
+        "reason": "Actual TCP fixture consumes this input; preserve original consumer ownership and independent selector source audit."
+      },
+      "before": null
+    },
+    {
+      "after": {
+        "effect": "impact",
+        "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml",
+        "nodes": [
+          "grotto.gui",
+          "nip5f.fixture_inputs",
+          "selection.contract"
+        ],
+        "reason": "Actual TCP fixture consumes this input; preserve original consumer ownership and independent selector source audit."
+      },
+      "before": {
+        "effect": "impact",
+        "exact": "apps/grotto/data/org.nostr.Grotto.gschema.xml",
+        "nodes": [
+          "grotto.gui",
+          "selection.contract"
+        ],
+        "reason": "Standalone runtime diagnostic source closure; preserve product ownership without profile admission."
+      }
+    }
+  ],
+  "source_before_sha256": {
+    ".github/workflows/dependency-worker.yml": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df",
+    "nips/nip5f/CMakeLists.txt": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4",
+    "nips/nip5f/TestInventory.cmake": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da",
+    "scripts/test_selection_realization.py": "7a479c583cf4be0dce9ac6dd760ee421735371567ff94fbffb4fa94fd2fb3160",
+    "scripts/test_selection_services.py": "2cfb1b485ec514d82f53d37127a6490fa26bd9e256b999eda870e388337619ba",
+    "tests/runtime/test_provisioned_nip5f.py": "5893188611a6153adc144c9624554bbf11e666e4281a17f00a3954ea67964ade"
+  },
+  "source_edits": {
+    ".github/workflows/dependency-worker.yml": [
+      {
+        "after": "          case \"$PROFILE\" in\n            core.linux|grotto.linux|groundhog.linux)\n              # The outer gate owns private services and post-namespace-exit\n              # sealing. Unsupported runner kernels retain refusal, not green.\n              set +e\n              bash scripts/test-gate.sh --head \"$REQUESTED_SHA\" \\\n                --plan \"$RUNNER_TEMP/dependency/plan.json\" --profile \"$PROFILE\" \\\n                --native-custody pidns --evidence-dir \"$RUNNER_TEMP/dependency/evidence\" \\\n                2>&1 | tee \"$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log\"\n              gate_status=${PIPESTATUS[0]}\n              set -e\n              GATE_STATUS=\"$gate_status\" python3 - <<'PY'\n          import json, os, shutil, sys\n          from pathlib import Path\n          sys.path.insert(0, 'scripts')\n          from test_selection_services import verify_native_public_receipt\n          base = Path(os.environ['RUNNER_TEMP']) / 'dependency'\n          matches = []\n          for path in (base / 'evidence').glob('*/0/lane-*/native-receipt.json'):\n              raw = json.loads(path.read_text())\n              if (raw.get('plan_id') == os.environ['PLAN_ID'] and raw.get('profile') == os.environ['PROFILE']\n                      and raw.get('source_identity') == dict(kind='committed', sha=os.environ['REQUESTED_SHA'])):\n                  verify_native_public_receipt(raw)\n                  matches.append(path)\n          if len(matches) > 1 or (not matches and os.environ['GATE_STATUS'] == '0'):\n              raise SystemExit('missing/ambiguous exact-plan retained native receipt')\n          if matches:\n              shutil.copyfile(matches[0], base / 'receipts' / os.environ['PROFILE'] / 'receipt.json')\n          PY\n              exit \"$gate_status\"\n              ;;\n          esac\n          parallel_args=(--parallel 2)\n",
+        "before": "          parallel_args=(--parallel 2)\n"
+      }
+    ]
+  },
+  "source_sha256": {
+    ".github/workflows/dependency-worker.yml": "a7575e49b5038a10c92ab1020d4885d3a38fe370764a40031e684d61308637bd",
+    "nips/nip5f/CMakeLists.txt": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+    "nips/nip5f/TestInventory.cmake": "c8caf0689e55db765a8f42a064fce8dfe54b95059ba45da564eac7f9335c41fc",
+    "scripts/test_selection_realization.py": "790f7523cc3514078aa16d68facc18e75d74239b95cb1971c193ea7107d5aa25",
+    "scripts/test_selection_services.py": "8dca0e987217ecbecc1296cd6213c1601501b633fb069c252708618056248198",
+    "tests/runtime/test_provisioned_nip5f.py": "093f428af8724f274e0571625abcd1fdbb535d826c2d149bbbc729e7878853f2",
+    "tests/selection/test_worker_signer.py": "f170a1fc34182ea171a3221ebe234a57d1a8c3a814c1f9dc05d655e8f3608136"
+  }
+}

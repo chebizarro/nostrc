@@ -17,6 +17,7 @@ import select
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -44,8 +45,8 @@ def _ready(fd, timeout=15):
     raise ServiceError('private service readiness record too large')
 
 
-def _identity(name):
-    executable = shutil.which(name)
+def _identity(name, search_path=None):
+    executable = shutil.which(name, path=search_path)
     if not executable:
         raise ServiceError('private service executable unavailable: ' + name)
     path = Path(executable).resolve(strict=True)
@@ -69,6 +70,162 @@ def _display_ready(number, cookie):
             response += data
         if response[0] != 1:
             raise ServiceError('private display authentication failed')
+
+
+# AF_UNIX sun_path holds 107 bytes plus NUL. Retained evidence roots are deep
+# (container /workspace/evidence/<run>/<lane>/..., host /private/tmp/...), so a
+# socket below them fails in bind(): "Socket name too long". The tmpfs mountpoint
+# therefore lives under a short owned directory, never below retained evidence.
+UNIX_SOCKET_MAX = 107
+RESOURCE_BASES = ('/tmp', '/var/tmp', '/dev/shm')
+RESOURCE_PREFIX = 'nostrc-rr-'
+# tempfile.mkdtemp('nip5f-private-') appends 8 characters; the bus is "bus" below.
+FIXTURE_SOCKET_TAIL = len('/nip5f-private-') + 8 + len('/bus')
+JOURNAL_NAME = 'resource-placement.jsonl'
+
+
+def require_socket_budget(root, tail=FIXTURE_SOCKET_TAIL):
+    """Refuse before launching a service whose socket path cannot be bound."""
+    if len(os.fsencode(str(root))) + tail > UNIX_SOCKET_MAX:
+        raise ServiceError('private resource root leaves no room for a UNIX socket path: ' + str(root))
+
+
+def _journal_append(path, record, *, create=False):
+    """Append-only, hash-chained, fsynced journal (O_EXCL on creation)."""
+    previous = ''
+    if not create:
+        lines = path.read_bytes().splitlines()
+        previous = hashlib.sha256(lines[-1]).hexdigest()
+    record = dict(record, prev=previous)
+    raw = (json.dumps(record, sort_keys=True) + '\n').encode()
+    flags = os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | (os.O_CREAT | os.O_EXCL if create else 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if os.write(fd, raw) != len(raw):
+            raise ServiceError('resource placement journal short write')
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def read_resource_journal(path):
+    path = Path(path)
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise ServiceError('resource placement journal is not an owned private regular file')
+    records, previous = [], ''
+    for line in path.read_bytes().splitlines():
+        record = json.loads(line)
+        if record.get('prev') != previous:
+            raise ServiceError('resource placement journal chain broken')
+        previous = hashlib.sha256(line).hexdigest()
+        records.append(record)
+    if not records or records[0].get('state') != 'intent':
+        raise ServiceError('resource placement journal lacks its intent record')
+    return records
+
+
+def allocate_resource_mountpoint(lane_dir, *, bases=RESOURCE_BASES):
+    """Create the short, owned, empty 0700 mountpoint for the namespace tmpfs.
+
+    The journal's intent record is only a plan: ownership exists once mkdir
+    succeeded and the 'allocated' record captured the new directory's dev/ino.
+    The tmpfs, HOME, runtime and sockets live only in the namespace mount and
+    vanish with it; release_resource_mountpoint removes the empty host directory.
+    """
+    journal = Path(lane_dir) / JOURNAL_NAME
+    token = secrets.token_hex(16)
+    for base in bases:
+        candidate = Path(base)
+        try:
+            info = candidate.lstat()
+            usable = (stat.S_ISDIR(info.st_mode) and candidate.resolve(strict=True) == candidate
+                      and os.access(candidate, os.W_OK | os.X_OK))
+        except OSError:
+            usable = False
+        path = candidate / (RESOURCE_PREFIX + token)
+        if usable and len(os.fsencode(str(path))) + FIXTURE_SOCKET_TAIL <= UNIX_SOCKET_MAX:
+            break
+    else:
+        raise ServiceError('no short owned directory available for the private resource mountpoint')
+    _journal_append(journal, {'state': 'intent', 'token': token, 'base': str(candidate), 'path': str(path),
+                              'uid': os.geteuid(), 'pid': os.getpid()}, create=True)
+    os.mkdir(path, 0o700)  # EEXIST: not ours; the journal stays intent-only
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ServiceError('private resource mountpoint was not created owned/0700')
+    _journal_append(journal, {'state': 'allocated', 'token': token, 'base': str(candidate), 'path': str(path),
+                              'dev': info.st_dev, 'ino': info.st_ino})
+    return path
+
+
+def _journal_allocation(records):
+    """The allocated record, only if it agrees with its intent (token/base/name)."""
+    intent, allocated = records[0], records[1]
+    if allocated.get('state') != 'allocated':
+        raise ServiceError('resource placement journal lacks its allocated record')
+    for field in ('token', 'base', 'path'):
+        if intent.get(field) != allocated.get(field):
+            raise ServiceError('resource placement journal intent/allocation disagree: ' + field)
+    token, base, path = intent['token'], Path(intent['base']), Path(intent['path'])
+    if (len(token) != 32 or any(c not in '0123456789abcdef' for c in token) or not base.is_absolute()
+            or path != base / (RESOURCE_PREFIX + token)):
+        raise ServiceError('resource placement journal path/token is not the allocator name')
+    return allocated
+
+
+def resource_mountpoint(lane_dir):
+    """The allocated mountpoint named by the journal (namespace side)."""
+    records = read_resource_journal(Path(lane_dir) / JOURNAL_NAME)
+    if records[-1].get('state') != 'allocated' or len(records) != 2:
+        raise ServiceError('resource placement journal is not in the allocated state')
+    return Path(_journal_allocation(records)['path'])
+
+
+def release_resource_mountpoint(lane_dir):
+    """Outer cleanup after the namespace barrier; verified, journaled, idempotent.
+
+    Only a directory this journal proved it created (allocated dev/ino, owner,
+    mode, empty, unmounted) is ever removed, non-recursively. An intent-only
+    journal never authorizes deletion: a present directory is refused and the
+    incomplete recovery is retained; an absent one is recorded as absent.
+    """
+    journal = Path(lane_dir) / JOURNAL_NAME
+    records = read_resource_journal(journal)
+    last = records[-1]
+    if last['state'] in ('released', 'absent'):
+        return Path(last['path'])
+    if last['state'] == 'recovery_refused':
+        raise ServiceError('resource placement recovery refused earlier; unowned directory retained: ' + last['path'])
+    if last['state'] == 'intent':
+        path = Path(last['path'])
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            _journal_append(journal, {'state': 'absent', 'path': str(path), 'allocation_proved': False})
+            return path
+        _journal_append(journal, {'state': 'recovery_refused', 'path': str(path),
+                                  'reason': 'intent-only journal does not prove ownership'})
+        raise ServiceError('intent-only resource placement journal cannot authorize removal of ' + str(path))
+    if last['state'] != 'allocated' or len(records) != 2:
+        raise ServiceError('unknown resource placement journal state')
+    allocation = _journal_allocation(records)
+    path = Path(allocation['path'])
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        raise ServiceError('private resource mountpoint vanished before release')
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ServiceError('private resource mountpoint changed identity before release')
+    if (info.st_dev, info.st_ino) != (allocation['dev'], allocation['ino']):
+        raise ServiceError('private resource mountpoint was replaced before release')
+    if os.path.ismount(path):
+        raise ServiceError('private resource mountpoint is still mounted; namespace not gone')
+    os.rmdir(path)  # ENOTEMPTY/EBUSY remain failures, never recursive deletion
+    if path.exists():
+        raise ServiceError('private resource mountpoint remained after release')
+    _journal_append(journal, {'state': 'released', 'path': str(path), 'absent_after': True})
+    return path
 
 
 def prepare_resources(resource_root, display):
@@ -136,9 +293,130 @@ def _namespace_resources(resource_root, display):
 def namespace_services(capabilities, evidence_dir, resource_root, finalizer_fd=None):
     root = _namespace_resources(resource_root, 'display' in capabilities)
     with private_services(capabilities, evidence_dir, resource_root=root, finalizer_fd=finalizer_fd) as state:
+        os.environ['NOSTRC_NATIVE_RESOURCE_ROOT'] = str(root)
         state['resource_mount'] = {'root': str(root), 'filesystem': 'tmpfs',
                                    'private_x11': 'display' in capabilities}
         yield state
+
+
+SIGNER_CONSENT = 'unidentified-get-public-key-once'
+SIGNER_INPUTS = ('tests/runtime/test_provisioned_nip5f.py', 'tests/runtime/nip5f_approver.c',
+                 'gnome/groundhog/tests/app/test_secret_service.py',
+                 'apps/grotto/data/org.nostr.Grotto.gschema.xml')
+SIGNER_BUILD_INPUTS = ('apps/grotto/grotto-daemon', 'nips/nip5f/test_nip5f_tcp',
+                       'nips/nip5f/test_nip5f_approver', 'apps/grotto/gschemas.compiled')
+
+
+def signer_contract(realization, environment=None):
+    """Authored provisioning contract only: never readiness or passing coverage."""
+    profile = realization['profile']
+    if (sys.platform != 'linux' or profile.get('platform') != 'linux' or
+            profile.get('architecture') != os.uname().machine):
+        raise ServiceError('signer fixture requires exact native Linux profile architecture')
+    if profile.get('environment', {}).get('NOSTRC_TEST_NIP5F_APPROVAL') != SIGNER_CONSENT:
+        raise ServiceError('signer fixture requires authored one-shot unidentified get_public_key consent')
+    expected = {'ENABLE_TCP_IPC': ('BOOL', 'ON'), 'NIP55L_TEST_TRUST_ENV': ('BOOL', 'ON'),
+                'NIP55L_SECRET_BACKEND': ('STRING', 'libsecret')}
+    args = profile.get('configure_args', [])
+    for name, (kind, value) in expected.items():
+        supplied = [arg for arg in args if arg.startswith('-D' + name + '=') or
+                    arg.startswith('-D' + name + ':')]
+        if len(supplied) != 1 or supplied[0] not in ('-D' + name + '=' + value,
+                                                   '-D' + name + ':' + kind + '=' + value):
+            raise ServiceError('signer fixture requires explicit authored configuration: ' + name)
+    root, build = Path(realization['repo_root']), Path(realization['build_dir'])
+    cache_path = build / 'CMakeCache.txt'
+    cache = cache_path.read_text().splitlines()
+    for name, (kind, value) in expected.items():
+        if [line for line in cache if line.startswith(name + ':')] != [name + ':' + kind + '=' + value]:
+            raise ServiceError('signer fixture realized configuration mismatch: ' + name)
+    if 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(root) not in cache:
+        raise ServiceError('signer fixture realized source root mismatch')
+    inputs = {}
+    for relative in SIGNER_INPUTS:
+        path = root / relative
+        if path.is_symlink() or path.resolve(strict=True) != path:
+            raise ServiceError('signer fixture source input must be canonical')
+        inputs[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if environment is None:
+        from test_selection_realization import phase_environment
+        environment = phase_environment(profile, str(root), 'test')
+    if environment.get('NOSTRC_TEST_NIP5F_APPROVAL') != SIGNER_CONSENT:
+        raise ServiceError('signer fixture test-phase consent differs from authored one-shot approval')
+    tools = {name: _identity(name, environment.get('PATH')) for name in ('dbus-daemon', 'gdbus')}
+    tools['python'] = _identity(sys.executable)
+    return {'kind': 'nip5f_one_shot_provision_contract_v1', 'readiness': False,
+            'executables': tools,
+            'source_identity': realization['source_identity'], 'consent': SIGNER_CONSENT,
+            'operation': 'get_public_key', 'principal': 'unidentified', 'remember': False,
+            'inputs': inputs, 'cache_sha256': hashlib.sha256(cache_path.read_bytes()).hexdigest(),
+            'complete': False, 'complete_gate_eligible': False}
+
+
+@contextlib.contextmanager
+def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, environment=None):
+    """Live, audited test_nip5f_tcp resource; never share its HOME/bus with CTest.
+
+    The outer PID namespace owns crash/cancellation descendants. Direct fixture
+    children are joined on normal/nonzero/exception exits; post-exit namespace
+    evidence remains the outer adapter's responsibility.
+    """
+    contract = signer_contract(realization, environment)
+    if resolved.get('runtime_capability_evidence', {}).get('signer_endpoint') != contract:
+        raise ServiceError('signer fixture resolved provisioning contract mismatch')
+    if not input_audit.get('passed') or not input_audit.get('after_build'):
+        raise ServiceError('signer fixture requires passing complete post-build input audit')
+    consumers = {name for name in resolved['tests'] if 'signer_endpoint' in
+                 next((d.get('requires', []) for d in realization['descriptors'] if d['name'] == name), [])}
+    if consumers != {'test_nip5f_tcp'} or any('signer_endpoint' in spec['requires']
+                                            for spec in resolved.get('command_executions', {}).values()):
+        raise ServiceError('signer fixture supports only the exact test_nip5f_tcp consumer')
+    root, build = Path(realization['repo_root']), Path(realization['build_dir'])
+    paths = [root / name for name in SIGNER_INPUTS] + [build / name for name in SIGNER_BUILD_INPUTS]
+    for path in paths:
+        if path.is_symlink() or path.resolve(strict=True) != path or not path.is_file():
+            raise ServiceError('signer fixture input absent or indirect')
+        if input_audit.get('input_hashes', {}).get(str(path)) != hashlib.sha256(path.read_bytes()).hexdigest():
+            raise ServiceError('signer fixture input lacks exact full-audit binding: ' + str(path))
+    resource_root = _namespace_resources(os.environ.get('NOSTRC_NATIVE_RESOURCE_ROOT', ''), False)
+    require_socket_budget(resource_root)
+    import runpy
+    fixture = runpy.run_path(str(root / SIGNER_INPUTS[0]))
+    config = fixture['prepare_fixture'](root, build, evidence_dir, consent=True,
+                                         private_root=resource_root, prebuilt=True, environment=environment,
+                                         runtime_tools=contract['executables'])
+    owned = fixture['Signer']('worker', config=config)
+    state = {'kind': 'nip5f_one_shot_runtime_v1', 'contract': contract, 'inputs': config.inputs,
+             'executables': config.producer['executables'], 'status': 'failed',
+             'complete': False, 'complete_gate_eligible': False}
+    try:
+        owned.start()
+        state['readiness'] = dict(owned.result)
+        # TCP clients need ONLY these values, never fixture HOME/bus/service.
+        yield {key: owned.env[key] for key in ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN')}, state
+        snapshot = owned.snapshot()
+        if snapshot != '(uint32 1, uint32 1, uint32 0)':
+            raise ServiceError('signer fixture did not observe exactly one completed explicit consent')
+        state['approval_snapshot'] = snapshot
+        state['status'] = 'passed'
+    except BaseException as exc:
+        state['error_type'] = type(exc).__name__
+        raise
+    finally:
+        try:
+            owned.finish()
+            if any(fixture['identity'](value['path']) != value for value in config.inputs.values()):
+                raise ServiceError('signer fixture input changed during execution')
+            if signer_contract(realization, environment) != contract:
+                raise ServiceError('signer fixture source/configuration changed during execution')
+        except BaseException:
+            state['status'] = 'failed'
+            raise
+        finally:
+            state['cleanup'] = owned.result
+            with (Path(evidence_dir) / 'signer-runtime.json').open('x') as stream:
+                json.dump(state, stream, sort_keys=True, indent=2)
+                stream.write('\n')
 
 
 @contextlib.contextmanager

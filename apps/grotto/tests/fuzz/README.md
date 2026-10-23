@@ -150,6 +150,19 @@ Fuzzing runs automatically:
 
 See `.github/workflows/grotto-fuzz.yml` for details.
 
+### JSON-GLib version for `fuzz-json-event`
+
+Ubuntu 24.04 ships libjson-glib 1.8.0, whose parser leaks the nodes of extra
+root statements (e.g. `{}{}`) in `json_parser_load_from_data()`; LeakSanitizer
+therefore fails the strict `fuzz-json-event` run. This is fixed upstream in
+JSON-GLib 1.10.0 (GNOME/json-glib#74, MR !82). The CI jobs build the official
+1.10.8 release tarball (pinned by SHA-256) with
+`apps/grotto/tests/fuzz/json-glib-setup.sh`, then verify with
+`json_glib_leak_probe.c` and `ldd` that the fuzz binary loads that library.
+Leak detection is not weakened: no suppressions, no `detect_leaks=0`, and
+corpus and duration are unchanged. Locally, outside CI, `fuzz-json-event` with
+the distribution's 1.8.0 library will still report this upstream leak.
+
 ## Interpreting Results
 
 ### Crash Files

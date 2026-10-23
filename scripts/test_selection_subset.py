@@ -84,6 +84,222 @@ def contracts(policy):
     return records
 
 
+FULL_AUTHORITY = "ordinary_go_full_ownership_v1"
+FULL_FIELD = "ordinary_go_full_ownership"
+FULL_FIXTURE = "tests/selection/fixtures/ordinary_go_full_ownership.json"
+FULL_FIXTURE_SHA256 = "5b785df0e0fbe66d98f303730d4bbaf8c2ee05ee6f3911d24e33c04a20644bc6"
+
+
+def full_marker():
+    return dict(schema_version=1, authority=FULL_AUTHORITY, profiles=sorted(PROFILES),
+                fixture=FULL_FIXTURE, fixture_sha256=FULL_FIXTURE_SHA256)
+
+
+def full_profiles(policy):
+    """Validate an explicit current declaration, never infer authority from names.
+
+    A broken declaration cannot fall back to the historical omission route.
+    Physical graph/inputs are independently checked by full_evidence before any
+    resolve/audit; this declaration alone is not execution evidence.
+    """
+    checks = policy.get("checks", {})
+    owner = checks.get("supported.libgo", {})
+    marker = owner.get(FULL_FIELD)
+    claims = {pid: [ident for ident, check in checks.items()
+                   if check.get("kind") == "ctest" and pid in check.get("profiles", [])
+                   for name in check.get("ctest_tests", {}).get(pid, []) if name in REGISTRATIONS]
+              for pid in PROFILES}
+    if marker is None and not any(claims.values()):
+        require(not any(FULL_FIELD in check for check in checks.values()), "misplaced full declaration")
+        return set()
+    require(isinstance(marker, dict) and type(marker.get("schema_version")) is int
+            and marker == full_marker(), "missing/forged full declaration")
+    require([ident for ident, check in checks.items() if FULL_FIELD in check] == ["supported.libgo"],
+            "ambiguous full declaration owner")
+    require(owner.get("kind") == "ctest" and owner.get("requirement") == "blocking"
+            and owner.get("expected_outcome") == "pass" and owner.get("runtime_inputs") == []
+            and "libgo" in owner.get("nodes", []), "full check semantics changed")
+    for pid in PROFILES:
+        profile = policy.get("profiles", {}).get(pid, {})
+        require(all(profile.get(k) == v for k, v in dict(platform="linux", architecture="x86_64",
+                compiler="gcc", instrumentation="none", feature_variants=[], source_dir=".").items()),
+                "full declaration requires authored ordinary Linux/x86_64 GCC root profile")
+        require(pid in owner.get("profiles", []) and owner.get("ctest_tests", {}).get(pid) == list(REGISTRATIONS)
+                and claims[pid] == ["supported.libgo"] * len(REGISTRATIONS),
+                "full registration ownership missing/duplicated/changed")
+    return set(PROFILES)
+
+
+def active_contracts(policy):
+    """Historical witnesses stay intact; only validated full declarations retire them.
+
+    Do not rebind old review hashes to new current profiles. Historical callers
+    continue using contracts() with their immutable witness policy.
+    """
+    full = full_profiles(policy)
+    return contracts(dict(policy, diagnostic_nonmember_subsets={
+        pid: record for pid, record in policy.get("diagnostic_nonmember_subsets", {}).items() if pid not in full}))
+
+
+def before_full_ownership_policy(policy):
+    """Losslessly reverse ONLY this finite membership wave for old witnesses.
+
+    Historical comparison helpers must compose this before their prior census
+    projections; source enrollment remains independently parent-owned.
+    """
+    import copy
+    previous = copy.deepcopy(policy)
+    if not full_profiles(previous):
+        return previous
+    check = previous["checks"]["supported.libgo"]
+    del check[FULL_FIELD]
+    for pid in PROFILES:
+        check["profiles"].remove(pid)
+        del check["ctest_tests"][pid]
+    return previous
+
+
+def _full_fixture(root):
+    import json
+    path = Path(root) / FULL_FIXTURE
+    require(path.is_file() and path.resolve().is_relative_to(Path(root).resolve())
+            and hashlib.sha256(path.read_bytes()).hexdigest() == FULL_FIXTURE_SHA256,
+            "missing/changed full graph fixture")
+    return json.loads(path.read_bytes())
+
+
+def _full_target_structure(candidate):
+    """Pin graph shape as well as closure names, including generated inputs."""
+    result = {}
+    for record in candidate.values():
+        for target in record["targets"]:
+            result[target["name"]] = dict(type=target["type"],
+                dependencies=sorted(target["dependencies"]),
+                sources=sorted(target["sources"], key=lambda source: source["path"]))
+    return result
+
+
+def full_evidence(inventory, realization, tests, descriptors):
+    """Bind exact live executables, prerequisites, source and CTest semantics.
+
+    No audit finding is removed here. The ordinary backend still audits ALL
+    registrations, default targets, Ninja inputs and discovered headers pre/post
+    build. This evidence is not an exclusion and conveys no complete-gate claim.
+    """
+    from test_selection import digest
+    import test_selection_realization as backend
+    pid = realization["profile_id"]
+    if pid not in full_profiles(inventory):
+        return None
+    require(inventory["profiles"][pid] == realization["profile"]
+            and digest(inventory) == realization["inventory_hash"], "full inventory/profile identity changed")
+    require(descriptors == {d["name"]: d for d in realization["descriptors"]}
+            and tests == {t["name"]: t for t in realization["tests"]}, "full generated metadata authority changed")
+    require(backend.load_realization(realization["build_dir"], realization["source_identity"]) == realization,
+            "full realization changed")
+    import json
+    config = ["-C", realization["configuration"]] if realization["configuration"] else []
+    phase_env = backend.phase_environment(realization["profile"], realization["repo_root"], "test")
+    require("GOF_NWORKERS" not in phase_env, "full default worker environment changed")
+    fresh = json.loads(backend._command(["ctest", "--test-dir", realization["build_dir"], *config, "--show-only=json-v1"],
+        env=phase_env))["tests"]
+    require(len({t["name"] for t in fresh}) == len(fresh)
+            and backend._registration_hash(fresh) == backend._registration_hash(realization["tests"]),
+            "full fresh CTest export changed/duplicated")
+    root = Path(realization["repo_root"])
+    fixture = _full_fixture(root)
+    for name, expected in fixture["source_inputs"].items():
+        path = root / name
+        require(path.is_file() and path.resolve().is_relative_to(root.resolve())
+                and hashlib.sha256(path.read_bytes()).hexdigest() == expected, "full source input changed: " + name)
+    candidate = candidate_contract(realization, tests, descriptors)
+    projection = {}
+    for name, record in candidate.items():
+        projection[name] = {k: record[k] for k in ("command", "properties", "descriptor", "runtime_inputs")}
+        projection[name].update(input_names=sorted(record["input_hashes"]),
+                                target_names=sorted(t["name"] for t in record["targets"]))
+    require(projection == fixture["registrations"]
+            and _full_target_structure(candidate) == fixture["target_graph"],
+            "full argv/environment/timeout/fixture/source/prerequisite graph changed")
+    targets = sorted({ident for name in REGISTRATIONS for ident in
+        backend._target_closure(backend._mapped_targets(tests[name], descriptors[name], realization), realization)})
+    target_names = sorted(realization["targets"][ident]["name"] for ident in targets)
+    executable_names = sorted({name for record in fixture["registrations"].values()
+                               for name in record["descriptor"]["targets"]})
+    require(inventory["checks"]["supported.libgo"].get("build_targets") == executable_names,
+            "full authored executable prerequisites changed")
+    require(backend._fixture_closure(REGISTRATIONS, tests, descriptors) == list(REGISTRATIONS),
+            "full fixture closure changed")
+    return dict(schema_version=1, authority=FULL_AUTHORITY, profile=pid,
+                fixture_sha256=FULL_FIXTURE_SHA256, graph_sha256=digest(candidate),
+                binding=backend._nonmember_binding(realization, descriptors),
+                executions=list(REGISTRATIONS), required_target_ids=targets, required_build_targets=target_names)
+
+
+def validate_full_receipt(receipt, backend, plan, lane, profile, *, checks):
+    """Full ownership is not a promotion of a partial witness or an audit waiver."""
+    from test_selection import (digest, NONMEMBER_BINDING_KEYS, validate_default_build_evidence,
+                                validate_phase_parallelism_evidence)
+    evidence = backend if backend else receipt
+    full = evidence.get(FULL_FIELD)
+    fields = {"schema_version", "authority", "profile", "fixture_sha256", "graph_sha256", "binding",
+              "executions", "required_target_ids", "required_build_targets"}
+    require(isinstance(full, dict) and set(full) == fields and type(full.get("schema_version")) is int
+            and full.get("schema_version") == 1
+            and full.get("authority") == FULL_AUTHORITY and full.get("profile") == lane["profile"]
+            and full.get("fixture_sha256") == FULL_FIXTURE_SHA256 and _sha(full.get("graph_sha256"))
+            and full.get("executions") == list(REGISTRATIONS), "missing/forged full ownership evidence")
+    require(not nested(receipt) and not nested(evidence)
+            and not receipt.get("baseline_exclusions") and not evidence.get("baseline_exclusions"),
+            "historical partial authority cannot become full ownership")
+    binding = full["binding"]
+    require(isinstance(binding, dict) and set(binding) == NONMEMBER_BINDING_KEYS, "full binding fields differ")
+    for key in NONMEMBER_BINDING_KEYS - {"source_identity", "profile_id", "configuration"}:
+        require(_sha(binding[key]), "invalid full binding hash: " + key)
+    expected = dict(source_identity=plan["source_identity"], inventory_hash=plan["inventory_hash"],
+                    profile_id=lane["profile"], profile_hash=lane["profile_hash"],
+                    profile_fingerprint=receipt.get("profile_fingerprint"), configuration=profile["build_type"],
+                    phase_context_hash=evidence.get("phase_context_hash"))
+    require(all(binding.get(k) == v for k, v in expected.items()) and receipt.get(FULL_FIELD) == full,
+            "full source/profile/context evidence differs")
+    require(evidence.get("plan_hash") == digest(plan), "full plan binding differs")
+    for key in ("required_target_ids", "required_build_targets"):
+        values = full[key]
+        require(isinstance(values, list) and values and values == sorted(set(values))
+                and all(isinstance(v, str) and v for v in values), "invalid full target closure")
+    require(set(full["required_target_ids"]) <= set(evidence.get("target_ids", []))
+            and set(full["required_build_targets"]) <= set(evidence.get("build_targets", [])),
+            "full required prerequisite closure missing")
+    post = evidence.get("input_audit_details", evidence.get("input_audit"))
+    pre = evidence.get("input_audit_before_build")
+    for audit, after in ((pre, False), (post, True)):
+        require(isinstance(audit, dict) and audit.get("passed") is True and audit.get("after_build") is after
+                and audit.get("gaps") == [] and audit.get("selective_enforcement") is after
+                and audit.get(FULL_FIELD) == full and not audit.get("baseline_exclusions")
+                and audit.get("audit_hash") == digest({k: v for k, v in audit.items() if k != "audit_hash"}),
+                "full pre/post source/Ninja/header/runtime/default audit missing/stale")
+        require(all(audit.get(k) == expected[k] for k in
+                    ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context_hash")),
+                "full audit identity differs")
+    require(_sha(post.get("header_index_hash")), "full discovered-header audit missing")
+    if 'supported.libgo' in checks:
+        record = evidence.get("checks", {}).get("supported.libgo", {})
+        require(record.get("outcome") == "passed" and all(record.get(k) == list(REGISTRATIONS)
+                for k in ("executions", "expected_executions", "observed_executions"))
+                and all(evidence.get("observed_executions", {}).get(n) == "passed" for n in REGISTRATIONS)
+                and type(evidence.get("ctest_exit_code")) is int and evidence["ctest_exit_code"] == 0,
+                "full Go33 physical execution missing/failed/skipped")
+        require(any(cmd and Path(cmd[0]).name == "ctest" for cmd in evidence.get("commands", [])),
+                "full physical CTest command missing")
+    else:
+        require('supported.libgo' not in evidence.get('checks', {}), 'unselected full Go execution cannot broaden lane')
+    defaults = {ident: check for ident, check in checks.items() if check.get("build_scope") == "default"}
+    require(bool(defaults), "full default build contract missing")
+    validate_default_build_evidence(profile, dict(evidence, input_audit=post), defaults)
+    validate_phase_parallelism_evidence(profile, evidence,
+        require_test=any(check.get('kind') == 'ctest' for check in checks.values()))
+
+
 def marked(value):
     """Recognize stripped wrappers and unknown authority versions, not just flags."""
     return isinstance(value, dict) and (
@@ -221,7 +437,10 @@ def validate_graph(contract, realization, tests, descriptors, authored):
 def admit(inventory, realization, tests, descriptors):
     from test_selection import digest
     import test_selection_realization as backend
-    contract = contracts(inventory).get(realization["profile_id"])
+    if realization["profile_id"] in full_profiles(inventory):
+        full_evidence(inventory, realization, tests, descriptors)
+        return []
+    contract = active_contracts(inventory).get(realization["profile_id"])
     if contract is None:
         return []
     require(descriptors == {d["name"]: d for d in realization["descriptors"]}, "generated descriptor authority differs")

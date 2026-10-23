@@ -1,5 +1,22 @@
 # Dependency-aware CI: finite closeout criterion register
 
+> **Latest concrete W11 batch:** code `0e3601eab21ca480a7d80c72d6c29ac29155f5aa`
+> integrates all six approved exact tips and internal profile/source/producer
+> enrollment. [Final source-bound implementation/proof/dispatch report](dependency-aware-testing-w11-closure-integration-2026-10-23.md)
+> supersedes older implementation status, not their historical receipts. Actual
+> selected policy uses a typed provisioned controller, not predecessor status;
+> full Go has genuine named ownership rather than relaxed33 authority. The
+> administrative shadow_cutover prerequisite remains separate from nine blocking
+> technical gaps. Native default439/zero failures/five skips, provisioned ARM
+> policy915/zero failures/six MDK opt-ins and79 zero-skip kernel cases are local
+> proof only. `.36`, `.9.1`, `.29` acceptance stays open for exact native/hosted
+> criteria; `.5` remains finite-baseline closed. Parent dispatches after landing.
+> Final TCP full audits/default build pass, then startup fails on an overlong
+> private D-Bus pathname (internal fixture defect). Selected policy setup attempts
+> fail without a typed receipt; passing ARM workload is not selected acceptance.
+> Strict JSON-GLib remedy exists; original missing input identity is not replayed.
+> W11 NOT MET/W12 NOT RUN; no cutover, waiver expansion or unit/replay quota credit.
+
 > **Latest W11/W12/heartbeat integration:** approved exact tips preserve ancestry;
 > enrollment source `942128955a726536b334bb6a2bcb2d6af278666e` and
 > [bounded source/evidence receipt](dependency-aware-testing-w11-w12-integration-2026-10-23.md)

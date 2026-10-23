@@ -47,6 +47,8 @@ def before_core_producer_source(path, content):
 
 
 def before_closeout_contract(contract, profile):
+    from w11_worker_support import before_worker_contract
+    contract = before_worker_contract(contract, profile)
     record = witness()['contracts'].get(profile)
     if record is None:
         return copy.deepcopy(contract)
@@ -85,7 +87,9 @@ def w11_setup_witness():
 
 def before_w11_setup_jobs(records):
     """Project only reviewed fingerprint fields for immutable historical tests."""
-    previous = copy.deepcopy(records)
+    from w11_worker_support import before_worker_jobs
+    from w11_policy_support import before_policy_jobs
+    previous = before_heartbeat_jobs(before_worker_jobs(before_policy_jobs(records)))
     for ident, record in w11_setup_witness()['workflow_jobs'].items():
         fields = {field: previous[ident][field] for field in record['after']}
         s.require(fields in (record['before'], record['after']),
@@ -94,10 +98,36 @@ def before_w11_setup_jobs(records):
     return previous
 
 
+HEARTBEAT_WITNESS = 'tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json'
+HEARTBEAT_SHA256 = 'cfff9082550676990622e9719b2502518eb162b112ace9a22af89fb6cb4a0f5f'
+
+
+def heartbeat_witness():
+    raw = (ROOT / HEARTBEAT_WITNESS).read_bytes()
+    s.require(hashlib.sha256(raw).hexdigest() == HEARTBEAT_SHA256,
+              'heartbeat enrollment witness bytes changed')
+    return json.loads(raw)
+
+
+def before_heartbeat_jobs(records):
+    """Historical test projection only; never used by runtime admission."""
+    previous = copy.deepcopy(records)
+    for ident, record in heartbeat_witness()['workflow_jobs'].items():
+        fields = {field: previous[ident][field] for field in record['after']}
+        s.require(fields in (record['before'], record['after']),
+                  'heartbeat workflow source changed: ' + ident)
+        previous[ident].update(record['before'])
+    return previous
+
+
 def before_w11_setup_source(path, raw):
     record = w11_setup_witness()['sources'][path]
     if hashlib.sha256(raw).hexdigest() == record['before_sha256']:
         return raw
+    from w11_worker_support import before_worker_source
+    from w11_policy_support import before_policy_source
+    if hashlib.sha256(raw).hexdigest() != record['after_sha256']:
+        raw = before_worker_source(path, before_policy_source(path, raw))
     s.require(hashlib.sha256(raw).hexdigest() == record['after_sha256'],
               'W11 setup source changed: ' + path)
     for edit in record['edits']:
@@ -110,6 +140,9 @@ def before_w11_setup_source(path, raw):
 
 
 RUNTIME_SOURCE_RULES = [
+    {'effect': 'global', 'exact': 'scripts/w11-evidence.py', 'nodes': ['selection.contract'],
+     'reason': 'Source-bound diagnostic replay helper consumed by policy tests; no replay acceptance credit.'},
+] + [
     {'effect': 'impact', 'exact': path, 'nodes': [owner, 'selection.contract'],
      'reason': 'Standalone runtime diagnostic source closure; preserve product ownership without profile admission.'}
     for owner, path in [('grotto.gui', 'apps/grotto/data/org.nostr.Grotto.gschema.xml')] +
@@ -120,7 +153,13 @@ RUNTIME_SOURCE_RULES = [
       'reason': 'W11 checkout regression consumes pinned vector bytes; preserve vector ownership.'},
      {'effect': 'global', 'exact': 'docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json',
       'nodes': ['selection.contract'],
-      'reason': 'Hosted diagnostic evidence index; explicit broad validation, not executable admission.'}]
+      'reason': 'Hosted diagnostic evidence index; explicit broad validation, not executable admission.'}] + [
+    {'effect': 'impact', 'exact': path, 'nodes': ['nostr.gobject', 'selection.contract'],
+     'reason': 'Heartbeat diagnostic consumes actual test/probe bytes; preserve product ownership without changing the normal gate.'}
+    for path in ('nostr-gobject/tests/test_main_thread_forbidden_calls.c',
+                 'nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh',
+                 'nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c')
+]
 NATIVE_RUNTIME_INPUTS = [
     '{source}/scripts/adapter_namespace_custody.py',
     '{source}/tests/selection/test_namespace_custody.py',
@@ -144,12 +183,36 @@ NATIVE_RUNTIME_INPUTS = [
     '{source}/tests/selection/test_w11_worker_setup.py',
     '{source}/tests/selection/fixtures/w11_setup_enrollment_20261023.json',
     '{source}/nips/nip44/tests/nip44.vectors.json',
+    '{source}/nostr-gobject/tests/test_main_thread_forbidden_calls.c',
+    '{source}/nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh',
+    '{source}/nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c',
+    '{source}/tests/selection/test_w11_heartbeat_enrollment.py',
+    '{source}/tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json',
+    '{source}/tests/selection/test_worker_signer.py',
+    '{source}/tests/selection/w11_worker_support.py',
+    '{source}/tests/selection/test_w11_worker_enrollment.py',
+    '{source}/tests/selection/fixtures/w11_worker_enrollment_20261023.json',
+    '{source}/tests/selection/test_w11_worker_host_guard.py',
+    '{source}/tests/selection/test_w11_retained_plan_adapter.py',
+    '{source}/scripts/w11-evidence.py',
+    '{source}/tests/selection/test_w11_evidence.py',
 ]
 
 
 def before_native_custody_policy(policy):
     """Reverse only the exact additive input record, never renew old authority."""
-    previous = copy.deepcopy(policy)
+    from w11_worker_support import before_worker_policy
+    from w11_policy_support import before_policy_enrollment
+    from test_selection_subset import before_full_ownership_policy
+    previous = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(policy)))
+    for gap in previous.get('coverage_gaps', []):
+        if gap.get('id') == 'shadow_cutover' and 'classification' in gap:
+            s.require(gap['classification'] == 'administrative_rollout_prerequisite'
+                      and gap.get('authority') == 'reviewed_shadow_cutover_v1'
+                      and gap.get('tracking') == 'nostrc-0cfsg.5',
+                      'reviewed rollout marker changed')
+            del gap['classification']
+            del gap['authority']
     check = previous['checks']['selection.contract']
     if set(NATIVE_RUNTIME_INPUTS) & set(check.get('runtime_inputs', [])):
         previous['workflow_jobs'] = before_w11_setup_jobs(previous['workflow_jobs'])

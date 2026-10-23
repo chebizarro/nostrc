@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import shutil
 import os
 from pathlib import Path
 import re
@@ -80,11 +81,17 @@ class WorkerAccountingTests(unittest.TestCase):
         errors, _ = ci.check_jobs(broad, self.needs)
         self.assertIn("broad family coverage did not complete as selected", errors)
 
-    def test_empty_set_needs_explicit_accounting_and_ready_policy(self):
+    def test_empty_set_needs_physical_accounting_not_rollout_approval(self):
         plan = s.make_plan(self.p, [], head="a" * 40, context="ci", event={"kind": "manual"})
         self.needs["core"]["result"] = "skipped"
         self.assertTrue(ci.aggregate(ROOT, self.p, plan, self.needs, [])["passed"])
         self.p["enforcement_ready"] = False
+        plan = s.make_plan(self.p, [], head="a" * 40, context="ci")
+        observed = ci.aggregate(ROOT, self.p, plan, self.needs, [])
+        self.assertTrue(observed["passed"])
+        self.assertTrue(observed["complete_gate_eligible"])
+        self.assertFalse(observed["rollout_readiness"]["ready"])
+        self.p["coverage_gaps"] = [{"id": "missing_runtime", "reason": "physical dependency missing"}]
         plan = s.make_plan(self.p, [], head="a" * 40, context="ci")
         self.assertFalse(ci.aggregate(ROOT, self.p, plan, self.needs, [])["passed"])
 
@@ -330,6 +337,9 @@ class PublicationTests(unittest.TestCase):
 
     def release(self, component):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        # Exercise publication routing with an explicitly synthetic ready policy;
+        # never forge ready validation against the actual unready inventory.
+        p.update(enforcement_ready=True, coverage_gaps=[])
         return s.release_plan(ROOT, p, head="HEAD", component=component, dry_run=True, run_id="synthetic")
 
     def needs(self, release, publisher):
@@ -342,7 +352,7 @@ class PublicationTests(unittest.TestCase):
         return result
 
     def validation(self, release):
-        return dict(passed=True, complete=True, enforcement_ready=True, coverage_gaps=[],
+        return dict(passed=True, complete=True, complete_gate_eligible=True, **s.coverage_state(release),
                     source_identity=release["source_identity"], tested_sha=release["tested_sha"],
                     inventory_hash=release["inventory_hash"], mode="broad", tag=release["tag"], partial_profiles=[],
                     broad_family_receipt=ci.broad_aggregate(ROOT, release['tested_sha'],
@@ -512,7 +522,8 @@ class WorkflowWiringTests(unittest.TestCase):
         for lane, job in expected.items():
             with self.subTest(lane=lane):
                 block = job_block(text, job)
-                self.assertIn('    needs: select\n', block)
+                self.assertIn('    needs: [select, policy_regressions]\n' if lane == 'static.policy'
+                              else '    needs: select\n', block)
                 self.assertIn('uses: ./.github/workflows/dependency-worker.yml', block)
                 self.assertIn('profile: ' + lane + '\n', block)
                 self.assertIn('plan_id: ${{ needs.select.outputs.plan_id }}', block)
@@ -643,7 +654,7 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
                     wrapper.write_text('#!/bin/sh\nshift ' + str(skip) + '\nexec "$@"\n')
                 wrapper.chmod(0o755)
             for profile in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers',
-                            'grotto.linux', 'grotto.linux.asan_ubsan', 'groundhog.mdk011'):
+                            'grotto.linux.asan_ubsan', 'groundhog.mdk011'):
                 for fail in ('0', '1'):
                     with self.subTest(profile=profile, failure=fail):
                         temp = root / (profile + '-' + fail)
@@ -674,15 +685,62 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
         self.assertIn("name: dependency-receipt-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}", text)
         self.assertIn('if: always()', text.split('- name: Retain incomplete evidence', 1)[1])
 
+    def test_ordinary_worker_keeps_outer_refusal_and_rejects_unreceipted_success(self):
+        # Routing test only. Real public namespace/source lifecycle proof is a
+        # separate mandatory Linux execution, not inferred from this stub.
+        script = step_script(workflow('dependency-worker'), 'Resolve, audit, build and execute exact selected checks')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / 'bin'
+            binary.mkdir()
+            real_bash = shutil.which('bash')
+            wrapper = binary / 'bash'
+            wrapper.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, sys
+if sys.argv[1:2] != ['scripts/test-gate.sh']:
+    os.execv(os.environ['REAL_BASH'], [os.environ['REAL_BASH'], *sys.argv[1:]])
+pathlib.Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))
+print(os.environ['PROFILE'] + ': retained outer refusal')
+sys.exit(int(os.environ['OUTER_STATUS']))
+''')
+            wrapper.chmod(0o755)
+            for profile in ('core.linux', 'grotto.linux', 'groundhog.linux'):
+                for status in ('0', '23'):
+                    with self.subTest(profile=profile, status=status):
+                        temp = root / (profile + '-' + status)
+                        temp.mkdir()
+                        env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                            REAL_BASH=real_bash, PROFILE=profile, RUNNER_TEMP=str(temp),
+                            REQUESTED_SHA='a' * 40, PLAN_ID='b' * 64, RUNNER_OS='Linux',
+                            CAPTURE=str(temp / 'argv.json'), OUTER_STATUS=status)
+                        result = subprocess.run([real_bash, '-c', script], cwd=ROOT, env=env,
+                                                capture_output=True, text=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        if status == '23':
+                            self.assertEqual(result.returncode, 23, result.stderr)
+                        else:
+                            self.assertIn('missing/ambiguous exact-plan retained native receipt', result.stderr)
+                        args = json.loads((temp / 'argv.json').read_text())
+                        self.assertEqual(args[:3], ['scripts/test-gate.sh', '--head', 'a' * 40])
+                        self.assertIn('--plan', args)
+                        self.assertEqual(args[args.index('--native-custody') + 1], 'pidns')
+                        self.assertFalse((temp / 'dependency/receipts' / profile / 'receipt.json').exists())
+                        self.assertIn('retained outer refusal',
+                            (temp / 'dependency/receipts' / profile / 'worker.log').read_text())
+
     def test_all_broad_families_reusable_and_same_sha_without_publisher_recursion(self):
         text = workflow("dependency-broad")
         for family in ci.FAMILIES:
             self.assertIn("uses: ./.github/workflows/" + family + ".yml", text)
             family_text = workflow(family)
             self.assertIn("workflow_call:", family_text)
-            self.assertIn("ref: ${{ inputs.sha || github.sha }}", family_text)
+            if family == 'namespace-policy-regression':
+                self.assertIn('ref: ${{ inputs.sha }}', family_text)
+                self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', family_text)
+            else:
+                self.assertIn("ref: ${{ inputs.sha || github.sha }}", family_text)
             self.assertIn("persist-credentials: false", family_text)
-            self.assertIn("Verify requested checkout", family_text)
+            self.assertIn('Bind exact source and retain native launcher diagnosis' if family == 'namespace-policy-regression'
+                          else 'Verify requested checkout', family_text)
             self.assertNotIn("secrets: inherit", family_text)
         self.assertIn('uses: ./.github/workflows/windows-validation.yml', job_block(text, 'windows'))
         self.assertNotIn('contents: write', workflow('windows-validation'))

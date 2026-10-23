@@ -7,6 +7,7 @@ RealizationError means a failed validation (exit 1); malformed calls use ValueEr
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -2005,7 +2006,20 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
         path = Path(executable).resolve()
         evidence['gnome_keyring'] = {'executable': 'gnome-keyring-daemon', 'path': str(path),
                                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer"}
+    if 'signer_endpoint' in required:
+        from test_selection_services import ServiceError, signer_contract
+        try:
+            evidence['signer_endpoint'] = signer_contract(realization)
+        except (ServiceError, OSError) as exc:
+            raise RealizationError(str(exc)) from exc
+    if 'namespace_policy_controller' in required:
+        from test_selection_policy import contract
+        try:
+            evidence['namespace_policy_controller'] = contract(realization,
+                phase_environment(realization['profile'], realization['repo_root'], 'test'))
+        except (ValueError, OSError, KeyError, subprocess.SubprocessError) as exc:
+            raise RealizationError(str(exc)) from exc
+    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer", "signer_endpoint", "namespace_policy_controller"}
     if unknown:
         raise RealizationError(f"unsupported runtime capabilities: {sorted(unknown)}")
     if "nak" in required:
@@ -2067,12 +2081,22 @@ def _command_keyring_runtime(realization, resolved, custody):
         raise RealizationError(str(exc)) from exc
 
 
+def _bound_coverage_state(value):
+    from test_selection import coverage_state, require_coverage_state
+    state = coverage_state(value)
+    require_coverage_state(value, state)
+    return state
+
+
 def resolve_checks(inventory, plan, realization, profile_id):
     """Resolve exact check membership plus fixture/order/runtime/build closure.
 
     plan.selected_checks is a list of stable IDs (or plan.checks). No name regex
     matching, alias expansion, profile projection or policy broadening happens here.
     """
+    from test_selection import coverage_state
+    import test_selection_subset as subset
+    state = coverage_state(inventory)
     _validate_phase_context(realization)
     if realization["profile_id"] != profile_id:
         raise RealizationError("profile mismatch")
@@ -2153,6 +2177,10 @@ def resolve_checks(inventory, plan, realization, profile_id):
     available = set(realization["profile"].get("capabilities", []))
     if not capabilities.issubset(available):
         raise RealizationError(f"unavailable selected capabilities: {sorted(capabilities - available)}")
+    if 'signer_endpoint' in capabilities:
+        signer_consumers = {name for name in selected if 'signer_endpoint' in descriptors.get(name, {}).get('requires', [])}
+        if signer_consumers != {'test_nip5f_tcp'} or any('signer_endpoint' in spec['requires'] for spec in selected_commands.values()):
+            raise RealizationError('signer fixture supports only the exact test_nip5f_tcp consumer')
     runtime_capabilities = _runtime_capability_evidence(realization, capabilities, plan.get('plan_id', _hash(plan)))
     result = {"schema_version": 1, "profile_id": profile_id,
         "profile_fingerprint": realization["profile_fingerprint"],
@@ -2168,15 +2196,19 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "target_ids": closure, "build_targets": sorted({realization["targets"][i]["name"] for i in ids | audit_ids | contract_ids}),
         "audit_build_targets": sorted({realization["targets"][i]["name"] for i in audit_ids}),
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
-        "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
-        "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
+        "baseline_exclusions": exclusions, **state,
+        "complete_gate_eligible": not bool(exclusions or state["physical_coverage_gaps"]),
         "runtime_inputs": sorted(inputs), "ctest_runtime_constraints": constraints,
         "required_capabilities": sorted(capabilities),
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
         "registered_commands": {t["name"]: t["command"] for t in realization["tests"] if "command" in t}}
+    full = subset.full_evidence(inventory, realization, tests, descriptors)
+    if full is not None:
+        result[subset.FULL_FIELD] = full
     if runtime_capabilities:
         result["runtime_capability_evidence"] = runtime_capabilities
+    result.update(_signer_diagnostic_boundary(realization))
     if "default_build_binding" in realization:
         result.update(default_build_required=True, default_build_hash=_hash(realization["default_build_binding"]))
     if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
@@ -2187,6 +2219,33 @@ def resolve_checks(inventory, plan, realization, profile_id):
     result.update(_diagnostic_boundary(realization))
     result["resolved_hash"] = _hash(result)
     return result
+
+
+def _signer_diagnostic_boundary(realization):
+    # An authored signer-fixture profile remains diagnostic even when a subset
+    # does not select its signer. This never provisions an unselected resource.
+    return ({'complete': False, 'complete_gate_eligible': False}
+            if 'signer_endpoint' in realization['profile'].get('capabilities', []) else {})
+
+
+def _signer_generated_input(realization, name, desc, target_ids, value):
+    """Recognize only exact fixture artifacts with their declared producer closure."""
+    from test_selection_services import SIGNER_BUILD_INPUTS
+    if name != 'test_nip5f_tcp' or 'signer_endpoint' not in desc.get('requires', []):
+        return False
+    if value not in {str(Path(realization['build_dir']) / p) for p in SIGNER_BUILD_INPUTS}:
+        return False
+    producers = {path for key in target_ids for path in realization['targets'][key]['artifacts']}
+    schema = str(Path(realization['build_dir']) / 'apps/grotto/gschemas.compiled')
+    for key in target_ids:
+        target = realization['targets'][key]
+        # Ninja File API represents this custom output by its generated .rule
+        # source, not by a fabricated executable artifact or utility "all" target.
+        if target['name'] == 'grotto-schemas' and any(s['path'] == schema + '.rule' and s.get('generated') for s in target['sources']):
+            producers.add(schema)
+    if value not in producers:
+        raise RealizationError('signer runtime input lacks declared producer closure: ' + value)
+    return True
 
 
 def _owners(inventory, relative):
@@ -2239,6 +2298,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     after_build additionally checks Ninja inputs/discovered headers. An absent
     header index is an explicit gap, not evidence that a target uses no headers.
     """
+    from test_selection import coverage_state
+    import test_selection_subset as subset
+    state = coverage_state(inventory)
     _validate_phase_context(realization)
     if source_identity is not None and _identity(source_identity) != realization["source_identity"]:
         raise RealizationError("input audit identity mismatch")
@@ -2384,6 +2446,11 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 # declared runtime source inputs. Unresolved provenance stays a gap.
                 if kind == "runtime" and value in configured:
                     fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+                elif kind == 'runtime' and after_build and _signer_generated_input(realization, name, desc, ids, value):
+                    if path.is_symlink() or path.resolve() != path or not path.is_file():
+                        gap('signer_runtime_artifact', test=name, input=value)
+                    else:
+                        fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
                 elif kind == "runtime" and not ids and not support:
                     gap("generated_runtime_without_target", test=name, input=value)
                 continue
@@ -2457,6 +2524,26 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 fingerprints[tool['setup_receipt']['path']] = tool['setup_receipt']['sha256']
         except RealizationError as exc:
             gap('missing_runtime_capability', capability=capability, reason=str(exc))
+    if 'signer_endpoint' in realization['profile'].get('capabilities', []) and any(
+            'signer_endpoint' in desc.get('requires', []) for desc in descriptors.values()):
+        try:
+            proof = _runtime_capability_evidence(realization, ['signer_endpoint'])
+            runtime_tools.update(proof)
+            fingerprints.update(proof['signer_endpoint']['inputs'])
+            fingerprints.update({tool['path']: tool['sha256'] for tool in proof['signer_endpoint']['executables'].values()})
+        except RealizationError as exc:
+            gap('missing_runtime_capability', capability='signer_endpoint', reason=str(exc))
+    if 'namespace_policy_controller' in realization['profile'].get('capabilities', []) and any(
+            'namespace_policy_controller' in spec['requires'] for spec in specs.values()):
+        try:
+            proof = _runtime_capability_evidence(realization, ['namespace_policy_controller'])
+            runtime_tools.update(proof)
+            value = proof['namespace_policy_controller']
+            fingerprints.update({str(Path(realization['repo_root']) / path): sha for path, sha in value['inputs'].items()})
+            fingerprints.update({item['path']: item['sha256'] for item in value['tools'].values()})
+            fingerprints.update(value['setup_inputs'])
+        except RealizationError as exc:
+            gap('missing_runtime_capability', capability='namespace_policy_controller', reason=str(exc))
     compatibility_gaps, compatibility_hashes = _audit_compatibility_targets(inventory, realization, after_build)
     gaps.extend(compatibility_gaps)
     fingerprints.update(compatibility_hashes)
@@ -2474,8 +2561,8 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         gap("missing_discovered_header_index")
     result = {"schema_version": 1, "passed": not gaps, "requires_broad": bool(gaps),
         "selective_enforcement": False if gaps or not after_build or exclusions else True,
-        "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
-        "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
+        "baseline_exclusions": exclusions, **state,
+        "complete_gate_eligible": not bool(exclusions or state["physical_coverage_gaps"]),
         "source_identity": realization["source_identity"], "inventory_hash": realization["inventory_hash"],
         "profile_fingerprint": realization["profile_fingerprint"], "after_build": after_build,
         "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
@@ -2485,6 +2572,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "ctest_runtime_constraints": constraints,
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
+    full = subset.full_evidence(inventory, realization, tests, descriptors)
+    if full is not None:
+        result[subset.FULL_FIELD] = full
     if "default_build_binding" in realization:
         result.update(default_build_required=True, default_build_hash=_hash(realization["default_build_binding"]))
     if any(e.get("authority") == "reviewed_diagnostic_nonmember_subset_v1" for e in exclusions):
@@ -2495,6 +2585,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         result["override_inventory_hash"] = _hash(realization["override_inventory"])
     if runtime_tools:
         result["runtime_capability_evidence"] = runtime_tools
+    result.update(_signer_diagnostic_boundary(realization))
     if default_execution is not None:
         result["default_build_execution"] = default_execution
     if prepared_inputs:
@@ -2715,6 +2806,9 @@ def cli(args, policy):
                     raise RealizationError("provided resolved plan is stale or differs from current resolution")
             code = 0
             if args.command == "run":
+                import test_selection_subset as subset
+                if args.phase == 'test' and subset.FULL_FIELD in result:
+                    raise RealizationError('ordinary full ownership test-only phase requires original pre-build audit; use --phase all')
                 parallel = None if authored_phase_parallelism(profile) is not None else profile.get("parallelism", 1)
                 pre = check_inputs(policy, realized, identity)
                 if not pre["passed"]:
@@ -2731,7 +2825,7 @@ def cli(args, policy):
                     else:
                         evidence = Path(args.output).absolute().parent / "selection-evidence" if args.output else Path(args.build_dir) / "selection-evidence"
                         result = run_resolved(result, args.build_dir, evidence, args.attempt,
-                            input_audit=audit, build=False, parallel=parallel,
+                            input_audit=audit, input_audit_before_build=pre, build=False, parallel=parallel,
                             timeout=profile.get("timeout_seconds"),
                             evidence_paths=[Path(args.build_dir) / "mdk011-interop-artifacts"])
                         result["build"] = build_result
@@ -2813,7 +2907,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, **kwargs):
             signal.signal(signal.SIGTERM, previous_handler)
 
 
-def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=None,
+def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=None, input_audit_before_build=None,
                  build=True, parallel=None, timeout=None, evidence_paths=(), custody=None,
                  build_parallel=None, test_parallel=None):
     """One CTest invocation per profile/attempt; no retries or quarantine policy.
@@ -2826,6 +2920,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         raise ValueError("attempt must be positive")
     build_dir = Path(build_dir).resolve()
     realization = load_realization(build_dir, resolved["source_identity"])
+    state = _bound_coverage_state(resolved)
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("resolved profile fingerprint mismatch")
     _validate_resolved_phase(resolved, realization)
@@ -2878,9 +2973,9 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
         "started": started, "commands": commands, "evidence_dir": str(directory),
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
-        "coverage_gaps": resolved.get("coverage_gaps", []),
+        **state,
         "complete_gate_eligible": resolved.get("complete_gate_eligible", True),
-        **_diagnostic_boundary(resolved),
+        **_diagnostic_boundary(resolved), **_signer_diagnostic_boundary(realization),
         "audit_build_targets": resolved.get("audit_build_targets", []),
         "compatibility_build_targets": resolved.get("compatibility_build_targets", []),
         "required_capabilities": resolved["required_capabilities"],
@@ -2926,6 +3021,27 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     if any(input_audit.get("runtime_capability_evidence", {}).get(key) != proof for key, proof in runtime_capabilities.items()):
         raise RealizationError("input audit runtime capability executable mismatch")
     _validate_runtime_closure(resolved, realization, input_audit)
+    from test_selection import require_coverage_state
+    import test_selection_subset as subset
+    require_coverage_state(input_audit, state)
+    full = resolved.get(subset.FULL_FIELD)
+    if full is not None:
+        for audit, after in ((input_audit_before_build, False), (input_audit, True)):
+            if (not isinstance(audit, dict) or audit.get(subset.FULL_FIELD) != full
+                    or audit.get('passed') is not True or audit.get('after_build') is not after
+                    or audit.get('gaps') != [] or audit.get('selective_enforcement') is not after
+                    or audit.get('baseline_exclusions')
+                    or audit.get('audit_hash') != _hash({k: v for k, v in audit.items() if k != 'audit_hash'})):
+                raise RealizationError('full ownership requires original matching pre/post full audits')
+            require_coverage_state(audit, state)
+            for key in ('source_identity', 'inventory_hash', 'profile_fingerprint', 'phase_context', 'phase_context_hash'):
+                if audit.get(key) != resolved[key]:
+                    raise RealizationError('full ownership audit identity mismatch: ' + key)
+        receipt[subset.FULL_FIELD] = full
+    elif subset.FULL_FIELD in input_audit or (input_audit_before_build is not None and subset.FULL_FIELD in input_audit_before_build):
+        raise RealizationError('undeclared full ownership audit evidence')
+    if input_audit_before_build is not None:
+        receipt['input_audit_before_build'] = input_audit_before_build
     receipt["input_audit"] = input_audit
     receipt["input_audit_status"] = "passed"
     env = phase_environment(realization["profile"], realization["repo_root"], "test")
@@ -3026,7 +3142,16 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
-        process = _execute(cmd, env=env, log_path=directory / "ctest.log", timeout=timeout)
+        resource = contextlib.nullcontext(({}, None))
+        if 'signer_endpoint' in resolved['required_capabilities']:
+            from test_selection_services import provisioned_signer
+            resource = provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env)
+        with resource as (overlay, signer_runtime):
+            process = _execute(cmd, env=dict(env, **overlay), log_path=directory / "ctest.log", timeout=timeout)
+        if signer_runtime is not None:
+            receipt['signer_runtime'] = signer_runtime
+            receipt['complete'] = False
+            receipt['complete_gate_eligible'] = False
         receipt["test_seconds"] = time.monotonic() - begin
         receipt["ctest_exit_code"] = process.returncode
         for value in evidence_paths:
@@ -3067,7 +3192,16 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         logfile = directory / f"command-{ident}.log"
         _atomic(directory / "receipt.json", dict(receipt, outcome="running", active_command=ident))
         begin = time.monotonic()
-        process = _execute(spec["argv"], cwd=spec["cwd"], env=env_command, log_path=logfile, timeout=timeout)
+        resource = contextlib.nullcontext(None)
+        if 'namespace_policy_controller' in spec['requires']:
+            if ident != 'selection.contract':
+                raise RealizationError('policy controller supports only exact selection.contract command')
+            from test_selection_policy import controller
+            resource = controller(realization, resolved, spec, input_audit)
+        with resource as policy_runtime:
+            process = _execute(spec["argv"], cwd=spec["cwd"], env=env_command, log_path=logfile, timeout=timeout)
+        if policy_runtime is not None:
+            receipt['policy_controller_runtime'] = policy_runtime
         artifacts, evidence_missing = {}, []
         for relative in spec["required_evidence"]:
             path = build_dir / relative
@@ -3108,7 +3242,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
                                          if receipt["baseline_exclusions"] else [])
         # Execution success is diagnostic only. Normalization preserves these
         # fields and complete aggregation rejects them independently of outcomes.
-        receipt["incomplete_reasons"] += ["inventory/profile union is not complete"] if receipt["coverage_gaps"] else []
+        receipt["incomplete_reasons"] += ["inventory/profile union is not complete"] if receipt["physical_coverage_gaps"] else []
     if (input_audit.get("complete_gate_eligible", True) != receipt["complete_gate_eligible"]
             or input_audit.get("coverage_gaps", []) != receipt["coverage_gaps"]):
         receipt["outcome"] = "failed"

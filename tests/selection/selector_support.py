@@ -31,6 +31,7 @@ def receipt(p, selected):
     lane = selected["lanes"][0]
     result = {"schema_version": 1, "lane_id": lane["id"], "profile": lane["profile"], "profile_hash": lane["profile_hash"], "profile_fingerprint": "fresh-configure-fingerprint", "job_conclusion": "success", "registration_audit": "passed", "input_audit": "passed", "checks": {}}
     result.update({k: copy.deepcopy(selected[k]) for k in ("plan_id", "inventory_hash", "source_identity")})
+    result.update(copy.deepcopy(s.coverage_state(p)))
     for ident in lane["checks"]:
         names = p["checks"][ident].get("ctest_tests", {}).get(lane["profile"], [ident])
         result["checks"][ident] = {"outcome": "passed", "expected_executions": names[:], "observed_executions": names[:]}

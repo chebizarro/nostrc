@@ -1,5 +1,55 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## Concrete closure implementation and refreshed evidence — 2026-10-23
+
+[Final integration and frozen hosted handoff](dependency-aware-testing-w11-closure-integration-2026-10-23.md)
+implements internal enrollment, genuine ordinary33 ownership, retained five-state
+coverage/readiness fields and a typed selected policy controller. These supersede
+master663's missing ownership and predecessor-only architecture below, not its
+historical evidence. Only marked shadow_cutover is administrative; nine technical
+rows still block and enforcement_ready remains false. No diagnostic flag clearing.
+
+[Fresh dated ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md):
+API window06:34:08.709047Z–06:34:42.397955Z returns all54 roots,53 failed/one
+cancelled. Four roots' full job/artifact lists and eleven original source-linked
+plan/broad/validation archives are retained and hashed; all four validation and
+three broad receipts fail. This is not final-batch hosted execution. **0/20
+qualifying reviewed comparisons,0/2 successful complete broad integrations;
+W11 NOT MET/W12 NOT RUN.** Parent lands and dispatches existing approved workflows
+on the exact landed ref; no endpoint, SSH or approval dependency remains. Local
+native439, provisioned policy915/kernel79 and diagnostic real-PR replays add zero
+quota credit. `.5` remains a closed finite baseline with a fresh official comment.
+
+J's strict official1.10.8 remedy and full internal source/toolchain enrollment
+exist; original62179 input identity remains unavailable/exact replay NOT RUN,
+not a claim that prior provider refusal explains the technical leak. Native and
+hosted acceptance criteria stay open. No default/protection/publication cutover.
+
+## W11 executable census and current-head refusal — 2026-10-23T02:12:28.940355Z
+
+[Finite source-bound register,21 real PR replays and run sequence](dependency-aware-testing-w11-execution-2026-10-23.md)
+uses master `663edcd70c0d313c98f87610aa41f1261bce4ee6`. Bounded sequential API
+window02:12:04.578186Z–02:12:28.940355Z:54 roots,49 failed/one cancelled/four
+nonterminal, zero successful roots. **0/20 qualifying comparisons;0/2 complete
+broad integrations; W11 NOT MET/W12 NOT RUN.** PR20 Windows/Linux libgo now
+terminal success; resource/partition failures remain. PR21 actual tested merge
+`a86aae499c3770a7e84b3d6479ad78977346d683` selects zero lanes yet actual validation
+12473820942 fails on global inventory/profile gaps; `complete=true` is not a pass.
+
+All21 immutable merged PRs' original planners/policies executed twice each:
+19 broad, one shared Signer/resource change, one docs-only no-op. **Diagnostic
+ONLY**, no cohort credit, paired savings or original hosted-tested-merge claim.
+Current inventory has ten unconditional gap rows and89 workflow-job metadata
+rows; ordinary GH/Grotto claim0/33 reviewed Go names (other profiles already own
+them). Existing subset authority requires incomplete execution. Parent interface
+and finite full-ownership work are recorded under `.36`/`nostrc-0cfsg.9.1`;
+no authority/criteria/core/inventory changes or dual-source framework here.
+`.5` remains CLOSED, comment only. No new cold broad retry or cutover.
+Raw `/tmp/nostrc-w11-execution-20261023/final-api/queries.json`, SHA256
+`86a6c0a59e09e4a3c7af8d75dba933777bca6b1025fefed2910c41d894869582`.
+Older evidence below remains historical and unchanged. Internal tools/tests/docs:
+no bump; local commits only, parent lands.
+
 ## Postlanding W11 observation — 2026-10-23T01:36:36.747178Z
 
 Dated bounded follow-through, not a live counter. [Short source/job/step

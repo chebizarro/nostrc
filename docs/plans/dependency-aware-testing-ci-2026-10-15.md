@@ -1,5 +1,24 @@
 # Dependency-aware testing and CI/CD
 
+> **Concrete closure batch, code `0e3601eab21ca480a7d80c72d6c29ac29155f5aa`:**
+> all six final approved tips preserve ancestry. Internal resource/profile/input,
+> tool/producer and workflow enrollment is implemented; full33 ordinary ownership
+> is not diagnostic-subset promotion. Typed policy-controller execution replaces
+> the predecessor-only architectural gap. Only validated shadow_cutover is
+> administrative rollout readiness; the other nine technical gaps and all guards
+> remain. [Final integration report, failed attempts and exact hosted dispatch
+> handoff](../reviews/dependency-aware-testing-w11-closure-integration-2026-10-23.md)
+> distinguish actual local/emulated supported proof from native/hosted acceptance.
+> Parent lands and dispatches existing workflows; no endpoint/approval is pending.
+> Final TCP audits/default build pass but fixture startup fails on an overlong
+> private D-Bus socket path: unresolved internal work, not emulation attribution.
+> Selected policy local provisioning attempts fail before a typed receipt; the
+> passing ARM workload alone is not selected-worker acceptance.
+> Dated C census `2026-10-23T02:12:04.578186Z`–`02:12:28.940355Z` and21 real PR
+> replays are diagnostic, not fresh acceptance:0/20 qualifying comparisons,0/2
+> complete broad integrations. Local suites add no quota credit. W11 NOT MET,
+> W12 NOT RUN; no default, protection, publisher or schedule cutover.
+
 > **2026-10-23 W11/W12/heartbeat integration:** exact approved tips preserve
 > ancestry; enrollment source `942128955a726536b334bb6a2bcb2d6af278666e` and
 > [source-bound gates/evidence](../reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md)

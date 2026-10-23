@@ -172,11 +172,49 @@ jobs:
         run: |
           brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc json-glib libgit2 dbus
           command -v dbus-daemon
+      - name: Prepare source-bound provisioned policy image
+        if: runner.os == 'Linux' && inputs.profile == 'static.policy'
+        shell: bash
+        run: |
+          python3 scripts/test_selection_policy.py prepare-image --source "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/dependency/policy-testhost-setup.json"
       - name: Resolve, audit, build and execute exact selected checks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dependency/receipts/$PROFILE"
+          case "$PROFILE" in
+            core.linux|grotto.linux|groundhog.linux)
+              # The outer gate owns private services and post-namespace-exit
+              # sealing. Unsupported runner kernels retain refusal, not green.
+              set +e
+              bash scripts/test-gate.sh --head "$REQUESTED_SHA" \
+                --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
+                --native-custody pidns --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
+                2>&1 | tee "$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log"
+              gate_status=${PIPESTATUS[0]}
+              set -e
+              GATE_STATUS="$gate_status" python3 - <<'PY'
+          import json, os, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from test_selection_services import verify_native_public_receipt
+          base = Path(os.environ['RUNNER_TEMP']) / 'dependency'
+          matches = []
+          for path in (base / 'evidence').glob('*/0/lane-*/native-receipt.json'):
+              raw = json.loads(path.read_text())
+              if (raw.get('plan_id') == os.environ['PLAN_ID'] and raw.get('profile') == os.environ['PROFILE']
+                      and raw.get('source_identity') == dict(kind='committed', sha=os.environ['REQUESTED_SHA'])):
+                  verify_native_public_receipt(raw)
+                  matches.append(path)
+          if len(matches) > 1 or (not matches and os.environ['GATE_STATUS'] == '0'):
+              raise SystemExit('missing/ambiguous exact-plan retained native receipt')
+          if matches:
+              shutil.copyfile(matches[0], base / 'receipts' / os.environ['PROFILE'] / 'receipt.json')
+          PY
+              exit "$gate_status"
+              ;;
+          esac
           parallel_args=(--parallel 2)
           # Preserve Grotto's authored build2/test1 without changing legacy lanes.
           case "$PROFILE" in
@@ -186,6 +224,7 @@ jobs:
           if [[ "$RUNNER_OS" == Linux ]]; then
             wrapper=(xvfb-run -a dbus-run-session --)
             case "$PROFILE" in
+              static.policy) wrapper=(env) ;;
               grotto.linux*) wrapper=(dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24') ;;
             esac
           fi
@@ -213,6 +252,9 @@ jobs:
           path: |
             ${{ runner.temp }}/dependency/evidence
             ${{ runner.temp }}/dependency/ordinary-tool-setup.json
+            ${{ runner.temp }}/dependency/policy-testhost-setup.json
+            ${{ runner.temp }}/dependency/policy-image-*
+            ${{ runner.temp }}/dependency-build/namespace-policy
             ${{ runner.temp }}/dependency-build/nostrc-test-inventory*
             ${{ runner.temp }}/dependency-build/nostrc-test-descriptors*
           if-no-files-found: warn

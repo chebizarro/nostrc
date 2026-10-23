@@ -31,7 +31,8 @@ class NonmemberOwnership(unittest.TestCase):
     def declarations(self):
         found = {}
         for path in self.evidence['descriptor_files']:
-            text = (ROOT / path).read_text()
+            from w11_worker_support import before_fixture_owners_source
+            text = before_fixture_owners_source(path, (ROOT / path).read_bytes()).decode()
             self.assertTrue(text.startswith('include_guard(DIRECTORY)'))
             for name, owners in re.findall(r'nostrc_add_test_owners\("([^"]+)" OWNER ([^)]+)\)', text):
                 self.assertNotIn(name, found)

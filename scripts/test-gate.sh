@@ -27,6 +27,7 @@ parser = argparse.ArgumentParser(description="Shared local test gate (diagnostic
 parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
+parser.add_argument("--plan", help="execute exact retained committed plan identity; --profile selects physical lanes without rewriting the plan")
 parser.add_argument("--broad", action="store_true")
 parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns"), default="legacy",
                     help="explicit Linux custody: ptrace (no instrumentation) or untraced user/mount/PID namespaces; wrappers refuse; neither is profile parity")
@@ -350,9 +351,45 @@ def materialize_submodules(source, directory, profile, initialized):
     candidates = ("third_party/nsync",) if profile.get("source_dir") == "libgo" else ("third_party/nsync", "third_party/nostrdb")
     required = [path for path in candidates if path not in initialized
                 and git("ls-files", "--stage", "--", path, repo=source).startswith(b"160000 ")]
+    records = []
+    def hydrate(parent, cache_parent, relative):
+        row = git('ls-files', '--stage', '-z', '--', relative, repo=parent).split(b'\0')[0]
+        fields, path = row.split(b'\t', 1)
+        mode, oid, stage = fields.decode().split()
+        if mode != '160000' or stage != '0' or os.fsdecode(path) != relative:
+            raise RuntimeError('submodule is not one exact selected gitlink: ' + relative)
+        config = shared.git(parent, 'config', '-f', '.gitmodules', '--get-regexp', r'^submodule\..*\.path$', check=False)
+        names = [line.split(None, 1)[0][len('submodule.'):-len('.path')]
+                 for line in config.stdout.decode().splitlines() if line.split(None, 1)[1] == relative]
+        if len(names) != 1:
+            raise RuntimeError('submodule lacks exact source-authored path/name: ' + relative)
+        cache = Path(cache_parent) / relative
+        usable = False
+        if cache.is_dir() and not cache.is_symlink() and cache.resolve().is_relative_to(Path(cache_parent).resolve()):
+            probe = shared.git(cache, 'rev-parse', '--show-toplevel', check=False)
+            usable = (probe.returncode == 0 and Path(os.fsdecode(probe.stdout).strip()).resolve() == cache.resolve()
+                      and shared.git(cache, 'cat-file', '-e', oid + '^{commit}', check=False).returncode == 0)
+        argv = ['git', '-c', 'core.hooksPath=/dev/null']
+        if usable:
+            # File transport is enabled for ONLY this exact overridden module;
+            # unknown/unavailable caches retain the original network route.
+            argv += ['-c', 'protocol.file.allow=always', '-c', 'submodule.' + names[0] + '.url=' + str(cache.resolve())]
+        argv += ['-C', parent, 'submodule', 'update', '--init', '--checkout', '--', relative]
+        destination = Path(parent) / relative
+        key = hashlib.sha256(os.fsencode(destination)).hexdigest()[:16]
+        command(argv, log=directory / ('submodule-' + key + '.log'))
+        if git('rev-parse', 'HEAD', repo=destination).decode().strip() != oid:
+            raise RuntimeError('materialized submodule differs from selected gitlink: ' + relative)
+        records.append(dict(path=str(destination), gitlink=oid, actual_head=oid,
+                            object_source=str(cache.resolve()) if usable else 'source-authored network URL'))
+        for entry in git('ls-files', '--stage', '-z', repo=destination).split(b'\0'):
+            if entry.startswith(b'160000 '):
+                hydrate(destination, cache, os.fsdecode(entry.split(b'\t', 1)[1]))
+    for relative in required:
+        hydrate(source, Path(args.repo), relative)
     if required:
-        command(["git", "-c", "core.hooksPath=/dev/null", "-C", source, "submodule", "update", "--init", "--", *required],
-                log=directory / "submodules.log")
+        shared.write_json(directory / 'submodules.json', {'kind': 'exact_gitlink_materialization_v1', 'modules': records,
+            'scope': 'source objects only; full configure/Ninja/header/runtime audits remain mandatory'})
     initialized.update(required)
 
 
@@ -375,13 +412,34 @@ def host_guard(profile, checks, policy, profile_id):
     caps = set(profile.get("capabilities", []))
     caps.update(cap for ident in checks for cap in policy["checks"][ident].get("requires", []))
     if 'gnome_keyring' in caps:
-        if any(policy['checks'][ident]['kind'] != 'ctest' for ident in checks):
+        if any(policy['checks'][ident]['kind'] != 'ctest' and
+               'gnome_keyring' in policy['checks'][ident].get('requires', []) for ident in checks):
             raise RuntimeError('gnome_keyring commands require live contained private HOME/private bus/throwaway Secret Service custody; native adapter not implemented; lane not launched')
         if not shutil.which('gnome-keyring-daemon'):
             raise RuntimeError('selected gnome_keyring capability requires the actual gnome-keyring-daemon executable; lane not launched')
     if "nak" in caps and not shutil.which("nak"):
         raise RuntimeError("selected nak capability requires the actual nak executable; lane not launched")
-    unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring"}
+    if 'signer_endpoint' in caps:
+        if (host != 'linux' or args.linux_custody != 'pidns'
+                or profile['architecture'] != platform.machine()):
+            raise RuntimeError('signer fixture requires exact native Linux architecture and pidns custody; lane not launched')
+        required = {'ENABLE_TCP_IPC': 'ON', 'NIP55L_TEST_TRUST_ENV': 'ON',
+                    'NIP55L_SECRET_BACKEND': 'libsecret', 'BUILD_APPS': 'ON'}
+        for name, value in required.items():
+            flags = [flag for flag in profile.get('configure_args', [])
+                     if flag.startswith('-D' + name + '=') or flag.startswith('-D' + name + ':')]
+            if flags != ['-D' + name + '=' + value]:
+                raise RuntimeError('signer fixture lacks exact authored configuration: ' + name)
+        if profile.get('environment', {}).get('NOSTRC_TEST_NIP5F_APPROVAL') != 'unidentified-get-public-key-once':
+            raise RuntimeError('signer fixture lacks authored one-shot consent')
+        for ident in checks:
+            check = policy['checks'][ident]
+            if 'signer_endpoint' in check.get('requires', []) and (
+                    check['kind'] != 'ctest' or check.get('ctest_tests', {}).get(profile_id) != ['test_nip5f_tcp']):
+                raise RuntimeError('signer fixture supports only exact test_nip5f_tcp; lane not launched')
+        if not {'display', 'private_bus'} <= caps:
+            raise RuntimeError('signer fixture requires authored namespace-owned display/private bus resources')
+    unsupported = caps - {"display", "private_bus", "nak", "gnome_keyring", "signer_endpoint"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
     wrapped = caps & {"display", "private_bus"}
@@ -438,8 +496,16 @@ def execute(head, events, number, dirty=False):
     if dirty:
         changes, identity, tree = snapshot(source, head)
         policy = shared.load_inventory(source / inventory_path)
-    plan = shared.git_plan(args.repo, policy, head=head, base=args.base, context="local",
-                           mode="broad" if args.broad else "affected", event=events, profiles=args.profile)
+    if args.plan:
+        plan = shared.read_json(args.plan)
+        shared.validate_plan(plan, policy)
+        if plan['source_identity'] != {'kind': 'committed', 'sha': head}:
+            raise RuntimeError('retained plan must bind the exact committed checkout')
+        if args.profile and not set(args.profile) <= {lane['profile'] for lane in plan['lanes']}:
+            raise RuntimeError('retained plan does not select requested profile')
+    else:
+        plan = shared.git_plan(args.repo, policy, head=head, base=args.base, context="local",
+                               mode="broad" if args.broad else "affected", event=events, profiles=args.profile)
     if dirty:
         old = shared.validate_inventory(json.loads(git("show", f"{head}:{inventory_path}")))
         head_modes = {}
@@ -474,6 +540,8 @@ def execute(head, events, number, dirty=False):
     receipts = []
     for lane in plan["lanes"]:
         profile_id = lane["profile"]
+        if args.plan and args.profile and profile_id not in args.profile:
+            continue
         profile = policy["profiles"][profile_id]
         # Never interpolate policy IDs as paths.
         lane_dir = directory / ("lane-" + hashlib.sha256(profile_id.encode()).hexdigest()[:16])
@@ -540,9 +608,9 @@ try:
     with contextlib.ExitStack() as resources:
         if service_caps:
             sys.path.insert(0, service_scripts)
-            from test_selection_services import namespace_services
+            from test_selection_services import namespace_services, resource_mountpoint
             resources.enter_context(namespace_services(service_caps.split(','), service_evidence,
-                                    pathlib.Path(service_evidence).parent / 'resources', finalizer_fd=seal_fd))
+                                    resource_mountpoint(pathlib.Path(service_evidence).parent), finalizer_fd=seal_fd))
         with (directory / "resolve.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             status = cli["main"](resolve, **({'result_observer': observe_resolution} if seal_fd is not None else {}))
         if status:
@@ -575,9 +643,11 @@ finally:
                 service_caps = service_caps & {"display", "private_bus"} if args.linux_custody == "pidns" else set()
                 if service_caps:
                     state["private_services"] = str(lane_dir / "services/services.json")
-                resource_root = lane_dir / "resources" if service_caps else None
-                if resource_root:
-                    resource_root.mkdir(mode=0o700)
+                resource_root = None
+                if service_caps:
+                    # Short owned mountpoint: sockets cannot live under deep evidence roots.
+                    from test_selection_services import allocate_resource_mountpoint
+                    resource_root = allocate_resource_mountpoint(lane_dir)
                 try:
                     command(prefix + [sys.executable, "-c", run_api, source / "scripts", adapter.parent,
                                       ','.join(sorted(service_caps)), lane_dir / "services", "run", *common,
@@ -590,7 +660,8 @@ finally:
                     # After the helper's wait barrier only the empty host
                     # mountpoint remains; private HOME/socket bytes were tmpfs.
                     if resource_root:
-                        resource_root.rmdir()
+                        from test_selection_services import release_resource_mountpoint
+                        release_resource_mountpoint(lane_dir)
                 if args.linux_custody == 'pidns':
                     import test_selection_realization as realization_backend
                     realization_backend._validate_source_identity(source, plan['source_identity'], lane_dir / 'build')
@@ -614,6 +685,12 @@ finally:
     aggregate = shared.aggregate(policy, plan, [shared.read_json(p) for p in receipts], complete=False, repo=source)
     shared.write_json(directory / "aggregate.json", aggregate)
     record["status"] = "partial" if aggregate["passed"] and all(x["status"] == "passed" for x in record["lanes"]) else "failed"
+    if args.plan and args.profile:
+        # This is one exact physical lane, not successful aggregation of all
+        # sibling lanes. Preserve the original failing/incomplete aggregate.
+        record['scope'] = 'explicit_retained_plan_lane_projection'
+        record['complete'] = record['complete_gate_eligible'] = False
+        record['status'] = 'partial' if record['lanes'] and all(x['status'] == 'passed' for x in record['lanes']) else 'failed'
 
 
 try:
@@ -630,6 +707,8 @@ try:
     run_dir = parent / uuid.uuid4().hex
     run_dir.mkdir(mode=0o700)
     print(f"test-gate: diagnostic evidence: {run_dir}", flush=True)
+    if args.plan and (not args.head or args.base or args.broad or args.pre_push):
+        raise RuntimeError('--plan requires --head and refuses --base/--broad/--pre-push')
     groups = {}
     if args.pre_push:
         if not args.refs_file:

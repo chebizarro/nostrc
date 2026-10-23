@@ -5,6 +5,7 @@ from selector_support import GitCase, ROOT, s
 class ReleaseTests(GitCase):
     def setUp(self):
         super().setUp()
+        self.p["enforcement_ready"] = True  # Explicit synthetic ready policy, never production acceptance.
         self.p["release_components"] = {
             "app": {"manifest_name": "App", "publisher": "main", "package_jobs": ["source", "linux.x86_64", "linux.aarch64"], "version_sources": [{"path": "app/version", "pattern": r"version=([0-9.]+)"}, {"path": "app/meson", "pattern": r"version=([0-9.]+)"}]},
             "library": {"manifest_name": "Library", "publisher": "none", "package_jobs": [], "version_sources": [{"path": "core/version", "pattern": r"version=([0-9.]+)"}]},
@@ -22,7 +23,10 @@ class ReleaseTests(GitCase):
         return s.release_plan(self.repo, self.p, head=self.head, tag=name)
 
     def validation(self, release):
-        return {"passed": True, "complete": True, "source_identity": release["source_identity"], "tested_sha": release["tested_sha"], "inventory_hash": release["inventory_hash"], "mode": "broad", "tag": release["tag"], "partial_profiles": []}
+        return {"passed": True, "complete": True, "complete_gate_eligible": True,
+                **s.coverage_state(release), "source_identity": release["source_identity"],
+                "tested_sha": release["tested_sha"], "inventory_hash": release["inventory_hash"],
+                "mode": "broad", "tag": release["tag"], "partial_profiles": []}
 
     def test_annotated_validation_only_tag_has_no_publisher(self):
         result = self.tagged("library-v9.8.7-preview", annotated=True)

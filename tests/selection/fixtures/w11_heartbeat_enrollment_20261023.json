@@ -1,0 +1,24 @@
+{
+  "approved_tip": "d232d31b71edc80aae25961d751e077ce914a4ae",
+  "base": "663edcd70c0d313c98f87610aa41f1261bce4ee6",
+  "workflow_jobs": {
+    ".github/workflows/nostrc-ci.yml:build-and-test": {
+      "before": {
+        "source_sha256": "3a62b2b339298b5348300b93179a3b7e94666521972433af299a92ca10a0ed06",
+        "workflow_sha256": "96fd1c4b95f6320466fc9c8f4791c357a49bbc95fccc2d9904561388a9c7dd87",
+        "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]"
+      },
+      "after": {
+        "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
+        "source_sha256": "34b4225c2530db6754c8121fc170973d7082987a38b0355667e79a48854ff85c",
+        "workflow_sha256": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef"
+      }
+    }
+  },
+  "source_sha256": {
+    ".github/workflows/nostrc-ci.yml": "fa74ee69dc070a5eb3d9cf1c590757ea68f2382618ad511a1860fa8d5474dcef",
+    "nostr-gobject/tests/test_main_thread_forbidden_calls.c": "863b58b187794fcb06ab4c1c56dcdb34c2d029a01c302df979b55a53af72b3c1",
+    "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh": "ed60f6c077ac2917a47736ca5e30920cf1cff85bd51b4117316b7a3b52920b73",
+    "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c": "0946e5008ae513503e6fb16568e604266fb610abfba227df50b7c852be2beb8a"
+  }
+}

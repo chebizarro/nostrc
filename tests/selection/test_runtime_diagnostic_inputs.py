@@ -1,6 +1,6 @@
 """Finite runtime diagnostics: source enrollment and actual pre-resource refusals.
 
-These are not live Docker/TCP acceptance or a new selector capability. The live
+These are not live Docker/TCP acceptance. The live
 standalone runners require the separately retained operator/provisioning proof.
 """
 import ast
@@ -74,8 +74,9 @@ class RuntimeDiagnosticInputs(unittest.TestCase):
 
     def test_runtime_diagnostics_do_not_admit_raw_receipts_or_capabilities(self):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        for profile in policy['profiles'].values():
-            self.assertNotIn('signer_endpoint', profile.get('capabilities', []))
+        self.assertEqual({ident for ident, profile in policy['profiles'].items()
+                          if 'signer_endpoint' in profile.get('capabilities', [])},
+                         {'core.linux', 'groundhog.linux', 'grotto.linux'})
         schema = ROOT / 'apps/grotto/data/org.nostr.Grotto.gschema.xml'
         self.assertTrue(ET.parse(schema).getroot().findall('schema'))
         for runner in ('test_provisioned_nip5f.py', 'test_mdk011_cache_contract.py',
@@ -84,7 +85,10 @@ class RuntimeDiagnosticInputs(unittest.TestCase):
             ast.parse(path.read_bytes(), filename=str(path))
         for path, owner in [('apps/grotto/data/org.nostr.Grotto.gschema.xml', 'grotto.gui'),
                             ('tests/interop/mdk/driver-0.11/src/main.rs', 'mdk011.peer_inputs')]:
-            self.assertEqual(set(s.classify(policy, path)['nodes']), {owner, 'selection.contract'})
+            expected = {owner, 'selection.contract'}
+            if path.endswith('.gschema.xml'):
+                expected.add('nip5f.fixture_inputs')
+            self.assertEqual(set(s.classify(policy, path)['nodes']), expected)
         self.assertNotIn('selection.contract', s.classify(policy, 'apps/grotto/src/main.c')['nodes'])
         # Their CLI runners are intentionally not auto-discovered as selector tests.
         check = policy['checks']['selection.contract']

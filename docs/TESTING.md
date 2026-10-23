@@ -1,5 +1,32 @@
 # Test Strategy & Suite Documentation
 
+> **Concrete W11 closure batch (2026-10-23):** all six frozen component tips are
+> integrated with actual profile/source/producer enrollment. The typed selected
+> policy controller executes the provisioned workload; its predecessor alone is
+> not acceptance. Full ordinary Go ownership is distinct from historical33
+> diagnostic authority; only shadow_cutover is administrative readiness, with nine
+> technical gaps still blocking. See the [final source-bound report and exact
+> hosted dispatch handoff](reviews/dependency-aware-testing-w11-closure-integration-2026-10-23.md).
+> Local native default439/zero failures/five visible skips and provisioned ARM
+> policy915/zero failures/six MDK opt-ins plus79 zero-skip kernel cases are bounded
+> proof, not hosted/native-x86 or W11 quota credit. Strict official JSON-GLib1.10.8
+> remedy is implemented; original missing input identity and hosted acceptance
+> remain distinct. Public TCP full audits/default build pass, but fixture startup
+> fails on an overlong private D-Bus socket pathname (internal defect). Selected
+> policy controller attempts retain local tool/socket setup failures, no receipt.
+> Parent dispatches the frozen landed source through existing workflows with these
+> exact limits. W11 NOT MET/W12 NOT RUN; defaults/protection/publication unchanged.
+>
+> **Addendum (2026-10-23, nostrc-0cfsg.36.5):** the private NIP5F bus socket
+> failure is fixed at code `744d2b4eddd5` (a short, owned, journaled
+> `/tmp/nostrc-rr-<token>` tmpfs mountpoint; intent-only journals never authorize
+> deletion). Native ARM real-signer fixture 6/6 with a deep evidence path (old
+> placement: 12 errors); 84/84 real Linux cells. The actual amd64-emulated public
+> gate now passes audits/build/bus startup, then fails in the approver
+> (`fixture API failed: StoreKey`) before CTest, a newly named failure not proven
+> to be emulation-caused. No native/hosted acceptance; W11 NOT MET. See the
+> [socket-placement handoff](reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json).
+
 > **Staged dependency-aware tooling (updated 2026-10-23): finite integration verified, not cut over.**
 > Explicit commands and additive shadow workflows exist; existing local defaults,
 > push requirements and schedules remain authoritative through W11. See the

@@ -23,7 +23,7 @@ LANES = {"core.linux": "core", "core.linux.asan": "core_asan", "core.macos.asan"
 BROAD_FAMILIES = {
     "core": "nostrc-ci", "libgo": "libgo-ci", "hanami": "libhanami-ci", "gi": "libnostr-gi",
     "groundhog": "groundhog-ci", "grotto": "grotto-ci", "nip55l": "nip55l-libsecret-ci",
-    "homed": "nostr-homed-ci", "signet": "signet-ci", "static": "static-checks",
+    "homed": "nostr-homed-ci", "signet": "signet-ci", "static": "namespace-policy-regression",
     "appimage": "gnostr-appimage", "windows": "windows-validation", "bp": "bp-matrix",
     "bp_extended": "bp-matrix-nightly", "fuzz": "grotto-fuzz", "mdk08": "marmot-mdk-interop",
     "mdk011": "marmot-mdk011-interop",
@@ -163,9 +163,10 @@ def aggregate(repo, policy, plan, needs, receipts, broad_receipt=None):
     result["errors"].extend(errors)
     result["errors"].extend(broad_receipt_errors(repo, plan, broad_receipt))
     result["broad_family_receipt"] = broad_receipt
-    # A partial policy can give useful shadow evidence, never a complete coverage attestation.
-    if not plan.get("enforcement_ready") or plan.get("coverage_gaps"):
-        result["errors"].append("inventory/profile coverage is incomplete; W4/W11 acceptance not established")
+    # Physical shadow completeness is distinct from rollout/publication readiness.
+    # The bound state and pending prerequisite remain on the result unchanged.
+    if selection.coverage_state(policy)["physical_coverage_gaps"]:
+        result["errors"].append("inventory/profile physical coverage is incomplete")
     result["passed"] = not result["errors"]
     result["complete_gate_eligible"] = bool(result.get("complete_gate_eligible")) and result["passed"]
     return result
@@ -236,6 +237,7 @@ def publish_gate(release, publisher, validation, needs, release_mode="enforce", 
     selection.require(isinstance(validation, dict), "required release validation receipt is missing")
     selection.require(validation.get("passed") and validation.get("complete") and validation.get("enforcement_ready")
                       and not validation.get("coverage_gaps"), "required release coverage is incomplete")
+    selection.require_rollout_ready(release, validation)
     broad_errors = broad_receipt_errors(repo, {"effective_mode": "broad", "tested_sha": release["tested_sha"]},
                                          validation.get("broad_family_receipt"))
     selection.require(not broad_errors, "required release broad family evidence: " + "; ".join(broad_errors))
