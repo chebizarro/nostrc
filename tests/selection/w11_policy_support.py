@@ -33,7 +33,8 @@ def before_policy_jobs(records):
 def before_policy_source(path, raw):
     from w11_json_glib_support import before_source
     from w11_placement_support import before_source as before_placement_source
-    raw = before_source(path, before_placement_source(path, raw))
+    from runtime_integration_support import before_runtime_source
+    raw = before_source(path, before_placement_source(path, before_runtime_source(path, raw)))
     change = witness()['source_edits'].get(path)
     if change is None or hashlib.sha256(raw).hexdigest() == change['before_sha256']:
         return raw

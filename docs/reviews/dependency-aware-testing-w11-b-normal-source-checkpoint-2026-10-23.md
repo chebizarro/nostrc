@@ -48,10 +48,14 @@ prove any production configured universe is complete or physically executed.
 
 ## Finite integration dependencies
 
-C exclusively owns the small worker dependency followup from exact A44 worker
-source: provision the existing pinned Nak for both MDK profiles and Blueprint for
-core ASan/MDK011, with a dedicated regression and exact job fingerprints. B does
-not edit that workflow; source enrollment follows C's frozen tip. The MDK runtime
+C's exact approved `14a35843c5028588230f90e1fe145107466dc53d` prerequisite
+followup is merged with ancestry. It provisions existing pinned Nak for both MDK
+profiles and Blueprint for core ASan/MDK011; ordinary-only setup/verifier scope is
+unchanged. B enrolls the dedicated regression, `execute` source `d339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c`
+and workflow `b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214`,
+with the empty matrix unchanged. The finite test inverse changes only this exact
+worker's after-fields and regression input; historical before hashes and old
+omission authorities remain unchanged. No hosted install success is claimed. The MDK runtime
 remains held pending Docker availability and actual image-production/use/cleanup
 proof.
 

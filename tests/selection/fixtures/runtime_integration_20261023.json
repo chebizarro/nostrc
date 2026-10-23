@@ -1140,9 +1140,9 @@
             "static.policy"
           ],
           "coverage_gap": "workflow_profile_union",
-          "source_sha256": "fc0c139aa48ecf2260e6179b6a9fcea24503948d8de6cd94e4a647f130277d9e",
+          "source_sha256": "d339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c",
           "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-          "workflow_sha256": "914af0dff0f95c053ec4f7c34c799472313aab2ebe254daa2340b211e8c9adc0"
+          "workflow_sha256": "b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214"
         }
       },
       ".github/workflows/namespace-policy-regression.yml:regressions": {
@@ -1166,6 +1166,7 @@
     }
   },
   "runtime_inputs": [
+    "{source}/tests/selection/test_worker_signer_prerequisites.py",
     "{source}/scripts/mdk-docker",
     "{source}/scripts/test_selection_mdk.py",
     "{source}/scripts/test_selection_execution.py",
@@ -1323,11 +1324,15 @@
   "sources": {
     ".github/workflows/dependency-worker.yml": {
       "before_sha256": "78dd275d8d249ddc83918b1757da26167ab2f750ea15e109e09d8c169fe96f28",
-      "after_sha256": "914af0dff0f95c053ec4f7c34c799472313aab2ebe254daa2340b211e8c9adc0",
+      "after_sha256": "b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214",
       "edits": [
         {
           "before": "          s.require(os.environ['PROFILE'] in p['expected_lane_ids'], 'worker was not selected')\n          profile = policy['profiles'][os.environ['PROFILE']]\n          actual_platform = {'Darwin': 'macos', 'Linux': 'linux'}.get(platform.system())\n          s.require(profile['platform'] == actual_platform and profile['architecture'] == platform.machine(), 'runner/profile mismatch')\n          PY\n      - name: Install Linux profile prerequisites\n        if: runner.os == 'Linux'\n        run: |\n",
           "after": "          s.require(os.environ['PROFILE'] in p['expected_lane_ids'], 'worker was not selected')\n          profile = policy['profiles'][os.environ['PROFILE']]\n          actual_platform = {'Darwin': 'macos', 'Linux': 'linux'}.get(platform.system())\n          s.require(profile['platform'] == actual_platform and profile['architecture'] == platform.machine(), 'runner/profile mismatch')\n          # The provisioned signer fixture exists only inside the outer pidns\n          # gate: any profile authoring signer_endpoint (including sanitizer\n          # variants) takes that route, never ambient wrapper services; so do\n          # original MDK image/peer lanes, whose host tree only pidns owns.\n          route = 'pidns' if ('signer_endpoint' in profile.get('capabilities', [])\n                              or profile.get('execution_domain') == 'mdk_original_linux_v1') else 'plan'\n          with open(os.environ['GITHUB_ENV'], 'a') as stream:\n              stream.write('DEPENDENCY_ROUTE=' + route + '\\n')\n          PY\n      - name: Install Linux profile prerequisites\n        if: runner.os == 'Linux'\n        run: |\n"
+        },
+        {
+          "before": "          echo \"$tool_bin\" >> \"$GITHUB_PATH\"\n      - name: Verify ordinary peer and keyring executable setup\n        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')\n        run: python3 .github/workflows/dependency_contract.py ordinary-tools --sha \"$REQUESTED_SHA\"\n      - name: Install pinned Blueprint compiler for application profiles\n        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')\n        run: |\n          set -euo pipefail\n          curl -fL https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o \"$RUNNER_TEMP/blueprint.tar.xz\"\n          echo \"231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  $RUNNER_TEMP/blueprint.tar.xz\" | sha256sum -c\n",
+          "after": "          echo \"$tool_bin\" >> \"$GITHUB_PATH\"\n      - name: Verify ordinary peer and keyring executable setup\n        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.linux' || inputs.profile == 'grotto.linux')\n        run: python3 .github/workflows/dependency_contract.py ordinary-tools --sha \"$REQUESTED_SHA\"\n      # Both original MDK profiles author the nak capability for their signer\n      # producers. Same pinned toolchain/module as the ordinary peers, but in\n      # disjoint steps: the ordinary-only steps and their verifier stay ordinary.\n      - name: Go toolchain for original MDK signer producers\n        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')\n        uses: actions/setup-go@v5\n        with:\n          go-version: '1.24'\n          cache: false\n      - name: Install pinned nak for original MDK signer producers\n        if: runner.os == 'Linux' && (inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')\n        run: |\n          set -euo pipefail\n          go install -ldflags='-X main.version=v0.19.7' github.com/fiatjaf/nak@v0.19.7\n          tool_bin=\"$(go env GOPATH)/bin\"\n          test -x \"$tool_bin/nak\"\n          version=\"$(\"$tool_bin/nak\" --version 2>&1)\"\n          printf '%s\\n' \"$version\"\n          # Same pin check as dependency_contract.py's ordinary nak verifier.\n          printf '%s\\n' \"$version\" | grep -Eq '(^|[[:space:]])v?0\\.19\\.7([[:space:]]|$)'\n          echo \"$tool_bin\" >> \"$GITHUB_PATH\"\n      - name: Install pinned Blueprint compiler for application profiles\n        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'core.linux.asan' || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08' || inputs.profile == 'groundhog.mdk011')\n        run: |\n          set -euo pipefail\n          curl -fL https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o \"$RUNNER_TEMP/blueprint.tar.xz\"\n          echo \"231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  $RUNNER_TEMP/blueprint.tar.xz\" | sha256sum -c\n"
         },
         {
           "before": "        if: runner.os == 'macOS' && inputs.profile == 'core.macos.asan'\n        run: |\n          brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc json-glib libgit2 dbus\n          command -v dbus-daemon\n      - name: Prepare source-bound provisioned policy image\n        if: runner.os == 'Linux' && inputs.profile == 'static.policy'\n        shell: bash\n        run: |\n",

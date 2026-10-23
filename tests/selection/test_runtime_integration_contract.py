@@ -35,6 +35,28 @@ class HistoricalIntegrationInverse(unittest.TestCase):
         changed['checks']['selection.contract']['runtime_inputs'].remove(wave.witness()['runtime_inputs'][0])
         with self.assertRaises(ValueError): wave.before_runtime_policy(changed)
 
+    def test_pinned_worker_prerequisites_are_source_enrolled_without_old_authority_refresh(self):
+        from profile_contract_support import source_job_blocks
+        import runtime_integration_support as wave
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        ident = '.github/workflows/dependency-worker.yml:execute'
+        record = policy['workflow_jobs'][ident]
+        actual = source_job_blocks(ROOT)[ident]
+        for field in ('source_sha256', 'workflow_sha256', 'matrix_source'):
+            self.assertEqual(record[field], actual[field])
+        self.assertEqual(record['source_sha256'], 'd339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c')
+        self.assertEqual(record['workflow_sha256'], 'b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214')
+        self.assertEqual(record['matrix_source'], '')
+        self.assertEqual(record['profiles'], ['static.policy'])
+        self.assertEqual(record['coverage_gap'], 'workflow_profile_union')
+        self.assertIn('{source}/tests/selection/test_worker_signer_prerequisites.py',
+                      policy['checks']['selection.contract']['runtime_inputs'])
+        previous = wave.before_runtime_policy(policy)
+        self.assertEqual(previous['workflow_jobs'][ident], wave.witness()['maps']['workflow_jobs'][ident]['before'])
+        changed = copy.deepcopy(policy)
+        changed['workflow_jobs'][ident]['source_sha256'] = '0' * 64
+        with self.assertRaises(ValueError): wave.before_runtime_policy(changed)
+
 
 class RuntimeEnrollmentTests(unittest.TestCase):
     def setUp(self):

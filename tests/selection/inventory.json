@@ -7959,6 +7959,7 @@
         "{source}/tests/selection/test_w11_heartbeat_enrollment.py",
         "{source}/tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json",
         "{source}/tests/selection/test_worker_signer.py",
+        "{source}/tests/selection/test_worker_signer_prerequisites.py",
         "{source}/tests/selection/w11_worker_support.py",
         "{source}/tests/selection/test_w11_worker_enrollment.py",
         "{source}/tests/selection/fixtures/w11_worker_enrollment_20261023.json",
@@ -27437,9 +27438,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "fc0c139aa48ecf2260e6179b6a9fcea24503948d8de6cd94e4a647f130277d9e",
+      "source_sha256": "d339f832c12d71ff9957319a904d7286e46d56cde7b837cbe1add82fe621010c",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "914af0dff0f95c053ec4f7c34c799472313aab2ebe254daa2340b211e8c9adc0"
+      "workflow_sha256": "b1bcf046f4bfb6326bc62803c62a163249a0d074840c29e412eb891a0fd9c214"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
