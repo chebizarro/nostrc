@@ -1,5 +1,25 @@
 ## P3 finite capture and dated measurement readiness — 2026-10-24 local
 
+**Editorial follow-up to `e1891b4b4`, not new acceptance evidence:** the public
+[P3 JSON](dependency-aware-testing-w11-p3-evidence-2026-10-24.json) is curated to
+2,845 lines / 114,385 bytes. Repeated raw API/job/artifact payloads are not public
+acceptance proof. All **1,421 original capture files (55,189,448 bytes)** and the
+complete pre-curation JSON remain in protected local evidence at
+`/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated`.
+Its `manifest.json` SHA256 is
+`28ac1461462d681f10afc07b6b801042e5d3c91526760fe18bb63d6a15e3028c`;
+all 1,425 listed files were hash/size verified, with directories0700/files0600.
+The directory is durable local custody, not independent immutable/remote storage.
+Public evidence retains source/UTC/root/job conclusions, the five validated
+original artifact IDs/digests/bytecounts/member dispositions, all23 real PR
+candidate dispositions and unchanged old-snapshot linkage. The adjacent
+`bounded-review.md`, `bounded-source-final.diff` and `test-manifest.json` preserve
+the existing bounded review and43 fixture test records. The diff is final source
+for parent inspection, not a claim that post-review fixes were re-reviewed.
+No raw evidence was deleted and no collection, review, tests, fullsuite or native
+build was rerun for curation. The existing dated counts/limits below are unchanged;
+parent owns the combined fullsuite/native build before push.
+
 Source `eaa918a0ab5ffb757171922a690c629d919d4025`; bead `nostrc-0cfsg.36.14`.
 Closing UTC census **2026-10-23T22:36:46.730361Z: 64 distinct roots = 61
 failed + one cancelled + one pending + one queued**, zero successful roots.
