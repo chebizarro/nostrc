@@ -6,7 +6,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_worker_enrollment_20261023.json'
-SHA256 = '22dd8acacab81c5fbf835c8b28dbeacd7ebc061bfc7588e6b75da49c12bbf385'
+SHA256 = '621a27e81aad9d833341d74d838630e2f0a02c8591468f67df403f5c0b5cfcda'
 
 
 def witness():
@@ -22,6 +22,33 @@ def current_source_hash(path, historical):
     s.require(historical == data['source_before_sha256'][path],
               'worker historical source provenance changed: ' + path)
     return data['source_sha256'][path]
+
+
+def before_worker_source(path, raw):
+    data = witness()
+    if path not in data.get('source_edits', {}):
+        return raw
+    if hashlib.sha256(raw).hexdigest() == data['source_before_sha256'][path]:
+        return raw
+    s.require(hashlib.sha256(raw).hexdigest() == data['source_sha256'][path],
+              'worker workflow source changed: ' + path)
+    for edit in data['source_edits'][path]:
+        after, before = edit['after'].encode(), edit['before'].encode()
+        s.require(raw.count(after) == 1, 'worker source edit is not unique')
+        raw = raw.replace(after, before, 1)
+    s.require(hashlib.sha256(raw).hexdigest() == data['source_before_sha256'][path],
+              'worker historical source changed: ' + path)
+    return raw
+
+
+def before_worker_jobs(records):
+    previous = copy.deepcopy(records)
+    for ident, record in witness()['records'].get('workflow_jobs', {}).items():
+        keys = ('source_sha256', 'workflow_sha256', 'matrix_source')
+        after = {key: record['after'][key] for key in keys}
+        if {key: previous[ident][key] for key in keys} == after:
+            previous[ident].update({key: record['before'][key] for key in keys})
+    return previous
 
 
 def before_worker_contract(contract, profile):

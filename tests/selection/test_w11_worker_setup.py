@@ -10,6 +10,8 @@ import unittest
 
 from selector_support import ROOT, s
 import closeout_support as c
+from w11_worker_support import before_worker_source
+from w11_policy_support import before_policy_source
 
 
 class W11WorkerSetupTests(unittest.TestCase):
@@ -28,7 +30,7 @@ class W11WorkerSetupTests(unittest.TestCase):
         self.assertFalse(evidence['unclassified'])
         self.assertEqual(c.witness()['after_policy_hash'], s.digest(c.before_native_custody_policy(policy)))
         for path, record in c.w11_setup_witness()['sources'].items():
-            raw = (ROOT / path).read_bytes()
+            raw = before_worker_source(path, before_policy_source(path, (ROOT / path).read_bytes()))
             self.assertEqual(hashlib.sha256(raw).hexdigest(), record['after_sha256'])
             self.assertEqual(hashlib.sha256(c.before_w11_setup_source(path, raw)).hexdigest(),
                              record['before_sha256'])

@@ -39,6 +39,12 @@
       }
     }
   },
+  "integration_source_changes": {
+    "scripts/test_selection_realization.py": {
+      "after": "2549db3c317bb56c9133d7420d8982c8bc3b047071425a2650684ab590c3a767",
+      "before": "790f7523cc3514078aa16d68facc18e75d74239b95cb1971c193ea7107d5aa25"
+    }
+  },
   "records": {
     "checks": {
       "supported.nips.nip5f.signer_endpoint": {
@@ -509,6 +515,26 @@
           "timeout_seconds": 3600
         }
       }
+    },
+    "workflow_jobs": {
+      ".github/workflows/dependency-worker.yml:execute": {
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "b07baf9d145b31faac0c865f216196913fd0d11865b1b80de4988eb8ef4f9454",
+          "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
+          "workflow_sha256": "a7575e49b5038a10c92ab1020d4885d3a38fe370764a40031e684d61308637bd"
+        },
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [],
+          "source_sha256": "577d2a31ea4057a91db0bd71c50501f91a6e416292c74b4817797ef841a80de3",
+          "unsupported_reason": "Additive diagnostic workers only. Unsupported live runtimes fail visibly; fixed Linux runner is not ubuntu-latest. Authored Grotto build2/test1 is supported, but default-all attestation/coverage (.34), full input audits/admission, remaining native extras and advisory TSan still prevent whole-job acceptance.",
+          "workflow_sha256": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df"
+        }
+      }
     }
   },
   "rules": [
@@ -574,13 +600,23 @@
     }
   ],
   "source_before_sha256": {
+    ".github/workflows/dependency-worker.yml": "83e65122b5bb0d3be9ca9c69550c7909b3f075521e62499d93a7fea1f0f771df",
     "nips/nip5f/CMakeLists.txt": "0e1d75a6da439cc5f3c104566f8fcc303142feaaf7b2d193728855d1c9812ef4",
     "nips/nip5f/TestInventory.cmake": "4be6bff4a8be706e4493e6fd1db142bbbe0e777512eacac8bf58a208f5c5f9da",
     "scripts/test_selection_realization.py": "7a479c583cf4be0dce9ac6dd760ee421735371567ff94fbffb4fa94fd2fb3160",
     "scripts/test_selection_services.py": "2cfb1b485ec514d82f53d37127a6490fa26bd9e256b999eda870e388337619ba",
     "tests/runtime/test_provisioned_nip5f.py": "5893188611a6153adc144c9624554bbf11e666e4281a17f00a3954ea67964ade"
   },
+  "source_edits": {
+    ".github/workflows/dependency-worker.yml": [
+      {
+        "after": "          case \"$PROFILE\" in\n            core.linux|grotto.linux|groundhog.linux)\n              # The outer gate owns private services and post-namespace-exit\n              # sealing. Unsupported runner kernels retain refusal, not green.\n              set +e\n              bash scripts/test-gate.sh --head \"$REQUESTED_SHA\" \\\n                --plan \"$RUNNER_TEMP/dependency/plan.json\" --profile \"$PROFILE\" \\\n                --native-custody pidns --evidence-dir \"$RUNNER_TEMP/dependency/evidence\" \\\n                2>&1 | tee \"$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log\"\n              gate_status=${PIPESTATUS[0]}\n              set -e\n              GATE_STATUS=\"$gate_status\" python3 - <<'PY'\n          import json, os, shutil, sys\n          from pathlib import Path\n          sys.path.insert(0, 'scripts')\n          from test_selection_services import verify_native_public_receipt\n          base = Path(os.environ['RUNNER_TEMP']) / 'dependency'\n          matches = []\n          for path in (base / 'evidence').glob('*/0/lane-*/native-receipt.json'):\n              raw = json.loads(path.read_text())\n              if (raw.get('plan_id') == os.environ['PLAN_ID'] and raw.get('profile') == os.environ['PROFILE']\n                      and raw.get('source_identity') == dict(kind='committed', sha=os.environ['REQUESTED_SHA'])):\n                  verify_native_public_receipt(raw)\n                  matches.append(path)\n          if len(matches) > 1 or (not matches and os.environ['GATE_STATUS'] == '0'):\n              raise SystemExit('missing/ambiguous exact-plan retained native receipt')\n          if matches:\n              shutil.copyfile(matches[0], base / 'receipts' / os.environ['PROFILE'] / 'receipt.json')\n          PY\n              exit \"$gate_status\"\n              ;;\n          esac\n          parallel_args=(--parallel 2)\n",
+        "before": "          parallel_args=(--parallel 2)\n"
+      }
+    ]
+  },
   "source_sha256": {
+    ".github/workflows/dependency-worker.yml": "a7575e49b5038a10c92ab1020d4885d3a38fe370764a40031e684d61308637bd",
     "nips/nip5f/CMakeLists.txt": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
     "nips/nip5f/TestInventory.cmake": "c8caf0689e55db765a8f42a064fce8dfe54b95059ba45da564eac7f9335c41fc",
     "scripts/test_selection_realization.py": "790f7523cc3514078aa16d68facc18e75d74239b95cb1971c193ea7107d5aa25",

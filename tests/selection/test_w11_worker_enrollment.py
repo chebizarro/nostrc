@@ -6,9 +6,22 @@ import unittest
 from selector_support import ROOT, s
 from realization_support import r
 import w11_worker_support as w
+from w11_policy_support import before_policy_enrollment, before_policy_source
 
 
 class WorkerEnrollmentTests(unittest.TestCase):
+    def test_worker_calls_public_custody_route_without_replanning_or_wrapper_inference(self):
+        text = (ROOT / '.github/workflows/dependency-worker.yml').read_text()
+        step = text.split('      - name: Resolve, audit, build and execute exact selected checks', 1)[1]
+        route = step.split('          parallel_args=', 1)[0]
+        self.assertIn('core.linux|grotto.linux|groundhog.linux)', route)
+        self.assertIn('bash scripts/test-gate.sh --head "$REQUESTED_SHA"', route)
+        self.assertIn('--plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE"', route)
+        self.assertIn('--native-custody pidns', route)
+        self.assertIn('verify_native_public_receipt(raw)', route)
+        self.assertIn('exit "$gate_status"', route)
+        self.assertNotIn('xvfb-run', route)
+
     def test_current_authored_fixture_profiles_are_not_boolean_only(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         for ident in ('core.linux', 'groundhog.linux', 'grotto.linux'):
@@ -25,7 +38,7 @@ class WorkerEnrollmentTests(unittest.TestCase):
 
     def test_exact_source_refresh_preserves_original_omission_authority(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        old = w.before_worker_policy(p)
+        old = w.before_worker_policy(before_policy_enrollment(p))
         for ident in ('groundhog.linux', 'grotto.linux'):
             a, b = p['diagnostic_nonmember_subsets'][ident], old['diagnostic_nonmember_subsets'][ident]
             self.assertEqual(set(a['review']['source_inputs']), set(b['review']['source_inputs']))
@@ -45,7 +58,9 @@ class WorkerEnrollmentTests(unittest.TestCase):
     def test_live_sources_and_semantic_prerequisites_are_owned(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         for path, expected in w.witness()['source_sha256'].items():
-            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), expected, path)
+            raw = before_policy_source(path, (ROOT / path).read_bytes())
+            expected = w.witness().get('integration_source_changes', {}).get(path, {}).get('after', expected)
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, path)
         check = p['checks']['supported.nips.nip5f.signer_endpoint']
         self.assertEqual(set(check['build_targets']),
                          {'test_nip5f_tcp', 'test_nip5f_approver', 'grotto-daemon', 'grotto-schemas'})

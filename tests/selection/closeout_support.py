@@ -87,7 +87,9 @@ def w11_setup_witness():
 
 def before_w11_setup_jobs(records):
     """Project only reviewed fingerprint fields for immutable historical tests."""
-    previous = before_heartbeat_jobs(records)
+    from w11_worker_support import before_worker_jobs
+    from w11_policy_support import before_policy_jobs
+    previous = before_heartbeat_jobs(before_worker_jobs(before_policy_jobs(records)))
     for ident, record in w11_setup_witness()['workflow_jobs'].items():
         fields = {field: previous[ident][field] for field in record['after']}
         s.require(fields in (record['before'], record['after']),
@@ -122,6 +124,10 @@ def before_w11_setup_source(path, raw):
     record = w11_setup_witness()['sources'][path]
     if hashlib.sha256(raw).hexdigest() == record['before_sha256']:
         return raw
+    from w11_worker_support import before_worker_source
+    from w11_policy_support import before_policy_source
+    if hashlib.sha256(raw).hexdigest() != record['after_sha256']:
+        raw = before_worker_source(path, before_policy_source(path, raw))
     s.require(hashlib.sha256(raw).hexdigest() == record['after_sha256'],
               'W11 setup source changed: ' + path)
     for edit in record['edits']:
@@ -136,6 +142,7 @@ def before_w11_setup_source(path, raw):
 RUNTIME_SOURCE_RULES = [
     {'effect': 'global', 'exact': 'scripts/w11-evidence.py', 'nodes': ['selection.contract'],
      'reason': 'Source-bound diagnostic replay helper consumed by policy tests; no replay acceptance credit.'},
+] + [
     {'effect': 'impact', 'exact': path, 'nodes': [owner, 'selection.contract'],
      'reason': 'Standalone runtime diagnostic source closure; preserve product ownership without profile admission.'}
     for owner, path in [('grotto.gui', 'apps/grotto/data/org.nostr.Grotto.gschema.xml')] +
@@ -195,7 +202,16 @@ NATIVE_RUNTIME_INPUTS = [
 def before_native_custody_policy(policy):
     """Reverse only the exact additive input record, never renew old authority."""
     from w11_worker_support import before_worker_policy
-    previous = before_worker_policy(policy)
+    from w11_policy_support import before_policy_enrollment
+    previous = before_worker_policy(before_policy_enrollment(policy))
+    for gap in previous.get('coverage_gaps', []):
+        if gap.get('id') == 'shadow_cutover' and 'classification' in gap:
+            s.require(gap['classification'] == 'administrative_rollout_prerequisite'
+                      and gap.get('authority') == 'reviewed_shadow_cutover_v1'
+                      and gap.get('tracking') == 'nostrc-0cfsg.5',
+                      'reviewed rollout marker changed')
+            del gap['classification']
+            del gap['authority']
     check = previous['checks']['selection.contract']
     if set(NATIVE_RUNTIME_INPUTS) & set(check.get('runtime_inputs', [])):
         previous['workflow_jobs'] = before_w11_setup_jobs(previous['workflow_jobs'])

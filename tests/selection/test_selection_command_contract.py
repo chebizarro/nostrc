@@ -17,6 +17,7 @@ from selector_support import change, s
 # Workflows, version sources and selection helpers have separately enumerated
 # discovery boundaries below. Never recursively audit mutable __pycache__.
 SUPPORT_INPUTS = {
+    "scripts/test_selection_policy.py",
     "scripts/w11-evidence.py",
     "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
     "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
@@ -161,7 +162,9 @@ class SelectionCommandContractTests(unittest.TestCase):
     def test_production_explicit_source_closure_and_nonmutating_environment(self):
         validate_source_closure(self.policy, ROOT)
         check = self.policy["checks"]["selection.contract"]
-        self.assertEqual(check["command"], ["python3", "-m", "unittest", "discover", "-s", "tests/selection"])
+        self.assertEqual(check["command"], ["python3", "{source}/scripts/test_selection_policy.py", "attach", "--control", "{build}/namespace-policy/control"])
+        self.assertEqual(check['requires'], ['namespace_policy_controller'])
+        self.assertEqual(self.policy['profiles']['static.policy']['execution_domain'], 'policy_controller_linux_v1')
         self.assertEqual(check["working_directory"], "{source}")
         self.assertEqual(check["environment"], {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "PYTHONPATH": ""})
         self.assertFalse(any("__pycache__" in p or p.endswith(".pyc") for p in check["runtime_inputs"]))
@@ -246,6 +249,11 @@ class SelectionCommandInputAuditTests(unittest.TestCase):
         check = self.policy["checks"]["selection.contract"]
         self.policy["checks"] = {"selection.contract": check}
         check["profiles"] = ["closure.fixture"]
+        # This fixture audits the full actual source-input list, not a Docker
+        # execution domain, provisioned runtime or production-profile success.
+        check['requires'] = []
+        check['required_evidence'] = []
+        check['command'] = ['python3', '-m', 'unittest', 'discover', '-s', 'tests/selection']
         copy_inputs(self.policy, self.root)
         r._git(self.root, "init", "-q")
         # Keep automatic maintenance, but join it before copying/removing .git.

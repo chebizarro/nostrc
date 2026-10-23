@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import shutil
 import os
 from pathlib import Path
 import re
@@ -512,7 +513,8 @@ class WorkflowWiringTests(unittest.TestCase):
         for lane, job in expected.items():
             with self.subTest(lane=lane):
                 block = job_block(text, job)
-                self.assertIn('    needs: select\n', block)
+                self.assertIn('    needs: [select, policy_regressions]\n' if lane == 'static.policy'
+                              else '    needs: select\n', block)
                 self.assertIn('uses: ./.github/workflows/dependency-worker.yml', block)
                 self.assertIn('profile: ' + lane + '\n', block)
                 self.assertIn('plan_id: ${{ needs.select.outputs.plan_id }}', block)
@@ -643,7 +645,7 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
                     wrapper.write_text('#!/bin/sh\nshift ' + str(skip) + '\nexec "$@"\n')
                 wrapper.chmod(0o755)
             for profile in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers',
-                            'grotto.linux', 'grotto.linux.asan_ubsan', 'groundhog.mdk011'):
+                            'grotto.linux.asan_ubsan', 'groundhog.mdk011'):
                 for fail in ('0', '1'):
                     with self.subTest(profile=profile, failure=fail):
                         temp = root / (profile + '-' + fail)
@@ -674,15 +676,62 @@ output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_
         self.assertIn("name: dependency-receipt-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}", text)
         self.assertIn('if: always()', text.split('- name: Retain incomplete evidence', 1)[1])
 
+    def test_ordinary_worker_keeps_outer_refusal_and_rejects_unreceipted_success(self):
+        # Routing test only. Real public namespace/source lifecycle proof is a
+        # separate mandatory Linux execution, not inferred from this stub.
+        script = step_script(workflow('dependency-worker'), 'Resolve, audit, build and execute exact selected checks')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / 'bin'
+            binary.mkdir()
+            real_bash = shutil.which('bash')
+            wrapper = binary / 'bash'
+            wrapper.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, sys
+if sys.argv[1:2] != ['scripts/test-gate.sh']:
+    os.execv(os.environ['REAL_BASH'], [os.environ['REAL_BASH'], *sys.argv[1:]])
+pathlib.Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))
+print(os.environ['PROFILE'] + ': retained outer refusal')
+sys.exit(int(os.environ['OUTER_STATUS']))
+''')
+            wrapper.chmod(0o755)
+            for profile in ('core.linux', 'grotto.linux', 'groundhog.linux'):
+                for status in ('0', '23'):
+                    with self.subTest(profile=profile, status=status):
+                        temp = root / (profile + '-' + status)
+                        temp.mkdir()
+                        env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                            REAL_BASH=real_bash, PROFILE=profile, RUNNER_TEMP=str(temp),
+                            REQUESTED_SHA='a' * 40, PLAN_ID='b' * 64, RUNNER_OS='Linux',
+                            CAPTURE=str(temp / 'argv.json'), OUTER_STATUS=status)
+                        result = subprocess.run([real_bash, '-c', script], cwd=ROOT, env=env,
+                                                capture_output=True, text=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        if status == '23':
+                            self.assertEqual(result.returncode, 23, result.stderr)
+                        else:
+                            self.assertIn('missing/ambiguous exact-plan retained native receipt', result.stderr)
+                        args = json.loads((temp / 'argv.json').read_text())
+                        self.assertEqual(args[:3], ['scripts/test-gate.sh', '--head', 'a' * 40])
+                        self.assertIn('--plan', args)
+                        self.assertEqual(args[args.index('--native-custody') + 1], 'pidns')
+                        self.assertFalse((temp / 'dependency/receipts' / profile / 'receipt.json').exists())
+                        self.assertIn('retained outer refusal',
+                            (temp / 'dependency/receipts' / profile / 'worker.log').read_text())
+
     def test_all_broad_families_reusable_and_same_sha_without_publisher_recursion(self):
         text = workflow("dependency-broad")
         for family in ci.FAMILIES:
             self.assertIn("uses: ./.github/workflows/" + family + ".yml", text)
             family_text = workflow(family)
             self.assertIn("workflow_call:", family_text)
-            self.assertIn("ref: ${{ inputs.sha || github.sha }}", family_text)
+            if family == 'namespace-policy-regression':
+                self.assertIn('ref: ${{ inputs.sha }}', family_text)
+                self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', family_text)
+            else:
+                self.assertIn("ref: ${{ inputs.sha || github.sha }}", family_text)
             self.assertIn("persist-credentials: false", family_text)
-            self.assertIn("Verify requested checkout", family_text)
+            self.assertIn('Bind exact source and retain native launcher diagnosis' if family == 'namespace-policy-regression'
+                          else 'Verify requested checkout', family_text)
             self.assertNotIn("secrets: inherit", family_text)
         self.assertIn('uses: ./.github/workflows/windows-validation.yml', job_block(text, 'windows'))
         self.assertNotIn('contents: write', workflow('windows-validation'))

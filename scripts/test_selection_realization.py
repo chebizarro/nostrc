@@ -2012,7 +2012,14 @@ def _runtime_capability_evidence(realization, capabilities, plan_id=None):
             evidence['signer_endpoint'] = signer_contract(realization)
         except (ServiceError, OSError) as exc:
             raise RealizationError(str(exc)) from exc
-    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer", "signer_endpoint"}
+    if 'namespace_policy_controller' in required:
+        from test_selection_policy import contract
+        try:
+            evidence['namespace_policy_controller'] = contract(realization,
+                phase_environment(realization['profile'], realization['repo_root'], 'test'))
+        except (ValueError, OSError, KeyError, subprocess.SubprocessError) as exc:
+            raise RealizationError(str(exc)) from exc
+    unknown = required - {"nak", "gnome_keyring", "display", "private_bus", "docker", "external_peer", "prepared_peer", "signer_endpoint", "namespace_policy_controller"}
     if unknown:
         raise RealizationError(f"unsupported runtime capabilities: {sorted(unknown)}")
     if "nak" in required:
@@ -2510,6 +2517,17 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             fingerprints.update({tool['path']: tool['sha256'] for tool in proof['signer_endpoint']['executables'].values()})
         except RealizationError as exc:
             gap('missing_runtime_capability', capability='signer_endpoint', reason=str(exc))
+    if 'namespace_policy_controller' in realization['profile'].get('capabilities', []) and any(
+            'namespace_policy_controller' in spec['requires'] for spec in specs.values()):
+        try:
+            proof = _runtime_capability_evidence(realization, ['namespace_policy_controller'])
+            runtime_tools.update(proof)
+            value = proof['namespace_policy_controller']
+            fingerprints.update({str(Path(realization['repo_root']) / path): sha for path, sha in value['inputs'].items()})
+            fingerprints.update({item['path']: item['sha256'] for item in value['tools'].values()})
+            fingerprints.update(value['setup_inputs'])
+        except RealizationError as exc:
+            gap('missing_runtime_capability', capability='namespace_policy_controller', reason=str(exc))
     compatibility_gaps, compatibility_hashes = _audit_compatibility_targets(inventory, realization, after_build)
     gaps.extend(compatibility_gaps)
     fingerprints.update(compatibility_hashes)
@@ -3130,7 +3148,16 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         logfile = directory / f"command-{ident}.log"
         _atomic(directory / "receipt.json", dict(receipt, outcome="running", active_command=ident))
         begin = time.monotonic()
-        process = _execute(spec["argv"], cwd=spec["cwd"], env=env_command, log_path=logfile, timeout=timeout)
+        resource = contextlib.nullcontext(None)
+        if 'namespace_policy_controller' in spec['requires']:
+            if ident != 'selection.contract':
+                raise RealizationError('policy controller supports only exact selection.contract command')
+            from test_selection_policy import controller
+            resource = controller(realization, resolved, spec, input_audit)
+        with resource as policy_runtime:
+            process = _execute(spec["argv"], cwd=spec["cwd"], env=env_command, log_path=logfile, timeout=timeout)
+        if policy_runtime is not None:
+            receipt['policy_controller_runtime'] = policy_runtime
         artifacts, evidence_missing = {}, []
         for relative in spec["required_evidence"]:
             path = build_dir / relative
