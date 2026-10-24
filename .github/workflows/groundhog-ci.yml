@@ -6,6 +6,14 @@ on:
       sha:
         type: string
         required: true
+      affected:
+        description: Use the shared selected-check sanitizer runner
+        type: boolean
+        default: false
+      selection_artifact:
+        description: Same-run shared selection plan artifact; empty keeps broad execution
+        type: string
+        default: ''
       artifact_prefix:
         type: string
         default: ''
@@ -34,6 +42,23 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+
+      - uses: actions/download-artifact@v4
+        if: inputs.selection_artifact != ''
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Prepare exact shared selection
+        id: selection
+        env:
+          SELECTION_ARTIFACT: ${{ inputs.selection_artifact }}
+        run: |
+          if [[ -z "$SELECTION_ARTIFACT" ]]; then
+            echo 'affected=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json"
 
       - name: No call modifies a variable another argument uses
         # nostrc-td3b: this job's x86_64 GCC evaluates arguments right to left,
@@ -69,15 +94,48 @@ jobs:
             scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
             oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
 
+      - name: Install prerequisites for selected Grotto consumers
+        if: steps.selection.outputs.affected == 'true' && steps.selection.outputs.needs_grotto == 'true'
+        run: |
+          sudo apt-get install -y --no-install-recommends libzbar-dev meson curl locales
+          sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+          # Grotto needs the same pinned compiler as its ordinary CI runner.
+          curl -fL --retry 3 https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o /tmp/blueprint.tar.xz
+          echo '231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  /tmp/blueprint.tar.xz' | sha256sum -c
+          mkdir /tmp/blueprint
+          tar -xJf /tmp/blueprint.tar.xz --strip-components=1 -C /tmp/blueprint
+          meson setup /tmp/blueprint-build /tmp/blueprint --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C /tmp/blueprint-build
+          sudo meson install -C /tmp/blueprint-build
+          blueprint-compiler --version | grep -x 0.22.2
+
       - name: Configure Groundhog and in-tree adapters
         run: |
+          args=()
+          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
+            args+=(-DENABLE_TCP_IPC=ON -DNIP55L_TEST_TRUST_ENV=ON
+              -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service
+              -DBUILD_NATIVE_HOST=OFF)
+            if [[ '${{ steps.selection.outputs.needs_grotto }}' == true ]]; then
+              args+=(-DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_SIGNER_TESTS=ON)
+            fi
+            if [[ '${{ steps.selection.outputs.needs_native_host }}' == true ]]; then
+              args+=(-DBUILD_NATIVE_HOST=ON -DENABLE_NOSTR_SIGNER_WEBEXT_HOST=ON)
+            fi
+          fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
             -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
             -DBUILD_APPS=OFF -DBUILD_RELAYD=ON -DSIGNET_ENABLE=OFF \
-            -DBUILD_MDK011_INTEROP=ON -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice
+            -DBUILD_MDK011_INTEROP=ON -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice "${args[@]}"
+
+      - name: Build selected checks and shared prerequisites
+        if: steps.selection.outputs.affected == 'true'
+        run: cmake --build build --parallel 2
 
       - name: Build Groundhog and every focused test target
+        if: steps.selection.outputs.affected != 'true'
         run: |
           cmake --build build --parallel 2 --target \
             test_nostr_gtk_bind_latency_budget \
@@ -123,6 +181,7 @@ jobs:
             gnome/groundhog/all
 
       - name: GTK bind performance regression gate (serial, no retry)
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.gtk_perf == 'true'
         run: |
           python3 - <<'PY'
           import json
@@ -135,6 +194,7 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error -L '^perf$' --parallel 1
 
       - name: Require complete Groundhog test registration
+        if: steps.selection.outputs.affected != 'true'
         run: |
           python3 - <<'PY'
           import json
@@ -195,16 +255,26 @@ jobs:
       - name: Install nak for the NIP-46 interop test
         # groundhog-nip46-nak pairs Groundhog's NIP-46 session with a real
         # `nak bunker`; without nak it skips, and this job allows no skips.
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.needs_nak == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: false
       - name: Build nak
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.needs_nak == 'true'
         run: |
           go install github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
+      - name: Run selected checks under a controlled display
+        if: steps.selection.outputs.affected == 'true'
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
+            python3 scripts/ci-selected-execution.py run --profile groundhog.linux \
+              --build build --plan "$RUNNER_TEMP/ci-selection/plan.json"
+
       - name: Run all Groundhog tests under a controlled display
+        if: steps.selection.outputs.affected != 'true'
         run: |
           set -euo pipefail
           # Give GTK a private session bus with the AT-SPI bus service installed;
@@ -220,6 +290,7 @@ jobs:
           fi
 
       - name: Stress GUI lifetime callbacks with deterministic completion jitter
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.lifetime_stress == 'true'
         run: scripts/test-groundhog-gui-lifetimes.sh build 2
 
       - name: White Noise AAC/MP4 voice interop with MDK 0.11
@@ -236,6 +307,7 @@ jobs:
           fi
 
       - name: KC-6 store key against the session's unlocked gnome-keyring
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.session_keyring == 'true'
         run: |
           set -euo pipefail
           # The run above already exercised KC-6 against a private keyring the
@@ -269,6 +341,7 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}groundhog-ctest-linux
           path: |
+            build/ci-selected*
             build/groundhog-ctest.log
             build/groundhog-ctest.xml
             build/groundhog-mdk011-voice.log
@@ -286,6 +359,7 @@ jobs:
     # Groundhog code is fixed instead. The widget tests stay in the job above.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    if: ${{ !inputs.affected }}
     env:
       GROUNDHOG_SANITIZER_TESTS: >-
         groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
@@ -410,7 +484,83 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}groundhog-asan-ctest-linux
           path: |
+            build-asan/ci-selected*
             build-asan/groundhog-asan-ctest.log
             build-asan/groundhog-asan-ctest.xml
+            build-asan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  groundhog-selected-sanitizers:
+    # Keep the ordinary broad recipe below parser-readable for local adapters.
+    # This job executes the same sanitizer policy with the shared selected checks.
+    if: inputs.affected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Validate shared selection
+        run: |
+          python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux.sanitizers \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json"
+      - name: Install build dependencies and matching LSan symbols
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
+            gettext dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi curl \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
+          version="$(dpkg-query -W -f='${Version}' libsecret-1-0)"
+          arch="$(dpkg --print-architecture)"
+          curl --fail --location --retry 3 \
+            "https://ddebs.ubuntu.com/ubuntu/pool/main/libs/libsecret/libsecret-1-0-dbgsym_${version}_${arch}.ddeb" \
+            --output /tmp/libsecret-dbgsym.ddeb
+          sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
+          rm /tmp/libsecret-dbgsym.ddeb
+      - name: Configure with ASAN and UBSAN
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
+      - name: Build selected checks and shared prerequisites
+        run: cmake --build build-asan --parallel 2
+      - name: Check sanitizer source inputs
+        run: python3 scripts/sanitizer-gate-ci.py check-inputs --build-dir build-asan
+      - name: Run selected checks under the sanitizers
+        env:
+          ASAN_OPTIONS: 'detect_leaks=1:halt_on_error=1:verify_asan_link_order=0'
+          UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
+          G_SLICE: 'always-malloc'
+        run: |
+          export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+          python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
+            --build build-asan --plan "$RUNNER_TEMP/ci-selection/plan.json"
+      - name: Upload selected sanitizer evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}groundhog-selected-asan-ctest-linux
+          path: |
+            build-asan/ci-selected*
             build-asan/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

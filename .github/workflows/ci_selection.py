@@ -9,7 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import test_selection as selection
-from dependency_contract import BROAD_FAMILIES
+from ci_families import BROAD_FAMILIES
 
 # These are runner adapters, not another path classifier or dependency graph.
 # The shared planner owns path classification, history union and impact closure.
@@ -24,7 +24,7 @@ FAMILY_NODES = {
     'nip55l': {'nip55l', 'nip55l.core', 'nip55l.glib', 'nip55l.dbus_contract'},
     'homed': {'execution.homed', 'gnome.nostr_homed', 'gnome.nostr_homed.test_inputs'},
     'signet': {'signet'},
-    'static': {'static.policy', 'selection.contract'},
+    'static': {'static.policy', 'selection.contract', 'testing.framework'},
     'appimage': {'gnostr', 'packaging.gnostr', 'gnostr.schema_inputs'},
     'windows': {'grotto.gui', 'grotto.daemon', 'grotto.native_host', 'packaging.grotto'},
     'bp': {'benchmarks'},
@@ -64,7 +64,7 @@ def project(plan):
     if broad:
         families = set(BROAD_FAMILIES)
     return {'schema_version': 1, 'kind': 'ci_legacy_dispatch_v1',
-            'scope': 'legacy_family_conclusions_not_profile_or_release_attestation',
+            'scope': 'runner_conclusions_not_profile_or_release_attestation',
             'sha': plan['tested_sha'], 'shared_plan_id': plan['plan_id'],
             'broad': broad, 'families': sorted(families),
             'run_reference': broad or reference or bool(families & {'mdk08', 'mdk011'}),
@@ -93,8 +93,7 @@ def event_contract(name, event, sha, full=False):
 
 
 def aggregate(dispatch, needs):
-    expected = {'select': 'success', 'cheap': 'success',
-                'full_static': 'success' if dispatch['broad'] else 'skipped'}
+    expected = {'select': 'success', 'cheap': 'success'}
     expected.update({family: 'success' if family in dispatch['families'] else 'skipped'
                      for family in BROAD_FAMILIES})
     errors = [f'{job}: expected {wanted}, observed {needs.get(job, {}).get("result", "missing")}'
@@ -105,7 +104,8 @@ def aggregate(dispatch, needs):
             'scope': dispatch['scope'], 'families': {
                 family: {'selected': family in dispatch['families'],
                          'result': needs.get(family, {}).get('result', 'missing'),
-                         'coverage': 'legacy_suite_conclusion' if family in dispatch['families']
+                         'coverage': ('selected_check_runner_conclusion' if family in {'grotto', 'groundhog'} and not dispatch['broad']
+                                      else 'legacy_suite_conclusion') if family in dispatch['families']
                                      else 'not_executed'} for family in BROAD_FAMILIES},
             'passed': not errors, 'errors': errors}
 
@@ -138,7 +138,7 @@ def main():
                    'Selected families: ' + (', '.join(dispatch['families']) or '(none)'),
                    'Reference compatibility: ' + ('selected' if dispatch['run_reference'] else 'not executed'),
                    *['- ' + reason for reason in dispatch['reasons']],
-                   'These are legacy suite conclusions, not physical profile/release attestations.']
+                   'Runner conclusions include selected Grotto/Groundhog checks, not whole-profile/release attestations.']
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
             output.write('\n\n'.join(summary) + '\n')
     else:

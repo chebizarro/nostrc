@@ -1,4 +1,4 @@
-"""Physical retained-plan execution through the existing public outer adapter."""
+"""Explicit attested retained-plan diagnostics through the public outer adapter."""
 import json
 import os
 from pathlib import Path
@@ -25,7 +25,7 @@ class RetainedPlanAdapterTests(unittest.TestCase):
         path.write_text(json.dumps(plan))
         evidence = self.work / ('evidence-' + str(len(list(self.work.glob('evidence-*')))))
         result = subprocess.run(['bash', str(self.repo / 'scripts/test-gate.sh'), '--repo', str(self.repo),
-            '--head', self.head, '--plan', str(path), '--profile', 'local.command',
+            '--head', self.head, '--plan', str(path), '--profile', 'local.command', '--execution', 'attested',
             '--evidence-dir', str(evidence), *extra], capture_output=True, text=True,
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'), timeout=60)
         receipt_path = next(evidence.glob('*/adapter-receipt.json'))

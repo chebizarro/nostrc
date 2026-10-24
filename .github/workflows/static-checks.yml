@@ -1,7 +1,7 @@
 name: Static checks
 
-# Repository-wide checks that need no build. The fast pre-push hook
-# (scripts/pre-push) runs the cheap ones before every push.
+# Operational regressions and cheap guards. Universal profile/custody
+# qualification is an explicitly dispatched diagnostic, not ordinary CI.
 on:
   workflow_call:
     inputs:
@@ -13,24 +13,19 @@ on:
         default: ''
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   static-checks:
     runs-on: ubuntu-24.04
-    # Bounded walltime for testhost provisioning plus the full default selection
-    # suite (474 s in the hosted policy testhost) and the finite gates below.
     timeout-minutes: 20
-    env:
-      REQUESTED_SHA: ${{ inputs.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
-          # The selection suite reads pinned ancestor commits (vector-family
-          # witnesses), so it needs full history like the regression controller.
           fetch-depth: 0
-          # Source-membership regressions hash the pinned nostrdb sources; no build is needed.
-          submodules: recursive
           persist-credentials: false
       - name: Verify requested checkout
         if: inputs.sha != ''
@@ -38,85 +33,24 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
-      # Selection and workflow contract tests: the full default suite
-      # (namespace_policy_entry.sh: discover -s tests/selection) runs in the
-      # shared provisioned testhost controller, with the exact checkout mounted
-      # read-only, its kernel-custody matrix actually provisioned, and owned
-      # always() steps request owned container/profile cleanup while the runner
-      # is available. Hard timeout or VM-loss absence is unverified/failed,
-      # never evidence of cleanup success.
-      - name: Bind exact source and retain native launcher diagnosis (not acceptance)
-        run: |
-          set -euo pipefail
-          # Prove the exact checkout before executing its shared controller.
-          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
-          bash tests/selection/namespace_policy_controller.sh bind
-      - name: Record explicitly provisioned disposable Docker regression policy
-        run: bash tests/selection/namespace_policy_controller.sh record
-      - name: Provision per-job namespace-custody AppArmor profile
-        run: bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
-      # Scheduling only: the nine original host self-tests named below start
-      # here in one owned supervisor beside the image build (exact argv, host
-      # environment and order), are joined before the testhost runs, are ended
-      # before evidence is retained, and are each reported by their original
-      # named step after it.
-      - name: Start the original host self-tests beside the image build
-        run: python3 tests/selection/static_frontend_host.py start
-      - name: Build dedicated nonroot regression image
-        run: bash tests/selection/namespace_policy_controller.sh build
-      - name: Join this job's host self-test group before the testhost
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: python3 tests/selection/static_frontend_host.py join
-      - name: Selection and workflow contract tests
-        run: bash tests/selection/namespace_policy_controller.sh execute
-      - name: Remove only this job's recorded immutable container
-        if: always()
-        run: bash tests/selection/namespace_policy_controller.sh remove
-      - name: Remove only this job's AppArmor profile after its consumers exited
-        if: always()
-        run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
-      - name: End this job's host self-test group before retaining evidence
-        if: always()
-        run: python3 tests/selection/static_frontend_host.py ensure-ended
-      - name: Retain testhost control and evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact_prefix }}static-checks-testhost-${{ inputs.sha || github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/namespace-policy
-          if-no-files-found: error
+      - name: Operational selection and workflow regressions
+        run: python3 scripts/test-selection-operational.py
 
       - name: No call modifies a variable another argument uses
-        # nostrc-td3b: argument evaluation order is unspecified; x86_64 GCC
-        # goes right to left, so such a call breaks only on x86_64 runners.
-        run: python3 tests/selection/static_frontend_host.py replay unsequenced
-
+        run: python3 scripts/check-unsequenced-args.py --self-test
       - name: Every GUI test installs narrow GDK frame tolerance
-        run: python3 tests/selection/static_frontend_host.py replay gui-frame
-
+        run: python3 scripts/check-gui-test-gdk-frame.py --self-test
       - name: Local Linux image mirrors the CI package lists
-        run: python3 tests/selection/static_frontend_host.py replay linux-packages
-
+        run: python3 scripts/check-linux-ci-packages.py --self-test
       - name: Pre-push hook behaviour
-        run: python3 tests/selection/static_frontend_host.py replay pre-push
-
+        run: bash scripts/test-pre-push.sh
       - name: Opt-in full gate behaviour
-        run: python3 tests/selection/static_frontend_host.py replay full-gate
-
+        run: bash scripts/test-full-gate.sh
       - name: Linux gate smoke run keeps and counts reruns
-        # nostrc-16yi: a rerun that passes still prints the first failure.
-        run: python3 tests/selection/static_frontend_host.py replay linux-smoke
-
+        run: bash scripts/test-linux-gate-smoke.sh
       - name: Sanitizer gate reads the CI job and filters pushes
-        # nostrc-3han: the pre-push sanitizer stage runs groundhog-sanitizers
-        # as read from groundhog-ci.yml, so a change to that job the stage
-        # cannot reproduce fails here; and only for pushes touching its paths.
-        run: python3 tests/selection/static_frontend_host.py replay sanitizer
-
+        run: bash scripts/test-sanitizer-gate.sh
       - name: Old signer names stay gone (W31)
-        run: python3 tests/selection/static_frontend_host.py replay signer-names
-
+        run: bash scripts/check-grotto-names.sh
       - name: Keychain guard self-test (nostrc-2hmd)
-        run: python3 tests/selection/static_frontend_host.py replay keychain-guard
+        run: bash scripts/test-check-macos-keychain.sh

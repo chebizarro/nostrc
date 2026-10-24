@@ -1,11 +1,22 @@
-name: Provisioned namespace policy regressions
+name: Diagnostic namespace policy regressions
+# Explicit diagnostics only. Not an ordinary CI requirement or delivery gate.
 # Docker provisions a regression host, not a native selector/profile backend.
 on:
+  # Reusable only for the separately invoked diagnostic orchestration.
   workflow_call:
     inputs:
       sha:
         type: string
         required: true
+      artifact_prefix:
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact commit to diagnose (defaults to dispatched ref)
+        type: string
+        required: false
       artifact_prefix:
         type: string
         default: ''
@@ -16,11 +27,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      REQUESTED_SHA: ${{ inputs.sha }}
+      REQUESTED_SHA: ${{ inputs.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.sha }}
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
@@ -56,6 +67,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ inputs.artifact_prefix }}namespace-policy-regressions-${{ inputs.sha }}-${{ github.run_attempt }}
+          name: ${{ inputs.artifact_prefix }}namespace-policy-regressions-${{ inputs.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/namespace-policy
           if-no-files-found: error

@@ -40,10 +40,11 @@ class RepresentativeSelectionTests(unittest.TestCase):
         self.assertFalse(result['broad'])
         self.assertEqual(result['families'], ['grotto', 'windows'])
         self.assertFalse(result['run_reference'])
-        # The legacy Grotto runner tests signer registrations, not its libraries.
+        # The broad Grotto path remains; affected checks use the shared handoff.
         text = workflow('grotto-ci')
         self.assertIn('ctest --test-dir build -j1 -R "$regex" --no-tests=error', text)
         self.assertIn("regex='^(signer/|nip55l_|nostr_signer_webext_host_)'", text)
+        self.assertIn('ci-selected-execution.py run', text)
         self.assertNotIn('ctest --test-dir build --output-on-failure\n', text)
 
     def test_mdk09_probe_selects_the_existing_mdk011_probe_runner_not_mdk08(self):
@@ -242,8 +243,7 @@ class RealHistoryTests(GitCase):
 def successful_needs(dispatch):
     result = {family: {'result': 'success' if family in dispatch['families'] else 'skipped'}
               for family in ci.BROAD_FAMILIES}
-    result.update(select={'result': 'success'}, cheap={'result': 'success'},
-                  full_static={'result': 'success' if dispatch['broad'] else 'skipped'})
+    result.update(select={'result': 'success'}, cheap={'result': 'success'})
     return result
 
 
@@ -273,11 +273,11 @@ class RequiredAggregateTests(unittest.TestCase):
         self.needs['unexpected'] = {'result': 'success'}
         self.assertFalse(ci.aggregate(self.dispatch, self.needs)['passed'])
 
-    def test_broad_needs_every_family_and_full_static(self):
+    def test_broad_needs_every_family(self):
         dispatch = RepresentativeSelectionTests().select(mode='broad')
         needs = successful_needs(dispatch)
         self.assertTrue(ci.aggregate(dispatch, needs)['passed'])
-        for family in [*ci.BROAD_FAMILIES, 'full_static']:
+        for family in ci.BROAD_FAMILIES:
             bad = copy.deepcopy(needs)
             bad[family]['result'] = 'skipped'
             with self.subTest(family=family):
@@ -299,7 +299,7 @@ class DefaultWorkflowWiringTests(unittest.TestCase):
         self.assertIn('name: Dependency gate', gate)
         self.assertIn('if: always()', gate)
         needs = set(re.search(r'needs: \[(.*?)\]', gate).group(1).split(', '))
-        self.assertEqual(needs, {*ci.BROAD_FAMILIES, 'cheap', 'select', 'full_static'})
+        self.assertEqual(needs, {*ci.BROAD_FAMILIES, 'cheap', 'select'})
         self.assertIn('ci_selection.py aggregate', gate)
         self.assertIn("if: always() && needs.select.result == 'success'", gate)
         self.assertNotIn('continue-on-error', gate)
@@ -320,7 +320,10 @@ class DefaultWorkflowWiringTests(unittest.TestCase):
         self.assertIn("run_reference: ${{ needs.select.outputs.run_reference == 'true' }}", groundhog)
         reference = workflow('groundhog-ci').split('- name: White Noise AAC/MP4 voice interop with MDK 0.11', 1)[1]
         self.assertIn("if: inputs.sha == '' || inputs.run_reference", reference.split('- name:', 1)[0])
-        self.assertIn("if: needs.select.outputs.broad == 'true'", job_block(text, 'full_static'))
+        self.assertIn('uses: ./.github/workflows/static-checks.yml', job_block(text, 'static'))
+        self.assertNotIn('full_static:', text)
+        self.assertNotIn('namespace-policy-regression.yml', text)
+        self.assertNotIn('dependency_contract', (ROOT / '.github/workflows/ci_selection.py').read_text())
 
     def test_manual_publishers_run_broad_and_do_not_promote_family_conclusions_to_attestations(self):
         for name in ['release', 'groundhog-release', 'windows-build']:
@@ -348,7 +351,9 @@ class DefaultWorkflowWiringTests(unittest.TestCase):
         for command in ['scripts/check-unsequenced-args.py', 'scripts/check-gui-test-gdk-frame.py',
                         'scripts/check-linux-ci-packages.py', 'gnome/groundhog/tests/check_privacy.py']:
             self.assertIn(command, cheap)
-        self.assertIn("-p 'test_workflow*.py'", cheap)
+        self.assertNotIn('unittest', cheap)
+        self.assertIn('test-selection-operational.py', workflow('static-checks'))
+        self.assertIn('static-checks.yml', job_block(text, 'static'))
         self.assertNotIn('namespace_policy_controller', cheap)
         self.assertNotIn('docker', cheap)
 
