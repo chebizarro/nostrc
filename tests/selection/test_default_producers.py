@@ -691,7 +691,35 @@ nostrc_finalize_test_inventory()''') + '\nfile(GLOB fixture_sources CONFIGURE_DE
                 self.configure()
         self.assertFalse((self.build / 'nostrc-test-realization.json').exists())
 
-    def test_targetless_run_refuses_bound_tool_drift(self):
+    def test_targetless_run_refuses_actual_bound_tool_byte_drift(self):
+        import os
+        self.glob()
+        self.lanes()
+        self.plan['selected_checks'] = ['command.actual']
+        private = Path(self.temp.name) / 'private-bin'
+        private.mkdir()
+        copy = private / 'ninja'
+        shutil.copy2(shutil.which('ninja'), copy)
+        copy.chmod(0o755)  # owned private copy; Homebrew installs it read-only
+        with mock.patch.dict(os.environ, PATH=str(private) + os.pathsep + os.environ['PATH']):
+            realized = self.configure()
+            bound = realized['ninja_generation_binding']['build_tools']['ninja']
+            self.assertEqual(bound['path'], str(copy.resolve()))
+            self.assertIn(bound['path'], realized['generation_files'])
+            self.build_all()
+            resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+            audit = self.audit(realized)
+            self.assertTrue(audit['passed'], audit['gaps'])
+            record = self.build / 'nostrc-test-realization.json'
+            stored = record.read_bytes()
+            with copy.open('ab') as stream:
+                stream.write(b'\0drift')  # the configured executable itself changes after configure
+            self.assertNotEqual(r.hashlib.sha256(copy.read_bytes()).hexdigest(), bound['sha256'])
+            with self.assertRaisesRegex(r.RealizationError, 'stale realization metadata: ' + bound['path']):
+                r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+            self.assertEqual(record.read_bytes(), stored)
+
+    def test_targetless_run_refuses_inconsistent_tool_record(self):
         self.glob()
         self.lanes()
         self.plan['selected_checks'] = ['command.actual']
@@ -703,7 +731,7 @@ nostrc_finalize_test_inventory()''') + '\nfile(GLOB fixture_sources CONFIGURE_DE
         ninja = realized['ninja_generation_binding']['build_tools']['ninja']['path']
         record = self.build / 'nostrc-test-realization.json'
         stored = json.loads(record.read_text())
-        stored['generation_files'][ninja] = '0' * 64  # bound tool bytes no longer match
+        stored['generation_files'][ninja] = '0' * 64  # record inconsistent with the unchanged executable
         record.write_text(json.dumps(stored))
         with self.assertRaisesRegex(r.RealizationError, 'stale realization metadata: ' + ninja):
             r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
