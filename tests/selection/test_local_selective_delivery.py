@@ -278,7 +278,8 @@ class GateEntrypointTests(PhysicalLegacyTests):
     def gate(self, *args):
         evidence = Path(self.temp.name) / "evidence"
         result = subprocess.run(["bash", str(self.source / "scripts/test-gate.sh"), "--repo", str(self.source),
-                                 "--profile", "linux", "--base", self.base, "--evidence-dir", str(evidence), *args],
+                                 "--profile", "linux", *([] if "--plan" in args else ["--base", self.base]),
+                                 "--evidence-dir", str(evidence), *args],
                                 capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         path = next(evidence.glob("*/adapter-receipt.json"))
@@ -290,6 +291,35 @@ class GateEntrypointTests(PhysicalLegacyTests):
         self.assertEqual(record["status"], "partial")
         self.assertTrue(list(directory.glob("*/legacy-*/build/built")))
         self.assertEqual(len(self.git("worktree", "list").splitlines()), 1)
+
+    def test_saved_plan_keeps_ordinary_execution_and_exact_identity(self):
+        plan = s.make_plan(self.p, [change("app/source.c")], head=self.head, base=self.base, context="local")
+        path = Path(self.temp.name) / "saved-plan.json"
+        s.write_json(path, plan)
+        record, directory = self.gate("--head", self.head, "--plan", str(path))
+        self.assertEqual(record["execution_api"], "legacy CMake/CTest")
+        self.assertEqual(record["executions"][0]["plan_id"], plan["plan_id"])
+        self.assertEqual(record["executions"][0]["status"], "partial")
+        self.assertTrue(list(directory.glob("*/legacy-*/build/built")))
+        self.assertEqual(len(self.git("worktree", "list").splitlines()), 1)
+
+    def test_saved_plan_explicit_attested_and_custody_stay_diagnostic(self):
+        plan = s.make_plan(self.p, [change("app/source.c")], head=self.head, base=self.base, context="local")
+        path = Path(self.temp.name) / "saved-plan.json"
+        s.write_json(path, plan)
+        # Mode selection only, not kernel qualification: the explicit legacy
+        # custody value needs no host-specific launcher even during checkout.
+        for flags in (("--execution", "attested"), ("--native-custody", "legacy")):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as tmp:
+                result = subprocess.run(["bash", str(self.source / "scripts/test-gate.sh"),
+                    "--repo", str(self.source), "--head", self.head, "--plan", str(path),
+                    "--profile", "linux", "--explain", "--evidence-dir", tmp, *flags],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                record = json.loads(next(Path(tmp).glob("*/adapter-receipt.json")).read_text())
+                self.assertEqual(record["execution_api"], "test-plan.py resolve/run")
+                self.assertEqual(record["status"], "planned")
+                self.assertFalse(record["complete_gate_eligible"])
 
     def test_full_alias_is_real_broad_ctest_execution(self):
         record, _ = self.gate("--head", self.head, "--full")

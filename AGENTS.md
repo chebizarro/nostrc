@@ -52,17 +52,18 @@ follow-ups, not prerequisites to the three outcomes. Parent verification of the
 integrated delivery remains necessary; this docs change alone proves no cutover.
 
 Use `scripts/test-gate.sh` for affected checks, `--explain` for plan-only output,
-and `--broad` for broad selection. `--profile` is a deliberately partial run,
-not whole-profile or release proof. Invoke `scripts/test-gate.sh --broad` directly
+and `--broad` for broad selection. A saved `--plan` stays ordinary unless
+`--execution attested` or custody is explicitly requested. `--profile` is a
+deliberately partial run, not whole-profile or release proof. Invoke `scripts/test-gate.sh --broad` directly
 for broad local testing; no push-hook environment flag launches builds or tests.
 Missing required capabilities must fail visibly, not silently drop
 selected checks. A bypass must remain explicit and cannot be called verification.
 
 See [TESTING](docs/TESTING.md#dependency-aware-delivery-policy--2026-10-25) for
 commands and evidence limits, and the [plan execution index](docs/plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
-for W11/W12 and task ownership. Historical implementation restrictions and
-source-specific receipts are retained in TESTING and the
-[acceptance audit](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md);
+for W11/W12 and task ownership. Historical source-specific receipts remain in
+Git history and the
+[dated acceptance audit](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md);
 their obsolete delivery blockers are superseded, not claimed satisfied.
 
 
@@ -170,6 +171,13 @@ are fixed, not suppressed; `lsan.supp` is only for leaks in other libraries,
 each naming its bead.
 
 ### Focused verification
+
+Ordinary selector/workflow/runner regressions use
+`python3 scripts/test-selection-operational.py`. The full experimental discovery
+suite and `namespace-policy-regression.yml` remain explicit diagnostics, not
+ordinary required CI; do not reintroduce universal custody/profile/attestation
+qualification through automatic hooks or triggers. Keep their safety guards and
+report diagnostic failures literally.
 
 Verify affected inclusion and unrelated omission with representative selector,
 adapter or workflow tests appropriate to the change. Relevant compatibility tests

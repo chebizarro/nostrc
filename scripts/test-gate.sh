@@ -27,7 +27,7 @@ parser = argparse.ArgumentParser(description="Affected local tests by default; e
 parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
-parser.add_argument("--plan", help="execute exact retained committed plan identity; --profile selects physical lanes without rewriting the plan")
+parser.add_argument("--plan", help="execute exact retained committed plan identity using ordinary execution unless --execution or custody is explicit")
 parser.add_argument("--broad", "--full", action="store_true", help="explicit broad local testing within the requested profiles; never launched by the push hook")
 parser.add_argument("--execution", choices=("legacy", "attested"), default=None,
                     help="legacy CMake/CTest by default; attested retains diagnostic realization/custody")
@@ -44,7 +44,7 @@ parser.add_argument("--evidence-dir", help="parent for a unique retained run dir
 args = parser.parse_args()
 # Existing explicit custody requests keep their diagnostic meaning.
 custody_requested = any(arg.split("=", 1)[0] in {"--linux-custody", "--native-custody"} for arg in sys.argv)
-args.execution = args.execution or ("attested" if args.plan or custody_requested or args.namespace_apparmor_profile else "legacy")
+args.execution = args.execution or ("attested" if custody_requested or args.namespace_apparmor_profile else "legacy")
 if args.execution == "legacy" and args.linux_custody != "legacy":
     parser.error("native custody requires --execution attested")
 active = None
