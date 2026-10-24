@@ -434,6 +434,55 @@ class HostFrontendGroupLifecycle(unittest.TestCase):
                     self.assertIn(message, result.stderr)
                     self.assertIsNone(victim.poll())  # the unrelated process is untouched
                     self.assertTrue(running(victim.pid, observed[2]))
+        # Same-UID session leaders that pass the pid/start/boot/uid/session checks; each is this
+        # test's own unreaped child. Only the published 64-hex token in start's exact launch
+        # argv for THIS root may be treated as the owned supervisor.
+        def leader(argv, **kwargs):
+            process = subprocess.Popen(argv, start_new_session=True, **kwargs)
+            self.addCleanup(lambda: process.poll() is None and (process.kill(), process.wait()))
+            return process, proc_stat(process.pid)[2]
+
+        def untouched(process, start):
+            status = Path('/proc/%d/status' % process.pid).read_text().splitlines()
+            pending = [int(line.split()[1], 16) for line in status if line.startswith(('SigPnd:', 'ShdPnd:'))]
+            return process.poll() is None and running(process.pid, start) and pending == [0, 0]
+
+        hex_token = '0123456789abcdef' * 4
+        sleeper, sleeper_start = leader(['sleep', '30'])
+        python, python_start = leader([sys.executable, '-c', 'import time; time.sleep(30)', hex_token])
+        foreign = self.temp / 'foreign-runner/namespace-policy/host-frontend'
+        (foreign / 'logs').mkdir(parents=True)
+        go_read, go_write = os.pipe()
+        ready_read, ready_write = os.pipe()
+        blocked = lambda: signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGUSR1})
+        supervisor, supervisor_start = leader([sys.executable, '-I', str(self.path), 'supervise', str(foreign),
+                                               'a' * 64, str(go_read), str(ready_write)],
+                                              pass_fds=(go_read, ready_write), preexec_fn=blocked)
+        self.addCleanup(os.close, go_write)  # never "go": a closed handshake runs nothing
+        os.close(go_read)
+        os.close(ready_write)
+        self.assertEqual(os.read(ready_read, 16), b'ready\n')
+        os.close(ready_read)
+        without = {k: v for k, v in base.items() if k != 'token'}
+        for name, process, start, record, message in (
+                ('missing token', sleeper, sleeper_start, without, 'ownership record malformed'),
+                ('empty token', sleeper, sleeper_start, dict(base, token=''), 'ownership record malformed'),
+                ('non-string token', sleeper, sleeper_start, dict(base, token=123), 'ownership record malformed'),
+                ('token equal to an argument', sleeper, sleeper_start, dict(base, token='30'),
+                 'ownership record malformed'),
+                ('well-formed token as an unrelated argument', python, python_start, dict(base, token=hex_token),
+                 'not the owned supervisor'),
+                ('supervisor shape for a foreign root', supervisor, supervisor_start, dict(base, token='a' * 64),
+                 'not the owned supervisor')):
+            with self.subTest(case=name):
+                self.assertTrue(untouched(process, start))
+                (self.root / 'owner.json').write_text(json.dumps(dict(record, pid=process.pid, starttime=start)))
+                for verb, status in (('ensure-ended', None), ('join', 'cancelled')):
+                    result = self.helper_run(verb, status=status)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('refused', result.stderr)
+                    self.assertIn(message, result.stderr)
+                    self.assertTrue(untouched(process, start))  # alive, no signal delivered or pending
         (self.root / 'owner.json').unlink()
 
     def test_exited_process_is_ended_and_never_signalled(self):
