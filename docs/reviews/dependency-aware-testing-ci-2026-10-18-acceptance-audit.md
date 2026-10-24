@@ -2,6 +2,36 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 keyring acceptance snapshot, S5 — 2026-10-24T16:54:26Z
+
+[Shadow root 40108475745](https://github.com/chebizarro/nostrc/actions/runs/40108475745) has head H5 `75a791b62` and tests S5 `d2c7eef19b98e908bdbdca698cd14a361d588668`; it **failed** at 16:30:38Z. Detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-keyring-shadow-profile-census-s5--snapshot-2026-10-24t165426z).
+
+Per-profile outcome at this root. **S5 differs from S3/S4 for two profiles, so the earlier four-lane status is not carried forward:**
+- **Normal-qualified and gate-clean (2):** `core.linux` (441 executed registrations) and `homed.linux.ci` (5, the standalone five-unit route), read from the S5 receipts. Validation still lists both in `incomplete_lanes`, so this is per-lane status, not profile or complete-gate acceptance. No S5 strict-signer result is retained or inferred.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (6):** `core.linux.asan`, `grotto.linux.asan_ubsan` (exit 1), `groundhog.mdk08`, `groundhog.mdk011`, and **newly `grotto.linux` and `groundhog.linux`** (exit 2). The withheld metadata records `paths: []` and "not durably retained"; no original is reconstructed.
+
+Classes compared with S4 (below). Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| **`grotto.linux` / `groundhog.linux` withheld, `command exited 2`** (normal-qualified at S3/S4) | **new at S5**; cause unavailable | none found by title; not attributed (in particular not to the #334/#335 smokes below) |
+| Withheld exit 1 / exit 2 lanes (`core.linux.asan`, `grotto.linux.asan_ubsan`, mdk08, mdk011) | unchanged; cause unavailable | `.36.16`, `.36.20` / `.36.24`, `.36.13` (profile owners, not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully` | unchanged | `.36.29` |
+| libgo `no authored normal contract` | unchanged | `.36.28` |
+| Broad core macOS ASan `heartbeat-not-starved` | **passed at S5** (test 227 passed); one root, not a fix claim | `nostrc-0cfsg.11` title; status unchanged here |
+| **Groundhog normal: `groundhog-bus-probe` #334 (`test_bus_probe.c:149 … g_subprocess_get_if_exited(proc)' should be TRUE`) and `groundhog-two-instance` #335 (`test_two_instance.c:239 … 'WIFEXITED(status)' should be TRUE`), 2 of 125** | **new at S5** in both broad groundhog (accounting 16/17) and legacy Groundhog opt-in CI normal | `.36.31` ("Groundhog named smoke subprocesses abort in current legacy normal CI"); correction pending, not in S5 (below) |
+| Legacy Groundhog sanitizer `00-unavailable` keyring race | **resolved at S5**: 65/65 passed with `.36.30` (`0562f6819` + `b81b54839`) in H5 | `.36.30`; status is the parent's |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static whole job | **success**: run 40108475746 in 763 s under the unchanged 1,200 s cap, DEFAULT 1,434 / 80 skipped, kernel 121 / 0, 14 commands and 9 replays exit 0; `complete=false` | `.36.26`; status is the parent's |
+
+**Pending `.36.31` correction (not in S5, no hosted result):** `93616912b` ("never announce on GTK's fallback test AT context"; GTK's fallback `GtkTestATContext` has no `announce` implementation, diagnosed by the author with gdb and reviewed with no blocker) and `cb04d098d` (comment wording plus the `VERSION_MANIFEST.md` note "PATCH-class Groundhog bug fix folded into unreleased 0.12.0") are on the `.30`/`.31` branch only. The author is still finishing required gates. The local fixed-build normal run was 124/125: one `groundhog-account-ui` SIGSEGV has no established cause, so no clean 125/125 is claimed.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
 ## PR26 owner-guard acceptance snapshot, S4 — 2026-10-24T15:35:14Z
 
 [Shadow root 40101269694](https://github.com/chebizarro/nostrc/actions/runs/40101269694) has head H4 `17eac22b1` and tests S4 `a44706d443c9e41044711f9499e33d6f7b521ae3`; it **failed** at 15:04:07Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-owner-guard-shadow-profile-census-s4--snapshot-2026-10-24t153514z).
