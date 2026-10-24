@@ -770,8 +770,62 @@ class SourceClaimContract(unittest.TestCase):
         with self.assertRaisesRegex(services.SourceClaimError, 'escaped checkout'):
             services._source_claims(receipt, self.root)
         self.schema.unlink()
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaisesRegex(services.SourceClaimError,
+                                    r'does not resolve: apps/grotto/data/org\.nostr\.Grotto\.gschema\.xml \(FileNotFoundError\)$'):
             services._source_claims(receipt, self.root)
+
+    def test_double_slash_spellings_refuse_instead_of_dropping_a_source_claim(self):
+        import test_selection_execution as normal
+        root = str(self.root)
+        double = '/' + str(self.schema)                  # //<root>/...: POSIX opens the same file
+        self.assertTrue(os.path.samefile(double, self.schema))
+        receipt = {'input_hashes': {double: self.digest}}
+        # Regression oracle: both old helpers silently omitted it (equal, but a claim was lost).
+        self.assertEqual((_old_sealer_claims(receipt, self.root), _old_qualifier_claims(receipt, root)), ({}, {}))
+        for side in (lambda: services.source_claim_contract(receipt, root),
+                     lambda: services._source_claims(receipt, self.root)):
+            with self.assertRaisesRegex(services.SourceClaimError, 'unsupported double-slash source input spelling: '
+                                        r'apps/grotto/data/org\.nostr\.Grotto\.gschema\.xml$'):
+                side()
+        with self.assertRaisesRegex(ValueError, 'violate the source claim contract: unsupported double-slash'):
+            normal._derived_claims(receipt, root)
+        with self.assertRaisesRegex(services.SourceClaimError, 'unsupported double-slash'):
+            services.source_claim_contract({'input_hashes': {'/' + root: self.digest}}, root)
+        with self.assertRaisesRegex(services.SourceClaimError, 'canonical absolute'):
+            services.source_claim_contract({}, '/' + root)        # no network-root authority
+        # Outside the root it is neither a claim nor authority; three slashes are POSIX root.
+        self.assertEqual(services.source_claim_contract({'input_hashes': {'//host/share/x': 'a' * 64}}, root), ({}, {}))
+        triple = {'input_hashes': {'//' + str(self.schema): self.digest}}
+        self.assertEqual(services._source_claims(triple, self.root), {str(self.schema): self.digest})
+
+    def test_unresolvable_raw_spellings_refuse_typed_without_host_paths(self):
+        import test_selection_execution as normal
+        root = str(self.root)
+        spellings = {'missing intermediate': root + '/apps/grotto/missing/../data/org.nostr.Grotto.gschema.xml',
+                     'outside prefix': str(self.root.parent) + '/absent-outside/../source/apps/grotto/data/'
+                                       'org.nostr.Grotto.gschema.xml'}
+        for label, raw in spellings.items():
+            with self.subTest(label):
+                receipt = {'input_hashes': {raw: self.digest}}
+                self.assertEqual(services.source_claim_contract(receipt, root)[0], {str(self.schema): self.digest})
+                if label == 'missing intermediate':
+                    with self.assertRaises(FileNotFoundError):    # old: untyped, leaks the host path
+                        _old_sealer_claims(receipt, self.root)
+                else:                                             # old: silently dropped on both sides
+                    self.assertEqual((_old_sealer_claims(receipt, self.root), _old_qualifier_claims(receipt, root)), ({}, {}))
+                with self.assertRaises(services.SourceClaimError) as caught:
+                    services._source_claims(receipt, self.root)
+                self.assertEqual(str(caught.exception), 'native source input spelling does not resolve: '
+                                 'apps/grotto/data/org.nostr.Grotto.gschema.xml (FileNotFoundError)')
+                self.assertNotIn(str(self.root.parent), str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                # Lexical qualifier derivation is unchanged; no seal exists for it to accept.
+                self.assertEqual(normal._derived_claims(receipt, root), {str(self.schema): self.digest})
+        loop = self.root / 'apps/loop'
+        os.symlink('loop', loop)
+        with self.assertRaisesRegex(services.SourceClaimError, r'does not resolve: .*\((OSError|RuntimeError)\)$'):
+            services._source_claims({'input_hashes': {str(loop) + '/../grotto/data/org.nostr.Grotto.gschema.xml':
+                                                      self.digest}}, self.root)
 
     def test_qualifier_diagnostic_names_unmatched_claims_without_secrets(self):
         import test_selection_execution as normal
@@ -894,14 +948,20 @@ class GenuineDescriptorAliasSourceClaims(TransportFixture):
             vector.unlink()
         def restore():
             vector.write_bytes(original)
+        def missing_intermediate():
+            shutil.move(str(cmake), str(moved))       # cmake/../vector.txt no longer resolves
+        def undo_intermediate():
+            shutil.move(str(moved), str(cmake))
         for label, mutate, undo, error in (
                 ('divergent alias', divergent, undo_divergent, 'alias resolves differently'),
                 ('stale input', stale, restore, 'changed before finalizer seal'),
-                ('missing input', missing, restore, 'No such file')):
+                ('missing input', missing, restore, r'does not resolve: vector\.txt \(FileNotFoundError\)$'),
+                ('missing intermediate', missing_intermediate, undo_intermediate,
+                 r'does not resolve: vector\.txt \(FileNotFoundError\)$')):
             with self.subTest(label):
                 mutate()
                 try:
-                    with self.assertRaisesRegex((lane_services.ServiceError, OSError), error):
+                    with self.assertRaisesRegex(lane_services.ServiceError, error):
                         self.seal()
                     self.assertFalse((self.work / 'native-seal.json').exists())
                 finally:

@@ -1092,6 +1092,20 @@ class SourceClaimError(ServiceError):
 
 _SHA256 = re.compile(r'[0-9a-f]{64}')
 _CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+# Credential/token-shaped runs never reach diagnostics, even inside a path name.
+_REDACT = re.compile(r'(?:NOSTR_SIGNER_TOKEN=\S*|AUTH [0-9a-f]{64}|p[1-9][0-9]{0,4}_[0-9a-f]{64}|[0-9A-Fa-f]{32,})')
+
+
+def _double_slash(path):
+    # POSIX leaves exactly two leading slashes implementation-defined; normpath keeps them.
+    return path.startswith('//') and not path.startswith('///')
+
+
+def safe_claim_name(name, source):
+    """Root-relative, credential-redacted, control-free ASCII name; never a host path."""
+    relative = name[len(source) + 1:] if isinstance(name, str) and name.startswith(source + os.sep) else '<outside root>'
+    relative = _CONTROL.sub('?', _REDACT.sub('<redacted>', relative))
+    return relative.encode('ascii', 'backslashreplace').decode('ascii')
 
 
 def source_claim_contract(result, source):
@@ -1113,7 +1127,7 @@ def source_claim_contract(result, source):
     from the root and contradictory aliases.
     """
     if not isinstance(source, str) or not os.path.isabs(source) or os.path.normpath(source) != source \
-            or source == os.sep:
+            or source == os.sep or _double_slash(source):
         raise SourceClaimError('source claim root is not a canonical absolute directory')
     prefix = source + os.sep
     claims, spellings = {}, {}
@@ -1128,6 +1142,14 @@ def source_claim_contract(result, source):
                         raise SourceClaimError('malformed input audit path')
                     if not os.path.isabs(path):
                         continue  # not a source-root claim on either side (unchanged)
+                    if _double_slash(path):
+                        # Never dropped and never granted network-root authority:
+                        # a spelling that would alias into the root refuses.
+                        collapsed = os.path.normpath('/' + path.lstrip('/'))
+                        if collapsed == source or collapsed.startswith(prefix):
+                            raise SourceClaimError('unsupported double-slash source input spelling: '
+                                                   + safe_claim_name(collapsed, source))
+                        continue  # outside the source root: other audits bind it
                     canonical = os.path.normpath(path)
                     raw_under = path.startswith(prefix) or path == source
                     if canonical == source:
@@ -1156,14 +1178,20 @@ def _source_claims(result, source):
     """Sealer side: the shared contract plus live physical alias/escape proof."""
     source = Path(source)
     claims, spellings = source_claim_contract(result, str(source))
+    def resolve(spelling, canonical):
+        try:
+            return Path(spelling).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:  # missing/non-directory component, symlink loop
+            raise SourceClaimError('native source input spelling does not resolve: %s (%s)'
+                                   % (safe_claim_name(canonical, str(source)), type(exc).__name__)) from None
     for canonical, raws in spellings.items():
-        target = Path(canonical).resolve(strict=True)
+        target = resolve(canonical, canonical)
         if not target.is_relative_to(source):
             raise SourceClaimError('native source input escaped checkout')
         for raw in raws:
             # A symlinked component before '..' makes the physical file differ
             # from the lexical canonical name: never let the alias stand for it.
-            if Path(raw).resolve(strict=True) != target:
+            if resolve(raw, canonical) != target:
                 raise SourceClaimError('native source input alias resolves differently from its canonical path')
     return claims
 

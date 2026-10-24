@@ -865,14 +865,9 @@ def _derived_claims(result, source):
         require(False, 'sealed raw input audits violate the source claim contract: ' + str(exc))
 
 
-# Credential/token-shaped runs never reach diagnostics, even inside a path name.
-_REDACT = re.compile(r'(?:NOSTR_SIGNER_TOKEN=\S*|AUTH [0-9a-f]{64}|p[1-9][0-9]{0,4}_[0-9a-f]{64}|[0-9A-Fa-f]{32,})')
-
-
 def _claim_name(name, source):
-    relative = name[len(source) + 1:] if isinstance(name, str) and name.startswith(source + os.sep) else '<outside root>'
-    relative = re.sub(r'[\x00-\x1f\x7f]', '?', _REDACT.sub('<redacted>', relative))
-    return relative.encode('ascii', 'backslashreplace').decode('ascii')
+    from test_selection_services import safe_claim_name
+    return safe_claim_name(name, source)
 
 
 def _claim_difference(sealed, derived, source, limit=8):
