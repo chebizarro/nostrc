@@ -2,6 +2,45 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 owner-guard acceptance snapshot, S4 — 2026-10-24T15:35:14Z
+
+[Shadow root 40101269694](https://github.com/chebizarro/nostrc/actions/runs/40101269694) has head H4 `17eac22b1` and tests S4 `a44706d443c9e41044711f9499e33d6f7b521ae3`; it **failed** at 15:04:07Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-owner-guard-shadow-profile-census-s4--snapshot-2026-10-24t153514z).
+
+Per-profile outcome at this root, the same as S3 for all 13 profiles:
+- **Normal-qualified and gate-clean (4):** `core.linux` (441 executed registrations), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5, the standalone five-unit route). These were read from the S4 receipts themselves. Validation still lists all four in `incomplete_lanes`, so this is per-lane status, not profile or complete-gate acceptance. No S4 strict-signer result is retained or inferred.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (4):** `core.linux.asan`, `grotto.linux.asan_ubsan` (exit 1), `groundhog.mdk08` and `groundhog.mdk011` (exit 2).
+
+Classes compared with S3 (below). Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| Withheld exit 1 / exit 2 lanes | unchanged; cause unavailable | `.36.16`, `.36.20` / `.36.24`, `.36.13` (profile owners, not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully` | unchanged | `.36.29` |
+| libgo `no authored normal contract` | unchanged | `.36.28` |
+| Broad core macOS ASan: `heartbeat-not-starved` `assertion failed (hb.missed_count <= 2): (3 <= 2)` | unchanged; broad accounting 16/17 | matches the literal title of `nostrc-0cfsg.11` (in_progress); no cause inferred |
+| **Legacy Groundhog opt-in CI `groundhog-sanitizers`**: `not ok /nip46-credentials/00-unavailable - libsecret-FATAL-WARNING: Global default SecretService instance out of sync with the watch for its DBus name` (test #337 SIGTRAP) | **new at H4** (S3's 40095380528 succeeded) | `.36.30` ("Legacy Groundhog ASan keyring unavailable case: libsecret default/watch race"). The correction `0562f6819` + `b81b54839` is on the `.30` branch, **not in S4, with no hosted CI result yet**. |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static whole job | **success** under the unchanged 1,200 s cap: run 40101269520 in 661 s, DEFAULT 1,434 / 80 skipped, kernel 121 / 0; `complete=false` | `.36.26`; status is the parent's, not closed here |
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
+## PR26 measured-fix acceptance snapshot, S3 — 2026-10-24T13:39:36Z
+
+[Shadow root 40095380606](https://github.com/chebizarro/nostrc/actions/runs/40095380606) has head H3 `4198376a6` and tests S3 `e31c06d9dc0ef363625b258bd2b7d73b86a21fd7`; it **failed** at 13:38:46Z. Detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-measured-fix-shadow-profile-census-s3--snapshot-2026-10-24t133936z).
+
+- **Per-profile:** the same as the 1f7 root (11:56:42Z, below) for all 13 profiles. The four normal-qualified, gate-clean lanes are core.linux (441), grotto.linux (461), groundhog.linux (471) and homed.linux.ci (5). Validation also lists them in `incomplete_lanes`.
+- **Strict signer:** .18's sealed S3 proof gives `grotto.linux` `proved true`, 461 registrations, for one lane only. No S3 signer result exists for Groundhog or core.
+- **Resolved since 1f7:** both broad groundhog jobs succeed, so the `header-menu` / `nostrc-hn8y`-titled symptom does not recur.
+- **New at this root:** `broad / core / macos-latest • asan_ubsan` fails on `heartbeat-not-starved` `(3 <= 2)`, matching the `nostrc-0cfsg.11` title. Broad accounting stays at 16/17.
+- **Legacy checks:** all 12 non-shadow workflow runs at H3 succeeded.
+- **Static:** run 40095380603 **succeeded** in 816 s under the unchanged 1,200 s cap: DEFAULT 1,427 / 80 skipped, kernel 121 / 0, `complete=false`. This is the first whole-job success after the two cancelled attempts recorded below.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** This is not a live counter, and there is no new waiver or cutover.
+
 ## PR26 final-source shadow acceptance snapshot — 2026-10-24T11:56:42Z
 
 [Shadow root 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) has head H `1f7dc22b6` and tests S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`; it **failed** at 11:41:30Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-shadow-profile-census--snapshot-2026-10-24t115642z).
