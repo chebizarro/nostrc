@@ -289,6 +289,7 @@ GhNip46CredentialStore *
 gh_nip46_credential_store_new_with_backend(GhNip46CredentialBackend *backend)
 {
   g_return_val_if_fail(backend && backend->search && backend->free, NULL);
+  g_return_val_if_fail(!backend->prepare_async == !backend->prepare_finish, NULL);
   return store_with_backend(backend);
 }
 #ifdef __APPLE__
@@ -305,10 +306,12 @@ typedef struct {
   gchar *account;
   GhNip46Credential *credential;
   gboolean interactive;
+  GObject *prepared; /* the backend's prepare_finish() result */
 } Operation;
 static void
 operation_free(Operation *op)
 {
+  g_clear_object(&op->prepared);
   g_free(op->account);
   gh_nip46_credential_free(op->credential);
   g_free(op);
@@ -345,7 +348,7 @@ run_operation(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
   if (op->kind == OP_LIST) {
     /* Attribute-only and lock-free: a lookup or write blocked on a Keychain
      * or keyring prompt holds the mutex, and must not stall listing. */
-    GPtrArray *items = self->backend->search(self->backend, NULL, FALSE, FALSE,
+    GPtrArray *items = self->backend->search(self->backend, op->prepared, NULL, FALSE, FALSE,
                                               cancellable, &error);
     if (!items) goto fail;
     GPtrArray *list = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
@@ -379,7 +382,7 @@ run_operation(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
    * retry or a store (nostrc-8xfib.1): reads take no lock. */
   gboolean locked_op = op->kind != OP_LOOKUP;
   if (locked_op) g_mutex_lock(&self->mutex);
-  GPtrArray *items = self->backend->search(self->backend, op->account,
+  GPtrArray *items = self->backend->search(self->backend, op->prepared, op->account,
                                             op->interactive, TRUE, cancellable, &error);
   if (!items) goto unlock_fail;
   if (cancelled(cancellable, &error)) goto items_fail;
@@ -436,10 +439,12 @@ mutate:
   gboolean ok;
   if (op->kind == OP_STORE) {
     GBytes *secret = serialize(op->credential);
-    ok = self->backend->write(self->backend, op->account, secret, op->interactive, &error);
+    ok = self->backend->write(self->backend, op->prepared, op->account, secret,
+                              op->interactive, &error);
     g_bytes_unref(secret);
   } else {
-    ok = self->backend->remove(self->backend, op->account, op->interactive, &error);
+    ok = self->backend->remove(self->backend, op->prepared, op->account,
+                               op->interactive, &error);
   }
   g_mutex_unlock(&self->mutex);
   if (!ok) goto fail;
@@ -451,6 +456,29 @@ unlock_fail:
   if (locked_op) g_mutex_unlock(&self->mutex);
 fail:
   g_task_return_error(task, error);
+}
+
+/* The backend's preparation ran on the starting thread: only now does the
+ * operation move to a worker thread. */
+static void
+on_prepared(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = user_data;
+  GhNip46CredentialStore *self = g_task_get_source_object(task);
+  Operation *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  op->prepared = self->backend->prepare_finish(self->backend, result, &error);
+  if (!op->prepared && !error) {
+    g_critical("%s: prepare_finish() returned NULL without an error", G_STRFUNC);
+    error = g_error_new_literal(GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_FAILED,
+                                "Remote signer credential storage failed");
+  }
+  if (op->prepared)
+    g_task_run_in_thread(task, run_operation);
+  else
+    g_task_return_error(task, error);
+  g_object_unref(task);
 }
 
 static void
@@ -466,6 +494,10 @@ start(GhNip46CredentialStore *self, Operation *op, GCancellable *cancellable,
     g_task_set_check_cancellable(task, FALSE);
   g_task_set_source_tag(task, tag);
   g_task_set_task_data(task, op, (GDestroyNotify)operation_free);
+  if (self->backend->prepare_async) {
+    self->backend->prepare_async(self->backend, cancellable, on_prepared, task);
+    return;
+  }
   g_task_run_in_thread(task, run_operation);
   g_object_unref(task);
 }

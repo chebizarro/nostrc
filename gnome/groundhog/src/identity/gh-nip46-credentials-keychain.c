@@ -109,11 +109,11 @@ refused(KeychainBackend *self, const gchar *account, GError **error)
 }
 
 static GPtrArray *
-kc_search(GhNip46CredentialBackend *backend, const gchar *account,
+kc_search(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
           gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
           GError **error)
 {
-  (void)cancellable;
+  (void)prepared; (void)cancellable;
   KeychainBackend *self = (KeychainBackend *)backend;
   if (refused(self, account, error)) return NULL;
   gboolean locked = FALSE;
@@ -186,9 +186,10 @@ kc_search(GhNip46CredentialBackend *backend, const gchar *account,
 }
 
 static gboolean
-kc_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret,
-         gboolean interactive, GError **error)
+kc_write(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
+         GBytes *secret, gboolean interactive, GError **error)
 {
+  (void)prepared;
   KeychainBackend *self = (KeychainBackend *)backend;
   if (refused(self, account, error)) return FALSE;
   gboolean locked = FALSE;
@@ -226,9 +227,10 @@ kc_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret
 }
 
 static gboolean
-kc_remove(GhNip46CredentialBackend *backend, const gchar *account,
+kc_remove(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
           gboolean interactive, GError **error)
 {
+  (void)prepared;
   KeychainBackend *self = (KeychainBackend *)backend;
   if (refused(self, account, error)) return FALSE;
   gboolean locked = FALSE;

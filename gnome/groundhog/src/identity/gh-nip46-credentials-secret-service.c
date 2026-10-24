@@ -45,7 +45,34 @@ on_session(GObject *source, GAsyncResult *result, gpointer user_data)
   *(GAsyncResult **)user_data = g_object_ref(result);
 }
 
-/* The shared Secret Service with its session open, or NULL with *error set.
+/* libsecret's shared default Secret Service, obtained on the thread that
+ * starts the store operation (nostrc-0cfsg.36.30). libsecret 0.21.4 caches a
+ * new default instance only after it starts watching the bus name, and that
+ * watch is dispatched in the thread-default context of the thread caching it.
+ * Created on a worker thread, that is the global default context, which the
+ * caller's thread may already be iterating: with no Secret Service running the
+ * watch reports the name vanished before the instance is cached, and libsecret
+ * warns "Global default SecretService instance out of sync with the watch for
+ * its DBus name". Here caching and the watch's callbacks share one thread. */
+static void
+ss_prepare_async(GhNip46CredentialBackend *backend, GCancellable *cancellable,
+                 GAsyncReadyCallback callback, gpointer user_data)
+{
+  (void)backend;
+  secret_service_get(SECRET_SERVICE_NONE, cancellable, callback, user_data);
+}
+
+static GObject *
+ss_prepare_finish(GhNip46CredentialBackend *backend, GAsyncResult *result, GError **error)
+{
+  (void)backend;
+  GError *local = NULL;
+  SecretService *service = secret_service_get_finish(result, &local);
+  if (!service) *error = map_error(local, TRUE);
+  return G_OBJECT(service);
+}
+
+/* The prepared Secret Service with its session open, or NULL with *error set.
  * The session is opened through libsecret's asynchronous path, on a private
  * main context, and never its synchronous one (nostrc-ep54q): in libsecret
  * 0.21.8 _secret_session_open_sync() dereferences a NULL GError when the AES
@@ -55,21 +82,25 @@ on_session(GObject *source, GAsyncResult *result, gpointer user_data)
  * which is a CRITICAL and leaks the session and its key. The service keeps
  * the session, so the synchronous calls below never open one themselves. */
 static SecretService *
-open_service(GCancellable *cancellable, GError **error)
+open_service(GObject *prepared, GCancellable *cancellable, GError **error)
 {
-  GError *local = NULL;
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, cancellable, &local);
-  if (service) {
-    GMainContext *context = g_main_context_new();
-    g_main_context_push_thread_default(context);
-    GAsyncResult *result = NULL;
-    secret_service_ensure_session(service, cancellable, on_session, &result);
-    while (!result) g_main_context_iteration(context, TRUE);
-    if (!secret_service_ensure_session_finish(service, result, &local)) g_clear_object(&service);
-    g_object_unref(result);
-    g_main_context_pop_thread_default(context);
-    g_main_context_unref(context);
+  if (!SECRET_IS_SERVICE(prepared)) {
+    /* The caller still gets an error to complete its task with. */
+    g_set_error_literal(error, GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_FAILED,
+                        "Secret Service operation failed");
+    g_return_val_if_reached(NULL);
   }
+  GError *local = NULL;
+  SecretService *service = g_object_ref(SECRET_SERVICE(prepared));
+  GMainContext *context = g_main_context_new();
+  g_main_context_push_thread_default(context);
+  GAsyncResult *result = NULL;
+  secret_service_ensure_session(service, cancellable, on_session, &result);
+  while (!result) g_main_context_iteration(context, TRUE);
+  if (!secret_service_ensure_session_finish(service, result, &local)) g_clear_object(&service);
+  g_object_unref(result);
+  g_main_context_pop_thread_default(context);
+  g_main_context_unref(context);
   if (!service) *error = map_error(local, TRUE);
   return service;
 }
@@ -101,12 +132,12 @@ check_empty_default(SecretService *service, GCancellable *cancellable, GError **
 }
 
 static GPtrArray *
-ss_search(GhNip46CredentialBackend *backend, const gchar *account,
+ss_search(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
           gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
           GError **error)
 {
   (void)backend;
-  SecretService *service = open_service(cancellable, error);
+  SecretService *service = open_service(prepared, cancellable, error);
   if (!service) return NULL;
   GHashTable *attrs = attributes(account, FALSE);
   /* Listing never loads secrets or unlocks: a locked keyring would otherwise
@@ -162,11 +193,11 @@ ss_search(GhNip46CredentialBackend *backend, const gchar *account,
 }
 
 static gboolean
-ss_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret,
-         gboolean interactive, GError **error)
+ss_write(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
+         GBytes *secret, gboolean interactive, GError **error)
 {
   (void)backend;
-  SecretService *service = open_service(NULL, error);
+  SecretService *service = open_service(prepared, NULL, error);
   if (!service) return FALSE;
   gsize len = 0;
   const gchar *data = g_bytes_get_data(secret, &len);
@@ -203,11 +234,11 @@ ss_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret
 }
 
 static gboolean
-ss_remove(GhNip46CredentialBackend *backend, const gchar *account,
+ss_remove(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
           gboolean interactive, GError **error)
 {
   (void)backend;
-  SecretService *service = open_service(NULL, error);
+  SecretService *service = open_service(prepared, NULL, error);
   if (!service) return FALSE;
   GHashTable *attrs = attributes(account, FALSE);
   SecretSearchFlags flags = SECRET_SEARCH_ALL;
@@ -242,6 +273,8 @@ GhNip46CredentialBackend *
 gh_nip46_credentials_secret_service_new(void)
 {
   SecretBackend *backend = g_new0(SecretBackend, 1);
+  backend->base.prepare_async = ss_prepare_async;
+  backend->base.prepare_finish = ss_prepare_finish;
   backend->base.search = ss_search;
   backend->base.write = ss_write;
   backend->base.remove = ss_remove;
