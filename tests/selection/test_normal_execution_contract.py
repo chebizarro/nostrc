@@ -1,9 +1,13 @@
 """Small real builds/seals plus synthetic supervisor results; NOT kernel/hosted proof."""
 import copy
+import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import platform
+import shutil
+import tempfile
 import unittest
 from unittest import mock
 
@@ -14,6 +18,33 @@ import test_selection_services as services
 import test_selection_execution as normal
 
 
+class FixtureDirectory:
+    """A restored per-case fixture copy at the genuine fixture's own path."""
+
+    def __init__(self, path):
+        self.name = str(path)
+
+    def cleanup(self):
+        shutil.rmtree(self.name, ignore_errors=True)
+
+
+def fixture_digest(root):
+    """Exact names, kinds, modes, nanosecond mtimes, bytes and link targets under root."""
+    digest = hashlib.sha256()
+    for directory, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            path = Path(directory) / name
+            info = path.lstat()
+            entry = [os.fsencode(path.relative_to(root)), oct(info.st_mode).encode()]
+            if path.is_symlink():
+                entry.append(os.fsencode(os.readlink(path)))
+            elif path.is_file():
+                entry += [str(info.st_mtime_ns).encode(), hashlib.sha256(path.read_bytes()).digest()]
+            digest.update(b'\0'.join(entry) + b'\n')
+    return digest.hexdigest()
+
+
 class NormalFixture(Project):
     # Lane layout hook: the default is the original synthetic layout; the
     # portable-transport tests use the worker's <run>/0/lane-<id> layout.
@@ -21,10 +52,24 @@ class NormalFixture(Project):
     ADAPTER_UP = 0
 
     def setUp(self):
-        super().setUp()
-        self.work = Path(self.temp.name).resolve().joinpath(*self.LANE)
-        self.work.mkdir(parents=True)
-        self.build, self.evidence = self.work / 'build', self.work / 'evidence'
+        """One genuine fixture per concrete class, a fresh exact copy per case.
+
+        The first case of each class runs the original construction below (real
+        Git history, configure, build, CTest run and seal). That tree is kept as an
+        immutable snapshot; every case (including the first) then starts from its
+        own copy restored at the identical absolute path, with bytes, modes, link
+        targets and nanosecond mtimes preserved (proved by digest), its own deep-copied
+        instance state, native-profile patch and freshly loaded CLI module. Cases
+        still mutate, re-run, re-seal and verify only their own copy; no runtime
+        cache or receipt is shared or trusted across cases."""
+        genuine = type(self).__dict__.get('_genuine_fixture')
+        if genuine is None:
+            self.construct_fixture()
+            genuine = self.snapshot_fixture()
+            type(self)._genuine_fixture = genuine
+        self.restore_fixture(genuine)
+
+    def patch_native_profile(self):
         original = r._validate_native_profile
         def native(profile, *args, **kwargs):
             return original(dict(profile, platform={'Darwin': 'macos', 'Linux': 'linux'}[platform.system()],
@@ -32,6 +77,40 @@ class NormalFixture(Project):
                 compiler='clang' if platform.system() == 'Darwin' else 'gcc'), *args, **kwargs)
         self.addCleanup(mock.patch.stopall)
         mock.patch.object(r, '_validate_native_profile', side_effect=native).start()
+
+    def load_cli(self):
+        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')
+        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)
+
+    def snapshot_fixture(self):
+        root = Path(self.temp.name)
+        store = Path(tempfile.mkdtemp(prefix='normal-fixture-'))
+        type(self).addClassCleanup(shutil.rmtree, store, True)
+        shutil.copytree(root, store / 'tree', symlinks=True)
+        state = {key: value for key, value in vars(self).items()
+                 if not key.startswith('_') and key not in ('temp', 'cli')}  # TestCase bookkeeping is not fixture state
+        return dict(root=root, tree=store / 'tree', digest=fixture_digest(root), state=copy.deepcopy(state))
+
+    def restore_fixture(self, genuine):
+        root = genuine['root']
+        constructing = hasattr(self, 'temp')
+        if not constructing:
+            self.temp = FixtureDirectory(root)
+            self.addCleanup(self.temp.cleanup)
+        shutil.rmtree(root, ignore_errors=not constructing)
+        shutil.copytree(genuine['tree'], root, symlinks=True)
+        self.assertEqual(fixture_digest(root), genuine['digest'], 'restored fixture differs from the genuine snapshot')
+        self.__dict__.update(copy.deepcopy(genuine['state']))
+        if not constructing:
+            self.patch_native_profile()
+        self.load_cli()
+
+    def construct_fixture(self):
+        super().setUp()
+        self.work = Path(self.temp.name).resolve().joinpath(*self.LANE)
+        self.work.mkdir(parents=True)
+        self.build, self.evidence = self.work / 'build', self.work / 'evidence'
+        self.patch_native_profile()
         self.profile.update(platform='linux', architecture='x86_64', compiler='gcc', build_type='Debug',
             instrumentation='none', feature_variants=[], setup='synthetic-normal', timeout_seconds=60, capabilities=[],
             local_availability='host',
@@ -55,8 +134,7 @@ class NormalFixture(Project):
         self.prepare_source()
         self.identity = dict(kind='committed', sha=self.git('rev-parse', 'HEAD').decode().strip())
         self.plan = self.make_plan()
-        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')
-        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)
+        self.load_cli()
         self.execute()
         self.public_path = self.work / 'native-receipt.json'
         self.adapter_path = self.work.parents[self.ADAPTER_UP] / 'adapter-receipt.json'
