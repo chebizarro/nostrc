@@ -28,6 +28,12 @@ class FixtureDirectory:
         shutil.rmtree(self.name, ignore_errors=True)
 
 
+def forget_fixture(cls, genuine):
+    """Drop only the exact class-cached snapshot this class cleanup belongs to."""
+    if cls.__dict__.get('_genuine_fixture') is genuine:
+        del cls._genuine_fixture
+
+
 def fixture_digest(root):
     """Exact names, kinds, modes, nanosecond mtimes, bytes and link targets under root."""
     digest = hashlib.sha256()
@@ -62,11 +68,15 @@ class NormalFixture(Project):
         instance state, native-profile patch and freshly loaded CLI module. Cases
         still mutate, re-run, re-seal and verify only their own copy; no runtime
         cache or receipt is shared or trusted across cases."""
-        genuine = type(self).__dict__.get('_genuine_fixture')
+        cls = type(self)
+        genuine = cls.__dict__.get('_genuine_fixture')
         if genuine is None:
             self.construct_fixture()
             genuine = self.snapshot_fixture()
-            type(self)._genuine_fixture = genuine
+            cls._genuine_fixture = genuine
+            # The snapshot store is removed by a class cleanup, so forget exactly this
+            # cached state with it: running the same class again constructs afresh.
+            cls.addClassCleanup(forget_fixture, cls, genuine)
         self.restore_fixture(genuine)
 
     def patch_native_profile(self):
