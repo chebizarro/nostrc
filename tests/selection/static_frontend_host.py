@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import select
 import signal
@@ -112,6 +113,9 @@ def owner_status(record):
     pid, start = record.get('pid'), record.get('starttime')
     if type(pid) is not int or type(start) is not int or pid <= 1:
         raise Refused('ownership record malformed')
+    token = record.get('token')
+    if type(token) is not str or not re.fullmatch(r'[0-9a-f]{64}', token):
+        raise Refused('ownership record malformed')  # before any process is inspected
     observed = stat(pid)
     if observed is None or observed[2] != start:
         return 'ended'  # that incarnation is gone; a reused number is never ours
@@ -125,9 +129,20 @@ def owner_status(record):
         return 'ended'
     if not raw:
         return 'ended'  # an exiting process has already released its argv; never signalled
-    if session != pid or info.st_uid != os.getuid() or record.get('token', '').encode() not in raw.split(b'\0'):
+    if session != pid or info.st_uid != os.getuid() or not launched_supervisor(raw, token):
         raise Refused('pid %d with the recorded start time is not the owned supervisor' % pid)
     return 'alive'
+
+
+def launched_supervisor(raw, token):
+    """argv is exactly start's launch for THIS job's root and token:
+    [sys.executable, -I, helper, supervise, root, token, go_fd, ready_fd]."""
+    argv = raw.split(b'\0')
+    if argv[-1:] == [b'']:
+        argv = argv[:-1]  # the kernel's terminating NUL, not an argument
+    expected = [os.fsencode(sys.executable), b'-I', os.fsencode(os.path.abspath(__file__)), b'supervise',
+                os.fsencode(str(root())), token.encode()]
+    return len(argv) == 8 and argv[:6] == expected and argv[6].isdigit() and argv[7].isdigit()
 
 
 def signal_owned(record, signum):
