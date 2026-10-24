@@ -10,7 +10,7 @@
     "{source}/tests/selection/test_w11_matrix_integration.py"
   ],
   "base_policy_hash": "90b5f536fa931c57dbd42f22ea8b161f6b9c4fb80e0af18a19ba50c6c7a39aa3",
-  "enrolled_policy_hash": "5018f4fcb9d1ad86aa08ef56b26e34bedb3c1af7e83255778b23c6c1e1f441b0",
+  "enrolled_policy_hash": "36bf71a0eab2ca5a2d98033f36ca8d72b7210f7c5a3dc57deefbeddad48e63eb",
   "sources": {
     "scripts/w11-evidence.py": {
       "before_sha256": "e2c72f4abf052961c3035ff847d7793ec58be81570d5974605a35f809b54ed20",
@@ -72,5 +72,26 @@
   "correction": {
     "review": "/tmp/nostrc-w11-priority-20261024/combined-review.md P3 CONFIRMED matrix cancellation accounting",
     "summary": "matrix() marks child/entry/cohort cancelled for KeyboardInterrupt, CommandInterrupted and captured process interrupted:true; still nonzero, no later workloads."
+  },
+  "added_path_rules": [
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-p3-evidence-2026-10-24.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Executable W11 matrix manifest read by tests/selection/test_w11_matrix.py and scripts/w11-evidence.py matrix --manifest; explicit broad validation, never recipe/schedule approval or measurement acceptance."
+    }
+  ],
+  "classification": {
+    "hosted_failure": "run 40041712788 job 120714080188 test_selector test_inventory_covers_all_tracked_paths_or_explicit_broadening: both files unclassified",
+    "docs/reviews/dependency-aware-testing-w11-p3-evidence-2026-10-24.json": "no code consumer (prose links only): provenance, nodes []",
+    "docs/reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json": "read by tests/selection/test_w11_matrix.py and the w11-evidence.py matrix --manifest CLI: selection.contract"
   }
 }

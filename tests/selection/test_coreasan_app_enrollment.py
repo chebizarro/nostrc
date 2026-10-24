@@ -10,10 +10,11 @@ PROFILE, PEER = 'core.linux.asan', 'core.linux'
 
 class CoreAsanAppEnrollment(unittest.TestCase):
     def policy(self):
-        # Exactly this layer's result: the independent worker-prerequisite layer
-        # (disjoint workflow_jobs/inputs) is projected away first.
+        # Exactly this layer's result: the newer W11 matrix integration layer and the
+        # independent worker-prerequisite layer (disjoint fields) are projected away first.
+        from w11_matrix_integration_support import before_policy as before_newer_policy
         from worker_prerequisite_support import before_policy as before_worker_policy
-        return before_worker_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
+        return before_worker_policy(before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json')))
 
     def claims(self, policy, profile):
         claims = {}

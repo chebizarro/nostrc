@@ -3,7 +3,8 @@
 P3 e1891b4b4 added tests/selection/test_w11_matrix.py and changed
 scripts/w11-evidence.py. This newest layer enrolls that test (plus this
 witness) and reverses only the exact reviewed w11-evidence.py delta for
-historical witnesses; unknown bytes refuse. Measurement behavior is untouched.
+historical witnesses; unknown bytes refuse. Its two checked-in docs/reviews JSON
+artifacts get exact (never prefix) classifications from their actual consumers.
 """
 import copy
 import hashlib
@@ -11,7 +12,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_matrix_integration_20261024.json'
-SHA256 = '0698a948758443db7a20259a844047f121401c42aa666773f8e43182c4720c77'
+SHA256 = 'b742cd6d12638e0af8e5c83dd7c29df9fc0266027737148d28b515f595c54b7b'
 
 
 def witness():
@@ -40,9 +41,16 @@ def before_policy(policy):
     previous = copy.deepcopy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
+    rules = [rule for rule in data['added_path_rules'] if rule in previous['path_rules']]
     if present:
         s.require(len(present) == len(data['runtime_inputs']), 'W11 matrix integration enrollment partially stripped')
+        s.require(len(rules) == len(data['added_path_rules']), 'W11 matrix evidence classification partially stripped')
         for path in data['runtime_inputs']:
             s.require(inputs.count(path) == 1, 'W11 matrix integration input missing/duplicated: ' + path)
             inputs.remove(path)
+        for rule in data['added_path_rules']:
+            s.require(previous['path_rules'].count(rule) == 1, 'W11 matrix evidence classification duplicated')
+            previous['path_rules'].remove(rule)
+    else:
+        s.require(not rules, 'W11 matrix evidence classification without enrollment')
     return previous

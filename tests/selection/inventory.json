@@ -21690,6 +21690,20 @@
     },
     {
       "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-p3-evidence-2026-10-24.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Executable W11 matrix manifest read by tests/selection/test_w11_matrix.py and scripts/w11-evidence.py matrix --manifest; explicit broad validation, never recipe/schedule approval or measurement acceptance."
+    },
+    {
+      "effect": "global",
       "exact": "docs/reviews/dependency-aware-testing-w11-runtime-mdk-handoff-2026-10-23.json",
       "nodes": [],
       "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
