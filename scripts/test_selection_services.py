@@ -30,10 +30,16 @@ class ServiceError(RuntimeError):
     pass
 
 
-def _ready(fd, timeout=15):
-    deadline = time.monotonic() + timeout
+# Explicit readiness deadline. A failure is classified and the service is
+# stopped while its readiness pipe stays readable; never retried or extended.
+READINESS_SECONDS = 15
+READINESS_RECORD_MAX = 4096
+
+
+def _ready(fd, timeout=None):
+    deadline = time.monotonic() + (READINESS_SECONDS if timeout is None else timeout)
     result = bytearray()
-    while len(result) < 4096:
+    while len(result) < READINESS_RECORD_MAX:
         remaining = deadline - time.monotonic()
         if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
             raise ServiceError('private service readiness deadline exceeded')
@@ -44,6 +50,47 @@ def _ready(fd, timeout=15):
             return result.decode('ascii')
         result.extend(data)
     raise ServiceError('private service readiness record too large')
+
+
+def _readiness_outcome(exc):
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return 'cancelled'
+    message = str(exc)
+    if 'deadline exceeded' in message:
+        return 'deadline_exceeded'
+    if 'exited before readiness' in message:
+        return 'exited_before_readiness'
+    if 'record too large' in message:
+        return 'record_too_large'
+    return 'error'
+
+
+def _service_alive(pid):
+    """Observe without reaping, so the PID identity stays reserved.
+
+    None means unobservable; it never masks the original readiness failure.
+    """
+    try:
+        return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+    except ChildProcessError:
+        return False
+    except OSError:
+        return None
+
+
+def _drain_late_readiness(fd, limit=READINESS_RECORD_MAX):
+    """Bytes a service wrote after readiness failed; nonblocking and bounded."""
+    os.set_blocking(fd, False)
+    data = bytearray()
+    while len(data) < limit:
+        try:
+            chunk = os.read(fd, limit - len(data))
+        except BlockingIOError:
+            break
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
 
 
 def _identity(name, search_path=None):
@@ -701,6 +748,7 @@ def private_services(capabilities, evidence_dir, resource_root=None, finalizer_f
              'services': [], 'status': 'failed', 'complete': False,
              'cleanup_scope': 'reserved direct services; outer namespace owns descendants'}
     children = []
+    retained_readiness = {}
     original = None
     previous = dict(os.environ)
     private = tempfile.TemporaryDirectory(prefix='nostrc-native-services-', dir=resource_root)
@@ -766,9 +814,25 @@ def private_services(capabilities, evidence_dir, resource_root=None, finalizer_f
             # Popen, but never authorizes a numeric signal fallback.
             if handle is None and read_fd != -1:
                 os.close(read_fd)
+        started = time.monotonic()
         try:
             value = _ready(read_fd) if ready else None
+            if ready:
+                record['readiness'] = {'outcome': 'ready', 'fd': write_fd,
+                                       'elapsed_seconds': round(time.monotonic() - started, 3)}
             return process, value
+        except BaseException as exc:
+            if ready:
+                # Keep the read end until teardown reaped this service: closing
+                # it first turns a late handshake into a manufactured EPIPE
+                # (Xserver: "Cannot write display number to fd N").
+                record['readiness'] = {'outcome': _readiness_outcome(exc), 'fd': write_fd,
+                                       'elapsed_seconds': round(time.monotonic() - started, 3),
+                                       'deadline_seconds': READINESS_SECONDS,
+                                       'service_alive_at_failure': _service_alive(process.pid)}
+                retained_readiness[id(process)] = read_fd
+                read_fd = -1
+            raise
         finally:
             if read_fd != -1:
                 os.close(read_fd)
@@ -862,6 +926,18 @@ def private_services(capabilities, evidence_dir, resource_root=None, finalizer_f
                     if handle is not None:
                         os.close(handle)
                     log.close()
+                    late = retained_readiness.pop(id(process), None)
+                    if late is not None:
+                        try:
+                            data = _drain_late_readiness(late)
+                            record['readiness'].update(late_record=data.decode('ascii', 'backslashreplace'),
+                                                       late_record_bytes=len(data))
+                        except Exception as exc:
+                            errors.append(type(exc).__name__ + ': ' + str(exc))
+                        finally:
+                            os.close(late)
+            for late in retained_readiness.values():
+                os.close(late)
             os.environ.clear()
             os.environ.update(previous)
             try:

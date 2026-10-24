@@ -5,6 +5,8 @@ scripts/w11-evidence.py. This newest layer enrolls that test (plus this
 witness) and reverses only the exact reviewed w11-evidence.py delta for
 historical witnesses; unknown bytes refuse. Its two checked-in docs/reviews JSON
 artifacts get exact (never prefix) classifications from their actual consumers.
+It also reverses the exact .36.21 scripts/test_selection_services.py readiness
+descriptor delta (one source record); no policy, input or path-rule change.
 """
 import copy
 import hashlib
@@ -12,7 +14,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_matrix_integration_20261024.json'
-SHA256 = 'b742cd6d12638e0af8e5c83dd7c29df9fc0266027737148d28b515f595c54b7b'
+SHA256 = '7aba3e806efbcf86466e5b23546c28909d2a12d5120236c85ef36197815a5690'
 
 
 def witness():
