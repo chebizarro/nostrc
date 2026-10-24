@@ -235,11 +235,15 @@ run_named_smoke(const gchar *const *argv, const gchar *name)
     g_string_append_len(stderr_log, buf, count);
   close(stderr_fd);
 
+  /* Its stderr and any killing signal, before the status is asserted. */
+  g_test_message("%s: %s", name, stderr_log->str);
+  if (WIFSIGNALED(status))
+    g_test_message("%s was killed by signal %d (%s)%s", name, WTERMSIG(status),
+                   g_strsignal(WTERMSIG(status)), exited ? "" : " after the time limit");
   g_assert_true(exited);
   g_assert_true(WIFEXITED(status));
   if (WEXITSTATUS(status) == 77)
     return FALSE;  /* The runner has no GUI display. */
-  g_test_message("%s: %s", name, stderr_log->str);
   g_assert_cmpint(WEXITSTATUS(status), ==, 0);
   g_autofree gchar *expected = g_strdup_printf("app id org.nostr.Groundhog.%s", name);
   g_assert_nonnull(strstr(stderr_log->str, expected));

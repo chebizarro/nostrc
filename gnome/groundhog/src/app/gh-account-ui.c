@@ -372,6 +372,18 @@ editing(GhAccountUi *ui)
          (GTK_IS_EDITABLE(focus) || GTK_IS_TEXT_VIEW(focus));
 }
 
+/* GTK (4.14 to current main) calls its AT context's announce() without a
+ * NULL check, and GtkTestATContext, the context GTK falls back to when no
+ * AT-SPI bus can be reached, has none: announcing there jumps to address 0
+ * (nostrc-0cfsg.36.31). No assistive technology listens on that fallback. */
+static gboolean
+can_announce(GtkAccessible *accessible)
+{
+  g_autoptr(GtkATContext) context = gtk_accessible_get_at_context(accessible);
+  GType fallback = g_type_from_name("GtkTestATContext");
+  return context && !(fallback && G_TYPE_CHECK_INSTANCE_TYPE(context, fallback));
+}
+
 /* Charter §7.14: no announcement to an inactive window; on its activation
  * the deferred focus move puts the page's action, which says the same, in
  * front of the screen reader. */
@@ -380,8 +392,9 @@ announce(GhAccountUi *ui, const gchar *text)
 {
   if (!text || !GTK_IS_ACCESSIBLE(ui->window) || !gtk_window_is_active(GTK_WINDOW(ui->window)))
     return;
-  gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), text,
-                          GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+  if (can_announce(GTK_ACCESSIBLE(ui->window)))
+    gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), text,
+                            GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
   ui->announcements++;
 }
 
