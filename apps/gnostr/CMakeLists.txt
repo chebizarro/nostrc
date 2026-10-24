@@ -1152,6 +1152,9 @@ if (BUILD_TESTING)
 
   # nostrc-8xfib.4: Gnostr GnMediaSource (policy, settings) for the nostr-gtk
   # media viewer and player; was the gnostr-image-viewer privacy test.
+  # Links completely (nostrc-0cfsg.36.23): the test records the one app-shell
+  # call the media source makes, gnostr_main_window_show_toast(), and asserts
+  # it. Left unresolved, the tree-wide -z now stopped it loading on Linux.
   add_executable(gnostr-test-image-viewer-remote-media
     tests/test_media_source.c
     src/services/gnostr-media-source.c
@@ -1174,10 +1177,7 @@ if (BUILD_TESTING)
   if (SOUP3_FOUND)
     target_link_libraries(gnostr-test-image-viewer-remote-media PRIVATE PkgConfig::SOUP3)
   endif()
-  if(APPLE)
-    target_link_options(gnostr-test-image-viewer-remote-media PRIVATE -Wl,-undefined,dynamic_lookup)
-  else()
-    target_link_options(gnostr-test-image-viewer-remote-media PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  if(NOT APPLE)
     # fmax/fmin: glibc keeps them in libm, which GNU ld does not add implicitly.
     target_link_libraries(gnostr-test-image-viewer-remote-media PRIVATE m)
   endif()
@@ -1785,12 +1785,18 @@ if (BUILD_TESTING)
       LABELS "model;item;txn;unit;gnostr")
 
     # Integration: NIP-09 delete authorization
+    # This test, ndb-main-thread-violations and real-bind-latency compile the
+    # event model and timeline source, so they also link that code's mute
+    # check, src/util/mute_filter.c. Without it they linked with the symbol
+    # unresolved and the tree-wide -z now stopped them loading on Linux
+    # (nostrc-0cfsg.36.23).
     gn_add_gtest(gnostr-test-delete-authorization
       SOURCES tests/integ/test_model_delete_authorization.c
               src/model/gn-nostr-event-model.c
               src/model/gnostr-timeline-source.c
               src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
+              src/util/mute_filter.c
               src/util/relays.c
               src/util/relay_info.c
               src/util/utils.c
@@ -1800,11 +1806,6 @@ if (BUILD_TESTING)
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 120
     )
-    if(APPLE)
-      target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,-undefined,dynamic_lookup)
-    else()
-      target_link_options(gnostr-test-delete-authorization PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
-    endif()
     target_include_directories(gnostr-test-delete-authorization PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/model
@@ -1844,6 +1845,7 @@ if (BUILD_TESTING)
               src/model/gnostr-timeline-source.c
               src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
+              src/util/mute_filter.c
               src/util/relays.c
               src/util/relay_info.c
               src/util/utils.c
@@ -1864,12 +1866,6 @@ if (BUILD_TESTING)
       ${_NDB_VENDOR_DIR}/src
       ${_NDB_VENDOR_DIR}/ccan
       ${_NDB_VENDOR_DIR}/deps/flatcc/include)
-    if(APPLE)
-      target_link_options(gnostr-test-ndb-main-thread-violations PRIVATE -Wl,-undefined,dynamic_lookup)
-    else()
-      target_link_options(gnostr-test-ndb-main-thread-violations PRIVATE
-        -Wl,--unresolved-symbols=ignore-in-object-files)
-    endif()
     if(TARGET nostrdb_storage)
       target_link_libraries(gnostr-test-ndb-main-thread-violations PRIVATE nostrdb_storage)
       if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
@@ -1898,6 +1894,7 @@ if (BUILD_TESTING)
               src/model/gnostr-timeline-source.c
               src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
+              src/util/mute_filter.c
               src/util/relays.c
               src/util/relay_info.c
               src/util/utils.c
@@ -1919,12 +1916,6 @@ if (BUILD_TESTING)
       ${_NDB_VENDOR_DIR}/src
       ${_NDB_VENDOR_DIR}/ccan
       ${_NDB_VENDOR_DIR}/deps/flatcc/include)
-    if(APPLE)
-      target_link_options(gnostr-test-real-bind-latency PRIVATE -Wl,-undefined,dynamic_lookup)
-    else()
-      target_link_options(gnostr-test-real-bind-latency PRIVATE
-        -Wl,--unresolved-symbols=ignore-in-object-files)
-    endif()
     if(TARGET nostrdb_storage)
       target_link_libraries(gnostr-test-real-bind-latency PRIVATE nostrdb_storage)
       if(NOT TARGET nostrdb AND EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)

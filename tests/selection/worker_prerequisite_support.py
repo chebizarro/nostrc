@@ -34,7 +34,9 @@ def before_source(path, raw):
 
 
 def before_jobs(records):
-    previous = copy.deepcopy(records)
+    # The newer W11 batch2 layer reverses the exact publication-gate job hashes first.
+    from w11_batch2_integration_support import before_jobs as before_batch2_jobs
+    previous = before_batch2_jobs(records)
     fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
     for ident, record in witness()['maps']['workflow_jobs'].items():
         if ident in previous and all(previous[ident].get(key) == record['after'][key] for key in fields):

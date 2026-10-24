@@ -7,15 +7,45 @@
 
 #include "nostrc-test-gdk-frame.h"
 #include <glib.h>
+#include <glib/gi18n.h>
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-media-viewer.h>
 #include <nostr-gtk-1.0/gn-video-player.h>
 
 #include "services/gnostr-media-source.h"
+#include "ui/gnostr-main-window.h"
 
 #define GNOSTR_CLIENT_SCHEMA_ID "org.gnostr.Client"
 #define GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY "load-remote-media"
+
+/* App-shell boundary (nostrc-0cfsg.36.23). The media source reports a copied
+ * link through gnostr_main_window_show_toast(); its real definition, in
+ * src/ui/gnostr-main-window-utilities.c, needs the whole main window, which
+ * this test does not build. So the test defines it and records every call,
+ * and the link-copied cases assert what the media source asked for. What the
+ * real function does with a window that is not a GnostrMainWindow is the
+ * main window's own contract, not tested here. */
+static guint toast_count;
+static GtkWidget *toast_window; /* compared by address only */
+static char *toast_message;
+
+void
+gnostr_main_window_show_toast(GtkWidget *window, const char *message)
+{
+  toast_count++;
+  toast_window = window;
+  g_free(toast_message);
+  toast_message = g_strdup(message);
+}
+
+static void
+reset_toasts(void)
+{
+  toast_count = 0;
+  toast_window = NULL;
+  g_clear_pointer(&toast_message, g_free);
+}
 
 static GSettings *
 open_client_settings(void)
@@ -84,6 +114,49 @@ test_video_blocked_when_remote_media_disabled(void)
   g_object_unref(player);
 }
 
+/* Copy link toasts on the window the viewer belongs to, without loading the
+ * blocked image. */
+static void
+test_copied_link_toasts_parent_window(void)
+{
+  if (!set_remote_media_enabled(FALSE)) return;
+  GtkWidget *parent = gtk_window_new();
+  GnMediaViewer *viewer = gn_media_viewer_new(GTK_WINDOW(parent));
+  const char *urls[] = { "https://example.com/test.png", NULL };
+  gn_media_viewer_set_gallery(viewer, urls, 0);
+  gn_media_viewer_set_source(viewer, gnostr_media_source_get());
+  reset_toasts();
+
+  gn_media_viewer_copy_link(viewer);
+  g_assert_cmpuint(toast_count, ==, 1);
+  g_assert_true(toast_window == parent);
+  g_assert_cmpstr(toast_message, ==, _("Link copied"));
+  g_assert_true(gn_media_viewer_get_load_offered(viewer));
+  g_assert_false(gn_media_viewer_get_loading(viewer));
+
+  gtk_window_destroy(GTK_WINDOW(viewer));
+  gtk_window_destroy(GTK_WINDOW(parent));
+  reset_toasts();
+}
+
+/* A viewer with no parent window has nowhere to toast. */
+static void
+test_copied_link_without_parent_window_no_toast(void)
+{
+  if (!set_remote_media_enabled(FALSE)) return;
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  const char *urls[] = { "https://example.com/test.png", NULL };
+  gn_media_viewer_set_gallery(viewer, urls, 0);
+  gn_media_viewer_set_source(viewer, gnostr_media_source_get());
+  reset_toasts();
+
+  gn_media_viewer_copy_link(viewer);
+  g_assert_cmpuint(toast_count, ==, 0);
+  g_assert_false(gn_media_viewer_get_loading(viewer));
+
+  gtk_window_destroy(GTK_WINDOW(viewer));
+}
+
 static void
 test_player_settings_bound(void)
 {
@@ -114,5 +187,9 @@ main(int argc, char *argv[])
   g_test_add_func("/gnostr/media-source/disabled-video-blocked",
                   test_video_blocked_when_remote_media_disabled);
   g_test_add_func("/gnostr/media-source/player-settings-bound", test_player_settings_bound);
+  g_test_add_func("/gnostr/media-source/copied-link-toasts-parent-window",
+                  test_copied_link_toasts_parent_window);
+  g_test_add_func("/gnostr/media-source/copied-link-without-parent-window-no-toast",
+                  test_copied_link_without_parent_window_no_toast);
   return g_test_run();
 }

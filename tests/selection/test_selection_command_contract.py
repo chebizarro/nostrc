@@ -21,6 +21,7 @@ SUPPORT_INPUTS = {
     "apps/grotto/tests/fuzz/json_glib_leak_probe.c",
     "scripts/test_selection_policy.py",
     "scripts/w11-evidence.py",
+    "scripts/signer-scope-proof.py",
     "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
     "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
     "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c",

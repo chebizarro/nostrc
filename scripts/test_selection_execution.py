@@ -226,7 +226,23 @@ def _sanitizer_environment(profile, source_root):
     return {key: value for key, value in authored.items() if key in SANITIZER_ENVIRONMENT}
 
 
-def _signer(backend, profile, post, source_root):
+def signer_consumer_junit(data):
+    """The consumer's own sealed JUnit case, independent of backend outcome fields.
+
+    Exactly one real run with no failure, error or skip: an internal exit 77
+    (CTest skip), not-run or missing case never stands for signer coverage."""
+    import xml.etree.ElementTree as ET
+    from test_selection_services import SIGNER_CONSUMER
+    try:
+        cases = [case for case in ET.fromstring(data).iter('testcase') if case.get('name') == SIGNER_CONSUMER]
+    except ET.ParseError:
+        cases = []
+    require(len(cases) == 1 and cases[0].get('status') == 'run'
+            and all(cases[0].find(tag) is None for tag in ('failure', 'error', 'skipped')),
+            'signer consumer did not actually execute and pass')
+
+
+def _signer(backend, profile, post, source_root, tests, closure, locator):
     from test_selection_services import SIGNER_CONSENT, SIGNER_EXECUTABLES
     proof = backend.get('runtime_capability_evidence', {}).get('signer_endpoint')
     state = backend.get('signer_runtime')
@@ -252,6 +268,25 @@ def _signer(backend, profile, post, source_root):
             and all(item.get('asan') is (profile['instrumentation'] == 'asan_ubsan')
                     and post['input_hashes'].get(path) == item.get('sha256')
                     for path, item in instruments.items()), 'signer executable/instrumentation audit missing')
+    from test_selection_services import (ServiceError, SIGNER_CONSUMER, SIGNER_DELIVERY, SIGNER_RESOURCE_TYPE,
+                                         signer_delivery_admission)
+    delivery, evidence = state.get('delivery', {}), Path(backend['evidence_dir'])
+    spec = Path(str(delivery.get('resource_spec_file')))
+    require(delivery.get('mechanism') == SIGNER_DELIVERY and delivery.get('resource_type') == SIGNER_RESOURCE_TYPE
+            and delivery.get('slots') == 1 and delivery.get('registrations') == [SIGNER_CONSUMER]
+            and delivery.get('endpoint') == state.get('readiness', {}).get('endpoint')
+            and delivery.get('ctest_environment_credentials') is False and delivery.get('removed') is True
+            and spec.is_absolute() and not spec.is_relative_to(evidence)
+            and delivery.get('exposure_checked') == sorted([str(evidence / 'ctest.log'), str(evidence / 'results.xml'),
+                                                            str(Path(backend['build_dir']) / 'Testing/Temporary/LastTest.log')])
+            and delivery.get('fixture_exposure_checked') == [str(evidence / 'signer')]
+            and delivery.get('exposed') == [],
+            'signer credential delivery is not the removed registration-scoped resource')
+    try:
+        signer_delivery_admission({test['name']: test for test in tests}, closure, {})
+    except ServiceError as exc:
+        require(False, str(exc))
+    signer_consumer_junit(_file(locator, evidence / 'results.xml').read_bytes())
     cleanup = state.get('cleanup', {})
     require(cleanup.get('private_namespace_absent') is True and cleanup.get('cleanup_errors') == []
             and cleanup.get('remember') is False and cleanup.get('stored_via') == 'StoreKey/libsecret',
@@ -495,8 +530,8 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         overlays = []
         if 'docker' in raw['required_capabilities']:
             overlays += ['NOSTRC_MDK_STATE', 'NOSTRC_MDK_PYTHON']
-        if 'signer_endpoint' in raw['required_capabilities']:
-            overlays += ['NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN']
+        # The signer never overlays the CTest environment: its credentials are
+        # the admitted registration's resource allocation (see _signer).
         require(env.get('overlay_names') == sorted(overlays)
                 and (overlays or env.get('effective_hash') == env.get('base_hash')),
                 'undeclared CTest environment overlay')
@@ -505,6 +540,8 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         expected_argv = ['ctest', '--test-dir', real['build_dir'], *config, '-I', str(directory / 'ctest-indices.txt'),
                          '--output-on-failure', '--output-junit', str(directory / 'results.xml'),
                          '--parallel', str(raw['execution_parallelism']['test'])]
+        if 'signer_endpoint' in raw['required_capabilities']:
+            expected_argv += ['--resource-spec-file', str((raw.get('signer_runtime') or {}).get('delivery', {}).get('resource_spec_file'))]
         argv = process['argv']
         require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'
                 and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')
@@ -519,7 +556,7 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')
         require(not any(marker in log_bytes for marker in
                         (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')
-    _signer(raw, profile, post, real['repo_root'])
+    _signer(raw, profile, post, real['repo_root'], real['tests'], closure, locator)
     if scope == 'selected' and not ('docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw):
         _require_no_mdk_lifecycle(raw, closure, descriptors, recovery)
     if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:
@@ -546,6 +583,14 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         result['transport'] = transport
     result['qualification_hash'] = digest(result)
     return result
+
+
+def verified_transport(policy, plan, receipt):
+    """validate_receipt for one transported bundle; returns the public receipt and the
+    locator over that bundle's verified, sealed bytes (for read-only diagnostics)."""
+    require('transport' in receipt and _PORTABLE_ONLY, 'not a transported normal receipt')
+    public = validate_receipt(policy, plan, receipt)
+    return public, _LOADED[receipt['qualification_hash']]['locator']
 
 
 def validate_receipt(policy, plan, receipt):
@@ -796,34 +841,47 @@ def verify_source_closure(locator, repo, plan):
     claims = locator.seal['source_claims']
     require(os.path.isabs(source) and os.path.normpath(source) == source and isinstance(claims, dict) and claims,
             'unsupported/empty sealed source closure')
-    require(claims == _derived_claims(locator.result, source),
-            'sealed source claims differ from the sealed raw input audits')
+    derived = _derived_claims(locator.result, source)
+    require(claims == derived, 'sealed source claims differ from the sealed raw input audits'
+            + _claim_difference(claims, derived, source))
     tracked = set(git('ls-files', '-z', '--recurse-submodules').split('\0')) - {''}
     for name, expected in claims.items():
         require(os.path.normpath(name) == name and name.startswith(source + os.sep), 'source claim outside sealed source root')
         relative = Path(name).relative_to(source)
-        require(relative.as_posix() in tracked, 'source claim is not a tracked file of the tested commit: ' + name)
+        require(relative.as_posix() in tracked,
+                'source claim is not a tracked file of the tested commit: ' + _claim_name(name, source))
         candidate = repo.joinpath(*relative.parts)
         resolved = candidate.resolve(strict=True)
         require(resolved.is_relative_to(repo) and resolved.is_file() and _sha(resolved) == expected,
-                'sealed source input differs from the tested checkout: ' + name)
+                'sealed source input differs from the tested checkout: ' + _claim_name(name, source))
 
 
 def _derived_claims(result, source):
-    """Lexical counterpart of the sealer's claim derivation over the sealed raw receipt."""
-    claims = {}
-    def visit(value):
-        if isinstance(value, dict):
-            for path, expected in (value.get('input_hashes') or {}).items():
-                if os.path.isabs(path) and os.path.normpath(path) == path and path.startswith(source + os.sep):
-                    require(claims.setdefault(path, expected) == expected, 'contradictory sealed source input claim')
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-    visit(result)
-    return claims
+    """The sealer's own canonical contract over the sealed raw receipt (lexical, portable)."""
+    from test_selection_services import SourceClaimError, source_claim_contract
+    try:
+        return source_claim_contract(result, source)[0]
+    except SourceClaimError as exc:
+        require(False, 'sealed raw input audits violate the source claim contract: ' + str(exc))
+
+
+def _claim_name(name, source):
+    from test_selection_services import safe_claim_name
+    return safe_claim_name(name, source)
+
+
+def _claim_difference(sealed, derived, source, limit=8):
+    """Nonsecret mismatch summary: root-relative names only, never hashes or bytes."""
+    if not isinstance(sealed, dict):
+        return ''
+    parts = []
+    for label, names in (('sealed only', sorted(set(sealed) - set(derived))),
+                         ('derived only', sorted(set(derived) - set(sealed))),
+                         ('hash differs', sorted(n for n in set(sealed) & set(derived) if sealed[n] != derived[n]))):
+        if names:
+            shown = ', '.join(_claim_name(n, source) for n in names[:limit])
+            parts.append('%s %d: %s%s' % (label, len(names), shown, ', ...' if len(names) > limit else ''))
+    return (' (' + '; '.join(parts) + ')') if parts else ''
 
 
 def _identity(receipt):
@@ -961,6 +1019,119 @@ def worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_d
             shutil.rmtree(temp, ignore_errors=True)
 
 
+# ------------------------------------------------------------- publication --
+PUBLICATION_WITHHELD = 'signer_sensitive_publication_withheld_v1'
+
+
+def _verified_plan(repo, plan_path, plan_id, sha, profile):
+    """The worker's existing plan checks, bound to the trusted workflow inputs.
+
+    Inventory is the tested commit's committed blob (never the mutable working
+    tree); validate_plan binds the plan's self-hash, inventory, coverage, SHA and
+    lane/check eligibility; identity must equal inputs.plan_id/inputs.sha; the
+    profile must be exactly one selected lane. Any failure raises (withhold)."""
+    import test_selection as selection
+    selection.require(isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{40}', sha)
+                      and selection.commit_sha(repo, sha) == sha and selection.commit_sha(repo, 'HEAD') == sha,
+                      'checkout is not the trusted tested commit')
+    policy = selection.validate_inventory(json.loads(selection.git(repo, 'show', sha + ':tests/selection/inventory.json').stdout))
+    plan = selection.validate_plan(selection.read_json(plan_path), policy)
+    selection.require(plan['plan_id'] == plan_id and plan['tested_sha'] == sha
+                      and plan['source_identity'] == {'kind': 'committed', 'sha': sha},
+                      'plan identity differs from the trusted workflow inputs')
+    lanes = [lane for lane in plan['lanes'] if lane['profile'] == profile]
+    selection.require(profile in plan['expected_lane_ids'] and len(lanes) == 1, 'profile is not exactly one selected lane')
+    return policy, plan, lanes[0]
+
+
+def _signer_possible(policy, lane):
+    """Whether this validated lane could provision the signer; unknown checks count."""
+    return any('signer_endpoint' in policy['checks'].get(ident, {'requires': ['signer_endpoint']}).get('requires', [])
+               for ident in lane['checks'])
+
+
+def _safe_path(path):
+    """A reportable path: anything carrying a 64-hex run is never echoed."""
+    return '<path withheld: credential-shaped name>' if re.search(r'[0-9a-f]{64}', str(path)) else str(path)
+
+
+def _credential_shapes(roots):
+    from test_selection_services import SIGNER_LEAK_PATTERNS
+    patterns = [re.compile(pattern) for pattern in SIGNER_LEAK_PATTERNS]
+    found = []
+    for root in map(Path, roots):
+        files = sorted(path for path in root.rglob('*') if path.is_file() and not path.is_symlink()) \
+            if root.is_dir() and not root.is_symlink() else []
+        found += [str(path) for path in files if any(p.search(path.read_bytes()) for p in patterns)]
+    return found
+
+
+def publication_decision(policy, plan, lane, receipts_dir, evidence_root, qualify_outcome):
+    """(publish, reason, paths) for this worker's always-uploaded receipt/evidence sets.
+
+    A lane that could provision the signer publishes only after post-exit
+    qualification passed and its delivery record shows a complete, clean
+    exact-token scan; anything else (failure, cancellation, refusal, scan
+    failure, exposure) withholds the whole set. Reasons and paths only: never
+    file contents or a credential. ``plan``/``lane`` must come from _verified_plan."""
+    profile = lane['profile']
+    if not _signer_possible(policy, lane):
+        return True, 'no_signer_in_lane', []
+    if qualify_outcome != 'success':
+        return False, 'qualification_' + (re.sub(r'[^a-z]', '', str(qualify_outcome))[:16] or 'unknown'), []
+    receipts = Path(receipts_dir)
+    current, original = receipts / 'receipt.json', receipts / ORIGINAL
+    def load(path):
+        try:
+            return json.loads(path.read_bytes()) if path.is_file() and not path.is_symlink() else None
+        except ValueError:
+            return None
+    receipt = load(current)
+    if not (isinstance(receipt, dict) and receipt.get('receipt_kind') == KIND and receipt.get('plan_id') == plan['plan_id']
+            and receipt.get('profile') == profile and receipt.get('source_identity') == plan['source_identity']):
+        return False, 'lane_not_qualified', []
+    public = load(original)
+    if not (isinstance(public, dict) and _sha(original) == (receipt.get('public_evidence') or {}).get('sha256')):
+        return False, 'original_unbound', []
+    backend = public.get('backend_receipt', public)
+    delivery = ((backend.get('signer_runtime') or {}).get('delivery') or {}) if isinstance(backend, dict) else {}
+    if not (delivery.get('removed') is True and delivery.get('exposure_checked') and delivery.get('fixture_exposure_checked')
+            and isinstance(delivery.get('exposed'), list)):
+        return False, 'exposure_scan_incomplete', []
+    if delivery['exposed']:
+        return False, 'exposure_detected', [_safe_path(path) for path in delivery['exposed']]
+    shapes = _credential_shapes([receipts, evidence_root])
+    if shapes:
+        return False, 'credential_shape_detected', [_safe_path(path) for path in shapes]
+    return True, 'qualified_exposure_checked', []
+
+
+def publication_gate(repo, plan_path, plan_id, sha, profile, receipts_dir, evidence_root, qualify_outcome, metadata_path):
+    """Worker step before upload. Nothing publishes unless the plan is verified
+    against the trusted inputs; withheld sets stay unuploaded on the ephemeral
+    worker and only nonsecret metadata (never a receipt.json) is written."""
+    sys.path.insert(0, str(Path(repo) / 'scripts'))
+    try:
+        policy, plan, lane = _verified_plan(repo, plan_path, plan_id, sha, profile)
+    except (ValueError, LookupError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+        publish, reason, paths = False, 'plan_or_source_unverified', []
+    else:
+        publish, reason, paths = publication_decision(policy, plan, lane, receipts_dir, evidence_root, qualify_outcome)
+    if publish:
+        return True, reason
+    record = dict(schema_version=1, kind=PUBLICATION_WITHHELD, plan_id=str(plan_id), profile=str(profile),
+                  source_identity={'kind': 'committed', 'sha': str(sha)}, reason=reason, paths=paths,
+                  withheld=['dependency-receipt', 'dependency-evidence'],
+                  local_retention='unuploaded on the ephemeral hosted worker until the job ends; not durably retained',
+                  complete=False, complete_gate_eligible=False)
+    metadata = Path(metadata_path)
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    with open(metadata, 'x') as stream:
+        json.dump(record, stream, sort_keys=True, indent=2)
+        stream.write('\n')
+    return False, reason
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description='normal execution worker qualification')
@@ -968,7 +1139,17 @@ def main(argv=None):
     worker = commands.add_parser('worker-qualify')
     for name in ('repo', 'plan', 'profile', 'evidence-root', 'apparmor-evidence', 'receipts-dir'):
         worker.add_argument('--' + name, required=True)
+    gate = commands.add_parser('publication-gate')
+    for name in ('repo', 'plan', 'plan-id', 'sha', 'profile', 'receipts-dir', 'evidence-root', 'qualify-outcome', 'metadata'):
+        gate.add_argument('--' + name, required=True)
     args = parser.parse_args(argv)
+    if args.command == 'publication-gate':
+        # stdout carries only the decision; any failure prints nothing there (withheld).
+        publish, reason = publication_gate(args.repo, args.plan, args.plan_id, args.sha, args.profile, args.receipts_dir,
+                                           args.evidence_root, args.qualify_outcome, args.metadata)
+        print('publication: %s (%s)' % ('published' if publish else 'withheld', reason), file=sys.stderr)
+        print('publish=true' if publish else 'publish=false')
+        return 0
     try:
         worker_qualify(args.repo, args.plan, args.profile, args.evidence_root, args.apparmor_evidence, args.receipts_dir)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError, subprocess.SubprocessError) as exc:

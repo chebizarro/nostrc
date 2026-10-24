@@ -733,10 +733,11 @@ typedef struct {
 } PromptBackend;
 
 static GPtrArray *
-prompt_search(GhNip46CredentialBackend *backend, const gchar *account, gboolean interactive,
-              gboolean load_secrets, GCancellable *cancellable, GError **error)
+prompt_search(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
+              gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
+              GError **error)
 {
-  (void)account; (void)interactive; (void)cancellable; (void)error;
+  (void)prepared; (void)account; (void)interactive; (void)cancellable; (void)error;
   PromptBackend *self = (PromptBackend *)backend;
   GPtrArray *items = g_ptr_array_new_with_free_func((GDestroyNotify)gh_nip46_credential_item_free);
   g_mutex_lock(&self->lock);
@@ -758,10 +759,10 @@ prompt_search(GhNip46CredentialBackend *backend, const gchar *account, gboolean 
 }
 
 static gboolean
-prompt_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret,
-             gboolean interactive, GError **error)
+prompt_write(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *account,
+             GBytes *secret, gboolean interactive, GError **error)
 {
-  (void)interactive; (void)error;
+  (void)prepared; (void)interactive; (void)error;
   PromptBackend *self = (PromptBackend *)backend;
   g_mutex_lock(&self->lock);
   g_free(self->account);
@@ -773,9 +774,9 @@ prompt_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *se
 }
 
 static gboolean
-prompt_remove(GhNip46CredentialBackend *b, const gchar *a, gboolean i, GError **e)
+prompt_remove(GhNip46CredentialBackend *b, GObject *p, const gchar *a, gboolean i, GError **e)
 {
-  (void)b; (void)a; (void)i; (void)e;
+  (void)b; (void)p; (void)a; (void)i; (void)e;
   return TRUE;
 }
 
@@ -815,7 +816,8 @@ static void
 test_grotto_fails_remote_selected_lookup_waits(void)
 {
   static PromptBackend backend;
-  backend = (PromptBackend){ .base = { prompt_search, prompt_write, prompt_remove, prompt_free } };
+  backend = (PromptBackend){ .base = { .search = prompt_search, .write = prompt_write,
+                                       .remove = prompt_remove, .free = prompt_free } };
   g_mutex_init(&backend.lock);
   g_cond_init(&backend.cond);
   GhNip46CredentialStore *store = gh_nip46_credential_store_new_with_backend(&backend.base);

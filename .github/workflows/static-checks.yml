@@ -69,8 +69,20 @@ jobs:
         run: bash tests/selection/namespace_policy_controller.sh record
       - name: Provision per-job namespace-custody AppArmor profile
         run: bash tests/selection/namespace_apparmor_setup.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
+      # Scheduling only: the nine original host self-tests named below start
+      # here in one owned supervisor beside the image build (exact argv, host
+      # environment and order), are joined before the testhost runs, are ended
+      # before evidence is retained, and are each reported by their original
+      # named step after it.
+      - name: Start the original host self-tests beside the image build
+        run: python3 tests/selection/static_frontend_host.py start
       - name: Build dedicated nonroot regression image
         run: bash tests/selection/namespace_policy_controller.sh build
+      - name: Join this job's host self-test group before the testhost
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 tests/selection/static_frontend_host.py join
       - name: Selection and workflow contract tests
         run: bash tests/selection/namespace_policy_controller.sh execute
       - name: Remove only this job's recorded immutable container
@@ -79,6 +91,9 @@ jobs:
       - name: Remove only this job's AppArmor profile after its consumers exited
         if: always()
         run: bash tests/selection/namespace_apparmor_teardown.sh "$RUNNER_TEMP/namespace-policy/control/apparmor"
+      - name: End this job's host self-test group before retaining evidence
+        if: always()
+        run: python3 tests/selection/static_frontend_host.py ensure-ended
       - name: Retain testhost control and evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,32 +105,32 @@ jobs:
       - name: No call modifies a variable another argument uses
         # nostrc-td3b: argument evaluation order is unspecified; x86_64 GCC
         # goes right to left, so such a call breaks only on x86_64 runners.
-        run: python3 scripts/check-unsequenced-args.py --self-test
+        run: python3 tests/selection/static_frontend_host.py replay unsequenced
 
       - name: Every GUI test installs narrow GDK frame tolerance
-        run: python3 scripts/check-gui-test-gdk-frame.py --self-test
+        run: python3 tests/selection/static_frontend_host.py replay gui-frame
 
       - name: Local Linux image mirrors the CI package lists
-        run: python3 scripts/check-linux-ci-packages.py --self-test
+        run: python3 tests/selection/static_frontend_host.py replay linux-packages
 
       - name: Pre-push hook behaviour
-        run: bash scripts/test-pre-push.sh
+        run: python3 tests/selection/static_frontend_host.py replay pre-push
 
       - name: Opt-in full gate behaviour
-        run: bash scripts/test-full-gate.sh
+        run: python3 tests/selection/static_frontend_host.py replay full-gate
 
       - name: Linux gate smoke run keeps and counts reruns
         # nostrc-16yi: a rerun that passes still prints the first failure.
-        run: bash scripts/test-linux-gate-smoke.sh
+        run: python3 tests/selection/static_frontend_host.py replay linux-smoke
 
       - name: Sanitizer gate reads the CI job and filters pushes
         # nostrc-3han: the pre-push sanitizer stage runs groundhog-sanitizers
         # as read from groundhog-ci.yml, so a change to that job the stage
         # cannot reproduce fails here; and only for pushes touching its paths.
-        run: bash scripts/test-sanitizer-gate.sh
+        run: python3 tests/selection/static_frontend_host.py replay sanitizer
 
       - name: Old signer names stay gone (W31)
-        run: bash scripts/check-grotto-names.sh
+        run: python3 tests/selection/static_frontend_host.py replay signer-names
 
       - name: Keychain guard self-test (nostrc-2hmd)
-        run: bash scripts/test-check-macos-keychain.sh
+        run: python3 tests/selection/static_frontend_host.py replay keychain-guard

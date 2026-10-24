@@ -111,7 +111,9 @@ class WorkerMicrohttpdPrerequisiteTests(unittest.TestCase):
         self.assertEqual(setup['if'], "runner.os == 'Linux'")
 
     def test_hosted_failing_worker_bytes_lack_the_package(self):
-        raw = (ROOT / WORKER).read_bytes()
+        # This layer's after bytes: the newer W11 batch2 publication gate is projected away first.
+        from w11_batch2_integration_support import before_source as before_batch2_source
+        raw = before_batch2_source(WORKER, (ROOT / WORKER).read_bytes())
         failing = wave.before_source(WORKER, raw).decode()
         self.assertEqual(missing(failing, self.inventory, PACKAGE), [
             f'core.linux: needs exactly one pre-execution {PACKAGE} install, got 0',
@@ -223,7 +225,8 @@ class WorkerBlueprintPrerequisiteTests(unittest.TestCase):
         self.assertEqual(blueprint_missing(self.worker, self.inventory, self.pinned), [])
 
     def test_hosted_failing_worker_bytes_lack_groundhog_linux_only(self):
-        failing = wave.before_source(WORKER, (ROOT / WORKER).read_bytes()).decode()
+        from w11_batch2_integration_support import before_source as before_batch2_source
+        failing = wave.before_source(WORKER, before_batch2_source(WORKER, (ROOT / WORKER).read_bytes())).decode()
         self.assertEqual(blueprint_missing(failing, self.inventory, self.pinned), [
             f'groundhog.linux: needs exactly one pre-execution pinned Blueprint {self.pinned}, got 0'])
         self.assertEqual(wave.witness()['blueprint_hosted_failure']['found_version'], '0.12.0')
@@ -297,9 +300,11 @@ class WorkerPrerequisiteEnrollmentTests(unittest.TestCase):
 
     def test_jobs_inverse_projects_only_the_exact_reviewed_hashes(self):
         from profile_contract_support import source_job_blocks, validate_job_accounting
-        policy = self.policy()
-        validate_job_accounting(policy, ROOT)
-        actual = source_job_blocks(ROOT)
+        # Live accounting holds for the live inventory; this layer's records are
+        # compared after the newer W11 batch2 publication-gate job map is projected.
+        from w11_batch2_integration_support import before_jobs as before_batch2_jobs
+        validate_job_accounting(s.load_inventory(ROOT / 'tests/selection/inventory.json'), ROOT)
+        actual = before_batch2_jobs(source_job_blocks(ROOT))
         for ident, record in wave.witness()['maps']['workflow_jobs'].items():
             for field in ('source_sha256', 'workflow_sha256', 'matrix_source'):
                 self.assertEqual(actual[ident][field], record['after'][field])

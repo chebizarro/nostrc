@@ -118,6 +118,30 @@ def retained_claims(result, work='/work', roots=('build', 'execution')):
     return claims
 
 
+def sealed_claim_entry(entries, name, *, max_links=40):
+    """The sealed entry whose bytes a receipt path claim actually hashed.
+
+    Receipts hash content read through a path, e.g. a CMake namelink
+    ``libfoo.so -> libfoo.so.1`` consumed as a linker input. The snapshot keeps
+    the link itself. Only an exact chain of sealed relative links that stays
+    inside the same retained tree ends at the claimed regular file; any other
+    link shape returns the raw link entry, which never satisfies a claim.
+    """
+    parts = name.split('/')
+    for _ in range(max_links):
+        for index in range(2, len(parts) + 1):
+            entry = entries.get('/'.join(parts[:index]))
+            if entry is not None and entry['kind'] == 'symlink':
+                break
+        else:
+            return entries.get('/'.join(parts))
+        target = entry['target'].split('/')
+        if entry['target'].startswith('/') or any(part in ('', '.', '..') for part in target):
+            return entry
+        parts = parts[:index - 1] + target + parts[index:]
+    return None
+
+
 def attest_retained_evidence(work, result, state, *, roots=('build', 'execution'), claim_root='/work'):
     expected = state['retained_evidence']
     if state['retained_evidence_hash'] != digest(expected):
@@ -129,7 +153,7 @@ def attest_retained_evidence(work, result, state, *, roots=('build', 'execution'
         if expected.get(path) != actual.get(path):
             errors.append({'path': path, 'reason': 'missing' if path not in actual else 'added' if path not in expected else 'changed'})
     for path, expected_hash in claims.items():
-        if expected.get(path) != {'kind': 'file', 'sha256': expected_hash}:
+        if sealed_claim_entry(expected, path) != {'kind': 'file', 'sha256': expected_hash}:
             errors.append({'path': path, 'reason': 'original receipt hash differs from seal'})
     return {'status': 'failed' if errors else 'verified', 'errors': errors,
             'expected_hash': digest(expected), 'actual_hash': digest(actual),

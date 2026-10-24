@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 import closeout_support as c
+import w11_batch2_integration_support as newest
 from w11_worker_support import before_worker_policy
 from w11_policy_support import before_policy_enrollment
 from test_selection_subset import before_full_ownership_policy
@@ -119,7 +120,9 @@ class CloseoutInterfaces(unittest.TestCase):
             for path, values in record.get('source_changes', {}).items():
                 self.assertEqual(a['review']['source_inputs'][path], values['after'])
                 self.assertEqual(b['review']['source_inputs'][path], values['before'])
-                self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), values['after'])
+                # The newer W11 batch2 layer (.36.23 Gnostr CMake) is projected first.
+                self.assertEqual(hashlib.sha256(newest.before_source(path, (ROOT / path).read_bytes())).hexdigest(),
+                                 values['after'])
                 a['review']['source_inputs'][path] = values['before']
             self.assertEqual(a['candidate_contract_hash'], record['after_candidate_contract_hash'])
             a['candidate_contract_hash'] = record['before_candidate_contract_hash']

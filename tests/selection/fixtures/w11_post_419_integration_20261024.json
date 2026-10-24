@@ -1,0 +1,36 @@
+{
+  "base": "4198376a6a3ab6c8df364b3ccce1cf485bb2dd18",
+  "base_policy_hash": "cb38eb2125d008c2f425aa1fc7245e9a7834051907ccb186aa90e7023bc38b48",
+  "commits": {
+    "nostrc-0cfsg.36.26": "c2320daf019cf8373538df77b76900940f3af4a0 (merged at 4c63a8386)"
+  },
+  "enrolled_policy_hash": "dd00b87e7df1aede8e13ac40b867583fbb8074c3f50726f4a45c4025decf2187",
+  "head": "4c63a83862f51c57c4c762ca518e8a6da8c27a6e",
+  "runtime_inputs": [
+    "{source}/tests/selection/w11_post_419_integration_support.py",
+    "{source}/tests/selection/fixtures/w11_post_419_integration_20261024.json",
+    "{source}/tests/selection/test_w11_post_419_integration.py"
+  ],
+  "schema_version": 1,
+  "scope": "Exact post-419 integration of nostrc-0cfsg.36.26 c2320daf0 (Static host ownership-record predicate) over pushed H3 4198376a6: the byte-pinned test_namespace_policy_contract.py delta and clerical selection.contract enrollment, reversed for historical witnesses only. static_frontend_host.py changed too but is not byte-pinned. No runtime, qualifier, authority, inventory metadata, path rule, profile, capability, omission or review binding change. Not hosted, signer or W11 acceptance.",
+  "sources": {
+    "tests/selection/test_namespace_policy_contract.py": {
+      "after_sha256": "621faca956b342d680ac152ae24b4598a8fac2baf9382d354a2699c69ac4958b",
+      "authors": [
+        "nostrc-0cfsg.36.26"
+      ],
+      "before_sha256": "2be108049190ed6314cd32d5f4d06c6219b4bd1106d35dbb1c94894e67fdcee8",
+      "edits": [
+        {
+          "after": "                    self.assertTrue(running(victim.pid, observed[2]))\n        # Same-UID session leaders that pass the pid/start/boot/uid/session checks; each is this\n        # test's own unreaped child. Only the published 64-hex token in start's exact launch\n        # argv for THIS root may be treated as the owned supervisor.\n        def leader(argv, **kwargs):\n            process = subprocess.Popen(argv, start_new_session=True, **kwargs)\n            self.addCleanup(lambda: process.poll() is None and (process.kill(), process.wait()))\n            return process, proc_stat(process.pid)[2]\n\n        def untouched(process, start):\n            status = Path('/proc/%d/status' % process.pid).read_text().splitlines()\n            pending = [int(line.split()[1], 16) for line in status if line.startswith(('SigPnd:', 'ShdPnd:'))]\n            return process.poll() is None and running(process.pid, start) and pending == [0, 0]\n\n        hex_token = '0123456789abcdef' * 4\n        sleeper, sleeper_start = leader(['sleep', '30'])\n        python, python_start = leader([sys.executable, '-c', 'import time; time.sleep(30)', hex_token])\n        foreign = self.temp / 'foreign-runner/namespace-policy/host-frontend'\n        (foreign / 'logs').mkdir(parents=True)\n        go_read, go_write = os.pipe()\n        ready_read, ready_write = os.pipe()\n        blocked = lambda: signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGUSR1})\n        supervisor, supervisor_start = leader([sys.executable, '-I', str(self.path), 'supervise', str(foreign),\n                                               'a' * 64, str(go_read), str(ready_write)],\n                                              pass_fds=(go_read, ready_write), preexec_fn=blocked)\n        self.addCleanup(os.close, go_write)  # never \"go\": a closed handshake runs nothing\n        os.close(go_read)\n        os.close(ready_write)\n        self.assertEqual(os.read(ready_read, 16), b'ready\\n')\n        os.close(ready_read)\n        without = {k: v for k, v in base.items() if k != 'token'}\n        for name, process, start, record, message in (\n                ('missing token', sleeper, sleeper_start, without, 'ownership record malformed'),\n                ('empty token', sleeper, sleeper_start, dict(base, token=''), 'ownership record malformed'),\n                ('non-string token', sleeper, sleeper_start, dict(base, token=123), 'ownership record malformed'),\n                ('token equal to an argument', sleeper, sleeper_start, dict(base, token='30'),\n                 'ownership record malformed'),\n                ('well-formed token as an unrelated argument', python, python_start, dict(base, token=hex_token),\n                 'not the owned supervisor'),\n                ('supervisor shape for a foreign root', supervisor, supervisor_start, dict(base, token='a' * 64),\n                 'not the owned supervisor')):\n            with self.subTest(case=name):\n                self.assertTrue(untouched(process, start))\n                (self.root / 'owner.json').write_text(json.dumps(dict(record, pid=process.pid, starttime=start)))\n                for verb, status in (('ensure-ended', None), ('join', 'cancelled')):\n                    result = self.helper_run(verb, status=status)\n                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)\n                    self.assertIn('refused', result.stderr)\n                    self.assertIn(message, result.stderr)\n                    self.assertTrue(untouched(process, start))  # alive, no signal delivered or pending\n        (self.root / 'owner.json').unlink()\n",
+          "before": "                    self.assertTrue(running(victim.pid, observed[2]))\n        (self.root / 'owner.json').unlink()\n"
+        }
+      ],
+      "origin": "nostrc-0cfsg.36.26 c2320daf0 bytes from H3 4198376a6",
+      "restored_sha256": [
+        "b950b306a8ac5d14985abc6b7b396ef0518cfd70bbe5d4273f4cabc909378b20",
+        "69f4b7019ab05d07fe76689bd4824c9b7eee21c9dde07033c50af52f413f5173"
+      ]
+    }
+  }
+}
