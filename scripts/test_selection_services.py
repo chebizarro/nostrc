@@ -1086,25 +1086,113 @@ def _native_files(work):
     return result
 
 
-def _source_claims(result, source):
-    claims = {}
+class SourceClaimError(ServiceError):
+    """The receipt's source-root input claims violate the shared canonical contract."""
+
+
+_SHA256 = re.compile(r'[0-9a-f]{64}')
+_CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+# Credential/token-shaped runs never reach diagnostics, even inside a path name.
+_REDACT = re.compile(r'(?:NOSTR_SIGNER_TOKEN=\S*|AUTH [0-9a-f]{64}|p[1-9][0-9]{0,4}_[0-9a-f]{64}|[0-9A-Fa-f]{32,})')
+
+
+def _double_slash(path):
+    # POSIX leaves exactly two leading slashes implementation-defined; normpath keeps them.
+    return path.startswith('//') and not path.startswith('///')
+
+
+def safe_claim_name(name, source):
+    """Root-relative, credential-redacted, control-free ASCII name; never a host path."""
+    relative = name[len(source) + 1:] if isinstance(name, str) and name.startswith(source + os.sep) else '<outside root>'
+    relative = _CONTROL.sub('?', _REDACT.sub('<redacted>', relative))
+    return relative.encode('ascii', 'backslashreplace').decode('ascii')
+
+
+def source_claim_contract(result, source):
+    """The one canonical source-claim derivation shared by sealer and qualifier.
+
+    Purely lexical over the original receipt, so portable/offline qualification
+    never needs worker host paths. Every ``input_hashes`` mapping anywhere in the
+    receipt contributes (input audits, runtime/signer/tool fingerprints, nested
+    attempts); nothing is intersected or dropped. An absolute key whose
+    ``os.path.normpath`` lies strictly under ``source`` is a source claim keyed by
+    that canonical name. CMake descriptors may legitimately author
+    ``${CMAKE_CURRENT_SOURCE_DIR}/../data/x``: that spelling and any other alias
+    of the same canonical file must agree on its hash.
+
+    Returns ``(claims, spellings)``: canonical name -> sha256, and canonical
+    name -> sorted original raw keys. The sealer must additionally prove every
+    raw spelling physically resolves to the canonical file before sealing.
+    Refuses malformed mappings/hashes/paths, the root itself, lexical escapes
+    from the root and contradictory aliases.
+    """
+    if not isinstance(source, str) or not os.path.isabs(source) or os.path.normpath(source) != source \
+            or source == os.sep or _double_slash(source):
+        raise SourceClaimError('source claim root is not a canonical absolute directory')
+    prefix = source + os.sep
+    claims, spellings = {}, {}
     def visit(value):
         if isinstance(value, dict):
-            for path, expected in value.get('input_hashes', {}).items():
-                candidate = Path(path)
-                if candidate.is_absolute() and candidate.is_relative_to(source):
-                    if candidate.resolve(strict=True).is_relative_to(source):
-                        if path in claims and claims[path] != expected:
-                            raise ServiceError('contradictory native source input claim')
-                        claims[path] = expected
-                    else:
-                        raise ServiceError('native source input escaped checkout')
+            if 'input_hashes' in value:
+                mapping = value['input_hashes']
+                if not isinstance(mapping, dict):
+                    raise SourceClaimError('malformed input audit mapping')
+                for path, expected in mapping.items():
+                    if not isinstance(path, str):
+                        raise SourceClaimError('malformed input audit path')
+                    if not os.path.isabs(path):
+                        continue  # not a source-root claim on either side (unchanged)
+                    if _double_slash(path):
+                        # Never dropped and never granted network-root authority:
+                        # a spelling that would alias into the root refuses.
+                        collapsed = os.path.normpath('/' + path.lstrip('/'))
+                        if collapsed == source or collapsed.startswith(prefix):
+                            raise SourceClaimError('unsupported double-slash source input spelling: '
+                                                   + safe_claim_name(collapsed, source))
+                        continue  # outside the source root: other audits bind it
+                    canonical = os.path.normpath(path)
+                    raw_under = path.startswith(prefix) or path == source
+                    if canonical == source:
+                        raise SourceClaimError('source input claim names the source root itself')
+                    if not canonical.startswith(prefix):
+                        if raw_under:
+                            raise SourceClaimError('native source input escaped checkout')
+                        continue  # outside the source root: other audits bind it
+                    if _CONTROL.search(path):
+                        raise SourceClaimError('malformed source input claim path')
+                    if not isinstance(expected, str) or not _SHA256.fullmatch(expected):
+                        raise SourceClaimError('malformed source input claim hash')
+                    if claims.setdefault(canonical, expected) != expected:
+                        raise SourceClaimError('contradictory native source input claim')
+                    spellings.setdefault(canonical, set()).add(path)
             for child in value.values():
                 visit(child)
         elif isinstance(value, list):
             for child in value:
                 visit(child)
     visit(result)
+    return claims, {name: sorted(raw) for name, raw in spellings.items()}
+
+
+def _source_claims(result, source):
+    """Sealer side: the shared contract plus live physical alias/escape proof."""
+    source = Path(source)
+    claims, spellings = source_claim_contract(result, str(source))
+    def resolve(spelling, canonical):
+        try:
+            return Path(spelling).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:  # missing/non-directory component, symlink loop
+            raise SourceClaimError('native source input spelling does not resolve: %s (%s)'
+                                   % (safe_claim_name(canonical, str(source)), type(exc).__name__)) from None
+    for canonical, raws in spellings.items():
+        target = resolve(canonical, canonical)
+        if not target.is_relative_to(source):
+            raise SourceClaimError('native source input escaped checkout')
+        for raw in raws:
+            # A symlinked component before '..' makes the physical file differ
+            # from the lexical canonical name: never let the alias stand for it.
+            if resolve(raw, canonical) != target:
+                raise SourceClaimError('native source input alias resolves differently from its canonical path')
     return claims
 
 

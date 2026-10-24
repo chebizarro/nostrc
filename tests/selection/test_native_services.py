@@ -1,5 +1,6 @@
 """Direct real private-resource tests; Linux skips are explicit, not acceptance."""
 import contextlib
+import copy
 import hashlib
 import importlib.util
 import json
@@ -605,3 +606,421 @@ class ReadinessDescriptorLifecycle(unittest.TestCase):
         result = json.loads((self.evidence / 'services.json').read_text())
         self.assertEqual(result['status'], 'passed')
         self.assertTrue(result['services'][0]['reaped'])
+
+
+# ------------------------------------------------- source claims (.36.27) --
+# Verbatim predicates of the sealer/qualifier at aebb6eff6 (manual broad run
+# 40072096156 refused grotto/core/groundhog with 'sealed source claims differ
+# from the sealed raw input audits'). Kept only as a regression oracle.
+def _old_sealer_claims(result, source):
+    claims = {}
+    def visit(value):
+        if isinstance(value, dict):
+            for path, expected in value.get('input_hashes', {}).items():
+                candidate = Path(path)
+                if candidate.is_absolute() and candidate.is_relative_to(source):
+                    if candidate.resolve(strict=True).is_relative_to(source):
+                        if path in claims and claims[path] != expected:
+                            raise services.ServiceError('contradictory native source input claim')
+                        claims[path] = expected
+                    else:
+                        raise services.ServiceError('native source input escaped checkout')
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    visit(result)
+    return claims
+
+
+def _old_qualifier_claims(result, source):
+    claims = {}
+    def visit(value):
+        if isinstance(value, dict):
+            for path, expected in (value.get('input_hashes') or {}).items():
+                if os.path.isabs(path) and os.path.normpath(path) == path and path.startswith(source + os.sep):
+                    if claims.setdefault(path, expected) != expected:
+                        raise ValueError('contradictory sealed source input claim')
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    visit(result)
+    return claims
+
+
+def _grotto_descriptor_alias(root):
+    """The production grotto descriptor spelling of the signer gschema input."""
+    authored = (ROOT / 'apps/grotto/tests/TestInventory.cmake').read_text()
+    spelling = '${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml'
+    assert spelling in authored, 'production descriptor spelling changed; re-derive this control'
+    return spelling.replace('${CMAKE_CURRENT_SOURCE_DIR}', str(root / 'apps/grotto/tests'))
+
+
+class SourceClaimContract(unittest.TestCase):
+    """One lexical contract on both sides; physical alias proof only at seal time."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve() / 'source'
+        (self.root / 'apps/grotto/tests').mkdir(parents=True)
+        (self.root / 'apps/grotto/data').mkdir(parents=True)
+        self.schema = self.root / 'apps/grotto/data/org.nostr.Grotto.gschema.xml'
+        self.schema.write_bytes(b'<schemalist/>\n')
+        self.digest = _sha(self.schema)
+        self.alias = _grotto_descriptor_alias(self.root)
+
+    def test_old_predicates_disagree_on_descriptor_dotdot_inputs(self):
+        receipt = {'backend_receipt': {'input_audit': {'input_hashes': {self.alias: self.digest}}}}
+        old_sealed = _old_sealer_claims(receipt, self.root)
+        old_derived = _old_qualifier_claims(receipt, str(self.root))
+        self.assertEqual(old_sealed, {self.alias: self.digest})
+        self.assertEqual(old_derived, {})              # exactly the hosted refusal shape
+        claims, spellings = services.source_claim_contract(receipt, str(self.root))
+        self.assertEqual(claims, {str(self.schema): self.digest})
+        self.assertEqual(spellings, {str(self.schema): [self.alias]})
+        self.assertEqual(services._source_claims(receipt, self.root), claims)
+
+    def test_signer_fixture_mapping_control_keeps_every_runtime_claim(self):
+        """Mapping control only: no signer execution, delivery or qualification is claimed.
+
+        The production post-build audit merges the signer contract's canonical
+        SIGNER_INPUTS into the same input_hashes as grotto descriptor inputs, so
+        the gschema is claimed under two spellings of one file."""
+        signer = {}
+        for relative in services.SIGNER_INPUTS:
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_bytes(relative.encode() + b'\n')
+            signer[str(path)] = _sha(path)
+        tool = {'path': '/usr/bin/dbus-daemon', 'sha256': 'e' * 64}
+        audit = dict(signer, **{self.alias: self.digest, tool['path']: tool['sha256']})
+        receipt = {'backend_receipt': {
+            'input_audit_before_build': {'input_hashes': dict(signer)},
+            'input_audit': {'input_hashes': audit},
+            'runtime_capability_evidence': {'signer_endpoint': {'inputs': dict(signer), 'executables': {'dbus-daemon': tool}}},
+            'signer_runtime': {'inputs': {'fixture': {'path': str(self.schema)}}, 'contract': {'inputs': dict(signer)}},
+            'previous_attempts': [{'input_audit': {'input_hashes': {self.alias: self.digest}}}]}}
+        old_sealed, old_derived = _old_sealer_claims(receipt, self.root), _old_qualifier_claims(receipt, str(self.root))
+        self.assertEqual(set(old_sealed) - set(old_derived), {self.alias})
+        claims, spellings = services.source_claim_contract(receipt, str(self.root))
+        self.assertEqual(claims, signer)                # every signer source claim kept, none dropped
+        self.assertEqual(spellings[str(self.schema)], sorted([str(self.schema), self.alias]))
+        self.assertNotIn(tool['path'], claims)          # host tools stay bound by their own audits
+        self.assertEqual(services._source_claims(receipt, self.root), claims)
+        # The raw audit keeps the canonical key _signer requires; nothing is rewritten.
+        self.assertEqual(receipt['backend_receipt']['input_audit']['input_hashes'][str(self.schema)], self.digest)
+        receipt['backend_receipt']['input_audit']['input_hashes'][self.alias] = 'f' * 64
+        with self.assertRaisesRegex(services.SourceClaimError, 'contradictory'):
+            services.source_claim_contract(receipt, str(self.root))
+
+    def test_malformed_escape_root_and_control_claims_refuse_on_both_sides(self):
+        import test_selection_execution as normal
+        root = str(self.root)
+        cases = {
+            'lexical escape': ({root + '/apps/../../outside/x': 'a' * 64}, 'escaped checkout'),
+            'root itself': ({root + '/apps/..': 'a' * 64}, 'source root itself'),
+            'malformed hash': ({str(self.schema): 'A' * 64}, 'malformed source input claim hash'),
+            'non-string hash': ({str(self.schema): None}, 'malformed source input claim hash'),
+            'control path': ({root + '/apps/x\ny': 'a' * 64}, 'malformed source input claim path'),
+            'contradictory aliases': ({str(self.schema): 'a' * 64, self.alias: 'b' * 64}, 'contradictory'),
+        }
+        for label, (mapping, message) in cases.items():
+            with self.subTest(label):
+                receipt = {'checks': {'x': {'input_hashes': mapping}}}
+                with self.assertRaisesRegex(services.SourceClaimError, message):
+                    services.source_claim_contract(receipt, root)
+                with self.assertRaisesRegex(ValueError, 'violate the source claim contract: .*' + message):
+                    normal._derived_claims(receipt, root)
+        for malformed in (None, [], 'x'):
+            with self.subTest(mapping=malformed):
+                with self.assertRaisesRegex(services.SourceClaimError, 'malformed input audit mapping'):
+                    services.source_claim_contract({'input_hashes': malformed}, root)
+        for bad_root in (root + '/', root + '/apps/..', 'relative', '/', None):
+            with self.subTest(root=bad_root):
+                with self.assertRaisesRegex(services.SourceClaimError, 'canonical absolute'):
+                    services.source_claim_contract({}, bad_root)
+        outside = {'/usr/include/stdio.h': 'a' * 64, 'relative/x.h': 'b' * 64, root + 'sibling/x': 'c' * 64}
+        self.assertEqual(services.source_claim_contract({'input_hashes': outside}, root), ({}, {}))
+
+    def test_sealer_requires_physical_alias_agreement_inside_source(self):
+        receipt = {'input_hashes': {self.alias: self.digest}}
+        outside = self.root.parent / 'outside'
+        (outside / 'deep').mkdir(parents=True)
+        (outside / 'data').mkdir()
+        (outside / 'data/org.nostr.Grotto.gschema.xml').write_bytes(self.schema.read_bytes())  # same bytes
+        tests = self.root / 'apps/grotto/tests'
+        tests.rmdir()
+        os.symlink(outside / 'deep', tests)              # tests/.. now leaves the checkout
+        with self.assertRaisesRegex(services.SourceClaimError, 'alias resolves differently'):
+            services._source_claims(receipt, self.root)
+        tests.unlink()
+        (self.root / 'apps/grotto/other/deep').mkdir(parents=True)
+        os.symlink(self.root / 'apps/grotto/other/deep', tests)   # in-tree, but a different file
+        (self.root / 'apps/grotto/other/data').mkdir()
+        (self.root / 'apps/grotto/other/data/org.nostr.Grotto.gschema.xml').write_bytes(self.schema.read_bytes())
+        with self.assertRaisesRegex(services.SourceClaimError, 'alias resolves differently'):
+            services._source_claims(receipt, self.root)
+        tests.unlink(); tests.mkdir()
+        self.schema.unlink()
+        os.symlink(outside / 'data/org.nostr.Grotto.gschema.xml', self.schema)
+        with self.assertRaisesRegex(services.SourceClaimError, 'escaped checkout'):
+            services._source_claims(receipt, self.root)
+        self.schema.unlink()
+        with self.assertRaisesRegex(services.SourceClaimError,
+                                    r'does not resolve: apps/grotto/data/org\.nostr\.Grotto\.gschema\.xml \(FileNotFoundError\)$'):
+            services._source_claims(receipt, self.root)
+
+    def test_double_slash_spellings_refuse_instead_of_dropping_a_source_claim(self):
+        import test_selection_execution as normal
+        root = str(self.root)
+        double = '/' + str(self.schema)                  # //<root>/...: POSIX opens the same file
+        self.assertTrue(os.path.samefile(double, self.schema))
+        receipt = {'input_hashes': {double: self.digest}}
+        # Regression oracle: both old helpers silently omitted it (equal, but a claim was lost).
+        self.assertEqual((_old_sealer_claims(receipt, self.root), _old_qualifier_claims(receipt, root)), ({}, {}))
+        for side in (lambda: services.source_claim_contract(receipt, root),
+                     lambda: services._source_claims(receipt, self.root)):
+            with self.assertRaisesRegex(services.SourceClaimError, 'unsupported double-slash source input spelling: '
+                                        r'apps/grotto/data/org\.nostr\.Grotto\.gschema\.xml$'):
+                side()
+        with self.assertRaisesRegex(ValueError, 'violate the source claim contract: unsupported double-slash'):
+            normal._derived_claims(receipt, root)
+        with self.assertRaisesRegex(services.SourceClaimError, 'unsupported double-slash'):
+            services.source_claim_contract({'input_hashes': {'/' + root: self.digest}}, root)
+        with self.assertRaisesRegex(services.SourceClaimError, 'canonical absolute'):
+            services.source_claim_contract({}, '/' + root)        # no network-root authority
+        # Outside the root it is neither a claim nor authority; three slashes are POSIX root.
+        self.assertEqual(services.source_claim_contract({'input_hashes': {'//host/share/x': 'a' * 64}}, root), ({}, {}))
+        triple = {'input_hashes': {'//' + str(self.schema): self.digest}}
+        self.assertEqual(services._source_claims(triple, self.root), {str(self.schema): self.digest})
+
+    def test_unresolvable_raw_spellings_refuse_typed_without_host_paths(self):
+        import test_selection_execution as normal
+        root = str(self.root)
+        spellings = {'missing intermediate': root + '/apps/grotto/missing/../data/org.nostr.Grotto.gschema.xml',
+                     'outside prefix': str(self.root.parent) + '/absent-outside/../source/apps/grotto/data/'
+                                       'org.nostr.Grotto.gschema.xml'}
+        for label, raw in spellings.items():
+            with self.subTest(label):
+                receipt = {'input_hashes': {raw: self.digest}}
+                self.assertEqual(services.source_claim_contract(receipt, root)[0], {str(self.schema): self.digest})
+                if label == 'missing intermediate':
+                    with self.assertRaises(FileNotFoundError):    # old: untyped, leaks the host path
+                        _old_sealer_claims(receipt, self.root)
+                else:                                             # old: silently dropped on both sides
+                    self.assertEqual((_old_sealer_claims(receipt, self.root), _old_qualifier_claims(receipt, root)), ({}, {}))
+                with self.assertRaises(services.SourceClaimError) as caught:
+                    services._source_claims(receipt, self.root)
+                self.assertEqual(str(caught.exception), 'native source input spelling does not resolve: '
+                                 'apps/grotto/data/org.nostr.Grotto.gschema.xml (FileNotFoundError)')
+                self.assertNotIn(str(self.root.parent), str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                # Lexical qualifier derivation is unchanged; no seal exists for it to accept.
+                self.assertEqual(normal._derived_claims(receipt, root), {str(self.schema): self.digest})
+        loop = self.root / 'apps/loop'
+        os.symlink('loop', loop)
+        with self.assertRaisesRegex(services.SourceClaimError, r'does not resolve: .*\((OSError|RuntimeError)\)$'):
+            services._source_claims({'input_hashes': {str(loop) + '/../grotto/data/org.nostr.Grotto.gschema.xml':
+                                                      self.digest}}, self.root)
+
+    def test_qualifier_diagnostic_names_unmatched_claims_without_secrets(self):
+        import test_selection_execution as normal
+        root = str(self.root)
+        token = 'p1_' + '0123456789abcdef' * 4
+        sealed = {self.alias: self.digest, root + '/a/' + token + '.txt': 'c' * 64, str(self.schema): self.digest}
+        derived = {str(self.schema): 'd' * 64, root + '/b\x1bx.h': 'e' * 64}
+        text = normal._claim_difference(sealed, derived, root)
+        self.assertIn('sealed only 2: a/<redacted>.txt, apps/grotto/tests/../data/org.nostr.Grotto.gschema.xml', text)
+        self.assertIn('derived only 1: b?x.h', text)
+        self.assertIn('hash differs 1: apps/grotto/data/org.nostr.Grotto.gschema.xml', text)
+        for secret in (token, self.digest, 'c' * 64, 'd' * 64, root):
+            self.assertNotIn(secret, text)
+
+
+from test_normal_transport import TransportFixture   # small real CMake/Ninja synthetic lanes
+import test_selection_execution as normal_execution
+import test_selection_services as lane_services   # the module the engine itself imports
+
+ALIAS_DESCRIPTOR = '''  if(t STREQUAL "omitted")
+    set(_input vector.txt)
+  else()
+    set(_input "${CMAKE_CURRENT_SOURCE_DIR}/cmake/../vector.txt")
+  endif()
+  nostrc_describe_test(${t} OWNER application TARGETS shared INPUTS ${_input})
+'''
+
+
+class GenuineDescriptorAliasSourceClaims(TransportFixture):
+    """Real configure/build/full audit/seal/worker/portable aggregate of a descriptor
+    INPUT authored like grotto's ``${CMAKE_CURRENT_SOURCE_DIR}/../data/...``.
+
+    Synthetic supervisor/AppArmor records and host builds: NOT pidns, hosted,
+    whole-profile or signer proof."""
+    def prepare_source(self):
+        lists = self.root / 'CMakeLists.txt'
+        text = lists.read_text()
+        old = '  nostrc_describe_test(${t} OWNER application TARGETS shared INPUTS vector.txt)\n'
+        self.assertIn(old, text)
+        lists.write_text(text.replace(old, ALIAS_DESCRIPTOR))
+        self.git('add', '-A')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'descriptor alias input')
+        self.alias = str(self.root) + '/cmake/../vector.txt'
+        self.canonical = str(self.root / 'vector.txt')
+
+    def audits(self):
+        raw = self.original['backend_receipt']
+        return raw['input_audit_before_build']['input_hashes'], raw['input_audit']['input_hashes']
+
+    def clear_seal(self):
+        for name in ('native-seal.json', 'native-final.json'):
+            (self.work / name).unlink(missing_ok=True)
+        shutil.rmtree(self.work / 'source-inputs', ignore_errors=True)
+
+    def test_genuine_receipt_carries_both_spellings_and_old_predicates_disagree(self):
+        for hashes in self.audits():
+            self.assertEqual(hashes[self.alias], hashes[self.canonical])
+        old_sealed = _old_sealer_claims(self.original, self.root)
+        old_derived = _old_qualifier_claims(self.original, str(self.root))
+        self.assertEqual(set(old_sealed) - set(old_derived), {self.alias})
+        with patch.object(lane_services, '_source_claims', _old_sealer_claims):
+            self.seal()
+        self.publish_raw()
+        with patch.object(normal_execution, '_derived_claims', _old_qualifier_claims):
+            # Exactly the hosted worker-qualify refusal text.
+            with self.assertRaisesRegex(ValueError, '^normal execution: sealed source claims differ '
+                                        'from the sealed raw input audits'):
+                self.worker()
+        self.assert_raw_retained()
+        # The corrected qualifier never re-accepts an old raw-spelling seal.
+        with self.assertRaisesRegex(ValueError, r'differ from the sealed raw input audits '
+                                    r'\(sealed only 1: cmake/\.\./vector\.txt\)$'):
+            self.worker()
+        self.assert_raw_retained()
+
+    def test_shared_contract_seals_qualifies_and_aggregates_offline(self):
+        seal = json.loads((self.work / 'native-seal.json').read_text())
+        claims = seal['source_claims']
+        self.assertIn(self.canonical, claims)
+        self.assertFalse(any('/../' in name or '/./' in name for name in claims))
+        self.assertEqual(claims, normal_execution._derived_claims(self.original, str(self.root)))
+        retained = self.work / 'source-inputs' / (hashlib.sha256(self.canonical.encode()).hexdigest() + '.input')
+        self.assertEqual(retained.read_bytes(), (self.root / 'vector.txt').read_bytes())
+        anchor = _sha(self.work / 'native-seal.json')
+        self.assertEqual(lane_services.attest_native_lane(self.work, anchor)['seal_sha256'], anchor)
+        for hashes in self.audits():
+            self.assertIn(self.alias, hashes)            # raw originals unmodified
+        result = self.worker()
+        self.assertEqual(result['receipt_kind'], normal_execution.KIND)
+        base = self.download()
+        shutil.move(str(self.dependency), str(Path(self.temp.name) / 'worker-gone'))   # no worker host paths
+        paths, aggregate = self.aggregate(base)
+        self.assertEqual(len(paths), 1)
+        self.assertTrue(aggregate['passed'], aggregate['errors'])
+
+    def test_symlinked_gate_source_spelling_seals_the_same_canonical_claims(self):
+        expected = json.loads((self.work / 'native-seal.json').read_text())['source_claims']
+        spelled = Path(self.temp.name) / 'gate-source-link'
+        os.symlink(self.root, spelled)
+        self.clear_seal()
+        lane_services.seal_native_lane(self.work, spelled, self.original, self.resolved)
+        self.assertEqual(json.loads((self.work / 'native-seal.json').read_text())['source_claims'], expected)
+
+    def test_divergent_missing_stale_and_conflicting_genuine_claims_refuse(self):
+        cmake = self.root / 'cmake'
+        moved = Path(self.temp.name) / 'cmake-moved'
+        elsewhere = self.root / 'elsewhere'
+        vector = self.root / 'vector.txt'
+        original = vector.read_bytes()
+        def divergent():
+            shutil.move(str(cmake), str(moved))
+            (elsewhere / 'deep').mkdir(parents=True)
+            (elsewhere / 'vector.txt').write_bytes(original)   # same bytes, different in-tree file
+            os.symlink(elsewhere / 'deep', cmake)
+        def undo_divergent():
+            cmake.unlink(); shutil.rmtree(elsewhere); shutil.move(str(moved), str(cmake))
+        def stale():
+            vector.write_bytes(b'changed before seal\n')
+        def missing():
+            vector.unlink()
+        def restore():
+            vector.write_bytes(original)
+        def missing_intermediate():
+            shutil.move(str(cmake), str(moved))       # cmake/../vector.txt no longer resolves
+        def undo_intermediate():
+            shutil.move(str(moved), str(cmake))
+        for label, mutate, undo, error in (
+                ('divergent alias', divergent, undo_divergent, 'alias resolves differently'),
+                ('stale input', stale, restore, 'changed before finalizer seal'),
+                ('missing input', missing, restore, r'does not resolve: vector\.txt \(FileNotFoundError\)$'),
+                ('missing intermediate', missing_intermediate, undo_intermediate,
+                 r'does not resolve: vector\.txt \(FileNotFoundError\)$')):
+            with self.subTest(label):
+                mutate()
+                try:
+                    with self.assertRaisesRegex(lane_services.ServiceError, error):
+                        self.seal()
+                    self.assertFalse((self.work / 'native-seal.json').exists())
+                finally:
+                    undo()
+        conflicting = copy.deepcopy(self.original)
+        conflicting['backend_receipt']['input_audit']['input_hashes'][self.alias] = '0' * 64
+        with self.assertRaisesRegex(lane_services.ServiceError, 'contradictory'):
+            lane_services._source_claims(conflicting, self.root)
+        with self.assertRaisesRegex(ValueError, 'contradictory'):
+            normal_execution._derived_claims(conflicting, str(self.root))
+        self.seal()
+        self.publish_raw()
+        self.worker()                                    # restored genuine state still qualifies
+
+    def test_post_seal_drift_and_wrong_qualifier_root_refuse(self):
+        anchor = _sha(self.work / 'native-seal.json')
+        vector = self.root / 'vector.txt'
+        original = vector.read_bytes()
+        vector.write_bytes(b'after seal\n')
+        try:
+            with self.assertRaisesRegex(lane_services.ServiceError, 'source input changed after finalizer seal'):
+                lane_services.attest_native_lane(self.work, anchor)
+        finally:
+            vector.write_bytes(original)
+        seal = json.loads((self.work / 'native-seal.json').read_text())
+        other = str(self.root.parent / 'other-root')
+        self.assertNotEqual(normal_execution._derived_claims(self.original, other), seal['source_claims'])
+        text = normal_execution._claim_difference(seal['source_claims'], {}, other)
+        self.assertIn('sealed only', text)
+        self.assertIn('<outside root>', text)
+        self.assertNotIn(str(self.root), text)
+
+    def test_finalizer_seals_canonical_claims_on_success_failure_and_cancellation(self):
+        harness = NativeSealLifecycle('test_namelink_claim_seals_and_attests_after_exit')
+        harness.root = Path(self.temp.name).resolve()
+        derived = normal_execution._derived_claims(self.original, str(self.root))
+        for outcome, code in ((0, 0), (1, 1), ('cancel', 130)):
+            with self.subTest(outcome):
+                self.clear_seal()
+                (self.work / 'lane.log').write_bytes(b'')
+                returncode, anchor = harness.finalize(self.work, self.root, outcome, [self.original], [self.resolved])
+                self.assertEqual(returncode, code, (self.work / 'lane.log').read_bytes())
+                self.assertEqual(lane_services.attest_native_lane(self.work, anchor)['status'], 'verified')
+                self.assertEqual(json.loads((self.work / 'native-seal.json').read_text())['source_claims'], derived)
+        # Divergent physical alias at seal time: the cancellation code stays, no anchor.
+        cmake, moved = self.root / 'cmake', Path(self.temp.name) / 'cmake-moved'
+        elsewhere = Path(self.temp.name) / 'elsewhere'
+        (elsewhere / 'deep').mkdir(parents=True)
+        (elsewhere / 'vector.txt').write_bytes((self.root / 'vector.txt').read_bytes())   # same bytes, other file
+        shutil.move(str(cmake), str(moved))
+        os.symlink(elsewhere / 'deep', cmake)
+        try:
+            self.clear_seal()
+            (self.work / 'lane.log').write_bytes(b'')
+            returncode, anchor = harness.finalize(self.work, self.root, 'cancel', [self.original], [self.resolved])
+            self.assertEqual((returncode, anchor), (130, ''))
+            self.assertIn(b'alias resolves differently', (self.work / 'lane.log').read_bytes())
+            self.assertFalse((self.work / 'native-seal.json').exists())
+            with self.assertRaisesRegex(lane_services.ServiceError, 'trusted native finalizer seal missing'):
+                lane_services.attest_native_lane(self.work, anchor)
+        finally:
+            cmake.unlink(); shutil.move(str(moved), str(cmake))

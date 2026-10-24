@@ -841,34 +841,47 @@ def verify_source_closure(locator, repo, plan):
     claims = locator.seal['source_claims']
     require(os.path.isabs(source) and os.path.normpath(source) == source and isinstance(claims, dict) and claims,
             'unsupported/empty sealed source closure')
-    require(claims == _derived_claims(locator.result, source),
-            'sealed source claims differ from the sealed raw input audits')
+    derived = _derived_claims(locator.result, source)
+    require(claims == derived, 'sealed source claims differ from the sealed raw input audits'
+            + _claim_difference(claims, derived, source))
     tracked = set(git('ls-files', '-z', '--recurse-submodules').split('\0')) - {''}
     for name, expected in claims.items():
         require(os.path.normpath(name) == name and name.startswith(source + os.sep), 'source claim outside sealed source root')
         relative = Path(name).relative_to(source)
-        require(relative.as_posix() in tracked, 'source claim is not a tracked file of the tested commit: ' + name)
+        require(relative.as_posix() in tracked,
+                'source claim is not a tracked file of the tested commit: ' + _claim_name(name, source))
         candidate = repo.joinpath(*relative.parts)
         resolved = candidate.resolve(strict=True)
         require(resolved.is_relative_to(repo) and resolved.is_file() and _sha(resolved) == expected,
-                'sealed source input differs from the tested checkout: ' + name)
+                'sealed source input differs from the tested checkout: ' + _claim_name(name, source))
 
 
 def _derived_claims(result, source):
-    """Lexical counterpart of the sealer's claim derivation over the sealed raw receipt."""
-    claims = {}
-    def visit(value):
-        if isinstance(value, dict):
-            for path, expected in (value.get('input_hashes') or {}).items():
-                if os.path.isabs(path) and os.path.normpath(path) == path and path.startswith(source + os.sep):
-                    require(claims.setdefault(path, expected) == expected, 'contradictory sealed source input claim')
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-    visit(result)
-    return claims
+    """The sealer's own canonical contract over the sealed raw receipt (lexical, portable)."""
+    from test_selection_services import SourceClaimError, source_claim_contract
+    try:
+        return source_claim_contract(result, source)[0]
+    except SourceClaimError as exc:
+        require(False, 'sealed raw input audits violate the source claim contract: ' + str(exc))
+
+
+def _claim_name(name, source):
+    from test_selection_services import safe_claim_name
+    return safe_claim_name(name, source)
+
+
+def _claim_difference(sealed, derived, source, limit=8):
+    """Nonsecret mismatch summary: root-relative names only, never hashes or bytes."""
+    if not isinstance(sealed, dict):
+        return ''
+    parts = []
+    for label, names in (('sealed only', sorted(set(sealed) - set(derived))),
+                         ('derived only', sorted(set(derived) - set(sealed))),
+                         ('hash differs', sorted(n for n in set(sealed) & set(derived) if sealed[n] != derived[n]))):
+        if names:
+            shown = ', '.join(_claim_name(n, source) for n in names[:limit])
+            parts.append('%s %d: %s%s' % (label, len(names), shown, ', ...' if len(names) > limit else ''))
+    return (' (' + '; '.join(parts) + ')') if parts else ''
 
 
 def _identity(receipt):
