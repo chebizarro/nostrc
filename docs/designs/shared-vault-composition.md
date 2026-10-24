@@ -2,8 +2,10 @@
 
 **Status:** Design (Phase 0 / SV-D). **No implementation in this document.** Unreviewed draft for maintainer critique.
 **Bead:** to be filed as a new epic (`E-shared-vault`, proposed) with a hard dependency on `nostrc-h10m` (E-portable-home); the restructuring in §9 is filed as its own epic (`E-package-boundaries`, proposed) because it unblocks more than this design.
-**Reads:** `docs/designs/home-from-relay.md` (§2 data model, §4 keys, §6.3 multi-writer punt, §8 threat model, HFR-D18), `docs/designs/porthome-crypto-spec.md` (PCS §2–§7, D4 approval), `docs/designs/nostrfs-porthome-overlay.md` (§11 D15 "MLS / group-shared homes"), `docs/libhanami-design.md` (LHD §3.1 index, §3.3 kinds), `docs/investigations/scion-nostr-blossom-doc-vs-libhanami-2026-10-13.md` (§A2 "a causal event chain is not compare-and-swap"), `docs/MLS_INTEGRATION.md`.
-**Date:** 2026-10-24
+**Reads:** `docs/designs/home-from-relay.md` (§2 data model, §4 keys, §6.3 multi-writer punt, §8 threat model, HFR-D18), `docs/designs/porthome-crypto-spec.md` (PCS §2–§7, D4 approval), `docs/designs/nostrfs-porthome-overlay.md` (§11 D15 "MLS / group-shared homes"), `docs/libhanami-design.md` (LHD §3.3 kinds)
+
+> **[SV-R1 2026-10-24 — correction]** The OID↔Blossom index is LHD **§4.4** (`hanami_index`, under §4 Components), not §3.1; LHD §3.1 is "Hash Algorithm Alignment". §3.3 (NIP-34 kinds 30617/30618) is correct. Same fix applies to the comment in §3.5., `docs/investigations/scion-nostr-blossom-doc-vs-libhanami-2026-10-13.md` (§A2 "a causal event chain is not compare-and-swap"), `docs/MLS_INTEGRATION.md`.
+> **Date:** 2026-10-24
 
 > Decision numbering in this document (**D1…D18**) is local. Parent-design decisions are written **HFR-Dn**, **PCS §n**, **LHD §n**. External specs: NIP-34, NIP-42, NIP-44, NIP-51, NIP-59, NIP-78, BUD-01/02/03/04, GRASP-01/08, Marmot MIP-00–04, CORD-01/06.
 
@@ -47,6 +49,8 @@ The honest caveat up front: **D8 (owner-sequencer) means a shared vault has one 
 | Group protocols in tree     | `nips/nip-concord`, `nips/nip-communikeys`, `nips/nip29`                                                                                                                                                                                                               | CORD-01 private streams; communikeys; relay groups                                                                                                                                                                       | Not used here; see §2.2                                                                                                                 |
 
 Nothing in the tree mentions subtree keys, grants, or a second writer. HFR §6.3 and overlay D15 both record the punt explicitly; this document is the design they defer to.
+
+> **[SV-R1 — minor]** The §1 table's `nh_porthome_manifest.{h,c}` implies both files sit in `src/porthome/`; the header actually lives at `gnome/nostr-homed/include/nh_porthome_manifest.h` (with `nh_porthome_crypto.h`, `nh_porthome_wrapkey.h`, …), and `nh_porthome_cbor.h` is in `src/porthome/`. §9.4/R3's `git mv` must enumerate both trees or the compat header will point at nothing.
 
 ***
 
@@ -175,6 +179,8 @@ sealed under the vault root's `mani_key`, addressed by `sha256(sealed)`, and ref
 
 A public 30618 MAY still be published for a vault whose owner has flipped it public (GRASP-08's "privacy can be lifted"); that is a projection, not the source of truth.
 
+> **[SV-R1]** The `# LHD §3.1's OID↔Blossom index` comment above should read **LHD §4.4** (`hanami_index`). Verified against `docs/libhanami-design.md`: §3.3 lists kinds 30617/30618; §4.4 is the `hanami_index` component.
+
 ***
 
 ## 4. Sealed objects (extends PCS §4–§5)
@@ -210,6 +216,8 @@ porthome's pointer is a kind-30078 (NIP-78 application data) addressable event, 
 * `d = "porthome/v2/" ‖ hex(vault_id)` — one addressable slot per (author, vault).
 
 * content is NIP-44 v2 encrypted under a **conversation key derived from** **`head_key`** (`nip44_get_conversation_key(head_key_as_privkey, pub(head_key_as_privkey))`, i.e. the CORD-01 construction), not under the author's identity key. Any ring holder decrypts; the relay sees NIP-44 noise.
+
+> **[SV-R1 — rename + underspecified]** `nip44_get_conversation_key` does not exist. The public API is `nostr_nip44_convkey(sender_sk[32], receiver_pk_xonly[32], out_convkey[32])` (`nips/nip44/include/nostr/nip44/nip44.h:24`). The construction also needs one more sentence of spec: CORD-01 derives conversation keys from a generated *stream keypair* (`nip_concord.h:244`, `conv_key = nip44_conversation_key(sk, pk)`); here `head_key` is an arbitrary HKDF output used as *both* sk and pk, so the spec must state that `head_key` is a valid BIP340 scalar (reduce mod n at derivation) and that `pub(head_key)` is derived with the schnorr pubkey function before the self-ECDH. Without that, two implementations disagree on whether a non-scalar 32 bytes is an error.
 
 Because 30078 is addressable per author, **every writer has their own head slot** for free. There is no new kind for heads.
 
@@ -269,6 +277,8 @@ grant {                                    # rumor kind 30804 (proposed; reconci
 
 Kind 30804 is a **rumor-only** kind: it is never published bare and never signed as a standalone event; it appears only as the inner event of the two carriers below. Rumor kinds are type tags, so using an addressable-range number for a never-published rumor is harmless, and it keeps one registry with Onyx's draft.
 
+> **[SV-R1 — unverifiable reference]** No copy of the Onyx draft (kinds 30800–30803) exists in this tree or in the whitenoise-ios root. §6.2, §10.3 and D7(a) ("new kind per Onyx's 30803") assert specifics of an external draft the reader cannot check, and §14 item 5 only *asks* whether to reconcile. Either add a pointer (repo/URL) next to each 308xx mention, or mark them "external draft, unverified here" the way NIPs are cited.
+
 ### 6.3 Carriers
 
 **Primary — Marmot group (D11).** The owner creates (or reuses) a Marmot group whose members are the vault's members. The vault's root ring is **derived from the group's exporter secret**: `seed = MLS-Exporter(label="porthome/v2/vault", context=vault_id, L=32)`, exactly the seam overlay-D15 anticipated. Grant bodies travel as kind-445 application messages inside the group. Add/remove is an MLS commit; the new epoch's exporter yields the new root key; PCS/forward secrecy of delivery comes from MLS, not from this document.
@@ -322,8 +332,11 @@ A **private vault service** is any pair of (Blossom server, Nostr relay) that:
 Three facts from §1 make the composition in §10 impossible on the current tree:
 
 1. `gnome/nostr-homed` **links libhanami to obtain a Blossom client**. A GNOME login/home component depending on a libgit2 extension is a layering inversion; it drags libgit2's symbol set into `pam_nostr`'s dependency closure (the CMake comment at `gnome/nostr-homed/CMakeLists.txt:55–64` already fights this) and means Onyx cannot take porthome without taking git.
-2. `nh_porthome_crypto.c` and `nh_porthome_wrapkey.c` **declare** **`nip44_hkdf_extract`/`_expand`/`nip44_hmac_sha256`** **as bare** **`extern`** and rely on link order to find them in `nip44`'s object files. That is a private cross-package symbol dependency with no header, no type-check across the boundary, and no `-fvisibility` protection. A signature change in nip44 breaks porthome at link time or, worse, silently at runtime.
-3. **Five Blossom clients** implement two auth styles (kind 27235 vs 24242) and divergent SSRF/size/content-type guards. The reviews under `docs/reviews/porthome-blossom-*` were run against *one* of them.
+
+> **[SV-R1 — overstatement + citation]** This is the risk the fence exists to *prevent*, not a present fact. `gnome/nostr-homed/CMakeLists.txt` (option block ~53–60 and the `NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL` fence at ~60–68) ships porthome as a standalone `libnostr_porthome.a` **not linked into the base nostr-login stack**, and double-gates syncd so nothing depending on libhanami reaches `pam_nostr`/`nostr-authd` today. Two corrections: (a) restate the argument honestly — the fence is load-bearing and fragile, and the real cost is that a GNOME-gated, libhanami-linked porthome *cannot be consumed by Onyx at all*; (b) the cited range `55–64` is off — the fence text spans ~53–68. §9.8/R3's "the `CMakeLists.txt:55–64` fence must stay green" inherits the same wrong range.
+
+1. `nh_porthome_crypto.c` and `nh_porthome_wrapkey.c` **declare** **`nip44_hkdf_extract`/`_expand`/`nip44_hmac_sha256`** **as bare** **`extern`** and rely on link order to find them in `nip44`'s object files. That is a private cross-package symbol dependency with no header, no type-check across the boundary, and no `-fvisibility` protection. A signature change in nip44 breaks porthome at link time or, worse, silently at runtime.
+2. **Five Blossom clients** implement two auth styles (kind 27235 vs 24242) and divergent SSRF/size/content-type guards. The reviews under `docs/reviews/porthome-blossom-*` were run against *one* of them.
 
 The `if(TARGET hanami)` ordering bug (`gnome/nostr-homed/CMakeLists.txt:1358–1364`) is a symptom: when a consumer has to guess whether a sibling exists, the sibling is in the wrong place.
 
@@ -349,6 +362,8 @@ Layer 7  gnome/nostr-homed/     syncd, FUSE, provisioner, pam/nss/auth glue, sys
          gnome/groundhog/, gnome/nostr-share/, apps/gnostr/   consume nostr-gobject's GnBlossomClient
          tools/vaultctl/        ⊕ CLI over libvault (share / grant / revoke / fold / fsck)
 ```
+
+> **[SV-R1 — phantom dependency]** `nips/nip78` **does not exist in the tree** (`nips/` has no nip78; nip59 and nip44 do). Kind-30078 pointer events are hand-rolled in `gnome/nostr-homed/src/porthome/nostr-homed-provision.c` (`nostr_event_set_kind(ev, 30078)`, line ~1552), with the pointer/manifest codec in `nh_porthome_manifest.c`. If a `nips/nip78` package is intended, it must be marked ⊕ **NEW** in the Layer-2 table and in §9.4, and its contents specified (what moves out of `nostr-homed-provision.c`); otherwise drop `78` from `nips/{44,59,78,bud02}` in the assembly table and from §9.4's dependency list. As written, two of the three assemblies name a package that will not exist at R-time.
 
 The three assemblies this document is about:
 
@@ -381,6 +396,8 @@ Deleted after migration: `gnome/nostr-homed/src/common/blossom_client.c`, `nh_po
 Contents: PCS v1+v2 sealing (§3–§4), manifest codec, name hashing, wrapkey, pointer/head codec (§5.1–§5.2), chunker (D3), the OID↔sealed index type (moved from hanami's `hanami-index.{h,c}` — it is a porthome concept, hanami is one user of it). **Not** contents: anything that opens a websocket, signs, touches systemd, FUSE, `auth.sock`, D-Bus, or `$HOME`. Those stay in nostr-homed.
 
 Dependencies: libnostr, `nips/nip44` **through** **`<nostr/nip44/kdf.h>`** (the `extern` declarations are deleted the same day the header lands — this is the first commit of SV-1), `nips/nip78`, libblossom, OpenSSL. Not libhanami. Not libmarmot.
+
+> **[SV-R1]** `nips/nip78` does not exist today (see the §9.2 note). Mark it ⊕ NEW with its contents specified, or remove it from this list. Also: R3's `git mv` must move the headers too — `nh_porthome_manifest.h`, `nh_porthome_wrapkey.h` etc. live in `gnome/nostr-homed/include/`, and `nh_porthome_cbor.h` stays in `src/porthome/`; the §9.4 text only moves `src/`.
 
 ### 9.5 libvault — the new code
 
@@ -497,6 +514,36 @@ Hanami mode already has a better answer than any of these: git merge. Concurrent
 5. **Kind numbers.** 30804 (grant rumor) and 10319 (service list) are proposals. Confirm whether to reconcile with Onyx's draft registry (30800–30802) before or after this lands, and who files the NIP.
 6. **PCS v1 → v2 migration.** Existing porthomes are at v1 under one `home_key`. The cheapest migration is "v1 home becomes a v2 vault whose root ring is `[(1, home_key)]` and whose derivation is `override` at every existing directory" — i.e. no re-seal. Confirm that is acceptable, or require a re-seal to get per-subtree convergence on old content.
 7. **`readers[]`** **in the manifest.** It is informational only (§3.4). Confirm the maintainer is comfortable shipping a field the protocol does not enforce, given the alternative is a side channel for "who has access".
+
+***
+
+## 14a. Reviewer verification log (SV-R1, 2026-10-24)
+
+Inline notes above are marked **[SV-R1]**. This log records what was checked against the tree and upstream docs, so the maintainer can see which load-bearing claims were verified rather than trusted.
+
+**Verified correct (spot-checked against source, no change needed):**
+
+* §1 line counts are exact: `nh_porthome_blossom.c` 518, `hanami-blossom-client.c` 1486, `gh-blossom-client.c` 954, `common/blossom_client.c` 306, `ns-blossom.c` 181 — five Blossom clients, as claimed.
+
+* The bare `extern` block exists at `nh_porthome_crypto.c:24–30` (`nip44_hkdf_extract`/`_expand`/`nip44_hmac_sha256`) and again at `nh_porthome_wrapkey.c:18–21`, with a comment admitting the link-order trick.
+
+* Root `CMakeLists.txt` adds `gnome/nostr-homed` (line 394) **before** `libhanami` (line 400), and `gnome/nostr-homed/CMakeLists.txt` ~1357–1364 contains the comment conceding that `if(TARGET hanami)` is always false in-tree — §9.1's ordering claim is exact.
+
+* Auth split: kind **27235** (NIP-98) in `common/blossom_client.c`, kind **24242** (BUD-02) in `libhanami/src/hanami-bud02-auth.c`; HFR-D7 (line 603) does say "Retire (a) in Phase 5", so §9.3's retirement claim is sourced.
+
+* `chunk_key_id` is reserved and always 0 in Phase 1 (PCS §9; `nh_porthome_manifest.c` map(3)), and PCS §2 fixes the `porthome/v1/*` salt strings with the v1→v2 lockstep bump convention — §3.2's `porthome/v2/*` salts follow it correctly.
+
+* `nip44_calc_padded_len` exists (`nips/nip44/src/core/nip44_padding.c`), so §4.2's padding reuse is implementable as stated.
+
+* GRASP-08 (ngit.dev, fetched 2026-10-24): kind **10318** private Git relay list, `g` tags NIP-44-encrypted in `content` with empty public tags, `auth-required:`/`restricted:` semantics, service-wide whitelist, and the **401-never-403/404** rule — §5.4 and §7 model it accurately. "Privacy can be lifted" matches GRASP-08's "can later become public".
+
+* Cross-references resolve: HFR §2.2/§4.3/§6.3/§6.5/§8 and HFR-D18; PCS §2–§9 + D4 approval 2026-09-23; overlay §11 D15 ("would arrive by the same seam") + §12 D3 truthful-folder; scion §A2 (CAS overclaim) and §A3 (retention); LHD §3.3 kinds 30617/30618; MLS kinds 443/444/445 + exporter secret; MIP-00–04; the five `docs/reviews/porthome-blossom-*` docs; `porthome-jmx0-two-machine-2026-09-25.md`; the shim's follow-up bead (`nostrc-si30`) and its 24 h capability cache; `relayd` implements NIP-42 (README §AUTH).
+
+* `bindings/` does not exist yet — correctly marked ⊕ NEW in §9.2.
+
+**Found and corrected above (7 items):** LHD §3.1→§4.4 index reference (×2); `nip44_get_conversation_key` → `nostr_nip44_convkey` + scalar-validity underspecification (§5.1); Onyx 308xx draft unverifiable (§6.2/§10.3/D7); §9.1's pam-closure overstatement + wrong CMake line range; `nips/nip78` phantom dependency (§9.2, §9.4); §1/R3 manifest-header location.
+
+**Open questions the log could not close:** whether Marmot's exporter-derived seed (§6.3) matches MLS_INTEGRATION's actual exporter label/policy (the doc cites RFC 9420 §8 but the label string is new); whether kind 10319 collides with any in-flight NIP-51 proposal. Both belong in §14.
 
 ***
 
