@@ -24,6 +24,18 @@ def witness():
     return json.loads(raw)
 
 
+def require_reviewed_contract(contract):
+    """The real renewal guard for this batch: exact digest and historical list pins.
+
+    The structural validator (s.diagnostic_nonmember_contracts) checks only shape:
+    keys, schema, the live profile hash, sorted unique names, disjoint lists and
+    review-hash format. It does not bind review provenance to the list contents."""
+    s.require(s.digest(contract) == witness()['contract_sha256'], 'reviewed nonmember contract digest changed')
+    frozen = json.loads((ROOT / 'tests/selection/fixtures/nonmember_audit_edges.json').read_bytes())
+    s.require(contract['registrations'] == frozen['unclaimed_registrations'],
+              'reviewed nonmember registrations differ from the frozen post-audit list')
+
+
 class SanitizerPartitionDrift(unittest.TestCase):
     def setUp(self):
         self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
@@ -53,6 +65,7 @@ class SanitizerPartitionDrift(unittest.TestCase):
 
     def test_reviewed_contract_is_exact_and_unrenewed(self):
         self.assertEqual(s.digest(self.contract), self.data['contract_sha256'])
+        require_reviewed_contract(self.contract)
         self.assertEqual({k: len(self.contract[k]) for k in ('registrations', 'required_closure')},
                          self.data['contract_counts'])
         self.assertEqual(self.data['contract_counts'], {'registrations': 347, 'required_closure': 65})
@@ -103,22 +116,47 @@ class SanitizerPartitionDrift(unittest.TestCase):
         with self.assertRaisesRegex(r.RealizationError, 'partition differs'):
             self.partition([n for n in hosted if n != delta], contract=overlapping)
 
-    def test_membership_or_unreviewed_renewal_cannot_silently_admit(self):
+    def test_membership_or_list_only_renewal_is_refused_by_digest_pin(self):
         hosted = self.data['hosted_registrations']
         delta = self.data['delta']['registration']
         # Owning it as a sanitizer member changes the reviewed 65-entry closure: refuses.
         with self.assertRaisesRegex(r.RealizationError, 'required fixture closure changed'):
             self.partition(hosted, closure=sorted(self.contract['required_closure'] + [delta]))
-        # A renewed list would satisfy the predicate, but the contract validator binds
-        # review provenance/profile hash; this bead applies no renewal.
-        renewed = copy.deepcopy(self.contract)
-        renewed['registrations'] = sorted(renewed['registrations'] + [delta])
-        self.partition(hosted, contract=renewed)
-        self.assertNotEqual(s.digest(renewed), self.data['contract_sha256'])
-        forged = copy.deepcopy(self.policy)
-        forged['diagnostic_nonmembers'][PROFILE]['review'] = {'source_sha': 'unknown'}
-        with self.assertRaises(ValueError):
-            s.diagnostic_nonmember_contracts(forged)
+        # A list-only renewal in the inventory, keeping the reviewed review and
+        # profile_hash (or with any well-formed review), passes the structural
+        # validator AND the partition predicate. Neither binds provenance; the
+        # digest and historical list pins are what refuse it. No renewal is applied.
+        for review in (None, {'source_sha': 'f' * 40, 'post_audit_sha256': 'e' * 64}):
+            with self.subTest(review=review):
+                forged = copy.deepcopy(self.policy)
+                record = forged['diagnostic_nonmembers'][PROFILE]
+                record['registrations'] = sorted(record['registrations'] + [delta])
+                if review is not None:
+                    record['review'] = review
+                renewed = s.diagnostic_nonmember_contracts(forged)[PROFILE]
+                self.assertEqual(renewed['profile_hash'], self.contract['profile_hash'])
+                self.partition(hosted, contract=renewed)
+                with self.assertRaisesRegex(ValueError, 'reviewed nonmember contract digest changed'):
+                    require_reviewed_contract(renewed)
+                # The historical post-audit list pin refuses independently of the digest.
+                with mock.patch.object(s, 'digest', return_value=self.data['contract_sha256']):
+                    with self.assertRaisesRegex(ValueError, 'differ from the frozen post-audit list'):
+                        require_reviewed_contract(renewed)
+        # What the structural validator does refuse: stale profile hash, duplicate
+        # names, registration/closure overlap and malformed review provenance.
+        names = self.policy['diagnostic_nonmembers'][PROFILE]
+        structural = (
+            ('profile_hash', '0' * 64, 'malformed/stale'),
+            ('registrations', sorted(names['registrations'] + [names['registrations'][0]]), 'malformed/stale'),
+            ('registrations', sorted(names['registrations'] + [names['required_closure'][0]]), 'malformed/stale'),
+            ('review', {'source_sha': 'unknown'}, 'review provenance'),
+        )
+        for key, value, message in structural:
+            with self.subTest(key=key, message=message):
+                forged = copy.deepcopy(self.policy)
+                forged['diagnostic_nonmembers'][PROFILE][key] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    s.diagnostic_nonmember_contracts(forged)
 
     def test_source_and_legacy_setup_facts(self):
         guard = self.data['delta']['cmake_guard']
