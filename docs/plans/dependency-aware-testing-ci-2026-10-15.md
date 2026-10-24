@@ -1,85 +1,63 @@
 # Dependency-aware testing and CI/CD
 
-> **PR26 landed — 2026-10-24:** normal merge `9c22f7298` (head H6 `8767f9f6e`, tested S6 `5031ee1c`, same tree). All 12 fresh-source legacy workflows passed, including Groundhog 125/125 + ASan 65/65 and Static 779 s. Exactly 11 `.36` cells closed; `.36.21`/`.32`/`.33` stay open. The shadow S6 gate was still pending, and counters stay 0/20, 0/2 and 0 product samples; W11 NOT MET / W12 NOT RUN. [Delivered receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#pr26-delivered-at-master-9c22f7298--2026-10-24t181519z) and [S6 run ledger](../reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-delivered-at-master-9c22f7298-and-s6-shadow-snapshot-2--2026-10-24t181519z).
+## Delivery acceptance — owner reset, 2026-10-25
 
-> **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](../reviews/dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
+This delivery has **exactly three outcomes**:
 
-> **Earlier finite batch — 2026-10-24, [PR24 source receipt](../reviews/dependency-aware-testing-priority-parity-2026-10-24.md):** landed normally at `b43ff6160`. Repairs include worker prerequisites, exact46 MDK011/45 ASan app ownership, two private-daemon test environments, and executable measurement capture. Final hosted head `bd0b3b2` / tested merge `f5d85dec8`: DEFAULT1,261/zero failures/errors/80 skips; separate overlapping kernel81/zero skips. Native source937 remains separately labelled439=434pass+5skip, not native final-head/profile acceptance. Original failed attempts remain retained. `.36.12`/`.36.17` close finite source scopes only; `.36.19`–`.36.22` name the newly reached ownership/freshness/Xvfb/partition blockers. Real product samples remain zero; reviewed W11 counters0/20 and0/2, W12 NOT RUN. No default/protection/publisher/legacy-trigger/schedule cutover. All older checkpoints below remain historical, not current acceptance.
+1. **Correct dependency-aware affected-test selection:** changed inputs select
+   their relevant checks and downstream consumers, including compatibility where
+   relevant; prerequisites are built without selecting unrelated prerequisite
+   tests. Explain inclusion, omission and conservative broad fallback for unknown
+   paths or incomplete relevant dependency information.
+2. **Operational defaults:** affected local development/pre-push and PR execution;
+   broad master/integration, release and manual routes; an explicit full override.
+   There is no scheduled/nightly tier.
+3. **Focused representative verification:** demonstrate relevant inclusion and
+   unrelated omission, including relevant compatibility, and report real failures,
+   cancellations, unavailable prerequisites and unexecuted work honestly.
 
-> **Concrete closure batch, code `0e3601eab21ca480a7d80c72d6c29ac29155f5aa`:**
-> all six final approved tips preserve ancestry. Internal resource/profile/input,
-> tool/producer and workflow enrollment is implemented; full33 ordinary ownership
-> is not diagnostic-subset promotion. Typed policy-controller execution replaces
-> the predecessor-only architectural gap. Only validated shadow_cutover is
-> administrative rollout readiness; the other nine technical gaps and all guards
-> remain. [Final integration report, failed attempts and exact hosted dispatch
-> handoff](../reviews/dependency-aware-testing-w11-closure-integration-2026-10-23.md)
-> distinguish actual local/emulated supported proof from native/hosted acceptance.
-> Parent lands and dispatches existing workflows; no endpoint/approval is pending.
-> Final TCP audits/default build pass but fixture startup fails on an overlong
-> private D-Bus socket path: unresolved internal work, not emulation attribution.
-> Selected policy local provisioning attempts fail before a typed receipt; the
-> passing ARM workload alone is not selected-worker acceptance.
-> Dated C census `2026-10-23T02:12:04.578186Z`–`02:12:28.940355Z` and21 real PR
-> replays are diagnostic, not fresh acceptance:0/20 qualifying comparisons,0/2
-> complete broad integrations. Local suites add no quota credit. W11 NOT MET,
-> W12 NOT RUN; no default, protection, publisher or schedule cutover.
+These are the complete delivery acceptance contract, replacing accumulated W11,
+W12 and AGENTS requirements. No additional acceptance tasks, PR/broad-run quotas,
+benchmark or savings targets, exhaustive baseline repair, universal process custody
+or profile/platform qualification parity are prerequisites. Existing safety guards
+on any invoked route remain in force; a refusal or incomplete receipt is not
+converted into a pass. Focused verification is not universal qualification.
 
-> **2026-10-23 W11/W12/heartbeat integration:** exact approved tips preserve
-> ancestry; enrollment source `942128955a726536b334bb6a2bcb2d6af278666e` and
-> [source-bound gates/evidence](../reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md)
-> keep local proof separate from acceptance. Dated W11 snapshot
-> **2026-10-23T00:48:54Z**:50 roots,47 failed,1 cancelled,2 pending; **0/20**
-> qualifying comparisons / **0/2** complete broad integrations. W11 **NOT MET**,
-> W12 **NOT RUN**; finite `.37` readiness closure is not a default switch.
-> Five current heartbeat recurrences are post-burst idle-wake failures; historical
-> cause only plausible and safe remedy unresolved, `.11` open. The hosted pidns
-> probe proves NEWUSER success then setgroups-open denial, not its policy cause;
-> no helper fix or privilege/sysctl bypass is justified. No rollout cutover.
-> Final clean regression source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`:
-> 786 selector tests/742 pass/44 explicit Linux-only skips/zero failures or errors;
-> fresh safe native build, exact heartbeat1/1/all8 cases, seven shells/four statics/
-> full actionlint+ShellCheck PASS, pre/post source/submodule/tool identity unchanged.
-> Failed786-case enrollment invocation remains retained; no complete/hosted credit.
+The owner authorizes this policy/default reset. This document does not assert that
+scripts, workflows, hosted settings or integrated verification have already changed.
+`.39` owns policy/tracker reconciliation, `.40` scripts/tests, `.41` workflows;
+the parent verifies their integrated delivery before closing `.40`, `.41` or
+`nostrc-0cfsg`. No component bump for internal tooling/tests/docs.
 
-> **Current finite integration accounting: [closeout criterion register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).**
-> All exact A/B/C tips are merged preserving ancestry. Tested code freeze
-> `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`:725 selector tests/zero skips,
-> all15 combined gates, safe native default build/18 canonical cases/434pass+5visible
-> skips, actual public standalone macOS32/Linux33 plus defaults, and all three
-> supported core/Groundhog/Grotto public default/full-audit/NIP14 routes **PASS**.
-> Five focused NIP29 registrations pass. Fresh source/generation/phase/prerequisite
-> receipts bind incremental owned-root artifacts; no old receipt credit.
-> Exact33 omissions/29 required omitted producers/193 source-control keys and
-> immutable histories remain. All three partial aggregates pass; complete requests
-> refuse. Source producer/freshness/typed-normalization failures and fixes are retained.
-> Parent approved the original finite criteria; `.2`–`.5`, `.9`, `.31`, `.34`
-> are now officially closed, alongside `.7`. Root, `.8`, `.11`, `.23`, `.29` and explicit runtime/
-> whole-job cells remain open. Scoped original Docker cleanup passes, but the
-> cancelled original image matrix is NOT MET; no second whole matrix here.
-> Membership, runnable capabilities, selected execution and acceptance are separate.
-> The status summary below and earlier sections are **HISTORICAL snapshots**,
-> retaining exact source identities and failures; [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
-> remains the original reconciliation. Prior reviewed hosted snapshot:
-> **2026-10-22T19:03:24.712764Z**,45failed/1cancelled/zero pending of46 roots,
-> **0/20** qualifying comparisons and **0/2** complete broad integrations.
-> W11 **NOT MET**, W12 **NOT RUN**. No default/protection/schedule/publisher cutover.
-
-**Status (2026-10-16):** Integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` implements actual separate phase environments/fingerprints/audits, ordinary outer command/build contracts, an explicit shared sanitizer phase route, 98 exact command inputs/87-job accounting and independent workers for all ten authored profiles. This is not production/hosted or W11 acceptance. Review R1 / `.22` is CLOSED **by prelaunch guard/refusal only** at `8179275b2`: selected command/build-contract lanes needing display/private bus, including mixed lanes, are refused without dropping capabilities or fabricating receipts. No drain fix or wrapped positive acceptance; full custody `.23` and unknown full-gate fixture failure/lost-trace `.24` stay OPEN. Parent final combined at `2d64a7ac2`: **307/307 passed, 0 skips, 125.303s**; subsequent changes are docs/failure forensics only. Parent confirms at `97e393cba`: **all six shell suites, four static checkers, full actionlint including ShellCheck and range whitespace passed** (`/tmp/nostrc-phase-final-test-*.log`); no rereview/full-slice acceptance is claimed. Parent native combined **306/306 passed, 0 skips, 146.958s** at `90a1b675f`; production Linux/x86_64 command **306 passed, 0 skips, 405.309s** at `7e3745463` with 99 audited hashes/no gaps. These do not invalidate the wrapped-cancellation adversary or confer full-slice acceptance. Fresh native root build at `7fdadd251` passed, BUILD ONLY/Groundhog OFF. MDK always refuses full lifecycle success; `.11` cause, full union and W11/W12 remain open. No default/enforce/threshold/schedule/protection cutover. Current progress is §13; §§8–12 and earlier review/verification receipts retain their dated SHAs and limits.
-
-**Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
-
-Sections 2–7 retain the implementation specification and historical planning evidence. Sections 8–15 retain dated execution snapshots, not current pending/completion claims. Sections 16–17 and `docs/TESTING.md` distinguish compiled diagnostics and acceptance accounting from still-proposed or unaccepted behavior. The specification alone is not implementation or rollout evidence.
+Historical results, failed attempts and audits remain literal in the archived
+sections and linked reviews. Old statements such as W11 NOT MET, W12 NOT RUN,
+0/20, 0/2 and zero benchmark samples describe their original contracts and dated
+sources. Those contracts are **superseded as delivery blockers**, not satisfied
+retroactively. The acceptance audit/run ledger need not be refreshed to deliver
+these three outcomes, and this reset adds no quota credit or successful execution.
 
 ## Goal
 
-Run only checks affected by each local or pre-merge change, while building their prerequisites and retaining downstream consumer coverage. Run broader suites after merge to master, on releases and manually; unknown dependencies broaden coverage with an explanation. Future implementation updates `AGENTS.md` to make this the default.
+Run checks affected by local or pre-merge changes, build their prerequisites, and
+retain downstream/compatibility coverage. Run broader suites after merge to
+master, on releases and manually. Unknown dependencies broaden coverage with an
+explanation. AGENTS and TESTING use this same policy.
 
 ## 1. Summary
 
-Implement one shared, versioned selection contract for local gates, pre-merge CI, post-merge validation, and releases. A small checked-in dependency inventory will describe source ownership, downstream test impact, execution profiles, and non-build dependencies; CMake/CTest and Ninja will validate its realization against the actual build. Selection will identify impacted tests first, then build their prerequisites—not run every prerequisite library’s tests. Preserve the existing execution safeguards, platform coverage, advisory classifications, and artifact ownership. This requires a coordinated orchestration refactor, not a production-code or build-system rewrite.
+Keep one shared dependency-aware selection policy for local and CI use. Separate
+test impact from build prerequisites. Relevant expensive compatibility belongs in
+affected coverage; unrelated expensive work does not. Broad execution and the
+explicit full override remain available. Keep selected failures visible and retain
+source-specific evidence without claiming unsupported coverage.
 
-This is the implementation specification, not an implementation report. This planning run changes documentation only. All new commands, files, workflow interfaces and thresholds below are proposed unless explicitly described as current behavior.
+Sections 2–4 below preserve the detailed original architecture as an implementation
+reference, not an additional delivery checklist. Route-specific auditing and
+qualification contracts still describe those routes, but proving every profile,
+optional platform or custody mechanism is not required for this delivery.
+
+<details>
+<summary>Original design and file-impact reference — not additional acceptance</summary>
 
 ## 2. Background and current-state analysis
 
@@ -908,6 +886,123 @@ Every existing workflow in §3.8 changes according to its row. Reusable interfac
 - `docs/plans/dependency-aware-testing-ci-2026-10-15.md` receives this resolved specification and rollout evidence.
 - `VERSION_MANIFEST.md` changes only if a separately assessed shipped build-contract correction requires it; internal CI/test metadata alone needs no version change.
 
+
+</details>
+
+## 5. Delivery verification and follow-up boundary
+
+Use focused selector, local-adapter and workflow verification for the three
+outcomes. Representative relevant edits must include their downstream and
+compatibility checks; a genuinely unrelated edit must omit them; an unknown or
+incompletely classified relevant input must broaden with an explanation. Exercise
+local/PR affected routing and master/release/manual/full-override broad routing.
+Use execution or adapter/workflow tests as appropriate; planning alone establishes
+selection only, not successful test execution. There is no required sample quota
+or performance measurement.
+
+Retain and identify failures rather than deleting, retrying away, skipping or
+relabeling them. Selected checks that cannot run must remain failed/unavailable,
+not successful coverage. Track unrelated bugs and prior qualification hardening
+as nonblocking follow-ups; their existence does not mandate a repository-wide
+repair campaign. A defect preventing one of the three outcomes remains relevant.
+Do not weaken keychain, sanitizer, approval or owned-resource cleanup safeguards.
+
+Existing publication identity/package safeguards remain; broad release routing is
+not permission to forge complete receipts or publish through failed selected
+checks. Server-side branch protection and publisher settings are not presumed
+changed by this docs commit. No universal attestation programme or protection
+migration is added as a fourth delivery outcome.
+
+The original measurement/rollout protocol is archived below and the
+[acceptance audit](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
+and [run ledger](../reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md)
+are preserved unchanged. Their quotas, baseline/savings gates, full-union parity
+and conditional-cutover blockers no longer gate delivery.
+
+## 6. Implementation order and acceptance
+
+### Execution index
+
+| Item | Goal | Done when | Ownership |
+|---|---|---|---|
+| W11 — Focused delivery verification | Verify affected correctness and honest results | Representative relevant inclusion/unrelated omission, relevant compatibility and conservative unknown fallback are demonstrated; failures and coverage limits are explicit. No quota, benchmark, exhaustive baseline repair or universal qualification gate. | `.40` selector/local tests, `.41` CI routing; parent integrated verification |
+| W12 — Operational defaults and coherent policy | Deliver affected local/PR and broad master/release/manual execution | Scripts/workflows and AGENTS/TESTING agree; full override works; no scheduled tier or duplicate broad PR/default policy defeats selective execution. No dependency on the superseded measurement/profile programme. | `.39` docs/tracker, `.40` local, `.41` workflows; parent final acceptance |
+
+Only the three outcomes above determine delivery acceptance. W1–W10 and prior
+checkpoint tables are historical implementation references, not extra gates to
+reopen. This reset does not declare W11/W12 execution passed; the parent assesses
+the integrated sibling changes and their focused evidence.
+
+### Tracker reconciliation
+
+`nostrc-0cfsg` retains the delivery and `.39`/`.40`/`.41`. Existing `.36` is the
+separate **nonblocking follow-up** umbrella, related to (not a child/blocker of)
+the delivery. Prior MDK lifecycle `.8`/`.8.1`, native custody `.23`, ordinary-Go
+qualification `.9.1`, heartbeat `.11`/`.11.1`, and the remaining `.36.*` hardening
+and bug cells stay unresolved there. Optional measurement `.36.6`/`.36.14` no
+longer impose quotas or block W12. Their original scope/evidence is preserved;
+no bug is called fixed and no new acceptance bead is created. Previously closed
+finite source scopes remain closed as recorded. Parent alone closes the root
+and sibling delivery tasks after verification.
+
+### Representative case reference
+
+The golden cases below help choose focused verification; they are not an
+exhaustive mandatory workload or a new sample quota.
+
+### Golden selection cases
+
+| Case | Expected selection | Live MDK |
+|---|---|---|
+| Grotto GUI-only source/template | Grotto GUI/signer checks, applicable sanitizer and build contracts; build shared prerequisites | None unless an explicitly consumed shared input changed |
+| Grotto daemon/bunker | Daemon/bunker, NIP55L integration, applicable fuzz/sanitizer and package contracts | None |
+| Groundhog isolated About/shell UI input | Owning UI/resource tests and actual app-process consumers | None if no harness consumes it |
+| `gnome/groundhog/src/mls/gh-mls-service.c` | MLS service/UI/files and consuming acceptance checks; store tests only if they compile/consume that source | MDK 0.8 and 0.11; voice where its harness consumes service |
+| `gnome/groundhog/src/ui/gh-mls-copy.c` | MLS UI/model/GUI, poll and direct-compiled harness consumers | Legacy 0.8 plus adopted checks under conservative shared-executable mapping |
+| Shared Groundhog store | Store consumers including MLS | Both versions and affected voice cases |
+| Shared media | Ordinary DM/media plus MLS media/files consumers | Every media-consuming compatibility case, including affected MDK011 voice |
+| Relay/auth/account-relay/shared conversation implementation | DM and MLS downstream consumers | Both versions when consumed by their harnesses |
+| `gnome/groundhog/src/ui/gh-poll-ui.c` | Poll test/app consumers; do not run prerequisite MLS UI suites merely because the poll target links them | Only if an actual compatibility runtime/compiled input consumes it |
+| `gnome/groundhog/src/ui/gh-create-poll-dialog.c` or `gh-poll-card.c` | MLS UI consumers, including the poll test, because these sources belong to MLS UI | Adopted harness checks consuming MLS UI; legacy only for an actual input edge |
+| `libgo` source/header | Libgo variants and downstream core/NIP/wrapper/app checks | Both versions through core dependencies |
+| NIP44 source | NIP44 consumers, Marmot/DM/signer downstream checks | Both versions |
+| Local Marmot vector | Ordinary vector checks and direct vector consumers | Not automatically live MDK |
+| Unknown path | All supported profiles, explicit unknown-path reason | Both versions and voice |
+| Root graph/selection metadata change | Broad configuration/validation | Both versions and voice |
+| Grotto-only workflow edit | Grotto profiles plus workflow/contract validation | None |
+| Rename across ownership boundaries | Union of old/new ownership | As required by either side |
+| Deleted runtime fixture | Base/head ownership plus missing-resource failure | Its consumers remain required |
+| Submodule pointer change | Owning vendor dependency closure; unknown vendor broadens | Both if core/crypto inputs are affected |
+| Unresolvable shallow range | Broad with recorded range limitation | Both versions and voice |
+| Mixed Grotto + Groundhog MLS | Union, deduplicated by check/profile | MLS-required compatibility only |
+
+### Verification commands
+
+Use the relevant selector/adapter/workflow tests and inspect explain output:
+
+```sh
+python3 -m unittest discover -s tests/selection
+python3 scripts/test-plan.py validate --inventory tests/selection/inventory.json
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+scripts/test-gate.sh --broad
+```
+
+The suite command is available for regression work, not a new universal acceptance
+quota. `--explain` is plan-only; `--profile` narrows execution and cannot establish
+whole-profile/release coverage. Retain source/command/result provenance and report
+the scope actually exercised. See [TESTING](../TESTING.md#dependency-aware-delivery-policy--2026-10-25).
+
+## Historical design qualification and execution record
+
+The details below preserve dated evidence and the former acceptance programme.
+Imperatives, open/closed statuses and "current" claims inside are historical to
+their source/date, not current delivery instructions. W11/W12 acceptance is now
+the execution index above; none of the archived blockers is silently satisfied.
+
+<details>
+<summary>Former migration gates, work breakdown and exhaustive regression reference</summary>
+
 ## 5. Risks and migration
 
 ### Operational prerequisites
@@ -1012,9 +1107,8 @@ Every failure detected only by legacy coverage is investigated and represented i
 
 Rollback restores old broad required jobs before removing the new requirement. Keep additive CMake metadata: it does not prevent broad execution.
 
-## 6. Implementation order and acceptance
 
-### Execution index
+### Historical execution checkpoints
 
 **Current bounded integration (2026-10-23):**
 [`df8fb86ff` source-bound integration](../reviews/dependency-aware-testing-integration-2026-10-23.md)
@@ -1107,8 +1201,6 @@ Production profile postbuild/header and all-29-omitted-target builds NOT RUN;
 ledger refresh, shipped bump, push or merge-back. Earlier pending receipts remain
 historical; final code and later docs/export commit are distinguished explicitly.
 
-Sizes describe reviewable implementation slices, not time estimates: S = focused adapter or tests, M = one substantial seam, L = cross-family integration. Split L items into beads before implementation; this index is not a replacement for `bd` tracking.
-
 | Item | Goal | Done when | Key files | Dependencies | Size |
 |---|---|---|---|---|---|
 | W1 — Baseline and contracts | Record current checks, runner capabilities, protection state and cost | Every existing job/profile has blocking/advisory/applicability provenance; representative baseline and actual required-check identities are recorded | Current workflows, local gates, `AGENTS.md`, measurement receipts | None | M |
@@ -1140,32 +1232,6 @@ Sizes describe reviewable implementation slices, not time estimates: S = focused
 12. **Complete shadow/measurement gates and protection cutover.**
 13. **Switch pre-push defaults and update `AGENTS.md`/`docs/TESTING.md` atomically.**
 14. **Remove duplicated selectors, obsolete triggers, and nightly wording.** Retain compatibility adapters only where a recorded caller still needs them.
-
-### Golden selection cases
-
-| Case | Expected selection | Live MDK |
-|---|---|---|
-| Grotto GUI-only source/template | Grotto GUI/signer checks, applicable sanitizer and build contracts; build shared prerequisites | None unless an explicitly consumed shared input changed |
-| Grotto daemon/bunker | Daemon/bunker, NIP55L integration, applicable fuzz/sanitizer and package contracts | None |
-| Groundhog isolated About/shell UI input | Owning UI/resource tests and actual app-process consumers | None if no harness consumes it |
-| `gnome/groundhog/src/mls/gh-mls-service.c` | MLS service/UI/files and consuming acceptance checks; store tests only if they compile/consume that source | MDK 0.8 and 0.11; voice where its harness consumes service |
-| `gnome/groundhog/src/ui/gh-mls-copy.c` | MLS UI/model/GUI, poll and direct-compiled harness consumers | Legacy 0.8 plus adopted checks under conservative shared-executable mapping |
-| Shared Groundhog store | Store consumers including MLS | Both versions and affected voice cases |
-| Shared media | Ordinary DM/media plus MLS media/files consumers | Every media-consuming compatibility case, including affected MDK011 voice |
-| Relay/auth/account-relay/shared conversation implementation | DM and MLS downstream consumers | Both versions when consumed by their harnesses |
-| `gnome/groundhog/src/ui/gh-poll-ui.c` | Poll test/app consumers; do not run prerequisite MLS UI suites merely because the poll target links them | Only if an actual compatibility runtime/compiled input consumes it |
-| `gnome/groundhog/src/ui/gh-create-poll-dialog.c` or `gh-poll-card.c` | MLS UI consumers, including the poll test, because these sources belong to MLS UI | Adopted harness checks consuming MLS UI; legacy only for an actual input edge |
-| `libgo` source/header | Libgo variants and downstream core/NIP/wrapper/app checks | Both versions through core dependencies |
-| NIP44 source | NIP44 consumers, Marmot/DM/signer downstream checks | Both versions |
-| Local Marmot vector | Ordinary vector checks and direct vector consumers | Not automatically live MDK |
-| Unknown path | All supported profiles, explicit unknown-path reason | Both versions and voice |
-| Root graph/selection metadata change | Broad configuration/validation | Both versions and voice |
-| Grotto-only workflow edit | Grotto profiles plus workflow/contract validation | None |
-| Rename across ownership boundaries | Union of old/new ownership | As required by either side |
-| Deleted runtime fixture | Base/head ownership plus missing-resource failure | Its consumers remain required |
-| Submodule pointer change | Owning vendor dependency closure; unknown vendor broadens | Both if core/crypto inputs are affected |
-| Unresolvable shallow range | Broad with recorded range limitation | Both versions and voice |
-| Mixed Grotto + Groundhog MLS | Union, deduplicated by check/profile | MLS-required compatibility only |
 
 ### Named verification commands
 
@@ -1201,6 +1267,83 @@ These commands are proposed interfaces, not commands run during planning.
 16. Known publisher=none annotated tags reach broad validation without any publish-capable job; unknown component-shaped tags fail; legacy/global and branch/tag dry-run routing preserve existing publishers' semantics.
 17. Two dirty snapshots at identical HEAD with different header/generated content cannot share realization/audit evidence. Explicit `--head` ignores dirty content; unsupported snapshot materialization and cancellation leave the caller's index/worktree unchanged.
 18. Concurrent build roots with different MDK driver inputs cannot use each other's images; cancellation cleans only owned containers/locks; partial/stale image builds cannot produce passing evidence.
+
+
+</details>
+
+<details>
+<summary>Dated status notices and source-bound execution receipts (unchanged)</summary>
+
+> **PR26 landed — 2026-10-24:** normal merge `9c22f7298` (head H6 `8767f9f6e`, tested S6 `5031ee1c`, same tree). All 12 fresh-source legacy workflows passed, including Groundhog 125/125 + ASan 65/65 and Static 779 s. Exactly 11 `.36` cells closed; `.36.21`/`.32`/`.33` stay open. The shadow S6 gate was still pending, and counters stay 0/20, 0/2 and 0 product samples; W11 NOT MET / W12 NOT RUN. [Delivered receipt](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#pr26-delivered-at-master-9c22f7298--2026-10-24t181519z) and [S6 run ledger](../reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-delivered-at-master-9c22f7298-and-s6-shadow-snapshot-2--2026-10-24t181519z).
+
+> **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](../reviews/dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
+
+> **Earlier finite batch — 2026-10-24, [PR24 source receipt](../reviews/dependency-aware-testing-priority-parity-2026-10-24.md):** landed normally at `b43ff6160`. Repairs include worker prerequisites, exact46 MDK011/45 ASan app ownership, two private-daemon test environments, and executable measurement capture. Final hosted head `bd0b3b2` / tested merge `f5d85dec8`: DEFAULT1,261/zero failures/errors/80 skips; separate overlapping kernel81/zero skips. Native source937 remains separately labelled439=434pass+5skip, not native final-head/profile acceptance. Original failed attempts remain retained. `.36.12`/`.36.17` close finite source scopes only; `.36.19`–`.36.22` name the newly reached ownership/freshness/Xvfb/partition blockers. Real product samples remain zero; reviewed W11 counters0/20 and0/2, W12 NOT RUN. No default/protection/publisher/legacy-trigger/schedule cutover. All older checkpoints below remain historical, not current acceptance.
+
+> **Concrete closure batch, code `0e3601eab21ca480a7d80c72d6c29ac29155f5aa`:**
+> all six final approved tips preserve ancestry. Internal resource/profile/input,
+> tool/producer and workflow enrollment is implemented; full33 ordinary ownership
+> is not diagnostic-subset promotion. Typed policy-controller execution replaces
+> the predecessor-only architectural gap. Only validated shadow_cutover is
+> administrative rollout readiness; the other nine technical gaps and all guards
+> remain. [Final integration report, failed attempts and exact hosted dispatch
+> handoff](../reviews/dependency-aware-testing-w11-closure-integration-2026-10-23.md)
+> distinguish actual local/emulated supported proof from native/hosted acceptance.
+> Parent lands and dispatches existing workflows; no endpoint/approval is pending.
+> Final TCP audits/default build pass but fixture startup fails on an overlong
+> private D-Bus socket path: unresolved internal work, not emulation attribution.
+> Selected policy local provisioning attempts fail before a typed receipt; the
+> passing ARM workload alone is not selected-worker acceptance.
+> Dated C census `2026-10-23T02:12:04.578186Z`–`02:12:28.940355Z` and21 real PR
+> replays are diagnostic, not fresh acceptance:0/20 qualifying comparisons,0/2
+> complete broad integrations. Local suites add no quota credit. W11 NOT MET,
+> W12 NOT RUN; no default, protection, publisher or schedule cutover.
+
+> **2026-10-23 W11/W12/heartbeat integration:** exact approved tips preserve
+> ancestry; enrollment source `942128955a726536b334bb6a2bcb2d6af278666e` and
+> [source-bound gates/evidence](../reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md)
+> keep local proof separate from acceptance. Dated W11 snapshot
+> **2026-10-23T00:48:54Z**:50 roots,47 failed,1 cancelled,2 pending; **0/20**
+> qualifying comparisons / **0/2** complete broad integrations. W11 **NOT MET**,
+> W12 **NOT RUN**; finite `.37` readiness closure is not a default switch.
+> Five current heartbeat recurrences are post-burst idle-wake failures; historical
+> cause only plausible and safe remedy unresolved, `.11` open. The hosted pidns
+> probe proves NEWUSER success then setgroups-open denial, not its policy cause;
+> no helper fix or privilege/sysctl bypass is justified. No rollout cutover.
+> Final clean regression source `c6fc26a858d2fcdfd8d456969c1ae0a2aa0f4508`:
+> 786 selector tests/742 pass/44 explicit Linux-only skips/zero failures or errors;
+> fresh safe native build, exact heartbeat1/1/all8 cases, seven shells/four statics/
+> full actionlint+ShellCheck PASS, pre/post source/submodule/tool identity unchanged.
+> Failed786-case enrollment invocation remains retained; no complete/hosted credit.
+
+> **Current finite integration accounting: [closeout criterion register](../reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).**
+> All exact A/B/C tips are merged preserving ancestry. Tested code freeze
+> `3ef5cbf9cc903ce5f91043d7040461bd1fef5e9a`:725 selector tests/zero skips,
+> all15 combined gates, safe native default build/18 canonical cases/434pass+5visible
+> skips, actual public standalone macOS32/Linux33 plus defaults, and all three
+> supported core/Groundhog/Grotto public default/full-audit/NIP14 routes **PASS**.
+> Five focused NIP29 registrations pass. Fresh source/generation/phase/prerequisite
+> receipts bind incremental owned-root artifacts; no old receipt credit.
+> Exact33 omissions/29 required omitted producers/193 source-control keys and
+> immutable histories remain. All three partial aggregates pass; complete requests
+> refuse. Source producer/freshness/typed-normalization failures and fixes are retained.
+> Parent approved the original finite criteria; `.2`–`.5`, `.9`, `.31`, `.34`
+> are now officially closed, alongside `.7`. Root, `.8`, `.11`, `.23`, `.29` and explicit runtime/
+> whole-job cells remain open. Scoped original Docker cleanup passes, but the
+> cancelled original image matrix is NOT MET; no second whole matrix here.
+> Membership, runnable capabilities, selected execution and acceptance are separate.
+> The status summary below and earlier sections are **HISTORICAL snapshots**,
+> retaining exact source identities and failures; [§17](#17-acceptance-reconciliation-and-run-ledger--2026-10-18)
+> remains the original reconciliation. Prior reviewed hosted snapshot:
+> **2026-10-22T19:03:24.712764Z**,45failed/1cancelled/zero pending of46 roots,
+> **0/20** qualifying comparisons and **0/2** complete broad integrations.
+> W11 **NOT MET**, W12 **NOT RUN**. No default/protection/schedule/publisher cutover.
+
+**Status (2026-10-16):** Integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` implements actual separate phase environments/fingerprints/audits, ordinary outer command/build contracts, an explicit shared sanitizer phase route, 98 exact command inputs/87-job accounting and independent workers for all ten authored profiles. This is not production/hosted or W11 acceptance. Review R1 / `.22` is CLOSED **by prelaunch guard/refusal only** at `8179275b2`: selected command/build-contract lanes needing display/private bus, including mixed lanes, are refused without dropping capabilities or fabricating receipts. No drain fix or wrapped positive acceptance; full custody `.23` and unknown full-gate fixture failure/lost-trace `.24` stay OPEN. Parent final combined at `2d64a7ac2`: **307/307 passed, 0 skips, 125.303s**; subsequent changes are docs/failure forensics only. Parent confirms at `97e393cba`: **all six shell suites, four static checkers, full actionlint including ShellCheck and range whitespace passed** (`/tmp/nostrc-phase-final-test-*.log`); no rereview/full-slice acceptance is claimed. Parent native combined **306/306 passed, 0 skips, 146.958s** at `90a1b675f`; production Linux/x86_64 command **306 passed, 0 skips, 405.309s** at `7e3745463` with 99 audited hashes/no gaps. These do not invalidate the wrapped-cancellation adversary or confer full-slice acceptance. Fresh native root build at `7fdadd251` passed, BUILD ONLY/Groundhog OFF. MDK always refuses full lifecycle success; `.11` cause, full union and W11/W12 remain open. No default/enforce/threshold/schedule/protection cutover. Current progress is §13; §§8–12 and earlier review/verification receipts retain their dated SHAs and limits.
+
+**Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
+
+Sections 2–7 retain the implementation specification and historical planning evidence. Sections 8–15 retain dated execution snapshots, not current pending/completion claims. Sections 16–17 and `docs/TESTING.md` distinguish compiled diagnostics and acceptance accounting from still-proposed or unaccepted behavior. The specification alone is not implementation or rollout evidence.
 
 ## 7. Design-review resolutions and fidelity
 
@@ -1563,3 +1706,5 @@ zero real product pairs. W11 NOT MET / W12 NOT RUN.** All five-sample/seven-clas
 30%/25% savings and10% limits remain. No default, protection, publisher, release,
 legacy trigger or acceptance cutover. Physical work remains in `.36.14`; parent
 integrates/pushes the finite local commit.
+
+</details>

@@ -19,152 +19,48 @@ Install git hooks before starting work:
 scripts/install-hooks.sh
 ```
 
-This installs the fast pre-push hook (static checks, no build; CI builds and tests).
+This installs the repository pre-push hook. Its delivery policy is static checks
+plus dependency-aware affected execution, with an explicit broad override.
 
-**Staged dependency-aware testing — operational rules:**
-- `scripts/test-gate.sh --help` documents explicit diagnostics; `--explain` is
-  plan-only. Profile-restricted execution is not complete CI coverage;
-  `libgo.macos.asan` is standalone macOS/arm64 libgo ASan/UBSan, not native root.
-  `NOSTRC_SELECTIVE_GATE=1` adds diagnostics to existing push gates, never replaces
-  them. Partial success cannot establish complete-gate or release acceptance.
-  Authored `build_parallelism` / `test_parallelism` are independently enforced;
-  legacy `parallelism` remains their fallback. Phase overrides must match the
-  profile, and physical argv/resolved/retained evidence must agree. Admitted CLI
-  `lane_failure_v1` receipts retain failures, never successful coverage; invalid
-  admission still refuses before authorizing a lane.
-- The outer adapter supports ordinary unwrapped `command`/`build_contract` checks
-  and legacy CTest lanes. Default/ptrace non-CTest display/private-bus and mixed
-  refusals remain. Explicit `--native-custody pidns` supports whole-wrapper Linux
-  diagnostics: the backend owns actual private services inside kernel custody,
-  seals original receipts/retained source bytes, and requires post-namespace-exit
-  evidence before aggregation. Unsupported kernel/setup/tool combinations refuse;
-  no dropped capabilities, host numeric-PID cleanup, native macOS success or
-  complete/profile parity is inferred. Default custody stays `legacy`; keyring
-  commands and shared signer capability remain unsupported. See the
-  [source-bound integration report](docs/reviews/dependency-aware-testing-integration-2026-10-23.md).
-- Full-profile normal qualification (`normal_execution`) requires fresh committed
-  **broad** plans. Seven profiles also author `normal_selected_execution`:
-  `core.linux`, `core.linux.asan`, `grotto.linux`, `grotto.linux.asan_ubsan`,
-  `groundhog.linux`, `groundhog.mdk08`, `groundhog.mdk011`. For an unrestricted,
-  unbroadened affected plan re-derived from the tested history, these execute only
-  the selected command checks and the selected CTest registration/fixture closure.
-  Whole-universe ownership and full source/Ninja/header/runtime audits stay
-  mandatory, and eligible unselected default/prerequisite builds still physically
-  run, though they are not selected-test coverage. Unselected checks/registrations
-  are `not_executed`; such a receipt does not by itself establish whole-profile,
-  complete-gate or W11 acceptance. `homed.linux.ci` is a separate CI-only route
-  for the five standalone homed units with no selected marker, so only broad CI
-  plans qualify it. It is not legacy four-distro/root-140 parity. See
-  [TESTING](docs/TESTING.md#selected-normal-contract-and-homed-ci-route--2026-10-24).
-- Native default-generator build contracts use `build_scope=default`, empty
-  `build_targets`, and exact `cmake --build {build}` with realized configuration
-  and authored build parallelism. Only attested single-config Ninja closures are
-  supported. Custom/generated work needs explicit source/tool/argv/input/output
-  producer attestation; unknown utility/dyndep/launcher or generated shapes refuse.
-  Raw default-build success is not attested selector execution. Preserve full
-  non-test source/Ninja/header/runtime/artifact and named/omitted
-  prerequisite audits, including eligible unselected defaults. Never substitute
-  `signer-tests`, fabricate a File API `all` target or use selected-only audits.
-  Fresh configure binds canonical generation-control inputs, verifier bytes and
-  configured CMake/Ninja identities. Freshness uses the bound VerifyGlobs command
-  (exit0, empty output) and an engine-owned Ninja entry that only includes the
-  original graph from its original cwd; exact no-work and pre/post binding checks
-  are required under the build lock. Query evidence is not physical coverage.
-  No graph filtering, execution-time-only verifier trust or `-d norebuild` flag.
-  Named-target single-config Ninja lanes also author configure-bound
-  `ninja_generation_binding`; stale/missing execution bindings require fresh
-  configure/audit, never a raw dry-run fallback. Targetless Ninja lanes bind tools
-  too, but do not invent a target-freshness query or physical coverage.
-  Failed readiness keeps its pipe readable through reserved-pidfd teardown and
-  retains bounded late data/liveness in `services.json`. The 15-second deadline
-  and failure remain; late data or exit0 cannot establish readiness or fix the
-  unresolved hosted Xvfb startup cause. See the
-  [PR25 source receipt](docs/reviews/dependency-aware-testing-ninja-readiness-2026-10-24.md).
-- Tool capabilities are not resource setup: `nak` and `gnome_keyring` require
-  actual executable fingerprints, distinct from display/private-bus evidence.
-  Existing keyring CTests own their private HOME/bus/supervised Secret Service,
-  including service-initially-absent negatives; do not require an ambient/global
-  service that defeats those fixtures. Selected contained commands requiring
-  keyring plus private bus need their own throwaway service, real secret roundtrip
-  and namespace cleanup proof. Declare profile tool support only after supported
-  executable evidence, not bus/display/setup inference. Pinned Nak installation
-  must stamp its actual module version; upstream's `debug` default is not accepted
-  by the executable-version check. Emulation-specific executable identity mismatch
-  does not authorize weaker caller attestation or a passing runtime receipt.
-  `nip5f_tcp` is a provisioned signer, not loopback: approved TCP-enabled configuration,
-  isolated identity/token readiness and explicit unidentified-caller approval are
-  required. No approval bypass or skip-as-success. See the finite
-  [criterion and runnable-cell register](docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md).
-- `NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers` explicitly selects
-  separate configure/build/test environments, fingerprints and full input audits.
-  Enforce authored execution options and independent profile/resolved/phase
-  configuration agreement; shared quarantine/retry overrides refuse.
-- The original full-partition nonmember authority admits only
-  `groundhog.linux.sanitizers` with its **exact reviewed nonmember list and
-  required fixture closure**, bound to fresh source/profile/context/export/partition/
-  build/audit identity. Only unclaimed membership findings are removed: omitted
-  targets remain built as required and source/Ninja/header/runtime audited.
-  Omitted registrations stay `not_executed`; `complete=false` and
-  `complete_gate_eligible=false`. Complete/release promotion, including nested
-  receipts, refuses. No selected-only audit fallback or automatic architecture/
-  prepared-profile admission.
-- The separately approved ordinary subset authority is limited to the exact 33
-  reviewed libgo registrations in `groundhog.linux` and `grotto.linux`; it is not
-  a complete partition or permission for other profiles/families. Fresh authored
-  x86 profile, full registration universe, candidate contract/fixture, source,
-  inventory, phase, generation and toolchain bindings must agree. Only those
-  matching unclaimed-registration findings may be reclassified; omitted target
-  closures remain built/audited as required. All other input/ownership/runtime
-  failures remain blocking. Omitted registrations remain `not_executed`, with
-  `complete=false` and `complete_gate_eligible=false`; nested complete/release
-  promotion refuses. No selected test or required fixture may be silently omitted,
-  and no architecture alias, sanitizer-policy relaxation or rollout cutover is
-  authorized by this subset. Ordinary-subset `--phase test` refuses before CTest;
-  use `--phase all` to retain physical prerequisite-build proof. Standalone build
-  results also retain both incomplete flags and omission accounting. Selected
-  inventory `command`/`build_contract` IDs are not CTest registration names:
-  normalization requires exact kind/selected-ID membership and per-kind physical
-  process/argv/environment/evidence, never a broad string whitelist. Neither
-  commands nor forged CTest labels can expand the reviewed33-registration authority.
-  See the
-  source-bound admission receipt in TESTING.
-- `scripts/contained-gate.py prepare` / `run` provide attested locked 08/09/011
-  preparation and verified CID lifecycle/final retained bytes. The distinct
-  `groundhog.linux.arm64.prepared011` route is **local-only contained Linux/arm64**,
-  not native arbitrary-tree custody or original Docker image-build execution.
-  Raw peer consumers do not establish selector/profile acceptance; full audits
-  remain required. The optional prepared selected-closure diagnostic is deferred.
-- Legacy `mdk-gate.py run` always reports `cleanup_complete=false`; otherwise
-  successful commands return nonzero `cleanup_unverified`, with scoped cleanup
-  errors separate. The additive `images [--probe]` route owns a unique explicit
-  BuildKit builder, its volume/registration and recorded immutable peer CIDs;
-  `cleanup_complete=true` applies only to those Docker resources, with
-  `complete=false`. Peer mounts/volume identities are journaled and rechecked;
-  owned anonymous volumes must disappear, pre-existing named volumes must remain,
-  and unowned new named/host allocations refuse. No default builder selection/global prune, prepared-route
-  alias, native arbitrary-tree or selector admission follows. C's exact-source original08/09 builds/hello and source-only-cache original011
-  rebuild/five tests/hello now pass with scoped cleanup, complete=false. The
-  unchanged cold011 recipe is not claimed; failed fetch/transfer attempts remain.
-  The cache-export cancellation/reply-loss seam has separately bound actual
-  ownership regressions. These are not prepared aliases, shared selector/profile
-  admission, native-tree cleanup or complete-gate acceptance; broader `.8` stays open.
-- Before reporting W11 progress or closing acceptance scope, refresh the
-  [acceptance audit and run ledger](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
-  from source-linked GitHub jobs/artifacts and update `.5`. Count reviewed distinct
-  PR comparisons and successful complete broad integrations, not unit cases,
-  nested jobs, retries or partial diagnostics. Record the snapshot time; never
-  present an old ledger as a live counter or erase a failed attempt.
-- Shadow workflows are additive, not accepted required checks. Publisher
-  `NOSTRC_DEPENDENCY_RELEASE_MODE` is `disabled` by default; `disabled`/`shadow`
-  publication decisions are not validation attestations. No default/enforcement,
-  legacy gate/trigger/schedule or protection cutover before **W11 evidence and
-  operator approval**. Preserve all mandatory requirements below.
+**Dependency-aware delivery policy — owner reset, 2026-10-25:**
 
-Use [TESTING](docs/TESTING.md) for commands and current bounded results, the
-[plan/progress index](docs/plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
-for acceptance requirements, and the
-[staged receipt](docs/reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
-for source-specific counts, hashes, bead status, historical failures and limits.
+The delivery acceptance contract is exactly these three outcomes:
+
+1. **Correct affected-test selection.** Select checks from changed inputs and
+   downstream consumers, including relevant compatibility checks. Build their
+   prerequisites without selecting unrelated prerequisite tests. Explain inclusion,
+   omission and conservative broad fallback for unknown paths or incomplete
+   relevant dependency information.
+2. **Operational defaults.** Local development, pre-push and PR checks default to
+   affected selection. Master/integration, release and manual runs are broad;
+   an explicit full override remains available. There is no scheduled/nightly tier.
+3. **Focused verification.** Representative changes demonstrate relevant inclusion
+   and unrelated omission, including compatibility where relevant. Failures,
+   cancellations, unavailable prerequisites and unexecuted checks remain honest;
+   planning, skips and partial diagnostics are not passing execution.
+
+These replace the former W11/W12 delivery blockers: no PR/broad-run quotas,
+seven-class/five-sample baselines, savings thresholds, benchmarks, universal
+custody/profile parity, exhaustive baseline repairs or new acceptance tasks.
+Existing execution safety guards still apply to the routes that use them; this
+reset does not turn failed or incomplete qualification receipts into success.
+Prior qualification/profile hardening and unrelated bugs are nonblocking
+follow-ups, not prerequisites to the three outcomes. Parent verification of the
+integrated delivery remains necessary; this docs change alone proves no cutover.
+
+Use `scripts/test-gate.sh` for affected checks, `--explain` for plan-only output,
+and `--broad` for broad selection. `--profile` is a deliberately partial run,
+not whole-profile or release proof. `NOSTRC_FULL_GATE=1 git push` retains the full
+override. Missing required capabilities must fail visibly, not silently drop
+selected checks. A bypass must remain explicit and cannot be called verification.
+
+See [TESTING](docs/TESTING.md#dependency-aware-delivery-policy--2026-10-25) for
+commands and evidence limits, and the [plan execution index](docs/plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
+for W11/W12 and task ownership. Historical implementation restrictions and
+source-specific receipts are retained in TESTING and the
+[acceptance audit](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md);
+their obsolete delivery blockers are superseded, not claimed satisfied.
+
 
 ---
 
@@ -231,58 +127,62 @@ is the required process.
 
 ---
 
-## Pre-Push Requirements (MANDATORY)
+## Pre-Push Requirements
 
-Before pushing ANY commits, you MUST complete these checks:
-
-### 1. Build Verification
-
-Build and test what you touched before pushing:
+Use the affected gate for the change being pushed, plus the hook's static checks.
+A blanket clean root build/full CTest is **not** a prerequisite for every push.
+The gate must build selected checks' prerequisites and execute selected checks:
 
 ```bash
-rm -rf _build && cmake -B _build && cmake --build _build
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain  # plan only
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
 ```
 
-**If build fails, DO NOT PUSH. Fix the issue first.**
+The hook validates detached pushed trees, not dirty caller files. Without explicit
+`--head`, `scripts/test-gate.sh` uses the working-change snapshot for developer
+feedback. A selected build/test failure blocks success; report it honestly and
+fix relevant delivery defects rather than omitting the check. Unrelated baseline
+bugs stay tracked separately and are not a mandate to repair the whole repository.
 
-The pre-push hook (`scripts/pre-push`) is fast (seconds, no build). For each
+The pre-push hook (`scripts/pre-push`) retains static checks. For each
 pushed commit it runs `git diff --check` over the pushed range and, on the
 pushed tree in a temporary worktree, the static checks CI would otherwise
 report late: `scripts/check-unsequenced-args.py` (no call may modify a variable
 in one argument and use it in another; x86_64 GCC evaluates arguments right to
 left), `scripts/check-gui-test-gdk-frame.py`, `scripts/check-linux-ci-packages.py`
 and `gnome/groundhog/tests/check_privacy.py`. `NOSTRC_SKIP_PRE_PUSH=1` skips
-them (announced). Full builds and tests run in CI, scoped per component by
-workflow path filters.
+them (announced, not verification). The affected gate supplies dependency-aware
+execution; broad master/release/manual routes and the full override remain distinct.
+`.40` and `.41` own implementation of this policy; their source and focused results,
+not this documentation commit, establish that the defaults are operational.
 
-The former full gate is kept as an explicit opt-in, `scripts/full-gate.sh`
-(run it for a push with `NOSTRC_FULL_GATE=1 git push`): the macOS build and
-full CTest run, in parallel a Linux stage (`scripts/linux-gate.sh`: GCC build
-of every default target plus Groundhog in an Ubuntu 24.04 container, then a
-smoke CTest subset; needs Docker, `NOSTRC_SKIP_LINUX_GATE=1` skips it,
-`NOSTRC_GATE_AMD64=1` runs it under amd64 emulation), and a sanitizer stage
-(`scripts/linux-gate.sh --sanitizers`) that reproduces `groundhog-ci.yml`'s
-`groundhog-sanitizers` job as read by `scripts/sanitizer-gate-ci.py`, only
-when the range touches its `SANITIZER_PATHS` (`NOSTRC_SKIP_SANITIZER_GATE=1`
-skips it). Use it before pushing risky glibc/GCC-sensitive or leak-sensitive
-Groundhog changes. Leaks in Groundhog are fixed, not suppressed; `lsan.supp`
-is only for leaks in other libraries, each naming its bead.
+The explicit full override is `NOSTRC_FULL_GATE=1 git push`;
+`scripts/full-gate.sh` retains its full-gate adapter role. Broad selection must
+not silently narrow to affected-only coverage. Platform/capability restrictions,
+resource locks, private services and sanitizer safeguards remain in force.
+A skip/bypass is incomplete verification, not a broad pass. Leaks in Groundhog
+are fixed, not suppressed; `lsan.supp` is only for leaks in other libraries,
+each naming its bead.
 
-### 2. Unit Tests
+### Focused verification
 
-If touching code in `apps/`, `lib*/`, or `nips/`:
+Verify affected inclusion and unrelated omission with representative selector,
+adapter or workflow tests appropriate to the change. Relevant compatibility tests
+belong in affected coverage; unrelated expensive suites do not. `--explain` alone
+is not execution. No fixed sample count, benchmark or exhaustive baseline repair
+is required. Retain failures and report the exact verification scope.
 
-```bash
-ctest --test-dir _build --output-on-failure
-```
-
-All tests must pass before push.
+For deliberately broad local verification use `scripts/test-gate.sh --broad` or
+`NOSTRC_FULL_GATE=1 git push`; a profile restriction still limits coverage.
 
 ## Landing the Plane (Session Completion)
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**When ending a work session**, follow the assigned landing boundary. For an
+explicitly local-only delegated task, commit locally, update its bead and hand the
+commit to the parent; do not push or merge. Otherwise complete the steps below,
+including a successful push.
 
-**MANDATORY WORKFLOW:**
+**MANDATORY WORKFLOW (when landing/pushing is assigned, not local-only handoff):**
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
@@ -298,7 +198,7 @@ All tests must pass before push.
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
 
-**CRITICAL RULES:**
+**CRITICAL RULES (when landing/pushing is assigned):**
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
@@ -335,9 +235,12 @@ bd close <id>         # Complete work
 
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**When ending a work session**, follow the assigned landing boundary. For an
+explicitly local-only delegated task, commit locally, update its bead and hand the
+commit to the parent; do not push or merge. Otherwise complete the steps below,
+including a successful push.
 
-**MANDATORY WORKFLOW:**
+**MANDATORY WORKFLOW (when landing/pushing is assigned, not local-only handoff):**
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
@@ -352,7 +255,7 @@ bd close <id>         # Complete work
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
 
-**CRITICAL RULES:**
+**CRITICAL RULES (when landing/pushing is assigned):**
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
