@@ -106,6 +106,7 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
       run_reference: ${{ needs.select.outputs.run_reference == 'true' }}
+      affected: ${{ needs.select.outputs.broad == 'false' }}
       selection_artifact: ${{ needs.select.outputs.selection_artifact }}
   grotto:
     needs: select

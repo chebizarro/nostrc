@@ -6,6 +6,10 @@ on:
       sha:
         type: string
         required: true
+      affected:
+        description: Use the shared selected-check sanitizer runner
+        type: boolean
+        default: false
       selection_artifact:
         description: Same-run shared selection plan artifact; empty keeps broad execution
         type: string
@@ -355,6 +359,7 @@ jobs:
     # Groundhog code is fixed instead. The widget tests stay in the job above.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    if: ${{ !inputs.affected }}
     env:
       GROUNDHOG_SANITIZER_TESTS: >-
         groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
@@ -393,23 +398,6 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
-      - uses: actions/download-artifact@v4
-        if: inputs.selection_artifact != ''
-        with:
-          name: ${{ inputs.selection_artifact }}
-          path: ${{ runner.temp }}/ci-selection
-      - name: Prepare exact shared selection
-        id: selection
-        env:
-          SELECTION_ARTIFACT: ${{ inputs.selection_artifact }}
-        run: |
-          if [[ -z "$SELECTION_ARTIFACT" ]]; then
-            echo 'affected=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux.sanitizers \
-            --plan "$RUNNER_TEMP/ci-selection/plan.json"
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -444,10 +432,6 @@ jobs:
       - name: Build the display-free tests
         run: |
           # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
-          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
-            cmake --build build-asan --parallel 2
-            exit 0
-          fi
           targets=(groundhog)
           for test in $GROUNDHOG_SANITIZER_TESTS; do
             case "$test" in groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
@@ -472,11 +456,6 @@ jobs:
         run: |
           set -euo pipefail
           export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
-          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
-            python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
-              --build build-asan --plan "$RUNNER_TEMP/ci-selection/plan.json"
-            exit 0
-          fi
           read -ra tests <<< "$GROUNDHOG_SANITIZER_TESTS"
           regex="^($(IFS='|'; echo "${tests[*]}"))\$"
           # Every listed test is registered: none may silently drop out.
@@ -508,5 +487,80 @@ jobs:
             build-asan/ci-selected*
             build-asan/groundhog-asan-ctest.log
             build-asan/groundhog-asan-ctest.xml
+            build-asan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  groundhog-selected-sanitizers:
+    # Keep the ordinary broad recipe below parser-readable for local adapters.
+    # This job executes the same sanitizer policy with the shared selected checks.
+    if: inputs.affected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Validate shared selection
+        run: |
+          python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux.sanitizers \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json"
+      - name: Install build dependencies and matching LSan symbols
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
+            gettext dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi curl \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
+          version="$(dpkg-query -W -f='${Version}' libsecret-1-0)"
+          arch="$(dpkg --print-architecture)"
+          curl --fail --location --retry 3 \
+            "https://ddebs.ubuntu.com/ubuntu/pool/main/libs/libsecret/libsecret-1-0-dbgsym_${version}_${arch}.ddeb" \
+            --output /tmp/libsecret-dbgsym.ddeb
+          sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
+          rm /tmp/libsecret-dbgsym.ddeb
+      - name: Configure with ASAN and UBSAN
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
+      - name: Build selected checks and shared prerequisites
+        run: cmake --build build-asan --parallel 2
+      - name: Check sanitizer source inputs
+        run: python3 scripts/sanitizer-gate-ci.py check-inputs --build-dir build-asan
+      - name: Run selected checks under the sanitizers
+        env:
+          ASAN_OPTIONS: 'detect_leaks=1:halt_on_error=1:verify_asan_link_order=0'
+          UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
+          G_SLICE: 'always-malloc'
+        run: |
+          export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+          python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
+            --build build-asan --plan "$RUNNER_TEMP/ci-selection/plan.json"
+      - name: Upload selected sanitizer evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}groundhog-selected-asan-ctest-linux
+          path: |
+            build-asan/ci-selected*
             build-asan/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

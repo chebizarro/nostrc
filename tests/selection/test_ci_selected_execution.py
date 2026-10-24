@@ -96,6 +96,25 @@ class SelectedPlanTests(unittest.TestCase):
         self.assertIn('test-selection-operational.py', workflow('static-checks'))
         self.assertIn('"test_ci_selected_execution",', (ROOT / 'scripts/test-selection-operational.py').read_text())
 
+    def test_ordinary_sanitizer_parser_retains_broad_recipe_and_affected_job_is_separate(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'scripts/sanitizer-gate-ci.py'),
+                                 'config', '--source-root', str(ROOT), '--json'],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        self.assertIn('groundhog-identity', config['GH_SAN_TESTS'])
+        self.assertIn('-DGNOSTR_ENABLE_ASAN=ON', config['GH_SAN_CONFIGURE'])
+        self.assertIn('-DGNOSTR_ENABLE_UBSAN=ON', config['GH_SAN_CONFIGURE'])
+        text = workflow('groundhog-ci')
+        broad = job_block(text, 'groundhog-sanitizers')
+        selected = job_block(text, 'groundhog-selected-sanitizers')
+        self.assertIn('if: ${{ !inputs.affected }}', broad)
+        self.assertNotIn('ci-selected-execution.py run', broad)
+        self.assertIn('if: inputs.affected', selected)
+        self.assertIn('ci-selected-execution.py run --profile groundhog.linux.sanitizers', selected)
+        self.assertIn("affected: ${{ needs.select.outputs.broad == 'false' }}",
+                      job_block(workflow('ci-selective'), 'groundhog'))
+
     def test_saved_plan_handoff_and_standalone_broad_wiring(self):
         text = workflow('ci-selective')
         for family in ['grotto', 'groundhog']:
