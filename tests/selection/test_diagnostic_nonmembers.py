@@ -212,6 +212,18 @@ nostrc_finalize_test_inventory()'''))
             finally:
                 path.write_bytes(original)
 
+    def test_audited_nonmember_binding_mutation_refuses_directly(self):
+        # Generation files stay unchanged, so the earlier stale-metadata refusal
+        # cannot pre-empt this guard; only the audited binding differs.
+        _, resolved, audit, _ = self.execute()
+        self.assertIsInstance(audit["nonmember_binding"], dict)
+        bad = copy.deepcopy(audit)
+        key = sorted(bad["nonmember_binding"])[0]
+        bad["nonmember_binding"][key] = "0" * 64 if bad["nonmember_binding"][key] != "0" * 64 else "1" * 64
+        bad["audit_hash"] = r._hash({k: v for k, v in bad.items() if k != "audit_hash"})
+        with self.assertRaisesRegex(r.RealizationError, "^diagnostic nonmember audited generation binding changed$"):
+            r.run_resolved(resolved, self.build, self.evidence / "binding", input_audit=bad, build=False)
+
     def test_other_profiles_keep_unclaimed_findings_without_fallback(self):
         self.inventory["profiles"]["other.profile"] = copy.deepcopy(self.profile)
         self.inventory["checks"]["model.unit"].update(profiles=["other.profile"], ctest_tests={"other.profile": ["a-model"]})
