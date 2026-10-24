@@ -1,6 +1,12 @@
 """Provisioning/acceptance separation; real kernel cases remain unchanged."""
+import json
+import os
 from pathlib import Path
+import platform
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -74,12 +80,28 @@ class NamespacePolicyContractTests(unittest.TestCase):
         # the literal full default discovery (no subset, no host-side copy).
         self.assertIn('run policy-suite python3 -m unittest discover -s tests/selection -v', entry)
         self.assertNotIn('unittest discover', legacy)
-        commands = [command for command in re.findall(r'^        run: (.+)$', legacy, re.M)
-                    if not command.startswith('test ')  # checkout verification is outside the testhost
-                    and command != '|' and command not in {cmd for _, cmd in SEQUENCE}]
-        self.assertEqual(len(commands), 9)
-        for command in commands:
-            self.assertIn(command, entry)
+        # Scheduling only: the nine original host commands run, with their exact
+        # argv and host environment, in one owned group beside the image build;
+        # each original named step replays exactly its own command afterwards.
+        helper = read('tests/selection/static_frontend_host.sh')
+        names = re.search(r'^NAMES=\((.+)\)$', helper, re.M).group(1).split()
+        commands = dict(re.findall(r"^    ([a-z-]+)\) echo '(.+)' ;;$", helper, re.M))
+        self.assertEqual(list(commands), names)
+        self.assertEqual(len(names), 9)
+        for command in commands.values():
+            self.assertIn(command, entry)  # the testhost runs the same commands too
+        replays = [command for command in re.findall(r'^        run: (.+)$', legacy, re.M)
+                   if command.startswith('bash tests/selection/static_frontend_host.sh replay ')]
+        self.assertEqual(replays, ['bash tests/selection/static_frontend_host.sh replay ' + n for n in names])
+        order = [(step['name'], step['condition'], step['run']) for step in steps(legacy)]
+        build = order.index(('Build dedicated nonroot regression image', None, 'bash ' + CONTROLLER + ' build'))
+        self.assertEqual(order[build - 1], ('Start the original host self-tests beside the image build', None,
+                                            'bash tests/selection/static_frontend_host.sh start'))
+        self.assertEqual(order[build + 1], ("Join this job's host self-test group before the testhost", 'always()',
+                                            'bash tests/selection/static_frontend_host.sh wait'))
+        self.assertEqual(order[build + 2][0], 'Selection and workflow contract tests')
+        self.assertIn('          JOB_STATUS: ${{ job.status }}\n', legacy)
+        self.assertNotRegex(helper, r'(?m)(^|[;&|(]\s*)timeout\s')  # no added command deadline
 
     def test_only_scoped_disposable_container_policy_is_relaxed(self):
         workflow = read('.github/workflows/namespace-policy-regression.yml')
@@ -204,6 +226,68 @@ class NamespacePolicyContractTests(unittest.TestCase):
         self.assertIn('USER 1001:1001', recipe)
         self.assertIn('install -d -o root -g root -m 1777 /tmp/.X11-unix', recipe)
         self.assertRegex(recipe, r'FROM ubuntu:24\.04@sha256:[0-9a-f]{64}')
+
+
+@unittest.skipUnless(platform.system() == 'Linux' and shutil.which('setsid') and shutil.which('pgrep'),
+                     'the owned host group uses the runner host\'s util-linux setsid and procps pgrep')
+class HostFrontendGroupMechanics(unittest.TestCase):
+    """The real helper with only its nine argv swapped for trivial stand-ins:
+    join before report, per-command exits, orphan accounting and cancellation."""
+
+    def helper(self, commands):
+        text = read('tests/selection/static_frontend_host.sh')
+        for name, argv in commands.items():
+            text, count = re.subn(r"(?m)^    %s\) echo '[^']*' ;;$" % re.escape(name),
+                                  lambda _: "    %s) echo '%s' ;;" % (name, argv), text)
+            self.assertEqual(count, 1, name)
+        temp = Path(tempfile.mkdtemp(prefix='host-frontend-'))
+        self.addCleanup(shutil.rmtree, temp, True)
+        (temp / 'helper.sh').write_text(text)
+        head = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True)
+        env = dict(os.environ, RUNNER_TEMP=str(temp / 'runner'), REQUESTED_SHA=head.stdout.strip())
+        def run(*args, status=None):
+            return subprocess.run(['bash', str(temp / 'helper.sh'), *args], cwd=ROOT, capture_output=True, text=True,
+                                  env=dict(env, **({'JOB_STATUS': status} if status else {})))
+        return run, temp / 'runner/namespace-policy/host-frontend'
+
+    def test_join_reports_each_exit_and_ends_orphans_without_counting_them(self):
+        names = ('unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate', 'linux-smoke',
+                 'sanitizer', 'signer-names', 'keychain-guard')
+        orphan = Path(tempfile.mkdtemp(prefix='host-orphan-')) / 'orphan.sh'
+        self.addCleanup(shutil.rmtree, orphan.parent, True)
+        orphan.write_text('sleep 60 &\n')  # like full-gate's cancelled mock: exits 0, child stays in the group
+        commands = dict.fromkeys(names, 'true')
+        commands.update({'pre-push': 'false', 'full-gate': 'bash ' + str(orphan)})
+        run, root = self.helper(commands)
+        self.assertEqual(run('replay', 'unsequenced').returncode, 1)  # never before a join
+        self.assertEqual(run('start').returncode, 0)
+        self.assertNotEqual(run('start').returncode, 0)  # one owned group per job
+        joined = run('wait', status='success')
+        self.assertEqual(joined.returncode, 0, joined.stdout + joined.stderr)
+        record = json.loads((root / 'group-exit.json').read_text())
+        self.assertTrue(record['completed'])
+        self.assertEqual(record['surviving_pids'], [])
+        self.assertEqual([line.split(' ', 1)[1] for line in record['orphans_ended_at_join']], ['sleep 60'])
+        self.assertEqual([(c['name'], c['exit']) for c in record['commands']],  # original order, real exits
+                         [(n, 1 if n == 'pre-push' else 0) for n in names])
+        self.assertFalse(record['complete'] or record['complete_gate_eligible'])
+        for name in names:
+            self.assertEqual(run('replay', name).returncode, 1 if name == 'pre-push' else 0, name)
+
+    def test_cancelled_job_terminates_the_group_and_reports_nothing_as_executed(self):
+        run, root = self.helper({'unsequenced': 'sleep 30'})
+        self.assertEqual(run('start').returncode, 0)
+        cancelled = run('wait', status='cancelled')
+        self.assertNotEqual(cancelled.returncode, 0)
+        record = json.loads((root / 'group-exit.json').read_text())
+        self.assertEqual((record['completed'], record['terminated_for_cancellation'], record['surviving_pids']),
+                         (False, True, []))
+        self.assertEqual(run('replay', 'unsequenced').returncode, 1)
+
+    def test_no_started_group_owns_nothing(self):
+        run, root = self.helper({})
+        self.assertEqual(run('wait', status='failure').returncode, 0)
+        self.assertFalse(root.exists())
 
 
 if __name__ == '__main__':
