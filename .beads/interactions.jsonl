@@ -1194,3 +1194,4 @@
 {"id":"int-d73c2181","kind":"field_change","created_at":"2026-10-24T04:11:00.549991Z","actor":"Biz","issue_id":"nostrc-0cfsg.36.25","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-0aea3329","kind":"field_change","created_at":"2026-10-24T07:29:21.243553Z","actor":"Biz","issue_id":"nostrc-0cfsg.36.26","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-89feeac7","kind":"field_change","created_at":"2026-10-24T08:06:53.401305Z","actor":"Biz","issue_id":"nostrc-0cfsg.36.27","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-dcb06587","kind":"field_change","created_at":"2026-10-24T14:31:43.247081Z","actor":"Biz","issue_id":"nostrc-0cfsg.36.30","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
