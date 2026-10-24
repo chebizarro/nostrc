@@ -44,6 +44,22 @@ def load_handoff(path, root=ROOT):
     return plan, policy, saved['dispatch']
 
 
+def needs_grotto(checks, profile):
+    """Enable the app subtree only for selected signer consumers, not lane membership."""
+    names = test_names(checks, profile)
+    targets = {target for check in checks.values() for target in check.get('build_targets', [])}
+    return (any(name.startswith('signer/') for name in names)
+            or bool(targets & {'grotto', 'grotto-daemon', 'nostr-signer-daemon',
+                               'grotto-schemas', 'grotto_resources', 'signer-tests'}))
+
+
+def needs_native_host(checks, profile):
+    names = test_names(checks, profile)
+    targets = {target for check in checks.values() for target in check.get('build_targets', [])}
+    return (any(name.startswith('nostr_signer_webext_') for name in names)
+            or 'nostr-signer-webext-host' in targets)
+
+
 def extra_steps(plan, profile, names=()):
     nodes = set(plan['witnesses'])
     # Legacy commands absent from inventory retain their existing bounded runner
@@ -135,6 +151,8 @@ def main():
         names = sorted(set(names) & TSAN_TESTS)
     if args.command == 'prepare':
         outputs = {'affected': not dispatch['broad'], 'has_checks': bool(checks),
+                   'needs_grotto': needs_grotto(checks, args.profile),
+                   'needs_native_host': needs_native_host(checks, args.profile),
                    'needs_nak': any('nak' in c.get('requires', []) for c in checks.values())
                        or any('nak' in name for name in names),
                    **extra_steps(plan, args.profile, names)}

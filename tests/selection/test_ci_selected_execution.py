@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 from selector_support import ROOT, change, s
@@ -50,6 +51,22 @@ class SelectedPlanTests(unittest.TestCase):
         self.assertFalse(extras['lifetime_stress'])
         self.assertFalse(extras['gtk_perf'])
         self.assertFalse(extras['session_keyring'])
+
+    def test_consumer_flags_are_derived_from_selected_checks_not_profile_membership(self):
+        for path in ['gnome/groundhog/src/ui/gh-about-dialog.c',
+                     'gnome/groundhog/data/ui/gh-window.blp',
+                     'gnome/groundhog/src/mls/gh-mls-service.c']:
+            with self.subTest(path=path):
+                checks = runner.selected_checks(self.plan(path), self.policy, 'groundhog.linux')
+                self.assertFalse(runner.needs_grotto(checks, 'groundhog.linux'))
+                self.assertFalse(runner.needs_native_host(checks, 'groundhog.linux'))
+        checks = runner.selected_checks(self.plan('libgo/src/channel.c'), self.policy, 'groundhog.linux')
+        self.assertTrue(runner.needs_grotto(checks, 'groundhog.linux'))
+        self.assertTrue(runner.needs_native_host(checks, 'groundhog.linux'))
+        host_only = {'host': {'kind': 'ctest', 'build_targets': ['nostr-signer-webext-host'],
+                             'ctest_tests': {'groundhog.linux': ['nostr_signer_webext_host_framing']}}}
+        self.assertFalse(runner.needs_grotto(host_only, 'groundhog.linux'))
+        self.assertTrue(runner.needs_native_host(host_only, 'groundhog.linux'))
 
     def test_mls_and_shared_dependencies_include_real_consumers(self):
         plan = self.plan('gnome/groundhog/src/mls/gh-mls-service.c')
@@ -182,6 +199,74 @@ class PhysicalRunnerFixtureTests(unittest.TestCase):
         self.assertTrue(set(names) <= observed)
         self.assertNotIn('unrelated.libnostr', observed)
         self.assertNotIn('unrelated.libgo', observed)
+
+    def test_actual_configure_shell_enables_only_selected_consumers(self):
+        # Run the production YAML's configure shell with production prepare output
+        # against a real CMake fixture. No apt packages or product builds are faked
+        # as accepted here: the fixture only proves the configure flag seam.
+        step = workflow('groundhog-ci').split('- name: Configure Groundhog and in-tree adapters\n', 1)[1]
+        script = textwrap.dedent(step.split('run: |\n', 1)[1].split('\n      - ', 1)[0])
+        prerequisites = workflow('groundhog-ci').split('- name: Install prerequisites for selected Grotto consumers\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn("steps.selection.outputs.needs_grotto == 'true'", prerequisites)
+        self.assertIn('libzbar-dev', prerequisites)
+        self.assertIn('blueprint-compiler-0.22.2.tar.xz', prerequisites)
+        fixture = '''cmake_minimum_required(VERSION 3.20)
+project(configure_seam NONE)
+enable_testing()
+option(BUILD_APPS "Build app subtree" ON)
+option(BUILD_SIGNER_TESTS "Build signer tests" OFF)
+option(BUILD_NATIVE_HOST "Build native host" OFF)
+option(ENABLE_NOSTR_SIGNER_WEBEXT_HOST "Build standalone native host" OFF)
+if(BUILD_APPS)
+  if(NOT "$ENV{GROTTO_PREREQUISITES_READY}" STREQUAL "yes")
+    message(FATAL_ERROR "Unrelated Grotto requires unavailable prerequisites")
+  endif()
+  if(BUILD_SIGNER_TESTS)
+    add_test(NAME signer/fixture COMMAND "${CMAKE_COMMAND}" -E true)
+  endif()
+endif()
+add_test(NAME groundhog-fixture COMMAND "${CMAKE_COMMAND}" -E true)
+'''
+        for path, expected in [('gnome/groundhog/src/ui/gh-about-dialog.c', False),
+                               ('gnome/groundhog/data/ui/gh-window.blp', False),
+                               ('nips/nip55l/src/core/signer_ops.c', True)]:
+            with self.subTest(path=path):
+                case = self.directory / ('shared' if expected else Path(path).name)
+                case.mkdir()
+                (case / 'CMakeLists.txt').write_text(fixture)
+                sha = s.commit_sha(ROOT, 'HEAD')
+                changes = [change(path)]
+                if expected:
+                    changes.append(change('gnome/groundhog/src/ui/gh-about-dialog.c'))
+                plan = s.make_plan(self.policy, changes, head=sha, context='ci')
+                self.assertFalse(ci.project(plan)['broad'])
+                saved = case / 'plan.json'
+                saved.write_text(json.dumps({'shared_plan': plan, 'dispatch': ci.project(plan)}))
+                output = case / 'outputs'
+                subprocess.run([sys.executable, str(ROOT / 'scripts/ci-selected-execution.py'),
+                                'prepare', '--profile', 'groundhog.linux', '--plan', str(saved)],
+                               env=dict(os.environ, GITHUB_OUTPUT=str(output)), check=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                outputs = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                self.assertEqual(outputs['needs_grotto'], str(expected).lower())
+                resolved = script
+                for key, value in outputs.items():
+                    resolved = resolved.replace('${{ steps.selection.outputs.' + key + ' }}', value)
+                environment = dict(os.environ)
+                environment.pop('GROTTO_PREREQUISITES_READY', None)
+                if expected:
+                    environment['GROTTO_PREREQUISITES_READY'] = 'yes'
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', resolved], cwd=case,
+                                        env=environment, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                cache = (case / 'build/CMakeCache.txt').read_text()
+                self.assertIn('BUILD_APPS:BOOL=' + ('ON' if expected else 'OFF'), cache)
+                self.assertIn('BUILD_SIGNER_TESTS:BOOL=' + ('ON' if expected else 'OFF'), cache)
+                self.assertIn('BUILD_NATIVE_HOST:BOOL=' + ('ON' if expected else 'OFF'), cache)
+                registrations = json.loads(subprocess.check_output(
+                    ['ctest', '--test-dir', str(case / 'build'), '--show-only=json-v1'], text=True))
+                self.assertEqual('signer/fixture' in {t['name'] for t in registrations['tests']}, expected)
 
     def test_exact_names_escape_regex_and_ctest_supplies_fixture_closure(self):
         names = ['selected.with+[regex](characters)']

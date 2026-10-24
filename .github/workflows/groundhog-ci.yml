@@ -90,13 +90,35 @@ jobs:
             scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
             oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
 
+      - name: Install prerequisites for selected Grotto consumers
+        if: steps.selection.outputs.affected == 'true' && steps.selection.outputs.needs_grotto == 'true'
+        run: |
+          sudo apt-get install -y --no-install-recommends libzbar-dev meson curl locales
+          sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+          # Grotto needs the same pinned compiler as its ordinary CI runner.
+          curl -fL --retry 3 https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o /tmp/blueprint.tar.xz
+          echo '231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  /tmp/blueprint.tar.xz' | sha256sum -c
+          mkdir /tmp/blueprint
+          tar -xJf /tmp/blueprint.tar.xz --strip-components=1 -C /tmp/blueprint
+          meson setup /tmp/blueprint-build /tmp/blueprint --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C /tmp/blueprint-build
+          sudo meson install -C /tmp/blueprint-build
+          blueprint-compiler --version | grep -x 0.22.2
+
       - name: Configure Groundhog and in-tree adapters
         run: |
           args=()
           if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
-            args+=(-DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_SIGNER_TESTS=ON -DBUILD_NATIVE_HOST=ON
-              -DENABLE_TCP_IPC=ON -DNIP55L_TEST_TRUST_ENV=ON
-              -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service)
+            args+=(-DENABLE_TCP_IPC=ON -DNIP55L_TEST_TRUST_ENV=ON
+              -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service
+              -DBUILD_NATIVE_HOST=OFF)
+            if [[ '${{ steps.selection.outputs.needs_grotto }}' == true ]]; then
+              args+=(-DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_SIGNER_TESTS=ON)
+            fi
+            if [[ '${{ steps.selection.outputs.needs_native_host }}' == true ]]; then
+              args+=(-DBUILD_NATIVE_HOST=ON -DENABLE_NOSTR_SIGNER_WEBEXT_HOST=ON)
+            fi
           fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
