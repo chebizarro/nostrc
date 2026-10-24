@@ -2,6 +2,36 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 final-source Static attempt — 2026-10-24T10:54:03Z–11:14:25Z
+
+This is a dated record of one actual hosted attempt plus separate local proofs. It is not a live counter, and the older entries below are unchanged. The parent's source freeze (`pr26-final/source-freeze.json`, snapshot 2026-10-24T10:54:31.914952Z) records:
+- head H `1f7dc22b6e860331d590d49fb91f9687dd269335`, pushed with the normal pre-push hook and not manually dispatched;
+- tested synthetic S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`, with tree `cabae365aca49b402b7943b0be4553a6a42c3b73` (equal to H's tree) and parents D `1d53e6ecd` and H.
+
+| Observation | Exact source / result |
+|---|---|
+| [Static run 40087734351](https://github.com/chebizarro/nostrc/actions/runs/40087734351) / [job 120853988147](https://github.com/chebizarro/nostrc/actions/runs/40087734351/job/120853988147), attempt 1 | **CANCELLED again** at the unchanged 20-minute cap. Job ran 10:54:07Z–11:14:24Z, cleanup included. |
+| Job steps | Success: host self-test start (7), image build (8), join (9), container and AppArmor removal (11–12), ensure-ended (13), evidence upload (14). Cancelled: step 10 `Selection and workflow contract tests` (testhost). Skipped: steps 15–23, the nine named replays. **Not complete.** |
+| [Artifact 12558486011](https://github.com/chebizarro/nostrc/actions/runs/40087734351/artifacts/12558486011) | `static-checks-testhost-19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77-1`, 39,784,542 bytes, `sha256:c457e76810526f027545bb361fb721dcc5ec96d518669d53f1a44f3c8a99ee87`. .26 is fetching the original ZIP; it is not duplicated here. |
+| [Shadow run 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) | Still running at capture. .18 is watching the actual qualifier; no result is inferred. |
+
+- **API snapshot:** parent-captured at `pr26-final/static-final-{run,jobs,artifacts}.json`.
+- **Next step:** the source-code fix stays under `.36.26` profiling. No unchanged retry and no manual dispatch.
+
+Separate local proofs. None of these is hosted, profile or W11 promotion.
+
+| Proof | Exact source / result |
+|---|---|
+| Native, 44d (`final-44d59586a14d-composed-native-20261024`) | Source `44d59586a14d109b4324ed02a2c16adeb10a994f`, tree `478142be`. 439 accounted = **434 passed + 5 skipped, 0 failed** (CTest exit 0). Its Linux part is separately `unsupported_current_host` on Darwin (driver exit 1). Complete, eligible and `w11_acceptance` are all false. Summary `8402974ae82f11034e8a766467f00835adb74aeb67b991f7cb4e57106fa0b022`; manifest 9,206 entries / 543,277,521 bytes, parent-verified. |
+| 44d → 1f7 delta | Only `.beads/interactions.jsonl` and `.beads/issues.jsonl`. Source-impact `577407f4b8d9fe71becaa9c658b0b71fdbecdad4c10b07a293509b4f78da7498` (`final-b2-composed-native-20261024/source-impact-44d59586a14d-to-1f7dc22b6e86.json`). |
+| LinuxKit round 5 at exact `1f7dc22b6` (`agent-handoffs/nostrc-0cfsg-36-26-static-budget-4b1c8ca66/round5-full-1f7dc22b6/ROUND5.md`) | Environment: LinuxKit aarch64 Docker Desktop, kernel 7.0.14; no AppArmor and no hosted controller. FULL DEFAULT ran **1,420 tests in 476.981s OK**: 1,340 ok + 80 skipped, the same 80 skip IDs as round 3, no cases removed, 36 new cases passing. Kernel: **121 / 0 skipped in 64.098s**. All 14 commands exited 0. `complete=false`, `complete_gate_eligible=false`, `native_profile_acceptance=false`. |
+| Round 5 verification and cleanup | Parent verified 228 hashes with 0 errors (`parent-full-composed-linux-verification.json`) plus the archived regression. Owned containers, image, builder, state volume and temp were removed, and the baseline of 21 containers / 53 volumes was restored. |
+| Round 5 file hashes | `ROUND5.md` `631343fec8b52245ea1a0b647c399455742d0209a16397e86c21f6fe9cdc9c2d`; verification `90b9fd1c0d275996ff75a0fd50f01c0b683e5dfe835cc73de446bef3408ca20e`. |
+
+**Tracker backfill after the 10:13:56Z census:** `.36.28` (libgo Linux/macOS normal qualification contracts) and `.36.29` (static.policy qualification versus actual container-exit seam) were created at 10:39Z. The census entry's "none found" wording below stays as historical.
+
+Reviewed counters stay at **0/20 qualifying PR comparisons, 0/2 successful complete broad integrations and 0 product samples. W11 NOT MET / W12 NOT RUN.** No defaults, protections, publisher, schedule or legacy-trigger cutover.
+
 ## H profile census — snapshot 2026-10-24T10:13:56Z
 
 This is a bounded census of two existing failing CI-control roots. It is a single snapshot, not a live counter, and no runs or retries were made for it. Both roots are attempt 1 and each has the plan's 13 `expected_lane_ids`.

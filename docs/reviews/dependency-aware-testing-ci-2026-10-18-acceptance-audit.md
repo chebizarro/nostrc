@@ -2,6 +2,29 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 final-source Static attempt and local proofs — 2026-10-24T11:14:25Z
+
+Per-step and hash detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-static-attempt--2026-10-24t105403z111425z).
+
+PR26 identities:
+- **Head:** H `1f7dc22b6e860331d590d49fb91f9687dd269335`, pushed with the normal hook.
+- **Tested:** synthetic S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`, with tree `cabae365aca49b402b7943b0be4553a6a42c3b73` (the same tree as H) and parents D `1d53e6ecd` and H.
+
+Hosted outcomes:
+- **Static:** [run 40087734351 / job 120853988147](https://github.com/chebizarro/nostrc/actions/runs/40087734351/job/120853988147) was **CANCELLED again** at the unchanged 20-minute cap (10:54:07Z–11:14:24Z, cleanup included). The testhost step was cancelled and the nine named replays were skipped, so it is **not complete**.
+  - Its [artifact 12558486011](https://github.com/chebizarro/nostrc/actions/runs/40087734351/artifacts/12558486011) is retained.
+  - `.36.26` ("fresh source-bound complete hosted Static integration succeeds under unchanged1200s cap") remains unmet. Its source fix stays under profiling, with no unchanged retry or manual dispatch.
+- **Shadow:** [run 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) was still running at capture, so no qualifier result is inferred.
+
+Separate local proofs. These give no hosted, profile or W11 credit:
+- **Native at 44d:** 434 passed + 5 skipped, 0 failed (439 accounted). The Linux part is unsupported on Darwin. Summary `8402974a…`.
+- **44d → 1f7 delta:** only two bead files.
+- **LinuxKit at exact `1f7dc22b6`:** DEFAULT 1,420 tests in 476.981s (80 skips, none removed, 36 new passing) and kernel 121 / 0 skipped in 64.098s. All 14 commands exited 0, and `complete`/`eligible`/`native` are all false.
+
+**Backfill:** after the 10:13:56Z census, the tracker added `.36.28` (libgo normal contracts) and `.36.29` (static.policy qualification versus actual exit seam). That census's "none found by read-only tracker search" rows below are historical and kept.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** This is not a live counter, and there is no new waiver or cutover.
+
 ## H profile census acceptance snapshot — 2026-10-24T10:13:56Z
 
 This snapshot covers [PR26 run 40072073551](https://github.com/chebizarro/nostrc/actions/runs/40072073551) and [manual broad run 40072096156](https://github.com/chebizarro/nostrc/actions/runs/40072096156):
