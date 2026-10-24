@@ -21,7 +21,42 @@ static int tcp_connect(const char *host, unsigned short port) {
   return fd;
 }
 
+/* A provisioned signer reaches only this registration: it alone declares
+ * RESOURCE_GROUPS nip5f_signer:1, and the engine's resource spec carries the
+ * loopback port and token as the resource id "p<port>_<64 hex>". CTest sets
+ * CTEST_RESOURCE_GROUP_COUNT only when it schedules resources (it strips an
+ * inherited value), so the count decides the route. Returns 1 with an exact
+ * allocation, 0 without one and -1 when malformed. Never prints the token. */
+static int ctest_allocation(char *ep, size_t ep_len, char *tok, size_t tok_len) {
+  const char *count = getenv("CTEST_RESOURCE_GROUP_COUNT");
+  if (!count || strcmp(count, "0") == 0) return 0;
+  const char *group = getenv("CTEST_RESOURCE_GROUP_0");
+  const char *value = getenv("CTEST_RESOURCE_GROUP_0_NIP5F_SIGNER");
+  if (strcmp(count, "1") != 0 || !group || strcmp(group, "nip5f_signer") != 0 || !value
+      || strncmp(value, "id:p", 4) != 0) return -1;
+  const char *port = value + 4, *sep = strchr(port, '_');
+  size_t digits = sep ? (size_t)(sep - port) : 0;
+  if (digits < 1 || digits > 5 || strspn(port, "0123456789") != digits || port[0] == '0') return -1;
+  const char *hex = sep + 1;
+  if (strspn(hex, "0123456789abcdef") != 64 || strcmp(hex + 64, ",slots:1") != 0 || tok_len < 65) return -1;
+  long number = strtol(port, NULL, 10);
+  if (number > 65535 || snprintf(ep, ep_len, "tcp:127.0.0.1:%ld", number) >= (int)ep_len) return -1;
+  memcpy(tok, hex, 64); tok[64] = '\0';
+  return 1;
+}
+
+static int run_signer(const char *ep, const char *tok);
+
 int main(void) {
+  char allocated_ep[32], allocated_tok[65];
+  int allocated = ctest_allocation(allocated_ep, sizeof(allocated_ep), allocated_tok, sizeof(allocated_tok));
+  if (allocated < 0) { fprintf(stderr, "Malformed CTest nip5f_signer resource allocation\n"); return 1; }
+  if (allocated) return run_signer(allocated_ep, allocated_tok);
+  if (getenv("CTEST_RESOURCE_GROUP_COUNT")) {
+    /* Resource-scheduled run without this allocation: never inherited credentials. */
+    fprintf(stderr, "Skipping TCP test (no nip5f_signer resource allocated)\n");
+    return 77;
+  }
   const char *ep = getenv("NOSTR_SIGNER_ENDPOINT");
   const char *tok = getenv("NOSTR_SIGNER_TOKEN");
   if (!ep || strncmp(ep, "tcp:", 4) != 0 || !tok || !*tok) {
@@ -30,6 +65,10 @@ int main(void) {
     fprintf(stderr, "For in-process testing, run test_nip5f_loopback instead\n");
     return 77;  /* Signal SKIP to CTest */
   }
+  return run_signer(ep, tok);
+}
+
+static int run_signer(const char *ep, const char *tok) {
   /* Parse tcp:HOST:PORT */
   const char *spec = ep + 4;
   const char *colon = strchr(spec, ':');

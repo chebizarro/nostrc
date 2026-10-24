@@ -76,6 +76,11 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
   target_link_libraries(test_nip5f_tcp PRIVATE nostr_nip5f_core nostr nostr_json)
   add_test(NAME test_nip5f_tcp COMMAND test_nip5f_tcp)
   set_tests_properties(test_nip5f_tcp PROPERTIES SKIP_RETURN_CODE 77)
+  # The only signer credential route: a provisioned signer's endpoint/token is
+  # a CTest resource allocated to this registration alone, never test-process
+  # environment shared by every registration. Without a resource spec CTest
+  # allocates nothing and the test keeps its unconfigured skip.
+  set_tests_properties(test_nip5f_tcp PROPERTIES RESOURCE_GROUPS "nip5f_signer:1")
 endif()
 
 # The worker fixture approver is test-only and uses the real daemon approval API.
