@@ -9,7 +9,7 @@
     ".23": "c326500c2",
     ".25": "276145d1c0"
   },
-  "enrolled_policy_hash": "f36e4cc28f4dc0a6a6c3f55fe4154f4326fcf976fcfb962eb823fc83949292c5",
+  "enrolled_policy_hash": "94a8c4a5ab39a2a29178fa5390cb64f74951ca643711b934e05a2a2829d81031",
   "head": "edeec682a65c4197bc599c4f726b3a8720fd8409",
   "maps": {
     "coverage_gaps": {
@@ -49,6 +49,30 @@
           "tracking": "nostrc-0cfsg.36.9"
         }
       }
+    },
+    "workflow_jobs": {
+      ".github/workflows/dependency-worker.yml:execute": {
+        "after": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "source_sha256": "3251b6a2780cf1bb5cdfa680da255741b7de2feb04a8f71f34776b9e5d949e84",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "1bfd93d469478a69b27588670a533b9b6ff007ac1bbdd8d299613f494fb08b62"
+        },
+        "before": {
+          "coverage_gap": "workflow_profile_union",
+          "matrix_source": "",
+          "profiles": [
+            "static.policy"
+          ],
+          "source_sha256": "4960e3d34b17ad9827972b5450d445b7431c2054ff566012ffed156575ef6ef0",
+          "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
+          "workflow_sha256": "16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9"
+        }
+      }
     }
   },
   "runtime_inputs": [
@@ -62,6 +86,39 @@
   "schema_version": 1,
   "scope": "Exact W11 batch2 integration of nostrc-0cfsg.36.25 (original-byte native seal), .36.18 (per-registration signer delivery, fail-closed scheduled consumer, sealed-JUnit qualification, offline hosted proof verifier) and .36.23 (Gnostr test linkage): the exact source deltas from the batch base, the .36.9 applicability anchor rebinding to the changed nip5f test source and registration, and clerical selection.contract enrollment, reversed for historical witnesses only. No admission, coverage, omission, nonmember/subset/full-ownership authority, path rule or historical review binding changes. Not execution, hosted, signer or W11 acceptance.",
   "sources": {
+    ".github/workflows/dependency-worker.yml": {
+      "after_sha256": "1bfd93d469478a69b27588670a533b9b6ff007ac1bbdd8d299613f494fb08b62",
+      "authors": [
+        "nostrc-0cfsg.36.18"
+      ],
+      "before_sha256": "16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9",
+      "edits": [
+        {
+          "after": "      - name: Qualify normal lane after pidns exit and AppArmor teardown\n        id: qualify\n        if: success() && runner.os == 'Linux'\n",
+          "before": "      - name: Qualify normal lane after pidns exit and AppArmor teardown\n        if: success() && runner.os == 'Linux'\n"
+        },
+        {
+          "after": "            --receipts-dir \"$RUNNER_TEMP/dependency/receipts/$PROFILE\"\n      # A lane that could provision the signer publishes its raw receipt/evidence\n      # sets only after exact-token-checked qualification; otherwise (failure,\n      # cancellation, refusal, scan failure, exposure, or this gate failing) both\n      # stay unuploaded on the ephemeral worker and only nonsecret metadata is kept.\n      - name: Decide signer-safe evidence publication\n        id: publication\n        if: always()\n        shell: bash\n        env:\n          QUALIFY_OUTCOME: ${{ steps.qualify.outcome }}\n        run: |\n          set -euo pipefail\n          decision=$(python3 scripts/test_selection_execution.py publication-gate --repo \"$GITHUB_WORKSPACE\" \\\n            --plan \"$RUNNER_TEMP/dependency/plan.json\" --profile \"$PROFILE\" \\\n            --receipts-dir \"$RUNNER_TEMP/dependency/receipts/$PROFILE\" \\\n            --evidence-root \"$RUNNER_TEMP/dependency/evidence\" --qualify-outcome \"$QUALIFY_OUTCOME\" \\\n            --metadata \"$RUNNER_TEMP/dependency/withheld/withheld.json\")\n          case \"$decision\" in\n            publish=true|publish=false) echo \"$decision\" >> \"$GITHUB_OUTPUT\" ;;\n            *) exit 1 ;;\n          esac\n      - name: Retain incomplete evidence on failure or cancellation\n",
+          "before": "            --receipts-dir \"$RUNNER_TEMP/dependency/receipts/$PROFILE\"\n      - name: Retain incomplete evidence on failure or cancellation\n"
+        },
+        {
+          "after": "      - name: Retain incomplete evidence on failure or cancellation\n        if: always() && steps.publication.outputs.publish == 'true'\n        uses: actions/upload-artifact@v4\n",
+          "before": "      - name: Retain incomplete evidence on failure or cancellation\n        if: always()\n        uses: actions/upload-artifact@v4\n"
+        },
+        {
+          "after": "      - name: Retain resolved plans and raw backend evidence separately\n        if: always() && steps.publication.outputs.publish == 'true'\n        uses: actions/upload-artifact@v4\n",
+          "before": "      - name: Retain resolved plans and raw backend evidence separately\n        if: always()\n        uses: actions/upload-artifact@v4\n"
+        },
+        {
+          "after": "          if-no-files-found: warn\n      - name: Record withheld signer-sensitive publication (nonsecret metadata only)\n        if: always() && steps.publication.outputs.publish != 'true'\n        uses: actions/upload-artifact@v4\n        with:\n          name: dependency-withheld-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/dependency/withheld/withheld.json\n          if-no-files-found: warn\n",
+          "before": "          if-no-files-found: warn\n"
+        }
+      ],
+      "origin": "additive publication gate from 1d53e6ecd bytes (after_sha256)",
+      "restored_sha256": [
+        "82aead62000cb696af72d1522dee3d298d445cbf78e9a9fac096f5c6097486ac"
+      ]
+    },
     "apps/gnostr/CMakeLists.txt": {
       "after_sha256": "6a812f72b33c7451438645a77df63ea67ce2eeefbcdc94b068e650a95cf1020d",
       "authors": [
@@ -159,7 +216,7 @@
       "origin": "nostrc-0cfsg.36.25 handoff record (verbatim, sha256 26a61685363434a41d150f043258028b3c34b44a13a3cc091ad29a3b9cf2a968)"
     },
     "scripts/test_selection_execution.py": {
-      "after_sha256": "28f4c7144503b53b47b69ab30b42dfa454a772177a04d3bb62e793023dc5cc90",
+      "after_sha256": "e8c956c764fd7065e8044ea4e754b7d3d0ff155b43a21ea8352adb8aeaa028fc",
       "authors": [
         "nostrc-0cfsg.36.18"
       ],
@@ -188,9 +245,21 @@
         {
           "after": "    return result\n\n\ndef verified_transport(policy, plan, receipt):\n    \"\"\"validate_receipt for one transported bundle; returns the public receipt and the\n    locator over that bundle's verified, sealed bytes (for read-only diagnostics).\"\"\"\n    require('transport' in receipt and _PORTABLE_ONLY, 'not a transported normal receipt')\n    public = validate_receipt(policy, plan, receipt)\n    return public, _LOADED[receipt['qualification_hash']]['locator']\n\n",
           "before": "    return result\n\n"
+        },
+        {
+          "after": "\n# ------------------------------------------------------------- publication --\nPUBLICATION_WITHHELD = 'signer_sensitive_publication_withheld_v1'\n\n\ndef _signer_possible(policy, plan, profile):\n    \"\"\"Whether this exact plan lane could provision the signer (authored data only).\n\n    Unknown lanes or checks count as possible: the decision can only withhold.\"\"\"\n    lane = next((item for item in plan.get('lanes', []) if item.get('profile') == profile), None)\n    if lane is None:\n        return 'signer_endpoint' in policy['profiles'].get(profile, {}).get('capabilities', [])\n    return any('signer_endpoint' in policy['checks'].get(ident, {'requires': ['signer_endpoint']}).get('requires', [])\n               for ident in lane['checks'])\n\n\ndef _safe_path(path):\n    \"\"\"A reportable path: anything carrying a 64-hex run is never echoed.\"\"\"\n    return '<path withheld: credential-shaped name>' if re.search(r'[0-9a-f]{64}', str(path)) else str(path)\n\n\ndef _credential_shapes(roots):\n    from test_selection_services import SIGNER_LEAK_PATTERNS\n    patterns = [re.compile(pattern) for pattern in SIGNER_LEAK_PATTERNS]\n    found = []\n    for root in map(Path, roots):\n        files = sorted(path for path in root.rglob('*') if path.is_file() and not path.is_symlink()) \\\n            if root.is_dir() and not root.is_symlink() else []\n        found += [str(path) for path in files if any(p.search(path.read_bytes()) for p in patterns)]\n    return found\n\n\ndef publication_decision(policy, plan, profile, receipts_dir, evidence_root, qualify_outcome):\n    \"\"\"(publish, reason, paths) for this worker's always-uploaded receipt/evidence sets.\n\n    A lane that could provision the signer publishes only after post-exit\n    qualification passed and its delivery record shows a complete, clean\n    exact-token scan; anything else (failure, cancellation, refusal, scan\n    failure, exposure) withholds the whole set. Reasons and paths only: never\n    file contents or a credential.\"\"\"\n    if not _signer_possible(policy, plan, profile):\n        return True, 'no_signer_in_lane', []\n    if qualify_outcome != 'success':\n        return False, 'qualification_' + (re.sub(r'[^a-z]', '', str(qualify_outcome))[:16] or 'unknown'), []\n    receipts = Path(receipts_dir)\n    current, original = receipts / 'receipt.json', receipts / ORIGINAL\n    def load(path):\n        try:\n            return json.loads(path.read_bytes()) if path.is_file() and not path.is_symlink() else None\n        except ValueError:\n            return None\n    receipt = load(current)\n    if not (isinstance(receipt, dict) and receipt.get('receipt_kind') == KIND and receipt.get('plan_id') == plan['plan_id']\n            and receipt.get('profile') == profile and receipt.get('source_identity') == plan['source_identity']):\n        return False, 'lane_not_qualified', []\n    public = load(original)\n    if not (isinstance(public, dict) and _sha(original) == (receipt.get('public_evidence') or {}).get('sha256')):\n        return False, 'original_unbound', []\n    backend = public.get('backend_receipt', public)\n    delivery = ((backend.get('signer_runtime') or {}).get('delivery') or {}) if isinstance(backend, dict) else {}\n    if not (delivery.get('removed') is True and delivery.get('exposure_checked') and delivery.get('fixture_exposure_checked')\n            and isinstance(delivery.get('exposed'), list)):\n        return False, 'exposure_scan_incomplete', []\n    if delivery['exposed']:\n        return False, 'exposure_detected', [_safe_path(path) for path in delivery['exposed']]\n    shapes = _credential_shapes([receipts, evidence_root])\n    if shapes:\n        return False, 'credential_shape_detected', [_safe_path(path) for path in shapes]\n    return True, 'qualified_exposure_checked', []\n\n\ndef publication_gate(repo, plan_path, profile, receipts_dir, evidence_root, qualify_outcome, metadata_path):\n    \"\"\"Worker step before upload. Withheld sets stay unuploaded on the ephemeral\n    worker; only nonsecret metadata (never a receipt.json) is written.\"\"\"\n    sys.path.insert(0, str(Path(repo) / 'scripts'))\n    import test_selection as selection\n    policy = selection.load_inventory(Path(repo) / 'tests/selection/inventory.json')\n    plan = selection.read_json(plan_path)\n    publish, reason, paths = publication_decision(policy, plan, profile, receipts_dir, evidence_root, qualify_outcome)\n    if publish:\n        return True, reason\n    record = dict(schema_version=1, kind=PUBLICATION_WITHHELD, plan_id=plan['plan_id'], profile=profile,\n                  source_identity=plan['source_identity'], reason=reason, paths=paths,\n                  withheld=['dependency-receipt', 'dependency-evidence'],\n                  local_retention='unuploaded on the ephemeral hosted worker until the job ends; not durably retained',\n                  complete=False, complete_gate_eligible=False)\n    metadata = Path(metadata_path)\n    metadata.parent.mkdir(parents=True, exist_ok=True)\n    with open(metadata, 'x') as stream:\n        json.dump(record, stream, sort_keys=True, indent=2)\n        stream.write('\\n')\n    return False, reason\n\n\ndef main(argv=None):\n",
+          "before": "\ndef main(argv=None):\n"
+        },
+        {
+          "after": "        worker.add_argument('--' + name, required=True)\n    gate = commands.add_parser('publication-gate')\n    for name in ('repo', 'plan', 'profile', 'receipts-dir', 'evidence-root', 'qualify-outcome', 'metadata'):\n        gate.add_argument('--' + name, required=True)\n    args = parser.parse_args(argv)\n",
+          "before": "        worker.add_argument('--' + name, required=True)\n    args = parser.parse_args(argv)\n"
+        },
+        {
+          "after": "    args = parser.parse_args(argv)\n    if args.command == 'publication-gate':\n        # stdout carries only the decision; any failure prints nothing there (withheld).\n        publish, reason = publication_gate(args.repo, args.plan, args.profile, args.receipts_dir, args.evidence_root,\n                                           args.qualify_outcome, args.metadata)\n        print('publication: %s (%s)' % ('published' if publish else 'withheld', reason), file=sys.stderr)\n        print('publish=true' if publish else 'publish=false')\n        return 0\n    try:\n",
+          "before": "    args = parser.parse_args(argv)\n    try:\n"
         }
       ],
-      "origin": "regenerated from 1d53e6ecd bytes to the .36.18 F1-F3 correction bytes (after_sha256)",
+      "origin": "regenerated from 1d53e6ecd bytes to the .36.18 F1-F3 + publication-gate correction bytes (after_sha256)",
       "restored_sha256": [
         "70714e1c3978e67d31ff1bc83d83dc6c04c75a559a354e812eb5e0b40f3e8526"
       ]
@@ -222,7 +291,7 @@
       "origin": "regenerated from 1d53e6ecd bytes to the .36.18 F1-F3 correction bytes (after_sha256)"
     },
     "scripts/test_selection_services.py": {
-      "after_sha256": "6d99419ed5d7269e040a6b78115e6f1bcd3e8aaec01d4dfe824cef729c34477e",
+      "after_sha256": "4d234d8b45c8e2bf61d4e28b07fa73fd35056c9f88d18ed11a748185bac4febe",
       "authors": [
         "nostrc-0cfsg.36.25",
         "nostrc-0cfsg.36.18"
@@ -230,7 +299,7 @@
       "before_sha256": "1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7",
       "edits": [
         {
-          "after": "SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')\n# Credentials reach only the admitted registration, as its CTest resource\n# allocation; the CTest process environment never carries them.\nSIGNER_CONSUMER = 'test_nip5f_tcp'\nSIGNER_RESOURCE_TYPE = 'nip5f_signer'\nSIGNER_RESOURCE_GROUPS = [{'requirements': [{'.type': SIGNER_RESOURCE_TYPE, 'slots': 1}]}]\nSIGNER_DELIVERY = 'ctest_resource_allocation_v1'\n# Inherited by every registration if present: refused, never overridden.\nSIGNER_AMBIENT = ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN', 'NOSTR_SIGNER_SOCK')\n\n",
+          "after": "SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')\n# Credentials reach only the admitted registration, as its CTest resource\n# allocation; the CTest process environment never carries them.\nSIGNER_CONSUMER = 'test_nip5f_tcp'\nSIGNER_RESOURCE_TYPE = 'nip5f_signer'\nSIGNER_RESOURCE_GROUPS = [{'requirements': [{'.type': SIGNER_RESOURCE_TYPE, 'slots': 1}]}]\nSIGNER_DELIVERY = 'ctest_resource_allocation_v1'\n# Inherited by every registration if present: refused, never overridden.\nSIGNER_AMBIENT = ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN', 'NOSTR_SIGNER_SOCK')\n# Forms a delivered credential takes in retained bytes: environment, wire AUTH line, resource id.\nSIGNER_LEAK_PATTERNS = (rb'NOSTR_SIGNER_TOKEN=', rb'AUTH [0-9a-f]{64}',\n                        rb'(?<![0-9A-Za-z])p[1-9][0-9]{0,4}_[0-9a-f]{64}(?![0-9a-f])')\n\n",
           "before": "SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')\n\n"
         },
         {
@@ -298,7 +367,7 @@
           "before": "    if verification['status'] != 'verified':\n        raise ServiceError('native retained evidence changed after finalizer seal')\n    return {'schema_version': 1, 'status': 'verified', 'seal_sha256': expected,\n"
         }
       ],
-      "origin": "regenerated from 1d53e6ecd bytes to the .36.18 F1-F3 correction bytes (after_sha256)"
+      "origin": "regenerated from 1d53e6ecd bytes to the .36.18 F1-F3 + publication-gate correction bytes (after_sha256)"
     },
     "tests/selection/test_normal_execution_contract.py": {
       "after_sha256": "807b93574b9b3e74376c976b79a461d6391f93822b24c95d1b8252501fc02054",
@@ -318,7 +387,7 @@
       ]
     },
     "tests/selection/test_post1640_integration.py": {
-      "after_sha256": "64400ec4fa33a3f01ac6555c75be55496b6236a52cf0d82edd9712590e3ed9d8",
+      "after_sha256": "236dec6d6109ab68c06fb476b15e7d46a8afc5b658790147dd208b33d8312a2e",
       "authors": [
         "w11-batch2-integration"
       ],
@@ -337,12 +406,34 @@
           "before": "            with self.subTest(path=path):\n                raw = (ROOT / path).read_bytes()\n                before = wave.before_source(path, raw)\n"
         },
         {
+          "after": "        from profile_contract_support import source_job_blocks, validate_job_accounting\n        from w11_batch2_integration_support import before_jobs as before_batch2_jobs\n        policy = self.policy()\n",
+          "before": "        from profile_contract_support import source_job_blocks, validate_job_accounting\n        policy = self.policy()\n"
+        },
+        {
+          "after": "        policy = self.policy()\n        # Live accounting holds for the live inventory; this layer's view projects\n        # the newer W11 batch2 publication-gate job map away first.\n        validate_job_accounting(s.load_inventory(ROOT / 'tests/selection/inventory.json'), ROOT)\n        actual = before_batch2_jobs(source_job_blocks(ROOT))\n        before = wave.before_jobs(actual)\n",
+          "before": "        policy = self.policy()\n        validate_job_accounting(policy, ROOT)\n        actual = source_job_blocks(ROOT)\n        before = wave.before_jobs(actual)\n"
+        },
+        {
           "after": "        from worker_prerequisite_support import before_source as before_newer_source\n        from w11_batch2_integration_support import before_source as before_batch2_source\n        data = wave.witness()\n",
           "before": "        from worker_prerequisite_support import before_source as before_newer_source\n        data = wave.witness()\n"
         },
         {
           "after": "                with self.subTest(field=field, path=path):\n                    raw = before_newer_source(path, before_batch2_source(path, (ROOT / path).read_bytes()))\n                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)\n",
           "before": "                with self.subTest(field=field, path=path):\n                    raw = before_newer_source(path, (ROOT / path).read_bytes())\n                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)\n"
+        }
+      ],
+      "origin": "this integration edit from 1d53e6ecd bytes"
+    },
+    "tests/selection/test_worker_signer_prerequisites.py": {
+      "after_sha256": "1c5a723112d2ecd647f9cd799764f96d27dfa4f3b93b1a0c5ff30a49c2843cf4",
+      "authors": [
+        "w11-batch2-integration"
+      ],
+      "before_sha256": "cc07963f1b00094c48c7ee6794c18030c12c73e0bfcc19119f4a3d4da71e51f1",
+      "edits": [
+        {
+          "after": "        import worker_prerequisite_support as newer\n        from w11_batch2_integration_support import before_source as before_batch2_source\n        path = '.github/workflows/dependency-worker.yml'\n        text = newer.before_source(path, before_batch2_source(path, WORKER.read_bytes())).decode()\n        self.assertEqual(text.count(current), 1)\n",
+          "before": "        import worker_prerequisite_support as newer\n        text = newer.before_source('.github/workflows/dependency-worker.yml', WORKER.read_bytes()).decode()\n        self.assertEqual(text.count(current), 1)\n"
         }
       ],
       "origin": "this integration edit from 1d53e6ecd bytes"

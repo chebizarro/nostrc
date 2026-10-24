@@ -12,8 +12,10 @@ test source and registration, and its clerical selection.contract enrollment.
 Each record maps only its exact after bytes; other non-before bytes refuse, and
 before bytes pass unchanged to the older layers' own strict inverses. Because
 post-1640 delegates to newer layers before checking its own result, its two
-records also pass exactly that layer's restored bytes (``restored_sha256``). No
-historical review binding, path rule or authority changes.
+records also pass exactly that layer's restored bytes (``restored_sha256``). The
+.36.18 publication gate adds the dependency-worker.yml source record and the exact
+execute workflow_jobs hash map (reversed first by before_jobs). No historical
+review binding, path rule or authority changes.
 """
 import copy
 import hashlib
@@ -21,7 +23,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_batch2_integration_20261024.json'
-SHA256 = 'daa5419d987703a5b5926c2f0c1842d4f5969759a9a5b9868db9839c2f10b074'
+SHA256 = '26564f1442fa4f43fc7a193df79715f65af3da9fbe5c82152f5bbe3898e97e12'
 
 
 def witness():
@@ -53,8 +55,12 @@ def before_policy(policy):
     gaps = previous['coverage_gaps']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     records = data['maps']['coverage_gaps']
+    jobs = data['maps']['workflow_jobs']
     if present:
         s.require(len(present) == len(data['runtime_inputs']), 'W11 batch2 enrollment partially stripped')
+        for ident, record in jobs.items():
+            s.require(previous['workflow_jobs'].get(ident) == record['after'], 'W11 batch2 workflow job changed: ' + ident)
+            previous['workflow_jobs'][ident] = copy.deepcopy(record['before'])
         for ident, record in records.items():
             matches = [index for index, gap in enumerate(gaps) if gap.get('id') == ident]
             s.require(len(matches) == 1 and gaps[matches[0]] == record['after'],
@@ -68,4 +74,17 @@ def before_policy(policy):
         # surviving without its enrollment refuses here.
         for ident, record in records.items():
             s.require(record['after'] not in gaps, 'W11 batch2 coverage gap rebinding without enrollment: ' + ident)
+        for ident, record in jobs.items():
+            s.require(previous['workflow_jobs'].get(ident) != record['after'],
+                      'W11 batch2 workflow job hashes without enrollment: ' + ident)
+    return previous
+
+
+def before_jobs(records):
+    """Exact live execute-job hashes -> batch base; anything else passes to older guards."""
+    previous = copy.deepcopy(records)
+    fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
+    for ident, record in witness()['maps']['workflow_jobs'].items():
+        if ident in previous and all(previous[ident].get(key) == record['after'][key] for key in fields):
+            previous[ident].update({key: record['before'][key] for key in fields})
     return previous

@@ -556,6 +556,9 @@ SIGNER_RESOURCE_GROUPS = [{'requirements': [{'.type': SIGNER_RESOURCE_TYPE, 'slo
 SIGNER_DELIVERY = 'ctest_resource_allocation_v1'
 # Inherited by every registration if present: refused, never overridden.
 SIGNER_AMBIENT = ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN', 'NOSTR_SIGNER_SOCK')
+# Forms a delivered credential takes in retained bytes: environment, wire AUTH line, resource id.
+SIGNER_LEAK_PATTERNS = (rb'NOSTR_SIGNER_TOKEN=', rb'AUTH [0-9a-f]{64}',
+                        rb'(?<![0-9A-Za-z])p[1-9][0-9]{0,4}_[0-9a-f]{64}(?![0-9a-f])')
 
 
 def elf_symbol_names(data, label='signer executable'):

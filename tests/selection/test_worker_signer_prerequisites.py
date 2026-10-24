@@ -165,7 +165,9 @@ class WorkerSignerPrerequisiteTests(unittest.TestCase):
                       " || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')\n")
         # Start from the pre-.36.12/.36.15 worker: only that exact reviewed repair is reversed.
         import worker_prerequisite_support as newer
-        text = newer.before_source('.github/workflows/dependency-worker.yml', WORKER.read_bytes()).decode()
+        from w11_batch2_integration_support import before_source as before_batch2_source
+        path = '.github/workflows/dependency-worker.yml'
+        text = newer.before_source(path, before_batch2_source(path, WORKER.read_bytes())).decode()
         self.assertEqual(text.count(current), 1)
         original = text.replace(current, checkpoint)
         start = original.index('      # Both original MDK profiles author the nak capability')

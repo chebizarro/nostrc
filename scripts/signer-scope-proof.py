@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_selection_services import SIGNER_CONSUMER  # noqa: E402
+from test_selection_services import SIGNER_CONSUMER, SIGNER_LEAK_PATTERNS  # noqa: E402
 
 CHECK = 'supported.nips.nip5f.signer_endpoint'
 # Registrations whose private grotto-daemon inherited the old overlay (PR23) or
@@ -34,8 +34,7 @@ WITNESSES = ('signer/clients', 'signer/activity', 'signer/room-flow', 'signer/ap
 # source's inventory at verify time). core.linux, core.linux.asan and
 # grotto.linux.asan_ubsan map no signer/room-flow and are not claimed.
 PROFILES = ('grotto.linux', 'groundhog.linux', 'groundhog.mdk08', 'groundhog.mdk011')
-LEAKS = (re.compile(rb'NOSTR_SIGNER_TOKEN='), re.compile(rb'AUTH [0-9a-f]{64}'),
-         re.compile(rb'(?<![0-9A-Za-z])p[1-9][0-9]{0,4}_[0-9a-f]{64}(?![0-9a-f])'))
+LEAKS = tuple(re.compile(pattern) for pattern in SIGNER_LEAK_PATTERNS)
 
 
 class ProofError(ValueError):

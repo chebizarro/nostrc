@@ -301,6 +301,7 @@ jobs:
       # requalification pass; then receipt.json is atomically replaced (raw bytes
       # kept as original-native-receipt.json and inside the sealed bundle).
       - name: Qualify normal lane after pidns exit and AppArmor teardown
+        id: qualify
         if: success() && runner.os == 'Linux'
         shell: bash
         run: |
@@ -309,15 +310,36 @@ jobs:
             --evidence-root "$RUNNER_TEMP/dependency/evidence" \
             --apparmor-evidence "$RUNNER_TEMP/dependency/namespace-apparmor" \
             --receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE"
-      - name: Retain incomplete evidence on failure or cancellation
+      # A lane that could provision the signer publishes its raw receipt/evidence
+      # sets only after exact-token-checked qualification; otherwise (failure,
+      # cancellation, refusal, scan failure, exposure, or this gate failing) both
+      # stay unuploaded on the ephemeral worker and only nonsecret metadata is kept.
+      - name: Decide signer-safe evidence publication
+        id: publication
         if: always()
+        shell: bash
+        env:
+          QUALIFY_OUTCOME: ${{ steps.qualify.outcome }}
+        run: |
+          set -euo pipefail
+          decision=$(python3 scripts/test_selection_execution.py publication-gate --repo "$GITHUB_WORKSPACE" \
+            --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
+            --receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE" \
+            --evidence-root "$RUNNER_TEMP/dependency/evidence" --qualify-outcome "$QUALIFY_OUTCOME" \
+            --metadata "$RUNNER_TEMP/dependency/withheld/withheld.json")
+          case "$decision" in
+            publish=true|publish=false) echo "$decision" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+      - name: Retain incomplete evidence on failure or cancellation
+        if: always() && steps.publication.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-receipt-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dependency/receipts
           if-no-files-found: warn
       - name: Retain resolved plans and raw backend evidence separately
-        if: always()
+        if: always() && steps.publication.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-evidence-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}
@@ -330,4 +352,11 @@ jobs:
             ${{ runner.temp }}/dependency-build/namespace-policy
             ${{ runner.temp }}/dependency-build/nostrc-test-inventory*
             ${{ runner.temp }}/dependency-build/nostrc-test-descriptors*
+          if-no-files-found: warn
+      - name: Record withheld signer-sensitive publication (nonsecret metadata only)
+        if: always() && steps.publication.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-withheld-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/withheld/withheld.json
           if-no-files-found: warn

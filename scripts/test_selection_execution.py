@@ -1006,6 +1006,99 @@ def worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_d
             shutil.rmtree(temp, ignore_errors=True)
 
 
+# ------------------------------------------------------------- publication --
+PUBLICATION_WITHHELD = 'signer_sensitive_publication_withheld_v1'
+
+
+def _signer_possible(policy, plan, profile):
+    """Whether this exact plan lane could provision the signer (authored data only).
+
+    Unknown lanes or checks count as possible: the decision can only withhold."""
+    lane = next((item for item in plan.get('lanes', []) if item.get('profile') == profile), None)
+    if lane is None:
+        return 'signer_endpoint' in policy['profiles'].get(profile, {}).get('capabilities', [])
+    return any('signer_endpoint' in policy['checks'].get(ident, {'requires': ['signer_endpoint']}).get('requires', [])
+               for ident in lane['checks'])
+
+
+def _safe_path(path):
+    """A reportable path: anything carrying a 64-hex run is never echoed."""
+    return '<path withheld: credential-shaped name>' if re.search(r'[0-9a-f]{64}', str(path)) else str(path)
+
+
+def _credential_shapes(roots):
+    from test_selection_services import SIGNER_LEAK_PATTERNS
+    patterns = [re.compile(pattern) for pattern in SIGNER_LEAK_PATTERNS]
+    found = []
+    for root in map(Path, roots):
+        files = sorted(path for path in root.rglob('*') if path.is_file() and not path.is_symlink()) \
+            if root.is_dir() and not root.is_symlink() else []
+        found += [str(path) for path in files if any(p.search(path.read_bytes()) for p in patterns)]
+    return found
+
+
+def publication_decision(policy, plan, profile, receipts_dir, evidence_root, qualify_outcome):
+    """(publish, reason, paths) for this worker's always-uploaded receipt/evidence sets.
+
+    A lane that could provision the signer publishes only after post-exit
+    qualification passed and its delivery record shows a complete, clean
+    exact-token scan; anything else (failure, cancellation, refusal, scan
+    failure, exposure) withholds the whole set. Reasons and paths only: never
+    file contents or a credential."""
+    if not _signer_possible(policy, plan, profile):
+        return True, 'no_signer_in_lane', []
+    if qualify_outcome != 'success':
+        return False, 'qualification_' + (re.sub(r'[^a-z]', '', str(qualify_outcome))[:16] or 'unknown'), []
+    receipts = Path(receipts_dir)
+    current, original = receipts / 'receipt.json', receipts / ORIGINAL
+    def load(path):
+        try:
+            return json.loads(path.read_bytes()) if path.is_file() and not path.is_symlink() else None
+        except ValueError:
+            return None
+    receipt = load(current)
+    if not (isinstance(receipt, dict) and receipt.get('receipt_kind') == KIND and receipt.get('plan_id') == plan['plan_id']
+            and receipt.get('profile') == profile and receipt.get('source_identity') == plan['source_identity']):
+        return False, 'lane_not_qualified', []
+    public = load(original)
+    if not (isinstance(public, dict) and _sha(original) == (receipt.get('public_evidence') or {}).get('sha256')):
+        return False, 'original_unbound', []
+    backend = public.get('backend_receipt', public)
+    delivery = ((backend.get('signer_runtime') or {}).get('delivery') or {}) if isinstance(backend, dict) else {}
+    if not (delivery.get('removed') is True and delivery.get('exposure_checked') and delivery.get('fixture_exposure_checked')
+            and isinstance(delivery.get('exposed'), list)):
+        return False, 'exposure_scan_incomplete', []
+    if delivery['exposed']:
+        return False, 'exposure_detected', [_safe_path(path) for path in delivery['exposed']]
+    shapes = _credential_shapes([receipts, evidence_root])
+    if shapes:
+        return False, 'credential_shape_detected', [_safe_path(path) for path in shapes]
+    return True, 'qualified_exposure_checked', []
+
+
+def publication_gate(repo, plan_path, profile, receipts_dir, evidence_root, qualify_outcome, metadata_path):
+    """Worker step before upload. Withheld sets stay unuploaded on the ephemeral
+    worker; only nonsecret metadata (never a receipt.json) is written."""
+    sys.path.insert(0, str(Path(repo) / 'scripts'))
+    import test_selection as selection
+    policy = selection.load_inventory(Path(repo) / 'tests/selection/inventory.json')
+    plan = selection.read_json(plan_path)
+    publish, reason, paths = publication_decision(policy, plan, profile, receipts_dir, evidence_root, qualify_outcome)
+    if publish:
+        return True, reason
+    record = dict(schema_version=1, kind=PUBLICATION_WITHHELD, plan_id=plan['plan_id'], profile=profile,
+                  source_identity=plan['source_identity'], reason=reason, paths=paths,
+                  withheld=['dependency-receipt', 'dependency-evidence'],
+                  local_retention='unuploaded on the ephemeral hosted worker until the job ends; not durably retained',
+                  complete=False, complete_gate_eligible=False)
+    metadata = Path(metadata_path)
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    with open(metadata, 'x') as stream:
+        json.dump(record, stream, sort_keys=True, indent=2)
+        stream.write('\n')
+    return False, reason
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description='normal execution worker qualification')
@@ -1013,7 +1106,17 @@ def main(argv=None):
     worker = commands.add_parser('worker-qualify')
     for name in ('repo', 'plan', 'profile', 'evidence-root', 'apparmor-evidence', 'receipts-dir'):
         worker.add_argument('--' + name, required=True)
+    gate = commands.add_parser('publication-gate')
+    for name in ('repo', 'plan', 'profile', 'receipts-dir', 'evidence-root', 'qualify-outcome', 'metadata'):
+        gate.add_argument('--' + name, required=True)
     args = parser.parse_args(argv)
+    if args.command == 'publication-gate':
+        # stdout carries only the decision; any failure prints nothing there (withheld).
+        publish, reason = publication_gate(args.repo, args.plan, args.profile, args.receipts_dir, args.evidence_root,
+                                           args.qualify_outcome, args.metadata)
+        print('publication: %s (%s)' % ('published' if publish else 'withheld', reason), file=sys.stderr)
+        print('publish=true' if publish else 'publish=false')
+        return 0
     try:
         worker_qualify(args.repo, args.plan, args.profile, args.evidence_root, args.apparmor_evidence, args.receipts_dir)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError, subprocess.SubprocessError) as exc:

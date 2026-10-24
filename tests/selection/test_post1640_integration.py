@@ -105,9 +105,12 @@ class Post1640Integration(unittest.TestCase):
 
     def test_actual_workflows_and_only_exact_new_homed_job_project(self):
         from profile_contract_support import source_job_blocks, validate_job_accounting
+        from w11_batch2_integration_support import before_jobs as before_batch2_jobs
         policy = self.policy()
-        validate_job_accounting(policy, ROOT)
-        actual = source_job_blocks(ROOT)
+        # Live accounting holds for the live inventory; this layer's view projects
+        # the newer W11 batch2 publication-gate job map away first.
+        validate_job_accounting(s.load_inventory(ROOT / 'tests/selection/inventory.json'), ROOT)
+        actual = before_batch2_jobs(source_job_blocks(ROOT))
         before = wave.before_jobs(actual)
         for ident, record in wave.witness()['maps']['workflow_jobs'].items():
             for field in ('source_sha256', 'workflow_sha256', 'matrix_source'):

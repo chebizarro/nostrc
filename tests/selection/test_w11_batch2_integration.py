@@ -10,6 +10,7 @@ from selector_support import ROOT, s
 import w11_batch2_integration_support as wave
 
 GAP = 'core_macos_asan_nip5f_tcp_unconfigured'
+JOB = '.github/workflows/dependency-worker.yml:execute'
 # Fixed composed set (a missing record cannot pass vacuously): path -> (before, after, edits).
 RECORDS = {
     'scripts/test-gate.sh': ('2bcdb1fbd755ef7561453d7850a30348bed283248f9a864cd56cc60e15d24554',
@@ -18,9 +19,9 @@ RECORDS = {
         '48b32386fe3fb4fe6c561319c8b7a46ac61f18644746b63731130b9c068c8aba',
         '807b93574b9b3e74376c976b79a461d6391f93822b24c95d1b8252501fc02054', 1),
     'scripts/test_selection_services.py': ('1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7',
-                                           '6d99419ed5d7269e040a6b78115e6f1bcd3e8aaec01d4dfe824cef729c34477e', 17),
+                                           '4d234d8b45c8e2bf61d4e28b07fa73fd35056c9f88d18ed11a748185bac4febe', 17),
     'scripts/test_selection_execution.py': ('9452ba91778426ee6e06c79f3c54f5cddf1fdc3586ce3cec95533d8514f6c400',
-                                            '28f4c7144503b53b47b69ab30b42dfa454a772177a04d3bb62e793023dc5cc90', 6),
+                                            'e8c956c764fd7065e8044ea4e754b7d3d0ff155b43a21ea8352adb8aeaa028fc', 9),
     'scripts/test_selection_realization.py': ('6b9da1ba7843c4589d1aad7a4cdc37a2dd38234ff88b12a03f87869033cf5099',
                                               '363f5013f9d9fa201ef236264e11cd4553d1444da42024d3c92560b1d6839d81', 4),
     'nips/nip5f/CMakeLists.txt': ('5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80',
@@ -29,12 +30,21 @@ RECORDS = {
                                           '0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e', 3),
     'apps/gnostr/CMakeLists.txt': ('51f7faeccb78182a5aa159d833e557beb70711c44dd8d167e75f953486cbfcd7',
                                    '6a812f72b33c7451438645a77df63ea67ce2eeefbcdc94b068e650a95cf1020d', 9),
+    # The .36.18 additive publication gate (worker-prerequisite layer pins its before bytes).
+    '.github/workflows/dependency-worker.yml': (
+        '16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9',
+        '1bfd93d469478a69b27588670a533b9b6ff007ac1bbdd8d299613f494fb08b62', 5),
     # This integration's projection of the byte-pinned historical post-1640 test.
     'tests/selection/test_post1640_integration.py': (
         '001d95311301f200271d536e1e0f0a82d607125ea5add1602404b3fb01cf4b9d',
-        '64400ec4fa33a3f01ac6555c75be55496b6236a52cf0d82edd9712590e3ed9d8', 5),
+        '236dec6d6109ab68c06fb476b15e7d46a8afc5b658790147dd208b33d8312a2e', 7),
+    # Byte-pinned worker-prerequisite test projecting the newer publication gate.
+    'tests/selection/test_worker_signer_prerequisites.py': (
+        'cc07963f1b00094c48c7ee6794c18030c12c73e0bfcc19119f4a3d4da71e51f1',
+        '1c5a723112d2ecd647f9cd799764f96d27dfa4f3b93b1a0c5ff30a49c2843cf4', 1),
 }
-RESTORED = ('scripts/test_selection_execution.py', 'tests/selection/test_normal_execution_contract.py')
+RESTORED = ('scripts/test_selection_execution.py', 'tests/selection/test_normal_execution_contract.py',
+            '.github/workflows/dependency-worker.yml')
 # sha256(json.dumps(edits, sort_keys=True)) of the original .36.25 handoff records
 # (nostrc-0cfsg-36-25-source-inverse.json sha256 26a61685...): reused verbatim.
 HANDOFF_EDITS = {
@@ -59,7 +69,8 @@ def older_after(path):
         return runtime.witness()['sources'][path]['after_sha256']
     if path == 'nips/nip5f/CMakeLists.txt':
         return worker.witness()['source_sha256'][path]
-    if path == 'tests/selection/test_post1640_integration.py':
+    if path in ('tests/selection/test_post1640_integration.py', '.github/workflows/dependency-worker.yml',
+                'tests/selection/test_worker_signer_prerequisites.py'):
         import worker_prerequisite_support as prerequisite
         return prerequisite.witness()['sources'][path]['after_sha256']
     if path == 'apps/gnostr/CMakeLists.txt':
@@ -194,7 +205,9 @@ class W11Batch2Integration(unittest.TestCase):
         self.assertEqual(s.digest(before), data['base_policy_hash'])
         self.assertEqual(data['base_policy_hash'], groundhog.witness()['enrolled_policy_hash'])
         self.assertEqual(wave.before_policy(before), before)
-        self.assertEqual({f for f in policy if policy[f] != before[f]}, {'checks', 'coverage_gaps'})
+        self.assertEqual({f for f in policy if policy[f] != before[f]}, {'checks', 'coverage_gaps', 'workflow_jobs'})
+        self.assertEqual({i for i in policy['workflow_jobs'] if policy['workflow_jobs'][i] != before['workflow_jobs'][i]},
+                         {JOB})
         self.assertEqual({i for i in policy['checks'] if policy['checks'][i] != before['checks'][i]},
                          {'selection.contract'})
         inputs = policy['checks']['selection.contract']['runtime_inputs']
@@ -214,7 +227,7 @@ class W11Batch2Integration(unittest.TestCase):
     def test_anchor_rebinding_is_exactly_the_changed_nip5f_source_and_registration(self):
         policy, data = self.policy(), wave.witness()
         record = data['maps']['coverage_gaps'][GAP]
-        self.assertEqual(set(data['maps']), {'coverage_gaps'})
+        self.assertEqual(set(data['maps']), {'coverage_gaps', 'workflow_jobs'})
         self.assertEqual(set(data['maps']['coverage_gaps']), {GAP})
         live = [gap for gap in policy['coverage_gaps'] if gap['id'] == GAP]
         self.assertEqual(live, [record['after']])
@@ -262,6 +275,39 @@ class W11Batch2Integration(unittest.TestCase):
         # An older view without this enrollment or rebinding passes unchanged.
         old = wave.before_policy(policy)
         self.assertEqual(wave.before_policy(old), old)
+
+    def test_execute_job_map_is_exact_live_hashes_to_worker_layer_after(self):
+        from profile_contract_support import source_job_blocks, validate_job_accounting
+        import worker_prerequisite_support as prerequisite
+        policy, data = self.policy(), wave.witness()
+        record = data['maps']['workflow_jobs'][JOB]
+        validate_job_accounting(policy, ROOT)
+        live = source_job_blocks(ROOT)
+        fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
+        self.assertEqual({k: live[JOB][k] for k in fields}, {k: record['after'][k] for k in fields})
+        self.assertEqual(policy['workflow_jobs'][JOB], record['after'])
+        self.assertEqual(record['before'], prerequisite.witness()['maps']['workflow_jobs'][JOB]['after'])
+        self.assertEqual({k for k in record['after'] if record['after'][k] != record['before'][k]},
+                         {'source_sha256', 'workflow_sha256'})
+        self.assertEqual(record['after']['workflow_sha256'], RECORDS['.github/workflows/dependency-worker.yml'][1])
+        projected = wave.before_jobs(live)
+        self.assertEqual({k: projected[JOB][k] for k in fields}, {k: record['before'][k] for k in fields})
+        self.assertEqual(wave.before_jobs(projected), projected)
+        # Through the whole jobs chain to the worker layer's own reviewed base.
+        chained = prerequisite.before_jobs(live)
+        expected = prerequisite.witness()['maps']['workflow_jobs'][JOB]['before']
+        self.assertEqual({k: chained[JOB][k] for k in fields}, {k: expected[k] for k in fields})
+        bad = copy.deepcopy(live)
+        bad[JOB]['source_sha256'] = '0' * 64
+        self.assertEqual(wave.before_jobs(bad)[JOB], bad[JOB])  # unknown hashes are never projected
+        tampered = copy.deepcopy(policy)
+        tampered['workflow_jobs'][JOB]['source_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'W11 batch2 workflow job changed'):
+            wave.before_policy(tampered)
+        unenrolled = copy.deepcopy(wave.before_policy(policy))
+        unenrolled['workflow_jobs'][JOB] = copy.deepcopy(record['after'])
+        with self.assertRaisesRegex(ValueError, 'workflow job hashes without enrollment'):
+            wave.before_policy(unenrolled)
 
     def test_enrolled_inputs_exist_and_keep_their_existing_ownership(self):
         policy = self.policy()

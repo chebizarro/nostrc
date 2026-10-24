@@ -397,5 +397,184 @@ class EngineScopedDelivery(ScopedDeliveryProject):
             r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
 
 
+
+class PublicationGate(unittest.TestCase):
+    """Worker publication boundary: a signer-capable lane's raw sets leave the
+    worker only after exact-token-checked qualification; otherwise only
+    nonsecret metadata does. Decisions use authored plan/inventory data only."""
+
+    SIGNER, PLAIN = 'supported.nips.nip5f.signer_endpoint', 'grotto.signer.native'
+
+    def setUp(self):
+        import test_selection as selection
+        import test_selection_execution as execution
+        self.execution = execution
+        self.root = Path(tempfile.mkdtemp(prefix='publication-')).resolve()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.policy = selection.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.token = secrets.token_hex(32)
+        self.plan = {'plan_id': 'plan-1', 'source_identity': {'kind': 'committed', 'sha': 'a' * 40},
+                     'lanes': [{'profile': 'grotto.linux', 'checks': [self.PLAIN, self.SIGNER]}]}
+        self.receipts, self.evidence = self.root / 'receipts/grotto.linux', self.root / 'evidence'
+        (self.evidence / 'run/0/lane-x/evidence').mkdir(parents=True)
+        self.receipts.mkdir(parents=True)
+        self.delivery = {'removed': True, 'exposure_checked': ['a', 'b', 'c'], 'fixture_exposure_checked': ['d'],
+                         'exposed': []}
+
+    def qualified(self):
+        original = self.receipts / self.execution.ORIGINAL
+        original.write_text(json.dumps({'backend_receipt': {'signer_runtime': {'delivery': self.delivery}}}))
+        import hashlib
+        (self.receipts / 'receipt.json').write_text(json.dumps(
+            {'receipt_kind': self.execution.KIND, 'plan_id': 'plan-1', 'profile': 'grotto.linux',
+             'source_identity': self.plan['source_identity'],
+             'public_evidence': {'path': '/x/native-receipt.json',
+                                 'sha256': hashlib.sha256(original.read_bytes()).hexdigest()}}))
+
+    def decide(self, outcome='success', profile='grotto.linux'):
+        return self.execution.publication_decision(self.policy, self.plan, profile, self.receipts, self.evidence, outcome)
+
+    def withheld(self, reason, outcome='success'):
+        publish, actual, paths = self.decide(outcome)
+        self.assertEqual((publish, actual), (False, reason))
+        self.assertNotIn(self.token, json.dumps(paths))
+        return paths
+
+    def test_lanes_that_cannot_provision_the_signer_publish_unchanged(self):
+        self.plan['lanes'][0]['checks'] = [self.PLAIN]
+        self.assertEqual(self.decide('failure'), (True, 'no_signer_in_lane', []))
+        self.plan['lanes'] = []  # no plan lane: authored capability decides, never a filename
+        self.assertEqual(self.decide('failure', 'core.macos.asan'), (True, 'no_signer_in_lane', []))
+        self.withheld('qualification_failure', 'failure')
+        self.plan['lanes'] = [{'profile': 'grotto.linux', 'checks': ['unknown.check']}]  # unknown: withhold
+        self.withheld('qualification_failure', 'failure')
+
+    def test_exposure_checked_qualified_lane_publishes(self):
+        (self.evidence / 'run/0/lane-x/evidence/ctest.log').write_text('100% tests passed\n')
+        (self.receipts / 'worker.log').write_text('normal qualification passed\n')
+        self.qualified()
+        self.assertEqual(self.decide(), (True, 'qualified_exposure_checked', []))
+
+    def test_failure_cancellation_or_skipped_qualification_withholds(self):
+        self.qualified()
+        for outcome in ('failure', 'cancelled', 'skipped', '', 'success; rm -rf'):
+            with self.subTest(outcome=outcome):
+                self.withheld('qualification_' + (''.join(c for c in outcome if c.isalpha() and c.islower())[:16] or 'unknown'),
+                              outcome)
+
+    def test_unqualified_missing_malformed_or_unbound_receipts_withhold(self):
+        self.withheld('lane_not_qualified')                       # cancelled before any receipt
+        (self.receipts / 'receipt.json').write_text('{"outcome": "failed"}')
+        self.withheld('lane_not_qualified')                       # raw failing receipt
+        (self.receipts / 'receipt.json').write_text('{not json')
+        self.withheld('lane_not_qualified')
+        self.qualified()
+        (self.receipts / self.execution.ORIGINAL).write_text('{}')
+        self.withheld('original_unbound')
+        (self.receipts / self.execution.ORIGINAL).unlink()
+        self.withheld('original_unbound')
+
+    def test_incomplete_or_failed_exposure_scan_withholds(self):
+        for key in ('exposed', 'exposure_checked', 'fixture_exposure_checked', 'removed'):
+            with self.subTest(missing=key):
+                saved = self.delivery.pop(key)
+                self.qualified()
+                self.withheld('exposure_scan_incomplete')
+                self.delivery[key] = saved
+        self.delivery['removed'] = False
+        self.qualified()
+        self.withheld('exposure_scan_incomplete')
+
+    def test_detected_exposure_or_credential_shape_withholds_without_echoing_it(self):
+        named = str(self.evidence / ('x' + self.token + '.log'))
+        self.delivery['exposed'] = [str(self.evidence / 'ctest.log'), named]
+        self.qualified()
+        self.assertEqual(self.withheld('exposure_detected'),
+                         [str(self.evidence / 'ctest.log'), '<path withheld: credential-shaped name>'])
+        self.delivery['exposed'] = []
+        self.qualified()
+        port = 41234
+        for where, text in ((self.evidence / 'run/0/lane-x/build/Testing/Temporary/LastTest.log', 'AUTH ' + self.token),
+                            (self.receipts / 'worker.log', 'id:p%d_%s,slots:1' % (port, self.token)),
+                            (self.evidence / 'run/0/lane-x/signer/worker/daemon.log', 'NOSTR_SIGNER_TOKEN=' + self.token)):
+            with self.subTest(where=where.name):
+                where.parent.mkdir(parents=True, exist_ok=True)
+                where.write_text(text)
+                self.assertEqual(self.withheld('credential_shape_detected'), [str(where)])
+                self.assertIn(self.token, where.read_text())  # originals are never rewritten or removed
+                where.unlink()
+
+    def gate(self, outcome):
+        plan = self.root / 'plan.json'
+        plan.write_text(json.dumps(self.plan))
+        metadata = self.root / 'withheld/withheld.json'
+        out, err = __import__('io').StringIO(), __import__('io').StringIO()
+        import contextlib as _c
+        with _c.redirect_stdout(out), _c.redirect_stderr(err):
+            code = self.execution.main(['publication-gate', '--repo', str(ROOT), '--plan', str(plan),
+                                        '--profile', 'grotto.linux', '--receipts-dir', str(self.receipts),
+                                        '--evidence-root', str(self.evidence), '--qualify-outcome', outcome,
+                                        '--metadata', str(metadata)])
+        return code, out.getvalue(), err.getvalue(), metadata
+
+    def test_cli_decision_metadata_and_console_never_carry_the_token(self):
+        leak = self.evidence / 'run/0/lane-x/evidence/ctest.log'
+        leak.write_text('AUTH ' + self.token)
+        code, out, err, metadata = self.gate('cancelled')
+        self.assertEqual((code, out), (0, 'publish=false\n'))
+        record = json.loads(metadata.read_text())
+        self.assertEqual((record['kind'], record['reason'], record['withheld']),
+                         (self.execution.PUBLICATION_WITHHELD, 'qualification_cancelled',
+                          ['dependency-receipt', 'dependency-evidence']))
+        self.assertFalse(record['complete'] or record['complete_gate_eligible'])
+        self.assertIn('not durably retained', record['local_retention'])
+        for text in (out, err, metadata.read_text()):
+            self.assertNotIn(self.token, text)
+        self.assertNotEqual(metadata.name, 'receipt.json')
+        self.assertEqual(leak.read_text(), 'AUTH ' + self.token)  # retained locally, unmodified
+        # A second decision cannot overwrite the first record: it fails, printing no decision.
+        with self.assertRaises(FileExistsError):
+            self.gate('cancelled')
+        metadata.unlink()
+        leak.unlink()
+        self.qualified()
+        code, out, err, metadata = self.gate('success')
+        self.assertEqual((code, out, metadata.exists()), (0, 'publish=true\n', False))
+
+    def test_gate_failure_prints_no_decision(self):
+        with self.assertRaises(Exception):
+            self.execution.main(['publication-gate', '--repo', str(ROOT), '--plan', str(self.root / 'absent.json'),
+                                 '--profile', 'grotto.linux', '--receipts-dir', str(self.receipts),
+                                 '--evidence-root', str(self.evidence), '--qualify-outcome', 'success',
+                                 '--metadata', str(self.root / 'm.json')])
+        self.assertFalse((self.root / 'm.json').exists())
+
+    def test_worker_uploads_are_gated_and_fail_closed(self):
+        text = (ROOT / '.github/workflows/dependency-worker.yml').read_text()
+        steps = text.split('\n      - ')
+        def step(name):
+            found = [s for s in steps if s.startswith('name: ' + name)]
+            self.assertEqual(len(found), 1, name)
+            return found[0]
+        qualify = step('Qualify normal lane after pidns exit and AppArmor teardown')
+        gate = step('Decide signer-safe evidence publication')
+        receipts = step('Retain incomplete evidence on failure or cancellation')
+        evidence = step('Retain resolved plans and raw backend evidence separately')
+        withheld = step('Record withheld signer-sensitive publication (nonsecret metadata only)')
+        self.assertIn('id: qualify\n', qualify)
+        self.assertIn("id: publication\n        if: always()\n", gate)
+        self.assertIn('QUALIFY_OUTCOME: ${{ steps.qualify.outcome }}', gate)
+        self.assertIn('publish=true|publish=false) echo "$decision" >> "$GITHUB_OUTPUT"', gate)
+        for upload in (receipts, evidence):
+            self.assertIn("if: always() && steps.publication.outputs.publish == 'true'\n", upload)
+        self.assertIn("if: always() && steps.publication.outputs.publish != 'true'\n", withheld)
+        self.assertIn('name: dependency-withheld-${{ inputs.plan_id }}', withheld)
+        self.assertIn('path: ${{ runner.temp }}/dependency/withheld/withheld.json\n', withheld)
+        order = [text.index('name: ' + n) for n in ('Remove only this job', 'Qualify normal lane', 'Decide signer-safe',
+                                                     'Retain incomplete evidence', 'Retain resolved plans', 'Record withheld')]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual(text.count('uses: actions/upload-artifact@v4'), 3)
+
+
 if __name__ == '__main__':
     unittest.main()
