@@ -6,7 +6,12 @@ witness) and reverses only the exact reviewed w11-evidence.py delta for
 historical witnesses; unknown bytes refuse. Its two checked-in docs/reviews JSON
 artifacts get exact (never prefix) classifications from their actual consumers.
 It also reverses the exact .36.21 scripts/test_selection_services.py readiness
-descriptor delta (one source record); no policy, input or path-rule change.
+descriptor delta and the exact .36.20 scripts/test_selection_realization.py
+Ninja generation-binding delta (74abda841; after 6b9da1ba, before 94177263 =
+post-608c's after bytes), one source record each; no policy, input or
+path-rule change. Each record maps only its exact after bytes; any other
+non-before bytes for a recorded path refuse here, and its before bytes go on
+to the older layers' own strict inverses unchanged.
 """
 import copy
 import hashlib
@@ -14,7 +19,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_matrix_integration_20261024.json'
-SHA256 = '7aba3e806efbcf86466e5b23546c28909d2a12d5120236c85ef36197815a5690'
+SHA256 = '25681d3d16f84d96a6b8545bd4027c3750efced6ee6df87ce1627d271b94bdac'
 
 
 def witness():
