@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import shutil
 import signal
 import stat
 import tempfile
@@ -101,6 +102,194 @@ with tempfile.TemporaryDirectory() as resources:
             services.ServiceError('private service exited before readiness')), 'exited_before_readiness')
         self.assertEqual(services._readiness_outcome(KeyboardInterrupt()), 'cancelled')
         self.assertEqual(services._readiness_outcome(OSError('other')), 'error')
+
+
+FINALIZER = '''import json, os, sys
+sys.path.insert(0, sys.argv[1])
+from test_selection_services import finalize_native_lane
+config = json.loads(open(sys.argv[2]).read())
+print('namespace custody apparmor: fixture (unconfined)', file=sys.stderr, flush=True)
+try:
+    if config['outcome'] == 'cancel':
+        raise KeyboardInterrupt('lane execution cancelled by signal 15')
+    if config['outcome'] == 'error':
+        raise RuntimeError('private service setup failed before resolve')
+    sys.exit(config['outcome'])
+except BaseException as outcome:
+    os._exit(finalize_native_lane(config['work'], config['source'], config['observed'],
+                                  config['resolutions'], outcome, int(sys.argv[3])))
+'''
+
+
+def _sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class NativeSealLifecycle(unittest.TestCase):
+    """Original PR25 shape: CTest/build receipts claim CMake namelinks by content.
+
+    Groundhog job120755613098 (exit 0) and Core job120755612969 (exit 1) both
+    claimed e.g. build/libjson/libnostr-json.so with its versioned target's
+    hash; the strict seal then refused every outcome. Content is unchanged.
+    """
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        self.addCleanup(sys.path.remove, str(ROOT / 'scripts'))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+
+    def reset(self):
+        shutil.rmtree(self.root / 'work')
+        shutil.rmtree(self.root / 'source')
+
+    def lane(self, kind='original', receipt=True):
+        work = self.root / 'work'
+        work.mkdir()
+        source = self.root / 'source'
+        source.mkdir()
+        lib = work / 'build/libjson'
+        lib.mkdir(parents=True)
+        self.real = lib / 'libnostr-json.so.1.0.0'
+        self.real.write_bytes(b'\x7fELF original shared object\n')
+        os.symlink('libnostr-json.so.1.0.0', lib / 'libnostr-json.so.1')
+        self.namelink = lib / 'libnostr-json.so'
+        os.symlink('libnostr-json.so.1', self.namelink)
+        log = work / 'evidence/check.log'
+        log.parent.mkdir()
+        log.write_bytes(b'original raw \xff\n')
+        (work / 'lane.log').write_bytes(b'')
+        result = {'receipt_kind': kind, 'complete': False, 'complete_gate_eligible': False,
+                  'checks': {'check': {'log': str(log), 'log_sha256': _sha(log)}},
+                  'backend_receipt': {'input_audit': {'input_hashes': {
+                      str(self.namelink): _sha(self.real), str(self.real): _sha(self.real)}}}}
+        resolved = {'resolved': True}
+        if receipt:
+            (work / 'receipt.json').write_text(json.dumps(result))
+            (work / 'resolved.json').write_text(json.dumps(resolved))
+        return work, source, result, resolved
+
+    def finalize(self, work, source, outcome, observed, resolutions):
+        config = self.root / 'finalizer.json'
+        config.write_text(json.dumps(dict(work=str(work), source=str(source), outcome=outcome,
+                                          observed=observed, resolutions=resolutions)))
+        read_fd, write_fd = os.pipe()
+        try:
+            with (work / 'lane.log').open('ab') as log:
+                process = subprocess.run([sys.executable, '-I', '-c', FINALIZER, str(ROOT / 'scripts'),
+                                          str(config), str(write_fd)], pass_fds=(write_fd,),
+                                         stdout=log, stderr=log, timeout=60)
+        finally:
+            os.close(write_fd)
+        try:
+            anchor = os.read(read_fd, 65).decode('ascii')
+        finally:
+            os.close(read_fd)
+        return process.returncode, anchor
+
+    def test_original_namelink_shape_is_a_sealed_symlink_claim(self):
+        import test_selection_custody as custody
+        work, source, result, _ = self.lane()
+        snapshot = custody.retained_files(work, services.NATIVE_ROOTS)
+        claims = custody.retained_claims(result, work, services.NATIVE_ROOTS)
+        self.assertEqual(snapshot['build/libjson/libnostr-json.so'], {'kind': 'symlink', 'target': 'libnostr-json.so.1'})
+        self.assertEqual(claims['build/libjson/libnostr-json.so'], claims['build/libjson/libnostr-json.so.1.0.0'])
+
+    def test_namelink_claim_seals_and_attests_after_exit(self):
+        work, source, result, resolved = self.lane()
+        anchor = services.seal_native_lane(work, source, result, resolved)
+        final = services.attest_native_lane(work, anchor)
+        self.assertEqual(final['status'], 'verified')
+        self.assertFalse(final['complete'])
+        self.assertFalse(final['complete_gate_eligible'])
+
+    def test_sealed_namelink_replacement_retarget_removal_and_tamper_refuse(self):
+        def replace(work):
+            self.namelink.unlink()
+            self.namelink.write_bytes(self.real.read_bytes())  # identical bytes, different kind
+        def retarget(work):
+            self.namelink.unlink()
+            os.symlink('libnostr-json.so.1.0.0', self.namelink)  # same content, different chain
+        def remove(work):
+            self.namelink.unlink()
+        def tamper(work):
+            self.real.write_bytes(b'\x7fELF replaced shared object\n')
+        for mutate in (replace, retarget, remove, tamper):
+            with self.subTest(mutate.__name__):
+                work, source, result, resolved = self.lane()
+                anchor = services.seal_native_lane(work, source, result, resolved)
+                mutate(work)
+                with self.assertRaisesRegex(services.ServiceError,
+                                            'changed after finalizer seal: .*build/libjson/libnostr-json.so'):
+                    services.attest_native_lane(work, anchor)
+                self.reset()
+
+    def test_unsupported_or_diverging_link_claims_refuse_before_seal(self):
+        for target in ('../libjson/libnostr-json.so.1.0.0', None, 'other.so'):
+            with self.subTest(target):
+                work, source, result, resolved = self.lane()
+                self.namelink.unlink()
+                if target == 'other.so':
+                    (self.namelink.parent / 'other.so').write_bytes(b'different bytes\n')
+                os.symlink(target or str(self.real), self.namelink)
+                with self.assertRaisesRegex(services.ServiceError, 'differ from pre-exit seal: 1 path.*'
+                                            'libnostr-json.so \\(original receipt hash differs from seal\\)'):
+                    services.seal_native_lane(work, source, result, resolved)
+                self.assertFalse((work / 'native-seal.json').exists())
+                self.reset()
+
+    def test_finalizer_seals_success_nonzero_and_cancellation_originals(self):
+        for outcome, code, kind in ((0, 0, 'original'), (1, 1, 'lane_failure_v1'), ('cancel', 130, 'lane_failure_v1')):
+            with self.subTest(outcome):
+                work, source, result, resolved = self.lane(kind)
+                original = (work / 'receipt.json').read_bytes()
+                returncode, anchor = self.finalize(work, source, outcome, [result], [resolved])
+                log = (work / 'lane.log').read_bytes()
+                self.assertEqual(returncode, code, log)
+                self.assertEqual(services.attest_native_lane(work, anchor)['status'], 'verified')
+                self.assertEqual((work / 'receipt.json').read_bytes(), original)
+                self.assertEqual(b'KeyboardInterrupt' in log, outcome == 'cancel')
+                # The reported outcome precedes the seal; later lane output refuses.
+                with (work / 'lane.log').open('ab') as stream:
+                    stream.write(b'late diagnostic\n')
+                with self.assertRaisesRegex(services.ServiceError, 'top-level retained evidence changed'):
+                    services.attest_native_lane(work, anchor)
+                self.reset()
+
+    def test_finalizer_seals_early_failure_without_any_run_receipt(self):
+        work, source, _, _ = self.lane(receipt=False)
+        returncode, anchor = self.finalize(work, source, 'error', [], [])
+        self.assertEqual(returncode, 1)
+        self.assertIn(b'private service setup failed before resolve', (work / 'lane.log').read_bytes())
+        self.assertEqual(services.attest_native_lane(work, anchor)['status'], 'verified')
+        seal = json.loads((work / 'native-seal.json').read_text())
+        self.assertNotIn('receipt.json', seal['files'])
+        self.assertEqual(seal['source_claims'], {})
+        (work / 'receipt.json').write_text('{"receipt_kind": "late"}')
+        with self.assertRaisesRegex(services.ServiceError, 'top-level retained evidence changed'):
+            services.attest_native_lane(work, anchor)
+
+    def test_finalizer_refuses_replaced_unobserved_or_tampered_originals(self):
+        def replaced(work, result):
+            (work / 'receipt.json').write_text(json.dumps(dict(result, receipt_kind='replaced')))
+            return 0, [result], 'native output differs from original in-memory receipt'
+        def unobserved(work, result):
+            return 1, [], 'published without an original in-memory observation'
+        def tampered(work, result):
+            self.real.write_bytes(b'\x7fELF replaced before seal\n')
+            return 0, [result], 'libnostr-json.so \\(original receipt hash differs from seal\\)'
+        for case in (replaced, unobserved, tampered):
+            with self.subTest(case.__name__):
+                work, source, result, resolved = self.lane()
+                outcome, observed, message = case(work, result)
+                returncode, anchor = self.finalize(work, source, outcome, observed, [resolved])
+                self.assertEqual(returncode, 1)
+                self.assertEqual(anchor, '')
+                self.assertRegex((work / 'lane.log').read_text(errors='replace'), message)
+                self.assertFalse((work / 'native-seal.json').exists())
+                with self.assertRaisesRegex(services.ServiceError, 'trusted native finalizer seal missing'):
+                    services.attest_native_lane(work, anchor)
+                self.reset()
 
 
 @unittest.skipUnless(platform.system() == 'Linux', 'actual Linux private services; not native macOS acceptance')

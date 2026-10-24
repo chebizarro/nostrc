@@ -198,6 +198,24 @@ class ContainedCustodyContract(unittest.TestCase):
         self.assertEqual(final['status'], 'failed')
         self.assertTrue(any('original receipt hash' in e['reason'] for e in final['errors']))
 
+    def test_sealed_link_chain_satisfies_only_its_exact_original_content_claim(self):
+        from test_selection_custody import sealed_claim_entry
+        real = {'kind': 'file', 'sha256': 'a' * 64}
+        entries = {'build/lib/libx.so.1.0.0': real,
+                   'build/lib/libx.so.1': {'kind': 'symlink', 'target': 'libx.so.1.0.0'},
+                   'build/lib/libx.so': {'kind': 'symlink', 'target': 'libx.so.1'},
+                   'build/alias': {'kind': 'symlink', 'target': 'lib'},
+                   'build/lib/abs.so': {'kind': 'symlink', 'target': '/work/build/lib/libx.so.1.0.0'},
+                   'build/lib/up.so': {'kind': 'symlink', 'target': '../lib/libx.so.1.0.0'},
+                   'build/lib/loop': {'kind': 'symlink', 'target': 'loop'}}
+        self.assertEqual(sealed_claim_entry(entries, 'build/lib/libx.so'), real)
+        self.assertEqual(sealed_claim_entry(entries, 'build/alias/libx.so.1'), real)
+        # Unsupported link shapes return the raw link, which never matches a file claim.
+        self.assertEqual(sealed_claim_entry(entries, 'build/lib/abs.so')['kind'], 'symlink')
+        self.assertEqual(sealed_claim_entry(entries, 'build/lib/up.so')['kind'], 'symlink')
+        self.assertIsNone(sealed_claim_entry(entries, 'build/lib/loop'))
+        self.assertIsNone(sealed_claim_entry(entries, 'build/lib/absent.so'))
+
     def test_retained_links_cannot_hide_outside_bytes_or_special_files(self):
         from test_selection_custody import retained_files
         build = self.root / 'build'

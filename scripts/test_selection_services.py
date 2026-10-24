@@ -995,17 +995,33 @@ def _source_claims(result, source):
     return claims
 
 
+def _evidence_errors(verification, limit=8):
+    errors = verification['errors']
+    shown = '; '.join(error['path'] + ' (' + error['reason'] + ')' for error in errors[:limit])
+    return f': {len(errors)} path(s): {shown}' + ('; ...' if len(errors) > limit else '')
+
+
+def _original_output(path, original, message):
+    """Published bytes must be exactly the observed original; no observation, no file."""
+    if original is None:
+        if path.exists() or path.is_symlink():
+            raise ServiceError(message + ': published without an original in-memory observation')
+    elif path.is_symlink() or not path.is_file() or json.loads(path.read_text()) != original:
+        raise ServiceError(message)
+
+
 def seal_native_lane(work, source, result, resolved):
-    """Trusted root seals original in-memory CLI claims before exiting."""
+    """Trusted root seals original in-memory CLI claims before exiting.
+
+    Every outcome reaching the finalizer is sealed: success, nonzero or
+    ``lane_failure_v1`` (including cancellation) and early failures that never
+    observed a run receipt (``result is None``). Sealing never rewrites originals.
+    """
     from test_selection_custody import retained_files, attest_retained_evidence, digest
     work, source = Path(work).resolve(strict=True), Path(source).resolve(strict=True)
-    output = work / 'receipt.json'
-    if output.is_symlink() or json.loads(output.read_text()) != result:
-        raise ServiceError('native output differs from original in-memory receipt')
-    resolution = work / 'resolved.json'
-    if resolution.is_symlink() or json.loads(resolution.read_text()) != resolved:
-        raise ServiceError('native resolution differs from original in-memory contract')
-    source_claims = _source_claims(result, source)
+    _original_output(work / 'receipt.json', result, 'native output differs from original in-memory receipt')
+    _original_output(work / 'resolved.json', resolved, 'native resolution differs from original in-memory contract')
+    source_claims = _source_claims(result, source) if result is not None else {}
     retained_source = work / 'source-inputs'
     retained_source.mkdir(mode=0o700)
     for name, expected in source_claims.items():
@@ -1018,14 +1034,47 @@ def seal_native_lane(work, source, result, resolved):
     snapshot = retained_files(work, NATIVE_ROOTS)
     seal = {'schema_version': 1, 'retained_evidence': snapshot, 'retained_evidence_hash': digest(snapshot),
             'files': _native_files(work), 'source_claims': source_claims}
-    verification = attest_retained_evidence(work, result, seal, roots=NATIVE_ROOTS, claim_root=work)
+    verification = attest_retained_evidence(work, result or {}, seal, roots=NATIVE_ROOTS, claim_root=work)
     if verification['status'] != 'verified':
-        raise ServiceError('native original receipt hashes differ from pre-exit seal')
+        raise ServiceError('native original receipt hashes differ from pre-exit seal' + _evidence_errors(verification))
     path = work / 'native-seal.json'
     raw = (json.dumps(seal, sort_keys=True, indent=2) + '\n').encode()
     with path.open('xb') as stream:
         stream.write(raw)
     return hashlib.sha256(raw).hexdigest()
+
+
+def finalize_native_lane(work, source, observed, resolutions, outcome, seal_fd):
+    """Trusted root: report the original outcome, seal, then publish the anchor.
+
+    The outcome (traceback, cancellation) reaches the top-level lane log BEFORE
+    the seal; the caller must then ``os._exit`` the returned code so no
+    interpreter output can follow sealed bytes. A refusal is reported and leaves
+    the private anchor empty; the outer adapter's post-exit check then refuses.
+    """
+    import traceback
+    if isinstance(outcome, SystemExit):
+        code = 0 if outcome.code is None else outcome.code
+        if type(code) is not int:
+            print(code, file=sys.stderr)
+            code = 1
+    else:
+        traceback.print_exception(type(outcome), outcome, outcome.__traceback__)
+        code = 130 if isinstance(outcome, KeyboardInterrupt) else 1
+    code = code if 0 <= code <= 255 else 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        anchor = seal_native_lane(work, source, observed[-1] if observed else None,
+                                  resolutions[-1] if resolutions else None)
+        os.write(seal_fd, anchor.encode('ascii'))
+    except BaseException:
+        traceback.print_exc()
+        sys.stderr.flush()
+        code = code or 1
+    finally:
+        os.close(seal_fd)
+    return code
 
 
 def attest_native_lane(work, expected, *, require_source=True):
@@ -1040,7 +1089,8 @@ def attest_native_lane(work, expected, *, require_source=True):
     seal = json.loads(path.read_text())
     if _native_files(work) != seal['files']:
         raise ServiceError('native top-level retained evidence changed after seal')
-    result = json.loads((work / 'receipt.json').read_text())
+    # An early failure sealed no run receipt; its later appearance changed files.
+    result = json.loads((work / 'receipt.json').read_text()) if 'receipt.json' in seal['files'] else {}
     verification = attest_retained_evidence(work, result, seal, roots=NATIVE_ROOTS, claim_root=work)
     for name, value in seal['source_claims'].items():
         retained = work / 'source-inputs' / (hashlib.sha256(name.encode()).hexdigest() + '.input')
@@ -1051,7 +1101,7 @@ def attest_native_lane(work, expected, *, require_source=True):
             if not candidate.is_file() or hashlib.sha256(candidate.read_bytes()).hexdigest() != value:
                 raise ServiceError('native source input changed after finalizer seal')
     if verification['status'] != 'verified':
-        raise ServiceError('native retained evidence changed after finalizer seal')
+        raise ServiceError('native retained evidence changed after finalizer seal' + _evidence_errors(verification))
     return {'schema_version': 1, 'status': 'verified', 'seal_sha256': expected,
             'retained_evidence': verification, 'complete': False, 'complete_gate_eligible': False}
 
