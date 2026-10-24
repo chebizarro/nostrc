@@ -62,6 +62,45 @@
           "before": "        print(out / \"result.json\")\n        return int(result.get(\"execution_passed\") is False or\n                   any(c[\"replay_status\"] == \"failed\" for c in result.get(\"candidates\", [])))\n"
         }
       ]
+    },
+    "scripts/test_selection_services.py": {
+      "before_sha256": "652754d063bb3f35da08e4bf599a43897943c01609e5b1bcdbeadc9b936abe2c",
+      "after_sha256": "1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7",
+      "edits": [
+        {
+          "before": "\ndef _ready(fd, timeout=15):\n    deadline = time.monotonic() + timeout\n    result = bytearray()\n",
+          "after": "\n# Explicit readiness deadline. A failure is classified and the service is\n# stopped while its readiness pipe stays readable; never retried or extended.\nREADINESS_SECONDS = 15\nREADINESS_RECORD_MAX = 4096\n\n\ndef _ready(fd, timeout=None):\n    deadline = time.monotonic() + (READINESS_SECONDS if timeout is None else timeout)\n    result = bytearray()\n"
+        },
+        {
+          "before": "    result = bytearray()\n    while len(result) < 4096:\n        remaining = deadline - time.monotonic()\n",
+          "after": "    result = bytearray()\n    while len(result) < READINESS_RECORD_MAX:\n        remaining = deadline - time.monotonic()\n"
+        },
+        {
+          "before": "    raise ServiceError('private service readiness record too large')\n\n",
+          "after": "    raise ServiceError('private service readiness record too large')\n\n\ndef _readiness_outcome(exc):\n    if isinstance(exc, (KeyboardInterrupt, SystemExit)):\n        return 'cancelled'\n    message = str(exc)\n    if 'deadline exceeded' in message:\n        return 'deadline_exceeded'\n    if 'exited before readiness' in message:\n        return 'exited_before_readiness'\n    if 'record too large' in message:\n        return 'record_too_large'\n    return 'error'\n\n\ndef _service_alive(pid):\n    \"\"\"Observe without reaping, so the PID identity stays reserved.\n\n    None means unobservable; it never masks the original readiness failure.\n    \"\"\"\n    try:\n        return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None\n    except ChildProcessError:\n        return False\n    except OSError:\n        return None\n\n\ndef _drain_late_readiness(fd, limit=READINESS_RECORD_MAX):\n    \"\"\"Bytes a service wrote after readiness failed; nonblocking and bounded.\"\"\"\n    os.set_blocking(fd, False)\n    data = bytearray()\n    while len(data) < limit:\n        try:\n            chunk = os.read(fd, limit - len(data))\n        except BlockingIOError:\n            break\n        if not chunk:\n            break\n        data.extend(chunk)\n    return bytes(data)\n\n"
+        },
+        {
+          "before": "    children = []\n    original = None\n",
+          "after": "    children = []\n    retained_readiness = {}\n    original = None\n"
+        },
+        {
+          "before": "                os.close(read_fd)\n        try:\n",
+          "after": "                os.close(read_fd)\n        started = time.monotonic()\n        try:\n"
+        },
+        {
+          "before": "            value = _ready(read_fd) if ready else None\n            return process, value\n",
+          "after": "            value = _ready(read_fd) if ready else None\n            if ready:\n                record['readiness'] = {'outcome': 'ready', 'fd': write_fd,\n                                       'elapsed_seconds': round(time.monotonic() - started, 3)}\n            return process, value\n"
+        },
+        {
+          "before": "            return process, value\n        finally:\n",
+          "after": "            return process, value\n        except BaseException as exc:\n            if ready:\n                # Keep the read end until teardown reaped this service: closing\n                # it first turns a late handshake into a manufactured EPIPE\n                # (Xserver: \"Cannot write display number to fd N\").\n                record['readiness'] = {'outcome': _readiness_outcome(exc), 'fd': write_fd,\n                                       'elapsed_seconds': round(time.monotonic() - started, 3),\n                                       'deadline_seconds': READINESS_SECONDS,\n                                       'service_alive_at_failure': _service_alive(process.pid)}\n                retained_readiness[id(process)] = read_fd\n                read_fd = -1\n            raise\n        finally:\n"
+        },
+        {
+          "before": "                    log.close()\n            os.environ.clear()\n",
+          "after": "                    log.close()\n                    late = retained_readiness.pop(id(process), None)\n                    if late is not None:\n                        try:\n                            data = _drain_late_readiness(late)\n                            record['readiness'].update(late_record=data.decode('ascii', 'backslashreplace'),\n                                                       late_record_bytes=len(data))\n                        except Exception as exc:\n                            errors.append(type(exc).__name__ + ': ' + str(exc))\n                        finally:\n                            os.close(late)\n            for late in retained_readiness.values():\n                os.close(late)\n            os.environ.clear()\n"
+        }
+      ],
+      "change": "nostrc-0cfsg.36.21 readiness read end retained until service reap; late record/outcome evidence only, unchanged 15s deadline"
     }
   },
   "p3_test": {
