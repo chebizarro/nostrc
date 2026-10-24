@@ -3,14 +3,19 @@
 
 The real provisioned signer runs only in the supported hosted route
 (dependency-tests.yml -> dependency-worker.yml: pidns custody, per-job AppArmor
-admission, post-exit worker-qualify). This tool never executes a lane. ``collect``
-names (and with --execute runs) the exact artifact downloads into fresh empty
-directories; ``verify`` reads the original downloaded files as untrusted data
-(JSON/XML/bytes only) and re-derives every claim from the lane's own receipt,
-JUnit and logs. Exit 0 only when every condition holds; nothing is inferred from
-a missing file, a skip or a summary field alone.
+admission, post-exit worker-qualify). This tool never executes a lane.
+``collect`` names (and with --execute runs) the exact artifact downloads into a
+fresh empty directory. ``verify`` accepts nothing of its own: the lane's
+qualified receipt must pass the existing strict aggregate path
+(test_selection_execution.transported_receipts + validate_receipt), which
+re-runs qualification over the receipt's own sealed transport archive (native
+finalizer seal, signer delivery/consent/JUnit, physical CTest argv/output
+binding) and checks every sealed source claim against an exact-SHA checkout.
+Only then are the signer isolation diagnostics read, from those same verified
+sealed bytes. Exit 0 only when every condition holds.
 """
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -19,15 +24,16 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_selection_services import (SIGNER_CONSUMER, SIGNER_DELIVERY, SIGNER_RESOURCE_TYPE,  # noqa: E402
-                                     SIGNER_AMBIENT)
+from test_selection_services import SIGNER_CONSUMER  # noqa: E402
 
-PROFILES = ('core.linux', 'core.linux.asan', 'grotto.linux', 'grotto.linux.asan_ubsan',
-            'groundhog.linux', 'groundhog.mdk08', 'groundhog.mdk011')
+CHECK = 'supported.nips.nip5f.signer_endpoint'
 # Registrations whose private grotto-daemon inherited the old overlay (PR23) or
-# spawn one without their own scrub: they must run in the same CTest process.
+# spawn one without their own scrub; all must run in the consumer's CTest process.
 WITNESSES = ('signer/clients', 'signer/activity', 'signer/room-flow', 'signer/approval-integration')
-APPROVED = '(uint32 1, uint32 1, uint32 0)'
+# Only profiles whose inventory maps every witness (re-derived from the tested
+# source's inventory at verify time). core.linux, core.linux.asan and
+# grotto.linux.asan_ubsan map no signer/room-flow and are not claimed.
+PROFILES = ('grotto.linux', 'groundhog.linux', 'groundhog.mdk08', 'groundhog.mdk011')
 LEAKS = (re.compile(rb'NOSTR_SIGNER_TOKEN='), re.compile(rb'AUTH [0-9a-f]{64}'),
          re.compile(rb'(?<![0-9A-Za-z])p[1-9][0-9]{0,4}_[0-9a-f]{64}(?![0-9a-f])'))
 
@@ -41,11 +47,21 @@ def require(condition, message):
         raise ProofError(message)
 
 
-def _json(path):
-    try:
-        return json.loads(Path(path).read_bytes())
-    except (OSError, ValueError) as exc:
-        raise ProofError(f'unreadable JSON {path}: {exc}') from exc
+def witness_map(policy, profile):
+    """Witness -> claiming checks for ``profile`` in this inventory."""
+    found = {}
+    for ident, check in policy['checks'].items():
+        if check.get('kind') == 'ctest' and profile in check.get('profiles', []):
+            for name in check.get('ctest_tests', {}).get(profile, []):
+                if name in WITNESSES:
+                    found.setdefault(name, []).append(ident)
+    return found
+
+
+def satisfiable(policy):
+    """Signer profiles whose inventory can realize the whole witness set."""
+    signer = policy['checks'][CHECK]['profiles']
+    return tuple(sorted(p for p in signer if set(witness_map(policy, p)) == set(WITNESSES)))
 
 
 def _cases(data):
@@ -64,72 +80,8 @@ def _ran(case):
             and all(case.find(tag) is None for tag in ('failure', 'error', 'skipped')))
 
 
-def lane(evidence, profile, sha):
-    """The exact single first-attempt backend receipt of a signer lane."""
-    found = [path for path in Path(evidence).rglob('attempt-1/receipt.json')
-             if (raw := _json(path)).get('profile_id') == profile
-             and raw.get('source_identity') == {'kind': 'committed', 'sha': sha}]
-    require(len(found) == 1, f'expected exactly one {profile} attempt-1 backend receipt at {sha}, found {len(found)}')
-    require(not any(Path(evidence).rglob('attempt-2/receipt.json')), 'retried lane cannot prove first-attempt delivery')
-    return found[0].parent, _json(found[0])
-
-
-def verify_lane(directory, raw):
-    require('signer_endpoint' in raw.get('required_capabilities', []), 'lane did not provision the signer')
-    require(raw.get('outcome') == 'passed' and raw.get('ctest_exit_code') == 0 and raw.get('attempt') == 1,
-            'backend lane did not pass on its first attempt')
-    require(raw.get('observed_executions', {}).get(SIGNER_CONSUMER) == 'passed', 'consumer execution not passed')
-    state = raw.get('signer_runtime') or {}
-    delivery = state.get('delivery') or {}
-    endpoint = (state.get('readiness') or {}).get('endpoint')
-    require(state.get('status') == 'passed' and state.get('approval_snapshot') == APPROVED,
-            'real fixture did not observe exactly one explicit approved request')
-    require(isinstance(endpoint, str) and re.fullmatch(r'tcp:127\.0\.0\.1:[1-9][0-9]{0,4}', endpoint),
-            'fixture readiness endpoint missing')
-    require(delivery.get('mechanism') == SIGNER_DELIVERY and delivery.get('resource_type') == SIGNER_RESOURCE_TYPE
-            and delivery.get('slots') == 1 and delivery.get('registrations') == [SIGNER_CONSUMER]
-            and delivery.get('endpoint') == endpoint and delivery.get('removed') is True
-            and delivery.get('ctest_environment_credentials') is False,
-            'credentials were not delivered as the removed registration-scoped resource')
-    spec = str(delivery.get('resource_spec_file'))
-    require(not spec.startswith(str(raw.get('evidence_dir', '\0'))), 'resource spec placed inside lane evidence')
-    ctest = [argv for argv in raw.get('commands', []) if argv and argv[0] == 'ctest' and '--output-junit' in argv]
-    require(len(ctest) == 1, 'not exactly one executing CTest process')
-    argv = ctest[0]
-    require(argv.count('--resource-spec-file') == 1 and argv[argv.index('--resource-spec-file') + 1] == spec,
-            'CTest argv lacks the exact resource spec')
-    env = raw.get('ctest_environment') or {}
-    require(not set(env.get('overlay_names', [])) & set(SIGNER_AMBIENT), 'signer credentials overlay the CTest environment')
-    if 'docker' not in raw.get('required_capabilities', []):
-        require(env.get('overlay_names') == [] and env.get('effective_hash') == env.get('base_hash'),
-                'CTest environment differs from the pre-provisioning test environment')
-    junit = (directory / 'results.xml').read_bytes()
-    cases = _cases(junit)
-    require(_ran(cases.get(SIGNER_CONSUMER)), 'consumer JUnit case is not a real passing run (skip/not-run/failure)')
-    missing = [name for name in WITNESSES if not _ran(cases.get(name))]
-    require(not missing, 'isolation witnesses did not run and pass in the same CTest process: ' + repr(missing))
-    port = endpoint.rsplit(':', 1)[1].encode()
-    for name in (directory / 'ctest.log', directory / 'results.xml'):
-        require(b'127.0.0.1:' + port not in name.read_bytes(), 'fixture endpoint appears in CTest output: ' + name.name)
-    return dict(endpoint=endpoint, consumer='passed', witnesses=list(WITNESSES), ctest_argv_has_spec=True,
-                approval=APPROVED, overlay_names=env.get('overlay_names'))
-
-
-def verify_receipt(receipts, profile, sha):
-    from test_selection_execution import KIND
-    found = [path for path in Path(receipts).rglob('receipt.json') if _json(path).get('profile') == profile]
-    require(len(found) == 1, f'expected exactly one qualified {profile} receipt, found {len(found)}')
-    result = _json(found[0])
-    require(result.get('receipt_kind') == KIND and result.get('job_conclusion') == 'success'
-            and result.get('source_identity') == {'kind': 'committed', 'sha': sha}
-            and SIGNER_CONSUMER in result.get('executed_registrations', [])
-            and (found[0].parent / 'original-native-receipt.json').is_file(),
-            'no post-namespace-exit qualified receipt (worker-qualify) for the lane')
-    return str(found[0])
-
-
 def scan(*roots):
-    """No credential form in any retained byte, including the uploaded build tree."""
+    """No credential form in any retained byte (whole roots, symlinks not followed)."""
     count = 0
     for root in roots:
         for path in sorted(Path(root).rglob('*')):
@@ -142,22 +94,100 @@ def scan(*roots):
     return count
 
 
-def verify(receipts, evidence, profile, sha):
-    require(profile in PROFILES, 'not a signer-provisioning profile: ' + profile)
-    require(re.fullmatch(r'[0-9a-f]{40}', sha), 'exact 40-hex tested SHA required')
-    directory, raw = lane(evidence, profile, sha)
-    proof = verify_lane(directory, raw)
-    proof['qualified_receipt'] = verify_receipt(receipts, profile, sha)
-    proof['scanned_files'] = scan(receipts, evidence)
-    return dict(proved=True, profile=profile, sha=sha, **proof,
-                scope='hosted pidns delivery/isolation for one lane; not profile, complete-gate or W11 acceptance')
+def _sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _receipt_path(receipts, plan, profile):
+    pattern = re.compile(re.escape('dependency-receipt-%s-%s-' % (plan['plan_id'], profile)) + r'[1-9][0-9]*')
+    found = [path for path in Path(receipts).rglob('receipt.json')
+             if path.parent.name == profile and pattern.fullmatch(path.parent.parent.name)]
+    require(len(found) == 1, f'expected exactly one {profile} lane receipt artifact for plan {plan["plan_id"]}, '
+                             f'found {len(found)}')
+    return found[0]
+
+
+def diagnose(policy, plan, receipt, public, locator, profile):
+    """Signer isolation diagnostics over the verified sealed lane bytes only."""
+    from test_selection_execution import _file
+    raw = public.get('backend_receipt', {})
+    require('signer_endpoint' in raw.get('required_capabilities', []), 'lane did not provision the signer')
+    executed = set(receipt.get('executed_registrations', []))
+    require(SIGNER_CONSUMER in executed, 'consumer is not in the qualified executed closure')
+    missing = [name for name in WITNESSES if name not in executed]
+    require(not missing, 'isolation witnesses were not co-selected into this qualified lane: ' + repr(missing))
+    evidence = Path(raw['evidence_dir'])
+    junit = _file(locator, evidence / 'results.xml').read_bytes()
+    log = _file(locator, evidence / 'ctest.log').read_bytes()
+    cases = _cases(junit)
+    require(_ran(cases.get(SIGNER_CONSUMER)), 'consumer JUnit case is not a real passing run')
+    failed = [name for name in WITNESSES if not _ran(cases.get(name))]
+    require(not failed, 'isolation witnesses did not run and pass in the same CTest process: ' + repr(failed))
+    endpoint = raw['signer_runtime']['readiness']['endpoint']
+    port = endpoint.rsplit(':', 1)[1].encode()
+    for name, data in (('ctest.log', log), ('results.xml', junit)):
+        require(b'127.0.0.1:' + port not in data, 'fixture endpoint appears in CTest output: ' + name)
+    return dict(witnesses=list(WITNESSES), witness_checks=witness_map(policy, profile),
+                junit_sha256=hashlib.sha256(junit).hexdigest(), ctest_log_sha256=hashlib.sha256(log).hexdigest())
+
+
+def verify(receipts, plan_path, repo, profile, evidence=None):
+    import test_selection as selection
+    require(profile in PROFILES, 'not a profile whose inventory can realize the isolation witnesses: ' + profile)
+    repo = Path(repo).resolve(strict=True)
+    policy = selection.load_inventory(repo / 'tests/selection/inventory.json')
+    require(profile in satisfiable(policy), 'tested inventory cannot realize every isolation witness for ' + profile)
+    return verify_qualified(policy, selection.read_json(plan_path), receipts, repo, profile, evidence)
+
+
+def verify_qualified(policy, plan, receipts, repo, profile, evidence=None):
+    """Strict existing acceptance first; signer diagnostics only over its verified bytes."""
+    import test_selection_execution as execution
+    sha = plan.get('source_identity', {}).get('sha')
+    require(plan.get('source_identity', {}).get('kind') == 'committed' and re.fullmatch(r'[0-9a-f]{40}', str(sha)),
+            'plan has no exact committed tested SHA')
+    path = _receipt_path(receipts, plan, profile)
+    original = path.parent / execution.ORIGINAL
+    try:
+        with execution.transported_receipts([path], repo=repo, plan=plan) as loaded:
+            receipt = loaded[0]
+            require(receipt.get('receipt_kind') == execution.KIND and receipt.get('profile') == profile
+                    and receipt.get('source_identity') == plan['source_identity'],
+                    'lane receipt is not a qualified normal receipt for this profile/source')
+            public, locator = execution.verified_transport(policy, plan, receipt)
+            # worker-qualify retains the published raw bytes beside the qualified
+            # receipt; they must be exactly the sealed public evidence just verified.
+            require(original.is_file() and not original.is_symlink()
+                    and _sha(original) == receipt['public_evidence']['sha256'],
+                    'original-native-receipt.json differs from the verified sealed public evidence')
+            proof = diagnose(policy, plan, receipt, public, locator, profile)
+            proof['scanned_files'] = scan(*locator.roots.values(), path.parent.parent)
+            if evidence is not None:
+                # Unbound raw artifact: diagnostic scan only; a leak still refuses.
+                proof['raw_evidence_scanned_files'] = scan(evidence)
+            binding = dict(qualification_hash=receipt['qualification_hash'], plan_id=plan['plan_id'],
+                           lane_id=receipt['lane_id'], profile_hash=receipt['profile_hash'],
+                           transport_archive_sha256=receipt['transport']['archive_sha256'],
+                           public_evidence_sha256=receipt['public_evidence']['sha256'],
+                           native_seal_sha256=public['native_custody_final']['seal_sha256'],
+                           execution_scope=receipt.get('execution_scope', 'full'),
+                           executed_registrations=len(receipt['executed_registrations']))
+    except ProofError:
+        raise
+    except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+        raise ProofError('strict qualified-receipt verification refused: ' + str(exc)) from exc
+    return dict(proved=True, profile=profile, sha=sha, binding=binding, **proof,
+                scope='hosted pidns delivery/isolation for one qualified lane; not profile, complete-gate or W11 acceptance')
 
 
 def collect(run, profile, out, repo, execute):
     out = Path(out)
-    require(profile in PROFILES, 'not a signer-provisioning profile: ' + profile)
-    commands = [['gh', 'run', 'download', str(run), '-R', repo, '-p', f'dependency-{kind}-*-{profile}-*',
-                 '-D', str(out / kind)] for kind in ('receipt', 'evidence')]
+    require(profile in PROFILES, 'not a profile whose inventory can realize the isolation witnesses: ' + profile)
+    commands = [['gh', 'run', 'download', str(run), '-R', repo, '-p', 'dependency-plan-*', '-D', str(out / 'plan')],
+                ['gh', 'run', 'download', str(run), '-R', repo, '-p', f'dependency-receipt-*-{profile}-*',
+                 '-D', str(out / 'receipts')],
+                ['gh', 'run', 'download', str(run), '-R', repo, '-p', f'dependency-evidence-*-{profile}-*',
+                 '-D', str(out / 'evidence')]]
     if execute:
         require(not out.exists() or not any(out.iterdir()), 'collection directory must be new and empty')
         for argv in commands:
@@ -175,16 +205,17 @@ def main(argv=None):
     c.add_argument('--repo', default='chebizarro/nostrc')
     c.add_argument('--execute', action='store_true', help='download; default prints the exact commands')
     v = sub.add_parser('verify')
-    v.add_argument('--receipts', required=True)
-    v.add_argument('--evidence', required=True)
+    v.add_argument('--receipts', required=True, help='downloaded dependency-receipt-* artifact directory')
+    v.add_argument('--plan', required=True, help='plan.json from the same run\'s dependency-plan-* artifact')
+    v.add_argument('--repo', required=True, help='clean checkout (with submodules) of the plan\'s tested SHA')
     v.add_argument('--profile', required=True)
-    v.add_argument('--sha', required=True)
+    v.add_argument('--evidence', help='optional raw dependency-evidence-* artifact (diagnostic scan only)')
     args = parser.parse_args(argv)
     try:
         if args.command == 'collect':
             result = {'commands': collect(args.run, args.profile, args.out, args.repo, args.execute)}
         else:
-            result = verify(args.receipts, args.evidence, args.profile, args.sha)
+            result = verify(args.receipts, args.plan, args.repo, args.profile, args.evidence)
     except ProofError as exc:
         print(json.dumps({'proved': False, 'refusal': str(exc)}, indent=2))
         return 1

@@ -3379,7 +3379,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
                 from test_selection_services import provisioned_signer
                 spec, signer_runtime = resources.enter_context(
                     provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env,
-                                       exposure_paths=(directory / "ctest.log", junit)))
+                                       exposure_paths=(directory / "ctest.log", junit,
+                                                       Path(realization["build_dir"]) / "Testing/Temporary/LastTest.log")))
                 cmd += ["--resource-spec-file", str(spec), *limit]
                 commands.append(cmd)
                 _atomic(directory / "receipt.json", dict(receipt, outcome="running"))

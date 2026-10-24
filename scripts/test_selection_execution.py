@@ -277,7 +277,10 @@ def _signer(backend, profile, post, source_root, tests, closure, locator):
             and delivery.get('endpoint') == state.get('readiness', {}).get('endpoint')
             and delivery.get('ctest_environment_credentials') is False and delivery.get('removed') is True
             and spec.is_absolute() and not spec.is_relative_to(evidence)
-            and delivery.get('exposure_checked') == sorted([str(evidence / 'ctest.log'), str(evidence / 'results.xml')]),
+            and delivery.get('exposure_checked') == sorted([str(evidence / 'ctest.log'), str(evidence / 'results.xml'),
+                                                            str(Path(backend['build_dir']) / 'Testing/Temporary/LastTest.log')])
+            and delivery.get('fixture_exposure_checked') == [str(evidence / 'signer')]
+            and delivery.get('exposed') == [],
             'signer credential delivery is not the removed registration-scoped resource')
     try:
         signer_delivery_admission({test['name']: test for test in tests}, closure, {})
@@ -580,6 +583,14 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         result['transport'] = transport
     result['qualification_hash'] = digest(result)
     return result
+
+
+def verified_transport(policy, plan, receipt):
+    """validate_receipt for one transported bundle; returns the public receipt and the
+    locator over that bundle's verified, sealed bytes (for read-only diagnostics)."""
+    require('transport' in receipt and _PORTABLE_ONLY, 'not a transported normal receipt')
+    public = validate_receipt(policy, plan, receipt)
+    return public, _LOADED[receipt['qualification_hash']]['locator']
 
 
 def validate_receipt(policy, plan, receipt):

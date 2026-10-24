@@ -695,12 +695,27 @@ def signer_delivery_admission(tests, selected, environment):
         raise ServiceError('ambient signer/CTest resource variables in the CTest environment: ' + repr(ambient))
 
 
+def signer_token_exposure(token, paths):
+    """Retained files (named files or whole directory trees) holding the raw token.
+
+    Never follows symlinks; returns paths only, never the token or its hash."""
+    needle, exposed = token.encode(), []
+    for root in map(Path, paths):
+        files = [root] if root.is_file() and not root.is_symlink() else (
+            sorted(path for path in root.rglob('*') if path.is_file() and not path.is_symlink())
+            if root.is_dir() and not root.is_symlink() else [])
+        exposed += [str(path) for path in files if needle in path.read_bytes()]
+    return sorted(set(exposed))
+
+
 @contextlib.contextmanager
 def signer_resource_delivery(endpoint, token, root, exposure_paths=()):
     """A private, removed CTest resource spec whose single id carries the credential.
 
-    Yields its path and a record that never contains or hashes the token. After a
-    normal exit the named lane outputs must not contain the token."""
+    Yields its path and a record that never contains or hashes the token. On every
+    exit (normal, failure, cancellation) the spec is removed first and the named
+    lane outputs are then scanned; a found token refuses a normal exit and never
+    masks an exception already in flight. Exposed bytes are never rewritten."""
     match = re.fullmatch(r'tcp:127\.0\.0\.1:([1-9][0-9]{0,4})', endpoint or '')
     if not match or int(match.group(1)) > 65535:
         raise ServiceError('signer delivery requires the fixture loopback endpoint')
@@ -711,21 +726,39 @@ def signer_resource_delivery(endpoint, token, root, exposure_paths=()):
     record = {'mechanism': SIGNER_DELIVERY, 'resource_type': SIGNER_RESOURCE_TYPE, 'slots': 1,
               'registrations': [SIGNER_CONSUMER], 'endpoint': endpoint, 'resource_spec_file': str(spec),
               'ctest_environment_credentials': False, 'removed': False}
+    in_flight = False
     try:
         descriptor = os.open(spec, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, 'w') as stream:
             json.dump({'version': {'major': 1, 'minor': 0}, 'local': [{SIGNER_RESOURCE_TYPE: [
                 {'id': 'p' + match.group(1) + '_' + token, 'slots': 1}]}]}, stream)
         yield spec, record
-        exposed = sorted(str(path) for path in exposure_paths
-                         if Path(path).is_file() and token.encode() in Path(path).read_bytes())
-        record['exposure_checked'] = sorted(str(path) for path in exposure_paths)
-        if exposed:
-            raise ServiceError('provisioned signer token exposed in lane output: ' + repr(exposed))
+    except BaseException:
+        in_flight = True
+        raise
     finally:
         spec.unlink(missing_ok=True)
         directory.rmdir()
         record['removed'] = not directory.exists()
+        record['exposure_checked'] = sorted(str(path) for path in exposure_paths)
+        record['exposed'] = signer_token_exposure(token, exposure_paths)
+        if record['exposed'] and not in_flight:
+            raise ServiceError('provisioned signer token exposed in lane output: ' + repr(record['exposed']))
+
+
+def signer_fixture_exposure(state, token, evidence_dir, in_flight):
+    """After the fixture's children are reaped, its own retained logs are final:
+    scan them too. Refuses a passing exit; never masks a failure in flight."""
+    delivery = state.get('delivery')
+    if delivery is None or token is None:
+        return
+    delivery['fixture_exposure_checked'] = [str(Path(evidence_dir))]
+    found = signer_token_exposure(token, [evidence_dir])
+    delivery['exposed'] = sorted(set(delivery.get('exposed', [])) | set(found))
+    if found:
+        state['status'] = 'failed'
+        if not in_flight:
+            raise ServiceError('provisioned signer token exposed in fixture output: ' + repr(found))
 
 
 @contextlib.contextmanager
@@ -787,6 +820,7 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
         state['error_type'] = type(exc).__name__
         raise
     finally:
+        in_flight = 'error_type' in state
         try:
             owned.finish()
             if any(fixture['identity'](value['path']) != value for value in config.inputs.values()):
@@ -795,12 +829,16 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
                 raise ServiceError('signer fixture source/configuration changed during execution')
         except BaseException:
             state['status'] = 'failed'
+            in_flight = True
             raise
         finally:
             state['cleanup'] = owned.result
-            with (Path(evidence_dir) / 'signer-runtime.json').open('x') as stream:
-                json.dump(state, stream, sort_keys=True, indent=2)
-                stream.write('\n')
+            try:
+                signer_fixture_exposure(state, getattr(owned, 'token', None), evidence_dir, in_flight)
+            finally:
+                with (Path(evidence_dir) / 'signer-runtime.json').open('x') as stream:
+                    json.dump(state, stream, sort_keys=True, indent=2)
+                    stream.write('\n')
 
 
 @contextlib.contextmanager

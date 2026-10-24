@@ -265,8 +265,42 @@ class DeliveryLifecycle(unittest.TestCase):
                         self.assertIn(self.token, spec.read_text())
                         raise error()
                 self.assertTrue(record['removed'])
-                self.assertNotIn('exposure_checked', record)
+                # Scanned on every exit, before any output is retained or uploaded.
+                self.assertEqual((record['exposure_checked'], record['exposed']), ([], []))
                 self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_exposure_on_failure_or_cancellation_is_recorded_without_masking(self):
+        leak = self.root / 'ctest.log'
+        for error in (KeyboardInterrupt, SystemExit, RuntimeError):
+            with self.subTest(error=error.__name__):
+                with self.assertRaises(error):
+                    with services.signer_resource_delivery('tcp:127.0.0.1:9', self.token, self.root, (leak,)) as (_, record):
+                        leak.write_text('AUTH ' + self.token)
+                        raise error()
+                self.assertTrue(record['removed'])
+                self.assertEqual(record['exposed'], [str(leak)])  # never rewritten, never the token itself
+                self.assertNotIn(self.token, json.dumps(record))
+                self.assertEqual(list(self.root.iterdir()), [leak])
+
+    def test_fixture_logs_are_scanned_after_reaping(self):
+        evidence = self.root / 'signer'
+        (evidence / 'worker').mkdir(parents=True)
+        (evidence / 'worker/daemon.log').write_text('started\n')
+        state = {'status': 'passed', 'delivery': {'exposed': []}}
+        services.signer_fixture_exposure(state, self.token, evidence, False)
+        self.assertEqual(state['delivery'], {'exposed': [], 'fixture_exposure_checked': [str(evidence)]})
+        self.assertEqual(state['status'], 'passed')
+        (evidence / 'worker/approver.log').write_text('request AUTH ' + self.token + '\n')
+        with self.assertRaisesRegex(services.ServiceError, 'exposed in fixture output'):
+            services.signer_fixture_exposure(state, self.token, evidence, False)
+        self.assertEqual((state['status'], state['delivery']['exposed']),
+                         ('failed', [str(evidence / 'worker/approver.log')]))
+        failing = {'status': 'failed', 'delivery': {'exposed': []}}
+        services.signer_fixture_exposure(failing, self.token, evidence, True)  # in flight: recorded, not masked
+        self.assertEqual(failing['delivery']['exposed'], [str(evidence / 'worker/approver.log')])
+        untouched = {'status': 'failed'}
+        services.signer_fixture_exposure(untouched, self.token, evidence, True)  # never delivered: nothing claimed
+        self.assertEqual(untouched, {'status': 'failed'})
 
     def test_token_exposed_in_named_output_fails_closed_and_still_cleans_up(self):
         leak = self.root / 'ctest.log'
@@ -314,6 +348,12 @@ class EngineScopedDelivery(ScopedDeliveryProject):
         with patch.object(services, 'provisioned_signer', provision), patch.object(r, '_execute', recording):
             receipt = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
         self.assertEqual(len(provisions), 1)
+        last = str(Path(realized['build_dir']) / 'Testing/Temporary/LastTest.log')
+        lane = Path(receipt['evidence_dir'])
+        self.assertEqual(provisions[0], [str(lane / 'ctest.log'), str(lane / 'results.xml'), last])
+        delivery = receipt['signer_runtime']['delivery']
+        self.assertEqual((delivery['exposure_checked'], delivery['exposed']), (sorted(provisions[0]), []))
+        self.assertTrue(Path(last).is_file())  # the real CTest wrote it and it was scanned
         ctest = [argv for argv in receipt['commands'] if argv[0] == 'ctest']
         self.assertEqual(len(ctest), 1, 'single CTest invocation')
         spec = receipt['signer_runtime']['delivery']['resource_spec_file']
