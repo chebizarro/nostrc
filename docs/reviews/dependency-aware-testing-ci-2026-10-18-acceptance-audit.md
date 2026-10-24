@@ -19,7 +19,13 @@
   - `.36.32`: the remaining 26 `gtk_accessible_announce` call sites.
   - `.36.33`: the old NIP-11 TLS worker racing `OPENSSL_cleanup` at exit. The failed local full-normal 124/125 runs stay retained; this race is not fixed.
 - **Native correction:** the historical macOS AUTO-backend qualification stays withdrawn. The compliant macOS run is 3,010 default targets with 26 pass and 3 skip.
-- **Raw cores:** to be deleted after the master merge. Only full traces and hashes are durable, and the parent cleans up after verifying retention.
+- **Raw cores:** deleted inside the owned container after M. They were never copied durably; only the full backtraces and core hashes remain.
+- **Owned-resource cleanup after M** (`parent-owned-resource-cleanup.json` `e9e80efe…`, `parent-owned-worktree-cleanup-part1.json` `c903c604…`):
+  - The parent verified 362 evidence hashes and 4 full backtraces, then removed exactly the owned container `2aef2c8e…` and 7 owned `/tmp` directories.
+  - Docker's full image-ID set (212, intermediates included) and its 53 volumes are identical before and after; containers went from 22 to 21. No image was deleted. The earlier figure of 126 was the default visible image listing, a different count.
+  - Read-only keychain guards returned 0 before and after.
+  - 6 source worktrees and 7 branches were removed, including a side branch. 4 temporary tags were archived in a verified 22,644 B bundle (`dceaf865d43037b55f1cd8d449192487ec722c39669d04b47d2436af15f40b15`) and then removed.
+  - This docs worktree stays until its merge.
 - **Shadow S6** ([root 40115923331](https://github.com/chebizarro/nostrc/actions/runs/40115923331)), still not terminal at 18:15:19Z (snapshot 2):
   - All 13 execute lanes have finished.
   - `core.linux` (441), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5) published S6-bound `normal_execution_v1` receipts, but no validation exists. Their gate status is **PENDING**, and they are not recorded as qualified.
