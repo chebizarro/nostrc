@@ -464,5 +464,45 @@ class HostFrontendGroupLifecycle(unittest.TestCase):
             self.assertEqual(self.helper_run(verb).returncode, 0)
         self.assertFalse(self.root.exists())
 
+class TesthostReceiptVerdict(unittest.TestCase):
+    """The entry's own receipt summary over synthetic command records (tool lookup stubbed)."""
+
+    def summary(self, records):
+        entry = read('tests/selection/namespace_policy_entry.sh')
+        code = entry.split("python3 - <<'PY'\n")[-1].split('\nPY\n')[0]
+        temp = Path(tempfile.mkdtemp(prefix='receipt-'))
+        self.addCleanup(shutil.rmtree, temp, True)
+        (temp / 'logs').mkdir()
+        (temp / 'logs/kernel-matrix.log').write_text('Ran 108 tests in 1.0s\n\nOK\n')
+        (temp / 'commands.tsv').write_text(''.join('%s\t%s\n' % pair for pair in records))
+        self.assertEqual(code.count("pathlib.Path('/evidence')"), 1)
+        script = temp / 'summary.py'
+        script.write_text('import shutil, sys\nshutil.which = lambda name: sys.executable\n'
+                          + code.replace("pathlib.Path('/evidence')", 'pathlib.Path(%r)' % str(temp)))
+        result = subprocess.run([sys.executable, '-I', str(script)], cwd=ROOT, capture_output=True, text=True, timeout=120)
+        return result.returncode, json.loads((temp / 'regression.json').read_text())
+
+    REQUIRED = ('environment', 'mapping-probe', 'kernel-prerequisite', 'kernel-matrix', 'policy-suite',
+                'unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate', 'linux-smoke',
+                'sanitizer', 'signer-names', 'keychain-guard')
+
+    def test_clean_records_pass(self):
+        code, receipt = self.summary([(name, 0) for name in self.REQUIRED])
+        self.assertEqual((code, receipt['passed'], receipt['duplicate_commands']), (0, True, []))
+
+    def test_duplicate_record_fails_even_when_its_last_exit_is_zero(self):
+        for tail in ([('pre-push', 1), ('pre-push', 0)], [('pre-push', 0), ('pre-push', 0)]):
+            with self.subTest(tail=tail):
+                records = [(name, 0) for name in self.REQUIRED if name != 'pre-push'] + tail
+                code, receipt = self.summary(records)
+                self.assertEqual((code, receipt['passed'], receipt['duplicate_commands']), (1, False, ['pre-push']))
+                self.assertFalse(receipt['complete'] or receipt['complete_gate_eligible'])
+
+    def test_missing_or_nonzero_records_fail(self):
+        code, receipt = self.summary([(name, 0) for name in self.REQUIRED if name != 'sanitizer'])
+        self.assertEqual((code, receipt['passed'], receipt['not_executed']), (1, False, ['sanitizer']))
+        code, receipt = self.summary([(name, int(name == 'full-gate')) for name in self.REQUIRED])
+        self.assertEqual((code, receipt['passed']), (1, False))
+
 if __name__ == '__main__':
     unittest.main()
