@@ -29,7 +29,8 @@ void gh_account_ui_attach(GhWindow *window, GhAccountController *controller,
  * borrowed name or NULL; source's "profile-changed" (s) signal refreshes. */
 typedef const gchar *(*GhAccountNameFunc)(gpointer data, const gchar *pubkey);
 void gh_account_ui_set_name_source(GhWindow *window, GhAccountNameFunc name, GObject *source);
-/* The account-state announcements made so far (tests). */
+/* The account-state announcements attempted so far to an active window
+ * (tests); not a count of announcements an AT backend delivered. */
 guint gh_account_ui_get_announcements(GhWindow *window);
 
 G_END_DECLS

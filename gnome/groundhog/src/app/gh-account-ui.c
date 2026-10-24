@@ -70,7 +70,8 @@ typedef struct {
    * (focus_idle), and waits for an inactive window (focus_deferred). */
   guint focus_idle;
   gboolean focus_deferred;
-  guint announcements; /* made (only while the window is active, §7.14) */
+  guint announcements; /* attempted while the window is active (§7.14), even
+                        * where GTK's fallback context cannot deliver them */
 } GhAccountUi;
 
 static void names_gone(gpointer data, GObject *where_the_object_was);
@@ -395,7 +396,7 @@ announce(GhAccountUi *ui, const gchar *text)
   if (can_announce(GTK_ACCESSIBLE(ui->window)))
     gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), text,
                             GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
-  ui->announcements++;
+  ui->announcements++; /* an eligible attempt, delivered or not */
 }
 
 /* Keyboard/screen-reader focus to the shown page's named target, unless
