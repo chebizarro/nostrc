@@ -78,43 +78,14 @@ class NamespaceWrapperAdapterTests(unittest.TestCase):
         self.assertFalse(final['complete_gate_eligible'])
         return final
 
-    def configure_namelink_ctest(self, exit_code):
-        """PR25 shape: CTest consumer linked through a CMake SONAME namelink."""
-        self.configure_ctest()
-        self.write('app/nlink.c', 'int nlink_value(void) { return 7; }\n')
-        self.write('app/main.c', '#include <unistd.h>\nint nlink_value(void);\n'
-                   'int main(int argc, char **argv) { (void)argc; if (nlink_value() != 7) return 124; '
-                   'execvp(argv[1], argv + 1); return 125; }\n')
-        self.write('app/check.py', 'import sys\nprint("namelink consumer", flush=True)\nsys.exit(%d)\n' % exit_code)
-        self.write('CMakeLists.txt', '''cmake_minimum_required(VERSION 3.22)
-project(native_namelink C)
-enable_testing()
-include(cmake/NostrcTestInventory.cmake)
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-add_library(nlink SHARED app/nlink.c)
-set_target_properties(nlink PROPERTIES VERSION 1.0.0 SOVERSION 1)
-add_executable(probe app/main.c)
-target_link_libraries(probe PRIVATE nlink)
-add_test(NAME escaped COMMAND probe ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/app/check.py)
-nostrc_describe_test(escaped OWNER app TARGETS probe INPUTS app/check.py EXPECTED pass)
-nostrc_finalize_test_inventory()
-''')
-        self.save_policy()
+    def configure_default_namelink(self, command_exit=None):
+        configure_default_namelink(self, command_exit)
 
     def symlink_claims(self, lane, receipt):
-        sys.path.insert(0, str(ROOT / 'scripts'))
-        try:
-            from test_selection_custody import retained_claims
-            claims = retained_claims(receipt, lane, private_resources.NATIVE_ROOTS)
-        finally:
-            sys.path.pop(0)
-        links = sorted(name for name in claims if (lane / name).is_symlink())
-        # Precondition, not coverage: the original receipt claims a link by content.
-        self.assertTrue(any(name.endswith('/libnlink.so') for name in links), sorted(claims))
-        return links
+        return audited_symlink_claims(self, lane, receipt)
 
-    def test_namelink_ctest_success_seals_publishes_and_refuses_replaced_link(self):
-        self.configure_namelink_ctest(0)
+    def test_namelink_default_build_success_seals_publishes_and_refuses_replaced_link(self):
+        self.configure_default_namelink()
         head = self.commit()
         receipt, directory = self.gate('--head', head, '--native-custody', 'pidns')
         self.assertEqual(receipt['status'], 'partial', receipt)
@@ -135,8 +106,8 @@ nostrc_finalize_test_inventory()
         finally:
             sys.path.pop(0)
 
-    def test_namelink_ctest_failure_keeps_sealed_original_failure_unpublished(self):
-        self.configure_namelink_ctest(23)
+    def test_namelink_default_build_command_failure_keeps_sealed_original_unpublished(self):
+        self.configure_default_namelink(command_exit=23)
         head = self.commit()
         receipt, directory = self.gate('--head', head, '--native-custody', 'pidns', success=False)
         state = receipt['executions'][0]['lanes'][0]
@@ -147,7 +118,8 @@ nostrc_finalize_test_inventory()
         original = (lane / 'receipt.json').read_bytes()
         child = json.loads(original)
         self.symlink_claims(lane, child)
-        self.assertEqual(child['backend_receipt']['checks']['ctest.actual']['outcome'], 'failed')
+        self.assertEqual(child['backend_receipt']['checks']['build.default']['exit_code'], 0)
+        self.assertEqual(child['backend_receipt']['checks']['command.actual']['exit_code'], 23)
         self.assertFalse(child['diagnostic_eligible'])
         self.assertFalse(child['complete_gate_eligible'])
         self.assertFalse((lane / 'native-receipt.json').exists())
@@ -477,6 +449,113 @@ nostrc_finalize_test_inventory()
         self.assertIn('gnome_keyring commands require', receipt['executions'][0]['lanes'][0]['error'])
         self.assertFalse(list(directory.rglob('services.json')))
         self.assertFalse(list(directory.rglob('command-*.log')))
+
+
+def configure_default_namelink(test, command_exit=None):
+    """Original PR25 claim writer: a default-scope build contract's post-build audit.
+
+    Per-registration CTest audits never hash build-tree inputs; the default
+    build audit hashes CMake native outputs, admitting CMAKE_SYMLINK_LIBRARY
+    namelinks by the content read through the link (groundhog/core default builds).
+    """
+    profile = test.policy['profiles']['local.command']
+    profile.update(compiler='clang' if platform.system() == 'Darwin' else 'gcc',
+                   configure_args=['-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Debug'])
+    if platform.system() == 'Darwin':  # host guard: private Secret Service, never the login keychain
+        profile['configure_args'] += ['-DNIP55L_SECRET_BACKEND=libsecret',
+                                      '-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service']
+    checks = {'build.default': dict(kind='build_contract', profiles=['local.command'], nodes=['app'],
+        cost='ordinary', requirement='blocking', expected_outcome='pass', build_scope='default',
+        build_targets=[], command=['cmake', '--build', '{build}', '--config', 'Debug'], working_directory='{source}',
+        environment={}, runtime_inputs=[], required_evidence=[])}
+    if command_exit is not None:
+        checks['command.actual'] = test.policy['checks']['command.actual']
+        test.write('app/check.py', "import pathlib, sys\npathlib.Path(sys.argv[2]).write_text('ran\\n')\n"
+                   "print('selected command after audited default build', flush=True)\nsys.exit(%d)\n" % command_exit)
+    test.policy['checks'] = checks
+    # The default-build audit imports the real producer attestation module.
+    shutil.copy2(ROOT / 'scripts/test_selection_producers.py', test.repo / 'scripts/test_selection_producers.py')
+    target = test.repo / 'cmake/NostrcTestInventory.cmake'
+    target.parent.mkdir(exist_ok=True)
+    shutil.copy2(ROOT / 'cmake/NostrcTestInventory.cmake', target)
+    test.write('app/nlink.c', 'int nlink_value(void) { return 7; }\n')
+    test.write('app/main.c', 'int nlink_value(void);\nint main(void) { return nlink_value() == 7 ? 0 : 1; }\n')
+    test.write('CMakeLists.txt', '''cmake_minimum_required(VERSION 3.22)
+project(native_namelink C)
+enable_testing()
+include(cmake/NostrcTestInventory.cmake)
+add_library(nlink SHARED app/nlink.c)
+set_target_properties(nlink PROPERTIES VERSION 1.0.0 SOVERSION 1)
+add_executable(probe app/main.c)
+target_link_libraries(probe PRIVATE nlink)
+nostrc_finalize_test_inventory()
+''')
+    test.save_policy()
+
+
+def audited_symlink_claims(test, lane, receipt):
+    """Precondition, not coverage: the ACTUAL audit claims a build link by content."""
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    try:
+        from test_selection_custody import retained_claims
+        claims = retained_claims(receipt, lane, private_resources.NATIVE_ROOTS)
+    finally:
+        sys.path.pop(0)
+    links = sorted(name for name in claims if (lane / name).is_symlink())
+    test.assertTrue(any(name.endswith(('/libnlink.so', '/libnlink.dylib')) for name in links), sorted(claims))
+    return links
+
+
+class DefaultBuildNamelinkAuditContract(unittest.TestCase):
+    """Any host, legacy custody: no kernel/namespace claim, only the real audit/seal predicate."""
+    setUpFixture = fixture.LocalCommandAdapterTests.setUp
+    write = fixture.LocalCommandAdapterTests.write
+    git = fixture.LocalCommandAdapterTests.git
+    commit = fixture.LocalCommandAdapterTests.commit
+    save_policy = fixture.LocalCommandAdapterTests.save_policy
+    gate = fixture.LocalCommandAdapterTests.gate
+
+    def setUp(self):
+        self.setUpFixture()
+        self.policy['profiles']['local.command']['capabilities'] = []
+        self.save_policy()
+
+    def test_actual_audited_namelink_claim_seals_only_through_the_sealed_link(self):
+        configure_default_namelink(self)
+        receipt, directory = self.gate('--head', self.commit())
+        lanes = list(directory.glob('0/lane-*'))
+        self.assertEqual(len(lanes), 1, lanes)
+        lane = lanes[0].resolve()
+        child = json.loads((lane / 'receipt.json').read_bytes())
+        self.assertEqual(child['backend_receipt']['checks']['build.default']['build_scope'], 'default')
+        links = audited_symlink_claims(self, lane, child)
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        try:
+            import test_selection_custody as custody
+            snapshot = custody.retained_files(lane, private_resources.NATIVE_ROOTS)
+            claims = custody.retained_claims(child, lane, private_resources.NATIVE_ROOTS)
+            for name in links:
+                # The pre-fix predicate demanded a file entry here and refused.
+                self.assertEqual(snapshot[name]['kind'], 'symlink')
+                self.assertEqual(custody.sealed_claim_entry(snapshot, name), {'kind': 'file', 'sha256': claims[name]})
+            resolved = json.loads((lane / 'resolved.json').read_bytes())
+            # The materialized checkout is gone; an empty root binds no source claims.
+            unrelated = Path(self.work) / 'no-source-claims'
+            unrelated.mkdir()
+            anchor = private_resources.seal_native_lane(lane, unrelated, child, resolved)
+            self.assertEqual(private_resources.attest_native_lane(lane, anchor, require_source=False)['status'], 'verified')
+            link = lane / links[0]
+            target = os.readlink(link)
+            link.unlink()
+            os.symlink(target, link)  # identical link recreated: still exactly sealed
+            self.assertEqual(private_resources.attest_native_lane(lane, anchor, require_source=False)['status'], 'verified')
+            content = link.read_bytes()
+            link.unlink()
+            link.write_bytes(content)
+            with self.assertRaisesRegex(private_resources.ServiceError, 'changed after finalizer seal: .*' + links[0]):
+                private_resources.attest_native_lane(lane, anchor, require_source=False)
+        finally:
+            sys.path.pop(0)
 
 
 class DisplayNamespaceWrapperAdapterTests(NamespaceWrapperAdapterTests):
