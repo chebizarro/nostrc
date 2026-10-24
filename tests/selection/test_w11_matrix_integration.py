@@ -10,7 +10,9 @@ PATH = 'scripts/w11-evidence.py'
 
 class W11MatrixIntegration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's result: the newer groundhog.linux app ownership layer is projected away first.
+        from groundhog_app_enrollment_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_exact_source_inverse_reaches_runtime_witness_and_refuses_unreviewed(self):
         import runtime_integration_support as runtime

@@ -37,8 +37,10 @@ def before_source(path, raw):
 
 
 def before_policy(policy):
+    # The newer groundhog.linux app ownership layer (nostrc-0cfsg.36.19) is projected first.
+    from groundhog_app_enrollment_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     rules = [rule for rule in data['added_path_rules'] if rule in previous['path_rules']]
