@@ -146,6 +146,9 @@ run_groundhog(GStrv env, gchar **stderr_out, gint64 *elapsed_us)
   *stderr_out = run.err;
   g_assert_false(run.timed_out);
   g_assert_true(g_subprocess_wait(proc, NULL, NULL));
+  if (g_subprocess_get_if_signaled(proc))
+    g_test_message("groundhog was killed by signal %d (%s)", g_subprocess_get_term_sig(proc),
+                   g_strsignal(g_subprocess_get_term_sig(proc)));
   g_assert_true(g_subprocess_get_if_exited(proc));
   return g_subprocess_get_exit_status(proc);
 }

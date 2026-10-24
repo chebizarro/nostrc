@@ -548,6 +548,17 @@ SIGNER_INSTRUMENTATION = {'none': {'GO_ENABLE_ASAN': None},
                           'asan_ubsan': {'GO_ENABLE_ASAN': 'GO_ENABLE_ASAN:BOOL=ON',
                                          'CMAKE_BUILD_TYPE': 'CMAKE_BUILD_TYPE:STRING=Debug'}}
 SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')
+# Credentials reach only the admitted registration, as its CTest resource
+# allocation; the CTest process environment never carries them.
+SIGNER_CONSUMER = 'test_nip5f_tcp'
+SIGNER_RESOURCE_TYPE = 'nip5f_signer'
+SIGNER_RESOURCE_GROUPS = [{'requirements': [{'.type': SIGNER_RESOURCE_TYPE, 'slots': 1}]}]
+SIGNER_DELIVERY = 'ctest_resource_allocation_v1'
+# Inherited by every registration if present: refused, never overridden.
+SIGNER_AMBIENT = ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN', 'NOSTR_SIGNER_SOCK')
+# Forms a delivered credential takes in retained bytes: environment, wire AUTH line, resource id.
+SIGNER_LEAK_PATTERNS = (rb'NOSTR_SIGNER_TOKEN=', rb'AUTH [0-9a-f]{64}',
+                        rb'(?<![0-9A-Za-z])p[1-9][0-9]{0,4}_[0-9a-f]{64}(?![0-9a-f])')
 
 
 def elf_symbol_names(data, label='signer executable'):
@@ -662,9 +673,103 @@ def signer_contract(realization, environment=None):
             'complete': False, 'complete_gate_eligible': False}
 
 
+def signer_delivery_admission(tests, selected, environment):
+    """Exact registration-bound credential route over the whole fresh CTest universe.
+
+    Only test_nip5f_tcp may declare the signer resource, with exactly one slot;
+    names, labels, commands or aliases never admit another registration. Any
+    other selected resource group would be starved by the signer-only spec.
+    Ambient signer or CTest resource variables reach every registration, so
+    they refuse rather than being trusted or overridden."""
+    holders = sorted(name for name, test in tests.items()
+                     for prop in test.get('properties', [])
+                     if prop.get('name') == 'RESOURCE_GROUPS' and SIGNER_RESOURCE_TYPE in json.dumps(prop.get('value')))
+    if holders != [SIGNER_CONSUMER]:
+        raise ServiceError('signer resource must be declared by exactly test_nip5f_tcp: ' + repr(holders))
+    groups = {name: [prop.get('value') for prop in tests[name].get('properties', []) if prop.get('name') == 'RESOURCE_GROUPS']
+              for name in selected if name in tests}
+    if SIGNER_CONSUMER not in selected or groups.get(SIGNER_CONSUMER) != [SIGNER_RESOURCE_GROUPS]:
+        raise ServiceError('signer consumer lacks its exact nip5f_signer:1 resource group')
+    others = sorted(name for name, values in groups.items() if values and name != SIGNER_CONSUMER)
+    if others:
+        raise ServiceError('selected registrations declare resources the signer spec cannot provide: ' + repr(others))
+    ambient = sorted(key for key in environment if key in SIGNER_AMBIENT or key.startswith('CTEST_RESOURCE_'))
+    if ambient:
+        raise ServiceError('ambient signer/CTest resource variables in the CTest environment: ' + repr(ambient))
+
+
+def signer_token_exposure(token, paths):
+    """Retained files (named files or whole directory trees) holding the raw token.
+
+    Never follows symlinks; returns paths only, never the token or its hash."""
+    needle, exposed = token.encode(), []
+    for root in map(Path, paths):
+        files = [root] if root.is_file() and not root.is_symlink() else (
+            sorted(path for path in root.rglob('*') if path.is_file() and not path.is_symlink())
+            if root.is_dir() and not root.is_symlink() else [])
+        exposed += [str(path) for path in files if needle in path.read_bytes()]
+    return sorted(set(exposed))
+
+
 @contextlib.contextmanager
-def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, environment=None):
+def signer_resource_delivery(endpoint, token, root, exposure_paths=()):
+    """A private, removed CTest resource spec whose single id carries the credential.
+
+    Yields its path and a record that never contains or hashes the token. On every
+    exit (normal, failure, cancellation) the spec is removed first and the named
+    lane outputs are then scanned; a found token refuses a normal exit and never
+    masks an exception already in flight. Exposed bytes are never rewritten."""
+    match = re.fullmatch(r'tcp:127\.0\.0\.1:([1-9][0-9]{0,4})', endpoint or '')
+    if not match or int(match.group(1)) > 65535:
+        raise ServiceError('signer delivery requires the fixture loopback endpoint')
+    if not isinstance(token, str) or not re.fullmatch(r'[0-9a-f]{64}', token):
+        raise ServiceError('signer delivery requires the fixture runtime token')
+    directory = Path(tempfile.mkdtemp(prefix='nip5f-delivery-', dir=root))
+    spec = directory / 'resources.json'
+    record = {'mechanism': SIGNER_DELIVERY, 'resource_type': SIGNER_RESOURCE_TYPE, 'slots': 1,
+              'registrations': [SIGNER_CONSUMER], 'endpoint': endpoint, 'resource_spec_file': str(spec),
+              'ctest_environment_credentials': False, 'removed': False}
+    in_flight = False
+    try:
+        descriptor = os.open(spec, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'w') as stream:
+            json.dump({'version': {'major': 1, 'minor': 0}, 'local': [{SIGNER_RESOURCE_TYPE: [
+                {'id': 'p' + match.group(1) + '_' + token, 'slots': 1}]}]}, stream)
+        yield spec, record
+    except BaseException:
+        in_flight = True
+        raise
+    finally:
+        spec.unlink(missing_ok=True)
+        directory.rmdir()
+        record['removed'] = not directory.exists()
+        record['exposure_checked'] = sorted(str(path) for path in exposure_paths)
+        record['exposed'] = signer_token_exposure(token, exposure_paths)
+        if record['exposed'] and not in_flight:
+            raise ServiceError('provisioned signer token exposed in lane output: ' + repr(record['exposed']))
+
+
+def signer_fixture_exposure(state, token, evidence_dir, in_flight):
+    """After the fixture's children are reaped, its own retained logs are final:
+    scan them too. Refuses a passing exit; never masks a failure in flight."""
+    delivery = state.get('delivery')
+    if delivery is None or token is None:
+        return
+    delivery['fixture_exposure_checked'] = [str(Path(evidence_dir))]
+    found = signer_token_exposure(token, [evidence_dir])
+    delivery['exposed'] = sorted(set(delivery.get('exposed', [])) | set(found))
+    if found:
+        state['status'] = 'failed'
+        if not in_flight:
+            raise ServiceError('provisioned signer token exposed in fixture output: ' + repr(found))
+
+
+@contextlib.contextmanager
+def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, environment=None, exposure_paths=()):
     """Live, audited test_nip5f_tcp resource; never share its HOME/bus with CTest.
+
+    Yields the private CTest resource spec delivering its endpoint/token to the
+    sole admitted registration; no credential enters the CTest environment.
 
     The outer PID namespace owns crash/cancellation descendants. Direct fixture
     children are joined on normal/nonzero/exception exits; post-exit namespace
@@ -704,8 +809,11 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
     try:
         owned.start()
         state['readiness'] = dict(owned.result)
-        # TCP clients need ONLY these values, never fixture HOME/bus/service.
-        yield {key: owned.env[key] for key in ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN')}, state
+        # The client needs ONLY these values, never fixture HOME/bus/service.
+        with signer_resource_delivery(owned.env['NOSTR_SIGNER_ENDPOINT'], owned.env['NOSTR_SIGNER_TOKEN'],
+                                      resource_root, exposure_paths) as (spec, delivery):
+            state['delivery'] = delivery
+            yield spec, state
         snapshot = owned.snapshot()
         if snapshot != '(uint32 1, uint32 1, uint32 0)':
             raise ServiceError('signer fixture did not observe exactly one completed explicit consent')
@@ -715,6 +823,7 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
         state['error_type'] = type(exc).__name__
         raise
     finally:
+        in_flight = 'error_type' in state
         try:
             owned.finish()
             if any(fixture['identity'](value['path']) != value for value in config.inputs.values()):
@@ -723,12 +832,16 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
                 raise ServiceError('signer fixture source/configuration changed during execution')
         except BaseException:
             state['status'] = 'failed'
+            in_flight = True
             raise
         finally:
             state['cleanup'] = owned.result
-            with (Path(evidence_dir) / 'signer-runtime.json').open('x') as stream:
-                json.dump(state, stream, sort_keys=True, indent=2)
-                stream.write('\n')
+            try:
+                signer_fixture_exposure(state, getattr(owned, 'token', None), evidence_dir, in_flight)
+            finally:
+                with (Path(evidence_dir) / 'signer-runtime.json').open('x') as stream:
+                    json.dump(state, stream, sort_keys=True, indent=2)
+                    stream.write('\n')
 
 
 @contextlib.contextmanager
@@ -973,39 +1086,175 @@ def _native_files(work):
     return result
 
 
-def _source_claims(result, source):
-    claims = {}
+class SourceClaimError(ServiceError):
+    """The receipt's source-root input claims violate the shared canonical contract."""
+
+
+_SHA256 = re.compile(r'[0-9a-f]{64}')
+_CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+# Credential/token-shaped runs never reach diagnostics, even inside a path name.
+_REDACT = re.compile(r'(?:NOSTR_SIGNER_TOKEN=\S*|AUTH [0-9a-f]{64}|p[1-9][0-9]{0,4}_[0-9a-f]{64}|[0-9A-Fa-f]{32,})')
+
+
+def _double_slash(path):
+    # POSIX leaves exactly two leading slashes implementation-defined; normpath keeps them.
+    return path.startswith('//') and not path.startswith('///')
+
+
+def safe_claim_name(name, source):
+    """Root-relative, credential-redacted, control-free ASCII name; never a host path."""
+    relative = name[len(source) + 1:] if isinstance(name, str) and name.startswith(source + os.sep) else '<outside root>'
+    relative = _CONTROL.sub('?', _REDACT.sub('<redacted>', relative))
+    return relative.encode('ascii', 'backslashreplace').decode('ascii')
+
+
+def source_claim_contract(result, source):
+    """The one canonical source-claim derivation shared by sealer and qualifier.
+
+    Purely lexical over the original receipt, so portable/offline qualification
+    never needs worker host paths. Every ``input_hashes`` mapping anywhere in the
+    receipt contributes (input audits, runtime/signer/tool fingerprints, nested
+    attempts); nothing is intersected or dropped. An absolute key whose
+    ``os.path.normpath`` lies strictly under ``source`` is a source claim keyed by
+    that canonical name. CMake descriptors may legitimately author
+    ``${CMAKE_CURRENT_SOURCE_DIR}/../data/x``: that spelling and any other alias
+    of the same canonical file must agree on its hash.
+
+    Returns ``(claims, spellings)``: canonical name -> sha256, and canonical
+    name -> sorted original raw keys. The sealer must additionally prove every
+    raw spelling physically resolves to the canonical file before sealing.
+    Refuses malformed mappings/hashes/paths, the root itself, lexical escapes
+    from the root and contradictory aliases.
+    """
+    if not isinstance(source, str) or not os.path.isabs(source) or os.path.normpath(source) != source \
+            or source == os.sep or _double_slash(source):
+        raise SourceClaimError('source claim root is not a canonical absolute directory')
+    prefix = source + os.sep
+    claims, spellings = {}, {}
     def visit(value):
         if isinstance(value, dict):
-            for path, expected in value.get('input_hashes', {}).items():
-                candidate = Path(path)
-                if candidate.is_absolute() and candidate.is_relative_to(source):
-                    if candidate.resolve(strict=True).is_relative_to(source):
-                        if path in claims and claims[path] != expected:
-                            raise ServiceError('contradictory native source input claim')
-                        claims[path] = expected
-                    else:
-                        raise ServiceError('native source input escaped checkout')
+            if 'input_hashes' in value:
+                mapping = value['input_hashes']
+                if not isinstance(mapping, dict):
+                    raise SourceClaimError('malformed input audit mapping')
+                for path, expected in mapping.items():
+                    if not isinstance(path, str):
+                        raise SourceClaimError('malformed input audit path')
+                    if not os.path.isabs(path):
+                        continue  # not a source-root claim on either side (unchanged)
+                    if _double_slash(path):
+                        # Never dropped and never granted network-root authority:
+                        # a spelling that would alias into the root refuses.
+                        collapsed = os.path.normpath('/' + path.lstrip('/'))
+                        if collapsed == source or collapsed.startswith(prefix):
+                            raise SourceClaimError('unsupported double-slash source input spelling: '
+                                                   + safe_claim_name(collapsed, source))
+                        continue  # outside the source root: other audits bind it
+                    canonical = os.path.normpath(path)
+                    raw_under = path.startswith(prefix) or path == source
+                    if canonical == source:
+                        raise SourceClaimError('source input claim names the source root itself')
+                    if not canonical.startswith(prefix):
+                        if raw_under:
+                            raise SourceClaimError('native source input escaped checkout')
+                        continue  # outside the source root: other audits bind it
+                    if _CONTROL.search(path):
+                        raise SourceClaimError('malformed source input claim path')
+                    if not isinstance(expected, str) or not _SHA256.fullmatch(expected):
+                        raise SourceClaimError('malformed source input claim hash')
+                    if claims.setdefault(canonical, expected) != expected:
+                        raise SourceClaimError('contradictory native source input claim')
+                    spellings.setdefault(canonical, set()).add(path)
             for child in value.values():
                 visit(child)
         elif isinstance(value, list):
             for child in value:
                 visit(child)
     visit(result)
+    return claims, {name: sorted(raw) for name, raw in spellings.items()}
+
+
+def _source_claims(result, source):
+    """Sealer side: the shared contract plus live physical alias/escape proof."""
+    source = Path(source)
+    claims, spellings = source_claim_contract(result, str(source))
+    def resolve(spelling, canonical):
+        try:
+            return Path(spelling).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:  # missing/non-directory component, symlink loop
+            raise SourceClaimError('native source input spelling does not resolve: %s (%s)'
+                                   % (safe_claim_name(canonical, str(source)), type(exc).__name__)) from None
+    for canonical, raws in spellings.items():
+        target = resolve(canonical, canonical)
+        if not target.is_relative_to(source):
+            raise SourceClaimError('native source input escaped checkout')
+        for raw in raws:
+            # A symlinked component before '..' makes the physical file differ
+            # from the lexical canonical name: never let the alias stand for it.
+            if resolve(raw, canonical) != target:
+                raise SourceClaimError('native source input alias resolves differently from its canonical path')
     return claims
 
 
+def _evidence_errors(verification, limit=8):
+    errors = verification['errors']
+    shown = '; '.join(error['path'] + ' (' + error['reason'] + ')' for error in errors[:limit])
+    return f': {len(errors)} path(s): {shown}' + ('; ...' if len(errors) > limit else '')
+
+
+def _trusted_output_bytes(original):
+    """Exact bytes test_selection.write_json publishes for an observed object.
+
+    write_json is the CLI's only writer of receipt.json/resolved.json. Serialized
+    in memory: a same-UID workload can race any scratch file the seal would use.
+    """
+    if type(original) is not dict:
+        raise ServiceError('native original observation is not a JSON object')
+    try:
+        text = json.dumps(original, sort_keys=True, indent=2, ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ServiceError('native original observation is not trusted-writer serializable: ' + str(exc)) from exc
+    return (text + '\n').encode('ascii')
+
+
+def _original_output(path, original, message):
+    """Published raw bytes must equal the trusted writer's bytes for the observation.
+
+    Never parsed or normalized: JSON equality admitted bool/int substitution,
+    duplicate keys and NaN. Returns the bytes' sha256; no observation, no file.
+    """
+    if original is None:
+        if os.path.lexists(path):
+            raise ServiceError(message + ': published without an original in-memory observation')
+        return None
+    expected = _trusted_output_bytes(original)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise ServiceError(message + ': ' + os.strerror(exc.errno)) from exc
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise ServiceError(message + ': not a regular file')
+    with os.fdopen(fd, 'rb') as stream:
+        if stream.read(len(expected) + 1) != expected:
+            raise ServiceError(message)
+    return hashlib.sha256(expected).hexdigest()
+
+
 def seal_native_lane(work, source, result, resolved):
-    """Trusted root seals original in-memory CLI claims before exiting."""
+    """Trusted root seals original in-memory CLI claims before exiting.
+
+    Every outcome reaching the finalizer is sealed: success, nonzero or
+    ``lane_failure_v1`` (including cancellation) and early failures that never
+    observed a run receipt (``result is None``). Sealing never rewrites originals.
+    """
     from test_selection_custody import retained_files, attest_retained_evidence, digest
     work, source = Path(work).resolve(strict=True), Path(source).resolve(strict=True)
-    output = work / 'receipt.json'
-    if output.is_symlink() or json.loads(output.read_text()) != result:
-        raise ServiceError('native output differs from original in-memory receipt')
-    resolution = work / 'resolved.json'
-    if resolution.is_symlink() or json.loads(resolution.read_text()) != resolved:
-        raise ServiceError('native resolution differs from original in-memory contract')
-    source_claims = _source_claims(result, source)
+    outputs = {'receipt.json': _original_output(work / 'receipt.json', result,
+                                                'native output differs from original in-memory receipt'),
+               'resolved.json': _original_output(work / 'resolved.json', resolved,
+                                                 'native resolution differs from original in-memory contract')}
+    source_claims = _source_claims(result, source) if result is not None else {}
     retained_source = work / 'source-inputs'
     retained_source.mkdir(mode=0o700)
     for name, expected in source_claims.items():
@@ -1016,16 +1265,53 @@ def seal_native_lane(work, source, result, resolved):
         with destination.open('xb') as stream:
             stream.write(raw)
     snapshot = retained_files(work, NATIVE_ROOTS)
+    files = _native_files(work)
+    # The pinned hashes must be the trusted bytes, not a swap after comparison.
+    if any(files.get(name) != sha for name, sha in outputs.items()):
+        raise ServiceError('native original output changed while sealing')
     seal = {'schema_version': 1, 'retained_evidence': snapshot, 'retained_evidence_hash': digest(snapshot),
-            'files': _native_files(work), 'source_claims': source_claims}
-    verification = attest_retained_evidence(work, result, seal, roots=NATIVE_ROOTS, claim_root=work)
+            'files': files, 'source_claims': source_claims}
+    verification = attest_retained_evidence(work, result or {}, seal, roots=NATIVE_ROOTS, claim_root=work)
     if verification['status'] != 'verified':
-        raise ServiceError('native original receipt hashes differ from pre-exit seal')
+        raise ServiceError('native original receipt hashes differ from pre-exit seal' + _evidence_errors(verification))
     path = work / 'native-seal.json'
     raw = (json.dumps(seal, sort_keys=True, indent=2) + '\n').encode()
     with path.open('xb') as stream:
         stream.write(raw)
     return hashlib.sha256(raw).hexdigest()
+
+
+def finalize_native_lane(work, source, observed, resolutions, outcome, seal_fd):
+    """Trusted root: report the original outcome, seal, then publish the anchor.
+
+    The outcome (traceback, cancellation) reaches the top-level lane log BEFORE
+    the seal; the caller must then ``os._exit`` the returned code so no
+    interpreter output can follow sealed bytes. A refusal is reported and leaves
+    the private anchor empty; the outer adapter's post-exit check then refuses.
+    """
+    import traceback
+    if isinstance(outcome, SystemExit):
+        code = 0 if outcome.code is None else outcome.code
+        if type(code) is not int:
+            print(code, file=sys.stderr)
+            code = 1
+    else:
+        traceback.print_exception(type(outcome), outcome, outcome.__traceback__)
+        code = 130 if isinstance(outcome, KeyboardInterrupt) else 1
+    code = code if 0 <= code <= 255 else 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        anchor = seal_native_lane(work, source, observed[-1] if observed else None,
+                                  resolutions[-1] if resolutions else None)
+        os.write(seal_fd, anchor.encode('ascii'))
+    except BaseException:
+        traceback.print_exc()
+        sys.stderr.flush()
+        code = code or 1
+    finally:
+        os.close(seal_fd)
+    return code
 
 
 def attest_native_lane(work, expected, *, require_source=True):
@@ -1040,7 +1326,8 @@ def attest_native_lane(work, expected, *, require_source=True):
     seal = json.loads(path.read_text())
     if _native_files(work) != seal['files']:
         raise ServiceError('native top-level retained evidence changed after seal')
-    result = json.loads((work / 'receipt.json').read_text())
+    # An early failure sealed no run receipt; its later appearance changed files.
+    result = json.loads((work / 'receipt.json').read_text()) if 'receipt.json' in seal['files'] else {}
     verification = attest_retained_evidence(work, result, seal, roots=NATIVE_ROOTS, claim_root=work)
     for name, value in seal['source_claims'].items():
         retained = work / 'source-inputs' / (hashlib.sha256(name.encode()).hexdigest() + '.input')
@@ -1051,7 +1338,7 @@ def attest_native_lane(work, expected, *, require_source=True):
             if not candidate.is_file() or hashlib.sha256(candidate.read_bytes()).hexdigest() != value:
                 raise ServiceError('native source input changed after finalizer seal')
     if verification['status'] != 'verified':
-        raise ServiceError('native retained evidence changed after finalizer seal')
+        raise ServiceError('native retained evidence changed after finalizer seal' + _evidence_errors(verification))
     return {'schema_version': 1, 'status': 'verified', 'seal_sha256': expected,
             'retained_evidence': verification, 'complete': False, 'complete_gate_eligible': False}
 

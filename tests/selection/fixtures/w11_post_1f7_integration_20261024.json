@@ -1,0 +1,60 @@
+{
+  "base": "1f7dc22b6e860331d590d49fb91f9687dd269335",
+  "base_policy_hash": "23a31248b8c7124f8e27b58fd0bdabe3d8d6ae01abdfd03b0b3f6e4a0c78ae73",
+  "commits": {
+    "nostrc-0cfsg.36.26": "87345c7e0 + d7058481136be071003ecc989c59a79c75193254 (final)"
+  },
+  "enrolled_policy_hash": "cb38eb2125d008c2f425aa1fc7245e9a7834051907ccb186aa90e7023bc38b48",
+  "head": "37f5ab64a33c7c2b2185a67edef56a204b859dba",
+  "runtime_inputs": [
+    "{source}/tests/selection/w11_post_1f7_integration_support.py",
+    "{source}/tests/selection/fixtures/w11_post_1f7_integration_20261024.json",
+    "{source}/tests/selection/test_w11_post_1f7_integration.py"
+  ],
+  "schema_version": 1,
+  "scope": "Exact post-1f7 integration of nostrc-0cfsg.36.26 fixture-only performance changes (87345c7e0, d70584811) over pushed/hosted-tested H' 1f7dc22b6: the byte-pinned test_normal_execution_contract.py delta and clerical selection.contract enrollment, reversed for historical witnesses only. test_supported_profile_membership.py changed too but is not byte-pinned. No runtime, qualifier, authority, inventory metadata, path rule, profile, capability, omission or review binding change. Not hosted, signer or W11 acceptance.",
+  "sources": {
+    "tests/selection/test_normal_execution_contract.py": {
+      "after_sha256": "4581b59e73386f52b9e2968e6e0577d998a38c4db0e85e406c18c930dddb9c37",
+      "authors": [
+        "nostrc-0cfsg.36.26"
+      ],
+      "before_sha256": "807b93574b9b3e74376c976b79a461d6391f93822b24c95d1b8252501fc02054",
+      "edits": [
+        {
+          "after": "import copy\nimport hashlib\nimport importlib.util\n",
+          "before": "import copy\nimport importlib.util\n"
+        },
+        {
+          "after": "import json\nimport os\nfrom pathlib import Path\n",
+          "before": "import json\nfrom pathlib import Path\n"
+        },
+        {
+          "after": "import platform\nimport shutil\nimport tempfile\nimport unittest\n",
+          "before": "import platform\nimport unittest\n"
+        },
+        {
+          "after": "\nclass FixtureDirectory:\n    \"\"\"A restored per-case fixture copy at the genuine fixture's own path.\"\"\"\n\n    def __init__(self, path):\n        self.name = str(path)\n\n    def cleanup(self):\n        shutil.rmtree(self.name, ignore_errors=True)\n\n\ndef forget_fixture(cls, genuine):\n    \"\"\"Drop only the exact class-cached snapshot this class cleanup belongs to.\"\"\"\n    if cls.__dict__.get('_genuine_fixture') is genuine:\n        del cls._genuine_fixture\n\n\ndef fixture_digest(root):\n    \"\"\"Exact names, kinds, modes, nanosecond mtimes, bytes and link targets under root.\"\"\"\n    digest = hashlib.sha256()\n    for directory, dirs, files in os.walk(root):\n        dirs.sort()\n        for name in sorted(dirs + files):\n            path = Path(directory) / name\n            info = path.lstat()\n            entry = [os.fsencode(path.relative_to(root)), oct(info.st_mode).encode()]\n            if path.is_symlink():\n                entry.append(os.fsencode(os.readlink(path)))\n            elif path.is_file():\n                entry += [str(info.st_mtime_ns).encode(), hashlib.sha256(path.read_bytes()).digest()]\n            digest.update(b'\\0'.join(entry) + b'\\n')\n    return digest.hexdigest()\n\n\nclass NormalFixture(Project):\n",
+          "before": "\nclass NormalFixture(Project):\n"
+        },
+        {
+          "after": "    def setUp(self):\n        \"\"\"One genuine fixture per concrete class, a fresh exact copy per case.\n\n        The first case of each class runs the original construction below (real\n        Git history, configure, build, CTest run and seal). That tree is kept as an\n        immutable snapshot; every case (including the first) then starts from its\n        own copy restored at the identical absolute path, with bytes, modes, link\n        targets and nanosecond mtimes preserved (proved by digest), its own deep-copied\n        instance state, native-profile patch and freshly loaded CLI module. Cases\n        still mutate, re-run, re-seal and verify only their own copy; no runtime\n        cache or receipt is shared or trusted across cases.\"\"\"\n        cls = type(self)\n        genuine = cls.__dict__.get('_genuine_fixture')\n        if genuine is None:\n            self.construct_fixture()\n            genuine = self.snapshot_fixture()\n            cls._genuine_fixture = genuine\n            # The snapshot store is removed by a class cleanup, so forget exactly this\n            # cached state with it: running the same class again constructs afresh.\n            cls.addClassCleanup(forget_fixture, cls, genuine)\n        self.restore_fixture(genuine)\n\n    def patch_native_profile(self):\n        original = r._validate_native_profile\n",
+          "before": "    def setUp(self):\n        super().setUp()\n        self.work = Path(self.temp.name).resolve().joinpath(*self.LANE)\n        self.work.mkdir(parents=True)\n        self.build, self.evidence = self.work / 'build', self.work / 'evidence'\n        original = r._validate_native_profile\n"
+        },
+        {
+          "after": "        mock.patch.object(r, '_validate_native_profile', side_effect=native).start()\n\n    def load_cli(self):\n        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')\n        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)\n\n    def snapshot_fixture(self):\n        root = Path(self.temp.name)\n        store = Path(tempfile.mkdtemp(prefix='normal-fixture-'))\n        type(self).addClassCleanup(shutil.rmtree, store, True)\n        shutil.copytree(root, store / 'tree', symlinks=True)\n        state = {key: value for key, value in vars(self).items()\n                 if not key.startswith('_') and key not in ('temp', 'cli')}  # TestCase bookkeeping is not fixture state\n        return dict(root=root, tree=store / 'tree', digest=fixture_digest(root), state=copy.deepcopy(state))\n\n    def restore_fixture(self, genuine):\n        root = genuine['root']\n        constructing = hasattr(self, 'temp')\n        if not constructing:\n            self.temp = FixtureDirectory(root)\n            self.addCleanup(self.temp.cleanup)\n        shutil.rmtree(root, ignore_errors=not constructing)\n        shutil.copytree(genuine['tree'], root, symlinks=True)\n        self.assertEqual(fixture_digest(root), genuine['digest'], 'restored fixture differs from the genuine snapshot')\n        self.__dict__.update(copy.deepcopy(genuine['state']))\n        if not constructing:\n            self.patch_native_profile()\n        self.load_cli()\n\n    def construct_fixture(self):\n        super().setUp()\n        self.work = Path(self.temp.name).resolve().joinpath(*self.LANE)\n        self.work.mkdir(parents=True)\n        self.build, self.evidence = self.work / 'build', self.work / 'evidence'\n        self.patch_native_profile()\n        self.profile.update(platform='linux', architecture='x86_64', compiler='gcc', build_type='Debug',\n",
+          "before": "        mock.patch.object(r, '_validate_native_profile', side_effect=native).start()\n        self.profile.update(platform='linux', architecture='x86_64', compiler='gcc', build_type='Debug',\n"
+        },
+        {
+          "after": "        self.plan = self.make_plan()\n        self.load_cli()\n        self.execute()\n",
+          "before": "        self.plan = self.make_plan()\n        spec = importlib.util.spec_from_file_location('normal_adapter', ROOT / 'scripts/test-plan.py')\n        self.cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.cli)\n        self.execute()\n"
+        }
+      ],
+      "origin": "nostrc-0cfsg.36.26 d70584811 final bytes from 1f7dc22b6",
+      "restored_sha256": [
+        "48b32386fe3fb4fe6c561319c8b7a46ac61f18644746b63731130b9c068c8aba",
+        "53f36450752e2285ea245ef282c9d2f0456e3db97be4185f83c23336b6321762"
+      ]
+    }
+  }
+}

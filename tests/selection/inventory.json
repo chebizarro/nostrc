@@ -8056,7 +8056,23 @@
         "{source}/tests/selection/fixtures/groundhog_app_enrollment_20261024.json",
         "{source}/tests/selection/test_groundhog_app_enrollment.py",
         "{source}/tests/selection/fixtures/sanitizer_partition_drift_20261024.json",
-        "{source}/tests/selection/test_sanitizer_partition_drift.py"
+        "{source}/tests/selection/test_sanitizer_partition_drift.py",
+        "{source}/scripts/signer-scope-proof.py",
+        "{source}/tests/selection/test_signer_credential_scope.py",
+        "{source}/tests/selection/test_signer_scope_proof.py",
+        "{source}/tests/selection/w11_batch2_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_batch2_integration_20261024.json",
+        "{source}/tests/selection/test_w11_batch2_integration.py",
+        "{source}/tests/selection/w11_post_h_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_post_h_integration_20261024.json",
+        "{source}/tests/selection/test_w11_post_h_integration.py",
+        "{source}/tests/selection/static_frontend_host.py",
+        "{source}/tests/selection/w11_post_1f7_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_post_1f7_integration_20261024.json",
+        "{source}/tests/selection/test_w11_post_1f7_integration.py",
+        "{source}/tests/selection/w11_post_419_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_post_419_integration_20261024.json",
+        "{source}/tests/selection/test_w11_post_419_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -19636,8 +19652,8 @@
       "reason": "Legacy nostrc-ci macOS ASan/UBSan (BUILD_APPS=OFF) provisions no NIP-5F TCP endpoint or token; test_nip5f_tcp then exits 77 (SKIP_RETURN_CODE 77), which never validated a live signer. Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage.",
       "tracking": "nostrc-0cfsg.36.9",
       "binding": {
-        "source_sha256": "618c01fdb6d46b0eae8902f1cf543472cac0e5691cbef4945502210a476acbe0",
-        "registration_sha256": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+        "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
+        "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
         "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
         "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
@@ -27832,9 +27848,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "4960e3d34b17ad9827972b5450d445b7431c2054ff566012ffed156575ef6ef0",
+      "source_sha256": "a3de764aaaa0d002282555d386f7b92102cda398f4a8d4df6fd5b9f7256fb3d8",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9"
+      "workflow_sha256": "be06df3608b0e5a6eb1372650daba2403a205c981c5ace28af1f3f6379621b1f"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -28290,9 +28306,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "74d407dd489dbf824d30c8a341b6f4667a4deb3963dec4295d6092434a78885b",
+      "source_sha256": "69601f9d1064d215ad53f70bf6c608131629f5f19abce27ed7277d1d3e8f65d0",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2"
+      "workflow_sha256": "0455626887da0517405a2f11a854d02fefd1c4f58fc1199041dcdeced2f3a7b2"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",

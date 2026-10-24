@@ -104,7 +104,9 @@ class Mdk011AppEnrollment(unittest.TestCase):
         import coreasan_app_enrollment_support as asan
         import post1640_integration_support as oldest
         import worker_prerequisite_support as worker
-        current = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Both layers' shared current view: the newer W11 batch2 layer projected first.
+        from w11_batch2_integration_support import before_policy as before_batch2_policy
+        current = before_batch2_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         mine = wave.before_policy(current)
         theirs = worker.before_policy(current)
         # Either order reaches the same exact base; neither touches the other's fields.

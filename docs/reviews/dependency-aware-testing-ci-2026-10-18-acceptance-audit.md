@@ -2,6 +2,162 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 keyring acceptance snapshot, S5 — 2026-10-24T16:54:26Z
+
+[Shadow root 40108475745](https://github.com/chebizarro/nostrc/actions/runs/40108475745) has head H5 `75a791b62` and tests S5 `d2c7eef19b98e908bdbdca698cd14a361d588668`; it **failed** at 16:30:38Z. Detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-keyring-shadow-profile-census-s5--snapshot-2026-10-24t165426z).
+
+Per-profile outcome at this root. **S5 differs from S3/S4 for two profiles, so the earlier four-lane status is not carried forward:**
+- **Normal-qualified and gate-clean (2):** `core.linux` (441 executed registrations) and `homed.linux.ci` (5, the standalone five-unit route), read from the S5 receipts. Validation still lists both in `incomplete_lanes`, so this is per-lane status, not profile or complete-gate acceptance. No S5 strict-signer result is retained or inferred.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (6):** `core.linux.asan`, `grotto.linux.asan_ubsan` (exit 1), `groundhog.mdk08`, `groundhog.mdk011`, and **newly `grotto.linux` and `groundhog.linux`** (exit 2). The withheld metadata records `paths: []` and "not durably retained"; no original is reconstructed.
+
+Classes compared with S4 (below). Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| **`grotto.linux` / `groundhog.linux` withheld, `command exited 2`** (normal-qualified at S3/S4) | **new at S5**; cause unavailable | none found by title; not attributed (in particular not to the #334/#335 smokes below) |
+| Withheld exit 1 / exit 2 lanes (`core.linux.asan`, `grotto.linux.asan_ubsan`, mdk08, mdk011) | unchanged; cause unavailable | `.36.16`, `.36.20` / `.36.24`, `.36.13` (profile owners, not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully` | unchanged | `.36.29` |
+| libgo `no authored normal contract` | unchanged | `.36.28` |
+| Broad core macOS ASan `heartbeat-not-starved` | **passed at S5** (test 227 passed); one root, not a fix claim | `nostrc-0cfsg.11` title; status unchanged here |
+| **Groundhog normal: `groundhog-bus-probe` #334 (`test_bus_probe.c:149 … g_subprocess_get_if_exited(proc)' should be TRUE`) and `groundhog-two-instance` #335 (`test_two_instance.c:239 … 'WIFEXITED(status)' should be TRUE`), 2 of 125** | **new at S5** in both broad groundhog (accounting 16/17) and legacy Groundhog opt-in CI normal | `.36.31` ("Groundhog named smoke subprocesses abort in current legacy normal CI"); correction pending, not in S5 (below) |
+| Legacy Groundhog sanitizer `00-unavailable` keyring race | **resolved at S5**: 65/65 passed with `.36.30` (`0562f6819` + `b81b54839`) in H5 | `.36.30`; status is the parent's |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static whole job | **success**: run 40108475746 in 763 s under the unchanged 1,200 s cap, DEFAULT 1,434 / 80 skipped, kernel 121 / 0, 14 commands and 9 replays exit 0; `complete=false` | `.36.26`; status is the parent's |
+
+**Pending `.36.31` correction (not in S5, no hosted result):** `93616912b` ("never announce on GTK's fallback test AT context"; GTK's fallback `GtkTestATContext` has no `announce` implementation, diagnosed by the author with gdb and reviewed with no blocker) and `cb04d098d` (comment wording plus the `VERSION_MANIFEST.md` note "PATCH-class Groundhog bug fix folded into unreleased 0.12.0") are on the `.30`/`.31` branch only. The author is still finishing required gates. The local fixed-build normal run was 124/125: one `groundhog-account-ui` SIGSEGV has no established cause, so no clean 125/125 is claimed.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
+## PR26 owner-guard acceptance snapshot, S4 — 2026-10-24T15:35:14Z
+
+[Shadow root 40101269694](https://github.com/chebizarro/nostrc/actions/runs/40101269694) has head H4 `17eac22b1` and tests S4 `a44706d443c9e41044711f9499e33d6f7b521ae3`; it **failed** at 15:04:07Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-owner-guard-shadow-profile-census-s4--snapshot-2026-10-24t153514z).
+
+Per-profile outcome at this root, the same as S3 for all 13 profiles:
+- **Normal-qualified and gate-clean (4):** `core.linux` (441 executed registrations), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5, the standalone five-unit route). These were read from the S4 receipts themselves. Validation still lists all four in `incomplete_lanes`, so this is per-lane status, not profile or complete-gate acceptance. No S4 strict-signer result is retained or inferred.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (4):** `core.linux.asan`, `grotto.linux.asan_ubsan` (exit 1), `groundhog.mdk08` and `groundhog.mdk011` (exit 2).
+
+Classes compared with S3 (below). Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| Withheld exit 1 / exit 2 lanes | unchanged; cause unavailable | `.36.16`, `.36.20` / `.36.24`, `.36.13` (profile owners, not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully` | unchanged | `.36.29` |
+| libgo `no authored normal contract` | unchanged | `.36.28` |
+| Broad core macOS ASan: `heartbeat-not-starved` `assertion failed (hb.missed_count <= 2): (3 <= 2)` | unchanged; broad accounting 16/17 | matches the literal title of `nostrc-0cfsg.11` (in_progress); no cause inferred |
+| **Legacy Groundhog opt-in CI `groundhog-sanitizers`**: `not ok /nip46-credentials/00-unavailable - libsecret-FATAL-WARNING: Global default SecretService instance out of sync with the watch for its DBus name` (test #337 SIGTRAP) | **new at H4** (S3's 40095380528 succeeded) | `.36.30` ("Legacy Groundhog ASan keyring unavailable case: libsecret default/watch race"). The correction `0562f6819` + `b81b54839` is on the `.30` branch, **not in S4, with no hosted CI result yet**. |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static whole job | **success** under the unchanged 1,200 s cap: run 40101269520 in 661 s, DEFAULT 1,434 / 80 skipped, kernel 121 / 0; `complete=false` | `.36.26`; status is the parent's, not closed here |
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
+## PR26 measured-fix acceptance snapshot, S3 — 2026-10-24T13:39:36Z
+
+[Shadow root 40095380606](https://github.com/chebizarro/nostrc/actions/runs/40095380606) has head H3 `4198376a6` and tests S3 `e31c06d9dc0ef363625b258bd2b7d73b86a21fd7`; it **failed** at 13:38:46Z. Detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-measured-fix-shadow-profile-census-s3--snapshot-2026-10-24t133936z).
+
+- **Per-profile:** the same as the 1f7 root (11:56:42Z, below) for all 13 profiles. The four normal-qualified, gate-clean lanes are core.linux (441), grotto.linux (461), groundhog.linux (471) and homed.linux.ci (5). Validation also lists them in `incomplete_lanes`.
+- **Strict signer:** .18's sealed S3 proof gives `grotto.linux` `proved true`, 461 registrations, for one lane only. No S3 signer result exists for Groundhog or core.
+- **Resolved since 1f7:** both broad groundhog jobs succeed, so the `header-menu` / `nostrc-hn8y`-titled symptom does not recur.
+- **New at this root:** `broad / core / macos-latest • asan_ubsan` fails on `heartbeat-not-starved` `(3 <= 2)`, matching the `nostrc-0cfsg.11` title. Broad accounting stays at 16/17.
+- **Legacy checks:** all 12 non-shadow workflow runs at H3 succeeded.
+- **Static:** run 40095380603 **succeeded** in 816 s under the unchanged 1,200 s cap: DEFAULT 1,427 / 80 skipped, kernel 121 / 0, `complete=false`. This is the first whole-job success after the two cancelled attempts recorded below.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** This is not a live counter, and there is no new waiver or cutover.
+
+## PR26 final-source shadow acceptance snapshot — 2026-10-24T11:56:42Z
+
+[Shadow root 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) has head H `1f7dc22b6` and tests S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`; it **failed** at 11:41:30Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-shadow-profile-census--snapshot-2026-10-24t115642z).
+
+Per-profile outcome at this root:
+- **Normal-qualified and gate-clean (4):** `core.linux` (441 executed registrations), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5, the standalone five-unit route).
+  - The strict signer proof is true for Grotto (461) and Groundhog (471) only. Its scope is one lane, not profile, complete-gate or W11.
+  - `core.linux`'s verifier refusal is by design; no signer claim is made.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (4):** `core.linux.asan`, `grotto.linux.asan_ubsan`, `groundhog.mdk08` and `groundhog.mdk011`.
+
+Classes compared with the 10:13:56Z H census below. Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| Source-claim qualification refusal | **not recurring**: core, grotto and groundhog Linux qualified and published `qualified_exposure_checked` | `.36.27` fix present in S; parent owns status |
+| Withheld exit 1: `core.linux.asan`, `grotto.linux.asan_ubsan` | unchanged; cause unavailable | `.36.16`; `.36.20` / `.36.24` (profile owners, not attributed) |
+| Withheld exit 2: `groundhog.mdk08`, `groundhog.mdk011` | unchanged; cause unavailable | `.36.20` / `.36.13` (not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained`, 3 `unclaimed_registration` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully`; `policy runtime on an unauthored profile` | unchanged | `.36.29` (backfilled 10:39Z) |
+| libgo `no authored normal contract`, diagnostic receipts | unchanged | `.36.28` (backfilled 10:39Z) |
+| Broad family: groundhog `not ok /groundhog/conversation-menu-gui/header-menu - GLib-GObject-FATAL-CRITICAL: object_ref: assertion '!object_already_finalized' failed` | **new at this root**: broad accounting 16/17 (old H 17/17) | assertion text matches existing `nostrc-hn8y` title (in_progress); the `header-menu` subtest is not named in the `nostrc-hn8y` or `nostrc-rbfc` titles; no cause or owner inferred |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static 20-minute cap | run 40087734351 cancelled (see entry below) | `.36.26` |
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
+## PR26 final-source Static attempt and local proofs — 2026-10-24T11:14:25Z
+
+Per-step and hash detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-static-attempt--2026-10-24t105403z111425z).
+
+PR26 identities:
+- **Head:** H `1f7dc22b6e860331d590d49fb91f9687dd269335`, pushed with the normal hook.
+- **Tested:** synthetic S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`, with tree `cabae365aca49b402b7943b0be4553a6a42c3b73` (the same tree as H) and parents D `1d53e6ecd` and H.
+
+Hosted outcomes:
+- **Static:** [run 40087734351 / job 120853988147](https://github.com/chebizarro/nostrc/actions/runs/40087734351/job/120853988147) was **CANCELLED again** at the unchanged 20-minute cap (10:54:07Z–11:14:24Z, cleanup included). The testhost step was cancelled and the nine named replays were skipped, so it is **not complete**.
+  - Its [artifact 12558486011](https://github.com/chebizarro/nostrc/actions/runs/40087734351/artifacts/12558486011) is retained.
+  - `.36.26` ("fresh source-bound complete hosted Static integration succeeds under unchanged1200s cap") remains unmet. Its source fix stays under profiling, with no unchanged retry or manual dispatch.
+- **Shadow:** [run 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) was still running at capture, so no qualifier result is inferred.
+
+Separate local proofs. These give no hosted, profile or W11 credit:
+- **Native at 44d:** 434 passed + 5 skipped, 0 failed (439 accounted). The Linux part is unsupported on Darwin. Summary `8402974a…`.
+- **44d → 1f7 delta:** only two bead files.
+- **LinuxKit at exact `1f7dc22b6`:** DEFAULT 1,420 tests in 476.981s (80 skips, none removed, 36 new passing) and kernel 121 / 0 skipped in 64.098s. All 14 commands exited 0, and `complete`/`eligible`/`native` are all false.
+
+**Backfill:** after the 10:13:56Z census, the tracker added `.36.28` (libgo normal contracts) and `.36.29` (static.policy qualification versus actual exit seam). That census's "none found by read-only tracker search" rows below are historical and kept.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** This is not a live counter, and there is no new waiver or cutover.
+
+## H profile census acceptance snapshot — 2026-10-24T10:13:56Z
+
+This snapshot covers [PR26 run 40072073551](https://github.com/chebizarro/nostrc/actions/runs/40072073551) and [manual broad run 40072096156](https://github.com/chebizarro/nostrc/actions/runs/40072096156):
+- The PR run's head is H `aebb6eff6dd879033fb38bb016ea3127232aa37e`, but it tests synthetic merge S `1c2bc8ebb6ad8fca5f0882d0676da49f2fc0840b`.
+- The manual run tests H.
+- Each run has 13 selector profiles.
+- Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#h-profile-census--snapshot-2026-10-24t101356z) and the protected census (`SHA256SUMS` `de847a3c7ffbc12e41c3e3feb9dc5b5e8b744be92ccbd2adda35d940c1a1f582`).
+
+Results at this snapshot:
+- **Only `homed.linux.ci` is normal-qualified**, and it is gate-clean on both sources. It is the standalone five-unit route, not the legacy four-distro/root140/systemd/FUSE contract.
+- **Both libgo lanes are diagnostic only.**
+- **Seven profiles are withheld.** Their raw receipt, `lane.log` and evidence are unavailable and are not reconstructed.
+- **Both gates fail.** Broad family accounting is 17/17 success, which is not a complete broad integration.
+
+Observed classes, mapped only to existing tracked work by literal title or AC. Causes are not inferred where the raw data was withheld.
+
+| Observed (PR + manual unless noted) | Tracked work, literal criterion | Status |
+|---|---|---|
+| `core.linux`, `grotto.linux`, `groundhog.linux` (manual): execute passed, then `normal execution: sealed source claims differ from the sealed raw input audits` | `.36.27`: "One shared strict canonical contract or equivalent exact same derivation on both sides" | `301e3979a`/`14af5ede5` integrated locally in `8cab02d0a`; pending fresh hosted proof |
+| `core.macos.asan`: `CheckFailure: pre-build input audit failed; original findings retained`, 3 `unclaimed_registration` gaps | `.36.16` title "repair three legacy exclusions after 45-app ownership enrollment" (AC field empty) | open |
+| `core.linux.asan`: withheld, `command exited 1` | `.36.16` (core ASan profile owner) | cause unavailable; not attributed |
+| `groundhog.linux.sanitizers`: `RealizationError: diagnostic nonmember fresh registration partition differs` | `.36.22`: "Explain exact named registration/set/config/tool/source delta" | open |
+| `groundhog.linux` (PR): withheld, `command exited 2` | `.36.19`: "actual source-bound hosted pre/postaudit+selected execution" | cause unavailable; not attributed |
+| `grotto.linux.asan_ubsan`: withheld, `command exited 1` | `.36.20` (Grotto ASan no-work freshness) and `.36.24` (58 physical failure cases) | cause unavailable; not attributed |
+| `groundhog.mdk08` / `groundhog.mdk011`: withheld, `command exited 2` | `.36.20` (MDK08) and `.36.13` (original MDK producer/runtime parity) | cause unavailable; not attributed |
+| `grotto.linux`: execute succeeded, receipt withheld | `.36.21`: "positive selected display+bus readiness … on supported actual Linux kernel" | no `.36.21` credit: not qualified, raw unavailable |
+| Static DEFAULT/kernel budget | `.36.26`: "fresh source-bound complete hosted Static integration succeeds under unchanged1200s cap" | `3416f85ab` integrated locally in `8cab02d0a`; pending fresh proof |
+| `static.policy`: `PolicyError: policy container did not physically exit successfully`; gate says `policy runtime on an unauthored profile` | none found by read-only tracker search | recorded; no owner or cause invented |
+| Both libgo lanes: `no authored normal contract` (Linux); diagnostic receipts | none found by read-only tracker search | recorded; no waiver |
+| Gate global errors: `inventory physical coverage cannot satisfy complete gate` and `shadow_cutover` pending | gate tracking labels `nostrc-0cfsg.9` and `.5` (both closed) | not reopened here |
+
+No fix integrated after these runs counts as accepted until fresh source-bound runs prove it.
+
+**Reviewed counters at this snapshot:** **0/20 qualifying PR comparisons, 0/2 successful complete broad integrations, 0 product samples. W11 NOT MET / W12 NOT RUN.** No new waiver; no defaults, protections, publisher, schedule or legacy-trigger cutover.
+
 ## Earlier dated snapshots (preserved)
 
 ## PR24 landed parity/measurement source batch — 2026-10-24

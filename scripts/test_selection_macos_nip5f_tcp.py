@@ -49,8 +49,10 @@ BINDING_KEYS = {"source_sha256", "registration_sha256", "selection_metadata_sha2
                 "legacy_job_source_sha256", "legacy_workflow_sha256"}
 VARIANT = {"platform": "macos", "architecture": "arm64", "compiler": "clang", "build_type": "Debug",
            "instrumentation": "asan_ubsan", "source_dir": ".", "setup": LEGACY_JOB}
-# The unconfigured branch whose exit 77 the legacy job observed.
+# The unconfigured branch whose exit 77 the legacy job observed, preceded by the
+# resource-scheduled failure that never skips or falls back to inherited credentials.
 UNCONFIGURED = re.compile(
+    r'if \(getenv\("CTEST_RESOURCE_GROUP_COUNT"\)\) \{[^{}]*?return 1;[^{}]*?\}\s*'
     r'const char \*ep = getenv\("NOSTR_SIGNER_ENDPOINT"\);\s*'
     r'const char \*tok = getenv\("NOSTR_SIGNER_TOKEN"\);\s*'
     r'if \(!ep \|\| strncmp\(ep, "tcp:", 4\) != 0 \|\| !tok \|\| !\*tok\) \{[^{}]*?return 77;[^{}]*?\}')
@@ -73,8 +75,8 @@ AUTHORED_RECORD = {
                "Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage."),
     "tracking": TRACKING,
     "binding": {
-        "source_sha256": "618c01fdb6d46b0eae8902f1cf543472cac0e5691cbef4945502210a476acbe0",
-        "registration_sha256": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+        "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
+        "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
         "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
         "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc",
@@ -241,6 +243,11 @@ def validate_realization(inventory, record, realization, tests, descriptors, map
              "registration metadata changed")
     _require(not any(_mentions_signer(props.get(key)) for key in SIGNER_PROPERTIES),
              "registration environment configures a signer")
+    # Its only credential route is the signer resource allocation, which this
+    # profile never provisions (no resource spec): CTest allocates nothing.
+    from test_selection_services import SIGNER_RESOURCE_GROUPS
+    _require(props.get("RESOURCE_GROUPS") == SIGNER_RESOURCE_GROUPS,
+             "registration signer resource route changed")
     desc = descriptors.get(REGISTRATION, {})
     # Owner list exactly as the real configured graph reports it: the nips/nip5f
     # directory owner plus TestInventory.cmake's supplements.

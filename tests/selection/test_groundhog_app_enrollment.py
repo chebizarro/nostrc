@@ -11,7 +11,9 @@ DEFAULT, FAMILY = 'groundhog.default_build', 'grotto.default_build'
 
 class GroundhogAppEnrollment(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's view: the newer W11 batch2 integration layer is projected away first.
+        from w11_batch2_integration_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def claims(self, policy, profile):
         claims = {}

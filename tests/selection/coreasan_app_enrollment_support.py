@@ -23,9 +23,13 @@ def witness():
 
 
 def before_source(path, raw):
-    # This layer changes no source; only the newest exact integration layer does.
+    # This layer changes no source; only the exact integration layers do. The
+    # newest post-H layer hands its before bytes (H) to the W11 batch2 layer,
+    # which hands its before bytes to the W11 matrix leaf.
+    from w11_post_h_integration_support import before_source as before_post_h_source
+    from w11_batch2_integration_support import before_source as before_batch2_source
     from w11_matrix_integration_support import before_source as before_newer_source
-    return before_newer_source(path, raw)
+    return before_newer_source(path, before_batch2_source(path, before_post_h_source(path, raw)))
 
 
 def before_policy(policy):

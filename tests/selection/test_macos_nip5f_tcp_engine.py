@@ -85,6 +85,7 @@ add_test(NAME test_nip5f_loopback COMMAND test_nip5f_loopback)
 add_test(NAME test_nip5f_negative_env COMMAND test_nip5f_negative_env)
 add_test(NAME test_nip5f_tcp COMMAND test_nip5f_tcp)
 set_tests_properties(test_nip5f_tcp PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(test_nip5f_tcp PROPERTIES RESOURCE_GROUPS "nip5f_signer:1")
 include(${CMAKE_CURRENT_SOURCE_DIR}/../TestInventory.cmake)
 ''')
         for stale in ("main.c", "shared.h", "vector.txt", "setup.cmake", "noop.cmake"):

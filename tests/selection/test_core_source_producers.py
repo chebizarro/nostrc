@@ -10,6 +10,7 @@ import shutil
 
 from realization_support import Project
 
+from w11_batch2_integration_support import before_source as before_batch2_source
 from closeout_support import (before_closeout_contract, before_core_producer_source,
                               core_source_witness, CORE_SOURCE_WITNESS,
                               before_closeout_policy, witness)
@@ -169,7 +170,9 @@ class CoreSourceProducers(unittest.TestCase):
             self.assertEqual(contract['registrations'], previous['registrations'])
             for path, old in self.data['before_controls'].items():
                 self.assertEqual(previous['review']['source_inputs'][path], old)
-                self.assertEqual(contract['review']['source_inputs'][path], hashlib.sha256((ROOT / path).read_bytes()).hexdigest())
+                # Frozen review binding: the newer W11 batch2 layer (.36.23 Gnostr CMake) is projected first.
+                self.assertEqual(contract['review']['source_inputs'][path],
+                                 hashlib.sha256(before_batch2_source(path, (ROOT / path).read_bytes())).hexdigest())
 
 
 class CoreConfigureWitnesses(Project):

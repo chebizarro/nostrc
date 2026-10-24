@@ -28,8 +28,8 @@ AUTHORED_RECORD = {
                "Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage."),
     "tracking": "nostrc-0cfsg.36.9",
     "binding": {
-        "source_sha256": "618c01fdb6d46b0eae8902f1cf543472cac0e5691cbef4945502210a476acbe0",
-        "registration_sha256": "5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80",
+        "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
+        "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
         "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
         "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc",
@@ -146,6 +146,11 @@ class PolicyApplicabilityTests(unittest.TestCase):
         text = (ROOT / a.SOURCE).read_text()
         self.assertRegex(text, a.UNCONFIGURED)
         self.assertNotRegex(text.replace("return 77;", "return 0;", 1), a.UNCONFIGURED)
+        scheduled = text.index('if (getenv("CTEST_RESOURCE_GROUP_COUNT")) {')
+        failure = text.index("return 1;", scheduled)
+        # A resource-scheduled run without its allocation must fail, never skip.
+        self.assertNotRegex(text[:failure] + "return 77;" + text[failure + len("return 1;"):], a.UNCONFIGURED)
+        self.assertNotRegex(text.replace('if (getenv("CTEST_RESOURCE_GROUP_COUNT")) {', "{", 1), a.UNCONFIGURED)
         self.assertNotRegex(text.replace('strncmp(ep, "tcp:", 4) != 0 || ', "", 1), a.UNCONFIGURED)
         self.assertIn(a.LEGACY_REGISTRATION, (ROOT / a.REGISTRATION_FILE).read_text())
 
@@ -200,7 +205,7 @@ def realization_fixture(test_case):
     profile = copy.deepcopy(inventory()["profiles"][a.PROFILE])
     tests = {name: {"name": name, "command": [str(build / "nips/nip5f" / name)], "properties": []}
              for name in ("test_nip5f_tcp",) + a.MANDATORY}
-    tests["test_nip5f_tcp"]["properties"] = [{"name": "SKIP_RETURN_CODE", "value": "77"}]
+    tests["test_nip5f_tcp"]["properties"] = [{"name": "SKIP_RETURN_CODE", "value": "77"}, ROUTE]
     descriptors = {"test_nip5f_tcp": {"name": "test_nip5f_tcp", "owner": ["nip5f", "nip5f.test_inputs", "nip5f.fixture_inputs"],
                                       "requires": ["signer_endpoint"], "targets": [], "inputs": [], "expected": []}}
     targets = {f"{name}-id": {"id": f"{name}-id", "name": name, "type": "EXECUTABLE",
@@ -211,6 +216,9 @@ def realization_fixture(test_case):
     realization = {"profile_id": a.PROFILE, "profile": profile, "repo_root": str(source), "build_dir": str(build),
                    "targets": targets}
     return realization, tests, descriptors
+
+
+ROUTE = {"name": "RESOURCE_GROUPS", "value": [{"requirements": [{".type": "nip5f_signer", "slots": 1}]}]}
 
 
 class RealizationApplicabilityTests(unittest.TestCase):
@@ -250,6 +258,10 @@ class RealizationApplicabilityTests(unittest.TestCase):
                 {"name": "SKIP_RETURN_CODE", "value": "77"},
                 {"name": "ENVIRONMENT_MODIFICATION", "value": ["NOSTR_SIGNER_ENDPOINT=set:tcp:127.0.0.1:9000",
                                                               "NOSTR_SIGNER_TOKEN=set:t"]}]),
+            "resource route removed": lambda rz, t, d: props(t, [{"name": "SKIP_RETURN_CODE", "value": "77"}]),
+            "resource route slots changed": lambda rz, t, d: props(t, [
+                {"name": "SKIP_RETURN_CODE", "value": "77"},
+                {"name": "RESOURCE_GROUPS", "value": [{"requirements": [{".type": "nip5f_signer", "slots": 2}]}]}]),
             "realized platform differs": lambda rz, t, d: rz["profile"].update(platform="linux"),
             "realized configure args differ": lambda rz, t, d: rz["profile"]["configure_args"].extend(["-D", "BUILD_APPS=ON"]),
             "realized env has signer": lambda rz, t, d: rz["profile"]["environment"].update(NOSTR_SIGNER_TOKEN="t"),
