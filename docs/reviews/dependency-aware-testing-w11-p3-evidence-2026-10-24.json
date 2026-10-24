@@ -1,0 +1,2845 @@
+{
+  "PR_metadata_capture": {
+    "endpoint": "repos/chebizarro/nostrc/pulls?state=all&sort=updated&direction=desc&per_page=100",
+    "pagination": "23 returned under page size100; all23 merged PRs independently git-bound",
+    "raw_sha256": "ce9e803b58778b8f034476d3c80771559f4de6fa7b33065f50d705ebc0fdb7cd",
+    "rows": 23
+  },
+  "acceptance": {
+    "Grotto_minimum_aggregate_savings_percent": 30,
+    "W11": "NOT MET",
+    "W12": "NOT RUN",
+    "maximum_critical_path_regression_percent": 10,
+    "maximum_unjustified_broad_median_regression_percent": 10,
+    "minimum_pairs_per_condition_cache": 5,
+    "nonMLS_Groundhog_minimum_aggregate_savings_percent": 25,
+    "qualifying_complete_broad_integrations": 0,
+    "qualifying_distinct_PR_comparisons": 0,
+    "required_complete_broad_integrations": 2,
+    "required_distinct_PR_comparisons": 20
+  },
+  "collection_failure_policy": "Single pass, no retry after TLS handshake timeout on 39696789681 attempt-after. Prior available raw jobs/artifacts retained but final stability unverified. No action dispatch/cancel/workflow rerun.",
+  "collection_totals": {
+    "artifact_metadata_rows": 2739,
+    "failed_collections": 1,
+    "job_rows": 3757,
+    "job_states": {
+      "cancelled": 32,
+      "failure": 818,
+      "in_progress": 20,
+      "pending": 4,
+      "queued": 14,
+      "skipped": 99,
+      "success": 2770
+    },
+    "root_attempts_requested": 64,
+    "stable_attempt_collections": 63
+  },
+  "complete": false,
+  "complete_gate_eligible": false,
+  "curated_at": "2026-10-23T22:49:04.166978+00:00",
+  "initial_root_census": {
+    "root_count": 64,
+    "root_states": {
+      "cancelled": 1,
+      "failure": 60,
+      "in_progress": 1,
+      "pending": 1,
+      "queued": 1
+    },
+    "snapshot_completed_at": "2026-10-23T22:23:35.811323+00:00"
+  },
+  "kind": "w11_p3_curated_public_acceptance_evidence_v1",
+  "limits": "Dated sequential source-linked observation, not live counter. Job durations retain failed/partial allocated intervals, not successful physical product samples, billed time, DAG critical path or paired runner-union savings. No PR23 CI/control work converted to representative product workload. No new acceptance, enforcement, publisher, protection or source authority.",
+  "local_nonacceptance_verification": {
+    "all_passed": true,
+    "editorial_rerun": false,
+    "existing_collector_tests": 7,
+    "heavy_gate_build_or_benchmark_run": false,
+    "logs": [
+      {
+        "path": "/tmp/nostrc-p3-measurement-tests-final2-20261024.log",
+        "sha256": "8d354cad174dff5e8ada08b8708e3a2812e9396bd47b7fe0f221432a0e53d51a"
+      },
+      {
+        "path": "/tmp/nostrc-p3-evidence-tests-final-20261024.log",
+        "sha256": "0898823b83c69bf9ec4d8fa92faeaa43988a36eff65a690a3f271044349d8531"
+      },
+      {
+        "path": "/tmp/nostrc-p3-static-gates-20261024.log",
+        "sha256": "98064bbd972ddd2829c06cb5dd7ea1f903a089b3a51ef06f5341f87dc9b29814"
+      }
+    ],
+    "matrix_and_measurement_tests": 36,
+    "outstanding_manifest_actual_exit": 1,
+    "protected_test_manifest": "/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated/test-manifest.json",
+    "source_review": "One substantive delivered-capsule Oracle review, chat untitled-chat-0110FB. Initial selection delivery had zero files and supplied no verdict. Nested-report exit propagation and cohort cancellation finalization findings fixed/regressed; no second substantive review claimed.",
+    "static_checks": [
+      "git diff --check",
+      "check-unsequenced-args.py",
+      "check-gui-test-gdk-frame.py",
+      "check-linux-ci-packages.py",
+      "gnome/groundhog/tests/check_privacy.py"
+    ],
+    "version_assessment": "No component bump: internal CI/tests/docs; no shipped component modified."
+  },
+  "old63_snapshot_binding": {
+    "all63_ids_retained": true,
+    "canonical_delta_sha256": "47f6375dffa676618069c0a3da6faea104e10536c344152b6eb33694cb06518a",
+    "field": "pr23_final05_refresh_20261024.post_merge_census_delta",
+    "file": "dependency-aware-testing-w11-e-evidence-2026-10-23.json",
+    "history_rewritten": false,
+    "new_root_ids": [
+      40029853925
+    ],
+    "root_count": 63,
+    "snapshot": "2026-10-23T21:38:19.418365+00:00"
+  },
+  "physical_measurement_readiness": {
+    "PR1_22_original_normal_selected_markers": 0,
+    "PR23_is_representative_product_workload": false,
+    "PR23_original_normal_selected_profiles": [
+      "grotto.linux.asan_ubsan",
+      "groundhog.mdk011",
+      "core.linux.asan",
+      "core.linux",
+      "grotto.linux",
+      "groundhog.linux",
+      "groundhog.mdk08"
+    ],
+    "approved_exact_physical_recipe_pairs": 0,
+    "heavy_slot_granted": false,
+    "historical_overlay_authorized": false,
+    "native_feasibility": "Linux/x86_64 selected profile markers do not authorize macOS/arm64 or amd64 Docker emulation as native x86; legacy runner union also includes other native systems. Physical product work waits for P1/P2 parity, accepted recipes and parent slot.",
+    "native_host": {
+      "machine": "arm64",
+      "system": "Darwin"
+    },
+    "parent_recipe_and_slot_response": "No previously approved pair; no heavy slot. PR23 not representative product workload. Fixture driver only; true physical work after P1/P2 repairs.",
+    "physical_product_samples_collected": 0
+  },
+  "protected_evidence": {
+    "bounded_review": {
+      "path": "/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated/bounded-review.md",
+      "sha256": "9414b65e3697dbb107e2e43484a44f829e6cd57665d5804c7311cc60ee1862c0",
+      "source_diff": "/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated/bounded-source-final.diff",
+      "source_diff_sha256": "9a0f9a28b3dbfac189bfe51bff4d52c231c07e28ea9d2d6b92f8968cffa6ea12"
+    },
+    "complete_raw_capture_files": 1421,
+    "custody_limit": "Durable local protected evidence, not independent immutable storage, remote escrow or permanent GitHub artifact retention. Original /tmp capture remains unchanged.",
+    "directory": "/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated",
+    "file_count": 1425,
+    "manifest": "/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated/manifest.json",
+    "manifest_bytes": 396835,
+    "manifest_sha256": "28ac1461462d681f10afc07b6b801042e5d3c91526760fe18bb63d6a15e3028c",
+    "original_public_snapshot": {
+      "bytes": 4517219,
+      "path": "original-public-evidence-e1891b4b4.json",
+      "sha256": "0a928bac4eb2ecb3649c35e40f16a5af0b312c73fd5a9204ce4405e4211f410b",
+      "source_commit": "e1891b4b406b4e84307d654a02c457471b0452fe"
+    },
+    "permissions": "directory0700 and files0600; owned by local operator UID",
+    "public_omissions": "Raw API payloads, repeated workflow_run echoes, irrelevant runner/label/timestamp objects and metadata-only artifact enumerations are preserved in full protected originals and raw files; no metadata-only artifact promoted to downloaded/validated proof.",
+    "test_manifest": {
+      "path": "/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated/test-manifest.json",
+      "sha256": "ca63badf14f1ed189b3207bef36367bc3913b3ae8f47ce57df198df3b730a67f"
+    },
+    "total_file_bytes": 59745625
+  },
+  "real_PR_candidates": [
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "AGENTS.md",
+        "docs/TESTING.md",
+        "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "scripts/test-full-gate.sh",
+        "scripts/test-plan.py",
+        "scripts/test-test-gate.sh",
+        "scripts/test_selection.py",
+        "scripts/test_selection_realization.py",
+        "scripts/test_selection_subset.py",
+        "tests/selection/fixtures/ordinary_subset_x86_exports.json",
+        "tests/selection/inventory.json",
+        "tests/selection/test_local_command_adapter.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py",
+        "tests/selection/test_selection_command_contract.py",
+        "tests/selection/test_shared_sanitizer_execution.py",
+        "tests/selection/test_store_key_membership.py",
+        "tests/selection/test_workflow_contracts.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "d120bc972bbb0f4c09951e376bcc229b41931e0e",
+      "inventory_sha256": "cb6c19a0a1970d373d4f836e451a056b12df16954be32004e1652fa9b19a766e",
+      "merge_parents": [
+        "b72b9ec70f4aee51a4a5f42447bc763cce5cc516",
+        "d120bc972bbb0f4c09951e376bcc229b41931e0e"
+      ],
+      "merge_sha": "1fad10a239f9cef72b7b056b8ab99679337d53c4",
+      "merged_at": "2026-10-19T15:42:41Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 1,
+      "qualifying_comparisons": 0,
+      "tree": "6078f7565da5ff572e24b3d04bc2c8af14400eee",
+      "url": "https://github.com/chebizarro/nostrc/pull/1"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        ".github/workflows/dependency-worker.yml",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "tests/selection/inventory.json",
+        "tests/selection/test_workflow_contracts.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "9271b0667d141f979f196e59fd5d617117bc81d8",
+      "inventory_sha256": "467c772667451ba9f1286ead5a7033cb92771a28cab002732e47dabf3bdf3227",
+      "merge_parents": [
+        "1fad10a239f9cef72b7b056b8ab99679337d53c4",
+        "9271b0667d141f979f196e59fd5d617117bc81d8"
+      ],
+      "merge_sha": "096091aaa758468a8338e9cf0646acee432cfba1",
+      "merged_at": "2026-10-21T00:06:37Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 2,
+      "qualifying_comparisons": 0,
+      "tree": "20e78035d0cb22aa81ada7c54b8db86cfebde451",
+      "url": "https://github.com/chebizarro/nostrc/pull/2"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/test_release_plan.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "4ea308cc2c888c6e0b8a6de842a621cecd66ea93",
+      "inventory_sha256": "467c772667451ba9f1286ead5a7033cb92771a28cab002732e47dabf3bdf3227",
+      "merge_parents": [
+        "096091aaa758468a8338e9cf0646acee432cfba1",
+        "4ea308cc2c888c6e0b8a6de842a621cecd66ea93"
+      ],
+      "merge_sha": "f39401e12eaac24cbf86e903cdc37198fb332479",
+      "merged_at": "2026-10-21T00:15:21Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 3,
+      "qualifying_comparisons": 0,
+      "tree": "62e6644e0705b7a848548d8dae6a61555b62289b",
+      "url": "https://github.com/chebizarro/nostrc/pull/3"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "scripts/test_selection_realization.py",
+        "scripts/test_selection_subset.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "172139a92e617d19d8d1aa3e0b9bd3fe5937e52d",
+      "inventory_sha256": "467c772667451ba9f1286ead5a7033cb92771a28cab002732e47dabf3bdf3227",
+      "merge_parents": [
+        "f39401e12eaac24cbf86e903cdc37198fb332479",
+        "172139a92e617d19d8d1aa3e0b9bd3fe5937e52d"
+      ],
+      "merge_sha": "f9d1e853794d81037e8dcf177e40b9bc83178b9c",
+      "merged_at": "2026-10-21T00:33:22Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 4,
+      "qualifying_comparisons": 0,
+      "tree": "5394f0619c7c3854187a4e9184114baa69ca6624",
+      "url": "https://github.com/chebizarro/nostrc/pull/4"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/inventory.json",
+        "tests/selection/test_production_inventory.py",
+        "tests/selection/test_realization_inputs.py",
+        "tests/selection/test_resource_profile_contracts.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "1f34a3bdf326bda6c2f2e15d2f26b11f97dbc230",
+      "inventory_sha256": "28499fa5146711245dd396f0f6a86468bff9b3334131cea4dad591068606f2a1",
+      "merge_parents": [
+        "f9d1e853794d81037e8dcf177e40b9bc83178b9c",
+        "1f34a3bdf326bda6c2f2e15d2f26b11f97dbc230"
+      ],
+      "merge_sha": "7219eb4b5dd7e3bd046dd96f846baa26ed08ddbf",
+      "merged_at": "2026-10-21T16:28:00Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 5,
+      "qualifying_comparisons": 0,
+      "tree": "389960097a4c58d2cebceba8fb8409cff50c0a65",
+      "url": "https://github.com/chebizarro/nostrc/pull/5"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/inventory.json",
+        "tests/selection/test_gtk_ownership.py",
+        "tests/selection/test_production_inventory.py",
+        "tests/selection/test_realization_inputs.py",
+        "tests/selection/test_resource_profile_contracts.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "3632336068340b842cc1c76a5d89014c3c1e430a",
+      "inventory_sha256": "c7db0fecdbd66ebf686a41f7e9e52f5344f61b8ec0feca18601529f2d8a2af8b",
+      "merge_parents": [
+        "7219eb4b5dd7e3bd046dd96f846baa26ed08ddbf",
+        "3632336068340b842cc1c76a5d89014c3c1e430a"
+      ],
+      "merge_sha": "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+      "merged_at": "2026-10-21T16:56:35Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 6,
+      "qualifying_comparisons": 0,
+      "tree": "4f4937ef51798d13d2d7a5b3d979c00388b37a1b",
+      "url": "https://github.com/chebizarro/nostrc/pull/6"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "apps/grotto/CMakeLists.txt",
+        "cmake/NostrcConfigureProvenance.cmake",
+        "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "scripts/test_selection_realization.py",
+        "tests/selection/fixtures/ordinary_subset_source_renewal_20261022.json",
+        "tests/selection/inventory.json",
+        "tests/selection/test_configure_outputs.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py",
+        "tests/selection/test_selection_command_contract.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+      "inventory_sha256": "c33991e7381023fd5d65928e548c0931c36d3651a4375e004d6f677961805426",
+      "merge_parents": [
+        "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+        "ac2627a2ee4b729f8ba9342138bc1e9274f48fee"
+      ],
+      "merge_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+      "merged_at": "2026-10-21T21:35:55Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 7,
+      "qualifying_comparisons": 0,
+      "tree": "7bfd44eb2c13212ba0b747961650518cc0d4d1c6",
+      "url": "https://github.com/chebizarro/nostrc/pull/7"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/inventory.json",
+        "tests/selection/test_service_impact.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "e8ad431f1b5866bf40dadcd12d41716e487e4463",
+      "inventory_sha256": "fa6afb4167b5fe19c11dd7deb6c9e4f5f88b05d5bc076e8ae383d4e1fa356104",
+      "merge_parents": [
+        "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+        "e8ad431f1b5866bf40dadcd12d41716e487e4463"
+      ],
+      "merge_sha": "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+      "merged_at": "2026-10-21T22:19:57Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 8,
+      "qualifying_comparisons": 0,
+      "tree": "599afa46e56e243f5d0bcd3be921cb24196e8272",
+      "url": "https://github.com/chebizarro/nostrc/pull/8"
+    },
+    {
+      "changed_paths": [
+        ".beads/interactions.jsonl",
+        ".beads/issues.jsonl",
+        "VERSION_MANIFEST.md",
+        "nips/nip55l/src/glib/signer_permissions.c",
+        "nips/nip55l/src/glib/signer_permissions.h",
+        "nips/nip55l/tests/test_signer_approval_service.c",
+        "tests/common/test_blueprint_resources.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "e65063eb5c9dd42bf77395245d50b4b695c29b35",
+      "inventory_sha256": "fa6afb4167b5fe19c11dd7deb6c9e4f5f88b05d5bc076e8ae383d4e1fa356104",
+      "merge_parents": [
+        "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+        "e65063eb5c9dd42bf77395245d50b4b695c29b35"
+      ],
+      "merge_sha": "37e144cab898e942d2875d903670ccaf4335158b",
+      "merged_at": "2026-10-21T23:07:54Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 9,
+      "qualifying_comparisons": 0,
+      "tree": "eeac6c4dfef0b506ac9c38bb8e0475831ef853e9",
+      "url": "https://github.com/chebizarro/nostrc/pull/9"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/fixtures/resource_diagnostics_projection_20261022.json",
+        "tests/selection/inventory.json",
+        "tests/selection/resource_export_projection.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_resource_profile_contracts.py",
+        "tests/selection/test_shared_dependency_edges.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "3930033b573b953b3e3e0d9f2dfa5ed503292017",
+      "inventory_sha256": "aa8a25fba1692e3c42dc45327fe511409fd08f7f87dcf214866605296cf94455",
+      "merge_parents": [
+        "37e144cab898e942d2875d903670ccaf4335158b",
+        "3930033b573b953b3e3e0d9f2dfa5ed503292017"
+      ],
+      "merge_sha": "d953c37fb7705eae76342c78222308f1290995ec",
+      "merged_at": "2026-10-21T23:58:26Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 10,
+      "qualifying_comparisons": 0,
+      "tree": "3c5a67f0966e370f23616c8fab0745b5779cb93d",
+      "url": "https://github.com/chebizarro/nostrc/pull/10"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/fixtures/headless_model_exports.json",
+        "tests/selection/fixtures/headless_model_subset_renewal_20261022.json",
+        "tests/selection/inventory.json",
+        "tests/selection/test_headless_model_membership.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "81a907d187a735e69c1bbde0840fe5fb4b9b51a8",
+      "inventory_sha256": "6231a94a01c4850aba1839329ba74757b1a635e1d54d1f66d6f818bf77eb46ce",
+      "merge_parents": [
+        "d953c37fb7705eae76342c78222308f1290995ec",
+        "81a907d187a735e69c1bbde0840fe5fb4b9b51a8"
+      ],
+      "merge_sha": "3c7c42c08cf1fade80da1355e4392847060abdb2",
+      "merged_at": "2026-10-22T01:31:00Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 11,
+      "qualifying_comparisons": 0,
+      "tree": "e164d7a1c0737ba4868ea09abb07adc306b2f984",
+      "url": "https://github.com/chebizarro/nostrc/pull/11"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/fixtures/headless_identity_exports.json",
+        "tests/selection/fixtures/headless_identity_subset_renewal_20261022.json",
+        "tests/selection/headless_identity_projection.py",
+        "tests/selection/inventory.json",
+        "tests/selection/test_headless_identity_membership.py",
+        "tests/selection/test_headless_model_membership.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec",
+      "inventory_sha256": "727a7d3c12b91b0530607980a68784aa4af433348d37519290604cc79bbd1da8",
+      "merge_parents": [
+        "3c7c42c08cf1fade80da1355e4392847060abdb2",
+        "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec"
+      ],
+      "merge_sha": "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+      "merged_at": "2026-10-22T02:09:40Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 12,
+      "qualifying_comparisons": 0,
+      "tree": "4c8782d71eab6c509c65e74087de8f7a82d85ef5",
+      "url": "https://github.com/chebizarro/nostrc/pull/12"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/inventory.json",
+        "tests/selection/test_shared_dependency_edges.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "bb001a70c53f713baa63fac435c4f5f103e68e63",
+      "inventory_sha256": "3f881c568c860624e5597be3efb7babd858c067fc557a9fdba201347075a2681",
+      "merge_parents": [
+        "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+        "bb001a70c53f713baa63fac435c4f5f103e68e63"
+      ],
+      "merge_sha": "53f2e822d04bd32e243a9cf969396f2f241af83e",
+      "merged_at": "2026-10-22T02:36:18Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 13,
+      "qualifying_comparisons": 0,
+      "tree": "5e3c323ad1cb96e2f93878b9baa5802a8350f25a",
+      "url": "https://github.com/chebizarro/nostrc/pull/13"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "scripts/adapter_custody.py",
+        "scripts/test-gate.sh",
+        "tests/selection/fixtures/headless_transport_exports.json",
+        "tests/selection/fixtures/headless_transport_subset_renewal_20261022.json",
+        "tests/selection/headless_identity_projection.py",
+        "tests/selection/headless_transport_projection.py",
+        "tests/selection/inventory.json",
+        "tests/selection/test_adapter_custody.py",
+        "tests/selection/test_headless_transport_membership.py",
+        "tests/selection/test_local_command_adapter.py",
+        "tests/selection/test_sanitizer_route_refusal.py",
+        "tests/selection/test_selection_command_contract.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "c5509f6c184e56f6c7d08049257cb0bcad8374ae",
+      "inventory_sha256": "5c97d0870974a30b67f467d41f6675ee5196105a7849edeab40c09f068c47500",
+      "merge_parents": [
+        "53f2e822d04bd32e243a9cf969396f2f241af83e",
+        "c5509f6c184e56f6c7d08049257cb0bcad8374ae"
+      ],
+      "merge_sha": "ed70631704778a7fbe31d45b24161570a91abb53",
+      "merged_at": "2026-10-22T04:13:58Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 14,
+      "qualifying_comparisons": 0,
+      "tree": "a07bae85c6d292293f360b234cb7aff42f05f4c8",
+      "url": "https://github.com/chebizarro/nostrc/pull/14"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "nips/nip49/TestInventory.cmake",
+        "scripts/test-plan.py",
+        "scripts/test_selection.py",
+        "scripts/test_selection_realization.py",
+        "tests/selection/fixtures/grotto_nip49_exports.json",
+        "tests/selection/fixtures/grotto_nip49_subset_renewal_20261022.json",
+        "tests/selection/fixtures/nip49_descriptor_renewal_20261022.json",
+        "tests/selection/grotto_nip49_projection.py",
+        "tests/selection/headless_transport_projection.py",
+        "tests/selection/inventory.json",
+        "tests/selection/test_ctest_runtime_inputs.py",
+        "tests/selection/test_grotto_nip49_membership.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_headless_transport_membership.py",
+        "tests/selection/test_nip49_runtime_descriptor.py",
+        "tests/selection/test_nonmember_ownership.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py",
+        "tests/selection/test_selector.py",
+        "tests/selection/test_shared_dependency_edges.py",
+        "tests/selection/test_store_key_membership.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "fc3bf15792110c095a13049eb4f471e612af07cb",
+      "inventory_sha256": "531355847aad7e20cc4a15de608bf3be21f080a70b333de3114e41f8fa1b26ab",
+      "merge_parents": [
+        "ed70631704778a7fbe31d45b24161570a91abb53",
+        "fc3bf15792110c095a13049eb4f471e612af07cb"
+      ],
+      "merge_sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1",
+      "merged_at": "2026-10-22T07:23:11Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 15,
+      "qualifying_comparisons": 0,
+      "tree": "6cbd3c04197e8a7151c7dd62dbe6ed26f71f7413",
+      "url": "https://github.com/chebizarro/nostrc/pull/15"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "tests/selection/encrypted_media_projection.py",
+        "tests/selection/fixtures/encrypted_media_exports.json",
+        "tests/selection/fixtures/encrypted_media_subset_renewal_20261022.json",
+        "tests/selection/fixtures/grotto_crypto_exports.json",
+        "tests/selection/fixtures/grotto_crypto_subset_renewal_20261022.json",
+        "tests/selection/grotto_crypto_projection.py",
+        "tests/selection/grotto_nip49_projection.py",
+        "tests/selection/inventory.json",
+        "tests/selection/test_encrypted_media_membership.py",
+        "tests/selection/test_grotto_crypto_membership.py",
+        "tests/selection/test_grotto_nip49_membership.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_headless_transport_membership.py",
+        "tests/selection/test_media_crypto_integration.py",
+        "tests/selection/test_shared_dependency_edges.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "2a1513ade043da9612f1b9a7c4c35037c43049ed",
+      "inventory_sha256": "f962d7dc3fcb2c8f7f816923f3546b179170ccb8dee2731756a08b19eb0a0fe3",
+      "merge_parents": [
+        "b7aede8166cc52a6ec55faafd755a1fa4a9121d1",
+        "2a1513ade043da9612f1b9a7c4c35037c43049ed"
+      ],
+      "merge_sha": "f646db033031a32ad0f6283f881d8506eafbcc4b",
+      "merged_at": "2026-10-22T09:09:54Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 16,
+      "qualifying_comparisons": 0,
+      "tree": "63c38a4f8c6cfa70699f07e402b77978f597c180",
+      "url": "https://github.com/chebizarro/nostrc/pull/16"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/plans/ordinary-profile-nonmember-policy-proposal-2026-10-19.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "nips/nip44/CMakeLists.txt",
+        "nips/nip44/TestInventory.cmake",
+        "nips/nip44/tests/test_canonical_vectors.py",
+        "nips/nip44/tests/test_nip44_vectors.c",
+        "tests/selection/encrypted_media_projection.py",
+        "tests/selection/fixtures/headless_account_policy_exports.json",
+        "tests/selection/fixtures/headless_account_policy_subset_renewal_20261022.json",
+        "tests/selection/fixtures/nip44_canonical_vectors_20261022.json",
+        "tests/selection/fixtures/nip44_vector_renewal_20261022.json",
+        "tests/selection/grotto_crypto_projection.py",
+        "tests/selection/headless_account_policy_projection.py",
+        "tests/selection/inventory.json",
+        "tests/selection/nip44_vector_projection.py",
+        "tests/selection/test_encrypted_media_membership.py",
+        "tests/selection/test_grotto_crypto_membership.py",
+        "tests/selection/test_grotto_nip49_membership.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_headless_account_policy_membership.py",
+        "tests/selection/test_headless_identity_membership.py",
+        "tests/selection/test_headless_transport_membership.py",
+        "tests/selection/test_media_crypto_integration.py",
+        "tests/selection/test_vector_family_integration.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "decef538f1b3cdddbffdb6695eae085b54c548fd",
+      "inventory_sha256": "1eb3b2687cffe994aeb69a2a0f91aa7900385454c314eae978f3def72c712436",
+      "merge_parents": [
+        "f646db033031a32ad0f6283f881d8506eafbcc4b",
+        "decef538f1b3cdddbffdb6695eae085b54c548fd"
+      ],
+      "merge_sha": "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+      "merged_at": "2026-10-22T10:42:42Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 17,
+      "qualifying_comparisons": 0,
+      "tree": "52d54911bd880249cae71139b54c6239ca7fac40",
+      "url": "https://github.com/chebizarro/nostrc/pull/17"
+    },
+    {
+      "changed_paths": [
+        ".beads/interactions.jsonl",
+        ".beads/issues.jsonl",
+        ".github/workflows/dependency-broad.yml",
+        ".github/workflows/dependency-tests.yml",
+        ".github/workflows/dependency-worker.yml",
+        ".github/workflows/dependency_contract.py",
+        ".github/workflows/nostr-homed-ci.yml",
+        ".github/workflows/static-checks.yml",
+        "AGENTS.md",
+        "VERSION_MANIFEST.md",
+        "apps/gnostr/CMakeLists.txt",
+        "apps/gnostr/src/nostr-config.h.in",
+        "apps/grotto/CMakeLists.txt",
+        "cmake/NostrdbVendored.cmake",
+        "cmake/nostrdb-hex-compat.h.in",
+        "cmake/nostrdb-talstr.h.in",
+        "components/nostrdb/CMakeLists.txt",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-22-hosted-evidence.json",
+        "gnome/groundhog/CMakeLists.txt",
+        "gnome/groundhog/TestInventory.cmake",
+        "gnome/groundhog/src/app/gh-background-autostart.h.in",
+        "gnome/groundhog/tests/app/test_remote_feature_matrix.c",
+        "libmarmot/CMakeLists.txt",
+        "libnostr/CMakeLists.txt",
+        "nips/nip5f/TestInventory.cmake",
+        "nostr-gtk/CMakeLists.txt",
+        "scripts/contained-gate.py",
+        "scripts/contained-runner.py",
+        "scripts/mdk-gate.py",
+        "scripts/sanitizer-gate-ci.py",
+        "scripts/test-gate.sh",
+        "scripts/test-plan.py",
+        "scripts/test_selection.py",
+        "scripts/test_selection_custody.py",
+        "scripts/test_selection_keyring.py",
+        "scripts/test_selection_producers.py",
+        "scripts/test_selection_realization.py",
+        "scripts/test_selection_subset.py",
+        "tests/custody/test_contained_engine.py",
+        "tests/custody/test_keyring_runtime.py",
+        "tests/selection/closeout_support.py",
+        "tests/selection/fixtures/closeout_interfaces.json",
+        "tests/selection/fixtures/core_source_producers_20261023.json",
+        "tests/selection/fixtures/supported_profile_membership.json",
+        "tests/selection/inventory.json",
+        "tests/selection/nip44_vector_projection.py",
+        "tests/selection/supported_profile_support.py",
+        "tests/selection/test_closeout_interfaces.py",
+        "tests/selection/test_closeout_producers.py",
+        "tests/selection/test_command_execution.py",
+        "tests/selection/test_command_output_bytes.py",
+        "tests/selection/test_command_signal_bytes.py",
+        "tests/selection/test_core_source_producers.py",
+        "tests/selection/test_default_producers.py",
+        "tests/selection/test_encrypted_media_membership.py",
+        "tests/selection/test_execution_parallelism.py",
+        "tests/selection/test_failure_receipts.py",
+        "tests/selection/test_grotto_crypto_membership.py",
+        "tests/selection/test_grotto_nip49_membership.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_headless_account_policy_membership.py",
+        "tests/selection/test_headless_identity_membership.py",
+        "tests/selection/test_headless_model_membership.py",
+        "tests/selection/test_headless_transport_membership.py",
+        "tests/selection/test_mdk_cleanup.py",
+        "tests/selection/test_mdk_gate.py",
+        "tests/selection/test_media_crypto_integration.py",
+        "tests/selection/test_nonmember_ownership.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py",
+        "tests/selection/test_production_inventory.py",
+        "tests/selection/test_profile_contracts.py",
+        "tests/selection/test_resource_profile_contracts.py",
+        "tests/selection/test_sanitizer_route_refusal.py",
+        "tests/selection/test_selection_command_contract.py",
+        "tests/selection/test_selector.py",
+        "tests/selection/test_service_impact.py",
+        "tests/selection/test_shared_dependency_edges.py",
+        "tests/selection/test_store_key_membership.py",
+        "tests/selection/test_supported_profile_membership.py",
+        "tests/selection/test_vector_family_integration.py",
+        "tests/selection/test_workflow_closeout.py",
+        "tests/selection/test_workflow_contracts.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "88d36526af2c913d9d7a93dce6078d7ce5259418",
+      "inventory_sha256": "4e76028db74f34887c9237c6bf1aa13a00fca8da3b9f87a59e1b26ef38c1b895",
+      "merge_parents": [
+        "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+        "88d36526af2c913d9d7a93dce6078d7ce5259418"
+      ],
+      "merge_sha": "0ce430299060a09e4a2db250be1a2cac4df2c212",
+      "merged_at": "2026-10-22T20:44:42Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 18,
+      "qualifying_comparisons": 0,
+      "tree": "e899cefc29d0dd2c9a698ec79ac18d3143b7dfdb",
+      "url": "https://github.com/chebizarro/nostrc/pull/18"
+    },
+    {
+      "changed_paths": [
+        ".beads/interactions.jsonl",
+        ".beads/issues.jsonl",
+        "AGENTS.md",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md",
+        "docs/reviews/dependency-aware-testing-integration-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-runtime-hosted-2026-10-23.md",
+        "docs/reviews/native-descendant-custody-2026-10-23.md",
+        "scripts/adapter_namespace_custody.py",
+        "scripts/mdk011-cache-build.py",
+        "scripts/test-gate.sh",
+        "scripts/test-plan.py",
+        "scripts/test_selection.py",
+        "scripts/test_selection_custody.py",
+        "scripts/test_selection_realization.py",
+        "scripts/test_selection_services.py",
+        "tests/interop/mdk/driver-0.11/Dockerfile",
+        "tests/runtime/mdk011-fetch.Dockerfile",
+        "tests/runtime/nip5f_approver.c",
+        "tests/runtime/test_mdk011_cache_contract.py",
+        "tests/runtime/test_mdk011_export_custody.py",
+        "tests/runtime/test_provisioned_nip5f.py",
+        "tests/selection/closeout_support.py",
+        "tests/selection/inventory.json",
+        "tests/selection/test_adapter_custody.py",
+        "tests/selection/test_closeout_interfaces.py",
+        "tests/selection/test_diagnostic_eligibility.py",
+        "tests/selection/test_local_command_adapter.py",
+        "tests/selection/test_namespace_custody.py",
+        "tests/selection/test_namespace_wrapper_adapter.py",
+        "tests/selection/test_native_services.py",
+        "tests/selection/test_runtime_diagnostic_inputs.py",
+        "tests/selection/test_selection_command_contract.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "cc56887a7b433f6391d13be5ef1688035de7de88",
+      "inventory_sha256": "b548604b923847a862de58656923675076d0933078ea9e6274392461c1a4bab8",
+      "merge_parents": [
+        "0ce430299060a09e4a2db250be1a2cac4df2c212",
+        "cc56887a7b433f6391d13be5ef1688035de7de88"
+      ],
+      "merge_sha": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+      "merged_at": "2026-10-22T23:31:33Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 19,
+      "qualifying_comparisons": 0,
+      "tree": "78ada74b26931ee1809fade88a5e8c355b2b6477",
+      "url": "https://github.com/chebizarro/nostrc/pull/19"
+    },
+    {
+      "changed_paths": [
+        ".beads/interactions.jsonl",
+        ".beads/issues.jsonl",
+        ".github/workflows/dependency-worker.yml",
+        ".github/workflows/windows-validation.yml",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-23-w11.md",
+        "docs/reviews/dependency-aware-testing-w11-w12-integration-2026-10-23.md",
+        "docs/reviews/heartbeat-causal-diagnosis-2026-10-23.md",
+        "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
+        "scripts/test-pre-push.sh",
+        "tests/selection/closeout_support.py",
+        "tests/selection/fixtures/w11_setup_enrollment_20261023.json",
+        "tests/selection/inventory.json",
+        "tests/selection/test_closeout_interfaces.py",
+        "tests/selection/test_selection_command_contract.py",
+        "tests/selection/test_w11_worker_setup.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "7319d339365d74efe0e26577d0055b91153707fd",
+      "inventory_sha256": "8b428b820152fd2d78b487153e4ce20623c0c5f8d4518dec6ba993c94fe2def6",
+      "merge_parents": [
+        "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+        "7319d339365d74efe0e26577d0055b91153707fd"
+      ],
+      "merge_sha": "d9c9c8808b2611fc179ed4ed3640e63920f4683f",
+      "merged_at": "2026-10-23T01:30:43Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 20,
+      "qualifying_comparisons": 0,
+      "tree": "54e86992fa6e0133a70c5a43dae61189cec3b895",
+      "url": "https://github.com/chebizarro/nostrc/pull/20"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-23-w11.md"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "5641f8b0bade465fee093925aa29443e791c4ae9",
+      "inventory_sha256": "8b428b820152fd2d78b487153e4ce20623c0c5f8d4518dec6ba993c94fe2def6",
+      "merge_parents": [
+        "d9c9c8808b2611fc179ed4ed3640e63920f4683f",
+        "5641f8b0bade465fee093925aa29443e791c4ae9"
+      ],
+      "merge_sha": "663edcd70c0d313c98f87610aa41f1261bce4ee6",
+      "merged_at": "2026-10-23T01:44:36Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 21,
+      "qualifying_comparisons": 0,
+      "tree": "a2fca595d744434038d67e8628392b6700bcac2d",
+      "url": "https://github.com/chebizarro/nostrc/pull/21"
+    },
+    {
+      "changed_paths": [
+        ".beads/interactions.jsonl",
+        ".beads/issues.jsonl",
+        ".github/workflows/dependency-broad.yml",
+        ".github/workflows/dependency-tests.yml",
+        ".github/workflows/dependency-worker.yml",
+        ".github/workflows/dependency_contract.py",
+        ".github/workflows/grotto-fuzz.yml",
+        ".github/workflows/namespace-policy-regression.yml",
+        ".github/workflows/nostrc-ci.yml",
+        "apps/grotto/tests/fuzz/README.md",
+        "apps/grotto/tests/fuzz/json-glib-setup.sh",
+        "apps/grotto/tests/fuzz/json_glib_leak_probe.c",
+        "docs/TESTING.md",
+        "docs/plans/dependency-aware-testing-ci-2026-10-15.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-22-closeout.md",
+        "docs/reviews/dependency-aware-testing-w11-closure-handoff-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w11-closure-integration-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-execution-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-socket-placement-handoff-2026-10-23.json",
+        "docs/reviews/heartbeat-scheduling-probe-2026-10-23.md",
+        "nips/nip5f/CMakeLists.txt",
+        "nips/nip5f/TestInventory.cmake",
+        "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
+        "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c",
+        "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
+        "scripts/test-gate.sh",
+        "scripts/test-plan.py",
+        "scripts/test_selection.py",
+        "scripts/test_selection_policy.py",
+        "scripts/test_selection_realization.py",
+        "scripts/test_selection_services.py",
+        "scripts/test_selection_subset.py",
+        "scripts/w11-evidence.py",
+        "tests/runtime/test_provisioned_nip5f.py",
+        "tests/selection/closeout_support.py",
+        "tests/selection/fixtures/ordinary_go_full_ownership.json",
+        "tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json",
+        "tests/selection/fixtures/w11_json_glib_enrollment_20261023.json",
+        "tests/selection/fixtures/w11_placement_enrollment_20261023.json",
+        "tests/selection/fixtures/w11_policy_enrollment_20261023.json",
+        "tests/selection/fixtures/w11_worker_enrollment_20261023.json",
+        "tests/selection/inventory.json",
+        "tests/selection/namespace-testhost.Dockerfile",
+        "tests/selection/namespace_host_probe.py",
+        "tests/selection/namespace_policy_entry.sh",
+        "tests/selection/namespace_testhost_lifecycle.py",
+        "tests/selection/selector_support.py",
+        "tests/selection/test_closeout_interfaces.py",
+        "tests/selection/test_contained_custody_contract.py",
+        "tests/selection/test_fuzz_json_glib_setup.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_namespace_host_probe.py",
+        "tests/selection/test_namespace_policy_contract.py",
+        "tests/selection/test_namespace_testhost_lifecycle.py",
+        "tests/selection/test_namespace_wrapper_adapter.py",
+        "tests/selection/test_nonmember_ownership.py",
+        "tests/selection/test_ordinary_go_full_ownership.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py",
+        "tests/selection/test_production_inventory.py",
+        "tests/selection/test_profile_contracts.py",
+        "tests/selection/test_release_plan.py",
+        "tests/selection/test_resource_placement.py",
+        "tests/selection/test_rollout_prerequisites.py",
+        "tests/selection/test_runtime_diagnostic_inputs.py",
+        "tests/selection/test_selection_command_contract.py",
+        "tests/selection/test_selector.py",
+        "tests/selection/test_supported_profile_membership.py",
+        "tests/selection/test_w11_evidence.py",
+        "tests/selection/test_w11_heartbeat_enrollment.py",
+        "tests/selection/test_w11_policy_controller.py",
+        "tests/selection/test_w11_receipt_retention.py",
+        "tests/selection/test_w11_retained_plan_adapter.py",
+        "tests/selection/test_w11_submodule_materialization.py",
+        "tests/selection/test_w11_worker_enrollment.py",
+        "tests/selection/test_w11_worker_host_guard.py",
+        "tests/selection/test_w11_worker_setup.py",
+        "tests/selection/test_worker_signer.py",
+        "tests/selection/test_workflow_closeout.py",
+        "tests/selection/test_workflow_contracts.py",
+        "tests/selection/w11_json_glib_support.py",
+        "tests/selection/w11_placement_support.py",
+        "tests/selection/w11_policy_support.py",
+        "tests/selection/w11_worker_support.py"
+      ],
+      "disposition": "no normal selected marker in original source; historical diagnostic/replay cannot become complete selected comparison; no current-engine overlay authorized",
+      "head_is_second_merge_parent": true,
+      "head_sha": "d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626",
+      "inventory_sha256": "0e1eb836a2c9cb48820a75353e0dd9de4ab6634e34595731a342a4db57cdabb9",
+      "merge_parents": [
+        "663edcd70c0d313c98f87610aa41f1261bce4ee6",
+        "d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626"
+      ],
+      "merge_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+      "merged_at": "2026-10-23T08:06:01Z",
+      "normal_profiles": [],
+      "normal_selected_profiles": [],
+      "number": 22,
+      "qualifying_comparisons": 0,
+      "tree": "d0972d7c9d3ff21e950befc2bb5a1ef14a08ea1b",
+      "url": "https://github.com/chebizarro/nostrc/pull/22"
+    },
+    {
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        ".github/workflows/dependency-tests.yml",
+        ".github/workflows/dependency-worker.yml",
+        ".github/workflows/dependency_contract.py",
+        ".github/workflows/namespace-policy-regression.yml",
+        ".github/workflows/nostrc-ci.yml",
+        ".github/workflows/static-checks.yml",
+        "AGENTS.md",
+        "docs/TESTING.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md",
+        "docs/reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md",
+        "docs/reviews/dependency-aware-testing-json-glib-hosted-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-json-glib-hosted-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-b-normal-source-checkpoint-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-darwin-gate-wiring-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w11-darwin-private-bus-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w11-e-evidence-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w11-e-handoff-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w11-e-protocol-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-execution-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-runtime-hosted-proof-plan-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-runtime-mdk-handoff-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w11-runtime-mdk-handoff-2026-10-23.md",
+        "docs/reviews/dependency-aware-testing-w11-runtime-verification-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23-rollback.patch",
+        "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.json",
+        "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23.patch",
+        "gnome/nostr-homed/CMakeLists.txt",
+        "gnome/nostr-homed/TestInventory.cmake",
+        "gnome/nostr-homed/tests/unit/CMakeLists.txt",
+        "gnome/nostr-homed/tests/unit/ManifestCacheTests.cmake",
+        "nostr-gobject/tests/heartbeat_sched/heartbeat-sched-probe.sh",
+        "nostr-gobject/tests/heartbeat_sched/heartbeat_sched_launch.c",
+        "nostr-gobject/tests/test_main_thread_forbidden_calls.c",
+        "scripts/adapter_darwin_custody.py",
+        "scripts/adapter_namespace_custody.py",
+        "scripts/mdk-docker",
+        "scripts/mdk-gate.py",
+        "scripts/test-full-gate.sh",
+        "scripts/test-gate.sh",
+        "scripts/test-plan.py",
+        "scripts/test-test-gate.sh",
+        "scripts/test_gate_darwin.py",
+        "scripts/test_selection.py",
+        "scripts/test_selection_execution.py",
+        "scripts/test_selection_macos_nip5f_tcp.py",
+        "scripts/test_selection_mdk.py",
+        "scripts/test_selection_policy.py",
+        "scripts/test_selection_realization.py",
+        "scripts/test_selection_services.py",
+        "scripts/test_selection_subset.py",
+        "scripts/w11-evidence.py",
+        "tests/runtime/nip5f_approver.c",
+        "tests/runtime/test_provisioned_nip5f.py",
+        "tests/selection/apparmor/nostrc-namespace-custody",
+        "tests/selection/closeout_support.py",
+        "tests/selection/fixtures/homed_profile_enrollment_20261023.json",
+        "tests/selection/fixtures/hosted_cause_integration_20261024.json",
+        "tests/selection/fixtures/post1640_integration_20261024.json",
+        "tests/selection/fixtures/post608c_integration_20261024.json",
+        "tests/selection/fixtures/runtime_integration_20261023.json",
+        "tests/selection/fixtures/w11_heartbeat_enrollment_20261023.json",
+        "tests/selection/homed_profile_support.py",
+        "tests/selection/inventory.json",
+        "tests/selection/namespace-testhost.Dockerfile",
+        "tests/selection/namespace_apparmor_setup.sh",
+        "tests/selection/namespace_apparmor_teardown.sh",
+        "tests/selection/namespace_host_probe.py",
+        "tests/selection/namespace_policy_controller.sh",
+        "tests/selection/post1640_integration_support.py",
+        "tests/selection/post608c_integration_support.py",
+        "tests/selection/runtime_integration_support.py",
+        "tests/selection/test_broad_setup_contracts.py",
+        "tests/selection/test_closeout_interfaces.py",
+        "tests/selection/test_command_execution.py",
+        "tests/selection/test_contained_custody_contract.py",
+        "tests/selection/test_darwin_boundary_contract.py",
+        "tests/selection/test_darwin_custody.py",
+        "tests/selection/test_darwin_gate_wiring.py",
+        "tests/selection/test_darwin_private_bus.py",
+        "tests/selection/test_diagnostic_eligibility.py",
+        "tests/selection/test_encrypted_media_membership.py",
+        "tests/selection/test_failure_receipts.py",
+        "tests/selection/test_fuzz_json_glib_setup.py",
+        "tests/selection/test_grotto_profiles.py",
+        "tests/selection/test_headless_account_policy_membership.py",
+        "tests/selection/test_homed_ci_worker.py",
+        "tests/selection/test_homed_profile_contract.py",
+        "tests/selection/test_local_command_adapter.py",
+        "tests/selection/test_macos_nip5f_tcp_applicability.py",
+        "tests/selection/test_macos_nip5f_tcp_engine.py",
+        "tests/selection/test_mdk_gate.py",
+        "tests/selection/test_mdk_selected_route.py",
+        "tests/selection/test_namespace_apparmor_provisioning.py",
+        "tests/selection/test_namespace_custody.py",
+        "tests/selection/test_namespace_host_probe.py",
+        "tests/selection/test_namespace_policy_contract.py",
+        "tests/selection/test_normal_execution_contract.py",
+        "tests/selection/test_normal_transport.py",
+        "tests/selection/test_ordinary_go_full_ownership.py",
+        "tests/selection/test_ordinary_nonmember_subsets.py",
+        "tests/selection/test_phase_environments.py",
+        "tests/selection/test_post1640_integration.py",
+        "tests/selection/test_post608c_integration.py",
+        "tests/selection/test_production_inventory.py",
+        "tests/selection/test_profile_contracts.py",
+        "tests/selection/test_realization_run.py",
+        "tests/selection/test_resource_placement.py",
+        "tests/selection/test_rollout_prerequisites.py",
+        "tests/selection/test_runtime_diagnostic_inputs.py",
+        "tests/selection/test_runtime_integration_contract.py",
+        "tests/selection/test_selection_command_contract.py",
+        "tests/selection/test_selector.py",
+        "tests/selection/test_shared_sanitizer_execution.py",
+        "tests/selection/test_supported_profile_membership.py",
+        "tests/selection/test_vector_family_integration.py",
+        "tests/selection/test_w11_heartbeat_enrollment.py",
+        "tests/selection/test_w11_measurement.py",
+        "tests/selection/test_w11_policy_controller.py",
+        "tests/selection/test_w11_worker_enrollment.py",
+        "tests/selection/test_w11_worker_setup.py",
+        "tests/selection/test_worker_signer.py",
+        "tests/selection/test_worker_signer_prerequisites.py",
+        "tests/selection/test_workflow_closeout.py",
+        "tests/selection/test_workflow_contracts.py",
+        "tests/selection/w11_policy_support.py"
+      ],
+      "disposition": "same-source normal selected profile markers present; full legacy-trigger/selected recipe, original tested-source receipts, five paired cache samples and exclusive slot still required",
+      "head_is_second_merge_parent": true,
+      "head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+      "inventory_sha256": "3b801b2b6b39af5815a4f35157c4ff94ee41546518aa3af643021a584113dd9e",
+      "merge_parents": [
+        "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+        "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1"
+      ],
+      "merge_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+      "merged_at": "2026-10-23T21:28:52Z",
+      "normal_profiles": [
+        "homed.linux.units",
+        "homed.linux.ci",
+        "grotto.linux.asan_ubsan",
+        "groundhog.mdk011",
+        "core.linux.asan",
+        "core.linux",
+        "grotto.linux",
+        "groundhog.linux",
+        "groundhog.mdk08"
+      ],
+      "normal_selected_profiles": [
+        "grotto.linux.asan_ubsan",
+        "groundhog.mdk011",
+        "core.linux.asan",
+        "core.linux",
+        "grotto.linux",
+        "groundhog.linux",
+        "groundhog.mdk08"
+      ],
+      "number": 23,
+      "qualifying_comparisons": 0,
+      "tree": "28dd6805e8f971b4f8fc59bbabc57027451da00f",
+      "url": "https://github.com/chebizarro/nostrc/pull/23"
+    }
+  ],
+  "recorded_at": "2026-10-23T22:37:10.571458+00:00",
+  "root_census": {
+    "not_a_live_counter": true,
+    "root_count": 64,
+    "root_states": {
+      "cancelled": 1,
+      "failure": 61,
+      "pending": 1,
+      "queued": 1
+    },
+    "roots": [
+      {
+        "api_head_sha": "eaa918a0ab5ffb757171922a690c629d919d4025",
+        "artifact_metadata_rows": 20,
+        "attempt_capture_state": "pending",
+        "census_state": "pending",
+        "census_updated_at": "2026-10-23T21:57:59Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 3,
+          "in_progress": 14,
+          "pending": 4,
+          "queued": 12,
+          "success": 27
+        },
+        "job_rows": 60,
+        "run_attempt": 1,
+        "run_id": 40029853925,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/40029853925"
+      },
+      {
+        "api_head_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+        "artifact_metadata_rows": 43,
+        "attempt_capture_state": "queued",
+        "census_state": "queued",
+        "census_updated_at": "2026-10-23T21:35:52Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 10,
+          "in_progress": 4,
+          "queued": 2,
+          "success": 44
+        },
+        "job_rows": 60,
+        "run_attempt": 1,
+        "run_id": 40027080264,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/40027080264"
+      },
+      {
+        "api_head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+        "artifact_metadata_rows": 49,
+        "attempt_capture_state": "in_progress",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T22:26:35Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 11,
+          "in_progress": 1,
+          "success": 50
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 40023343699,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/40023343699"
+      },
+      {
+        "api_head_sha": "723e601ac1322ca0220cd88b3b0ed22b0a7fcd81",
+        "artifact_metadata_rows": 49,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T21:26:22Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 14,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 63,
+        "run_attempt": 1,
+        "run_id": 40015363696,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/40015363696"
+      },
+      {
+        "api_head_sha": "1640fc86de42f3b6d495847a83820eafb6dfbf4b",
+        "artifact_metadata_rows": 49,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T20:06:49Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 11,
+          "success": 51
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 40004170022,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/40004170022"
+      },
+      {
+        "api_head_sha": "608c1fe20d20121d68c9ea7f948ee7849057ce16",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T17:01:57Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 39977420607,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39977420607"
+      },
+      {
+        "api_head_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+        "artifact_metadata_rows": 48,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T10:50:05Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 39923954670,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39923954670"
+      },
+      {
+        "api_head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+        "artifact_metadata_rows": 41,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T10:45:10Z",
+        "event": "workflow_dispatch",
+        "job_conclusions": {
+          "cancelled": 6,
+          "failure": 13,
+          "skipped": 1,
+          "success": 42
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 39922309846,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39922309846"
+      },
+      {
+        "api_head_sha": "94647b282b1c26d8eed2a4fc2b7a1bf109479e65",
+        "artifact_metadata_rows": 48,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T10:44:09Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 39922272251,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39922272251"
+      },
+      {
+        "api_head_sha": "d29a5ac5bc06ffc7c76ab4ec319eecea5ed3a626",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T10:31:25Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 2,
+          "failure": 14,
+          "skipped": 1,
+          "success": 45
+        },
+        "job_rows": 62,
+        "run_attempt": 1,
+        "run_id": 39922245779,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39922245779"
+      },
+      {
+        "api_head_sha": "663edcd70c0d313c98f87610aa41f1261bce4ee6",
+        "artifact_metadata_rows": 48,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T03:41:22Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 15,
+          "skipped": 1,
+          "success": 44
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39885713147,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39885713147"
+      },
+      {
+        "api_head_sha": "5641f8b0bade465fee093925aa29443e791c4ae9",
+        "artifact_metadata_rows": 2,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T02:12:17Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 1,
+          "skipped": 13,
+          "success": 1
+        },
+        "job_rows": 15,
+        "run_attempt": 1,
+        "run_id": 39885673421,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39885673421"
+      },
+      {
+        "api_head_sha": "d9c9c8808b2611fc179ed4ed3640e63920f4683f",
+        "artifact_metadata_rows": 48,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T03:13:46Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 14,
+          "skipped": 1,
+          "success": 45
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39884406426,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39884406426"
+      },
+      {
+        "api_head_sha": "7319d339365d74efe0e26577d0055b91153707fd",
+        "artifact_metadata_rows": 48,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T03:40:59Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 2,
+          "failure": 14,
+          "skipped": 1,
+          "success": 44
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39884384021,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39884384021"
+      },
+      {
+        "api_head_sha": "587ebea254fb3b7c19c8f91a42b23a8a4d950db3",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T01:20:50Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 16,
+          "skipped": 1,
+          "success": 43
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39872363501,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39872363501"
+      },
+      {
+        "api_head_sha": "cc56887a7b433f6391d13be5ef1688035de7de88",
+        "artifact_metadata_rows": 45,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-23T02:08:30Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 2,
+          "failure": 15,
+          "skipped": 1,
+          "success": 43
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39872346136,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39872346136"
+      },
+      {
+        "api_head_sha": "0ce430299060a09e4a2db250be1a2cac4df2c212",
+        "artifact_metadata_rows": 45,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T23:01:39Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 2,
+          "failure": 16,
+          "skipped": 1,
+          "success": 42
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39851489448,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39851489448"
+      },
+      {
+        "api_head_sha": "88d36526af2c913d9d7a93dce6078d7ce5259418",
+        "artifact_metadata_rows": 42,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T22:48:11Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 3,
+          "failure": 15,
+          "skipped": 1,
+          "success": 42
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39851463581,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39851463581"
+      },
+      {
+        "api_head_sha": "dd949e4b7a2969e01ac5dea3f12bdde2cf22655b",
+        "artifact_metadata_rows": 43,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T17:01:56Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 14,
+          "skipped": 1,
+          "success": 45
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39765146565,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39765146565"
+      },
+      {
+        "api_head_sha": "decef538f1b3cdddbffdb6695eae085b54c548fd",
+        "artifact_metadata_rows": 45,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T12:39:11Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 16,
+          "skipped": 2,
+          "success": 43
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39765128286,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39765128286"
+      },
+      {
+        "api_head_sha": "f646db033031a32ad0f6283f881d8506eafbcc4b",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T10:28:32Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39753293484,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39753293484"
+      },
+      {
+        "api_head_sha": "2a1513ade043da9612f1b9a7c4c35037c43049ed",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T10:20:17Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 2,
+          "success": 45
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39753280286,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39753280286"
+      },
+      {
+        "api_head_sha": "b7aede8166cc52a6ec55faafd755a1fa4a9121d1",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T08:45:56Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39740131392,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39740131392"
+      },
+      {
+        "api_head_sha": "fc3bf15792110c095a13049eb4f471e612af07cb",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T08:24:25Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 2,
+          "success": 45
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39740044784,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39740044784"
+      },
+      {
+        "api_head_sha": "ed70631704778a7fbe31d45b24161570a91abb53",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T05:12:29Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 1,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39721223143,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39721223143"
+      },
+      {
+        "api_head_sha": "c5509f6c184e56f6c7d08049257cb0bcad8374ae",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T05:02:04Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 2,
+          "success": 45
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39721202319,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39721202319"
+      },
+      {
+        "api_head_sha": "53f2e822d04bd32e243a9cf969396f2f241af83e",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T04:02:18Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39712305258,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39712305258"
+      },
+      {
+        "api_head_sha": "bb001a70c53f713baa63fac435c4f5f103e68e63",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T03:33:24Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39712294835,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39712294835"
+      },
+      {
+        "api_head_sha": "93970ed48fb5711193bc73bd0b304b9e81e6f25f",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T03:21:27Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 15,
+          "skipped": 1,
+          "success": 45
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39709833505,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39709833505"
+      },
+      {
+        "api_head_sha": "bdfee8f6d2df27c7a005c7850c1dcae8a59e1eec",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T03:12:35Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39709815551,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39709815551"
+      },
+      {
+        "api_head_sha": "3c7c42c08cf1fade80da1355e4392847060abdb2",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T02:37:02Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39706136042,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39706136042"
+      },
+      {
+        "api_head_sha": "81a907d187a735e69c1bbde0840fe5fb4b9b51a8",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T02:33:22Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39706114829,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39706114829"
+      },
+      {
+        "api_head_sha": "d953c37fb7705eae76342c78222308f1290995ec",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T01:06:56Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "in_progress": 1,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39696802787,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39696802787"
+      },
+      {
+        "api_head_sha": "3930033b573b953b3e3e0d9f2dfa5ed503292017",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": null,
+        "capture_failure": "command failed (1); see /tmp/nostrc-p3-hosted-20261024/39696789681/attempt-after.stderr",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T00:46:45Z",
+        "event": "pull_request",
+        "failure_disposition": "final attempt read failed TLS handshake; no retry; final stability unverified; previous raw pages preserved",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39696789681,
+        "stable_attempt_capture": false,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39696789681"
+      },
+      {
+        "api_head_sha": "37e144cab898e942d2875d903670ccaf4335158b",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-22T00:28:18Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 1,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39691368155,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39691368155"
+      },
+      {
+        "api_head_sha": "e65063eb5c9dd42bf77395245d50b4b695c29b35",
+        "artifact_metadata_rows": 18,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T23:27:13Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 9,
+          "skipped": 5,
+          "success": 1
+        },
+        "job_rows": 15,
+        "run_attempt": 1,
+        "run_id": 39691347591,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39691347591"
+      },
+      {
+        "api_head_sha": "493aaa20ee9a8c9cd58ac6831327685bb679eacb",
+        "artifact_metadata_rows": 45,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T23:36:17Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39685711754,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39685711754"
+      },
+      {
+        "api_head_sha": "e8ad431f1b5866bf40dadcd12d41716e487e4463",
+        "artifact_metadata_rows": 44,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T23:03:36Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39685690707,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39685690707"
+      },
+      {
+        "api_head_sha": "705d7b051b41a54fdd62e1823a1d074c8e9d7197",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T22:52:42Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39680092640,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39680092640"
+      },
+      {
+        "api_head_sha": "ac2627a2ee4b729f8ba9342138bc1e9274f48fee",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T22:18:24Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39680066929,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39680066929"
+      },
+      {
+        "api_head_sha": "a14b8b38cbd1b350324c2fbfed227592ede3ab2b",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T18:18:10Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 1,
+          "success": 48
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39639305885,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39639305885"
+      },
+      {
+        "api_head_sha": "3632336068340b842cc1c76a5d89014c3c1e430a",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T17:54:26Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39639281932,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39639281932"
+      },
+      {
+        "api_head_sha": "7219eb4b5dd7e3bd046dd96f846baa26ed08ddbf",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T17:41:39Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 1,
+          "success": 48
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39635020066,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39635020066"
+      },
+      {
+        "api_head_sha": "1f34a3bdf326bda6c2f2e15d2f26b11f97dbc230",
+        "artifact_metadata_rows": 44,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T17:43:03Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "cancelled": 1,
+          "failure": 12,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39634993581,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39634993581"
+      },
+      {
+        "api_head_sha": "f9d1e853794d81037e8dcf177e40b9bc83178b9c",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T02:17:31Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 14,
+          "skipped": 1,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39522032401,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39522032401"
+      },
+      {
+        "api_head_sha": "172139a92e617d19d8d1aa3e0b9bd3fe5937e52d",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T01:56:28Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39522018295,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39522018295"
+      },
+      {
+        "api_head_sha": "f39401e12eaac24cbf86e903cdc37198fb332479",
+        "artifact_metadata_rows": 43,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T01:39:53Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 4,
+          "failure": 13,
+          "skipped": 1,
+          "success": 43
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39520208404,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39520208404"
+      },
+      {
+        "api_head_sha": "4ea308cc2c888c6e0b8a6de842a621cecd66ea93",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T01:45:15Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 2,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39520195345,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39520195345"
+      },
+      {
+        "api_head_sha": "096091aaa758468a8338e9cf0646acee432cfba1",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T01:37:10Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39519285551,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39519285551"
+      },
+      {
+        "api_head_sha": "9271b0667d141f979f196e59fd5d617117bc81d8",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-21T01:37:08Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 2,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39519271161,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39519271161"
+      },
+      {
+        "api_head_sha": "1fad10a239f9cef72b7b056b8ab99679337d53c4",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T16:44:33Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39280051357,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39280051357"
+      },
+      {
+        "api_head_sha": "d120bc972bbb0f4c09951e376bcc229b41931e0e",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T16:44:31Z",
+        "event": "pull_request",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 2,
+          "success": 46
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39280037488,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39280037488"
+      },
+      {
+        "api_head_sha": "b72b9ec70f4aee51a4a5f42447bc763cce5cc516",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T15:32:42Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 1,
+          "success": 48
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39271217772,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39271217772"
+      },
+      {
+        "api_head_sha": "6ce261c4234c35d5f6c95822edeab83fdae48b60",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T05:56:03Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39202094613,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39202094613"
+      },
+      {
+        "api_head_sha": "fb7335cb0e9546463293b6adf2044fe54178f5ac",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T05:17:52Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 1,
+          "success": 48
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39198909741,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39198909741"
+      },
+      {
+        "api_head_sha": "e57ef16ed1aeff152d808aec407c1b6f86bfc6be",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T04:39:15Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 1,
+          "success": 48
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39196963896,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39196963896"
+      },
+      {
+        "api_head_sha": "2c5b18c23344b3a4c32faf2738e6c34064ab1af7",
+        "artifact_metadata_rows": 42,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T04:04:41Z",
+        "event": "push",
+        "job_conclusions": {
+          "cancelled": 4,
+          "failure": 12,
+          "skipped": 1,
+          "success": 44
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39194781902,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39194781902"
+      },
+      {
+        "api_head_sha": "5280ea324ec474e9d0644638565a2e5a01748b51",
+        "artifact_metadata_rows": 47,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-19T04:04:23Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 47
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39194059430,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39194059430"
+      },
+      {
+        "api_head_sha": "2743f17354ac13527d8d8919f81abc711396c959",
+        "artifact_metadata_rows": 46,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-18T14:24:47Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 12,
+          "skipped": 1,
+          "success": 48
+        },
+        "job_rows": 61,
+        "run_attempt": 1,
+        "run_id": 39132650260,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/39132650260"
+      },
+      {
+        "api_head_sha": "249f9657fb230947ba486fb3cd92894316f9acc3",
+        "artifact_metadata_rows": 34,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-16T09:53:52Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 45
+        },
+        "job_rows": 59,
+        "run_attempt": 1,
+        "run_id": 38878691465,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/38878691465"
+      },
+      {
+        "api_head_sha": "a478070509569c26917dd5fb13a548b1f68eade9",
+        "artifact_metadata_rows": 33,
+        "attempt_capture_state": "cancelled",
+        "census_state": "cancelled",
+        "census_updated_at": "2026-10-16T09:19:49Z",
+        "event": "workflow_dispatch",
+        "job_conclusions": {
+          "failure": 13,
+          "skipped": 1,
+          "success": 45
+        },
+        "job_rows": 59,
+        "run_attempt": 1,
+        "run_id": 38873978927,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/38873978927"
+      },
+      {
+        "api_head_sha": "8a031f443ac84850345a4cf0fb6ab5a8c3b32814",
+        "artifact_metadata_rows": 29,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-16T06:18:19Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 19,
+          "skipped": 1,
+          "success": 39
+        },
+        "job_rows": 59,
+        "run_attempt": 1,
+        "run_id": 38856570439,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/38856570439"
+      },
+      {
+        "api_head_sha": "33a1012767c9db5a46057280178134a544b86af7",
+        "artifact_metadata_rows": 0,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-16T03:32:15Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 2,
+          "skipped": 8
+        },
+        "job_rows": 10,
+        "run_attempt": 1,
+        "run_id": 38845886339,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/38845886339"
+      },
+      {
+        "api_head_sha": "5467c02d11f74efc1a85c833024efb654bbf98b5",
+        "artifact_metadata_rows": 24,
+        "attempt_capture_state": "failure",
+        "census_state": "failure",
+        "census_updated_at": "2026-10-16T01:56:42Z",
+        "event": "push",
+        "job_conclusions": {
+          "failure": 18,
+          "skipped": 1,
+          "success": 37
+        },
+        "job_rows": 56,
+        "run_attempt": 1,
+        "run_id": 38833746063,
+        "stable_attempt_capture": true,
+        "url": "https://github.com/chebizarro/nostrc/actions/runs/38833746063"
+      }
+    ],
+    "snapshot_completed_at": "2026-10-23T22:36:46.730361+00:00"
+  },
+  "source_sha": "eaa918a0ab5ffb757171922a690c629d919d4025",
+  "standalone_histories": {
+    "broad": {
+      "raw_sha256": "a2790a384d7d281e7395679000c35d27768d89dbd7052f725b8f4688beb59915",
+      "total_count": 0
+    },
+    "worker": {
+      "raw_sha256": "a2790a384d7d281e7395679000c35d27768d89dbd7052f725b8f4688beb59915",
+      "total_count": 0
+    }
+  },
+  "validated_PR23_attempt": {
+    "api_head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+    "artifact_source_scope": "API artifact workflow_run source bound once to API head above; root-scoped original artifacts, not inferred attempt attribution. Actual tested source comes from original plan and log/receipt bytes.",
+    "canonical_landing_commit_sha": "e8a1a571ca40792882cd07ce1ddec5cf9eb398f3",
+    "capture_completed_at": "2026-10-23T22:29:10.826952+00:00",
+    "complete": false,
+    "complete_gate_eligible": false,
+    "conclusion": "failure",
+    "job_conclusions": [
+      {
+        "id": 120653237585,
+        "name": "select",
+        "state": "success"
+      },
+      {
+        "id": 120653339860,
+        "name": "core / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653339921,
+        "name": "groundhog / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653339923,
+        "name": "core_asan / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653339972,
+        "name": "grotto_asan / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653339992,
+        "name": "groundhog_sanitizers / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653340092,
+        "name": "policy_regressions / regressions",
+        "state": "success"
+      },
+      {
+        "id": 120653340143,
+        "name": "grotto / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653340144,
+        "name": "core_native / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653340175,
+        "name": "libgo_native / execute",
+        "state": "success"
+      },
+      {
+        "id": 120653340196,
+        "name": "homed_units / execute",
+        "state": "success"
+      },
+      {
+        "id": 120653340229,
+        "name": "libgo / execute",
+        "state": "success"
+      },
+      {
+        "id": 120653340392,
+        "name": "mdk08 / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653340454,
+        "name": "mdk011 / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120653340604,
+        "name": "broad / gi / ubuntu-latest \u2022 GIR/typelib",
+        "state": "success"
+      },
+      {
+        "id": 120653340700,
+        "name": "broad / windows / Build Windows Installer",
+        "state": "success"
+      },
+      {
+        "id": 120653340712,
+        "name": "broad / appimage / Build and smoke test gnostr AppImage (x86_64)",
+        "state": "success"
+      },
+      {
+        "id": 120653340754,
+        "name": "broad / nip55l / refusing-session",
+        "state": "success"
+      },
+      {
+        "id": 120653340780,
+        "name": "broad / hanami / ubuntu-latest \u2022 libhanami",
+        "state": "success"
+      },
+      {
+        "id": 120653340798,
+        "name": "broad / fuzz / select-fuzz",
+        "state": "success"
+      },
+      {
+        "id": 120653340799,
+        "name": "broad / gi / macos-latest \u2022 GIR/typelib",
+        "state": "success"
+      },
+      {
+        "id": 120653340819,
+        "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=OFF \u2022 sqlcipher=ON \u2022 hooks=OFF",
+        "state": "success"
+      },
+      {
+        "id": 120653340822,
+        "name": "broad / appimage / Build and smoke test gnostr AppImage (aarch64)",
+        "state": "success"
+      },
+      {
+        "id": 120653340827,
+        "name": "broad / mdk08 / mdk-interop",
+        "state": "success"
+      },
+      {
+        "id": 120653340833,
+        "name": "broad / bp_extended / nightly-matrix",
+        "state": "success"
+      },
+      {
+        "id": 120653340841,
+        "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=ON \u2022 sqlcipher=ON \u2022 hooks=OFF",
+        "state": "success"
+      },
+      {
+        "id": 120653340861,
+        "name": "broad / hanami / macos-latest \u2022 libhanami",
+        "state": "success"
+      },
+      {
+        "id": 120653340892,
+        "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=OFF \u2022 sqlcipher=OFF \u2022 hooks=OFF",
+        "state": "success"
+      },
+      {
+        "id": 120653340912,
+        "name": "broad / signet / signet \u2022 Release \u2022 passkeys=ON \u2022 sqlcipher=ON \u2022 hooks=OFF",
+        "state": "success"
+      },
+      {
+        "id": 120653340938,
+        "name": "broad / bp / bp-matrix",
+        "state": "success"
+      },
+      {
+        "id": 120653340951,
+        "name": "broad / mdk011 / MDK 0.11 adopted matrix",
+        "state": "success"
+      },
+      {
+        "id": 120653340957,
+        "name": "broad / groundhog / groundhog-sanitizers",
+        "state": "success"
+      },
+      {
+        "id": 120653340982,
+        "name": "broad / signet / signet \u2022 Debug \u2022 passkeys=ON \u2022 sqlcipher=OFF \u2022 hooks=ON",
+        "state": "success"
+      },
+      {
+        "id": 120653340994,
+        "name": "broad / groundhog / groundhog",
+        "state": "success"
+      },
+      {
+        "id": 120653341002,
+        "name": "broad / static / regressions",
+        "state": "success"
+      },
+      {
+        "id": 120653341003,
+        "name": "broad / core / ubuntu-latest \u2022 asan_ubsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341053,
+        "name": "broad / libgo / linux \u2022 gofiber \u2022 asan_ubsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341068,
+        "name": "broad / libgo / macos-latest \u2022 fuzz-driver",
+        "state": "success"
+      },
+      {
+        "id": 120653341073,
+        "name": "broad / homed / build-and-test (ubuntu-24.04, ubuntu:24.04, apt-get update, apt-get install -y build-essential cm...",
+        "state": "success"
+      },
+      {
+        "id": 120653341094,
+        "name": "broad / libgo / ubuntu-latest \u2022 fuzz-driver",
+        "state": "success"
+      },
+      {
+        "id": 120653341097,
+        "name": "broad / homed / build-and-test (archlinux, archlinux:latest, pacman -Syu --noconfirm, pacman -S --noconfirm base-...",
+        "state": "success"
+      },
+      {
+        "id": 120653341099,
+        "name": "broad / libgo / ubuntu-latest \u2022 tsan_mpmc",
+        "state": "success"
+      },
+      {
+        "id": 120653341101,
+        "name": "broad / homed / systemd-opensession",
+        "state": "success"
+      },
+      {
+        "id": 120653341122,
+        "name": "broad / homed / build-and-test (fedora-40, fedora:40, dnf -y update, dnf -y install @development-tools cmake ninj...",
+        "state": "success"
+      },
+      {
+        "id": 120653341123,
+        "name": "broad / libgo / ubuntu-latest \u2022 tsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341127,
+        "name": "broad / homed / build-and-test (debian-bookworm, debian:bookworm, apt-get update, apt-get install -y build-essent...",
+        "state": "success"
+      },
+      {
+        "id": 120653341129,
+        "name": "broad / libgo / ubuntu-latest \u2022 asan_ubsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341181,
+        "name": "broad / core / macos-latest \u2022 asan_ubsan",
+        "state": "failure"
+      },
+      {
+        "id": 120653341188,
+        "name": "broad / libgo / macos-latest \u2022 asan_ubsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341189,
+        "name": "broad / libgo / macos-latest \u2022 tsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341205,
+        "name": "broad / libgo / linux \u2022 gofiber \u2022 tsan",
+        "state": "success"
+      },
+      {
+        "id": 120653341236,
+        "name": "broad / libgo / macos-latest \u2022 tsan_mpmc",
+        "state": "success"
+      },
+      {
+        "id": 120653341301,
+        "name": "broad / grotto / ubuntu-24.04 / tsan (ADVISORY, non-gating)",
+        "state": "success"
+      },
+      {
+        "id": 120653341407,
+        "name": "broad / grotto / ubuntu-24.04 / native",
+        "state": "success"
+      },
+      {
+        "id": 120653341442,
+        "name": "broad / grotto / ubuntu-latest / native",
+        "state": "success"
+      },
+      {
+        "id": 120653341477,
+        "name": "broad / grotto / ubuntu-24.04 / asan-ubsan",
+        "state": "success"
+      },
+      {
+        "id": 120657456039,
+        "name": "broad / fuzz / Fuzz nip49",
+        "state": "success"
+      },
+      {
+        "id": 120657456079,
+        "name": "broad / fuzz / Fuzz bip39",
+        "state": "success"
+      },
+      {
+        "id": 120657456133,
+        "name": "broad / fuzz / Fuzz json-event",
+        "state": "success"
+      },
+      {
+        "id": 120660920734,
+        "name": "policy / execute",
+        "state": "failure"
+      },
+      {
+        "id": 120667459791,
+        "name": "broad / fuzz / Generate coverage report",
+        "state": "success"
+      },
+      {
+        "id": 120677868542,
+        "name": "broad / Broad family accounting",
+        "state": "failure"
+      },
+      {
+        "id": 120687334416,
+        "name": "Dependency gate",
+        "state": "failure"
+      }
+    ],
+    "observed_allocated_job_minutes": 623.95,
+    "original_artifacts": [
+      {
+        "API_digest_and_size_and_ZIP_CRC_verified": true,
+        "api_bytes": 25155,
+        "api_digest": "sha256:54a3e4d40ee603c3cde62ab939a77473dbf4cd2cf798e8103c9226404f74c106",
+        "id": 12531985831,
+        "members": [
+          {
+            "bytes": 267292,
+            "name": "plan.json",
+            "sha256": "01f42cf02dca2532dfcbb70d9f6d273a5a9c4f0e93a6df2e6fee2999c3b0add5",
+            "validated_source": {
+              "effective_mode": "broad",
+              "event": {
+                "base_sha": "44044fefe9c40ac095044e9c22eb06f2678aab1f",
+                "kind": "pull_request",
+                "pr_head_sha": "05e82b6e09d6ef46aa21bc33ead60ebff0c485c1",
+                "tested_sha": "0609aa7be06845d23797eddfa067028ea89a2b94"
+              },
+              "head": "0609aa7be06845d23797eddfa067028ea89a2b94",
+              "inventory_hash": "c8165e5a92638a2a10718cc1b03fb8e625969d5b56f4a3777de12a921dbc120f",
+              "plan_id": "848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d",
+              "requested_mode": "affected",
+              "tested_sha": "0609aa7be06845d23797eddfa067028ea89a2b94"
+            }
+          }
+        ],
+        "name": "dependency-plan-848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d-1",
+        "zip_bytes": 25155,
+        "zip_sha256": "54a3e4d40ee603c3cde62ab939a77473dbf4cd2cf798e8103c9226404f74c106"
+      },
+      {
+        "API_digest_and_size_and_ZIP_CRC_verified": true,
+        "api_bytes": 419,
+        "api_digest": "sha256:0a755cc5015491556c71f6ed10d5a6c7ad5fdf3da197bb8793ebd604831c9415",
+        "id": 12533264747,
+        "members": [
+          {
+            "bytes": 501,
+            "name": "grotto.linux/worker.log",
+            "sha256": "009404fe94edceb2c13dc6681e5e65c35a758062e271aa5e1b408d622147c455",
+            "validated_disposition": {
+              "complete_coverage_claim": false,
+              "exit_code": 2,
+              "kind": "worker_log_only_failed_adapter_not_normalized_receipt",
+              "tested_source_sha": "0609aa7be06845d23797eddfa067028ea89a2b94"
+            }
+          }
+        ],
+        "name": "dependency-receipt-848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d-grotto.linux-1",
+        "zip_bytes": 419,
+        "zip_sha256": "0a755cc5015491556c71f6ed10d5a6c7ad5fdf3da197bb8793ebd604831c9415"
+      },
+      {
+        "API_digest_and_size_and_ZIP_CRC_verified": true,
+        "api_bytes": 430,
+        "api_digest": "sha256:b7d4337f62c291828e0d94b1048c2e184342afd1305a4da6dc370a94405e694b",
+        "id": 12533500937,
+        "members": [
+          {
+            "bytes": 505,
+            "name": "groundhog.mdk011/worker.log",
+            "sha256": "58d559ba111842ebb1fe3ebf2142d7626917a50a6997f753d6043fd10bb401d2",
+            "validated_disposition": {
+              "complete_coverage_claim": false,
+              "exit_code": 1,
+              "kind": "worker_log_only_failed_adapter_not_normalized_receipt",
+              "tested_source_sha": "0609aa7be06845d23797eddfa067028ea89a2b94"
+            }
+          }
+        ],
+        "name": "dependency-receipt-848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d-groundhog.mdk011-1",
+        "zip_bytes": 430,
+        "zip_sha256": "b7d4337f62c291828e0d94b1048c2e184342afd1305a4da6dc370a94405e694b"
+      },
+      {
+        "API_digest_and_size_and_ZIP_CRC_verified": true,
+        "api_bytes": 132584,
+        "api_digest": "sha256:eefe99e063a090e407f5ee727d1f6ee0af1dbd853ef447a4d9d06953831a6a64",
+        "id": 12534891235,
+        "members": [
+          {
+            "bytes": 634620,
+            "name": "static.policy/receipt.json",
+            "receipt_accounting": {
+              "checks": {
+                "selection.contract": {
+                  "expected_executions": [
+                    "selection.contract"
+                  ],
+                  "observed_executions": [],
+                  "outcome": "missing"
+                }
+              },
+              "complete": false,
+              "complete_gate_eligible": false,
+              "plan_id": "848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d",
+              "profile": "static.policy",
+              "schema_version": 1
+            },
+            "sha256": "686ece47661b97ccb4e64651a7d3338ee99761537eb268736f6064c39e13daa1"
+          },
+          {
+            "bytes": 65,
+            "name": "static.policy/worker.log",
+            "sha256": "89d3aca975691a97212cd87896a0ed81e65ab90f2e6763fce36b5b99dda1f496",
+            "validated_disposition": {
+              "complete_coverage_claim": false,
+              "exit_code": null,
+              "kind": "policy_container_physical_exit_failure",
+              "observed_error": "test-plan: policy container did not physically exit successfully"
+            }
+          }
+        ],
+        "name": "dependency-receipt-848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d-static.policy-1",
+        "zip_bytes": 132584,
+        "zip_sha256": "eefe99e063a090e407f5ee727d1f6ee0af1dbd853ef447a4d9d06953831a6a64"
+      },
+      {
+        "API_digest_and_size_and_ZIP_CRC_verified": true,
+        "api_bytes": 414,
+        "api_digest": "sha256:b4f50029b307a0f8a49aa262d681a3bee0c8e78edd35fe548eb2d697caf2b114",
+        "id": 12535452301,
+        "members": [
+          {
+            "bytes": 499,
+            "name": "core.linux/worker.log",
+            "sha256": "8db9cd48a9e50d7b67215929594c4f20664e705af392ea1b5b61e7eb420114ea",
+            "validated_disposition": {
+              "complete_coverage_claim": false,
+              "exit_code": 1,
+              "kind": "worker_log_only_failed_adapter_not_normalized_receipt",
+              "tested_source_sha": "0609aa7be06845d23797eddfa067028ea89a2b94"
+            }
+          }
+        ],
+        "name": "dependency-receipt-848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d-core.linux-1",
+        "zip_bytes": 414,
+        "zip_sha256": "b4f50029b307a0f8a49aa262d681a3bee0c8e78edd35fe548eb2d697caf2b114"
+      }
+    ],
+    "plan_id": "848efedd9b31311d987ecb2f20126ce68d42c95917f727a66059a865f83d489d",
+    "run_attempt": 1,
+    "run_id": 40023343699,
+    "snapshot_updated_at": "2026-10-23T22:26:36Z",
+    "source_bound_tested_merge_sha": "0609aa7be06845d23797eddfa067028ea89a2b94",
+    "stable_capture": true,
+    "status": "completed",
+    "timing_disposition": "failed root allocation intervals, not billed time, DAG critical path, product samples or runner-union savings"
+  }
+}

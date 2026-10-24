@@ -7,6 +7,7 @@ Use an empty output directory; failures and original inputs are retained. Cutove
 support only emits unapplied patches; it never changes GitHub or active policy.
 """
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -52,6 +53,10 @@ class CommandTimeout(ValueError):
     pass
 
 
+class CommandInterrupted(CommandTimeout):
+    """An owned command stopped by cancellation; handled exactly like a timeout."""
+
+
 def command(argv, cwd, prefix, timeout=120, env=None):
     start = time.monotonic()
     if os.name != "posix":
@@ -95,7 +100,8 @@ def command(argv, cwd, prefix, timeout=120, env=None):
               "custody_scope": "owned_posix_process_group_not_kernel_namespace"}
     write(prefix.with_suffix(".process.json"), record)
     if timed_out or interrupted:
-        raise CommandTimeout(f"command timed out; cohort stopped; see {prefix}.process.json")
+        raise (CommandInterrupted if interrupted else CommandTimeout)(
+            f"command timed out; cohort stopped; see {prefix}.process.json")
     if code:
         raise ValueError(f"command failed ({code}); see {prefix}.stderr")
     return stdout
@@ -633,6 +639,141 @@ def execute_locked(args, out):
     return result
 
 
+def matrix(args, out):
+    """Serial capture of an explicit same-source schedule, never a recipe generator."""
+    raw = Path(args.manifest).read_bytes()
+    (out / "manifest.json").write_bytes(raw)
+    manifest = json.loads(raw)
+    if not isinstance(manifest, dict) or manifest.get("kind") != "w11_physical_matrix_v1" or not isinstance(manifest.get("entries"), list):
+        raise ValueError("explicit w11_physical_matrix_v1 entries required")
+    repository = manifest["repository"]
+    if not isinstance(repository, str) or not re.fullmatch(r"[\w.-]+/[\w.-]+", repository):
+        raise ValueError("invalid repository")
+    scheduled, identities, pairs = [], set(), {}
+    contracts = out / "contracts"
+    contracts.mkdir()
+    for index, entry in enumerate(manifest["entries"]):
+        path = Path(entry["contract"])
+        repo = Path(entry["repo"])
+        if not path.is_absolute() or not repo.is_absolute():
+            raise ValueError("matrix checkout/contract paths must be absolute")
+        contract_raw = path.read_bytes()
+        retained = contracts / f"{index:04d}.json"
+        retained.write_bytes(contract_raw)
+        if digest(contract_raw) != entry["contract_sha256"]:
+            raise ValueError("matrix contract digest mismatch")
+        c = json.loads(contract_raw)
+        if (not isinstance(c, dict) or c.get("kind") != "w11_physical_contract_v1" or c["condition"] not in CONDITIONS
+                or c["cache_state"] not in ("clean", "incremental") or c["route"] not in ("legacy", "selected")
+                or type(c["sample"]) is not int or c["sample"] < 1
+                or not isinstance(c["pair_id"], str) or not c["pair_id"]
+                or type(entry["pull"]) is not int or entry["pull"] < 1):
+            raise ValueError("invalid matrix contract identity")
+        immutable(c["candidate_sha"])
+        # A renamed pair is still the same sample slot, not an independent retry.
+        key = (c["condition"], c["cache_state"], c["sample"])
+        identity = key + (c["route"],)
+        if identity in identities:
+            raise ValueError("duplicate matrix sample/retry slot")
+        identities.add(identity)
+        pair = pairs.setdefault(key, {})
+        if pair:
+            other, other_entry = next(iter(pair.values()))
+            if (any(c[k] != other[k] for k in ("candidate_sha", "pair_id", "profile", "environment", "tool_probes"))
+                    or entry["pull"] != other_entry["pull"]):
+                raise ValueError("matrix pair source/PR/profile/environment/tool identity differs")
+        pair[c["route"]] = (c, entry)
+        scheduled.append({"index": index, "repo": str(repo.resolve()), "pull": entry["pull"],
+                          "contract": str(retained), "contract_sha256": digest(contract_raw),
+                          "condition": c["condition"], "cache_state": c["cache_state"],
+                          "route": c["route"], "sample": c["sample"], "status": "not_run"})
+    cells = [{"condition": condition, "cache_state": cache,
+              "planned_pairs": sum(k[:2] == (condition, cache) and set(v) == {"legacy", "selected"}
+                                   for k, v in pairs.items())}
+             for condition in CONDITIONS for cache in ("clean", "incremental")]
+    ready = all(c["planned_pairs"] >= 5 for c in cells) and all(len(v) == 2 for v in pairs.values())
+    result = {"kind": "w11_physical_matrix_capture_v1", "manifest_sha256": digest(raw),
+              "schedule_ready": ready, "execute_requested": args.execute, "cells": cells, "entries": scheduled,
+              "complete": False, "complete_gate_eligible": False, "qualifying_comparisons": 0,
+              "qualifying_broad_integrations": 0,
+              "limits": "Schedule readiness is not recipe/cache/capability approval or a CPU/Docker slot grant. "
+                        "No checkout provisioning, cache reset, source transplant or historical engine override. "
+                        "Uses existing endpoint-only local executor; full coverage/runner-union/critical-path review remains required."}
+    write(out / "result.json", result)
+    if not ready or not args.execute:
+        return result
+    sample_paths, active, cancelled = [], None, False
+    try:
+        # Keep all common-repository locks across the cohort, not just within a phase.
+        with contextlib.ExitStack() as stack:
+            lock_paths = set()
+            for entry in scheduled:
+                common = Path(git(entry["repo"], "rev-parse", "--git-common-dir").decode().strip())
+                if not common.is_absolute():
+                    common = Path(entry["repo"]) / common
+                lock_paths.add(common.resolve() / "w11-measurement.lock")
+            for path in sorted(lock_paths):
+                handle = stack.enter_context(path.open("a"))
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise ValueError("another measurement owns a matrix repository; no overlapping samples") from exc
+            for entry in scheduled:
+                active = entry
+                child = out / f"sample-{entry['index']:04d}"
+                child.mkdir()
+                # Retain only the exact admitted contract, including on later preflight failure.
+                admitted = Path(entry["contract"]).read_bytes()
+                if digest(admitted) != entry["contract_sha256"]:
+                    raise ValueError("retained matrix contract changed after schedule admission")
+                (child / "contract.json").write_bytes(admitted)
+                child_args = argparse.Namespace(repo=entry["repo"], pull=entry["pull"],
+                                                contract=str(child / "contract.json"), repository=repository)
+                try:
+                    sample = execute_locked(child_args, child)
+                    sample_paths.append(str(child / "result.json"))
+                    entry["status"] = "passed" if sample["execution_passed"] else "failed"
+                    # command() captures a running-phase interrupt as interrupted:true
+                    # in the child's process record; that is cancellation, not an
+                    # ordinary workload failure.
+                    interrupted = [phase["phase"] for phase in sample.get("phases", [])
+                                   if (phase.get("process") or {}).get("interrupted") is True]
+                    if interrupted:
+                        cancelled = True
+                        entry["status"] = "failed"
+                        write(child / "cancellation.json", {"cancelled": True, "interrupted_phases": interrupted,
+                                                            "process_records": [str(child / (name + ".process.json"))
+                                                                                for name in interrupted],
+                                                            "complete": False})
+                except (ValueError, OSError, KeyError, TypeError, KeyboardInterrupt, subprocess.SubprocessError) as exc:
+                    interrupt = isinstance(exc, (KeyboardInterrupt, CommandInterrupted))
+                    cancelled = cancelled or interrupt
+                    write(child / "failure.json", {"error": str(exc), "cancelled": interrupt, "complete": False})
+                    sample_paths.append(str(child / "failure.json"))
+                    entry.update(status="failed", error=str(exc))
+                if cancelled:
+                    entry["cancelled"] = True
+                    result["cancelled"] = True
+                write(out / "result.json", result)
+                active = None
+                if entry["status"] == "failed":
+                    break  # No retry, replacement sample, or later workload after failure/cancellation.
+        result["execution_passed"] = not cancelled and all(e["status"] == "passed" for e in scheduled)
+        result["cancelled"] = cancelled
+        result["measurement_report"] = measurement_report(sample_paths)
+        result["measurement_matrix_satisfied"] = result["measurement_report"]["measurement_matrix_satisfied"]
+        write(out / "result.json", result)
+    except (ValueError, OSError, KeyError, TypeError, KeyboardInterrupt, subprocess.SubprocessError) as exc:
+        if active is not None and active["status"] == "not_run":
+            active.update(status="failed", error=str(exc))
+        result.update(execution_passed=False, measurement_matrix_satisfied=False,
+                      cohort_error=str(exc), cancelled=cancelled or isinstance(exc, KeyboardInterrupt),
+                      retained_sample_paths=sample_paths)
+        write(out / "failure.json", {"error": str(exc), "cancelled": result["cancelled"], "complete": False})
+        write(out / "result.json", result)
+    return result
+
+
 def measurement_report(paths):
     """Descriptive paired data only. Never allows user-supplied `complete` to promote samples."""
     samples, identities, pairs, preflight_failures = [], set(), {}, []
@@ -653,7 +794,7 @@ def measurement_report(paths):
                 or not math.isfinite(sample["serial_wall_seconds"]) or sample["serial_wall_seconds"] < 0):
             raise ValueError("invalid physical sample condition/route/identity/outcome/timing")
         key = (sample["condition"], sample["cache_state"], sample["pair_id"], sample["sample"])
-        identity = key + (sample["route"],)
+        identity = (sample["condition"], sample["cache_state"], sample["sample"], sample["route"])
         if identity in identities:
             raise ValueError("duplicate sample/retry; retain failed attempt separately, never overwrite")
         identities.add(identity)
@@ -702,6 +843,8 @@ def measurement_report(paths):
             rows.append(row)
     return {"kind": "w11_unreviewed_paired_measurements_v1", "cells": rows, "inputs": samples,
             "unpaired_samples": incomplete, "preflight_failures": preflight_failures,
+            "measurement_matrix_satisfied": not incomplete and not preflight_failures and all(
+                r["successful_pairs"] >= 5 and not r["failed_pairs"] for r in rows),
             "complete": False, "complete_gate_eligible": False,
             "qualifying_comparisons": 0, "qualifying_broad_integrations": 0,
             "limits": "Descriptive serial phase/wall measurements only. No PR provenance, recipe, "
@@ -881,13 +1024,16 @@ def main():
     ep.add_argument("--pull", type=int, required=True)
     mp = sub.add_parser("measurements", help="Account paired physical samples, failures and all 14 clean/incremental cells")
     mp.add_argument("--sample", action="append", required=True)
+    mx = sub.add_parser("matrix", help="Validate all 14 five-pair cells; optionally capture serial reviewed contracts without retries")
+    mx.add_argument("--manifest", required=True)
+    mx.add_argument("--execute", action="store_true", help="requires parent exclusive slot and reviewed recipes; default only checks schedule")
     wp = sub.add_parser("prepare-cutover", help="Generate source-bound forward/rollback patches; NEVER apply or mutate GitHub")
     wp.add_argument("--repo", required=True)
     wp.add_argument("--sha", required=True)
     wp.add_argument("--protection", help="retained GET branch protection JSON; 404 leaves server patch blocked")
     wp.add_argument("--app-id", type=int, help="actual observed check-run app.id")
     wp.add_argument("--obsolete-context", action="append", help="only these explicitly reviewed old Actions contexts may be removed")
-    for cmd in (rp, jp, sp, ip, cp, cn, ep, mp, wp):
+    for cmd in (rp, jp, sp, ip, cp, cn, ep, mp, mx, wp):
         cmd.add_argument("--output", required=True, help="new retained evidence directory")
     args = parser.parse_args()
     out = Path(args.output).resolve()
@@ -896,7 +1042,7 @@ def main():
                                 "python": sys.version, "python_executable": str(Path(sys.executable).resolve()),
                                 "python_sha256": digest(Path(sys.executable).resolve().read_bytes()),
                                 "started_at": dt.datetime.now(dt.timezone.utc).isoformat()})
-    if args.operation == "execute":
+    if args.operation in ("execute", "matrix"):
         def interrupted(signum, frame):
             raise KeyboardInterrupt("measurement cancelled")
         signal.signal(signal.SIGTERM, interrupted)
@@ -909,6 +1055,8 @@ def main():
             result = census(args, out)
         elif args.operation == "execute":
             result = execute(args, out)
+        elif args.operation == "matrix":
+            result = matrix(args, out)
         elif args.operation == "measurements":
             result = measurement_report(args.sample)
         elif args.operation == "prepare-cutover":
@@ -924,7 +1072,8 @@ def main():
             result["input_sha256"] = digest(raw)
         write(out / "result.json", result)
         print(out / "result.json")
-        return int(result.get("execution_passed") is False or
+        return int(result.get("execution_passed") is False or result.get("schedule_ready") is False or
+                   result.get("measurement_matrix_satisfied") is False or
                    any(c["replay_status"] == "failed" for c in result.get("candidates", [])))
     except (ValueError, OSError, KeyError, TypeError, KeyboardInterrupt, zipfile.BadZipFile, subprocess.SubprocessError) as exc:
         write(out / "failure.json", {"error": str(exc), "complete": False})

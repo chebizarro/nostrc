@@ -8032,7 +8032,20 @@
         "{source}/tests/selection/test_homed_ci_worker.py",
         "{source}/tests/selection/post1640_integration_support.py",
         "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
-        "{source}/tests/selection/test_post1640_integration.py"
+        "{source}/tests/selection/test_post1640_integration.py",
+        "{source}/tests/selection/mdk011_app_enrollment_support.py",
+        "{source}/tests/selection/fixtures/mdk011_app_enrollment_20261024.json",
+        "{source}/tests/selection/test_mdk011_app_enrollment.py",
+        "{source}/tests/selection/coreasan_app_enrollment_support.py",
+        "{source}/tests/selection/fixtures/coreasan_app_enrollment_20261024.json",
+        "{source}/tests/selection/test_coreasan_app_enrollment.py",
+        "{source}/tests/selection/worker_prerequisite_support.py",
+        "{source}/tests/selection/fixtures/worker_prerequisite_20261024.json",
+        "{source}/tests/selection/test_worker_prerequisites.py",
+        "{source}/tests/selection/test_w11_matrix.py",
+        "{source}/tests/selection/w11_matrix_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_matrix_integration_20261024.json",
+        "{source}/tests/selection/test_w11_matrix_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -16395,9 +16408,11 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16410,10 +16425,16 @@
         "core.linux": [
           "test-bc-blob-store"
         ],
+        "core.linux.asan": [
+          "test-bc-blob-store"
+        ],
         "grotto.linux.asan_ubsan": [
           "test-bc-blob-store"
         ],
         "groundhog.mdk08": [
+          "test-bc-blob-store"
+        ],
+        "groundhog.mdk011": [
           "test-bc-blob-store"
         ]
       },
@@ -16431,9 +16452,11 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16446,10 +16469,16 @@
         "core.linux": [
           "grelay_ingress_security"
         ],
+        "core.linux.asan": [
+          "grelay_ingress_security"
+        ],
         "grotto.linux.asan_ubsan": [
           "grelay_ingress_security"
         ],
         "groundhog.mdk08": [
+          "grelay_ingress_security"
+        ],
+        "groundhog.mdk011": [
           "grelay_ingress_security"
         ]
       },
@@ -16469,9 +16498,11 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16486,11 +16517,19 @@
           "grotto_app_dbus_service_configured",
           "grotto_dbus_service_configured"
         ],
+        "core.linux.asan": [
+          "grotto_app_dbus_service_configured",
+          "grotto_dbus_service_configured"
+        ],
         "grotto.linux.asan_ubsan": [
           "grotto_app_dbus_service_configured",
           "grotto_dbus_service_configured"
         ],
         "groundhog.mdk08": [
+          "grotto_app_dbus_service_configured",
+          "grotto_dbus_service_configured"
+        ],
+        "groundhog.mdk011": [
           "grotto_app_dbus_service_configured",
           "grotto_dbus_service_configured"
         ]
@@ -16508,9 +16547,11 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -16530,6 +16571,15 @@
           "nostr_signer_webext_host_router",
           "nostr_signer_webext_host_webln"
         ],
+        "core.linux.asan": [
+          "nostr_signer_webext_extension_policy",
+          "nostr_signer_webext_extension_webln",
+          "nostr_signer_webext_host_errors",
+          "nostr_signer_webext_host_framing",
+          "nostr_signer_webext_host_policy",
+          "nostr_signer_webext_host_router",
+          "nostr_signer_webext_host_webln"
+        ],
         "grotto.linux.asan_ubsan": [
           "nostr_signer_webext_extension_policy",
           "nostr_signer_webext_extension_webln",
@@ -16540,6 +16590,15 @@
           "nostr_signer_webext_host_webln"
         ],
         "groundhog.mdk08": [
+          "nostr_signer_webext_extension_policy",
+          "nostr_signer_webext_extension_webln",
+          "nostr_signer_webext_host_errors",
+          "nostr_signer_webext_host_framing",
+          "nostr_signer_webext_host_policy",
+          "nostr_signer_webext_host_router",
+          "nostr_signer_webext_host_webln"
+        ],
+        "groundhog.mdk011": [
           "nostr_signer_webext_extension_policy",
           "nostr_signer_webext_extension_webln",
           "nostr_signer_webext_host_errors",
@@ -18144,8 +18203,10 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18155,10 +18216,16 @@
         "core.linux": [
           "nostr_signer_webext_host_e2e"
         ],
+        "core.linux.asan": [
+          "nostr_signer_webext_host_e2e"
+        ],
         "grotto.linux.asan_ubsan": [
           "nostr_signer_webext_host_e2e"
         ],
         "groundhog.mdk08": [
+          "nostr_signer_webext_host_e2e"
+        ],
+        "groundhog.mdk011": [
           "nostr_signer_webext_host_e2e"
         ]
       },
@@ -18187,8 +18254,10 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18196,6 +18265,22 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "signer/blueprint-drift",
+          "signer/bunker",
+          "signer/bunker-startup",
+          "signer/core",
+          "signer/crypto",
+          "signer/hsm-provider",
+          "signer/identity",
+          "signer/legacy-dirs",
+          "signer/profile-guard",
+          "signer/rate-limiter",
+          "signer/secure-mem",
+          "signer/session",
+          "signer/signer-core",
+          "signer/social-recovery"
+        ],
+        "core.linux.asan": [
           "signer/blueprint-drift",
           "signer/bunker",
           "signer/bunker-startup",
@@ -18227,6 +18312,22 @@
           "signer/social-recovery"
         ],
         "groundhog.mdk08": [
+          "signer/blueprint-drift",
+          "signer/bunker",
+          "signer/bunker-startup",
+          "signer/core",
+          "signer/crypto",
+          "signer/hsm-provider",
+          "signer/identity",
+          "signer/legacy-dirs",
+          "signer/profile-guard",
+          "signer/rate-limiter",
+          "signer/secure-mem",
+          "signer/session",
+          "signer/signer-core",
+          "signer/social-recovery"
+        ],
+        "groundhog.mdk011": [
           "signer/blueprint-drift",
           "signer/bunker",
           "signer/bunker-startup",
@@ -18272,8 +18373,10 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18285,12 +18388,22 @@
           "signer/qr-scanner",
           "signer/ui"
         ],
+        "core.linux.asan": [
+          "signer/approval-dialog",
+          "signer/qr-scanner",
+          "signer/ui"
+        ],
         "grotto.linux.asan_ubsan": [
           "signer/approval-dialog",
           "signer/qr-scanner",
           "signer/ui"
         ],
         "groundhog.mdk08": [
+          "signer/approval-dialog",
+          "signer/qr-scanner",
+          "signer/ui"
+        ],
+        "groundhog.mdk011": [
           "signer/approval-dialog",
           "signer/qr-scanner",
           "signer/ui"
@@ -18328,8 +18441,10 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18345,6 +18460,15 @@
           "signer/ui-accessibility",
           "signer/ui-layout"
         ],
+        "core.linux.asan": [
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/desktop-contract",
+          "signer/identity-model",
+          "signer/onboarding",
+          "signer/ui-accessibility",
+          "signer/ui-layout"
+        ],
         "grotto.linux.asan_ubsan": [
           "signer/desktop-contract",
           "signer/identity-model",
@@ -18352,6 +18476,16 @@
           "signer/ui-layout"
         ],
         "groundhog.mdk08": [
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/desktop-contract",
+          "signer/identity-model",
+          "signer/onboarding",
+          "signer/room-flow",
+          "signer/ui-accessibility",
+          "signer/ui-layout"
+        ],
+        "groundhog.mdk011": [
           "signer/approval-controller",
           "signer/approval-integration",
           "signer/desktop-contract",
@@ -18398,8 +18532,10 @@
       ],
       "profiles": [
         "core.linux",
+        "core.linux.asan",
         "grotto.linux.asan_ubsan",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.mdk011"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -18407,6 +18543,17 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "signer/activity",
+          "signer/background",
+          "signer/bunker-e2e",
+          "signer/bunker-headless",
+          "signer/clients",
+          "signer/dbus",
+          "signer/home-model",
+          "signer/identity-management",
+          "signer/session-lock"
+        ],
+        "core.linux.asan": [
           "signer/activity",
           "signer/background",
           "signer/bunker-e2e",
@@ -18425,6 +18572,17 @@
           "signer/session-lock"
         ],
         "groundhog.mdk08": [
+          "signer/activity",
+          "signer/background",
+          "signer/bunker-e2e",
+          "signer/bunker-headless",
+          "signer/clients",
+          "signer/dbus",
+          "signer/home-model",
+          "signer/identity-management",
+          "signer/session-lock"
+        ],
+        "groundhog.mdk011": [
           "signer/activity",
           "signer/background",
           "signer/bunker-e2e",
@@ -21529,6 +21687,20 @@
       "exact": "docs/reviews/dependency-aware-testing-w11-e-evidence-2026-10-23.json",
       "nodes": [],
       "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-p3-evidence-2026-10-24.json",
+      "nodes": [],
+      "reason": "Source-bound machine-readable diagnostic provenance, not executable coverage or a prose exemption."
+    },
+    {
+      "effect": "global",
+      "exact": "docs/reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Executable W11 matrix manifest read by tests/selection/test_w11_matrix.py and scripts/w11-evidence.py matrix --manifest; explicit broad validation, never recipe/schedule approval or measurement acceptance."
     },
     {
       "effect": "global",
@@ -27576,9 +27748,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "fcf6ac4f6d1011bee1f4706360de3ccad87f0d2821dad67d18b5363b03cf273d",
+      "source_sha256": "4960e3d34b17ad9827972b5450d445b7431c2054ff566012ffed156575ef6ef0",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "e7aeed2ec2c8109949bc192fd0ee1c45b7eca8a083911f10e1db5c408f5292f9"
+      "workflow_sha256": "16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",

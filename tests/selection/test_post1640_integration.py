@@ -125,11 +125,13 @@ class Post1640Integration(unittest.TestCase):
         self.assertEqual(wave.before_jobs(bad)['unknown:job'], bad['unknown:job'])
 
     def test_original_witnesses_and_author_production_bytes_unchanged(self):
+        from worker_prerequisite_support import before_source as before_newer_source
         data = wave.witness()
         for field in ('protected_witnesses', 'author_sources'):
             for path, digest in data[field].items():
                 with self.subTest(field=field, path=path):
-                    self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest)
+                    raw = before_newer_source(path, (ROOT / path).read_bytes())
+                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)
 
     def test_new_runtime_inputs_have_live_command_ownership(self):
         policy = self.policy()

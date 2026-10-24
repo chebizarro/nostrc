@@ -1,3 +1,105 @@
+## P3 finite capture and dated measurement readiness — 2026-10-24 local
+
+**Editorial follow-up to `e1891b4b4`, not new acceptance evidence:** the public
+[P3 JSON](dependency-aware-testing-w11-p3-evidence-2026-10-24.json) is curated to
+2,845 lines / 114,385 bytes. Repeated raw API/job/artifact payloads are not public
+acceptance proof. All **1,421 original capture files (55,189,448 bytes)** and the
+complete pre-curation JSON remain in protected local evidence at
+`/Users/bizarro/Library/Application Support/RepoPrompt CE/evidence/nostrc/p3-w11-20261024-e1891b4b4-curated`.
+Its `manifest.json` SHA256 is
+`28ac1461462d681f10afc07b6b801042e5d3c91526760fe18bb63d6a15e3028c`;
+all 1,425 listed files were hash/size verified, with directories0700/files0600.
+The directory is durable local custody, not independent immutable/remote storage.
+Public evidence retains source/UTC/root/job conclusions, the five validated
+original artifact IDs/digests/bytecounts/member dispositions, all23 real PR
+candidate dispositions and unchanged old-snapshot linkage. The adjacent
+`bounded-review.md`, `bounded-source-final.diff` and `test-manifest.json` preserve
+the existing bounded review and43 fixture test records. The diff is final source
+for parent inspection, not a claim that post-review fixes were re-reviewed.
+No raw evidence was deleted and no collection, review, tests, fullsuite or native
+build was rerun for curation. The existing dated counts/limits below are unchanged;
+parent owns the combined fullsuite/native build before push.
+
+Source `eaa918a0ab5ffb757171922a690c629d919d4025`; bead `nostrc-0cfsg.36.14`.
+Closing UTC census **2026-10-23T22:36:46.730361Z: 64 distinct roots = 61
+failed + one cancelled + one pending + one queued**, zero successful roots.
+This is a dated sequential observation, **not a live counter**. The separate
+22:23:35Z census was 64 = 60 failed + one cancelled + three nonterminal.
+The old **21:38:19Z / 63-root** snapshot below and its evidence object are
+unchanged. All 63 identities survive; the only added root is
+[40029853925](https://github.com/chebizarro/nostrc/actions/runs/40029853925),
+API head `eaa918a0a`, still pending in the closing census.
+
+Single-pass attempt-specific collection retained **3,757 job rows** (2,770
+success, 818 failure, 32 cancelled, 99 skipped, 38 nonterminal) and **2,739
+artifact metadata rows**. These are not 3,757 integrations or downloaded
+artifacts. **63/64** collections have stable before/after attempt observations.
+The final read for [39696789681](https://github.com/chebizarro/nostrc/actions/runs/39696789681)
+failed with a TLS handshake timeout; earlier raw job/artifact data and the failed
+process/streams remain. No retry was made and final stability is unverified.
+Standalone broad and worker histories each returned zero roots at 22:34:39Z;
+this does not mean their nested jobs did not execute.
+
+A later, separately retained [PR23 collection](https://github.com/chebizarro/nostrc/actions/runs/40023343699)
+observed **completed/failure**, updated 22:26:36Z, with 63 job rows and **623.95
+observed allocated job-minutes**. This is neither billed runner cost, DAG
+critical path, successful complete coverage nor a product benchmark. Original
+plan artifact **12531985831** still binds tested merge `0609aa7be06845d23797eddfa067028ea89a2b94`
+and API head `05e82b6e09d6ef46aa21bc33ead60ebff0c485c1`; neither is relabelled as
+landing `e8a1a571c` or current source `eaa918a0a`.
+
+Five explicitly requested original archives passed **API digest + exact size +
+ZIP CRC + every member SHA256**: plan12531985831, core12535452301,
+policy12534891235, Grotto12533264747, MDK01112533500937. The three worker-log-only
+archives report actual failed adapters, not normalized passing receipts;
+policy reports missing `selection.contract` and both incomplete flags. No
+unfetched artifact or passing sibling replaces these failures.
+
+[Machine evidence](dependency-aware-testing-w11-p3-evidence-2026-10-24.json)
+retains exact root/job/artifact identities, raw capture hashes, all **23 real
+merged PR** head/merge/first-parent/tree/diff-path dispositions, and verified
+archive/member proofs. Raw captures remain local under
+`/tmp/nostrc-p3-{census,hosted,pr23-originals,closing-census}-20261024`; temporary
+files and GitHub retention are not permanent artifact custody.
+
+The [executable outstanding matrix](dependency-aware-testing-w11-p3-matrix-2026-10-24.json)
+names **seven classes × clean/incremental × five paired sample slots**: 70 pairs,
+140 route invocations, all currently blocked with null physical values. Run:
+
+```sh
+python3 scripts/w11-evidence.py matrix \
+  --manifest docs/reviews/dependency-aware-testing-w11-p3-matrix-2026-10-24.json \
+  --output /tmp/w11-p3-readiness-NEW
+# Expected exit 1, retained result.json: 14 cells, zero approved scheduled pairs.
+```
+
+Parent explicitly confirmed **no approved exact physical legacy/selected pair,
+no heavy slot, and PR23 must not count as representative product work**. PR1–22
+have no original `normal_selected_execution` profile markers; overlaying today's
+engine would broaden authority. PR23 has seven original Linux/x86_64 selected
+markers but is mixed CI/control work, not a substitute for seven representative
+product classes. A future approved original-source recipe is required; changing
+cache/runner/source labels or manufacturing PRs is not a workaround. Native
+Darwin/arm64, native Linux/x86_64 and amd64 emulation are distinct. A local
+single-profile matrix does not measure the legacy native runner/profile union.
+
+The matrix driver demonstrably runs only labelled small **nonacceptance
+fixtures** here. It retains admitted contracts, holds common-repository locks,
+stops on first failure/cancellation and leaves later slots `not_run`; renamed
+retries refuse. Missing/failed matrix reports exit nonzero. The bounded review
+found nested-report exit propagation and cohort-finalization cancellation gaps;
+both were repaired and regressed. **36 matrix/measurement + seven existing
+collector tests passed**; no product build, heavy gate or benchmark ran.
+
+**0/20 reviewed qualifying distinct PR comparisons; 0/2 successful complete
+broad integrations; 0 real product benchmark pairs. W11 NOT MET / W12 NOT RUN.**
+Minimum five samples, all seven classes, >=30% Grotto / >=25% non-MLS Groundhog
+aggregate savings, zero unrelated selected live MDK and <=10% critical-path /
+unjustified broad median regression limits remain unchanged. P1/P2 retain
+engine/worker/profile and original MDK ownership. No shared files, default,
+protection, publisher or component version changed. Physical measurement work
+remains in `.36.14` after profile/MDK repairs and parent recipe/slot approval.
+
 ## PR23 final source and merge — 2026-10-23
 
 Landing: PR23 → `e8a1a571ca40792882cd07ce1ddec5cf9eb398f3`, 21:28:52Z.
