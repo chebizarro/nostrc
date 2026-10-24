@@ -50,9 +50,9 @@ BINDING_KEYS = {"source_sha256", "registration_sha256", "selection_metadata_sha2
 VARIANT = {"platform": "macos", "architecture": "arm64", "compiler": "clang", "build_type": "Debug",
            "instrumentation": "asan_ubsan", "source_dir": ".", "setup": LEGACY_JOB}
 # The unconfigured branch whose exit 77 the legacy job observed, preceded by the
-# resource-scheduled skip that never falls back to inherited credentials.
+# resource-scheduled failure that never skips or falls back to inherited credentials.
 UNCONFIGURED = re.compile(
-    r'if \(getenv\("CTEST_RESOURCE_GROUP_COUNT"\)\) \{[^{}]*?return 77;[^{}]*?\}\s*'
+    r'if \(getenv\("CTEST_RESOURCE_GROUP_COUNT"\)\) \{[^{}]*?return 1;[^{}]*?\}\s*'
     r'const char \*ep = getenv\("NOSTR_SIGNER_ENDPOINT"\);\s*'
     r'const char \*tok = getenv\("NOSTR_SIGNER_TOKEN"\);\s*'
     r'if \(!ep \|\| strncmp\(ep, "tcp:", 4\) != 0 \|\| !tok \|\| !\*tok\) \{[^{}]*?return 77;[^{}]*?\}')
@@ -75,7 +75,7 @@ AUTHORED_RECORD = {
                "Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage."),
     "tracking": TRACKING,
     "binding": {
-        "source_sha256": "1721a905f7fcb1007be4e393c55349e3f71c9cd957242623536e84dc3a8c0984",
+        "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
         "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
         "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",

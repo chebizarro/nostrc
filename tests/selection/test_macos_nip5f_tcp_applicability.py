@@ -28,7 +28,7 @@ AUTHORED_RECORD = {
                "Accounted not_executed/nonvalidation: never passed, skipped-as-pass or signing coverage."),
     "tracking": "nostrc-0cfsg.36.9",
     "binding": {
-        "source_sha256": "1721a905f7fcb1007be4e393c55349e3f71c9cd957242623536e84dc3a8c0984",
+        "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
         "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
         "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
@@ -146,8 +146,10 @@ class PolicyApplicabilityTests(unittest.TestCase):
         text = (ROOT / a.SOURCE).read_text()
         self.assertRegex(text, a.UNCONFIGURED)
         self.assertNotRegex(text.replace("return 77;", "return 0;", 1), a.UNCONFIGURED)
-        last = text.rindex("return 77;")
-        self.assertNotRegex(text[:last] + "return 0;" + text[last + len("return 77;"):], a.UNCONFIGURED)
+        scheduled = text.index('if (getenv("CTEST_RESOURCE_GROUP_COUNT")) {')
+        failure = text.index("return 1;", scheduled)
+        # A resource-scheduled run without its allocation must fail, never skip.
+        self.assertNotRegex(text[:failure] + "return 77;" + text[failure + len("return 1;"):], a.UNCONFIGURED)
         self.assertNotRegex(text.replace('if (getenv("CTEST_RESOURCE_GROUP_COUNT")) {', "{", 1), a.UNCONFIGURED)
         self.assertNotRegex(text.replace('strncmp(ep, "tcp:", 4) != 0 || ', "", 1), a.UNCONFIGURED)
         self.assertIn(a.LEGACY_REGISTRATION, (ROOT / a.REGISTRATION_FILE).read_text())

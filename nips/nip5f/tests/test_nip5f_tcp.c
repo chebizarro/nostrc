@@ -25,7 +25,8 @@ static int tcp_connect(const char *host, unsigned short port) {
  * RESOURCE_GROUPS nip5f_signer:1, and the engine's resource spec carries the
  * loopback port and token as the resource id "p<port>_<64 hex>". CTest sets
  * CTEST_RESOURCE_GROUP_COUNT only when it schedules resources (it strips an
- * inherited value), so the count decides the route. Returns 1 with an exact
+ * inherited value), so the count decides the route: under scheduling only an
+ * exact allocation runs; anything else fails. Returns 1 with an exact
  * allocation, 0 without one and -1 when malformed. Never prints the token. */
 static int ctest_allocation(char *ep, size_t ep_len, char *tok, size_t tok_len) {
   const char *count = getenv("CTEST_RESOURCE_GROUP_COUNT");
@@ -53,9 +54,10 @@ int main(void) {
   if (allocated < 0) { fprintf(stderr, "Malformed CTest nip5f_signer resource allocation\n"); return 1; }
   if (allocated) return run_signer(allocated_ep, allocated_tok);
   if (getenv("CTEST_RESOURCE_GROUP_COUNT")) {
-    /* Resource-scheduled run without this allocation: never inherited credentials. */
-    fprintf(stderr, "Skipping TCP test (no nip5f_signer resource allocated)\n");
-    return 77;
+    /* Resource-scheduled run without this allocation: a delivery failure, never
+     * a skip and never inherited credentials. */
+    fprintf(stderr, "No nip5f_signer resource allocated to this registration\n");
+    return 1;
   }
   const char *ep = getenv("NOSTR_SIGNER_ENDPOINT");
   const char *tok = getenv("NOSTR_SIGNER_TOKEN");
