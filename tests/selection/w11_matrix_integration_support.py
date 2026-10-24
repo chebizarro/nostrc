@@ -5,6 +5,13 @@ scripts/w11-evidence.py. This newest layer enrolls that test (plus this
 witness) and reverses only the exact reviewed w11-evidence.py delta for
 historical witnesses; unknown bytes refuse. Its two checked-in docs/reviews JSON
 artifacts get exact (never prefix) classifications from their actual consumers.
+It also reverses the exact .36.21 scripts/test_selection_services.py readiness
+descriptor delta and the exact .36.20 scripts/test_selection_realization.py
+Ninja generation-binding delta (74abda841; after 6b9da1ba, before 94177263 =
+post-608c's after bytes), one source record each; no policy, input or
+path-rule change. Each record maps only its exact after bytes; any other
+non-before bytes for a recorded path refuse here, and its before bytes go on
+to the older layers' own strict inverses unchanged.
 """
 import copy
 import hashlib
@@ -12,7 +19,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_matrix_integration_20261024.json'
-SHA256 = 'b742cd6d12638e0af8e5c83dd7c29df9fc0266027737148d28b515f595c54b7b'
+SHA256 = '25681d3d16f84d96a6b8545bd4027c3750efced6ee6df87ce1627d271b94bdac'
 
 
 def witness():
@@ -37,8 +44,10 @@ def before_source(path, raw):
 
 
 def before_policy(policy):
+    # The newer groundhog.linux app ownership layer (nostrc-0cfsg.36.19) is projected first.
+    from groundhog_app_enrollment_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     rules = [rule for rule in data['added_path_rules'] if rule in previous['path_rules']]

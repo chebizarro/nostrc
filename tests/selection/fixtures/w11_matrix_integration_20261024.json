@@ -62,6 +62,95 @@
           "before": "        print(out / \"result.json\")\n        return int(result.get(\"execution_passed\") is False or\n                   any(c[\"replay_status\"] == \"failed\" for c in result.get(\"candidates\", [])))\n"
         }
       ]
+    },
+    "scripts/test_selection_services.py": {
+      "before_sha256": "652754d063bb3f35da08e4bf599a43897943c01609e5b1bcdbeadc9b936abe2c",
+      "after_sha256": "1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7",
+      "edits": [
+        {
+          "before": "\ndef _ready(fd, timeout=15):\n    deadline = time.monotonic() + timeout\n    result = bytearray()\n",
+          "after": "\n# Explicit readiness deadline. A failure is classified and the service is\n# stopped while its readiness pipe stays readable; never retried or extended.\nREADINESS_SECONDS = 15\nREADINESS_RECORD_MAX = 4096\n\n\ndef _ready(fd, timeout=None):\n    deadline = time.monotonic() + (READINESS_SECONDS if timeout is None else timeout)\n    result = bytearray()\n"
+        },
+        {
+          "before": "    result = bytearray()\n    while len(result) < 4096:\n        remaining = deadline - time.monotonic()\n",
+          "after": "    result = bytearray()\n    while len(result) < READINESS_RECORD_MAX:\n        remaining = deadline - time.monotonic()\n"
+        },
+        {
+          "before": "    raise ServiceError('private service readiness record too large')\n\n",
+          "after": "    raise ServiceError('private service readiness record too large')\n\n\ndef _readiness_outcome(exc):\n    if isinstance(exc, (KeyboardInterrupt, SystemExit)):\n        return 'cancelled'\n    message = str(exc)\n    if 'deadline exceeded' in message:\n        return 'deadline_exceeded'\n    if 'exited before readiness' in message:\n        return 'exited_before_readiness'\n    if 'record too large' in message:\n        return 'record_too_large'\n    return 'error'\n\n\ndef _service_alive(pid):\n    \"\"\"Observe without reaping, so the PID identity stays reserved.\n\n    None means unobservable; it never masks the original readiness failure.\n    \"\"\"\n    try:\n        return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None\n    except ChildProcessError:\n        return False\n    except OSError:\n        return None\n\n\ndef _drain_late_readiness(fd, limit=READINESS_RECORD_MAX):\n    \"\"\"Bytes a service wrote after readiness failed; nonblocking and bounded.\"\"\"\n    os.set_blocking(fd, False)\n    data = bytearray()\n    while len(data) < limit:\n        try:\n            chunk = os.read(fd, limit - len(data))\n        except BlockingIOError:\n            break\n        if not chunk:\n            break\n        data.extend(chunk)\n    return bytes(data)\n\n"
+        },
+        {
+          "before": "    children = []\n    original = None\n",
+          "after": "    children = []\n    retained_readiness = {}\n    original = None\n"
+        },
+        {
+          "before": "                os.close(read_fd)\n        try:\n",
+          "after": "                os.close(read_fd)\n        started = time.monotonic()\n        try:\n"
+        },
+        {
+          "before": "            value = _ready(read_fd) if ready else None\n            return process, value\n",
+          "after": "            value = _ready(read_fd) if ready else None\n            if ready:\n                record['readiness'] = {'outcome': 'ready', 'fd': write_fd,\n                                       'elapsed_seconds': round(time.monotonic() - started, 3)}\n            return process, value\n"
+        },
+        {
+          "before": "            return process, value\n        finally:\n",
+          "after": "            return process, value\n        except BaseException as exc:\n            if ready:\n                # Keep the read end until teardown reaped this service: closing\n                # it first turns a late handshake into a manufactured EPIPE\n                # (Xserver: \"Cannot write display number to fd N\").\n                record['readiness'] = {'outcome': _readiness_outcome(exc), 'fd': write_fd,\n                                       'elapsed_seconds': round(time.monotonic() - started, 3),\n                                       'deadline_seconds': READINESS_SECONDS,\n                                       'service_alive_at_failure': _service_alive(process.pid)}\n                retained_readiness[id(process)] = read_fd\n                read_fd = -1\n            raise\n        finally:\n"
+        },
+        {
+          "before": "                    log.close()\n            os.environ.clear()\n",
+          "after": "                    log.close()\n                    late = retained_readiness.pop(id(process), None)\n                    if late is not None:\n                        try:\n                            data = _drain_late_readiness(late)\n                            record['readiness'].update(late_record=data.decode('ascii', 'backslashreplace'),\n                                                       late_record_bytes=len(data))\n                        except Exception as exc:\n                            errors.append(type(exc).__name__ + ': ' + str(exc))\n                        finally:\n                            os.close(late)\n            for late in retained_readiness.values():\n                os.close(late)\n            os.environ.clear()\n"
+        }
+      ],
+      "change": "nostrc-0cfsg.36.21 readiness read end retained until service reap; late record/outcome evidence only, unchanged 15s deadline"
+    },
+    "scripts/test_selection_realization.py": {
+      "before_sha256": "941772636a5e46398c46577a50b22fa86e0dbd96c4034f2a0887e03b83e91a4e",
+      "after_sha256": "6b9da1ba7843c4589d1aad7a4cdc37a2dd38234ff88b12a03f87869033cf5099",
+      "edits": [
+        {
+          "before": "        keys += (\"default_build_binding\",)\n    return _hash({k: realization.get(k) for k in keys})\n",
+          "after": "        keys += (\"default_build_binding\",)\n    if \"ninja_generation_binding\" in realization:\n        keys += (\"ninja_generation_binding\",)\n    return _hash({k: realization.get(k) for k in keys})\n"
+        },
+        {
+          "before": "\ndef _ninja_freshness(realization, targets):\n",
+          "after": "\nclass FreshnessError(RealizationError):\n    \"\"\"Freshness refusal (pending work or binding drift) with its query record.\"\"\"\n\n    def __init__(self, message, proof):\n        super().__init__(message)\n        self.proof = proof\n\n\ndef _native_cache(build):\n    cache_path = Path(build) / 'CMakeCache.txt'\n    if not cache_path.is_file() or cache_path.resolve() != cache_path:\n        raise RealizationError('default build requires a bound native CMake cache')\n    cache = {}\n    for line in cache_path.read_text().splitlines():\n        match = re.match(r'([^:#=]+):[^=]+=(.*)$', line)\n        if match:\n            if match[1] in cache:\n                raise RealizationError('duplicate native CMake cache entry')\n            cache[match[1]] = match[2]\n    return cache_path, cache\n\n\ndef _bound_build_tools(realization, cache):\n    \"\"\"Configured CMake/Ninja must be the build-phase PATH executables.\"\"\"\n    env = phase_environment(realization[\"profile\"], realization[\"repo_root\"], \"build\")\n    tools = {}\n    configured_tools = {'ninja': cache.get('CMAKE_MAKE_PROGRAM'),\n                        'cmake': realization['cmake'].get('paths', {}).get('cmake')}\n    for name, configured in configured_tools.items():\n        actual = shutil.which(name, path=env.get('PATH'))\n        if (not configured or not Path(configured).is_absolute() or not actual\n                or Path(configured).resolve() != Path(actual).resolve() or not Path(actual).is_file()):\n            raise RealizationError(f'default configured/PATH build tool identity mismatch: {name}')\n        path = Path(actual).resolve()\n        tools[name] = {'configured': configured, 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}\n    return tools\n\n\ndef _ninja_generation_binding(realization):\n    \"\"\"Configure-time regeneration identity for named-target freshness.\n\n    Named-target lanes have no default attestation, yet their freshness query\n    needs the same bound manifests, tools and VerifyGlobs control. A raw\n    ``ninja -n`` cannot supply it: CMake's always-dirty glob stamp makes the\n    dry-run manifest prepass report regeneration and exit before any target.\n    \"\"\"\n    build = Path(realization['build_dir'])\n    cache_path, cache = _native_cache(build)\n    tools = _bound_build_tools(realization, cache)\n    return {'schema_version': 1, 'manifests': _ninja_manifests(build), 'build_tools': tools,\n            'generation_control': _generation_control(realization, tools),\n            'cache_sha256': hashlib.sha256(cache_path.read_bytes()).hexdigest()}\n\n\ndef _freshness_snapshot(realization):\n    if 'default_build_binding' in realization:\n        return realization['default_build_binding']['snapshot']\n    binding = realization.get('ninja_generation_binding')\n    if binding is None:\n        raise RealizationError('execution build-freshness proof requires configure-bound Ninja '\n                               'generation control; configure and audit again')\n    if binding.get('schema_version') != 1:\n        raise RealizationError('unsupported Ninja generation binding')\n    return binding\n\n\ndef _ninja_freshness(realization, targets):\n"
+        },
+        {
+          "before": "    Callers hold the build lock; this is query evidence, not physical coverage.\n    \"\"\"\n    binding = realization['default_build_binding']\n    snapshot = binding['snapshot']\n    control = snapshot['generation_control']\n    build = Path(realization['build_dir'])\n",
+          "after": "    Callers hold the build lock; this is query evidence, not physical coverage.\n    Every refusal carries its diagnostic record (stage/argv/output) for retention.\n    \"\"\"\n    record = {'targets': list(targets), 'stage': 'binding', 'physical_coverage': False}\n    try:\n        return _ninja_freshness_query(realization, targets, record)\n    except FreshnessError:\n        raise\n    except RealizationError as exc:\n        raise FreshnessError(str(exc), dict(record, outcome='refused', error=str(exc))) from exc\n\n\ndef _ninja_freshness_query(realization, targets, record):\n    snapshot = _freshness_snapshot(realization)\n    control = snapshot['generation_control']\n    record['generation_control_hash'] = _hash(control)\n    build = Path(realization['build_dir'])\n"
+        },
+        {
+          "before": "            raise RealizationError('CMake regeneration needed; configure and audit again')\n        if control['verifier']:\n",
+          "after": "            raise RealizationError('CMake regeneration needed; configure and audit again')\n        # Bytes are also bound in generation_files; this re-derives the whole\n        # named-target binding (cache/manifests/tool bytes/control) under lock.\n        if 'default_build_binding' not in realization and _ninja_generation_binding(realization) != snapshot:\n            raise RealizationError('Ninja generation binding changed; configure and audit again')\n        if control['verifier']:\n"
+        },
+        {
+          "before": "            # output is mandatory even when the stamp cannot be touched.\n            output = _command([tools['cmake']['path'], '-P', control['verifier']], cwd=build, env=env)\n            if output != '':\n",
+          "after": "            # output is mandatory even when the stamp cannot be touched.\n            verify = [tools['cmake']['path'], '-P', control['verifier']]\n            record.setdefault('verifier_runs', []).append({'argv': verify})\n            output = _command(verify, cwd=build, env=env)\n            record['verifier_runs'][-1]['output'] = output\n            if output != '':\n"
+        },
+        {
+          "before": "                raise RealizationError('CMake glob control changed during verification')\n    validate()\n    with tempfile.TemporaryDirectory(prefix='nostrc-ninja-query-', dir=build) as directory:\n",
+          "after": "                raise RealizationError('CMake glob control changed during verification')\n    record['stage'] = 'pre_query_validation'\n    validate()\n    record['stage'] = 'query'\n    with tempfile.TemporaryDirectory(prefix='nostrc-ninja-query-', dir=build) as directory:\n"
+        },
+        {
+          "before": "        argv = [tools['ninja']['path'], '-f', str(entry), '-n', '-v', *targets]\n        output = _command(argv, cwd=build, env=env)\n        if output != 'ninja: no work to do.\\n':\n            raise RealizationError(('selected targets are' if targets else 'native default is')\n                                   + ' not up to date; build and re-audit before execution')\n        validate()\n        return {'argv': argv, 'entry_text': entry.read_text(),\n                'entry_sha256': hashlib.sha256(entry.read_bytes()).hexdigest(),\n                'generation_control_hash': _hash(control), 'output': output,\n                'physical_coverage': False}\n\n",
+          "after": "        argv = [tools['ninja']['path'], '-f', str(entry), '-n', '-v', *targets]\n        record.update(argv=argv, entry_text=entry.read_text())\n        output = _command(argv, cwd=build, env=env)\n        record['output'] = output\n        proof = {'argv': argv, 'entry_text': entry.read_text(),\n                 'entry_sha256': hashlib.sha256(entry.read_bytes()).hexdigest(),\n                 'generation_control_hash': _hash(control), 'output': output,\n                 'physical_coverage': False}\n        if output != 'ninja: no work to do.\\n':\n            raise FreshnessError(('selected targets are' if targets else 'native default is')\n                                 + ' not up to date; build and re-audit before execution',\n                                 dict(record, **proof, outcome='pending_work'))\n        record['stage'] = 'post_query_validation'\n        validate()\n        return proof\n\n"
+        },
+        {
+          "before": "    manifests = _ninja_manifests(build)\n    cache_path = Path(build) / 'CMakeCache.txt'\n    if not cache_path.is_file() or cache_path.resolve() != cache_path:\n        raise RealizationError('default build requires a bound native CMake cache')\n    cache = {}\n    for line in cache_path.read_text().splitlines():\n        match = re.match(r'([^:#=]+):[^=]+=(.*)$', line)\n        if match:\n            if match[1] in cache:\n                raise RealizationError('duplicate native CMake cache entry')\n            cache[match[1]] = match[2]\n    tools = {}\n    configured_tools = {'ninja': cache.get('CMAKE_MAKE_PROGRAM'),\n                        'cmake': realization['cmake'].get('paths', {}).get('cmake')}\n    for name, configured in configured_tools.items():\n        actual = shutil.which(name, path=env.get('PATH'))\n        if (not configured or not Path(configured).is_absolute() or not actual\n                or Path(configured).resolve() != Path(actual).resolve() or not Path(actual).is_file()):\n            raise RealizationError(f'default configured/PATH build tool identity mismatch: {name}')\n        path = Path(actual).resolve()\n        tools[name] = {'configured': configured, 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}\n    for key, value in cache.items():\n",
+          "after": "    manifests = _ninja_manifests(build)\n    cache_path, cache = _native_cache(build)\n    tools = _bound_build_tools(realization, cache)\n    for key, value in cache.items():\n"
+        },
+        {
+          "before": "        _atomic(default_evidence, raw)\n    if diagnostic_boundary is not None:\n",
+          "after": "        _atomic(default_evidence, raw)\n    elif realization[\"cmake\"].get(\"generator\", {}).get(\"name\") == \"Ninja\":\n        realization[\"ninja_generation_binding\"] = _ninja_generation_binding(realization)\n    if diagnostic_boundary is not None:\n"
+        },
+        {
+          "before": "    if \"default_build_binding\" in realization:\n        bound += [default_evidence, build / 'CMakeCache.txt', *map(Path, binding[\"snapshot\"][\"manifests\"][\"files\"])]\n        bound += [Path(tool['path']) for tool in binding['snapshot']['build_tools'].values()]\n        bound += list(map(Path, binding['snapshot']['generation_control']['files']))\n    realization[\"generation_files\"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}\n",
+          "after": "    if \"default_build_binding\" in realization:\n        bound.append(default_evidence)\n    if \"default_build_binding\" in realization or \"ninja_generation_binding\" in realization:\n        snapshot = _freshness_snapshot(realization)\n        bound += [build / 'CMakeCache.txt', *map(Path, snapshot[\"manifests\"][\"files\"])]\n        bound += [Path(tool['path']) for tool in snapshot['build_tools'].values()]\n        bound += list(map(Path, snapshot['generation_control']['files']))\n    realization[\"generation_files\"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}\n"
+        },
+        {
+          "before": "    freshness = []\n    if resolved.get(\"default_build_required\"):\n        freshness.append(_ninja_freshness(realization, []))\n    if resolved[\"build_targets\"]:\n        if realization[\"cmake\"].get(\"generator\", {}).get(\"name\") != \"Ninja\":\n            raise RealizationError(\"execution build-freshness proof requires the existing Ninja profile\")\n        if 'default_build_binding' in realization:\n            freshness.append(_ninja_freshness(realization, resolved['build_targets']))\n        else:\n            dry_run = _command([\"ninja\", \"-C\", str(build_dir), \"-n\", *resolved[\"build_targets\"]], env=build_env)\n            if \"ninja: no work to do.\" not in dry_run:\n                raise RealizationError(\"selected targets are not up to date; build and re-audit before execution\")\n    if freshness:\n",
+          "after": "    freshness = []\n    try:\n        if resolved.get(\"default_build_required\"):\n            freshness.append(_ninja_freshness(realization, []))\n        if resolved[\"build_targets\"]:\n            if realization[\"cmake\"].get(\"generator\", {}).get(\"name\") != \"Ninja\":\n                raise RealizationError(\"execution build-freshness proof requires the existing Ninja profile\")\n            freshness.append(_ninja_freshness(realization, resolved['build_targets']))\n    except RealizationError as exc:\n        proof = exc.proof if isinstance(exc, FreshnessError) else {\n            'targets': resolved['build_targets'], 'stage': 'generator', 'outcome': 'refused',\n            'error': str(exc), 'physical_coverage': False}\n        _atomic(directory / 'ninja-freshness-query.json', [*freshness, proof])\n        raise\n    if freshness:\n"
+        }
+      ]
     }
   },
   "p3_test": {

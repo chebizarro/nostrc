@@ -10,7 +10,9 @@ PATH = 'scripts/w11-evidence.py'
 
 class W11MatrixIntegration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's result: the newer groundhog.linux app ownership layer is projected away first.
+        from groundhog_app_enrollment_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_exact_source_inverse_reaches_runtime_witness_and_refuses_unreviewed(self):
         import runtime_integration_support as runtime
@@ -105,6 +107,96 @@ class W11MatrixIntegration(unittest.TestCase):
                 inputs.append(path) if duplicate else inputs.remove(path)
                 with self.subTest(path=path, duplicate=duplicate), self.assertRaises(ValueError):
                     wave.before_policy(policy)
+
+
+    # The leaf composes every sibling's exact source inverse: P3's evidence script,
+    # .36.21's services readiness delta and .36.20's realization generation binding.
+    # Each hands off exactly the bytes its next older layer records as its result.
+    COMPOSED = {
+        'scripts/w11-evidence.py': 'runtime',
+        'scripts/test_selection_services.py': 'runtime',
+        'scripts/test_selection_realization.py': 'post608c',
+    }
+
+    def older(self, path):
+        import post608c_integration_support as post608c
+        import runtime_integration_support as runtime
+        layer = {'runtime': runtime, 'post608c': post608c}[self.COMPOSED[path]]
+        return layer.witness()['sources'][path]
+
+    def test_composed_source_records_are_exact_lossless_handoffs(self):
+        import runtime_integration_support as runtime
+        data = wave.witness()
+        self.assertEqual(set(data['sources']), set(self.COMPOSED))
+        for path, record in data['sources'].items():
+            with self.subTest(path=path):
+                raw = (ROOT / path).read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), record['after_sha256'])
+                for edit in record['edits']:
+                    self.assertEqual(raw.count(edit['after'].encode()), 1)
+                before = wave.before_source(path, raw)
+                self.assertEqual(hashlib.sha256(before).hexdigest(), record['before_sha256'])
+                self.assertEqual(wave.before_source(path, before), before)
+                self.assertEqual(record['before_sha256'], self.older(path)['after_sha256'])
+                self.assertNotEqual(record['before_sha256'], record['after_sha256'])
+                # Whole chain from the frozen current bytes to the oldest runtime witness.
+                self.assertEqual(hashlib.sha256(runtime.before_runtime_source(path, raw)).hexdigest(),
+                                 runtime.witness()['sources'][path]['before_sha256'])
+        realization = data['sources']['scripts/test_selection_realization.py']
+        self.assertEqual((realization['after_sha256'], realization['before_sha256'], len(realization['edits'])),
+                         ('6b9da1ba7843c4589d1aad7a4cdc37a2dd38234ff88b12a03f87869033cf5099',
+                          '941772636a5e46398c46577a50b22fa86e0dbd96c4034f2a0887e03b83e91a4e', 11))
+        services = data['sources']['scripts/test_selection_services.py']
+        self.assertEqual((services['after_sha256'], services['before_sha256'], len(services['edits'])),
+                         ('1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7',
+                          '652754d063bb3f35da08e4bf599a43897943c01609e5b1bcdbeadc9b936abe2c', 8))
+
+    def test_tampered_or_unknown_bytes_refuse_for_every_composed_record(self):
+        import runtime_integration_support as runtime
+        for path in self.COMPOSED:  # fixed set: a missing record cannot pass vacuously
+            record = wave.witness()['sources'][path]
+            raw = (ROOT / path).read_bytes()
+            before = wave.before_source(path, raw)
+            drifted = [raw + b'\n# unknown bytes\n', before + b'\n# unknown bytes\n', raw[:-1]]
+            for edit in record['edits']:
+                start = raw.index(edit['after'].encode())
+                middle = start + len(edit['after'].encode()) // 2
+                drifted.append(raw[:middle] + bytes([raw[middle] ^ 0x01]) + raw[middle + 1:])
+            for index, candidate in enumerate(drifted):
+                with self.subTest(path=path, case=index):
+                    with self.assertRaisesRegex(ValueError, 'W11 matrix integration source changed: ' + path):
+                        wave.before_source(path, candidate)
+                    with self.assertRaises(ValueError):
+                        runtime.before_runtime_source(path, candidate)
+
+    def test_tampered_witness_records_refuse(self):
+        from unittest import mock
+        original = wave.witness()
+        path = 'scripts/test_selection_realization.py'
+        raw = (ROOT / path).read_bytes()
+        tampers = {
+            'changed before text': (lambda r: r['edits'][0].__setitem__('before', r['edits'][0]['before'] + '#'),
+                                    'W11 matrix historical source changed'),
+            'dropped edit': (lambda r: r['edits'].pop(), 'W11 matrix historical source changed'),
+            'ambiguous after text': (lambda r: r['edits'][0].__setitem__('after', '\n'),
+                                     'ambiguous W11 matrix integration inverse'),
+            'changed after hash': (lambda r: r.__setitem__('after_sha256', '0' * 64),
+                                   'W11 matrix integration source changed'),
+        }
+        for name, (mutate, message) in tampers.items():
+            data = copy.deepcopy(original)
+            mutate(data['sources'][path])
+            with self.subTest(tamper=name), mock.patch.object(wave, 'witness', return_value=data):
+                with self.assertRaisesRegex(ValueError, message):
+                    wave.before_source(path, raw)
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            copied = Path(directory) / 'witness.json'
+            copied.write_bytes((ROOT / wave.WITNESS).read_bytes().replace(b'"edits"', b'"edits" ', 1))
+            with mock.patch.object(wave, 'WITNESS', str(copied)):
+                with self.assertRaisesRegex(ValueError, 'W11 matrix integration witness changed'):
+                    wave.before_source(path, raw)
 
 
 if __name__ == '__main__':

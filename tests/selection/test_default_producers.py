@@ -460,3 +460,278 @@ add_custom_target(data ALL DEPENDS "${CMAKE_BINARY_DIR}/schema/gschemas.compiled
         with mock.patch.object(producers, 'hashed', side_effect=lambda path: '0' * 64 if str(path) == cmake else actual_hash(path)):
             with self.assertRaisesRegex(r.RealizationError, 'default'):
                 r._validate_default_binding(realized)
+
+
+class NamedTargetFreshness(Project):
+    """Selected-target lanes (no default attestation) under CONFIGURE_DEPENDS.
+
+    Hosted MDK08/Grotto ASan refused after a passing build: raw ``ninja -n``
+    reports CMake's always-dirty VerifyGlobs prepass and exits before any
+    target, so it can never prove no-work. The configure-bound entry can.
+    """
+
+    def glob_ready(self):
+        with (self.root / 'CMakeLists.txt').open('a') as stream:
+            stream.write('\nfile(GLOB fixture_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/*.c")\n')
+        realized = self.configure()
+        self.assertNotIn('default_build_binding', realized)
+        binding = realized['ninja_generation_binding']
+        control = binding['generation_control']
+        self.assertTrue(control['verifier'])
+        self.assertIn(control['verifier'], control['files'])
+        self.assertIn(str(self.build / 'build.ninja'), binding['manifests']['files'])
+        self.assertEqual(binding['generation_control']['tools'], binding['build_tools'])
+        for path in (control['verifier'], str(self.build / 'CMakeCache.txt'), binding['build_tools']['ninja']['path'],
+                     *binding['manifests']['files']):
+            self.assertIn(path, realized['generation_files'])
+        resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+        self.assertEqual(resolved['build_targets'], ['shared'])
+        pre = r.check_inputs(self.inventory, realized)
+        self.assertTrue(pre['passed'], pre['gaps'])
+        r.build_resolved(resolved, self.build)
+        audit = self.audit(realized)
+        self.assertTrue(audit['passed'], audit['gaps'])
+        return realized, resolved, audit
+
+    def retained(self, resolved):
+        return json.loads((r._attempt_directory(resolved, self.evidence, 1) / 'ninja-freshness-query.json').read_text())
+
+    def test_binding_is_configure_time_profile_identity(self):
+        realized, _, _ = self.glob_ready()
+        self.assertEqual(r._ninja_generation_binding(realized), realized['ninja_generation_binding'])
+        unbound = {k: v for k, v in realized.items() if k != 'ninja_generation_binding'}
+        self.assertNotEqual(r._profile_fingerprint(unbound), realized['profile_fingerprint'])
+
+    def test_named_target_freshness_real_execution(self):
+        realized, resolved, audit = self.glob_ready()
+        # Causal witness: the former raw dry run cannot prove no-work here.
+        raw = r._command(['ninja', '-C', str(self.build), '-n', 'shared'])
+        self.assertIn('Re-checking globbed directories', raw)
+        self.assertNotIn('ninja: no work to do.', raw)
+        receipt = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        self.assertEqual(receipt['outcome'], 'passed', receipt)
+        [proof] = self.retained(resolved)
+        self.assertEqual(proof['output'], 'ninja: no work to do.\n')
+        self.assertFalse(proof['physical_coverage'])
+        self.assertEqual(proof['argv'][0], realized['ninja_generation_binding']['build_tools']['ninja']['path'])
+        self.assertEqual(proof['argv'][-1], 'shared')
+        self.assertEqual(proof['generation_control_hash'], r._hash(realized['ninja_generation_binding']['generation_control']))
+        self.assertFalse(list(self.build.glob('nostrc-ninja-query-*')))
+
+    def test_missing_output_refuses_and_retains_pending_query(self):
+        _, resolved, audit = self.glob_ready()
+        (self.build / 'shared').unlink()
+        with self.assertRaisesRegex(r.RealizationError, 'selected targets are not up to date'):
+            r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        [proof] = self.retained(resolved)
+        self.assertEqual(proof['outcome'], 'pending_work')
+        self.assertIn('shared', proof['output'])
+        self.assertNotIn('ctest', json.dumps(json.loads((r._attempt_directory(resolved, self.evidence, 1) / 'receipt.json').read_text())['commands'][-1:]))
+
+    def test_stale_source_same_bytes_refuses(self):
+        import os
+        import time
+        _, resolved, audit = self.glob_ready()
+        stamp = max(time.time_ns(), (self.build / 'shared').stat().st_mtime_ns + 1000000000)
+        os.utime(self.root / 'main.c', ns=(stamp, stamp))
+        with self.assertRaisesRegex(r.RealizationError, 'not up to date'):
+            r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        self.assertEqual(self.retained(resolved)[0]['outcome'], 'pending_work')
+
+    def test_new_glob_member_refuses_and_retains_verifier_output(self):
+        _, resolved, audit = self.glob_ready()
+        with (self.root / '.git/info/exclude').open('a') as stream:
+            stream.write('\nnew-untracked.c\n')
+        (self.root / 'new-untracked.c').write_text('int new_member;\n')
+        with self.assertRaisesRegex(r.RealizationError, 'glob membership changed'):
+            r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        [proof] = self.retained(resolved)
+        self.assertEqual((proof['outcome'], proof['stage']), ('refused', 'pre_query_validation'))
+        self.assertNotEqual(proof['verifier_runs'][-1]['output'], '')
+        self.assertNotIn('argv', proof)
+
+    def test_touched_configure_input_requires_regeneration(self):
+        import os
+        realized, _, _ = self.glob_ready()
+        source = self.root / 'CMakeLists.txt'
+        stamp = source.stat().st_mtime_ns + 1000000000
+        os.utime(source, ns=(stamp, stamp))
+        with self.assertRaisesRegex(r.RealizationError, 'CMake regeneration needed') as caught:
+            r._ninja_freshness(realized, ['shared'])
+        self.assertEqual(caught.exception.proof['outcome'], 'refused')
+
+    def test_changed_manifest_cache_and_verifier_refuse_before_execution(self):
+        for name, message in (('build.ninja', 'stale realization'), ('CMakeFiles/rules.ninja', 'stale realization'),
+                              ('CMakeCache.txt', 'stale realization'), ('verifier', 'stale realization')):
+            with self.subTest(name=name):
+                self.setUp()
+                realized, resolved, audit = self.glob_ready()
+                path = (Path(realized['ninja_generation_binding']['generation_control']['verifier'])
+                        if name == 'verifier' else self.build / name)
+                marker = self.build / 'must-not-execute'
+                with path.open('a') as stream:
+                    stream.write('\nfile(WRITE "' + str(marker) + '" "executed")\n' if name == 'verifier' else '\n# changed\n')
+                with self.assertRaisesRegex(r.RealizationError, message) as caught:
+                    r._ninja_freshness(realized, ['shared'])
+                self.assertEqual(caught.exception.proof['outcome'], 'refused')
+                self.assertNotIn('argv', caught.exception.proof)
+                self.assertFalse(marker.exists())
+
+    def test_build_tool_bytes_change_refuses_binding(self):
+        realized, _, _ = self.glob_ready()
+        actual = r._bound_build_tools
+        def changed(realization, cache):
+            tools = actual(realization, cache)
+            tools['ninja'] = dict(tools['ninja'], sha256='0' * 64)
+            return tools
+        with mock.patch.object(r, '_bound_build_tools', side_effect=changed):
+            with self.assertRaisesRegex(r.RealizationError, 'Ninja generation binding changed'):
+                r._ninja_freshness(realized, ['shared'])
+
+    def test_build_tool_identity_change_refuses(self):
+        realized, _, _ = self.glob_ready()
+        fake = Path(self.temp.name) / 'bin/ninja'
+        fake.parent.mkdir()
+        shutil.copy2(shutil.which('ninja'), fake)
+        real = shutil.which
+        with mock.patch.object(r.shutil, 'which', side_effect=lambda name, path=None: str(fake) if name == 'ninja' else real(name, path=path)):
+            with self.assertRaisesRegex(r.RealizationError, 'build tool identity changed'):
+                r._ninja_freshness(realized, ['shared'])
+
+    def test_unknown_regeneration_control_argv_refuses_fresh_binding(self):
+        realized, _, _ = self.glob_ready()
+        rules = self.build / 'CMakeFiles/rules.ninja'
+        rules.write_text(rules.read_text().replace(' -P ', ' --unknown-control -P '))
+        with self.assertRaisesRegex(r.RealizationError, 'unsupported CMake regeneration control command'):
+            r._ninja_generation_binding(realized)
+        with self.assertRaisesRegex(r.RealizationError, 'stale realization'):
+            r._ninja_freshness(realized, ['shared'])
+
+    def test_query_output_with_any_pending_text_refuses(self):
+        realized, _, _ = self.glob_ready()
+        original = r._command
+        def command(argv, *args, **kwargs):
+            result = original(argv, *args, **kwargs)
+            return result + '[1/1] pending\n' if '-f' in argv and '-n' in argv else result
+        with mock.patch.object(r, '_command', side_effect=command):
+            with self.assertRaisesRegex(r.RealizationError, 'not up to date') as caught:
+                r._ninja_freshness(realized, ['shared'])
+        self.assertIn('[1/1] pending', caught.exception.proof['output'])
+
+    def test_missing_binding_and_unsupported_generator_refuse(self):
+        realized, _, _ = self.glob_ready()
+        unbound = {k: v for k, v in realized.items() if k != 'ninja_generation_binding'}
+        with self.assertRaisesRegex(r.RealizationError, 'configure-bound Ninja generation control') as caught:
+            r._ninja_freshness(unbound, ['shared'])
+        self.assertEqual((caught.exception.proof['stage'], caught.exception.proof['outcome']), ('binding', 'refused'))
+        shutil.rmtree(self.build)
+        self.profile['configure_args'] = ['-G', 'Unix Makefiles']
+        makefiles = self.configure()
+        self.assertNotIn('ninja_generation_binding', makefiles)
+        self.assertNotIn('default_build_binding', makefiles)
+        with self.assertRaisesRegex(r.RealizationError, 'configure-bound Ninja generation control'):
+            r._ninja_freshness(makefiles, ['shared'])
+
+    def test_cancellation_during_freshness_is_generic_cancelled_receipt(self):
+        # Retention applies to RealizationError refusals; cancellation stays generic.
+        _, resolved, audit = self.glob_ready()
+        with mock.patch.object(r, '_ninja_freshness_query', side_effect=KeyboardInterrupt('cancelled during query')):
+            with self.assertRaisesRegex(r.RealizationError, 'execution interrupted/failed; retained .*: cancelled during query'):
+                r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+        attempt = r._attempt_directory(resolved, self.evidence, 1)
+        receipt = json.loads((attempt / 'receipt.json').read_text())
+        self.assertEqual((receipt['outcome'], receipt['execution_outcome']), ('cancelled', 'cancelled'))
+        self.assertFalse((attempt / 'ninja-freshness-query.json').exists())
+
+class TargetlessNinjaLane(Project):
+    """Command/registration lanes without build targets still carry the binding."""
+    command = execution.CommandExecutionTests.command
+
+    def glob(self):
+        lists = self.root / 'CMakeLists.txt'
+        lists.write_text(lists.read_text().replace('nostrc_finalize_test_inventory()', '''add_test(NAME standalone COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/noop.cmake)
+nostrc_describe_test(standalone OWNER testing INPUTS noop.cmake)
+nostrc_finalize_test_inventory()''') + '\nfile(GLOB fixture_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/*.c")\n')
+
+    def lanes(self):
+        self.command()
+        self.inventory['checks']['standalone.registration'] = {
+            'kind': 'ctest', 'profiles': ['synthetic'], 'ctest_tests': {'synthetic': ['standalone']}, 'nodes': ['testing']}
+        return (('command', ['command.actual']), ('registration', ['standalone.registration']))
+
+    def test_targetless_lanes_bind_generation_and_run_without_query(self):
+        self.glob()
+        for name, selected in self.lanes():
+            with self.subTest(lane=name):
+                self.plan['selected_checks'] = selected
+                realized = self.configure()
+                binding = realized['ninja_generation_binding']
+                self.assertNotIn('default_build_binding', realized)
+                self.assertIn(binding['build_tools']['ninja']['path'], realized['generation_files'])
+                self.assertEqual(r._ninja_generation_binding(realized), binding)
+                self.build_all()
+                resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+                self.assertEqual(resolved['build_targets'], [])
+                audit = self.audit(realized)
+                self.assertTrue(audit['passed'], audit['gaps'])
+                evidence = self.evidence / name
+                receipt = r.run_resolved(resolved, self.build, evidence, input_audit=audit, build=False)
+                self.assertEqual(receipt['outcome'], 'passed', receipt)
+                self.assertFalse((r._attempt_directory(resolved, evidence, 1) / 'ninja-freshness-query.json').exists())
+
+    def test_targetless_configure_refuses_path_ninja_mismatch(self):
+        self.glob()
+        self.lanes()
+        fake = Path(self.temp.name) / 'bin/ninja'
+        fake.parent.mkdir()
+        shutil.copy2(shutil.which('ninja'), fake)
+        real = shutil.which
+        with mock.patch.object(r.shutil, 'which', side_effect=lambda name, path=None: str(fake) if name == 'ninja' else real(name, path=path)):
+            with self.assertRaisesRegex(r.RealizationError, 'configured/PATH build tool identity mismatch: ninja'):
+                self.configure()
+        self.assertFalse((self.build / 'nostrc-test-realization.json').exists())
+
+    def test_targetless_run_refuses_actual_bound_tool_byte_drift(self):
+        import os
+        self.glob()
+        self.lanes()
+        self.plan['selected_checks'] = ['command.actual']
+        private = Path(self.temp.name) / 'private-bin'
+        private.mkdir()
+        copy = private / 'ninja'
+        shutil.copy2(shutil.which('ninja'), copy)
+        copy.chmod(0o755)  # owned private copy; Homebrew installs it read-only
+        with mock.patch.dict(os.environ, PATH=str(private) + os.pathsep + os.environ['PATH']):
+            realized = self.configure()
+            bound = realized['ninja_generation_binding']['build_tools']['ninja']
+            self.assertEqual(bound['path'], str(copy.resolve()))
+            self.assertIn(bound['path'], realized['generation_files'])
+            self.build_all()
+            resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+            audit = self.audit(realized)
+            self.assertTrue(audit['passed'], audit['gaps'])
+            record = self.build / 'nostrc-test-realization.json'
+            stored = record.read_bytes()
+            with copy.open('ab') as stream:
+                stream.write(b'\0drift')  # the configured executable itself changes after configure
+            self.assertNotEqual(r.hashlib.sha256(copy.read_bytes()).hexdigest(), bound['sha256'])
+            with self.assertRaisesRegex(r.RealizationError, 'stale realization metadata: ' + bound['path']):
+                r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+            self.assertEqual(record.read_bytes(), stored)
+
+    def test_targetless_run_refuses_inconsistent_tool_record(self):
+        self.glob()
+        self.lanes()
+        self.plan['selected_checks'] = ['command.actual']
+        realized = self.configure()
+        self.build_all()
+        resolved = r.resolve_checks(self.inventory, self.plan, realized, 'synthetic')
+        audit = self.audit(realized)
+        self.assertTrue(audit['passed'], audit['gaps'])
+        ninja = realized['ninja_generation_binding']['build_tools']['ninja']['path']
+        record = self.build / 'nostrc-test-realization.json'
+        stored = json.loads(record.read_text())
+        stored['generation_files'][ninja] = '0' * 64  # record inconsistent with the unchanged executable
+        record.write_text(json.dumps(stored))
+        with self.assertRaisesRegex(r.RealizationError, 'stale realization metadata: ' + ninja):
+            r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)

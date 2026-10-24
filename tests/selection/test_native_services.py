@@ -8,7 +8,10 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import signal
+import stat
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -81,6 +84,25 @@ with tempfile.TemporaryDirectory() as resources:
             os.close(read_fd)
 
 
+    def test_late_readiness_drain_is_bounded_and_nonblocking(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            self.assertEqual(services._drain_late_readiness(read_fd), b'')  # writer open: no hang
+            os.write(write_fd, b'7\n' + b'x' * 10)
+            self.assertEqual(services._drain_late_readiness(read_fd, limit=4), b'7\nxx')
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_readiness_failure_classification(self):
+        self.assertEqual(services._readiness_outcome(
+            services.ServiceError('private service readiness deadline exceeded')), 'deadline_exceeded')
+        self.assertEqual(services._readiness_outcome(
+            services.ServiceError('private service exited before readiness')), 'exited_before_readiness')
+        self.assertEqual(services._readiness_outcome(KeyboardInterrupt()), 'cancelled')
+        self.assertEqual(services._readiness_outcome(OSError('other')), 'error')
+
+
 @unittest.skipUnless(platform.system() == 'Linux', 'actual Linux private services; not native macOS acceptance')
 class NativeServicesActual(unittest.TestCase):
     def setUp(self):
@@ -140,3 +162,158 @@ class NativeServicesActual(unittest.TestCase):
                 with services.private_services(['private_bus'], self.evidence):
                     self.fail('missing tool admitted')
             launch.assert_not_called()
+
+
+# Xserver-like fake bus service: SIGPIPE ignored, SIGTERM only flags shutdown,
+# initialization continues, then the readiness record is written to the
+# authored descriptor (dbus --print-address / Xvfb -displayfd semantics).
+FAKE_SERVICE = """#!{python}
+import json, os, signal, sys, time
+fd = int(next(a for a in sys.argv if a.startswith('--print-address=')).split('=', 1)[1])
+mode = {mode!r}
+links = {{}}
+for name in os.listdir('/proc/self/fd'):
+    try:
+        links[name] = os.readlink('/proc/self/fd/' + name)
+    except OSError:
+        pass  # the listing's own transient directory descriptor
+print('fds ' + json.dumps(links), flush=True)
+if mode == 'exit':
+    sys.exit(3)
+signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+if mode == 'late':
+    signal.signal(signal.SIGTERM, lambda *_: print('term during init', flush=True))
+    time.sleep(1.5)
+if mode in ('late', 'ready'):
+    try:
+        os.write(fd, b'unix:abstract=nostrc-fake-late\\n')
+        print('readiness write ok', flush=True)
+    except OSError as exc:
+        print('Cannot write readiness to fd', fd, exc.errno, flush=True)
+        sys.exit(1)
+    os.close(fd)
+if mode in ('late',):
+    sys.exit(0)
+signal.signal(signal.SIGTERM, signal.SIG_DFL)
+while True:
+    time.sleep(60)
+"""
+FAKE_PROBE = "#!/bin/sh\necho 'array [ string \"org.freedesktop.DBus\" ]'\n"
+
+
+@unittest.skipUnless(platform.system() == 'Linux', 'actual Linux readiness FD lifecycle; not native macOS acceptance')
+class ReadinessDescriptorLifecycle(unittest.TestCase):
+    """nostrc-0cfsg.36.21: readiness failure must not close the pipe under a live service."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='nostrc-readiness-tests-')
+        self.addCleanup(self.temporary.cleanup)
+        self.base = Path(self.temporary.name)
+        self.evidence = self.base / 'evidence'
+        self.before = dict(os.environ)
+        self.fds_before = self.open_fds()
+
+    @staticmethod
+    def open_fds():
+        def is_open(fd):
+            try:
+                os.fstat(fd)
+                return True
+            except OSError:  # the listing's own, now closed, directory descriptor
+                return False
+        return {fd for fd in map(int, os.listdir('/proc/self/fd')) if is_open(fd)}
+
+    def fake(self, mode):
+        tools = self.base / 'tools'
+        tools.mkdir(exist_ok=True)
+        service, probe = tools / ('service-' + mode), tools / 'probe'
+        service.write_text(FAKE_SERVICE.format(python=sys.executable, mode=mode))
+        probe.write_text(FAKE_PROBE)
+        for path in (service, probe):
+            path.chmod(stat.S_IRWXU)
+        paths = {'dbus-daemon': service, 'dbus-send': probe}
+        identity = lambda name, search_path=None: {'path': str(paths[name]), 'sha256': '0' * 64}
+        return patch.object(services, '_identity', identity)
+
+    def final(self):
+        self.assertEqual(dict(os.environ), self.before)
+        self.assertEqual(self.open_fds(), self.fds_before, 'readiness descriptor leaked')
+        result = json.loads((self.evidence / 'services.json').read_text())
+        self.assertEqual(result['status'], 'failed')
+        self.assertFalse(result['complete'])
+        (service,) = result['services']
+        self.assertTrue(service['reaped'], result)
+        return result, service, (self.evidence / 'dbus-daemon.log').read_text()
+
+    def test_late_handshake_after_deadline_is_retained_not_manufactured_epipe(self):
+        with self.fake('late'), patch.object(services, 'READINESS_SECONDS', 0.5):
+            with self.assertRaisesRegex(services.ServiceError, 'readiness deadline exceeded'):
+                with services.private_services(['private_bus'], self.evidence):
+                    self.fail('late service admitted as ready')
+        result, service, log = self.final()
+        readiness = service['readiness']
+        self.assertEqual(readiness['outcome'], 'deadline_exceeded')
+        self.assertTrue(readiness['service_alive_at_failure'])
+        self.assertEqual(readiness['late_record'], 'unix:abstract=nostrc-fake-late\n')
+        self.assertIn('readiness write ok', log)
+        self.assertNotIn('Cannot write', log)
+        self.assertEqual(service['exit_code'], 0)
+        self.assertNotIn('forced_exit', service)
+        self.assertEqual(result['error'], 'ServiceError: private service readiness deadline exceeded')
+
+    def test_exit_before_readiness_is_classified_and_reaped(self):
+        with self.fake('exit'):
+            with self.assertRaisesRegex(services.ServiceError, 'exited before readiness'):
+                with services.private_services(['private_bus'], self.evidence):
+                    self.fail('exited service admitted')
+        _, service, _ = self.final()
+        self.assertEqual(service['readiness']['outcome'], 'exited_before_readiness')
+        # The kernel closes the exiting task's descriptors (readiness EOF) before
+        # the task becomes waitable, so this instantaneous non-reaping probe may
+        # legitimately see either state. It must be an observed bool, never None.
+        self.assertIn(service['readiness']['service_alive_at_failure'], (False, True))
+        self.assertEqual(service['readiness']['late_record_bytes'], 0)
+        self.assertEqual(service['exit_code'], 3)  # its own exit, observed by the actual reap
+        self.assertTrue(service['reaped'])
+        self.assertNotIn('forced_exit', service)
+
+    def test_cancellation_during_readiness_stops_service_and_keeps_sibling(self):
+        sibling = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        self.addCleanup(sibling.wait)
+        self.addCleanup(sibling.kill)  # this test's own unreaped direct child
+        timer = threading.Timer(0.5, signal.pthread_kill, (threading.main_thread().ident, signal.SIGINT))
+        with self.fake('never'), patch.object(services, 'READINESS_SECONDS', 30):
+            timer.start()
+            try:
+                with self.assertRaises(KeyboardInterrupt):
+                    with services.private_services(['private_bus'], self.evidence):
+                        self.fail('cancelled service admitted')
+            finally:
+                timer.cancel()
+        _, service, _ = self.final()
+        self.assertEqual(service['readiness']['outcome'], 'cancelled')
+        self.assertTrue(service['readiness']['service_alive_at_failure'])
+        self.assertEqual(service['exit_code'], -signal.SIGTERM)
+        self.assertIsNone(sibling.poll(), 'sibling outside service custody was signalled')
+
+    def test_protected_finalizer_fd_closed_in_service_and_retained_by_backend(self):
+        finalizer_read, finalizer_write = os.pipe()
+        self.addCleanup(os.close, finalizer_read)
+        self.addCleanup(os.close, finalizer_write)
+        with self.fake('ready'):
+            with services.private_services(['private_bus'], self.evidence, finalizer_fd=finalizer_write) as state:
+                self.assertTrue(state['ready'])
+                readiness = state['services'][0]['readiness']
+                self.assertEqual(readiness['outcome'], 'ready')
+                inherited = json.loads((self.evidence / 'dbus-daemon.log').read_text()
+                                       .splitlines()[0].removeprefix('fds '))
+        os.fstat(finalizer_write)  # still the backend's trusted descriptor
+        protected = 'pipe:[%d]' % os.fstat(finalizer_write).st_ino
+        self.assertNotIn(protected, inherited.values(), 'protected finalizer pipe reached the service')
+        self.assertTrue(inherited[str(readiness['fd'])].startswith('pipe:['), inherited)
+        self.assertNotEqual(inherited[str(readiness['fd'])], protected)
+        self.assertEqual(self.open_fds(), self.fds_before | {finalizer_read, finalizer_write},
+                         'service descriptor leaked')
+        result = json.loads((self.evidence / 'services.json').read_text())
+        self.assertEqual(result['status'], 'passed')
+        self.assertTrue(result['services'][0]['reaped'])
