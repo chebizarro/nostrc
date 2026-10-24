@@ -172,7 +172,8 @@ class RealCTestDelivery(ScopedDeliveryProject):
         self.assertEqual(self.listener.received[:1], [b'AUTH ' + self.token.encode() + b'\n'])
         self.assertEqual(len(self.listener.received), 1)
         results = junit.read_text()
-        self.assertRegex(results, r'name="alias"[^>]*status="(skipped|notrun)"')
+        # Scheduled without the allocation: a failure, never a skip that could pass.
+        self.assertRegex(results, r'name="alias"[^>]*status="fail"')
         self.assertRegex(results, r'name="test_nip5f_tcp"[^>]*status="fail"')  # stubs: never fake success
         for name in DUMPERS:
             env = self.env_of(name)

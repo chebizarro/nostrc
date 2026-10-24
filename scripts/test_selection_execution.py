@@ -226,7 +226,23 @@ def _sanitizer_environment(profile, source_root):
     return {key: value for key, value in authored.items() if key in SANITIZER_ENVIRONMENT}
 
 
-def _signer(backend, profile, post, source_root, tests, closure):
+def signer_consumer_junit(data):
+    """The consumer's own sealed JUnit case, independent of backend outcome fields.
+
+    Exactly one real run with no failure, error or skip: an internal exit 77
+    (CTest skip), not-run or missing case never stands for signer coverage."""
+    import xml.etree.ElementTree as ET
+    from test_selection_services import SIGNER_CONSUMER
+    try:
+        cases = [case for case in ET.fromstring(data).iter('testcase') if case.get('name') == SIGNER_CONSUMER]
+    except ET.ParseError:
+        cases = []
+    require(len(cases) == 1 and cases[0].get('status') == 'run'
+            and all(cases[0].find(tag) is None for tag in ('failure', 'error', 'skipped')),
+            'signer consumer did not actually execute and pass')
+
+
+def _signer(backend, profile, post, source_root, tests, closure, locator):
     from test_selection_services import SIGNER_CONSENT, SIGNER_EXECUTABLES
     proof = backend.get('runtime_capability_evidence', {}).get('signer_endpoint')
     state = backend.get('signer_runtime')
@@ -267,6 +283,7 @@ def _signer(backend, profile, post, source_root, tests, closure):
         signer_delivery_admission({test['name']: test for test in tests}, closure, {})
     except ServiceError as exc:
         require(False, str(exc))
+    signer_consumer_junit(_file(locator, evidence / 'results.xml').read_bytes())
     cleanup = state.get('cleanup', {})
     require(cleanup.get('private_namespace_absent') is True and cleanup.get('cleanup_errors') == []
             and cleanup.get('remember') is False and cleanup.get('stored_via') == 'StoreKey/libsecret',
@@ -536,7 +553,7 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')
         require(not any(marker in log_bytes for marker in
                         (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')
-    _signer(raw, profile, post, real['repo_root'], real['tests'], closure)
+    _signer(raw, profile, post, real['repo_root'], real['tests'], closure, locator)
     if scope == 'selected' and not ('docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw):
         _require_no_mdk_lifecycle(raw, closure, descriptors, recovery)
     if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:
