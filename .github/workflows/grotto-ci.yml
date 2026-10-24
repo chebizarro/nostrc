@@ -6,6 +6,10 @@ on:
       sha:
         type: string
         required: true
+      selection_artifact:
+        description: Same-run shared selection plan artifact; empty keeps broad execution
+        type: string
+        default: ''
       artifact_prefix:
         type: string
         default: ''
@@ -51,6 +55,27 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - uses: actions/download-artifact@v4
+        if: inputs.selection_artifact != ''
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Prepare exact shared selection
+        id: selection
+        env:
+          SELECTION_ARTIFACT: ${{ inputs.selection_artifact }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          if [[ -z "$SELECTION_ARTIFACT" ]]; then
+            echo 'affected=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          profile=grotto.linux
+          args=()
+          if [[ "$MODE" == asan-ubsan ]]; then profile=grotto.linux.asan_ubsan; fi
+          if [[ "$MODE" == tsan ]]; then args+=(--tsan); fi
+          python3 scripts/ci-selected-execution.py prepare --profile "$profile" \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json" "${args[@]}"
       - name: Install build, keyring, camera and display dependencies
         run: |
           sudo apt-get update
@@ -79,8 +104,6 @@ jobs:
           blueprint-compiler --version | grep -x 0.22.2
           pkg-config --modversion gtk4 libadwaita-1 glib-2.0 zbar gstreamer-app-1.0 | tee dependency-versions.txt
           cat /etc/os-release >> dependency-versions.txt
-          python3 scripts/check-linux-ci-packages.py --self-test
-          python3 scripts/test-grotto-quarantine.py
       - name: Matching third-party symbols for narrow GUI LSan exceptions
         if: matrix.mode == 'asan-ubsan'
         run: |
@@ -134,17 +157,33 @@ jobs:
             -DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG="$groundhog" \
             -DBUILD_TESTING=ON -DBUILD_SIGNER_TESTS=ON -DBUILD_NATIVE_HOST=ON \
             -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service \
-            -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF "${flags[@]}"
+            -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF -DENABLE_TCP_IPC=ON -DNIP55L_TEST_TRUST_ENV=ON "${flags[@]}"
       - name: Build
         run: cmake --build build --parallel 2
       - name: Prove GUI LSan exceptions do not hide application fixture leaks
-        if: matrix.mode == 'asan-ubsan'
+        if: matrix.mode == 'asan-ubsan' && steps.selection.outputs.affected != 'true'
         run: python3 scripts/test-grotto-lsan-suppressions.py build/lsan-counterfactuals
+      - name: Go toolchain for selected interop checks
+        if: steps.selection.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Build pinned nak for selected interop checks
+        if: steps.selection.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
+        run: |
+          go install github.com/fiatjaf/nak@v0.19.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/nak" --version
       - name: Run signer and nip55l suites (no quarantines)
         env:
           MODE: ${{ matrix.mode }}
         run: |
           set -euo pipefail
+          if [[ '${{ steps.selection.outputs.affected }}' != true ]]; then
+            python3 scripts/check-linux-ci-packages.py --self-test
+            python3 scripts/test-grotto-quarantine.py
+          fi
           regex='^(signer/|nip55l_|nostr_signer_webext_host_)'
           required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/background signer/onboarding signer/clients signer/activity signer/ui-layout signer/desktop-contract signer/blueprint-drift signer/qr-scanner signer/trust-tiers signer/home-model nip55l_approval_service nip55l_dbus_contract'
           case "$MODE" in
@@ -168,6 +207,16 @@ jobs:
           assert units and all('-fsanitize=thread' in u['command'] for u in units), 'nsync must be instrumented too'
           PY
           fi
+          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
+            profile=grotto.linux
+            args=()
+            if [[ "$MODE" == asan-ubsan ]]; then profile=grotto.linux.asan_ubsan; fi
+            if [[ "$MODE" == tsan ]]; then args+=(--tsan); fi
+            dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
+              python3 scripts/ci-selected-execution.py run --profile "$profile" \
+                --build build --plan "$RUNNER_TEMP/ci-selection/plan.json" "${args[@]}"
+            exit 0
+          fi
           ctest --test-dir build -N -R "$regex" --show-only=json-v1 > build/selected-tests.json
           python3 - "$required" <<'PY'
           import json, sys
@@ -180,19 +229,19 @@ jobs:
               --output-junit "$PWD/build/signer-ctest.xml" | tee build/signer-ctest.log
           ! grep -E '\*\*\*Skipped|Not Run' build/signer-ctest.log
       - name: Go toolchain for the real nak baseline test
-        if: matrix.mode == 'native'
+        if: matrix.mode == 'native' && steps.selection.outputs.affected != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: false
       - name: Build pinned nak (same interop peer as Groundhog CI)
-        if: matrix.mode == 'native'
+        if: matrix.mode == 'native' && steps.selection.outputs.affected != 'true'
         run: |
           go install github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
       - name: Known desktop baseline tests (executed, named quarantine)
-        if: matrix.mode == 'native'
+        if: matrix.mode == 'native' && steps.selection.outputs.affected != 'true'
         env:
           BUILD_DIR: ${{ github.workspace }}/build
           STATE_DIR: ${{ github.workspace }}/build/baseline
@@ -206,12 +255,12 @@ jobs:
           TAIL_LINES: all
         run: bash scripts/linux-gate-smoke.sh
       - name: Build the alternate GUI frontend
-        if: matrix.mode == 'native'
+        if: matrix.mode == 'native' && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.grotto_frontend == 'true')
         run: |
           meson setup build-meson apps/grotto -Dcmake_build_dir="$PWD/build"
           meson compile -C build-meson
       - name: Build and inspect the single native deb
-        if: matrix.mode == 'native'
+        if: matrix.mode == 'native' && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.grotto_package == 'true')
         run: |
           mkdir -p /tmp/grotto-package/source
           rsync -a --exclude=.git --exclude=/build --exclude=/build-meson --exclude=/debian \
@@ -223,7 +272,7 @@ jobs:
           dpkg-deb -c build/packages/grotto_*.deb | tee build/packages/contents.txt
           ! ls /tmp/grotto-package/grotto-daemon_*.deb
       - name: Shell extension tests
-        if: matrix.mode == 'native'
+        if: matrix.mode == 'native' && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.shell_extension == 'true')
         run: |
           # Private-bus GJS unit, not live GNOME Shell acceptance.
           sh gnome/nostr-shell-extension/tests/run-signer.sh
@@ -239,6 +288,7 @@ jobs:
             build/lsan-counterfactuals/
             build/signer-ctest.*
             build/selected-tests.json
+            build/ci-selected*
             build/Testing/Temporary/LastTest.log
             build/baseline/
             build/packages/

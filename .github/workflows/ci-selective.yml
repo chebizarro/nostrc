@@ -34,6 +34,7 @@ jobs:
       families: ${{ steps.plan.outputs.families }}
       broad: ${{ steps.plan.outputs.broad }}
       run_reference: ${{ steps.plan.outputs.run_reference }}
+      selection_artifact: ci-selection-${{ inputs.sha || github.sha }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,8 +70,6 @@ jobs:
       - run: python3 scripts/check-gui-test-gdk-frame.py
       - run: python3 scripts/check-linux-ci-packages.py
       - run: python3 gnome/groundhog/tests/check_privacy.py
-      - name: Workflow and representative selection contracts (no build or custody matrix)
-        run: python3 -m unittest discover -s tests/selection -p 'test_workflow*.py' -v
   core:
     needs: select
     if: contains(fromJSON(needs.select.outputs.families), 'core')
@@ -107,12 +106,14 @@ jobs:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
       run_reference: ${{ needs.select.outputs.run_reference == 'true' }}
+      selection_artifact: ${{ needs.select.outputs.selection_artifact }}
   grotto:
     needs: select
     if: contains(fromJSON(needs.select.outputs.families), 'grotto')
     uses: ./.github/workflows/grotto-ci.yml
     with:
       sha: ${{ needs.select.outputs.sha }}
+      selection_artifact: ${{ needs.select.outputs.selection_artifact }}
       artifact_prefix: ci-
   nip55l:
     needs: select
@@ -138,7 +139,7 @@ jobs:
   static:
     needs: select
     if: contains(fromJSON(needs.select.outputs.families), 'static')
-    uses: ./.github/workflows/namespace-policy-regression.yml
+    uses: ./.github/workflows/static-checks.yml
     with:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
@@ -191,17 +192,10 @@ jobs:
     with:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
-  full_static:
-    needs: select
-    if: needs.select.outputs.broad == 'true'
-    uses: ./.github/workflows/static-checks.yml
-    with:
-      sha: ${{ needs.select.outputs.sha }}
-      artifact_prefix: ci-
   gate:
     name: Dependency gate
     if: always()
-    needs: [select, cheap, core, libgo, hanami, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011, full_static]
+    needs: [select, cheap, core, libgo, hanami, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
     runs-on: ubuntu-24.04
     steps:
       - name: Selection and cheap guards must succeed

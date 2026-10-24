@@ -6,6 +6,10 @@ on:
       sha:
         type: string
         required: true
+      selection_artifact:
+        description: Same-run shared selection plan artifact; empty keeps broad execution
+        type: string
+        default: ''
       artifact_prefix:
         type: string
         default: ''
@@ -34,6 +38,23 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+
+      - uses: actions/download-artifact@v4
+        if: inputs.selection_artifact != ''
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Prepare exact shared selection
+        id: selection
+        env:
+          SELECTION_ARTIFACT: ${{ inputs.selection_artifact }}
+        run: |
+          if [[ -z "$SELECTION_ARTIFACT" ]]; then
+            echo 'affected=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json"
 
       - name: No call modifies a variable another argument uses
         # nostrc-td3b: this job's x86_64 GCC evaluates arguments right to left,
@@ -71,13 +92,24 @@ jobs:
 
       - name: Configure Groundhog and in-tree adapters
         run: |
+          args=()
+          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
+            args+=(-DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_SIGNER_TESTS=ON -DBUILD_NATIVE_HOST=ON
+              -DENABLE_TCP_IPC=ON -DNIP55L_TEST_TRUST_ENV=ON
+              -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service)
+          fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
             -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
             -DBUILD_APPS=OFF -DBUILD_RELAYD=ON -DSIGNET_ENABLE=OFF \
-            -DBUILD_MDK011_INTEROP=ON -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice
+            -DBUILD_MDK011_INTEROP=ON -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice "${args[@]}"
+
+      - name: Build selected checks and shared prerequisites
+        if: steps.selection.outputs.affected == 'true'
+        run: cmake --build build --parallel 2
 
       - name: Build Groundhog and every focused test target
+        if: steps.selection.outputs.affected != 'true'
         run: |
           cmake --build build --parallel 2 --target \
             test_nostr_gtk_bind_latency_budget \
@@ -123,6 +155,7 @@ jobs:
             gnome/groundhog/all
 
       - name: GTK bind performance regression gate (serial, no retry)
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.gtk_perf == 'true'
         run: |
           python3 - <<'PY'
           import json
@@ -135,6 +168,7 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error -L '^perf$' --parallel 1
 
       - name: Require complete Groundhog test registration
+        if: steps.selection.outputs.affected != 'true'
         run: |
           python3 - <<'PY'
           import json
@@ -195,16 +229,26 @@ jobs:
       - name: Install nak for the NIP-46 interop test
         # groundhog-nip46-nak pairs Groundhog's NIP-46 session with a real
         # `nak bunker`; without nak it skips, and this job allows no skips.
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.needs_nak == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: false
       - name: Build nak
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.needs_nak == 'true'
         run: |
           go install github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
+      - name: Run selected checks under a controlled display
+        if: steps.selection.outputs.affected == 'true'
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
+            python3 scripts/ci-selected-execution.py run --profile groundhog.linux \
+              --build build --plan "$RUNNER_TEMP/ci-selection/plan.json"
+
       - name: Run all Groundhog tests under a controlled display
+        if: steps.selection.outputs.affected != 'true'
         run: |
           set -euo pipefail
           # Give GTK a private session bus with the AT-SPI bus service installed;
@@ -220,6 +264,7 @@ jobs:
           fi
 
       - name: Stress GUI lifetime callbacks with deterministic completion jitter
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.lifetime_stress == 'true'
         run: scripts/test-groundhog-gui-lifetimes.sh build 2
 
       - name: White Noise AAC/MP4 voice interop with MDK 0.11
@@ -236,6 +281,7 @@ jobs:
           fi
 
       - name: KC-6 store key against the session's unlocked gnome-keyring
+        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.session_keyring == 'true'
         run: |
           set -euo pipefail
           # The run above already exercised KC-6 against a private keyring the
@@ -269,6 +315,7 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}groundhog-ctest-linux
           path: |
+            build/ci-selected*
             build/groundhog-ctest.log
             build/groundhog-ctest.xml
             build/groundhog-mdk011-voice.log
@@ -324,6 +371,23 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - uses: actions/download-artifact@v4
+        if: inputs.selection_artifact != ''
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Prepare exact shared selection
+        id: selection
+        env:
+          SELECTION_ARTIFACT: ${{ inputs.selection_artifact }}
+        run: |
+          if [[ -z "$SELECTION_ARTIFACT" ]]; then
+            echo 'affected=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux.sanitizers \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json"
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -358,6 +422,10 @@ jobs:
       - name: Build the display-free tests
         run: |
           # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
+          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
+            cmake --build build-asan --parallel 2
+            exit 0
+          fi
           targets=(groundhog)
           for test in $GROUNDHOG_SANITIZER_TESTS; do
             case "$test" in groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
@@ -382,6 +450,11 @@ jobs:
         run: |
           set -euo pipefail
           export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
+            python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
+              --build build-asan --plan "$RUNNER_TEMP/ci-selection/plan.json"
+            exit 0
+          fi
           read -ra tests <<< "$GROUNDHOG_SANITIZER_TESTS"
           regex="^($(IFS='|'; echo "${tests[*]}"))\$"
           # Every listed test is registered: none may silently drop out.
@@ -410,6 +483,7 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}groundhog-asan-ctest-linux
           path: |
+            build-asan/ci-selected*
             build-asan/groundhog-asan-ctest.log
             build-asan/groundhog-asan-ctest.xml
             build-asan/Testing/Temporary/LastTest.log

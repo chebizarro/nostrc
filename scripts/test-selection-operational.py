@@ -20,6 +20,7 @@ MODULES = (
     "test_cmake_inventory_compat",
     "test_local_selective_delivery",
     "test_workflow_defaults",
+    "test_ci_selected_execution",
     "test_ordinary_gate_wiring",
 )
 
