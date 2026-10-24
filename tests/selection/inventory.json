@@ -27838,9 +27838,9 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "3251b6a2780cf1bb5cdfa680da255741b7de2feb04a8f71f34776b9e5d949e84",
+      "source_sha256": "a3de764aaaa0d002282555d386f7b92102cda398f4a8d4df6fd5b9f7256fb3d8",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "1bfd93d469478a69b27588670a533b9b6ff007ac1bbdd8d299613f494fb08b62"
+      "workflow_sha256": "be06df3608b0e5a6eb1372650daba2403a205c981c5ace28af1f3f6379621b1f"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",

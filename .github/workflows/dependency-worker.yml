@@ -323,8 +323,8 @@ jobs:
         run: |
           set -euo pipefail
           decision=$(python3 scripts/test_selection_execution.py publication-gate --repo "$GITHUB_WORKSPACE" \
-            --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
-            --receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE" \
+            --plan "$RUNNER_TEMP/dependency/plan.json" --plan-id "$PLAN_ID" --sha "$REQUESTED_SHA" \
+            --profile "$PROFILE" --receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE" \
             --evidence-root "$RUNNER_TEMP/dependency/evidence" --qualify-outcome "$QUALIFY_OUTCOME" \
             --metadata "$RUNNER_TEMP/dependency/withheld/withheld.json")
           case "$decision" in

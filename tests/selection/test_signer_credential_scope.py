@@ -399,73 +399,167 @@ class EngineScopedDelivery(ScopedDeliveryProject):
 
 
 class PublicationGate(unittest.TestCase):
-    """Worker publication boundary: a signer-capable lane's raw sets leave the
-    worker only after exact-token-checked qualification; otherwise only
-    nonsecret metadata does. Decisions use authored plan/inventory data only."""
+    """Worker publication boundary over a genuine source-bound plan (git_plan +
+    validate_plan for the tested HEAD). A signer-capable lane's raw sets leave
+    the worker only after exact-token-checked qualification; any unverified
+    plan/lane/profile/source withholds; only a validated known no-signer lane
+    publishes its ordinary diagnostics."""
 
-    SIGNER, PLAIN = 'supported.nips.nip5f.signer_endpoint', 'grotto.signer.native'
+    SIGNER, PLAIN = 'grotto.linux', 'core.macos.asan'
 
     def setUp(self):
         import test_selection as selection
         import test_selection_execution as execution
-        self.execution = execution
+        self.selection, self.execution = selection, execution
         self.root = Path(tempfile.mkdtemp(prefix='publication-')).resolve()
         self.addCleanup(shutil.rmtree, self.root, True)
-        self.policy = selection.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.sha = selection.commit_sha(ROOT, 'HEAD')
+        self.policy = selection.validate_inventory(json.loads(
+            selection.git(ROOT, 'show', self.sha + ':tests/selection/inventory.json').stdout))
+        self.plan = selection.git_plan(ROOT, self.policy, head=self.sha, context='ci', mode='broad',
+                                       event={'kind': 'manual', 'base_sha': None, 'tested_sha': self.sha})
+        selection.validate_plan(self.plan, self.policy)
+        self.plan_id = self.plan['plan_id']
         self.token = secrets.token_hex(32)
-        self.plan = {'plan_id': 'plan-1', 'source_identity': {'kind': 'committed', 'sha': 'a' * 40},
-                     'lanes': [{'profile': 'grotto.linux', 'checks': [self.PLAIN, self.SIGNER]}]}
-        self.receipts, self.evidence = self.root / 'receipts/grotto.linux', self.root / 'evidence'
+        self.receipts, self.evidence = self.root / 'receipts' / self.SIGNER, self.root / 'evidence'
         (self.evidence / 'run/0/lane-x/evidence').mkdir(parents=True)
         self.receipts.mkdir(parents=True)
         self.delivery = {'removed': True, 'exposure_checked': ['a', 'b', 'c'], 'fixture_exposure_checked': ['d'],
                          'exposed': []}
+        self.calls = 0
+
+    def lane(self, profile):
+        return next(lane for lane in self.plan['lanes'] if lane['profile'] == profile)
 
     def qualified(self):
+        import hashlib
         original = self.receipts / self.execution.ORIGINAL
         original.write_text(json.dumps({'backend_receipt': {'signer_runtime': {'delivery': self.delivery}}}))
-        import hashlib
         (self.receipts / 'receipt.json').write_text(json.dumps(
-            {'receipt_kind': self.execution.KIND, 'plan_id': 'plan-1', 'profile': 'grotto.linux',
-             'source_identity': self.plan['source_identity'],
+            {'receipt_kind': self.execution.KIND, 'plan_id': self.plan_id, 'profile': self.SIGNER,
+             'source_identity': {'kind': 'committed', 'sha': self.sha},
              'public_evidence': {'path': '/x/native-receipt.json',
                                  'sha256': hashlib.sha256(original.read_bytes()).hexdigest()}}))
 
-    def decide(self, outcome='success', profile='grotto.linux'):
-        return self.execution.publication_decision(self.policy, self.plan, profile, self.receipts, self.evidence, outcome)
+    def gate(self, outcome='success', profile=SIGNER, plan=None, plan_id=None, sha=None, raw=None):
+        self.calls += 1
+        path = self.root / ('plan-%d.json' % self.calls)
+        path.write_text(raw if raw is not None else json.dumps(self.plan if plan is None else plan))
+        metadata = self.root / ('withheld-%d/withheld.json' % self.calls)
+        publish, reason = self.execution.publication_gate(
+            ROOT, path, plan_id or self.plan_id, sha or self.sha, profile, self.receipts, self.evidence, outcome, metadata)
+        record = json.loads(metadata.read_text()) if metadata.exists() else None
+        self.assertEqual(record is None, publish)
+        if record is not None:
+            self.assertNotIn(self.token, metadata.read_text())
+            self.assertEqual((record['plan_id'], record['source_identity'], record['reason']),
+                             (plan_id or self.plan_id, {'kind': 'committed', 'sha': sha or self.sha}, reason))
+        return publish, reason, record
 
-    def withheld(self, reason, outcome='success'):
-        publish, actual, paths = self.decide(outcome)
+    def withheld(self, reason, **kwargs):
+        publish, actual, record = self.gate(**kwargs)
         self.assertEqual((publish, actual), (False, reason))
-        self.assertNotIn(self.token, json.dumps(paths))
-        return paths
+        return record['paths']
 
-    def test_lanes_that_cannot_provision_the_signer_publish_unchanged(self):
-        self.plan['lanes'][0]['checks'] = [self.PLAIN]
-        self.assertEqual(self.decide('failure'), (True, 'no_signer_in_lane', []))
-        self.plan['lanes'] = []  # no plan lane: authored capability decides, never a filename
-        self.assertEqual(self.decide('failure', 'core.macos.asan'), (True, 'no_signer_in_lane', []))
-        self.withheld('qualification_failure', 'failure')
-        self.plan['lanes'] = [{'profile': 'grotto.linux', 'checks': ['unknown.check']}]  # unknown: withhold
-        self.withheld('qualification_failure', 'failure')
+    def forged(self, mutate, rehash=False):
+        plan = json.loads(json.dumps(self.plan))
+        mutate(plan)
+        if rehash:
+            plan.pop('plan_id')
+            plan['plan_id'] = self.selection.digest(plan)
+        return plan
 
-    def test_exposure_checked_qualified_lane_publishes(self):
-        (self.evidence / 'run/0/lane-x/evidence/ctest.log').write_text('100% tests passed\n')
-        (self.receipts / 'worker.log').write_text('normal qualification passed\n')
-        self.qualified()
-        self.assertEqual(self.decide(), (True, 'qualified_exposure_checked', []))
+    def test_validated_known_no_signer_lane_publishes_its_diagnostics(self):
+        self.assertFalse(self.execution._signer_possible(self.policy, self.lane(self.PLAIN)))
+        self.assertTrue(self.execution._signer_possible(self.policy, self.lane(self.SIGNER)))
+        for outcome in ('failure', 'cancelled', 'skipped'):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(self.gate(outcome, self.PLAIN)[:2], (True, 'no_signer_in_lane'))
 
-    def test_failure_cancellation_or_skipped_qualification_withholds(self):
+    def test_unknown_unselected_profile_or_unverified_plan_withholds(self):
+        unselected = sorted(set(self.policy['profiles']) - set(self.plan['expected_lane_ids']))
+        for profile in ['not.a.profile', *unselected[:1]]:
+            with self.subTest(profile=profile):
+                self.withheld('plan_or_source_unverified', outcome='failure', profile=profile)
+        for raw in ('{not json', '[]', '{}'):
+            with self.subTest(raw=raw):
+                self.withheld('plan_or_source_unverified', outcome='failure', profile=self.PLAIN, raw=raw)
+
+    def test_deleted_or_duplicated_lane_never_declassifies(self):
+        def delete(plan):
+            plan['lanes'] = [lane for lane in plan['lanes'] if lane['profile'] != self.SIGNER]
+        def delete_consistently(plan):
+            delete(plan)
+            plan['expected_lane_ids'] = sorted(lane['id'] for lane in plan['lanes'])
+            plan['selected_checks'] = sorted({c for lane in plan['lanes'] for c in lane['checks']})
+        def duplicate(plan):
+            plan['lanes'].append(json.loads(json.dumps(next(l for l in plan['lanes'] if l['profile'] == self.PLAIN))))
+        cases = [('deleted, declared id kept', self.forged(delete)),
+                 ('deleted, rehashed', self.forged(delete, rehash=True)),
+                 ('deleted consistently, rehashed', self.forged(delete_consistently, rehash=True)),
+                 ('duplicated known lane', self.forged(duplicate))]
+        for name, plan in cases:
+            for profile in (self.SIGNER, self.PLAIN):
+                with self.subTest(case=name, profile=profile):
+                    self.withheld('plan_or_source_unverified', outcome='cancelled', profile=profile, plan=plan)
+
+    def test_same_declared_plan_id_with_changed_checks_withholds(self):
+        signer_checks = [c for c in self.lane(self.SIGNER)['checks']
+                         if 'signer_endpoint' in self.policy['checks'][c].get('requires', [])]
+        self.assertTrue(signer_checks)
+        def declassify(plan):
+            lane = next(l for l in plan['lanes'] if l['profile'] == self.SIGNER)
+            lane['checks'] = [c for c in lane['checks'] if c not in signer_checks]
+        for rehash in (False, True):
+            with self.subTest(rehash=rehash):
+                self.withheld('plan_or_source_unverified', outcome='failure', plan=self.forged(declassify, rehash))
+        # The declassified lane, if it were trusted, would have published: the
+        # refusal comes from plan verification, not from the receipt checks.
+        lane = next(l for l in self.forged(declassify)['lanes'] if l['profile'] == self.SIGNER)
+        self.assertFalse(self.execution._signer_possible(self.policy, lane))
+
+    def test_untrusted_identity_or_source_withholds(self):
+        self.withheld('plan_or_source_unverified', outcome='failure', profile=self.PLAIN, plan_id='0' * 64)
+        self.withheld('plan_or_source_unverified', outcome='failure', profile=self.PLAIN, sha='f' * 40)
+        parent = self.selection.commit_sha(ROOT, 'HEAD~1')
+        self.withheld('plan_or_source_unverified', outcome='failure', profile=self.PLAIN, sha=parent)
+
+    def test_valid_plan_for_another_commit_than_the_checkout_withholds(self):
+        # A genuine, self-consistent plan and matching trusted inputs for the parent
+        # commit: only the checkout binding (HEAD == tested SHA) refuses it.
+        parent = self.selection.commit_sha(ROOT, 'HEAD~1')
+        policy = self.selection.validate_inventory(json.loads(
+            self.selection.git(ROOT, 'show', parent + ':tests/selection/inventory.json').stdout))
+        plan = self.selection.git_plan(ROOT, policy, head=parent, context='ci', mode='broad',
+                                       event={'kind': 'manual', 'base_sha': None, 'tested_sha': parent})
+        self.selection.validate_plan(plan, policy)
+        self.assertIn(self.PLAIN, plan['expected_lane_ids'])
+        self.withheld('plan_or_source_unverified', outcome='failure', profile=self.PLAIN, plan=plan,
+                      plan_id=plan['plan_id'], sha=parent)
+
+    def test_unknown_check_is_signer_possible_even_past_validation(self):
+        # validate_plan already refuses unknown checks; this fallback is defense in depth.
+        self.assertTrue(self.execution._signer_possible(self.policy, {'profile': self.PLAIN, 'checks': ['unknown.check']}))
+        self.assertTrue(self.execution._signer_possible(self.policy, {'profile': self.PLAIN,
+                                                                      'checks': [*self.lane(self.PLAIN)['checks'], 'x']}))
+
+    def test_failed_cancelled_or_skipped_signer_qualification_withholds(self):
         self.qualified()
         for outcome in ('failure', 'cancelled', 'skipped', '', 'success; rm -rf'):
             with self.subTest(outcome=outcome):
-                self.withheld('qualification_' + (''.join(c for c in outcome if c.isalpha() and c.islower())[:16] or 'unknown'),
-                              outcome)
+                expected = ''.join(c for c in outcome if c.isalpha() and c.islower())[:16] or 'unknown'
+                self.withheld('qualification_' + expected, outcome=outcome)
+
+    def test_exposure_checked_qualified_signer_lane_publishes(self):
+        (self.evidence / 'run/0/lane-x/evidence/ctest.log').write_text('100% tests passed\n')
+        (self.receipts / 'worker.log').write_text('normal qualification passed\n')
+        self.qualified()
+        self.assertEqual(self.gate()[:2], (True, 'qualified_exposure_checked'))
 
     def test_unqualified_missing_malformed_or_unbound_receipts_withhold(self):
-        self.withheld('lane_not_qualified')                       # cancelled before any receipt
+        self.withheld('lane_not_qualified')
         (self.receipts / 'receipt.json').write_text('{"outcome": "failed"}')
-        self.withheld('lane_not_qualified')                       # raw failing receipt
+        self.withheld('lane_not_qualified')
         (self.receipts / 'receipt.json').write_text('{not json')
         self.withheld('lane_not_qualified')
         self.qualified()
@@ -493,9 +587,8 @@ class PublicationGate(unittest.TestCase):
                          [str(self.evidence / 'ctest.log'), '<path withheld: credential-shaped name>'])
         self.delivery['exposed'] = []
         self.qualified()
-        port = 41234
         for where, text in ((self.evidence / 'run/0/lane-x/build/Testing/Temporary/LastTest.log', 'AUTH ' + self.token),
-                            (self.receipts / 'worker.log', 'id:p%d_%s,slots:1' % (port, self.token)),
+                            (self.receipts / 'worker.log', 'id:p41234_%s,slots:1' % self.token),
                             (self.evidence / 'run/0/lane-x/signer/worker/daemon.log', 'NOSTR_SIGNER_TOKEN=' + self.token)):
             with self.subTest(where=where.name):
                 where.parent.mkdir(parents=True, exist_ok=True)
@@ -504,23 +597,23 @@ class PublicationGate(unittest.TestCase):
                 self.assertIn(self.token, where.read_text())  # originals are never rewritten or removed
                 where.unlink()
 
-    def gate(self, outcome):
-        plan = self.root / 'plan.json'
-        plan.write_text(json.dumps(self.plan))
-        metadata = self.root / 'withheld/withheld.json'
-        out, err = __import__('io').StringIO(), __import__('io').StringIO()
-        import contextlib as _c
+    def cli(self, outcome, plan_path, metadata):
+        import contextlib as _c, io
+        out, err = io.StringIO(), io.StringIO()
         with _c.redirect_stdout(out), _c.redirect_stderr(err):
-            code = self.execution.main(['publication-gate', '--repo', str(ROOT), '--plan', str(plan),
-                                        '--profile', 'grotto.linux', '--receipts-dir', str(self.receipts),
-                                        '--evidence-root', str(self.evidence), '--qualify-outcome', outcome,
-                                        '--metadata', str(metadata)])
-        return code, out.getvalue(), err.getvalue(), metadata
+            code = self.execution.main(['publication-gate', '--repo', str(ROOT), '--plan', str(plan_path),
+                                        '--plan-id', self.plan_id, '--sha', self.sha, '--profile', self.SIGNER,
+                                        '--receipts-dir', str(self.receipts), '--evidence-root', str(self.evidence),
+                                        '--qualify-outcome', outcome, '--metadata', str(metadata)])
+        return code, out.getvalue(), err.getvalue()
 
     def test_cli_decision_metadata_and_console_never_carry_the_token(self):
+        plan = self.root / 'plan.json'
+        plan.write_text(json.dumps(self.plan))
         leak = self.evidence / 'run/0/lane-x/evidence/ctest.log'
         leak.write_text('AUTH ' + self.token)
-        code, out, err, metadata = self.gate('cancelled')
+        metadata = self.root / 'withheld/withheld.json'
+        code, out, err = self.cli('cancelled', plan, metadata)
         self.assertEqual((code, out), (0, 'publish=false\n'))
         record = json.loads(metadata.read_text())
         self.assertEqual((record['kind'], record['reason'], record['withheld']),
@@ -530,24 +623,18 @@ class PublicationGate(unittest.TestCase):
         self.assertIn('not durably retained', record['local_retention'])
         for text in (out, err, metadata.read_text()):
             self.assertNotIn(self.token, text)
-        self.assertNotEqual(metadata.name, 'receipt.json')
         self.assertEqual(leak.read_text(), 'AUTH ' + self.token)  # retained locally, unmodified
-        # A second decision cannot overwrite the first record: it fails, printing no decision.
-        with self.assertRaises(FileExistsError):
-            self.gate('cancelled')
+        with self.assertRaises(FileExistsError):  # a second decision cannot overwrite the record
+            self.cli('cancelled', plan, metadata)
+        code, out, err = self.cli('success', self.root / 'absent.json', self.root / 'absent/withheld.json')
+        self.assertEqual((code, out), (0, 'publish=false\n'))  # unverifiable plan: withheld, never published
+        self.assertEqual(json.loads((self.root / 'absent/withheld.json').read_text())['reason'],
+                         'plan_or_source_unverified')
         metadata.unlink()
         leak.unlink()
         self.qualified()
-        code, out, err, metadata = self.gate('success')
+        code, out, err = self.cli('success', plan, metadata)
         self.assertEqual((code, out, metadata.exists()), (0, 'publish=true\n', False))
-
-    def test_gate_failure_prints_no_decision(self):
-        with self.assertRaises(Exception):
-            self.execution.main(['publication-gate', '--repo', str(ROOT), '--plan', str(self.root / 'absent.json'),
-                                 '--profile', 'grotto.linux', '--receipts-dir', str(self.receipts),
-                                 '--evidence-root', str(self.evidence), '--qualify-outcome', 'success',
-                                 '--metadata', str(self.root / 'm.json')])
-        self.assertFalse((self.root / 'm.json').exists())
 
     def test_worker_uploads_are_gated_and_fail_closed(self):
         text = (ROOT / '.github/workflows/dependency-worker.yml').read_text()
@@ -564,6 +651,10 @@ class PublicationGate(unittest.TestCase):
         self.assertIn('id: qualify\n', qualify)
         self.assertIn("id: publication\n        if: always()\n", gate)
         self.assertIn('QUALIFY_OUTCOME: ${{ steps.qualify.outcome }}', gate)
+        # Trusted identity comes from the reusable workflow inputs (job env), not the plan file.
+        self.assertIn('--plan-id "$PLAN_ID" --sha "$REQUESTED_SHA"', gate)
+        self.assertIn('PLAN_ID: ${{ inputs.plan_id }}', text)
+        self.assertIn('REQUESTED_SHA: ${{ inputs.sha }}', text)
         self.assertIn('publish=true|publish=false) echo "$decision" >> "$GITHUB_OUTPUT"', gate)
         for upload in (receipts, evidence):
             self.assertIn("if: always() && steps.publication.outputs.publish == 'true'\n", upload)

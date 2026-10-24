@@ -21,7 +21,7 @@ RECORDS = {
     'scripts/test_selection_services.py': ('1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7',
                                            '4d234d8b45c8e2bf61d4e28b07fa73fd35056c9f88d18ed11a748185bac4febe', 17),
     'scripts/test_selection_execution.py': ('9452ba91778426ee6e06c79f3c54f5cddf1fdc3586ce3cec95533d8514f6c400',
-                                            'e8c956c764fd7065e8044ea4e754b7d3d0ff155b43a21ea8352adb8aeaa028fc', 9),
+                                            '16f8c1357e8772785ee717fcf972a6117d2ea30a0f6c7a134ef03fee978668bd', 9),
     'scripts/test_selection_realization.py': ('6b9da1ba7843c4589d1aad7a4cdc37a2dd38234ff88b12a03f87869033cf5099',
                                               '363f5013f9d9fa201ef236264e11cd4553d1444da42024d3c92560b1d6839d81', 4),
     'nips/nip5f/CMakeLists.txt': ('5b73b22a6357188a482762aeaa0f1930dbb6afe0a4abc49f67906189a8593c80',
@@ -33,7 +33,7 @@ RECORDS = {
     # The .36.18 additive publication gate (worker-prerequisite layer pins its before bytes).
     '.github/workflows/dependency-worker.yml': (
         '16a92e574e6fc03ca55591c017e911d0e418cfd20431eb501fc736a6715fc1d9',
-        '1bfd93d469478a69b27588670a533b9b6ff007ac1bbdd8d299613f494fb08b62', 5),
+        'be06df3608b0e5a6eb1372650daba2403a205c981c5ace28af1f3f6379621b1f', 5),
     # This integration's projection of the byte-pinned historical post-1640 test.
     'tests/selection/test_post1640_integration.py': (
         '001d95311301f200271d536e1e0f0a82d607125ea5add1602404b3fb01cf4b9d',

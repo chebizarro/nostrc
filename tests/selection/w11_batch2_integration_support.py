@@ -23,7 +23,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_batch2_integration_20261024.json'
-SHA256 = '26564f1442fa4f43fc7a193df79715f65af3da9fbe5c82152f5bbe3898e97e12'
+SHA256 = '3c618784578606eef1c688b940ed5e691f7e028a265d9cd8e1a68353d17c029d'
 
 
 def witness():

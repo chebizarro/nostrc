@@ -1010,13 +1010,29 @@ def worker_qualify(repo, plan_path, pid, evidence_root, apparmor_dir, receipts_d
 PUBLICATION_WITHHELD = 'signer_sensitive_publication_withheld_v1'
 
 
-def _signer_possible(policy, plan, profile):
-    """Whether this exact plan lane could provision the signer (authored data only).
+def _verified_plan(repo, plan_path, plan_id, sha, profile):
+    """The worker's existing plan checks, bound to the trusted workflow inputs.
 
-    Unknown lanes or checks count as possible: the decision can only withhold."""
-    lane = next((item for item in plan.get('lanes', []) if item.get('profile') == profile), None)
-    if lane is None:
-        return 'signer_endpoint' in policy['profiles'].get(profile, {}).get('capabilities', [])
+    Inventory is the tested commit's committed blob (never the mutable working
+    tree); validate_plan binds the plan's self-hash, inventory, coverage, SHA and
+    lane/check eligibility; identity must equal inputs.plan_id/inputs.sha; the
+    profile must be exactly one selected lane. Any failure raises (withhold)."""
+    import test_selection as selection
+    selection.require(isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{40}', sha)
+                      and selection.commit_sha(repo, sha) == sha and selection.commit_sha(repo, 'HEAD') == sha,
+                      'checkout is not the trusted tested commit')
+    policy = selection.validate_inventory(json.loads(selection.git(repo, 'show', sha + ':tests/selection/inventory.json').stdout))
+    plan = selection.validate_plan(selection.read_json(plan_path), policy)
+    selection.require(plan['plan_id'] == plan_id and plan['tested_sha'] == sha
+                      and plan['source_identity'] == {'kind': 'committed', 'sha': sha},
+                      'plan identity differs from the trusted workflow inputs')
+    lanes = [lane for lane in plan['lanes'] if lane['profile'] == profile]
+    selection.require(profile in plan['expected_lane_ids'] and len(lanes) == 1, 'profile is not exactly one selected lane')
+    return policy, plan, lanes[0]
+
+
+def _signer_possible(policy, lane):
+    """Whether this validated lane could provision the signer; unknown checks count."""
     return any('signer_endpoint' in policy['checks'].get(ident, {'requires': ['signer_endpoint']}).get('requires', [])
                for ident in lane['checks'])
 
@@ -1037,15 +1053,16 @@ def _credential_shapes(roots):
     return found
 
 
-def publication_decision(policy, plan, profile, receipts_dir, evidence_root, qualify_outcome):
+def publication_decision(policy, plan, lane, receipts_dir, evidence_root, qualify_outcome):
     """(publish, reason, paths) for this worker's always-uploaded receipt/evidence sets.
 
     A lane that could provision the signer publishes only after post-exit
     qualification passed and its delivery record shows a complete, clean
     exact-token scan; anything else (failure, cancellation, refusal, scan
     failure, exposure) withholds the whole set. Reasons and paths only: never
-    file contents or a credential."""
-    if not _signer_possible(policy, plan, profile):
+    file contents or a credential. ``plan``/``lane`` must come from _verified_plan."""
+    profile = lane['profile']
+    if not _signer_possible(policy, lane):
         return True, 'no_signer_in_lane', []
     if qualify_outcome != 'success':
         return False, 'qualification_' + (re.sub(r'[^a-z]', '', str(qualify_outcome))[:16] or 'unknown'), []
@@ -1076,18 +1093,21 @@ def publication_decision(policy, plan, profile, receipts_dir, evidence_root, qua
     return True, 'qualified_exposure_checked', []
 
 
-def publication_gate(repo, plan_path, profile, receipts_dir, evidence_root, qualify_outcome, metadata_path):
-    """Worker step before upload. Withheld sets stay unuploaded on the ephemeral
-    worker; only nonsecret metadata (never a receipt.json) is written."""
+def publication_gate(repo, plan_path, plan_id, sha, profile, receipts_dir, evidence_root, qualify_outcome, metadata_path):
+    """Worker step before upload. Nothing publishes unless the plan is verified
+    against the trusted inputs; withheld sets stay unuploaded on the ephemeral
+    worker and only nonsecret metadata (never a receipt.json) is written."""
     sys.path.insert(0, str(Path(repo) / 'scripts'))
-    import test_selection as selection
-    policy = selection.load_inventory(Path(repo) / 'tests/selection/inventory.json')
-    plan = selection.read_json(plan_path)
-    publish, reason, paths = publication_decision(policy, plan, profile, receipts_dir, evidence_root, qualify_outcome)
+    try:
+        policy, plan, lane = _verified_plan(repo, plan_path, plan_id, sha, profile)
+    except (ValueError, LookupError, TypeError, AttributeError, OSError, subprocess.SubprocessError):
+        publish, reason, paths = False, 'plan_or_source_unverified', []
+    else:
+        publish, reason, paths = publication_decision(policy, plan, lane, receipts_dir, evidence_root, qualify_outcome)
     if publish:
         return True, reason
-    record = dict(schema_version=1, kind=PUBLICATION_WITHHELD, plan_id=plan['plan_id'], profile=profile,
-                  source_identity=plan['source_identity'], reason=reason, paths=paths,
+    record = dict(schema_version=1, kind=PUBLICATION_WITHHELD, plan_id=str(plan_id), profile=str(profile),
+                  source_identity={'kind': 'committed', 'sha': str(sha)}, reason=reason, paths=paths,
                   withheld=['dependency-receipt', 'dependency-evidence'],
                   local_retention='unuploaded on the ephemeral hosted worker until the job ends; not durably retained',
                   complete=False, complete_gate_eligible=False)
@@ -1107,13 +1127,13 @@ def main(argv=None):
     for name in ('repo', 'plan', 'profile', 'evidence-root', 'apparmor-evidence', 'receipts-dir'):
         worker.add_argument('--' + name, required=True)
     gate = commands.add_parser('publication-gate')
-    for name in ('repo', 'plan', 'profile', 'receipts-dir', 'evidence-root', 'qualify-outcome', 'metadata'):
+    for name in ('repo', 'plan', 'plan-id', 'sha', 'profile', 'receipts-dir', 'evidence-root', 'qualify-outcome', 'metadata'):
         gate.add_argument('--' + name, required=True)
     args = parser.parse_args(argv)
     if args.command == 'publication-gate':
         # stdout carries only the decision; any failure prints nothing there (withheld).
-        publish, reason = publication_gate(args.repo, args.plan, args.profile, args.receipts_dir, args.evidence_root,
-                                           args.qualify_outcome, args.metadata)
+        publish, reason = publication_gate(args.repo, args.plan, args.plan_id, args.sha, args.profile, args.receipts_dir,
+                                           args.evidence_root, args.qualify_outcome, args.metadata)
         print('publication: %s (%s)' % ('published' if publish else 'withheld', reason), file=sys.stderr)
         print('publish=true' if publish else 'publish=false')
         return 0
