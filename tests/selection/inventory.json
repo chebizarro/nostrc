@@ -5786,9 +5786,14 @@
       "kind": "build_contract",
       "nodes": [
         "execution.groundhog",
+        "blossom_cache",
         "gnome.common",
         "gnome.seahorse",
         "gnostr.schema_inputs",
+        "grelay",
+        "grotto.daemon",
+        "grotto.gui",
+        "grotto.native_host",
         "groundhog.account_relays",
         "groundhog.conversations",
         "groundhog.gresource_inputs",
@@ -5905,6 +5910,7 @@
         "nostr.gtk.portable",
         "nostr.gtk.resources",
         "nostrdb",
+        "relayctl",
         "relayd",
         "schema",
         "schema.test_inputs",
@@ -8045,7 +8051,12 @@
         "{source}/tests/selection/test_w11_matrix.py",
         "{source}/tests/selection/w11_matrix_integration_support.py",
         "{source}/tests/selection/fixtures/w11_matrix_integration_20261024.json",
-        "{source}/tests/selection/test_w11_matrix_integration.py"
+        "{source}/tests/selection/test_w11_matrix_integration.py",
+        "{source}/tests/selection/groundhog_app_enrollment_support.py",
+        "{source}/tests/selection/fixtures/groundhog_app_enrollment_20261024.json",
+        "{source}/tests/selection/test_groundhog_app_enrollment.py",
+        "{source}/tests/selection/fixtures/sanitizer_partition_drift_20261024.json",
+        "{source}/tests/selection/test_sanitizer_partition_drift.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -16411,6 +16422,7 @@
         "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -16429,6 +16441,9 @@
           "test-bc-blob-store"
         ],
         "grotto.linux.asan_ubsan": [
+          "test-bc-blob-store"
+        ],
+        "groundhog.linux": [
           "test-bc-blob-store"
         ],
         "groundhog.mdk08": [
@@ -16455,6 +16470,7 @@
         "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -16473,6 +16489,9 @@
           "grelay_ingress_security"
         ],
         "grotto.linux.asan_ubsan": [
+          "grelay_ingress_security"
+        ],
+        "groundhog.linux": [
           "grelay_ingress_security"
         ],
         "groundhog.mdk08": [
@@ -16501,6 +16520,7 @@
         "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -16522,6 +16542,10 @@
           "grotto_dbus_service_configured"
         ],
         "grotto.linux.asan_ubsan": [
+          "grotto_app_dbus_service_configured",
+          "grotto_dbus_service_configured"
+        ],
+        "groundhog.linux": [
           "grotto_app_dbus_service_configured",
           "grotto_dbus_service_configured"
         ],
@@ -16550,6 +16574,7 @@
         "core.linux.asan",
         "grotto.linux",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -16581,6 +16606,15 @@
           "nostr_signer_webext_host_webln"
         ],
         "grotto.linux.asan_ubsan": [
+          "nostr_signer_webext_extension_policy",
+          "nostr_signer_webext_extension_webln",
+          "nostr_signer_webext_host_errors",
+          "nostr_signer_webext_host_framing",
+          "nostr_signer_webext_host_policy",
+          "nostr_signer_webext_host_router",
+          "nostr_signer_webext_host_webln"
+        ],
+        "groundhog.linux": [
           "nostr_signer_webext_extension_policy",
           "nostr_signer_webext_extension_webln",
           "nostr_signer_webext_host_errors",
@@ -18205,6 +18239,7 @@
         "core.linux",
         "core.linux.asan",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -18220,6 +18255,9 @@
           "nostr_signer_webext_host_e2e"
         ],
         "grotto.linux.asan_ubsan": [
+          "nostr_signer_webext_host_e2e"
+        ],
+        "groundhog.linux": [
           "nostr_signer_webext_host_e2e"
         ],
         "groundhog.mdk08": [
@@ -18256,6 +18294,7 @@
         "core.linux",
         "core.linux.asan",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -18298,6 +18337,22 @@
         ],
         "grotto.linux.asan_ubsan": [
           "signer/blueprint-drift",
+          "signer/bunker-startup",
+          "signer/core",
+          "signer/crypto",
+          "signer/hsm-provider",
+          "signer/identity",
+          "signer/legacy-dirs",
+          "signer/profile-guard",
+          "signer/rate-limiter",
+          "signer/secure-mem",
+          "signer/session",
+          "signer/signer-core",
+          "signer/social-recovery"
+        ],
+        "groundhog.linux": [
+          "signer/blueprint-drift",
+          "signer/bunker",
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
@@ -18375,6 +18430,7 @@
         "core.linux",
         "core.linux.asan",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -18394,6 +18450,11 @@
           "signer/ui"
         ],
         "grotto.linux.asan_ubsan": [
+          "signer/approval-dialog",
+          "signer/qr-scanner",
+          "signer/ui"
+        ],
+        "groundhog.linux": [
           "signer/approval-dialog",
           "signer/qr-scanner",
           "signer/ui"
@@ -18443,6 +18504,7 @@
         "core.linux",
         "core.linux.asan",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -18472,6 +18534,16 @@
         "grotto.linux.asan_ubsan": [
           "signer/desktop-contract",
           "signer/identity-model",
+          "signer/ui-accessibility",
+          "signer/ui-layout"
+        ],
+        "groundhog.linux": [
+          "signer/approval-controller",
+          "signer/approval-integration",
+          "signer/desktop-contract",
+          "signer/identity-model",
+          "signer/onboarding",
+          "signer/room-flow",
           "signer/ui-accessibility",
           "signer/ui-layout"
         ],
@@ -18534,6 +18606,7 @@
         "core.linux",
         "core.linux.asan",
         "grotto.linux.asan_ubsan",
+        "groundhog.linux",
         "groundhog.mdk08",
         "groundhog.mdk011"
       ],
@@ -18566,6 +18639,17 @@
         ],
         "grotto.linux.asan_ubsan": [
           "signer/bunker-headless",
+          "signer/dbus",
+          "signer/home-model",
+          "signer/identity-management",
+          "signer/session-lock"
+        ],
+        "groundhog.linux": [
+          "signer/activity",
+          "signer/background",
+          "signer/bunker-e2e",
+          "signer/bunker-headless",
+          "signer/clients",
           "signer/dbus",
           "signer/home-model",
           "signer/identity-management",

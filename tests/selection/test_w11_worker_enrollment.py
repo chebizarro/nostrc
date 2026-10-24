@@ -39,7 +39,9 @@ class WorkerEnrollmentTests(unittest.TestCase):
 
     def test_current_grotto_input_selects_real_signer_fixture_without_rewriting_goldens(self):
         from selector_support import change
-        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # The newer groundhog.linux app ownership layer (its own exact selection test) is projected first.
+        from groundhog_app_enrollment_support import before_policy as before_newer_policy
+        p = before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         from homed_profile_support import before_homed_policy
         previous = w.before_worker_policy(before_policy_enrollment(before_homed_policy(p)))
         path = change('apps/grotto/src/main.c')
