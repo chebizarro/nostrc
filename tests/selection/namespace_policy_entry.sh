@@ -79,7 +79,11 @@ fi
 python3 - <<'PY'
 import hashlib, json, os, pathlib, re, shutil, subprocess
 root = pathlib.Path('/evidence')
-commands = {name: int(code) for name, code in (line.split() for line in (root / 'commands.tsv').read_text().splitlines())}
+lines = [line.split() for line in (root / 'commands.tsv').read_text().splitlines()]
+names = [name for name, _ in lines]
+# A repeated command record is a failure even if its last exit is 0.
+duplicates = sorted({name for name in names if names.count(name) > 1})
+commands = {name: int(code) for name, code in lines}
 tools = {}
 for name in ('python3', 'git', 'cc', 'cmake', 'ninja', 'Xvfb', 'dbus-daemon', 'gnome-keyring-daemon'):
     path = pathlib.Path(shutil.which(name)).resolve()
@@ -92,13 +96,14 @@ matrix_text = matrix_log.read_text(errors='replace') if matrix_log.exists() else
 summary = re.search(r'^Ran (\d+) tests? in ', matrix_text, re.M)
 matrix = dict(tests=int(summary[1]) if summary else 0,
               skipped=sum(int(n) for n in re.findall(r'skipped=(\d+)', matrix_text)))
-passed = (set(commands) == required and all(code == 0 for code in commands.values())
+passed = (not duplicates and set(commands) == required and all(code == 0 for code in commands.values())
           and matrix['tests'] >= 79 and matrix['skipped'] == 0)
 record = dict(kind='namespace_policy_regression_v1',
     scope='provisioned_container_regressions_not_authored_native_profile',
     source_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
     kernel=list(os.uname()), uid=os.getuid(), gid=os.getgid(), tools=tools,
-    commands=commands, kernel_matrix=matrix, not_executed=sorted(required - commands.keys()), passed=passed,
+    commands=commands, duplicate_commands=duplicates, kernel_matrix=matrix,
+    not_executed=sorted(required - commands.keys()), passed=passed,
     complete=False, complete_gate_eligible=False, native_profile_acceptance=False)
 (root / 'regression.json').write_text(json.dumps(record, indent=2) + '\n')
 if not passed:
