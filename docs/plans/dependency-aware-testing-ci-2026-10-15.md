@@ -18,25 +18,12 @@ This delivery has **exactly three outcomes**:
    unrelated omission, including relevant compatibility, and report real failures,
    cancellations, unavailable prerequisites and unexecuted work honestly.
 
-These are the complete delivery acceptance contract, replacing accumulated W11,
-W12 and AGENTS requirements. No additional acceptance tasks, PR/broad-run quotas,
-benchmark or savings targets, exhaustive baseline repair, universal process custody
-or profile/platform qualification parity are prerequisites. Existing safety guards
-on any invoked route remain in force; a refusal or incomplete receipt is not
-converted into a pass. Focused verification is not universal qualification.
-
-The owner authorizes this policy/default reset. This document does not assert that
-scripts, workflows, hosted settings or integrated verification have already changed.
-`.39` owns policy/tracker reconciliation, `.40` scripts/tests, `.41` workflows;
-the parent verifies their integrated delivery before closing `.40`, `.41` or
-`nostrc-0cfsg`. No component bump for internal tooling/tests/docs.
-
-Historical results, failed attempts and audits remain literal in Git history
-and linked reviews. Old statements such as W11 NOT MET, W12 NOT RUN,
-0/20, 0/2 and zero benchmark samples describe their original contracts and dated
-sources. Those contracts are **superseded as delivery blockers**, not satisfied
-retroactively. The acceptance audit/run ledger need not be refreshed to deliver
-these three outcomes, and this reset adds no quota credit or successful execution.
+These are the complete delivery acceptance contract. No additional acceptance
+tasks, quotas, benchmarks, exhaustive baseline repair or universal custody/profile
+qualification are prerequisites. Existing safety guards on invoked routes remain
+in force; a refusal or incomplete receipt is not converted into a pass.
+Historical results remain in Git history and separate reviews, not as current
+operational instructions.
 
 ## Goal
 
@@ -77,41 +64,8 @@ Do not weaken keychain, sanitizer, approval or owned-resource cleanup safeguards
 
 Existing publication identity/package safeguards remain; broad release routing is
 not permission to forge complete receipts or publish through failed selected
-checks. Server-side branch protection and publisher settings are not presumed
-changed by this docs commit. No universal attestation programme or protection
-migration is added as a fourth delivery outcome.
-
-The original measurement/rollout protocol is available in Git history. The
-[acceptance audit](../reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
-and [run ledger](../reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md)
-are preserved unchanged. Their quotas, baseline/savings gates, full-union parity
-and conditional-cutover blockers no longer gate delivery.
-
-## Implementation order and acceptance
-
-### Execution index
-
-| Item | Goal | Done when | Ownership |
-|---|---|---|---|
-| W11 — Focused delivery verification | Verify affected correctness and honest results | Representative relevant inclusion/unrelated omission, relevant compatibility and conservative unknown fallback are demonstrated; failures and coverage limits are explicit. No quota, benchmark, exhaustive baseline repair or universal qualification gate. | `.40` selector/local tests, `.41` CI routing; parent integrated verification |
-| W12 — Operational defaults and coherent policy | Deliver affected explicit local/PR testing, a static-only push hook and broad master/release/manual CI | Scripts/workflows and AGENTS/TESTING agree; the hook never launches builds/tests even under legacy flags; explicit local `--broad` works; no scheduled tier or duplicate broad PR/default policy defeats selective execution. No dependency on the superseded measurement/profile programme. | `.39` docs/tracker, `.40` local, `.41` workflows; parent final acceptance |
-
-Only the three outcomes above determine delivery acceptance. W1–W10 and prior
-checkpoint tables are historical implementation references, not extra gates to
-reopen. This reset does not declare W11/W12 execution passed; the parent assesses
-the integrated sibling changes and their focused evidence.
-
-### Tracker reconciliation
-
-`nostrc-0cfsg` retains the delivery and `.39`/`.40`/`.41`. Existing `.36` is the
-separate **nonblocking follow-up** umbrella, related to (not a child/blocker of)
-the delivery. Prior MDK lifecycle `.8`/`.8.1`, native custody `.23`, ordinary-Go
-qualification `.9.1`, heartbeat `.11`/`.11.1`, and the remaining `.36.*` hardening
-and bug cells stay unresolved there. Optional measurement `.36.6`/`.36.14` no
-longer impose quotas or block W12. Their original scope/evidence is preserved;
-no bug is called fixed and no new acceptance bead is created. Previously closed
-finite source scopes remain closed as recorded. Parent alone closes the root
-and sibling delivery tasks after verification.
+checks. No universal attestation programme or protection migration is an
+additional delivery outcome.
 
 ### Representative case reference
 
