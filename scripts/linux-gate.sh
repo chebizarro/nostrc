@@ -220,10 +220,11 @@ STRICT_CFLAGS='-Werror=implicit-function-declaration -Werror=implicit-int -Werro
 # Smoke set: every registered test except
 #  - those over ~13 s each (scrypt, stress, D-Bus contract suites), which hosted
 #    CI runs; the rest finish in about half a minute on 14 cores;
-#  - gnostr tests that cannot load on Linux yet (nostrc-taue: they link with
-#    unresolved symbols, and -z now rejects them). Drop them here when fixed.
+#  - tests that cannot run on Linux, each with its bead. None now: the four
+#    gnostr tests that linked with unresolved symbols, which -z now rejected
+#    (nostrc-taue), link completely since nostrc-0cfsg.36.23.
 SLOW_TESTS='test_nip49_roundtrip|profile_fetch_stress|signer/crypto|gnostr-test-event-model-windowing|nip55l_dbus_contract|libnostr_reconnect_same_second'
-BROKEN_ON_LINUX='gnostr-test-image-viewer-remote-media|gnostr-test-delete-authorization|gnostr-test-ndb-main-thread-violations|gnostr-test-real-bind-latency'
+BROKEN_ON_LINUX=''
 # Under emulation (Rosetta, qemu), left out of the NOSTRC_GATE_AMD64=1 run:
 #  - nostr_signer_webext_host_e2e: /proc/<pid>/exe of another process names the
 #    emulator (/run/rosetta/rosetta), so the signer cannot attest the webext
@@ -235,9 +236,9 @@ BROKEN_ON_LINUX='gnostr-test-image-viewer-remote-media|gnostr-test-delete-author
 EMULATION_ONLY='nostr_signer_webext_host_e2e|test_nostr_gtk_bind_latency_budget|test_nostr_gtk_bind_latency_perf'
 AMD64_KNOWN='relayd_session_relay_storage'
 if [ "$ARCH" != "$NATIVE" ]; then
-    BROKEN_ON_LINUX="$BROKEN_ON_LINUX|$EMULATION_ONLY|$AMD64_KNOWN"
+    BROKEN_ON_LINUX="${BROKEN_ON_LINUX:+$BROKEN_ON_LINUX|}$EMULATION_ONLY|$AMD64_KNOWN"
 fi
-SMOKE_EXCLUDE="^($SLOW_TESTS|$BROKEN_ON_LINUX)\$"
+SMOKE_EXCLUDE="^($SLOW_TESTS${BROKEN_ON_LINUX:+|$BROKEN_ON_LINUX})\$"
 
 # The script below runs in the container; "$@" there is not this script's.
 # shellcheck disable=SC2016

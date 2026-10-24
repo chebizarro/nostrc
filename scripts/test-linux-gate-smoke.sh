@@ -148,7 +148,8 @@ grep -qF -- '-L ^perf$' "$tmp/trace" || fail "perf label was not selected"
 FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe other_probe" REQUIRED_PERF_TEST="perf_probe" \
     TEST_REGEX=. gate > "$tmp/out" 2>&1 || fail "multiple perf registrations were rejected"
 # Use the driver's actual non-native-arch exclusions, not a copy that can drift.
-emulation_names="$(sed -nE "s/^(SLOW_TESTS|BROKEN_ON_LINUX|EMULATION_ONLY|AMD64_KNOWN)='(.*)'$/\2/p" \
+# An empty list (BROKEN_ON_LINUX='') adds no alternative: ERE rejects "a||b".
+emulation_names="$(sed -nE "s/^(SLOW_TESTS|BROKEN_ON_LINUX|EMULATION_ONLY|AMD64_KNOWN)='(.+)'$/\2/p" \
     "$scripts/linux-gate.sh" | paste -sd '|' -)"
 emulation_exclude="^($emulation_names)\$"
 [[ test_nostr_gtk_bind_latency_perf =~ $emulation_exclude ]] || fail "missing emulation perf exclusion"
