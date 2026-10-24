@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Fast pre-push checks: cheap static checks on each pushed commit, no build.
+# Pre-push: cheap static guards, then affected local tests on pushed trees.
 #
-# CI builds and tests every component (scoped by path in .github/workflows),
-# so this hook only catches what CI would otherwise report late and that costs
-# seconds here: whitespace errors in the pushed range (git diff --check), and
-# the repository static checkers, run on the pushed tree (not the working tree):
+# The guards run first: whitespace errors in the pushed range (git diff --check),
+# and the repository static checkers on the pushed tree (not the working tree):
 #   scripts/check-unsequenced-args.py, scripts/check-gui-test-gdk-frame.py,
 #   scripts/check-linux-ci-packages.py, gnome/groundhog/tests/check_privacy.py
-# Each checker runs only if the pushed commit ships it. Typical run: ~5-10 s.
+# Each checker runs only if the pushed commit ships it. The guard phase is cheap;
+# selected builds/tests follow unless explicitly bypassed.
 #
 # The former full gate (macOS build + CTest, Linux Docker build, sanitizer
 # stage) is scripts/full-gate.sh. Opt in per push with
 #   NOSTRC_FULL_GATE=1 git push ...
-# NOSTRC_SKIP_PRE_PUSH=1 skips these static checks (announced).
-# NOSTRC_SELECTIVE_GATE=1 additionally runs the diagnostic shared adapter.
-# This is explicit opt-in, not a replacement for required pre-push gates.
+# NOSTRC_SKIP_PRE_PUSH=1 skips this hook's static and affected checks (announced).
+# Affected local tests run after these guards by default. NOSTRC_SELECTIVE_GATE=0
+# is an announced local-test bypass; NOSTRC_FULL_GATE=1 runs the real full gate.
 set -euo pipefail
 {
 
@@ -46,7 +45,7 @@ trap cleanup EXIT
 
 printf '%s\n' "$input" > "$tmp/refs"
 if [ "${NOSTRC_SKIP_PRE_PUSH:-0}" = 1 ]; then
-    echo "!! Pre-push: static checks SKIPPED (NOSTRC_SKIP_PRE_PUSH=1)." >&2
+    echo "!! Pre-push: static and affected checks SKIPPED (NOSTRC_SKIP_PRE_PUSH=1)." >&2
     if [ "${NOSTRC_SELECTIVE_GATE:-0}" = 1 ]; then
         # Plan-only evidence makes this explicit bypass visible; no execution
         # or receipt may suggest the skipped mandatory static checks passed.
@@ -95,9 +94,11 @@ if [ "$failed" -ne 0 ]; then
     echo "Pre-push static checks failed - push blocked (NOSTRC_SKIP_PRE_PUSH=1 bypasses)" >&2
     exit 1
 fi
-if [ "${NOSTRC_SELECTIVE_GATE:-0}" = 1 ]; then
-    echo "Pre-push: explicit diagnostic shared gate (does not replace mandatory rollout gates)"
-    bash "$repo_root/scripts/test-gate.sh" --repo "$repo_root" --pre-push --refs-file "$tmp/refs"
+if [ "${NOSTRC_SELECTIVE_GATE:-1}" != 0 ]; then
+    echo "Pre-push: affected local tests (legacy CMake/CTest; not whole-CI coverage)"
+    bash "$repo_root/scripts/test-gate.sh" --execution legacy --repo "$repo_root" --pre-push --refs-file "$tmp/refs"
+else
+    echo "!! Pre-push: affected local tests SKIPPED (NOSTRC_SELECTIVE_GATE=0)." >&2
 fi
 exit 0
 }

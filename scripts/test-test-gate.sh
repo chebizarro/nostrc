@@ -89,7 +89,7 @@ head = commit()
 
 def gate(*args, success=True):
     evidence = tmp / ('evidence-' + str(len(list(tmp.glob('evidence-*')))))
-    p = subprocess.run(['bash', str(repo/'scripts/test-gate.sh'), '--repo', str(repo),
+    p = subprocess.run(['bash', str(repo/'scripts/test-gate.sh'), '--execution', 'attested', '--repo', str(repo),
                         '--evidence-dir', str(evidence), *args], capture_output=True, text=True,
                         env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
     receipts = list(evidence.glob('*/adapter-receipt.json'))
@@ -212,7 +212,7 @@ server.bind(sockpath)
 server.listen(1)
 server.settimeout(30)
 evidence = tmp/'cancel-evidence'
-process = subprocess.Popen(['bash', str(repo/'scripts/test-gate.sh'), '--repo', str(repo),
+process = subprocess.Popen(['bash', str(repo/'scripts/test-gate.sh'), '--execution', 'attested', '--repo', str(repo),
     '--head', blocked_head, '--base', head, '--evidence-dir', str(evidence)],
     env=dict(os.environ, GATE_TEST_SOCKET=sockpath, PYTHONDONTWRITEBYTECODE='1'),
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
