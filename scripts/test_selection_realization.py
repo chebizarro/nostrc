@@ -2355,6 +2355,12 @@ def resolve_checks(inventory, plan, realization, profile_id):
         signer_consumers = {name for name in selected if 'signer_endpoint' in descriptors.get(name, {}).get('requires', [])}
         if signer_consumers != {'test_nip5f_tcp'} or any('signer_endpoint' in spec['requires'] for spec in selected_commands.values()):
             raise RealizationError('signer fixture supports only the exact test_nip5f_tcp consumer')
+        from test_selection_services import ServiceError, signer_delivery_admission
+        try:
+            # Registration metadata only; execution re-checks the actual CTest environment.
+            signer_delivery_admission(tests, selected, {})
+        except ServiceError as exc:
+            raise RealizationError(str(exc)) from exc
     runtime_capabilities = _runtime_capability_evidence(realization, capabilities, plan.get('plan_id', _hash(plan)))
     result = {"schema_version": 1, "profile_id": profile_id,
         "profile_fingerprint": realization["profile_fingerprint"],
@@ -3345,9 +3351,17 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
             raise RealizationError("CTest indexed selection differs from resolved closure")
         junit = directory / "results.xml"
         cmd = [*args, "--output-on-failure", "--output-junit", str(junit), "--parallel", str(jobs["test"])]
-        if timeout is not None:
-            cmd += ["--timeout", str(timeout)]
-        commands.append(cmd)
+        limit = ["--timeout", str(timeout)] if timeout is not None else []
+        signer = 'signer_endpoint' in resolved['required_capabilities']
+        if signer:
+            from test_selection_services import ServiceError, signer_delivery_admission
+            try:
+                signer_delivery_admission(tests, resolved['tests'], env)
+            except ServiceError as exc:
+                raise RealizationError(str(exc)) from exc
+        else:
+            cmd += limit
+            commands.append(cmd)
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
@@ -3359,13 +3373,16 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
                 mdk_overlay, mdk_runtime = resources.enter_context(
                     lifecycle(realization, resolved, input_audit, directory, environment=env))
                 overlay.update(mdk_overlay)
-            if 'signer_endpoint' in resolved['required_capabilities']:
+            if signer:
+                # Exactly one CTest process; only the admitted registration's
+                # resource allocation carries the endpoint/token.
                 from test_selection_services import provisioned_signer
-                signer_overlay, signer_runtime = resources.enter_context(
-                    provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env))
-                if overlay.keys() & signer_overlay.keys():
-                    raise RealizationError('runtime environment authorities overlap')
-                overlay.update(signer_overlay)
+                spec, signer_runtime = resources.enter_context(
+                    provisioned_signer(realization, resolved, input_audit, directory / 'signer', environment=env,
+                                       exposure_paths=(directory / "ctest.log", junit)))
+                cmd += ["--resource-spec-file", str(spec), *limit]
+                commands.append(cmd)
+                _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
             effective_env = dict(env, **overlay)
             _legacy_macos_environment_guard(realization["profile_id"], realization["profile"],
                                             realization["repo_root"], effective_env)

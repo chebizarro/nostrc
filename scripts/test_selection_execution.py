@@ -226,7 +226,7 @@ def _sanitizer_environment(profile, source_root):
     return {key: value for key, value in authored.items() if key in SANITIZER_ENVIRONMENT}
 
 
-def _signer(backend, profile, post, source_root):
+def _signer(backend, profile, post, source_root, tests, closure):
     from test_selection_services import SIGNER_CONSENT, SIGNER_EXECUTABLES
     proof = backend.get('runtime_capability_evidence', {}).get('signer_endpoint')
     state = backend.get('signer_runtime')
@@ -252,6 +252,21 @@ def _signer(backend, profile, post, source_root):
             and all(item.get('asan') is (profile['instrumentation'] == 'asan_ubsan')
                     and post['input_hashes'].get(path) == item.get('sha256')
                     for path, item in instruments.items()), 'signer executable/instrumentation audit missing')
+    from test_selection_services import (ServiceError, SIGNER_CONSUMER, SIGNER_DELIVERY, SIGNER_RESOURCE_TYPE,
+                                         signer_delivery_admission)
+    delivery, evidence = state.get('delivery', {}), Path(backend['evidence_dir'])
+    spec = Path(str(delivery.get('resource_spec_file')))
+    require(delivery.get('mechanism') == SIGNER_DELIVERY and delivery.get('resource_type') == SIGNER_RESOURCE_TYPE
+            and delivery.get('slots') == 1 and delivery.get('registrations') == [SIGNER_CONSUMER]
+            and delivery.get('endpoint') == state.get('readiness', {}).get('endpoint')
+            and delivery.get('ctest_environment_credentials') is False and delivery.get('removed') is True
+            and spec.is_absolute() and not spec.is_relative_to(evidence)
+            and delivery.get('exposure_checked') == sorted([str(evidence / 'ctest.log'), str(evidence / 'results.xml')]),
+            'signer credential delivery is not the removed registration-scoped resource')
+    try:
+        signer_delivery_admission({test['name']: test for test in tests}, closure, {})
+    except ServiceError as exc:
+        require(False, str(exc))
     cleanup = state.get('cleanup', {})
     require(cleanup.get('private_namespace_absent') is True and cleanup.get('cleanup_errors') == []
             and cleanup.get('remember') is False and cleanup.get('stored_via') == 'StoreKey/libsecret',
@@ -495,8 +510,8 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         overlays = []
         if 'docker' in raw['required_capabilities']:
             overlays += ['NOSTRC_MDK_STATE', 'NOSTRC_MDK_PYTHON']
-        if 'signer_endpoint' in raw['required_capabilities']:
-            overlays += ['NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN']
+        # The signer never overlays the CTest environment: its credentials are
+        # the admitted registration's resource allocation (see _signer).
         require(env.get('overlay_names') == sorted(overlays)
                 and (overlays or env.get('effective_hash') == env.get('base_hash')),
                 'undeclared CTest environment overlay')
@@ -505,6 +520,8 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         expected_argv = ['ctest', '--test-dir', real['build_dir'], *config, '-I', str(directory / 'ctest-indices.txt'),
                          '--output-on-failure', '--output-junit', str(directory / 'results.xml'),
                          '--parallel', str(raw['execution_parallelism']['test'])]
+        if 'signer_endpoint' in raw['required_capabilities']:
+            expected_argv += ['--resource-spec-file', str((raw.get('signer_runtime') or {}).get('delivery', {}).get('resource_spec_file'))]
         argv = process['argv']
         require(argv == expected_argv or (argv[:-2] == expected_argv and argv[-2] == '--timeout'
                 and argv[-1].isdigit() and int(argv[-1]) > 0), 'physical CTest argv differs from contract')
@@ -519,7 +536,7 @@ def qualify(policy, plan, public_path, adapter_path, apparmor_dir=None, *, locat
         require(hashlib.sha256(log_bytes).hexdigest() == process.get('output_sha256'), 'CTest output binding differs')
         require(not any(marker in log_bytes for marker in
                         (b'ERROR: AddressSanitizer', b'ERROR: LeakSanitizer', b': runtime error: ')), 'sanitizer report')
-    _signer(raw, profile, post, real['repo_root'])
+    _signer(raw, profile, post, real['repo_root'], real['tests'], closure)
     if scope == 'selected' and not ('docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw):
         _require_no_mdk_lifecycle(raw, closure, descriptors, recovery)
     if 'docker' in raw.get('required_capabilities', []) or 'mdk_runtime' in raw:

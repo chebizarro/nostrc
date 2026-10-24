@@ -548,6 +548,14 @@ SIGNER_INSTRUMENTATION = {'none': {'GO_ENABLE_ASAN': None},
                           'asan_ubsan': {'GO_ENABLE_ASAN': 'GO_ENABLE_ASAN:BOOL=ON',
                                          'CMAKE_BUILD_TYPE': 'CMAKE_BUILD_TYPE:STRING=Debug'}}
 SANITIZER_ENVIRONMENT = ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'LSAN_OPTIONS', 'G_SLICE')
+# Credentials reach only the admitted registration, as its CTest resource
+# allocation; the CTest process environment never carries them.
+SIGNER_CONSUMER = 'test_nip5f_tcp'
+SIGNER_RESOURCE_TYPE = 'nip5f_signer'
+SIGNER_RESOURCE_GROUPS = [{'requirements': [{'.type': SIGNER_RESOURCE_TYPE, 'slots': 1}]}]
+SIGNER_DELIVERY = 'ctest_resource_allocation_v1'
+# Inherited by every registration if present: refused, never overridden.
+SIGNER_AMBIENT = ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN', 'NOSTR_SIGNER_SOCK')
 
 
 def elf_symbol_names(data, label='signer executable'):
@@ -662,9 +670,70 @@ def signer_contract(realization, environment=None):
             'complete': False, 'complete_gate_eligible': False}
 
 
+def signer_delivery_admission(tests, selected, environment):
+    """Exact registration-bound credential route over the whole fresh CTest universe.
+
+    Only test_nip5f_tcp may declare the signer resource, with exactly one slot;
+    names, labels, commands or aliases never admit another registration. Any
+    other selected resource group would be starved by the signer-only spec.
+    Ambient signer or CTest resource variables reach every registration, so
+    they refuse rather than being trusted or overridden."""
+    holders = sorted(name for name, test in tests.items()
+                     for prop in test.get('properties', [])
+                     if prop.get('name') == 'RESOURCE_GROUPS' and SIGNER_RESOURCE_TYPE in json.dumps(prop.get('value')))
+    if holders != [SIGNER_CONSUMER]:
+        raise ServiceError('signer resource must be declared by exactly test_nip5f_tcp: ' + repr(holders))
+    groups = {name: [prop.get('value') for prop in tests[name].get('properties', []) if prop.get('name') == 'RESOURCE_GROUPS']
+              for name in selected if name in tests}
+    if SIGNER_CONSUMER not in selected or groups.get(SIGNER_CONSUMER) != [SIGNER_RESOURCE_GROUPS]:
+        raise ServiceError('signer consumer lacks its exact nip5f_signer:1 resource group')
+    others = sorted(name for name, values in groups.items() if values and name != SIGNER_CONSUMER)
+    if others:
+        raise ServiceError('selected registrations declare resources the signer spec cannot provide: ' + repr(others))
+    ambient = sorted(key for key in environment if key in SIGNER_AMBIENT or key.startswith('CTEST_RESOURCE_'))
+    if ambient:
+        raise ServiceError('ambient signer/CTest resource variables in the CTest environment: ' + repr(ambient))
+
+
 @contextlib.contextmanager
-def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, environment=None):
+def signer_resource_delivery(endpoint, token, root, exposure_paths=()):
+    """A private, removed CTest resource spec whose single id carries the credential.
+
+    Yields its path and a record that never contains or hashes the token. After a
+    normal exit the named lane outputs must not contain the token."""
+    match = re.fullmatch(r'tcp:127\.0\.0\.1:([1-9][0-9]{0,4})', endpoint or '')
+    if not match or int(match.group(1)) > 65535:
+        raise ServiceError('signer delivery requires the fixture loopback endpoint')
+    if not isinstance(token, str) or not re.fullmatch(r'[0-9a-f]{64}', token):
+        raise ServiceError('signer delivery requires the fixture runtime token')
+    directory = Path(tempfile.mkdtemp(prefix='nip5f-delivery-', dir=root))
+    spec = directory / 'resources.json'
+    record = {'mechanism': SIGNER_DELIVERY, 'resource_type': SIGNER_RESOURCE_TYPE, 'slots': 1,
+              'registrations': [SIGNER_CONSUMER], 'endpoint': endpoint, 'resource_spec_file': str(spec),
+              'ctest_environment_credentials': False, 'removed': False}
+    try:
+        descriptor = os.open(spec, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'w') as stream:
+            json.dump({'version': {'major': 1, 'minor': 0}, 'local': [{SIGNER_RESOURCE_TYPE: [
+                {'id': 'p' + match.group(1) + '_' + token, 'slots': 1}]}]}, stream)
+        yield spec, record
+        exposed = sorted(str(path) for path in exposure_paths
+                         if Path(path).is_file() and token.encode() in Path(path).read_bytes())
+        record['exposure_checked'] = sorted(str(path) for path in exposure_paths)
+        if exposed:
+            raise ServiceError('provisioned signer token exposed in lane output: ' + repr(exposed))
+    finally:
+        spec.unlink(missing_ok=True)
+        directory.rmdir()
+        record['removed'] = not directory.exists()
+
+
+@contextlib.contextmanager
+def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, environment=None, exposure_paths=()):
     """Live, audited test_nip5f_tcp resource; never share its HOME/bus with CTest.
+
+    Yields the private CTest resource spec delivering its endpoint/token to the
+    sole admitted registration; no credential enters the CTest environment.
 
     The outer PID namespace owns crash/cancellation descendants. Direct fixture
     children are joined on normal/nonzero/exception exits; post-exit namespace
@@ -704,8 +773,11 @@ def provisioned_signer(realization, resolved, input_audit, evidence_dir, *, envi
     try:
         owned.start()
         state['readiness'] = dict(owned.result)
-        # TCP clients need ONLY these values, never fixture HOME/bus/service.
-        yield {key: owned.env[key] for key in ('NOSTR_SIGNER_ENDPOINT', 'NOSTR_SIGNER_TOKEN')}, state
+        # The client needs ONLY these values, never fixture HOME/bus/service.
+        with signer_resource_delivery(owned.env['NOSTR_SIGNER_ENDPOINT'], owned.env['NOSTR_SIGNER_TOKEN'],
+                                      resource_root, exposure_paths) as (spec, delivery):
+            state['delivery'] = delivery
+            yield spec, state
         snapshot = owned.snapshot()
         if snapshot != '(uint32 1, uint32 1, uint32 0)':
             raise ServiceError('signer fixture did not observe exactly one completed explicit consent')
