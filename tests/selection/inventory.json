@@ -19751,6 +19751,16 @@
         ".github/workflows"
       ]
     },
+    "fuzz.harness_inputs": {
+      "depends_on": [],
+      "id": "fuzz.harness_inputs",
+      "owner_paths": [
+        "apps/grotto/tests/fuzz/fuzz_nip49.c",
+        "apps/grotto/tests/fuzz/fuzz_bip39.c",
+        "apps/grotto/tests/fuzz/fuzz_json_event.c"
+      ],
+      "rationale": "Standalone harness sources consumed by the existing fuzz-nip49, fuzz-bip39 and fuzz-json-event CI targets; not signer GUI inputs."
+    },
     "gnome.common": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
       "depends_on": [
@@ -26090,6 +26100,30 @@
       ],
       "effect": "impact",
       "reason": "Exact configure template read by production producer regressions; preserve component ownership and select the actual contract consumer."
+    },
+    {
+      "exact": "apps/grotto/tests/fuzz/fuzz_nip49.c",
+      "effect": "impact",
+      "nodes": [
+        "fuzz.harness_inputs"
+      ],
+      "reason": "Standalone fuzz-nip49 harness source consumed by the existing fuzz CI runner."
+    },
+    {
+      "exact": "apps/grotto/tests/fuzz/fuzz_bip39.c",
+      "effect": "impact",
+      "nodes": [
+        "fuzz.harness_inputs"
+      ],
+      "reason": "Standalone fuzz-bip39 harness source consumed by the existing fuzz CI runner."
+    },
+    {
+      "exact": "apps/grotto/tests/fuzz/fuzz_json_event.c",
+      "effect": "impact",
+      "nodes": [
+        "fuzz.harness_inputs"
+      ],
+      "reason": "Standalone fuzz-json-event harness source consumed by the existing fuzz CI runner."
     },
     {
       "exact": "apps/grotto/tests/fuzz/json-glib-setup.sh",

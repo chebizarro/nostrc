@@ -9,70 +9,10 @@ on:
       artifact_prefix:
         type: string
         default: ''
-  push:
-    branches: [main, master]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'Testing/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'gnome/groundhog/**'
-      - 'gnome/seahorse/**'
-      - 'gnome/common/**'
-      - 'gnome/dbus/**'
-      - 'nostr-gobject/**'
-      - 'nostr-gtk/**'
-      - 'libmarmot/**'
-      - 'marmot-gobject/**'
-      - 'apps/relayd/**'
-      - 'apps/gnostr/data/schemas/**'
-      - 'scripts/check-unsequenced-args.py'
-      - 'scripts/check-gui-test-gdk-frame.py'
-      - 'scripts/sanitizer-gate-ci.py'
-      - 'scripts/*groundhog*'
-      - '.github/workflows/groundhog-ci.yml'
-  pull_request:
-    branches: [main, master]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'Testing/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'gnome/groundhog/**'
-      - 'gnome/seahorse/**'
-      - 'gnome/common/**'
-      - 'gnome/dbus/**'
-      - 'nostr-gobject/**'
-      - 'nostr-gtk/**'
-      - 'libmarmot/**'
-      - 'marmot-gobject/**'
-      - 'apps/relayd/**'
-      - 'apps/gnostr/data/schemas/**'
-      - 'scripts/check-unsequenced-args.py'
-      - 'scripts/check-gui-test-gdk-frame.py'
-      - 'scripts/sanitizer-gate-ci.py'
-      - 'scripts/*groundhog*'
-      - '.github/workflows/groundhog-ci.yml'
+      run_reference:
+        description: Run costly MDK reference compatibility (broad or affected MLS only)
+        type: boolean
+        default: true
   workflow_dispatch:
 
 # This is a focused compile/test gate, not messaging-protocol or GNOME manual
@@ -283,6 +223,7 @@ jobs:
         run: scripts/test-groundhog-gui-lifetimes.sh build 2
 
       - name: White Noise AAC/MP4 voice interop with MDK 0.11
+        if: inputs.sha == '' || inputs.run_reference
         run: |
           set -euo pipefail
           ctest --test-dir build --output-on-failure --no-tests=error \

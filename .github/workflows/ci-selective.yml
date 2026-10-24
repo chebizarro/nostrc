@@ -1,0 +1,239 @@
+name: CI
+# Operational defaults: affected PR/merge queue; broad master, tags, release and manual.
+on:
+  pull_request:
+    branches: [main, master]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main, master]
+    tags: ['v*', '**-v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      full:
+        description: Force broad validation (reusable/manual runs are always broad)
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  select:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      families: ${{ steps.plan.outputs.families }}
+      broad: ${{ steps.plan.outputs.broad }}
+      run_reference: ${{ steps.plan.outputs.run_reference }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Shared dependency-aware selection at immutable event identities
+        id: plan
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+          FULL: ${{ inputs.full || false }}
+        run: |
+          args=()
+          if [[ "$FULL" == true ]]; then args+=(--full); fi
+          python3 .github/workflows/ci_selection.py select --sha "$REQUESTED_SHA" \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json" "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-selection-${{ inputs.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-selection/plan.json
+          if-no-files-found: error
+  cheap:
+    name: Cheap static guards
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 scripts/check-unsequenced-args.py
+      - run: python3 scripts/check-gui-test-gdk-frame.py
+      - run: python3 scripts/check-linux-ci-packages.py
+      - run: python3 gnome/groundhog/tests/check_privacy.py
+      - name: Workflow and representative selection contracts (no build or custody matrix)
+        run: python3 -m unittest discover -s tests/selection -p 'test_workflow*.py' -v
+  core:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'core')
+    uses: ./.github/workflows/nostrc-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  libgo:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'libgo')
+    uses: ./.github/workflows/libgo-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  hanami:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'hanami')
+    uses: ./.github/workflows/libhanami-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  gi:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'gi')
+    uses: ./.github/workflows/libnostr-gi.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  groundhog:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'groundhog')
+    uses: ./.github/workflows/groundhog-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+      run_reference: ${{ needs.select.outputs.run_reference == 'true' }}
+  grotto:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'grotto')
+    uses: ./.github/workflows/grotto-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  nip55l:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'nip55l')
+    uses: ./.github/workflows/nip55l-libsecret-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  homed:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'homed')
+    uses: ./.github/workflows/nostr-homed-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  signet:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'signet')
+    uses: ./.github/workflows/signet-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  static:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'static')
+    uses: ./.github/workflows/namespace-policy-regression.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  appimage:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'appimage')
+    uses: ./.github/workflows/gnostr-appimage.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  windows:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'windows')
+    uses: ./.github/workflows/windows-validation.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  bp:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'bp')
+    uses: ./.github/workflows/bp-matrix.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  bp_extended:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'bp_extended')
+    uses: ./.github/workflows/bp-matrix-nightly.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  fuzz:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'fuzz')
+    uses: ./.github/workflows/grotto-fuzz.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  mdk08:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'mdk08')
+    uses: ./.github/workflows/marmot-mdk-interop.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  mdk011:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'mdk011')
+    uses: ./.github/workflows/marmot-mdk011-interop.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  full_static:
+    needs: select
+    if: needs.select.outputs.broad == 'true'
+    uses: ./.github/workflows/static-checks.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      artifact_prefix: ci-
+  gate:
+    name: Dependency gate
+    if: always()
+    needs: [select, cheap, core, libgo, hanami, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011, full_static]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Selection and cheap guards must succeed
+        env:
+          SELECTION: ${{ needs.select.result }}
+          CHEAP: ${{ needs.cheap.result }}
+        run: test "$SELECTION" = success && test "$CHEAP" = success
+      - uses: actions/checkout@v4
+        if: always() && needs.select.result == 'success'
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: always() && needs.select.result == 'success'
+        with:
+          name: ci-selection-${{ needs.select.outputs.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-selection
+      - name: Require every selected family; account for deliberate omissions
+        if: always() && needs.select.result == 'success'
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUESTED_SHA: ${{ needs.select.outputs.sha }}
+        run: |
+          printf '%s' "$RESULTS" > "$RUNNER_TEMP/ci-selection/needs.json"
+          python3 .github/workflows/ci_selection.py aggregate --sha "$REQUESTED_SHA" \
+            --plan "$RUNNER_TEMP/ci-selection/plan.json" \
+            --needs "$RUNNER_TEMP/ci-selection/needs.json" \
+            --output "$RUNNER_TEMP/ci-selection/conclusions.json"
+      - uses: actions/upload-artifact@v4
+        if: always() && needs.select.result == 'success'
+        with:
+          name: ci-conclusions-${{ needs.select.outputs.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-selection
+          if-no-files-found: error

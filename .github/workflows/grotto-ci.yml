@@ -9,29 +9,6 @@ on:
       artifact_prefix:
         type: string
         default: ''
-  push:
-    paths: &inputs
-      - '.github/workflows/grotto-ci.yml'
-      - 'apps/grotto/**'
-      - 'nips/**'
-      - 'libnostr/**'
-      - 'libgo/**'
-      - 'nostr-gobject/**'
-      - 'nostr-gtk/**'
-      - 'third_party/**'
-      - 'components/**'
-      - 'cmake/**'
-      - 'CMakeLists.txt'
-      - 'VERSION_MANIFEST.md'
-      - 'flake.nix'
-      - 'packaging/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'gnome/seahorse/**'
-      - 'gnome/common/**'
-      - 'gnome/nostr-shell-extension/**'
-  pull_request:
-    paths: *inputs
   workflow_dispatch:
 
 permissions:

@@ -9,40 +9,6 @@ on:
       artifact_prefix:
         type: string
         default: ''
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'gnome/nostr-homed/**'
-      - 'gnome/common/**'
-      - '.github/workflows/nostr-homed-ci.yml'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'gnome/nostr-homed/**'
-      - 'gnome/common/**'
-      - '.github/workflows/nostr-homed-ci.yml'
   workflow_dispatch:
 
 jobs:

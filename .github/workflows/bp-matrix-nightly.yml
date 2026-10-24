@@ -1,6 +1,6 @@
 name: Backpressure Matrix Nightly
 
-# Compatibility name retained until W11 evidence/consumer audit permits renaming.
+# Historical artifact/job names retained; ci-selective.yml owns broad dispatch, not a schedule.
 on:
   workflow_call:
     inputs:

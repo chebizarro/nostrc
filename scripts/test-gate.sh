@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Explicit, diagnostic shared-plan adapter. Legacy pre-push/full-gate defaults
-# stay in force until the rollout evidence authorizes a cutover.
+# Shared affected local gate. The legacy CMake/CTest runner is the default;
+# --execution attested retains the separate diagnostic realization route.
 set -euo pipefail
 exec python3 - "$0" "$@" <<'PY'
 import argparse
@@ -23,12 +23,14 @@ import test_selection as shared
 # Read-only Git probes must not refresh the developer's index as a side effect.
 os.environ["GIT_OPTIONAL_LOCKS"] = "0"
 
-parser = argparse.ArgumentParser(description="Shared local test gate (diagnostic; not CI/push acceptance)")
+parser = argparse.ArgumentParser(description="Affected local tests by default; explicit attested diagnostics remain separate (not whole-CI/release coverage)")
 parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--plan", help="execute exact retained committed plan identity; --profile selects physical lanes without rewriting the plan")
-parser.add_argument("--broad", action="store_true")
+parser.add_argument("--broad", "--full", action="store_true", help="run every check in the requested local profiles; push-wide legacy override: NOSTRC_FULL_GATE=1")
+parser.add_argument("--execution", choices=("legacy", "attested"), default=None,
+                    help="legacy CMake/CTest by default; attested retains diagnostic realization/custody")
 parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns", "darwin"), default="legacy",
                     help="explicit native custody: Linux ptrace (no instrumentation) or user/mount/PID namespaces; macOS-only "
                          "darwin seatbelt-tag diagnostic (no wrappers/keyring/instrumentation); none is profile parity")
@@ -40,6 +42,11 @@ parser.add_argument("--pre-push", action="store_true", help="read all ref update
 parser.add_argument("--refs-file", help="pre-push input file (stdin is reserved by this adapter)")
 parser.add_argument("--evidence-dir", help="parent for a unique retained run directory")
 args = parser.parse_args()
+# Existing explicit custody requests keep their diagnostic meaning.
+custody_requested = any(arg.split("=", 1)[0] in {"--linux-custody", "--native-custody"} for arg in sys.argv)
+args.execution = args.execution or ("attested" if args.plan or custody_requested or args.namespace_apparmor_profile else "legacy")
+if args.execution == "legacy" and args.linux_custody != "legacy":
+    parser.error("native custody requires --execution attested")
 active = None
 worktrees = []
 receipt = {"schema_version": 1, "adapter": "test-gate", "execution_api": "test-plan.py resolve/run", "complete": False,
@@ -584,11 +591,30 @@ def execute(head, events, number, dirty=False):
     record.update(plan=str(directory / "plan.json"), source_identity=plan["source_identity"], plan_id=plan["plan_id"])
     print(f"{head}: {plan['effective_mode']}, {len(plan['selected_checks'])} checks, {len(plan['lanes'])} lanes", flush=True)
     if args.explain:
+        if args.execution == "legacy":
+            import test_selection_legacy as legacy
+            projected = args.profile or sorted(legacy.DEFAULT_PROFILES.get(platform.system(), set()))
+            print("  local execution projection: " + ", ".join(projected), flush=True)
+        for node, witness in sorted(plan["witnesses"].items()):
+            print("  impact: " + " -> ".join(witness), flush=True)
         for reason in plan["broadening_reasons"]:
             print(f"  broad: {reason}", flush=True)
         for lane in plan["lanes"]:
             print(f"  {lane['profile']}: {', '.join(lane['checks'])}", flush=True)
         record["status"] = "planned"
+        return
+    if args.execution == "legacy":
+        import test_selection_legacy as legacy
+        guard = adapter.parent / "check-macos-keychain.sh"
+        if platform.system() == "Darwin":
+            command(["bash", guard], log=directory / "keychain-before.log")
+        try:
+            legacy.run(policy, plan, source, directory, record, command=command,
+                       materialize=lambda profile, lane_dir, initialized: materialize_submodules(source, lane_dir, profile, initialized),
+                       profiles=args.profile)
+        finally:
+            if platform.system() == "Darwin":
+                command(["bash", guard], log=directory / "keychain-after.log")
         return
     submodules_ready = set()
     receipts = []
@@ -798,7 +824,8 @@ try:
     parent.mkdir(parents=True, exist_ok=True)
     run_dir = parent / uuid.uuid4().hex
     run_dir.mkdir(mode=0o700)
-    print(f"test-gate: diagnostic evidence: {run_dir}", flush=True)
+    receipt["execution_api"] = "legacy CMake/CTest" if args.execution == "legacy" else receipt["execution_api"]
+    print(f"test-gate: {args.execution} evidence: {run_dir}", flush=True)
     if args.plan and (not args.head or args.base or args.broad or args.pre_push):
         raise RuntimeError('--plan requires --head and refuses --base/--broad/--pre-push')
     groups = {}

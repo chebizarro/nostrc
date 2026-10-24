@@ -4,9 +4,8 @@ name: Marmot MDK interop
 # (nostrc-7gx7, nostrc-77pa; charter section 7.9): Groundhog's GhMlsService
 # (libmarmot) against MDK v0.8.0 (575ae29d, the pinned JSON-lines driver of
 # tests/interop/mdk/driver, built as a Docker image), on the test's own local
-# relays only. On demand and nightly: the image build compiles MDK (minutes).
+# relays only. Affected MLS and broad CI: the image build compiles MDK (minutes).
 # Report: docs/analysis/marmot-mdk-interop-2026-09-30.md.
-# Legacy schedule retained until two broad runs and release proof (W11).
 on:
   workflow_call:
     inputs:
@@ -17,9 +16,6 @@ on:
         type: string
         default: ''
   workflow_dispatch:
-  schedule:
-    - cron: '17 3 * * *'
-
 # Builds and runs third-party code (MDK, OpenMLS crates): read-only token.
 permissions:
   contents: read
