@@ -84,7 +84,12 @@ ss_prepare_finish(GhNip46CredentialBackend *backend, GAsyncResult *result, GErro
 static SecretService *
 open_service(GObject *prepared, GCancellable *cancellable, GError **error)
 {
-  g_return_val_if_fail(SECRET_IS_SERVICE(prepared), NULL);
+  if (!SECRET_IS_SERVICE(prepared)) {
+    /* The caller still gets an error to complete its task with. */
+    g_set_error_literal(error, GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_FAILED,
+                        "Secret Service operation failed");
+    g_return_val_if_reached(NULL);
+  }
   GError *local = NULL;
   SecretService *service = g_object_ref(SECRET_SERVICE(prepared));
   GMainContext *context = g_main_context_new();

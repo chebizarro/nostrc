@@ -469,6 +469,11 @@ on_prepared(GObject *source, GAsyncResult *result, gpointer user_data)
   Operation *op = g_task_get_task_data(task);
   GError *error = NULL;
   op->prepared = self->backend->prepare_finish(self->backend, result, &error);
+  if (!op->prepared && !error) {
+    g_critical("%s: prepare_finish() returned NULL without an error", G_STRFUNC);
+    error = g_error_new_literal(GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_FAILED,
+                                "Remote signer credential storage failed");
+  }
   if (op->prepared)
     g_task_run_in_thread(task, run_operation);
   else
