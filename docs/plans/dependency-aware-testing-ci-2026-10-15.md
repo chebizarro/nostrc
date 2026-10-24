@@ -1,5 +1,7 @@
 # Dependency-aware testing and CI/CD
 
+> **Latest finite batch — 2026-10-24, [PR24 source receipt](../reviews/dependency-aware-testing-priority-parity-2026-10-24.md):** landed normally at `b43ff6160`. Repairs include worker prerequisites, exact46 MDK011/45 ASan app ownership, two private-daemon test environments, and executable measurement capture. Final hosted head `bd0b3b2` / tested merge `f5d85dec8`: DEFAULT1,261/zero failures/errors/80 skips; separate overlapping kernel81/zero skips. Native source937 remains separately labelled439=434pass+5skip, not native final-head/profile acceptance. Original failed attempts remain retained. `.36.12`/`.36.17` close finite source scopes only; `.36.19`–`.36.22` name the newly reached ownership/freshness/Xvfb/partition blockers. Real product samples remain zero; reviewed W11 counters0/20 and0/2, W12 NOT RUN. No default/protection/publisher/legacy-trigger/schedule cutover. All older checkpoints below remain historical, not current acceptance.
+
 > **Concrete closure batch, code `0e3601eab21ca480a7d80c72d6c29ac29155f5aa`:**
 > all six final approved tips preserve ancestry. Internal resource/profile/input,
 > tool/producer and workflow enrollment is implemented; full33 ordinary ownership

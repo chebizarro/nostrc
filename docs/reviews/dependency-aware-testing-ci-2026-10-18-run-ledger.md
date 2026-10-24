@@ -1,3 +1,22 @@
+## PR24 final-source ledger — 2026-10-24T00:50:15Z–00:50:52Z
+
+This bounded snapshot precedes normal PR24 landing `b43ff6160` at00:58:13Z and excludes later merge/metadata-triggered roots. It is not a live all-history counter. [Full receipt, identities, retained attempts, raw-capture references and criterion reconciliation](dependency-aware-testing-priority-parity-2026-10-24.md).
+
+| Observation | Exact source / result |
+|---|---|
+| Final API head / tested merge / equal tree | `bd0b3b2fd36903e3c220249faef993ffc3e4bb36` / `f5d85dec88985c5a40d4fc0ff39a9e8224a3c40f` / `1b6b8a9c5070f45e51cff22d7cd201bace8f27eb`; distinct identities |
+| [Static40044808206/job120723979931](https://github.com/chebizarro/nostrc/actions/runs/40044808206/job/120723979931), attempt1 | SUCCESS1133s; DEFAULT1261/0fail/0error/80skip (883.680s), overlapping kernel81PASS0skip (55.236s); not full-profile acceptance |
+| Original artifact12541671571 |31735136bytes; SHA256 `dceeb8288f37025febdc8f7766916586daded04c9e28dbd2d99b3a9b8486f7bc`;5978CRCs checked; no top-level JUnit;22nested fixture XMLs not promoted |
+| Prior937 [40041712788/job120714080188](https://github.com/chebizarro/nostrc/actions/runs/40041712788/job/120714080188) | FAILED1259/1fail/80skip +kernel81pass; document classification failure, not timeout; artifact12539269705 retained |
+| Native937 | Fresh default build and439accounted=434pass+5skip; explicit internal UI SKIPs; three read-only keychain guards/private-bus cleanup; not relabelled final head or native profile acceptance |
+| Earlier nativebeb437 | Incomplete missing-Node registration budget; preserved separately, never stitched |
+| Final-source checks |51success/8failure/4skipped/8in-progress/2queued/3pending; whole PR/profile not green |
+| Source-linked next failures | GH46unclaimed+638edges; MDK08/GrottoASan no-work freshness; Grotto Xvfb fd7 readiness; GHsan partition mismatch; coreLinux/MacASan3legacy unclaimed each. Core ordinary/MDK011 in progress at snapshot. |
+
+Protected final-source capture summary SHA256 `311d12e0bd69b4e15ec55a8a4885f10a410ff7c9cd9a9d33a5fa1fe66971f203`; native937summary `4524b8e2d7fe6d6dd62bb207abf6309810d914e28f2aa1c2658b9a6d88880bad`. Parent independently checks original Static archive/log/source bytes and all native9172manifest entries/6531Git blobs. Original `.5` has the dated source-linked comment; all older observations below remain retained.
+
+**Reviewed counters:0/20 qualifying representative PR comparisons,0/2 successful complete broad integrations; zero product benchmark samples.** PR24 CI-control work, unit cases, nested jobs, retries, local/native/container diagnostics and authored skips add no acceptance credit. W11 NOT MET/W12 NOT RUN, original savings/sample thresholds unchanged; no defaults, protections, publisher or legacy-trigger/schedule cutover.
+
 ## P3 finite capture and dated measurement readiness — 2026-10-24 local
 
 **Editorial follow-up to `e1891b4b4`, not new acceptance evidence:** the public

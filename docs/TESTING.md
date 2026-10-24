@@ -1,5 +1,7 @@
 # Test Strategy & Suite Documentation
 
+> **Latest finite source batch (2026-10-24):** [PR24 receipt and remaining runnable blockers](reviews/dependency-aware-testing-priority-parity-2026-10-24.md). Final hosted Static at head `bd0b3b2` / tested merge `f5d85dec8` passes DEFAULT1,261 with80 explicit skips and a separate overlapping81-case zero-skip kernel matrix. Native source937 default build/439-registration accounting stays source937 (434pass/5skip); neither establishes whole-profile/W11 acceptance. New `scripts/w11-evidence.py matrix` is descriptive serial capture only: the checked-in14-cell outstanding matrix has no approved recipe entries and intentionally refuses execution/readiness. Hand-authored `measurement_matrix_satisfied` is not an attestation; fixture data and partial timings advance no quota. See the [measurement protocol](reviews/dependency-aware-testing-w11-e-protocol-2026-10-23.md). Historical failures remain; defaults, guards and W12 are unchanged.
+
 > **Concrete W11 closure batch (2026-10-23):** all six frozen component tips are
 > integrated with actual profile/source/producer enrollment. The typed selected
 > policy controller executes the provisioned workload; its predecessor alone is

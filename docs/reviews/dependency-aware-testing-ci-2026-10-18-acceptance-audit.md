@@ -1,5 +1,13 @@
 # Dependency-aware testing: acceptance reconciliation
 
+## PR24 landed parity/measurement source batch — 2026-10-24
+
+[Complete source receipt, original failures and finite remaining criteria](dependency-aware-testing-priority-parity-2026-10-24.md): normal merge `b43ff6160`, reviewed head `bd0b3b2`, actual tested merge `f5d85dec8`, equal tree `1b6b8a9c5` with identities kept distinct. Final hosted Static1261/zero failures/errors/80 skips and separate overlapping kernel81/zero skips pass. Native937439=434pass+5skip remains source937; combined local driver remains incomplete for unsupported hosted-Linux execution. Original937 hosted1259/one failure and incompletebeb437 remain retained, not stitched/relabelled. One combined review's cancellation finding is fixed; exact two-document classification repair preserves unknown-path broadening.
+
+The dated **00:50:15Z–00:50:52Z** final-source check snapshot has51success/8failure/4skipped/8in-progress/2queued/3pending, not a green PR/profile or live all-history counter. Published failures identify Groundhog46unclaimed+638edges (`.36.19`), MDK08/Grotto-ASan no-work freshness (`.36.20`), Grotto Xvfb fd7 (`.36.21`), and sanitizer partition mismatch (`.36.22`). Core Linux/Mac ASan retain exactly three legacy unclaimed registrations (`.36.16`); engine credential scope (`.36.18`) and original MDK/full-profile/native custody requirements remain. The unchanged legacy Mac heartbeat failure remains `.11`. Core ordinary/MDK011 are in progress in that snapshot; post-merge/metadata roots are not included.
+
+Only finite source repairs `.36.12` and `.36.17` are closed. `.36.13`/`.36.14`/`.36.15`/`.36.16`, original `.8`, W11 and W12 are not closed by this batch. Reviewed acceptance remains **0/20 distinct representative PR comparisons,0/2 complete broad integrations**, with zero product samples or measured savings; original thresholds and seven-class five-sample matrix remain unchanged. Original `.5` receives the source-linked dated refresh. No component bump (CI/test/docs only), default/guard/protection/publisher/legacy-trigger/schedule or release cutover.
+
 ## P3 finite measurement capture — 2026-10-24 local / 2026-10-23 UTC
 
 Against source `eaa918a0ab5ffb757171922a690c629d919d4025`, the new
