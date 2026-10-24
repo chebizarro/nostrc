@@ -5,10 +5,14 @@ only on the existing strict transported-receipt path; these tests prove the
 verifier reaches it, binds the retained original to it, and refuses every
 mismatched, tampered, missing, replaced, forged, unsatisfiable or leaking shape.
 """
+import copy
+import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -139,16 +143,68 @@ class Diagnostics(unittest.TestCase):
                 path.unlink()
 
 
+def _tree_digest(root, skip=None):
+    """Exact names, modes, bytes and link targets under root (mtimes excluded)."""
+    root, digest = Path(root), hashlib.sha256()
+    for path in sorted(root.rglob('*')):
+        relative = path.relative_to(root)
+        if skip is not None and relative.parts[0] == skip:
+            continue
+        digest.update(os.fsencode(relative) + b'\0' + oct(path.lstat().st_mode).encode() + b'\0')
+        if path.is_symlink():
+            digest.update(os.fsencode(os.readlink(path)))
+        elif path.is_file():
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 class StrictBinding(TransportFixture):
     """F1: the real worker -> artifact -> aggregate path over a genuine synthetic
     sealed bundle. The synthetic lane provisions no signer, so a genuine bundle
     passes strict acceptance and the original binding, then is refused at the
-    first signer diagnostic: no synthetic success is ever produced."""
+    first signer diagnostic: no synthetic success is ever produced.
+
+    Only the read-only verifier is under test here, so ONE genuine worker run
+    (real configure/build/run, seal and worker_qualify: ~90% of this class's
+    measured time when repeated per case) is shared by the class. Every case
+    still gets its own fresh download of those exact worker bytes into its own
+    temporary directory and its own inventory/plan copies; the shared worker
+    receipts and committed checkout are proven byte-unchanged before every case
+    and after the last, so no case can observe another's mutation."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        genuine = cls('runTest')  # holder for the class-shared fixture; never part of the suite
+        cls.addClassCleanup(genuine.doCleanups)
+        TransportFixture.setUp(genuine)  # the unchanged fixture chain (skips without CMake/Ninja)
+        genuine.qualified = genuine.worker()
+        cls.genuine = genuine
+        cls.pristine = cls.shared_state()
+        cls.addClassCleanup(cls.assert_shared_unchanged)  # LIFO: runs before the fixture is removed
+
+    @classmethod
+    def shared_state(cls):
+        genuine = cls.genuine
+        head = subprocess.run(['git', '-C', str(genuine.root), 'rev-parse', 'HEAD'], check=True,
+                              capture_output=True).stdout
+        return dict(receipts=_tree_digest(genuine.receipts), checkout=_tree_digest(genuine.root, skip='.git'),
+                    head=head)
+
+    @classmethod
+    def assert_shared_unchanged(cls):
+        if cls.shared_state() != cls.pristine:
+            raise AssertionError('shared genuine worker output or committed checkout was mutated by a case')
 
     def setUp(self):
-        super().setUp()
-        self.qualified = self.worker()
-        self.base = self.download()
+        genuine = type(self).genuine
+        self.assert_shared_unchanged()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root, self.receipts = genuine.root, genuine.receipts
+        self.inventory, self.plan = copy.deepcopy(genuine.inventory), copy.deepcopy(genuine.plan)
+        self.qualified = copy.deepcopy(genuine.qualified)
+        self.base = self.download()  # isolated per-case copy, exactly the artifact-download layout
         self.lane = next(self.base.glob('*/synthetic'))
 
     def verify(self, **kwargs):
