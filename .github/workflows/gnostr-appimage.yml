@@ -14,36 +14,6 @@ on:
         description: Version to use in the AppImage filename
         required: false
         type: string
-  push:
-    branches:
-      - master
-    paths:
-      # nostrc-appci: the AppImage statically bundles these libraries, so
-      # changes to any of them must rebuild it — an apps/gnostr-only filter
-      # silently shipped stale library code (e.g. libnostr log fixes).
-      - 'apps/gnostr/**'
-      - 'libnostr/**'
-      - 'libgo/**'
-      - 'nips/**'
-      - 'nostr-gobject/**'
-      - 'nostr-gtk/**'
-      - 'components/**'
-      - 'scripts/ci/**'
-      - '.github/workflows/gnostr-appimage.yml'
-      - '.github/workflows/release.yml'
-  pull_request:
-    paths:
-      - 'apps/gnostr/**'
-      - 'libnostr/**'
-      - 'libgo/**'
-      - 'nips/**'
-      - 'nostr-gobject/**'
-      - 'nostr-gtk/**'
-      - 'components/**'
-      - 'scripts/ci/**'
-      - '.github/workflows/gnostr-appimage.yml'
-      - '.github/workflows/release.yml'
-
 jobs:
   build-appimage:
     name: Build and smoke test gnostr AppImage (${{ matrix.arch }})

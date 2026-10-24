@@ -58,6 +58,14 @@ jobs:
           path: ${{ runner.temp }}/dependency/release.json
           if-no-files-found: error
   # Explicit staged rollout; only enforce after checked-in-lane/broad proof.
+  manual-broad:
+    if: github.event_name == 'workflow_dispatch'
+    needs: identity
+    uses: ./.github/workflows/ci-selective.yml
+    with:
+      sha: ${{ needs.identity.outputs.sha }}
+      full: true
+
   validation:
     if: vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'shadow' || vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'enforce'
     needs: identity
@@ -320,7 +328,7 @@ jobs:
   release-aggregate:
     name: Require validation and every Groundhog package
     if: always()
-    needs: [identity, validation, source, deb, rpm, arch, flatpak, nix]
+    needs: [identity, manual-broad, validation, source, deb, rpm, arch, flatpak, nix]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -333,9 +341,12 @@ jobs:
         env:
           IDENTITY: ${{ needs.identity.result }}
           VALIDATION: ${{ needs.validation.result }}
+          MANUAL_BROAD: ${{ needs.manual-broad.result }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
           RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
         run: |
           test "$IDENTITY" = success
+          if [[ "$MANUAL" == true ]]; then test "$MANUAL_BROAD" = success; fi
           if [[ "$RELEASE_MODE" == enforce ]]; then test "$VALIDATION" = success; fi
       - uses: actions/checkout@v4
         with:

@@ -7,14 +7,11 @@
 #
 # Issue: nostrc-p7f6
 #
-# This workflow runs:
-# - On manual trigger (workflow_dispatch)
-# - Weekly on Sundays for continuous fuzzing
-# - On PRs touching security-critical files
+# Dispatched by ci-selective.yml for affected PRs and broad master/release/manual
+# runs. Direct workflow_dispatch remains an explicit fuzz diagnostic.
 
 name: grotto Fuzz Testing
 
-# Weekly schedule retained until W11 replacement evidence is met.
 on:
   workflow_call:
     inputs:
@@ -34,22 +31,8 @@ on:
         description: 'Specific target (nip49, bip39, json-event, or all)'
         required: false
         default: 'all'
-  schedule:
-    # Run weekly on Sundays at 3:00 UTC
-    - cron: '0 3 * * 0'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'apps/grotto/src/backup-recovery.c'
-      - 'apps/grotto/src/backup-recovery.h'
-      - 'apps/grotto/src/bunker_service.c'
-      - 'apps/grotto/src/bunker_service.h'
-      - 'nips/nip49/**'
-      - 'libnostr/src/crypto/bip39*'
-      - 'apps/grotto/tests/fuzz/**'
-
 env:
-  # Default duration for scheduled runs and PRs (shorter for PRs)
+  # Default duration for affected runs; broad calls use the extended duration.
   DEFAULT_FUZZ_DURATION: 60
 
 permissions:

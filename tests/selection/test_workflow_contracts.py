@@ -488,14 +488,16 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_unfiltered_entrypoint_merge_queue_read_only_and_stable_direct_gate(self):
         text = workflow("dependency-tests")
         self.assertNotIn("paths:", text)
-        self.assertIn("merge_group:", text)
-        self.assertIn("tags: ['v*', '**-v*']", text)
+        self.assertNotIn("merge_group:", text)
+        self.assertNotIn("pull_request:", text)
+        self.assertNotIn("  push:", text)
+        self.assertIn("workflow_dispatch:", text)
         self.assertIn("contents: read", text)
         self.assertNotIn("pull_request_target", text)
         self.assertNotIn("workflow_run", text)
         self.assertNotIn("secrets:", text)
         gate = job_block(text, "gate")
-        self.assertIn("name: Dependency gate", gate)
+        self.assertIn("name: Diagnostic receipt accounting", gate)
         self.assertIn("if: always()", gate)
         for job in (*ci.LANES.values(), "select", "broad"):
             self.assertIn(job, gate.split("needs:", 1)[1].splitlines()[0])
@@ -751,12 +753,16 @@ sys.exit(int(os.environ['OUTER_STATUS']))
         self.assertNotIn("continue-on-error", text)
         self.assertIn("if: always()", job_block(text, "broad_gate"))
 
-    def test_legacy_schedules_and_status_triggers_retained_during_shadow(self):
-        for family in ("grotto-fuzz", "marmot-mdk-interop", "marmot-mdk011-interop"):
-            self.assertIn("schedule:", workflow(family))
-        for family in ("nostrc-ci", "grotto-ci", "groundhog-ci", "windows-build"):
-            self.assertIn("pull_request:", workflow(family))
-            self.assertIn("push:", workflow(family))
+    def test_operational_root_replaces_legacy_automatic_triggers(self):
+        for family in (*ci.FAMILIES, 'static-checks', 'dependency-tests'):
+            text = workflow(family)
+            self.assertNotIn('  schedule:', text)
+            self.assertNotIn('  pull_request:', text)
+            self.assertNotIn('  push:', text)
+        # Windows still owns its historical release tag publisher, never PR checks.
+        self.assertNotIn('  pull_request:', workflow('windows-build'))
+        self.assertNotIn('branches:', workflow('windows-build').split('jobs:', 1)[0])
+        self.assertIn("tags: ['v*']", workflow('windows-build'))
         self.assertIn("name: ${{ inputs.artifact_prefix }}bp-matrix-nightly-artifacts", workflow('bp-matrix-nightly'))
 
     def test_every_publisher_uses_validation_gate_and_exact_asset_ids(self):

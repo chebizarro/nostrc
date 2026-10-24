@@ -1,13 +1,6 @@
-name: Dependency tests (shadow)
-# NOT required yet. Keep legacy required checks, duplicate triggers and schedules through W11.
+name: Dependency attestation diagnostics (manual)
+# Explicit diagnostics only. ci-selective.yml owns operational CI defaults.
 on:
-  pull_request:
-    branches: [main, master]
-  merge_group:
-    types: [checks_requested]
-  push:
-    branches: [main, master]
-    tags: ['v*', '**-v*']
   workflow_dispatch:
     inputs:
       mode:
@@ -183,7 +176,7 @@ jobs:
     with:
       sha: ${{ needs.select.outputs.sha }}
   gate:
-    name: Dependency gate
+    name: Diagnostic receipt accounting
     if: always()
     needs: [select, core, core_asan, core_native, grotto, grotto_asan, groundhog, groundhog_sanitizers, mdk08, mdk011, libgo, libgo_native, homed_units, policy, broad]
     runs-on: ubuntu-24.04
