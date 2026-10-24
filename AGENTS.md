@@ -42,14 +42,10 @@ The delivery acceptance contract is exactly these three outcomes:
    cancellations, unavailable prerequisites and unexecuted checks remain honest;
    planning, skips and partial diagnostics are not passing execution.
 
-These replace the former W11/W12 delivery blockers: no PR/broad-run quotas,
-seven-class/five-sample baselines, savings thresholds, benchmarks, universal
-custody/profile parity, exhaustive baseline repairs or new acceptance tasks.
-Existing execution safety guards still apply to the routes that use them; this
-reset does not turn failed or incomplete qualification receipts into success.
-Prior qualification/profile hardening and unrelated bugs are nonblocking
-follow-ups, not prerequisites to the three outcomes. Parent verification of the
-integrated delivery remains necessary; this docs change alone proves no cutover.
+There are no additional quotas, benchmarks, universal custody/profile parity or
+exhaustive baseline-repair requirements. Existing execution safety guards apply
+to the routes that use them; failed or incomplete receipts are not success.
+Unrelated bugs and optional qualification hardening remain nonblocking follow-ups.
 
 Use `scripts/test-gate.sh` for affected checks, `--explain` for plan-only output,
 and `--broad` for broad selection. A saved `--plan` stays ordinary unless
@@ -59,12 +55,8 @@ for broad local testing; no push-hook environment flag launches builds or tests.
 Missing required capabilities must fail visibly, not silently drop
 selected checks. A bypass must remain explicit and cannot be called verification.
 
-See [TESTING](docs/TESTING.md#dependency-aware-delivery-policy--2026-10-25) for
-commands and evidence limits, and the [plan execution index](docs/plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
-for W11/W12 and task ownership. Historical source-specific receipts remain in
-Git history and the
-[dated acceptance audit](docs/reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md);
-their obsolete delivery blockers are superseded, not claimed satisfied.
+See [TESTING](docs/TESTING.md#dependency-aware-commands) for current testing
+commands and evidence limits. The three outcomes above are the complete policy.
 
 
 ---

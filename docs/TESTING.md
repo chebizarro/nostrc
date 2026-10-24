@@ -16,17 +16,10 @@ The owner-approved delivery contract is exactly:
    omission and preserve honest failures, cancellations, unavailable prerequisites
    and unexecuted checks. A skip, plan or partial diagnostic is not execution proof.
 
-This replaces former W11/W12 quotas, five-sample/seven-class baselines, savings
-thresholds, benchmarks, universal custody/profile parity and exhaustive baseline
-repairs as delivery blockers. No new acceptance tasks are required. Existing
-route-specific safety guards stay intact. Prior qualification hardening and
-unrelated bugs remain nonblocking follow-ups, not silently fixed or erased.
-
-The [plan execution index](plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
-records current W11/W12 and bead dispositions. `.39` owns docs/tracker policy;
-`.40` and `.41` implement local selection and CI defaults. The parent verifies the
-integrated delivery; this documentation commit alone claims no operational or
-hosted success. Internal tooling/tests/docs require **no component bump**.
+There are no additional quotas, benchmarks, universal custody/profile parity or
+exhaustive baseline-repair requirements. Existing route-specific safety guards
+stay intact. Optional qualification hardening and unrelated bugs remain
+nonblocking follow-ups, not silently fixed or erased.
 
 ## Dependency-aware commands
 
@@ -103,9 +96,8 @@ That command includes host-specific custody/profile/attestation experiments; it 
 not an ordinary delivery gate. Missing capabilities and failed diagnostics remain
 literal failures or skips, not successful execution. Diagnostic cleanup and
 source/evidence safety guards still apply. No tests are deleted by this separation.
-Historical qualification receipts remain in the
-[dated audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
-and Git history; their obsolete requirements are not current instructions.
+Historical qualification receipts remain in Git history and separate reviews;
+their obsolete requirements are not current instructions.
 
 
 ## Overview
