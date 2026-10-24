@@ -2,6 +2,41 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## H profile census acceptance snapshot — 2026-10-24T10:13:56Z
+
+This snapshot covers [PR26 run 40072073551](https://github.com/chebizarro/nostrc/actions/runs/40072073551) and [manual broad run 40072096156](https://github.com/chebizarro/nostrc/actions/runs/40072096156):
+- The PR run's head is H `aebb6eff6dd879033fb38bb016ea3127232aa37e`, but it tests synthetic merge S `1c2bc8ebb6ad8fca5f0882d0676da49f2fc0840b`.
+- The manual run tests H.
+- Each run has 13 selector profiles.
+- Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#h-profile-census--snapshot-2026-10-24t101356z) and the protected census (`SHA256SUMS` `de847a3c7ffbc12e41c3e3feb9dc5b5e8b744be92ccbd2adda35d940c1a1f582`).
+
+Results at this snapshot:
+- **Only `homed.linux.ci` is normal-qualified**, and it is gate-clean on both sources. It is the standalone five-unit route, not the legacy four-distro/root140/systemd/FUSE contract.
+- **Both libgo lanes are diagnostic only.**
+- **Seven profiles are withheld.** Their raw receipt, `lane.log` and evidence are unavailable and are not reconstructed.
+- **Both gates fail.** Broad family accounting is 17/17 success, which is not a complete broad integration.
+
+Observed classes, mapped only to existing tracked work by literal title or AC. Causes are not inferred where the raw data was withheld.
+
+| Observed (PR + manual unless noted) | Tracked work, literal criterion | Status |
+|---|---|---|
+| `core.linux`, `grotto.linux`, `groundhog.linux` (manual): execute passed, then `normal execution: sealed source claims differ from the sealed raw input audits` | `.36.27`: "One shared strict canonical contract or equivalent exact same derivation on both sides" | `301e3979a`/`14af5ede5` integrated locally in `8cab02d0a`; pending fresh hosted proof |
+| `core.macos.asan`: `CheckFailure: pre-build input audit failed; original findings retained`, 3 `unclaimed_registration` gaps | `.36.16` title "repair three legacy exclusions after 45-app ownership enrollment" (AC field empty) | open |
+| `core.linux.asan`: withheld, `command exited 1` | `.36.16` (core ASan profile owner) | cause unavailable; not attributed |
+| `groundhog.linux.sanitizers`: `RealizationError: diagnostic nonmember fresh registration partition differs` | `.36.22`: "Explain exact named registration/set/config/tool/source delta" | open |
+| `groundhog.linux` (PR): withheld, `command exited 2` | `.36.19`: "actual source-bound hosted pre/postaudit+selected execution" | cause unavailable; not attributed |
+| `grotto.linux.asan_ubsan`: withheld, `command exited 1` | `.36.20` (Grotto ASan no-work freshness) and `.36.24` (58 physical failure cases) | cause unavailable; not attributed |
+| `groundhog.mdk08` / `groundhog.mdk011`: withheld, `command exited 2` | `.36.20` (MDK08) and `.36.13` (original MDK producer/runtime parity) | cause unavailable; not attributed |
+| `grotto.linux`: execute succeeded, receipt withheld | `.36.21`: "positive selected display+bus readiness … on supported actual Linux kernel" | no `.36.21` credit: not qualified, raw unavailable |
+| Static DEFAULT/kernel budget | `.36.26`: "fresh source-bound complete hosted Static integration succeeds under unchanged1200s cap" | `3416f85ab` integrated locally in `8cab02d0a`; pending fresh proof |
+| `static.policy`: `PolicyError: policy container did not physically exit successfully`; gate says `policy runtime on an unauthored profile` | none found by read-only tracker search | recorded; no owner or cause invented |
+| Both libgo lanes: `no authored normal contract` (Linux); diagnostic receipts | none found by read-only tracker search | recorded; no waiver |
+| Gate global errors: `inventory physical coverage cannot satisfy complete gate` and `shadow_cutover` pending | gate tracking labels `nostrc-0cfsg.9` and `.5` (both closed) | not reopened here |
+
+No fix integrated after these runs counts as accepted until fresh source-bound runs prove it.
+
+**Reviewed counters at this snapshot:** **0/20 qualifying PR comparisons, 0/2 successful complete broad integrations, 0 product samples. W11 NOT MET / W12 NOT RUN.** No new waiver; no defaults, protections, publisher, schedule or legacy-trigger cutover.
+
 ## Earlier dated snapshots (preserved)
 
 ## PR24 landed parity/measurement source batch — 2026-10-24
