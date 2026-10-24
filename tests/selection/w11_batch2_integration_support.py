@@ -49,8 +49,10 @@ def before_source(path, raw):
 
 
 def before_policy(policy):
+    # The newer post-H layer (.36.27 and later) is projected first.
+    from w11_post_h_integration_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     gaps = previous['coverage_gaps']
     present = [path for path in data['runtime_inputs'] if path in inputs]

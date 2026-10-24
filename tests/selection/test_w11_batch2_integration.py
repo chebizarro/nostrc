@@ -54,6 +54,12 @@ HANDOFF_EDITS = {
 }
 
 
+
+def current_bytes(path):
+    """This layer's after bytes: the newer post-H layer is projected away first."""
+    from w11_post_h_integration_support import before_source as before_post_h_source
+    return before_post_h_source(path, (ROOT / path).read_bytes())
+
 def older_after(path):
     """The exact bytes each record must hand to its next older strict pin."""
     import closeout_support
@@ -80,7 +86,9 @@ def older_after(path):
 
 class W11Batch2Integration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's view: the newer post-H layer is projected away first.
+        from w11_post_h_integration_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_source_records_are_exact_lossless_handoffs_to_older_pins(self):
         data = wave.witness()
@@ -88,7 +96,7 @@ class W11Batch2Integration(unittest.TestCase):
         for path, (before_sha, after_sha, count) in RECORDS.items():
             record = data['sources'][path]
             with self.subTest(path=path):
-                raw = (ROOT / path).read_bytes()
+                raw = current_bytes(path)
                 self.assertEqual((record['before_sha256'], record['after_sha256'], len(record['edits'])),
                                  (before_sha, after_sha, count))
                 self.assertEqual(hashlib.sha256(raw).hexdigest(), after_sha)
@@ -108,7 +116,7 @@ class W11Batch2Integration(unittest.TestCase):
             restored = data['sources'][path]['restored_sha256']
             self.assertEqual(restored, [post1640.witness()['sources'][path]['before_sha256']])
             self.assertNotIn(restored[0], (RECORDS[path][0], RECORDS[path][1]))
-            previous = post1640.before_source(path, (ROOT / path).read_bytes())
+            previous = post1640.before_source(path, current_bytes(path))
             self.assertEqual(hashlib.sha256(previous).hexdigest(), restored[0])
             self.assertEqual(wave.before_source(path, previous), previous)
             self.assertEqual(post1640.before_source(path, previous), previous)
@@ -126,25 +134,25 @@ class W11Batch2Integration(unittest.TestCase):
         from w11_policy_support import before_policy_source
         for path in ('scripts/test-gate.sh', 'scripts/test_selection_services.py',
                      'scripts/test_selection_realization.py'):
-            raw = (ROOT / path).read_bytes()
+            raw = current_bytes(path)
             self.assertEqual(hashlib.sha256(runtime.before_runtime_source(path, raw)).hexdigest(),
                              runtime.witness()['sources'][path]['before_sha256'], path)
         for path in ('scripts/test_selection_execution.py', 'tests/selection/test_normal_execution_contract.py'):
-            raw = (ROOT / path).read_bytes()
+            raw = current_bytes(path)
             self.assertEqual(hashlib.sha256(post1640.before_source(path, raw)).hexdigest(),
                              post1640.witness()['sources'][path]['before_sha256'], path)
         # The coreasan hand-off routes the newest layer into the W11 matrix leaf.
         path = 'scripts/test_selection_realization.py'
         import w11_matrix_integration_support as matrix
-        self.assertEqual(hashlib.sha256(coreasan.before_source(path, (ROOT / path).read_bytes())).hexdigest(),
+        self.assertEqual(hashlib.sha256(coreasan.before_source(path, current_bytes(path))).hexdigest(),
                          matrix.witness()['sources'][path]['before_sha256'])
         path = 'apps/gnostr/CMakeLists.txt'
         record = core_source_witness()['source_edits'][path]
-        previous = before_core_producer_source(path, (ROOT / path).read_bytes())
+        previous = before_core_producer_source(path, current_bytes(path))
         self.assertEqual(hashlib.sha256(previous).hexdigest(), record['before_sha256'])
         self.assertEqual(before_core_producer_source(path, previous), previous)
         path = 'nips/nip5f/CMakeLists.txt'
-        raw = before_policy_source(path, before_homed_source(path, (ROOT / path).read_bytes()))
+        raw = before_policy_source(path, before_homed_source(path, current_bytes(path)))
         self.assertEqual(hashlib.sha256(raw).hexdigest(), RECORDS[path][0])
 
     def test_tampered_or_unknown_bytes_refuse_for_every_record(self):
@@ -152,7 +160,7 @@ class W11Batch2Integration(unittest.TestCase):
         from closeout_support import before_core_producer_source
         for path in RECORDS:
             record = wave.witness()['sources'][path]
-            raw = (ROOT / path).read_bytes()
+            raw = current_bytes(path)
             before = wave.before_source(path, raw)
             drifted = [raw + b'\n# unknown bytes\n', before + b'\n# unknown bytes\n', raw[:-1]]
             for edit in record['edits']:
@@ -171,7 +179,7 @@ class W11Batch2Integration(unittest.TestCase):
     def test_tampered_witness_records_refuse(self):
         original = wave.witness()
         path = 'scripts/test_selection_services.py'
-        raw = (ROOT / path).read_bytes()
+        raw = current_bytes(path)
         tampers = {
             'changed before text': (lambda r: r['edits'][0].__setitem__('before', r['edits'][0]['before'] + '#'),
                                     'W11 batch2 historical source changed'),
@@ -238,7 +246,7 @@ class W11Batch2Integration(unittest.TestCase):
         self.assertEqual(changed, {'source_sha256', 'registration_sha256'})
         for key, path in (('source_sha256', 'nips/nip5f/tests/test_nip5f_tcp.c'),
                           ('registration_sha256', 'nips/nip5f/CMakeLists.txt')):
-            self.assertEqual(record['after']['binding'][key], hashlib.sha256((ROOT / path).read_bytes()).hexdigest())
+            self.assertEqual(record['after']['binding'][key], hashlib.sha256(current_bytes(path)).hexdigest())
             self.assertEqual(record['after']['binding'][key], RECORDS[path][1])
             self.assertEqual(record['before']['binding'][key], RECORDS[path][0])
 

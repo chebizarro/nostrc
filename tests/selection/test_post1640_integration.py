@@ -68,9 +68,10 @@ class Post1640Integration(unittest.TestCase):
 
     def test_exact_source_inverse_idempotence_and_unreviewed_byte_refusal(self):
         from w11_batch2_integration_support import before_source as before_batch2_source
+        from w11_post_h_integration_support import before_source as before_post_h_source
         for path, record in wave.witness()['sources'].items():
             with self.subTest(path=path):
-                raw = before_batch2_source(path, (ROOT / path).read_bytes())
+                raw = before_batch2_source(path, before_post_h_source(path, (ROOT / path).read_bytes()))
                 before = wave.before_source(path, raw)
                 self.assertEqual(hashlib.sha256(before).hexdigest(), record['before_sha256'])
                 self.assertEqual(wave.before_source(path, before), before)
@@ -133,11 +134,13 @@ class Post1640Integration(unittest.TestCase):
     def test_original_witnesses_and_author_production_bytes_unchanged(self):
         from worker_prerequisite_support import before_source as before_newer_source
         from w11_batch2_integration_support import before_source as before_batch2_source
+        from w11_post_h_integration_support import before_source as before_post_h_source
         data = wave.witness()
         for field in ('protected_witnesses', 'author_sources'):
             for path, digest in data[field].items():
                 with self.subTest(field=field, path=path):
-                    raw = before_newer_source(path, before_batch2_source(path, (ROOT / path).read_bytes()))
+                    raw = before_newer_source(path, before_batch2_source(path, before_post_h_source(
+                        path, (ROOT / path).read_bytes())))
                     self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)
 
     def test_new_runtime_inputs_have_live_command_ownership(self):

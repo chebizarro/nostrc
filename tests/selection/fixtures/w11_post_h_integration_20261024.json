@@ -1,0 +1,103 @@
+{
+  "base": "aebb6eff6dd879033fb38bb016ea3127232aa37e",
+  "base_policy_hash": "31d31d5172f1656546d2a8148d9e766631a7c8972e83df5f57dfa1a2013803e2",
+  "commits": {
+    "nostrc-0cfsg.36.26": "4b1c8ca66 (test-only fixture; no record)",
+    "nostrc-0cfsg.36.27": "14af5ede5"
+  },
+  "enrolled_policy_hash": "a0919012e9252f8c347b556068b1143e6849e71594c4b4fb3e6126d32c4446ec",
+  "head": "a91c2206af1df73b76b9ccca114b7c2863164a99",
+  "runtime_inputs": [
+    "{source}/tests/selection/w11_post_h_integration_support.py",
+    "{source}/tests/selection/fixtures/w11_post_h_integration_20261024.json",
+    "{source}/tests/selection/test_w11_post_h_integration.py"
+  ],
+  "schema_version": 1,
+  "scope": "Exact post-H integration of nostrc-0cfsg.36.27 (14af5ede5) over pushed/hosted-tested H aebb6eff6: the two production source deltas, the projected byte-pinned post-1640 test, and clerical selection.contract enrollment, reversed for historical witnesses only. No admission, authority, path rule, profile, capability, omission or review binding change. Not hosted, signer or W11 acceptance.",
+  "sources": {
+    "scripts/test_selection_execution.py": {
+      "after_sha256": "7dc38995191962d704c4cf6ead962b9f38bbca3d1d3ec8f05476a552c49071f8",
+      "authors": [
+        "nostrc-0cfsg.36.27"
+      ],
+      "before_sha256": "16f8c1357e8772785ee717fcf972a6117d2ea30a0f6c7a134ef03fee978668bd",
+      "edits": [
+        {
+          "after": "            'unsupported/empty sealed source closure')\n    derived = _derived_claims(locator.result, source)\n    require(claims == derived, 'sealed source claims differ from the sealed raw input audits'\n            + _claim_difference(claims, derived, source))\n    tracked = set(git('ls-files', '-z', '--recurse-submodules').split('\\0')) - {''}\n",
+          "before": "            'unsupported/empty sealed source closure')\n    require(claims == _derived_claims(locator.result, source),\n            'sealed source claims differ from the sealed raw input audits')\n    tracked = set(git('ls-files', '-z', '--recurse-submodules').split('\\0')) - {''}\n"
+        },
+        {
+          "after": "        relative = Path(name).relative_to(source)\n        require(relative.as_posix() in tracked,\n                'source claim is not a tracked file of the tested commit: ' + _claim_name(name, source))\n        candidate = repo.joinpath(*relative.parts)\n",
+          "before": "        relative = Path(name).relative_to(source)\n        require(relative.as_posix() in tracked, 'source claim is not a tracked file of the tested commit: ' + name)\n        candidate = repo.joinpath(*relative.parts)\n"
+        },
+        {
+          "after": "        require(resolved.is_relative_to(repo) and resolved.is_file() and _sha(resolved) == expected,\n                'sealed source input differs from the tested checkout: ' + _claim_name(name, source))\n\n",
+          "before": "        require(resolved.is_relative_to(repo) and resolved.is_file() and _sha(resolved) == expected,\n                'sealed source input differs from the tested checkout: ' + name)\n\n"
+        },
+        {
+          "after": "def _derived_claims(result, source):\n    \"\"\"The sealer's own canonical contract over the sealed raw receipt (lexical, portable).\"\"\"\n    from test_selection_services import SourceClaimError, source_claim_contract\n    try:\n        return source_claim_contract(result, source)[0]\n    except SourceClaimError as exc:\n        require(False, 'sealed raw input audits violate the source claim contract: ' + str(exc))\n\n\ndef _claim_name(name, source):\n    from test_selection_services import safe_claim_name\n    return safe_claim_name(name, source)\n\n\ndef _claim_difference(sealed, derived, source, limit=8):\n    \"\"\"Nonsecret mismatch summary: root-relative names only, never hashes or bytes.\"\"\"\n    if not isinstance(sealed, dict):\n        return ''\n    parts = []\n    for label, names in (('sealed only', sorted(set(sealed) - set(derived))),\n                         ('derived only', sorted(set(derived) - set(sealed))),\n                         ('hash differs', sorted(n for n in set(sealed) & set(derived) if sealed[n] != derived[n]))):\n        if names:\n            shown = ', '.join(_claim_name(n, source) for n in names[:limit])\n            parts.append('%s %d: %s%s' % (label, len(names), shown, ', ...' if len(names) > limit else ''))\n    return (' (' + '; '.join(parts) + ')') if parts else ''\n\n",
+          "before": "def _derived_claims(result, source):\n    \"\"\"Lexical counterpart of the sealer's claim derivation over the sealed raw receipt.\"\"\"\n    claims = {}\n    def visit(value):\n        if isinstance(value, dict):\n            for path, expected in (value.get('input_hashes') or {}).items():\n                if os.path.isabs(path) and os.path.normpath(path) == path and path.startswith(source + os.sep):\n                    require(claims.setdefault(path, expected) == expected, 'contradictory sealed source input claim')\n            for child in value.values():\n                visit(child)\n        elif isinstance(value, list):\n            for child in value:\n                visit(child)\n    visit(result)\n    return claims\n\n"
+        }
+      ],
+      "origin": "nostrc-0cfsg.36.27 14af5ede5 bytes from H",
+      "restored_sha256": [
+        "9452ba91778426ee6e06c79f3c54f5cddf1fdc3586ce3cec95533d8514f6c400",
+        "70714e1c3978e67d31ff1bc83d83dc6c04c75a559a354e812eb5e0b40f3e8526"
+      ]
+    },
+    "scripts/test_selection_services.py": {
+      "after_sha256": "d786771ce8a953fd73b0e07a3396a200e6ce607dba09f2f1d38da103b57981a9",
+      "authors": [
+        "nostrc-0cfsg.36.27"
+      ],
+      "before_sha256": "4d234d8b45c8e2bf61d4e28b07fa73fd35056c9f88d18ed11a748185bac4febe",
+      "edits": [
+        {
+          "after": "\nclass SourceClaimError(ServiceError):\n    \"\"\"The receipt's source-root input claims violate the shared canonical contract.\"\"\"\n\n\n_SHA256 = re.compile(r'[0-9a-f]{64}')\n_CONTROL = re.compile(r'[\\x00-\\x1f\\x7f]')\n# Credential/token-shaped runs never reach diagnostics, even inside a path name.\n_REDACT = re.compile(r'(?:NOSTR_SIGNER_TOKEN=\\S*|AUTH [0-9a-f]{64}|p[1-9][0-9]{0,4}_[0-9a-f]{64}|[0-9A-Fa-f]{32,})')\n\n\ndef _double_slash(path):\n    # POSIX leaves exactly two leading slashes implementation-defined; normpath keeps them.\n    return path.startswith('//') and not path.startswith('///')\n\n\ndef safe_claim_name(name, source):\n    \"\"\"Root-relative, credential-redacted, control-free ASCII name; never a host path.\"\"\"\n    relative = name[len(source) + 1:] if isinstance(name, str) and name.startswith(source + os.sep) else '<outside root>'\n    relative = _CONTROL.sub('?', _REDACT.sub('<redacted>', relative))\n    return relative.encode('ascii', 'backslashreplace').decode('ascii')\n\n\ndef source_claim_contract(result, source):\n    \"\"\"The one canonical source-claim derivation shared by sealer and qualifier.\n\n    Purely lexical over the original receipt, so portable/offline qualification\n    never needs worker host paths. Every ``input_hashes`` mapping anywhere in the\n    receipt contributes (input audits, runtime/signer/tool fingerprints, nested\n    attempts); nothing is intersected or dropped. An absolute key whose\n    ``os.path.normpath`` lies strictly under ``source`` is a source claim keyed by\n    that canonical name. CMake descriptors may legitimately author\n    ``${CMAKE_CURRENT_SOURCE_DIR}/../data/x``: that spelling and any other alias\n    of the same canonical file must agree on its hash.\n\n    Returns ``(claims, spellings)``: canonical name -> sha256, and canonical\n    name -> sorted original raw keys. The sealer must additionally prove every\n    raw spelling physically resolves to the canonical file before sealing.\n    Refuses malformed mappings/hashes/paths, the root itself, lexical escapes\n    from the root and contradictory aliases.\n    \"\"\"\n    if not isinstance(source, str) or not os.path.isabs(source) or os.path.normpath(source) != source \\\n            or source == os.sep or _double_slash(source):\n        raise SourceClaimError('source claim root is not a canonical absolute directory')\n    prefix = source + os.sep\n    claims, spellings = {}, {}\n    def visit(value):\n",
+          "before": "\ndef _source_claims(result, source):\n    claims = {}\n    def visit(value):\n"
+        },
+        {
+          "after": "        if isinstance(value, dict):\n            if 'input_hashes' in value:\n                mapping = value['input_hashes']\n                if not isinstance(mapping, dict):\n                    raise SourceClaimError('malformed input audit mapping')\n                for path, expected in mapping.items():\n                    if not isinstance(path, str):\n                        raise SourceClaimError('malformed input audit path')\n                    if not os.path.isabs(path):\n                        continue  # not a source-root claim on either side (unchanged)\n                    if _double_slash(path):\n                        # Never dropped and never granted network-root authority:\n                        # a spelling that would alias into the root refuses.\n                        collapsed = os.path.normpath('/' + path.lstrip('/'))\n                        if collapsed == source or collapsed.startswith(prefix):\n                            raise SourceClaimError('unsupported double-slash source input spelling: '\n                                                   + safe_claim_name(collapsed, source))\n                        continue  # outside the source root: other audits bind it\n                    canonical = os.path.normpath(path)\n                    raw_under = path.startswith(prefix) or path == source\n                    if canonical == source:\n                        raise SourceClaimError('source input claim names the source root itself')\n                    if not canonical.startswith(prefix):\n                        if raw_under:\n                            raise SourceClaimError('native source input escaped checkout')\n                        continue  # outside the source root: other audits bind it\n                    if _CONTROL.search(path):\n                        raise SourceClaimError('malformed source input claim path')\n                    if not isinstance(expected, str) or not _SHA256.fullmatch(expected):\n                        raise SourceClaimError('malformed source input claim hash')\n                    if claims.setdefault(canonical, expected) != expected:\n                        raise SourceClaimError('contradictory native source input claim')\n                    spellings.setdefault(canonical, set()).add(path)\n            for child in value.values():\n",
+          "before": "        if isinstance(value, dict):\n            for path, expected in value.get('input_hashes', {}).items():\n                candidate = Path(path)\n                if candidate.is_absolute() and candidate.is_relative_to(source):\n                    if candidate.resolve(strict=True).is_relative_to(source):\n                        if path in claims and claims[path] != expected:\n                            raise ServiceError('contradictory native source input claim')\n                        claims[path] = expected\n                    else:\n                        raise ServiceError('native source input escaped checkout')\n            for child in value.values():\n"
+        },
+        {
+          "after": "    visit(result)\n    return claims, {name: sorted(raw) for name, raw in spellings.items()}\n\n\ndef _source_claims(result, source):\n    \"\"\"Sealer side: the shared contract plus live physical alias/escape proof.\"\"\"\n    source = Path(source)\n    claims, spellings = source_claim_contract(result, str(source))\n    def resolve(spelling, canonical):\n        try:\n            return Path(spelling).resolve(strict=True)\n        except (OSError, RuntimeError) as exc:  # missing/non-directory component, symlink loop\n            raise SourceClaimError('native source input spelling does not resolve: %s (%s)'\n                                   % (safe_claim_name(canonical, str(source)), type(exc).__name__)) from None\n    for canonical, raws in spellings.items():\n        target = resolve(canonical, canonical)\n        if not target.is_relative_to(source):\n            raise SourceClaimError('native source input escaped checkout')\n        for raw in raws:\n            # A symlinked component before '..' makes the physical file differ\n            # from the lexical canonical name: never let the alias stand for it.\n            if resolve(raw, canonical) != target:\n                raise SourceClaimError('native source input alias resolves differently from its canonical path')\n    return claims\n",
+          "before": "    visit(result)\n    return claims\n"
+        }
+      ],
+      "origin": "nostrc-0cfsg.36.27 14af5ede5 bytes from H",
+      "restored_sha256": [
+        "1f54ff13b8471758a635527cb639d46664d665f527fada543257c1bcb7c811c7"
+      ]
+    },
+    "tests/selection/test_post1640_integration.py": {
+      "after_sha256": "dfc0990ead4812724f466e46213e7d94aaae554264c1cb261f556adadcc41f65",
+      "authors": [
+        "w11-post-h-integration"
+      ],
+      "before_sha256": "236dec6d6109ab68c06fb476b15e7d46a8afc5b658790147dd208b33d8312a2e",
+      "edits": [
+        {
+          "after": "        from w11_batch2_integration_support import before_source as before_batch2_source\n        from w11_post_h_integration_support import before_source as before_post_h_source\n        for path, record in wave.witness()['sources'].items():\n",
+          "before": "        from w11_batch2_integration_support import before_source as before_batch2_source\n        for path, record in wave.witness()['sources'].items():\n"
+        },
+        {
+          "after": "            with self.subTest(path=path):\n                raw = before_batch2_source(path, before_post_h_source(path, (ROOT / path).read_bytes()))\n                before = wave.before_source(path, raw)\n",
+          "before": "            with self.subTest(path=path):\n                raw = before_batch2_source(path, (ROOT / path).read_bytes())\n                before = wave.before_source(path, raw)\n"
+        },
+        {
+          "after": "        from w11_batch2_integration_support import before_source as before_batch2_source\n        from w11_post_h_integration_support import before_source as before_post_h_source\n        data = wave.witness()\n",
+          "before": "        from w11_batch2_integration_support import before_source as before_batch2_source\n        data = wave.witness()\n"
+        },
+        {
+          "after": "                with self.subTest(field=field, path=path):\n                    raw = before_newer_source(path, before_batch2_source(path, before_post_h_source(\n                        path, (ROOT / path).read_bytes())))\n                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)\n",
+          "before": "                with self.subTest(field=field, path=path):\n                    raw = before_newer_source(path, before_batch2_source(path, (ROOT / path).read_bytes()))\n                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)\n"
+        }
+      ],
+      "origin": "this integration edit from H bytes",
+      "restored_sha256": [
+        "001d95311301f200271d536e1e0f0a82d607125ea5add1602404b3fb01cf4b9d"
+      ]
+    }
+  }
+}

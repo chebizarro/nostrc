@@ -121,7 +121,8 @@ class W11MatrixIntegration(unittest.TestCase):
     def current(self, path):
         # This leaf's after bytes: the newer W11 batch2 layer is projected away first.
         from w11_batch2_integration_support import before_source as before_batch2_source
-        return before_batch2_source(path, (ROOT / path).read_bytes())
+        from w11_post_h_integration_support import before_source as before_post_h_source
+        return before_batch2_source(path, before_post_h_source(path, (ROOT / path).read_bytes()))
 
     def older(self, path):
         import post608c_integration_support as post608c
