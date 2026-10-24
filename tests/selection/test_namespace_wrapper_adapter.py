@@ -66,6 +66,129 @@ class NamespaceWrapperAdapterTests(unittest.TestCase):
             self.assertFalse(state['display_identity']['shared_lock_created'])
         return state
 
+    def native_lane(self, directory):
+        lanes = list(directory.glob('0/lane-*'))
+        self.assertEqual(len(lanes), 1, lanes)
+        return lanes[0]
+
+    def native_final(self, directory):
+        final = json.loads((self.native_lane(directory) / 'native-final.json').read_text())
+        self.assertEqual(final['status'], 'verified', final)
+        self.assertFalse(final['complete'])
+        self.assertFalse(final['complete_gate_eligible'])
+        return final
+
+    def configure_namelink_ctest(self, exit_code):
+        """PR25 shape: CTest consumer linked through a CMake SONAME namelink."""
+        self.configure_ctest()
+        self.write('app/nlink.c', 'int nlink_value(void) { return 7; }\n')
+        self.write('app/main.c', '#include <unistd.h>\nint nlink_value(void);\n'
+                   'int main(int argc, char **argv) { (void)argc; if (nlink_value() != 7) return 124; '
+                   'execvp(argv[1], argv + 1); return 125; }\n')
+        self.write('app/check.py', 'import sys\nprint("namelink consumer", flush=True)\nsys.exit(%d)\n' % exit_code)
+        self.write('CMakeLists.txt', '''cmake_minimum_required(VERSION 3.22)
+project(native_namelink C)
+enable_testing()
+include(cmake/NostrcTestInventory.cmake)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_library(nlink SHARED app/nlink.c)
+set_target_properties(nlink PROPERTIES VERSION 1.0.0 SOVERSION 1)
+add_executable(probe app/main.c)
+target_link_libraries(probe PRIVATE nlink)
+add_test(NAME escaped COMMAND probe ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/app/check.py)
+nostrc_describe_test(escaped OWNER app TARGETS probe INPUTS app/check.py EXPECTED pass)
+nostrc_finalize_test_inventory()
+''')
+        self.save_policy()
+
+    def symlink_claims(self, lane, receipt):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        try:
+            from test_selection_custody import retained_claims
+            claims = retained_claims(receipt, lane, private_resources.NATIVE_ROOTS)
+        finally:
+            sys.path.pop(0)
+        links = sorted(name for name in claims if (lane / name).is_symlink())
+        # Precondition, not coverage: the original receipt claims a link by content.
+        self.assertTrue(any(name.endswith('/libnlink.so') for name in links), sorted(claims))
+        return links
+
+    def test_namelink_ctest_success_seals_publishes_and_refuses_replaced_link(self):
+        self.configure_namelink_ctest(0)
+        head = self.commit()
+        receipt, directory = self.gate('--head', head, '--native-custody', 'pidns')
+        self.assertEqual(receipt['status'], 'partial', receipt)
+        lane = self.native_lane(directory)
+        links = self.symlink_claims(lane, json.loads((lane / 'receipt.json').read_text()))
+        self.native_final(directory)
+        public = json.loads((lane / 'native-receipt.json').read_text())
+        self.assertFalse(public['complete_gate_eligible'])
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        try:
+            private_resources.verify_native_public_receipt(public)
+            link = lane / links[0]
+            content = link.read_bytes()
+            link.unlink()
+            link.write_bytes(content)  # identical bytes; the sealed link itself was replaced
+            with self.assertRaisesRegex(private_resources.ServiceError, 'changed after finalizer seal: .*' + links[0]):
+                private_resources.verify_native_public_receipt(public)
+        finally:
+            sys.path.pop(0)
+
+    def test_namelink_ctest_failure_keeps_sealed_original_failure_unpublished(self):
+        self.configure_namelink_ctest(23)
+        head = self.commit()
+        receipt, directory = self.gate('--head', head, '--native-custody', 'pidns', success=False)
+        state = receipt['executions'][0]['lanes'][0]
+        self.assertEqual(state['status'], 'failed', state)
+        self.assertIn('command exited', state['error'])
+        self.assertFalse(any('native final evidence refused' in error for error in receipt['errors']), receipt)
+        lane = self.native_lane(directory)
+        original = (lane / 'receipt.json').read_bytes()
+        child = json.loads(original)
+        self.symlink_claims(lane, child)
+        self.assertEqual(child['backend_receipt']['checks']['ctest.actual']['outcome'], 'failed')
+        self.assertFalse(child['diagnostic_eligible'])
+        self.assertFalse(child['complete_gate_eligible'])
+        self.assertFalse((lane / 'native-receipt.json').exists())
+        final = self.native_final(directory)
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        try:
+            # Post-exit re-verification of the same anchor; failure is retained, not laundered.
+            again = private_resources.attest_native_lane(lane, final['seal_sha256'], require_source=False)
+            self.assertEqual(again, final)
+            self.assertEqual((lane / 'receipt.json').read_bytes(), original)
+            (lane / 'receipt.json').write_text(json.dumps(dict(child, diagnostic_eligible=True)))
+            with self.assertRaisesRegex(private_resources.ServiceError, 'top-level retained evidence changed'):
+                private_resources.attest_native_lane(lane, final['seal_sha256'], require_source=False)
+        finally:
+            sys.path.pop(0)
+
+    def test_early_configure_failure_seals_without_any_run_receipt(self):
+        self.configure_build_contract('int main(void) { return 0; }\n')
+        self.write('CMakeLists.txt', 'cmake_minimum_required(VERSION 3.22)\nproject(early C)\n'
+                   'message(FATAL_ERROR "deliberate early configure negative")\n')
+        head = self.commit()
+        receipt, directory = self.gate('--head', head, '--native-custody', 'pidns', success=False)
+        state = receipt['executions'][0]['lanes'][0]
+        self.assertIn('command exited', state['error'])
+        self.assertFalse(any('native final evidence refused' in error for error in receipt['errors']), receipt)
+        lane = self.native_lane(directory)
+        self.assertFalse((lane / 'receipt.json').exists())
+        self.assertFalse((lane / 'native-receipt.json').exists())
+        self.assertTrue(any(b'deliberate early configure negative' in p.read_bytes() for p in lane.rglob('*.log')))
+        final = self.native_final(directory)
+        seal = json.loads((lane / 'native-seal.json').read_text())
+        self.assertNotIn('receipt.json', seal['files'])
+        self.assertEqual(seal['source_claims'], {})
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        try:
+            (lane / 'receipt.json').write_text('{"receipt_kind": "late"}')
+            with self.assertRaisesRegex(private_resources.ServiceError, 'top-level retained evidence changed'):
+                private_resources.attest_native_lane(lane, final['seal_sha256'], require_source=False)
+        finally:
+            sys.path.pop(0)
+
     def test_wrapped_command_positive(self):
         self.write('app/check.py', 'CAPS = ' + repr(self.capabilities) + '\n' + '''import os, pathlib, subprocess, sys
 assert ('DISPLAY' in os.environ) == ('display' in CAPS)
@@ -122,6 +245,8 @@ print('real wrapped command', flush=True)
         backend = json.loads(next(directory.glob('0/lane-*/receipt.json')).read_text())
         self.assertFalse(backend['diagnostic_eligible'], backend)
         self.assertFalse(backend['complete_gate_eligible'], backend)
+        self.native_final(directory)
+        self.assertFalse(list(directory.glob('0/lane-*/native-receipt.json')))
 
     def sibling_service_roundtrip(self, address):
         result = subprocess.run(['dbus-send', '--print-reply', '--bus=' + address,
@@ -145,6 +270,13 @@ print('real wrapped command', flush=True)
             self.sibling_service_roundtrip(address)
         directory = next((self.work / 'custody-evidence').iterdir())
         self.assertEqual(self.services_receipt(directory)['status'], 'failed')
+        # The cancelled original is reported before, and sealed by, the trusted finalizer.
+        child = json.loads((self.native_lane(directory) / 'receipt.json').read_text())
+        self.assertEqual(child['receipt_kind'], 'lane_failure_v1')
+        self.assertEqual(child['job_conclusion'], 'cancelled')
+        self.assertFalse(child['complete_gate_eligible'])
+        self.native_final(directory)
+        self.assertFalse((self.native_lane(directory) / 'native-receipt.json').exists())
 
     def test_mixed_command_and_ctest_use_same_private_resources(self):
         command = self.policy['checks']['command.actual']

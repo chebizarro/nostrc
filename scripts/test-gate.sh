@@ -689,23 +689,19 @@ try:
         if status:
             sys.exit(status)
     sys.exit(0)
-finally:
-    if seal_fd is not None:
-        # Only this trusted root retains the FD. Popen closes it in services
-        # and workloads; the original in-memory receipt cannot be replaced by
-        # a late filesystem writer before we anchor the seal to the parent.
-        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, signal.SIG_IGN)
-        try:
-            if observed:
-                sys.path.insert(0, service_scripts)
-                from test_selection_services import seal_native_lane
-                sys.stdout.flush(); sys.stderr.flush()
-                digest = seal_native_lane(directory, args.repo, observed[-1], original_resolution[-1])
-                os.write(seal_fd, digest.encode('ascii'))
-        finally:
-            os.close(seal_fd)
+except BaseException as outcome:
+    if seal_fd is None:
+        raise
+    # Only this trusted root retains the FD. Popen closes it in services
+    # and workloads; the original in-memory receipt cannot be replaced by
+    # a late filesystem writer before we anchor the seal to the parent.
+    # Every outcome is reported, then sealed; nothing may write after it.
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
+    sys.path.insert(0, service_scripts)
+    from test_selection_services import finalize_native_lane
+    os._exit(finalize_native_lane(directory, args.repo, observed, original_resolution, outcome, seal_fd))
 '''
                 service_caps = set(profile.get("capabilities", []))
                 service_caps.update(cap for ident in lane["checks"] for cap in policy["checks"][ident].get("requires", []))
