@@ -29,10 +29,10 @@ FAMILY_NODES = {
     'windows': {'grotto.gui', 'grotto.daemon', 'grotto.native_host', 'packaging.grotto'},
     'bp': {'benchmarks'},
     'bp_extended': {'benchmarks'},
-    'fuzz': {'nip49', 'nip06', 'libjson', 'libnostr'},
-    'mdk08': {'libmarmot', 'marmot.gobject', 'marmot.vector_inputs', 'mdk08.peer_inputs',
-              'mdk09.peer_inputs'},
-    'mdk011': {'libmarmot', 'marmot.gobject', 'marmot.vector_inputs', 'mdk011.peer_inputs'},
+    'fuzz': {'nip49', 'nip06', 'libjson', 'libnostr', 'fuzz.harness_inputs'},
+    'mdk08': {'libmarmot', 'marmot.gobject', 'marmot.vector_inputs', 'mdk08.peer_inputs'},
+    'mdk011': {'libmarmot', 'marmot.gobject', 'marmot.vector_inputs', 'mdk011.peer_inputs',
+               'mdk09.peer_inputs'},
 }
 REFERENCE_NODES = {'groundhog.mls_store', 'groundhog.mls_service', 'groundhog.mls_media',
                    'groundhog.mls_files', 'groundhog.mls_ui', 'groundhog.voice'}

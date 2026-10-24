@@ -46,6 +46,47 @@ class RepresentativeSelectionTests(unittest.TestCase):
         self.assertIn("regex='^(signer/|nip55l_|nostr_signer_webext_host_)'", text)
         self.assertNotIn('ctest --test-dir build --output-on-failure\n', text)
 
+    def test_mdk09_probe_selects_the_existing_mdk011_probe_runner_not_mdk08(self):
+        path = 'tests/interop/mdk/driver-0.9-probe/src/main.rs'
+        self.assertTrue((ROOT / path).is_file())
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        shared = s.make_plan(policy, [change(path)], head='a' * 40, context='ci')
+        self.assertIn('mdk011.mdk09_probe', shared['selected_checks'])
+        dispatch = ci.project(shared)
+        self.assertFalse(dispatch['broad'])
+        self.assertEqual(dispatch['families'], ['mdk011'])
+        call = job_block(workflow('ci-selective'), 'mdk011')
+        self.assertIn('uses: ./.github/workflows/marmot-mdk011-interop.yml', call)
+        runner = workflow('marmot-mdk011-interop')
+        self.assertIn('-DBUILD_MDK011_INTEROP=ON', runner)
+        self.assertIn("ctest --test-dir build -R '^groundhog-mdk011-interop'", runner)
+        self.assertNotIn('-DBUILD_MDK09_PROBE=OFF', runner)
+        cmake = (ROOT / 'gnome/groundhog/CMakeLists.txt').read_text()
+        self.assertIn('option(BUILD_MDK09_PROBE "Register the MDK 0.9 expected-incompatible probe" ON)', cmake)
+        self.assertIn('list(APPEND groundhog_mdk011_cases mdk09-probe)', cmake)
+
+    def test_fuzz_harness_sources_have_shared_ownership_and_select_only_fuzz(self):
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        cmake = (ROOT / 'apps/grotto/tests/fuzz/CMakeLists.txt').read_text()
+        for target, filename in [('nip49', 'fuzz_nip49.c'), ('bip39', 'fuzz_bip39.c'),
+                                 ('json-event', 'fuzz_json_event.c')]:
+            path = 'apps/grotto/tests/fuzz/' + filename
+            with self.subTest(path=path):
+                self.assertTrue((ROOT / path).is_file())
+                self.assertIn(f'add_fuzz_target(fuzz-{target} {filename}', cmake)
+                self.assertEqual(s.classify(policy, path)['nodes'], ['fuzz.harness_inputs'])
+                shared = s.make_plan(policy, [change(path)], head='a' * 40, context='ci')
+                dispatch = ci.project(shared)
+                self.assertFalse(dispatch['broad'])
+                self.assertEqual(dispatch['families'], ['fuzz'])
+                self.assertFalse(dispatch['run_reference'])
+        call = job_block(workflow('ci-selective'), 'fuzz')
+        self.assertIn('uses: ./.github/workflows/grotto-fuzz.yml', call)
+        runner = workflow('grotto-fuzz')
+        self.assertIn("TARGET: ${{ inputs.target || 'all' }}", runner)
+        self.assertIn('cmake --build build --target fuzz-${{ matrix.target }}', runner)
+        self.assertIn('FUZZ_BIN="build/apps/grotto/tests/fuzz/fuzz-${{ matrix.target }}"', runner)
+
     def test_libgo_includes_own_tests_and_downstream_consumers(self):
         self.assertTrue((ROOT / 'libgo/src/channel.c').is_file())
         result = self.select(['libgo/src/channel.c'])
@@ -146,6 +187,18 @@ class RealHistoryTests(GitCase):
         self.assertTrue(result['broad'])
         self.assertTrue(any('range unavailable' in reason for reason in result['reasons']))
         self.assertEqual(set(result['families']), set(ci.BROAD_FAMILIES))
+
+    def test_each_fuzz_harness_history_change_reaches_only_the_fuzz_runner(self):
+        for filename in ['fuzz_nip49.c', 'fuzz_bip39.c', 'fuzz_json_event.c']:
+            with self.subTest(filename=filename):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('apps/grotto/tests/fuzz/' + filename, 'harness change\n')
+                self.commit()
+                shared = self.select(base=before, context='ci')
+                self.assertEqual(set(shared['witnesses']), {'fuzz.harness_inputs'})
+                dispatch = ci.project(shared)
+                self.assertFalse(dispatch['broad'])
+                self.assertEqual(dispatch['families'], ['fuzz'])
 
     def test_rename_retains_old_library_ownership(self):
         self.git('mv', 'libgo/src/channel.c', 'apps/grotto/src/moved.c')
