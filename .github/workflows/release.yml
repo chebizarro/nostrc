@@ -59,6 +59,14 @@ jobs:
 
   # NOSTRC_DEPENDENCY_RELEASE_MODE: disabled (default), shadow, enforce.
   # Only enable enforce after real checked-in-lane/broad evidence; no validation pass is synthesized.
+  manual-broad:
+    if: github.event_name == 'workflow_dispatch'
+    needs: detect-component
+    uses: ./.github/workflows/ci-selective.yml
+    with:
+      sha: ${{ needs.detect-component.outputs.sha }}
+      full: true
+
   validation:
     if: vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'shadow' || vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'enforce'
     needs: detect-component
@@ -72,7 +80,7 @@ jobs:
   release-aggregate:
     name: Require validation and every applicable main package
     if: always()
-    needs: [detect-component, validation, build-source, build-linux, build-linux-daemon-tcp, build-appimage-gnostr, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
+    needs: [detect-component, manual-broad, validation, build-source, build-linux, build-linux-daemon-tcp, build-appimage-gnostr, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -85,9 +93,12 @@ jobs:
         env:
           IDENTITY: ${{ needs.detect-component.result }}
           VALIDATION: ${{ needs.validation.result }}
+          MANUAL_BROAD: ${{ needs.manual-broad.result }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
           RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
         run: |
           test "$IDENTITY" = success
+          if [[ "$MANUAL" == true ]]; then test "$MANUAL_BROAD" = success; fi
           if [[ "$RELEASE_MODE" == enforce ]]; then test "$VALIDATION" = success; fi
       - uses: actions/checkout@v4
         with:

@@ -9,41 +9,6 @@ on:
       artifact_prefix:
         type: string
         default: ''
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'nostr-gobject/**'
-      - 'gir_wrappers/**'
-      - '.github/workflows/libnostr-gi.yml'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'nostr-gobject/**'
-      - 'gir_wrappers/**'
-      - '.github/workflows/libnostr-gi.yml'
-
 jobs:
   generate-gir:
     name: ${{ matrix.os }} • GIR/typelib

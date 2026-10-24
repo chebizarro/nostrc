@@ -6,8 +6,7 @@
 # NSIS installer package.
 #
 # Triggers:
-#   - Push to main/master branch
-#   - Pull requests targeting main/master
+#   - PR/master checks are dispatched by ci-selective.yml, not this publisher.
 #   - Manual workflow dispatch
 #   - Release tags (v*)
 #
@@ -17,27 +16,7 @@ name: Windows Build
 
 on:
   push:
-    branches: [main, master]
     tags: ['v*']
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'apps/**'
-      - 'nostr-gobject/**'
-      - 'nostr-gtk/**'
-      - 'gnome/common/**'
-      - '.github/workflows/windows-build.yml'
-  pull_request:
-    branches: [main, master]
     paths:
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
@@ -98,6 +77,13 @@ jobs:
       tag: ${{ needs.identity.outputs.tag }}
       component: global
       dry_run: false
+  manual-broad:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/ci-selective.yml
+    with:
+      sha: ${{ github.sha }}
+      full: true
+
   build:
     uses: ./.github/workflows/windows-validation.yml
     with:

@@ -15,16 +15,6 @@ on:
       artifact_prefix:
         type: string
         default: ''
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'signet/**'
-      - '.github/workflows/signet-ci.yml'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'signet/**'
-      - '.github/workflows/signet-ci.yml'
   workflow_dispatch:
 
 jobs:

@@ -9,53 +9,6 @@ on:
       artifact_prefix:
         type: string
         default: ''
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'Testing/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'libmarmot/**'
-      - 'marmot-gobject/**'
-      - 'nostr-gobject/**'
-      - 'libhanami/**'
-      - 'signet/**'
-      - '.github/workflows/nostrc-ci.yml'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'NipOptions.cmake'
-      - 'cmake/**'
-      - 'libgo/**'
-      - 'libnostr/**'
-      - 'libjson/**'
-      - 'nips/**'
-      - 'third_party/**'
-      - 'components/**'
-      - '.gitmodules'
-      - 'Testing/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'libmarmot/**'
-      - 'marmot-gobject/**'
-      - 'nostr-gobject/**'
-      - 'libhanami/**'
-      - 'signet/**'
-      - '.github/workflows/nostrc-ci.yml'
-
 jobs:
   build-and-test:
     name: ${{ matrix.os }} • ${{ matrix.sanitizer }}
