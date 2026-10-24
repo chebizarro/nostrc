@@ -64,6 +64,16 @@ class SupportedProfileMembership(unittest.TestCase):
                     self.assertNotIn(support, claims, (name, support))
 
     def test_every_real_compiled_runtime_and_fixture_input_has_check_local_impact(self):
+        # s.classify is a pure function of (policy, path) and self.p never changes:
+        # classify each distinct path once (it was ~0.9M repeated rule scans); every
+        # per-(profile, registration, path) existence and coverage assertion still runs.
+        classifications = {}
+
+        def classify(path):
+            if path not in classifications:
+                classifications[path] = s.classify(self.p, path)
+            return classifications[path]
+
         for profile, record in self.data['profiles'].items():
             claims = {name: check for check in self.p['checks'].values()
                       if check['kind'] == 'ctest' and profile in check['profiles']
@@ -72,7 +82,7 @@ class SupportedProfileMembership(unittest.TestCase):
                 covered = r._impact_prerequisites(self.p, claims[name]['nodes'])
                 for path in census_inputs(self.data, facts):
                     self.assertTrue((ROOT / path).is_file(), path)
-                    classified = s.classify(self.p, path)
+                    classified = classify(path)
                     self.assertFalse(classified.get('unclassified'), path)
                     if classified['effect'] != 'global':
                         self.assertEqual(classified['effect'], 'impact', path)
@@ -84,7 +94,7 @@ class SupportedProfileMembership(unittest.TestCase):
                 self.assertIn(profile, check['profiles'])
                 covered = r._impact_prerequisites(self.p, check['nodes'])
                 for path in census_inputs(self.data, facts):
-                    classified = s.classify(self.p, path)
+                    classified = classify(path)
                     if classified['effect'] != 'global':
                         self.assertEqual(classified['effect'], 'impact', path)
                         self.assertTrue(set(classified['nodes']) & covered, (profile, ident, path))
