@@ -9,9 +9,11 @@ This delivery has **exactly three outcomes**:
    relevant; prerequisites are built without selecting unrelated prerequisite
    tests. Explain inclusion, omission and conservative broad fallback for unknown
    paths or incomplete relevant dependency information.
-2. **Operational defaults:** affected local development/pre-push and PR execution;
-   broad master/integration, release and manual routes; an explicit full override.
-   There is no scheduled/nightly tier.
+2. **Operational defaults:** explicitly invoked local tests and PR execution use
+   affected selection; the push hook performs cheap static checks only, never
+   configure/build/test/container work, including through legacy environment flags.
+   Broad master/integration, release and manual CI routes and an explicit local
+   `--broad` override remain. There is no scheduled/nightly tier.
 3. **Focused representative verification:** demonstrate relevant inclusion and
    unrelated omission, including relevant compatibility, and report real failures,
    cancellations, unavailable prerequisites and unexecuted work honestly.
@@ -926,7 +928,7 @@ and conditional-cutover blockers no longer gate delivery.
 | Item | Goal | Done when | Ownership |
 |---|---|---|---|
 | W11 — Focused delivery verification | Verify affected correctness and honest results | Representative relevant inclusion/unrelated omission, relevant compatibility and conservative unknown fallback are demonstrated; failures and coverage limits are explicit. No quota, benchmark, exhaustive baseline repair or universal qualification gate. | `.40` selector/local tests, `.41` CI routing; parent integrated verification |
-| W12 — Operational defaults and coherent policy | Deliver affected local/PR and broad master/release/manual execution | Scripts/workflows and AGENTS/TESTING agree; full override works; no scheduled tier or duplicate broad PR/default policy defeats selective execution. No dependency on the superseded measurement/profile programme. | `.39` docs/tracker, `.40` local, `.41` workflows; parent final acceptance |
+| W12 — Operational defaults and coherent policy | Deliver affected explicit local/PR testing, a static-only push hook and broad master/release/manual CI | Scripts/workflows and AGENTS/TESTING agree; the hook never launches builds/tests even under legacy flags; explicit local `--broad` works; no scheduled tier or duplicate broad PR/default policy defeats selective execution. No dependency on the superseded measurement/profile programme. | `.39` docs/tracker, `.40` local, `.41` workflows; parent final acceptance |
 
 Only the three outcomes above determine delivery acceptance. W1–W10 and prior
 checkpoint tables are historical implementation references, not extra gates to

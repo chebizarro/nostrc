@@ -95,4 +95,29 @@ grep -Fq 'CUSTOM' "$repo/.other/hooks/pre-push"
 git -C "$repo" config --unset core.hooksPath
 "$repo/scripts/install-hooks.sh"
 cmp "$repo/scripts/pre-push" "$repo/.git/hooks/pre-push"
+# Upgrade only exact former standalone repository hooks, never customized copies.
+standalone="$tmp/standalone"
+mkdir -p "$standalone/scripts" "$standalone/.git/hooks"
+git init -q "$standalone"
+cp "$SCRIPT_DIR/install-hooks.sh" "$SCRIPT_DIR/pre-push" "$standalone/scripts/"
+cp "$SCRIPT_DIR/fixtures/pre-push-selective-old.txt" "$standalone/.git/hooks/pre-push"
+chmod +x "$standalone/.git/hooks/pre-push"
+[ "$(git -C "$standalone" hash-object .git/hooks/pre-push)" = 2c541d0c442c52980e4ab3513d12b39267ba4c2c ]
+cat > "$standalone/scripts/full-gate.sh" <<'FORBIDDEN'
+#!/bin/sh
+echo 'installer retained a build-capable hook' >&2
+exit 93
+FORBIDDEN
+cp "$standalone/scripts/full-gate.sh" "$standalone/scripts/test-gate.sh"
+chmod +x "$standalone/scripts/"*.sh
+"$standalone/scripts/install-hooks.sh"
+cmp "$standalone/scripts/pre-push" "$standalone/.git/hooks/pre-push"
+(cd "$standalone" && NOSTRC_FULL_GATE=1 NOSTRC_SELECTIVE_GATE=1 .git/hooks/pre-push \
+    <<< '(delete) 0000000000000000000000000000000000000000 refs/heads/gone 1111111111111111111111111111111111111111')
+cp "$SCRIPT_DIR/fixtures/pre-push-selective-old.txt" "$standalone/.git/hooks/pre-push"
+printf '\n# developer customization\n' >> "$standalone/.git/hooks/pre-push"
+if "$standalone/scripts/install-hooks.sh" >/dev/null 2>&1; then
+    echo 'Installer overwrote a customized former hook' >&2; exit 1
+fi
+grep -q 'developer customization' "$standalone/.git/hooks/pre-push"
 echo 'install-hooks tests passed'

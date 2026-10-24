@@ -1,5 +1,6 @@
 #!/bin/bash
-# Install the repository build gate without replacing an active Beads hook.
+# Install static-only push checks without replacing an active Beads hook.
+# Legacy BUILD VERIFICATION markers are retained solely for installer compatibility.
 
 set -euo pipefail
 
@@ -22,6 +23,11 @@ mkdir -p "$HOOKS_DIR"
 if [ ! -f "$HOOK" ] || cmp -s "$SOURCE" "$HOOK"; then
     cp "$SOURCE" "$HOOK"
     result="installed"
+elif [[ "$(git -C "$REPO_ROOT" hash-object "$HOOK")" = 2c541d0c442c52980e4ab3513d12b39267ba4c2c ||
+        "$(git -C "$REPO_ROOT" hash-object "$HOOK")" = 10e898a4c13f0ab91e476b506def52eb9e2b357e ]]; then
+    # Exact former repository copies only; never overwrite a customized hook.
+    cp "$SOURCE" "$HOOK"
+    result="upgraded known standalone hook"
 elif grep -Fq 'BEGIN BEADS INTEGRATION' "$HOOK"; then
     legacy='"$nostrc_root/scripts/pre-push" "$@"'
     replay='"$nostrc_root/scripts/pre-push" "$@" < "$nostrc_push_input"'
@@ -85,4 +91,4 @@ else
     exit 1
 fi
 chmod +x "$HOOK"
-echo "Pre-push build verification $result in $HOOK"
+echo "Pre-push static checks $result in $HOOK"

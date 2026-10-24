@@ -8,8 +8,9 @@ The owner-approved delivery contract is exactly:
    including relevant compatibility; explain selection and unrelated omission;
    conservatively broaden unknown or incomplete relevant dependency information.
    Building a prerequisite does not select that library's unrelated tests.
-2. **Operational defaults:** affected local development, pre-push and PR checks;
-   broad master/integration, release and manual routes; explicit full override.
+2. **Operational defaults:** explicitly invoked local tests and PR checks use
+   affected selection; the push hook is static-only. Broad master/integration,
+   release and manual CI routes and an explicit local `--broad` override remain.
    There is no scheduled/nightly tier.
 3. **Focused representative verification:** show relevant inclusion and unrelated
    omission and preserve honest failures, cancellations, unavailable prerequisites
@@ -35,16 +36,22 @@ scripts/test-gate.sh
 # Exact committed range; explain does not configure, build or execute
 scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
 scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
-# Deliberately broad local run and full push override
+# Deliberately broad local run (explicit; never launched by git push)
 scripts/test-gate.sh --broad
-NOSTRC_FULL_GATE=1 git push
 ```
 
-The pre-push policy retains static/range checks and affected execution of each
-pushed tree, not the caller's dirty files. It replaces blanket clean root
-build/full CTest requirements for every change. Relevant expensive compatibility
-checks still run in affected mode; unrelated ones do not. Broad routes remain
-broad rather than becoming selected-only release/master validation.
+The pre-push hook performs only whitespace and cheap static checks on each
+pushed tree, not the caller's dirty files. It never configures, rebuilds, runs
+tests or starts Docker. `NOSTRC_FULL_GATE` and `NOSTRC_SELECTIVE_GATE` cannot
+launch either runner through the hook, including when both are set to `1`.
+`NOSTRC_SKIP_PRE_PUSH=1` is an announced static-check bypass, not verification.
+
+Automatic builds/tests belong in CI. Local affected/full testing is explicitly
+invoked using the commands above. Relevant expensive compatibility checks run
+when affected; unrelated ones do not. Broad routes remain broad rather than
+becoming selected-only release/master validation. `scripts/full-gate.sh` is still
+available as a directly invoked legacy adapter fed pre-push ref lines on stdin;
+the hook never delegates to it.
 
 Use `scripts/test-gate.sh --help` and `python3 scripts/test-plan.py --help` for
 route-specific arguments. `--profile <id>` deliberately restricts coverage;

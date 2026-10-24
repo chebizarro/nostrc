@@ -1,35 +1,43 @@
 #!/usr/bin/env bash
-# Static guards plus affected local tests by default; the real full gate is
-# behind NOSTRC_FULL_GATE=1. scripts/test-full-gate.sh tests that adapter.
+# Static-only hook contract: no environment flag can launch a build/test runner.
 set -euo pipefail
+unset NOSTRC_FULL_GATE NOSTRC_SELECTIVE_GATE NOSTRC_SKIP_PRE_PUSH
 scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 repo="$tmp/repo"
-mkdir -p "$repo/scripts"
+mkdir -p "$repo/scripts" "$tmp/bin"
 git init -q "$repo"
 git -C "$repo" config user.name Test
 git -C "$repo" config user.email test@example.invalid
 cp "$scripts/pre-push" "$repo/scripts/pre-push"
-cat > "$repo/scripts/full-gate.sh" <<'FULL'
+export FORBIDDEN_TRACE="$tmp/forbidden"
+cat > "$tmp/forbidden-runner" <<'FORBIDDEN'
 #!/bin/sh
-printf 'FULL_GATE_RAN args=[%s] stdin=[%s]\n' "$*" "$(cat)"
-FULL
-chmod +x "$repo/scripts/full-gate.sh"
-cat > "$repo/scripts/test-gate.sh" <<'GATE'
-#!/bin/bash
-set -eu
-printf 'SELECTIVE %s\n' "$*"
-while [ $# -gt 0 ]; do
-    if [ "$1" = --refs-file ]; then
-        test -s "$2"
-        cat "$2"
-        break
-    fi
-    shift
+printf '%s\n' "$0 $*" >> "$FORBIDDEN_TRACE"
+exit 93
+FORBIDDEN
+chmod +x "$tmp/forbidden-runner"
+for tool in cmake ctest ninja make docker gcc clang cc go cargo meson; do
+    cp "$tmp/forbidden-runner" "$tmp/bin/$tool"
 done
-exit "${GATE_RC:-0}"
-GATE
+for runner in full-gate.sh test-gate.sh linux-gate.sh; do
+    cp "$tmp/forbidden-runner" "$repo/scripts/$runner"
+done
+# Permit only the actual static-check invocation, never Python test/planner work.
+STATIC_PYTHON="$(command -v python3)"
+export STATIC_PYTHON
+cat > "$tmp/bin/python3" <<'PYTHON'
+#!/bin/sh
+case "${1:-}" in
+    */scripts/check-unsequenced-args.py|*/scripts/check-gui-test-gdk-frame.py|*/scripts/check-linux-ci-packages.py|*/gnome/groundhog/tests/check_privacy.py)
+        exec "$STATIC_PYTHON" "$@" ;;
+    *) printf 'python3 %s\n' "$*" >> "$FORBIDDEN_TRACE"; exit 93 ;;
+esac
+PYTHON
+chmod +x "$tmp/bin/python3"
+export PATH="$tmp/bin:$PATH"
+printf 'print("STATIC_GUARD_RAN")\n' > "$repo/scripts/check-unsequenced-args.py"
 printf 'base\n' > "$repo/file"
 git -C "$repo" add .
 git -C "$repo" commit -qm base
@@ -41,76 +49,53 @@ printf 'trailing   \n' >> "$repo/file"
 git -C "$repo" commit -qam ws
 ws="$(git -C "$repo" rev-parse HEAD)"
 z=0000000000000000000000000000000000000000
-hook() { (cd "$repo" && scripts/pre-push); }
-
-echo "refs/heads/m $clean refs/heads/m $base" | hook > "$tmp/out" 2>&1 || { cat "$tmp/out"; echo "clean push blocked" >&2; exit 1; }
-if echo "refs/heads/m $ws refs/heads/m $clean" | hook > "$tmp/out" 2>&1; then echo "whitespace error passed" >&2; exit 1; fi
-grep -q "whitespace errors" "$tmp/out"
-NOSTRC_SKIP_PRE_PUSH=1 hook <<< "refs/heads/m $ws refs/heads/m $clean" > "$tmp/out" 2>&1
-grep -q SKIPPED "$tmp/out"
-echo "(delete) $z refs/heads/gone $clean" | hook > /dev/null
-if hook < /dev/null > "$tmp/out" 2>&1; then echo "empty input accepted" >&2; exit 1; fi
-grep -q "No pre-push refs received" "$tmp/out"
-echo "refs/heads/m $clean refs/heads/m $base" | NOSTRC_FULL_GATE=1 hook > "$tmp/out" 2>&1
-grep -q FULL_GATE_RAN "$tmp/out"
-NOSTRC_SELECTIVE_GATE=1 hook <<< "refs/heads/m $clean refs/heads/m $base" > "$tmp/out" 2>&1
-grep -q 'SELECTIVE .*--pre-push --refs-file' "$tmp/out"
-grep -q "refs/heads/m $clean refs/heads/m $base" "$tmp/out"
-NOSTRC_SELECTIVE_GATE=1 NOSTRC_SKIP_PRE_PUSH=1 hook <<< "refs/heads/m $clean refs/heads/m $base" > "$tmp/out" 2>&1
-grep -q SKIPPED "$tmp/out"
-grep -q 'SELECTIVE .*--explain' "$tmp/out"
-# Generic zero OID recognition is not tied to SHA-1 length.
-echo "(delete) $(printf '%064d' 0) refs/heads/gone $clean" | hook > /dev/null
-if git -C "$repo" worktree list | grep -q /checkout; then echo "temporary checkout left behind" >&2; exit 1; fi
-
-# The delivered contract: affected execution is the default. Only an explicit
-# zero bypasses local tests, and the bypass is announced.
+hook() { (cd "$repo" && scripts/pre-push "$@"); }
 refs_clean="refs/heads/m $clean refs/heads/m $base"
 refs_ws="refs/heads/m $ws refs/heads/m $clean"
-for value in unset 1 "" true yes 2; do
-    if [ "$value" = unset ]; then
-        hook <<< "$refs_clean" > "$tmp/out" 2>&1
-    else
-        NOSTRC_SELECTIVE_GATE="$value" hook <<< "$refs_clean" > "$tmp/out" 2>&1
-    fi
-    grep -q 'SELECTIVE --execution legacy' "$tmp/out" || { echo "affected default missing for $value" >&2; exit 1; }
+
+hook <<< "$refs_clean" > "$tmp/out" 2>&1 || { cat "$tmp/out"; echo 'clean push blocked' >&2; exit 1; }
+grep -q STATIC_GUARD_RAN "$tmp/out"
+if hook <<< "$refs_ws" > "$tmp/out" 2>&1; then echo 'whitespace error passed' >&2; exit 1; fi
+grep -q 'whitespace errors' "$tmp/out"
+if hook < /dev/null > "$tmp/out" 2>&1; then echo 'empty input accepted' >&2; exit 1; fi
+grep -q 'No pre-push refs received' "$tmp/out"
+echo "(delete) $z refs/heads/gone $clean" | hook > /dev/null
+echo "(delete) $(printf '%064d' 0) refs/heads/gone $clean" | hook > /dev/null
+
+# Old switches are inert even together; only the explicit static skip is honored.
+for full in 0 1; do
+    for selective in 0 1; do
+        for skip in 0 1; do
+            NOSTRC_FULL_GATE="$full" NOSTRC_SELECTIVE_GATE="$selective" NOSTRC_SKIP_PRE_PUSH="$skip" \
+                hook origin url <<< "$refs_clean" > "$tmp/out" 2>&1 || { cat "$tmp/out"; exit 1; }
+            if [ "$skip" = 1 ]; then
+                grep -q 'static checks SKIPPED' "$tmp/out"
+                if grep -q STATIC_GUARD_RAN "$tmp/out"; then echo 'static skip ignored' >&2; exit 1; fi
+            else
+                grep -q STATIC_GUARD_RAN "$tmp/out"
+                if NOSTRC_FULL_GATE="$full" NOSTRC_SELECTIVE_GATE="$selective" hook <<< "$refs_ws" > "$tmp/out" 2>&1; then
+                    echo 'legacy flag bypassed whitespace failure' >&2; exit 1
+                fi
+            fi
+        done
+    done
 done
-NOSTRC_SELECTIVE_GATE=0 hook <<< "$refs_clean" > "$tmp/out" 2>&1
-grep -q 'affected local tests SKIPPED' "$tmp/out"
-if grep -q '^SELECTIVE ' "$tmp/out"; then echo "explicit bypass ignored" >&2; exit 1; fi
+
+# A dirty caller cannot change which candidate static checker is validated.
+printf 'raise SystemExit(17)\n' > "$repo/scripts/check-unsequenced-args.py"
 hook <<< "$refs_clean" > "$tmp/out" 2>&1
-grep -q '^SELECTIVE ' "$tmp/out"
-
-# A failing opt-in diagnostic blocks the push, also as the plan-only
-# companion of an announced static skip; it never masks a static failure.
-if NOSTRC_SELECTIVE_GATE=1 GATE_RC=3 hook <<< "$refs_clean" > "$tmp/out" 2>&1; then
-    echo "failed shared diagnostic did not block the push" >&2; exit 1
+grep -q STATIC_GUARD_RAN "$tmp/out"
+git -C "$repo" checkout -q "$clean" -- file
+git -C "$repo" add scripts/check-unsequenced-args.py
+git -C "$repo" commit -qm static-failure
+bad="$(git -C "$repo" rev-parse HEAD)"
+printf 'print("DIRTY_GUARD_MUST_NOT_RUN")\n' > "$repo/scripts/check-unsequenced-args.py"
+if hook <<< "refs/heads/m $bad refs/heads/m $clean" > "$tmp/out" 2>&1; then
+    echo 'candidate static failure passed' >&2; exit 1
 fi
-grep -q 'SELECTIVE .*--pre-push --refs-file' "$tmp/out"
-if NOSTRC_SELECTIVE_GATE=1 NOSTRC_SKIP_PRE_PUSH=1 GATE_RC=3 hook <<< "$refs_clean" > "$tmp/out" 2>&1; then
-    echo "failed plan-only diagnostic did not block the push" >&2; exit 1
-fi
-if NOSTRC_SELECTIVE_GATE=1 hook <<< "$refs_ws" > "$tmp/out" 2>&1; then
-    echo "diagnostic opt-in bypassed a static failure" >&2; exit 1
-fi
-grep -q "whitespace errors" "$tmp/out"
-if grep -q SELECTIVE "$tmp/out"; then echo "diagnostic ran after static failure" >&2; exit 1; fi
-
-# The full override wins over the static skip and the diagnostic opt-in, and
-# receives git's arguments and the pushed ref lines unchanged.
-for env_name in NOSTRC_SKIP_PRE_PUSH NOSTRC_SELECTIVE_GATE; do
-    # shellcheck disable=SC2016 # the inner script expands its own arguments
-    env NOSTRC_FULL_GATE=1 "$env_name=1" bash -c 'cd "$1" && shift && scripts/pre-push "$@"' _ "$repo" origin url \
-        <<< "$refs_clean" > "$tmp/out" 2>&1
-    grep -qF "FULL_GATE_RAN args=[origin url] stdin=[$refs_clean]" "$tmp/out"
-    if grep -q -e SKIPPED -e SELECTIVE "$tmp/out"; then echo "full override ran a different path ($env_name)" >&2; exit 1; fi
-done
-
-# All three switches at once: the override still takes the full-gate path only.
-# shellcheck disable=SC2016 # the inner script expands its own arguments
-NOSTRC_FULL_GATE=1 NOSTRC_SKIP_PRE_PUSH=1 NOSTRC_SELECTIVE_GATE=1 bash -c 'cd "$1" && shift && scripts/pre-push "$@"' _ "$repo" origin url \
-    <<< "$refs_clean" > "$tmp/out" 2>&1
-grep -qF "FULL_GATE_RAN args=[origin url] stdin=[$refs_clean]" "$tmp/out"
-if grep -q -e SKIPPED -e SELECTIVE "$tmp/out"; then echo "full override ran a different path (all switches)" >&2; exit 1; fi
-
-echo "pre-push tests passed"
+grep -q 'check-unsequenced-args.py failed' "$tmp/out"
+if grep -q DIRTY_GUARD_MUST_NOT_RUN "$tmp/out"; then echo 'dirty caller checked' >&2; exit 1; fi
+printf '%s\n%s\n' "$refs_clean" "(delete) $z refs/heads/gone $clean" | hook > /dev/null
+if git -C "$repo" worktree list | grep -q /checkout; then echo 'temporary checkout left behind' >&2; exit 1; fi
+if [ -e "$FORBIDDEN_TRACE" ]; then cat "$FORBIDDEN_TRACE"; echo 'hook launched forbidden work' >&2; exit 1; fi
+echo 'pre-push static-only tests passed'

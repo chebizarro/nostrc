@@ -28,7 +28,7 @@ parser.add_argument("--repo", default=".")
 parser.add_argument("--base")
 parser.add_argument("--head", help="execute this committed tree, never the caller's dirty tree")
 parser.add_argument("--plan", help="execute exact retained committed plan identity; --profile selects physical lanes without rewriting the plan")
-parser.add_argument("--broad", "--full", action="store_true", help="run every check in the requested local profiles; push-wide legacy override: NOSTRC_FULL_GATE=1")
+parser.add_argument("--broad", "--full", action="store_true", help="explicit broad local testing within the requested profiles; never launched by the push hook")
 parser.add_argument("--execution", choices=("legacy", "attested"), default=None,
                     help="legacy CMake/CTest by default; attested retains diagnostic realization/custody")
 parser.add_argument("--linux-custody", "--native-custody", choices=("legacy", "ptrace", "pidns", "darwin"), default="legacy",

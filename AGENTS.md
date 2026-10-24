@@ -19,8 +19,10 @@ Install git hooks before starting work:
 scripts/install-hooks.sh
 ```
 
-This installs the repository pre-push hook. Its delivery policy is static checks
-plus dependency-aware affected execution, with an explicit broad override.
+This installs the repository pre-push hook: cheap static checks only. It must
+never configure, build, execute tests or start containers, even when legacy
+`NOSTRC_FULL_GATE` or `NOSTRC_SELECTIVE_GATE` flags are set. Builds and tests run
+in CI or through explicitly invoked local commands.
 
 **Dependency-aware delivery policy — owner reset, 2026-10-25:**
 
@@ -31,9 +33,10 @@ The delivery acceptance contract is exactly these three outcomes:
    prerequisites without selecting unrelated prerequisite tests. Explain inclusion,
    omission and conservative broad fallback for unknown paths or incomplete
    relevant dependency information.
-2. **Operational defaults.** Local development, pre-push and PR checks default to
-   affected selection. Master/integration, release and manual runs are broad;
-   an explicit full override remains available. There is no scheduled/nightly tier.
+2. **Operational defaults.** Explicit local test commands and PR checks default
+   to affected selection. The push hook remains static-only. Master/integration,
+   release and manual CI runs are broad; an explicit local `--broad` override
+   remains available. There is no scheduled/nightly tier.
 3. **Focused verification.** Representative changes demonstrate relevant inclusion
    and unrelated omission, including compatibility where relevant. Failures,
    cancellations, unavailable prerequisites and unexecuted checks remain honest;
@@ -50,8 +53,9 @@ integrated delivery remains necessary; this docs change alone proves no cutover.
 
 Use `scripts/test-gate.sh` for affected checks, `--explain` for plan-only output,
 and `--broad` for broad selection. `--profile` is a deliberately partial run,
-not whole-profile or release proof. `NOSTRC_FULL_GATE=1 git push` retains the full
-override. Missing required capabilities must fail visibly, not silently drop
+not whole-profile or release proof. Invoke `scripts/test-gate.sh --broad` directly
+for broad local testing; no push-hook environment flag launches builds or tests.
+Missing required capabilities must fail visibly, not silently drop
 selected checks. A bypass must remain explicit and cannot be called verification.
 
 See [TESTING](docs/TESTING.md#dependency-aware-delivery-policy--2026-10-25) for
@@ -129,20 +133,21 @@ is the required process.
 
 ## Pre-Push Requirements
 
-Use the affected gate for the change being pushed, plus the hook's static checks.
-A blanket clean root build/full CTest is **not** a prerequisite for every push.
-The gate must build selected checks' prerequisites and execute selected checks:
+The push hook runs only range whitespace checks and cheap static checks on the
+pushed tree. No configure, rebuild, CTest, unit-test suite or Docker work belongs
+in that hook. Build/test failures are CI results, not automatic push prerequisites.
+For optional local feedback, explicitly invoke the affected gate:
 
 ```bash
 scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain  # plan only
 scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
 ```
 
-The hook validates detached pushed trees, not dirty caller files. Without explicit
-`--head`, `scripts/test-gate.sh` uses the working-change snapshot for developer
-feedback. A selected build/test failure blocks success; report it honestly and
-fix relevant delivery defects rather than omitting the check. Unrelated baseline
-bugs stay tracked separately and are not a mandate to repair the whole repository.
+The hook's static checks validate detached pushed trees, not dirty caller files.
+Without explicit `--head`, the separately invoked `scripts/test-gate.sh` uses the
+working-change snapshot for developer feedback. A selected build/test failure
+fails that test command or CI run, not the static-only push hook. Report it honestly;
+unrelated baseline bugs stay tracked separately, not as new delivery requirements.
 
 The pre-push hook (`scripts/pre-push`) retains static checks. For each
 pushed commit it runs `git diff --check` over the pushed range and, on the
@@ -151,14 +156,14 @@ report late: `scripts/check-unsequenced-args.py` (no call may modify a variable
 in one argument and use it in another; x86_64 GCC evaluates arguments right to
 left), `scripts/check-gui-test-gdk-frame.py`, `scripts/check-linux-ci-packages.py`
 and `gnome/groundhog/tests/check_privacy.py`. `NOSTRC_SKIP_PRE_PUSH=1` skips
-them (announced, not verification). The affected gate supplies dependency-aware
-execution; broad master/release/manual routes and the full override remain distinct.
-`.40` and `.41` own implementation of this policy; their source and focused results,
-not this documentation commit, establish that the defaults are operational.
+them (announced, not verification). `NOSTRC_FULL_GATE` and
+`NOSTRC_SELECTIVE_GATE` are inert in this hook; neither may turn a push into a
+build/test run. CI owns automatic dependency-aware execution.
 
-The explicit full override is `NOSTRC_FULL_GATE=1 git push`;
-`scripts/full-gate.sh` retains its full-gate adapter role. Broad selection must
-not silently narrow to affected-only coverage. Platform/capability restrictions,
+The explicit local full override is `scripts/test-gate.sh --broad`.
+`scripts/full-gate.sh` remains a separately invoked legacy adapter accepting
+pre-push ref lines on stdin; the push hook never delegates to it. Broad selection
+must not silently narrow to affected-only coverage. Platform/capability restrictions,
 resource locks, private services and sanitizer safeguards remain in force.
 A skip/bypass is incomplete verification, not a broad pass. Leaks in Groundhog
 are fixed, not suppressed; `lsan.supp` is only for leaks in other libraries,
@@ -172,8 +177,8 @@ belong in affected coverage; unrelated expensive suites do not. `--explain` alon
 is not execution. No fixed sample count, benchmark or exhaustive baseline repair
 is required. Retain failures and report the exact verification scope.
 
-For deliberately broad local verification use `scripts/test-gate.sh --broad` or
-`NOSTRC_FULL_GATE=1 git push`; a profile restriction still limits coverage.
+For deliberately broad local verification explicitly run
+`scripts/test-gate.sh --broad`; a profile restriction still limits coverage.
 
 ## Landing the Plane (Session Completion)
 
@@ -283,8 +288,8 @@ restored by hand.
   and run against a throwaway Secret Service on a private bus; they never
   store test keys in the login keychain.
 - `scripts/check-macos-keychain.sh` (read-only) runs in the opt-in full gate
-  (`NOSTRC_FULL_GATE=1`, `scripts/full-gate.sh`) before and after the tests and blocks the push if the configuration is not
-  the login keychain. If it fails, **stop and tell the owner**; only the
+  (`scripts/full-gate.sh`, invoked directly) before and after the tests and refuses
+  that verification if the configuration is not the login keychain. If it fails, **stop and tell the owner**; only the
   machine's owner repairs it. Never choose "Reset To Defaults" in a keychain
   dialog.
 

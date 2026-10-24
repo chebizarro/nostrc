@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The opt-in full gate: NOSTRC_FULL_GATE=1 on a push (scripts/pre-push execs
-# this), or fed pre-push lines directly. Validates pushed commits in temporary
-# worktrees, never in the caller's checkout.
+# Explicit legacy full gate, fed pre-push ref lines directly on stdin.
+# The push hook never calls this script, including under NOSTRC_FULL_GATE=1.
+# Validates committed trees in temporary worktrees, never the caller's checkout.
 #
 # For each pushed ref: the candidate's static checks (the Linux image's package
 # list, and no call argument modifying a variable another argument uses: x86_64
