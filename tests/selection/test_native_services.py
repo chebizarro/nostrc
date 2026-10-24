@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory() as resources:
             work = Path(directory) / 'work'; work.mkdir()
             source = Path(directory) / 'source'; source.mkdir()
             for name in ('receipt.json', 'resolved.json'):
-                (work / name).write_text('{}')
+                (work / name).write_text('{}\n')  # trusted write_json bytes for {}
             original = Path.open
             @contextlib.contextmanager
             def replace_after_write(path, *args, **kwargs):
@@ -144,6 +144,8 @@ class NativeSealLifecycle(unittest.TestCase):
         shutil.rmtree(self.root / 'source')
 
     def lane(self, kind='original', receipt=True):
+        if (self.root / 'work').exists():
+            self.reset()  # a failed subTest must not mask the next case
         work = self.root / 'work'
         work.mkdir()
         source = self.root / 'source'
@@ -165,8 +167,9 @@ class NativeSealLifecycle(unittest.TestCase):
                       str(self.namelink): _sha(self.real), str(self.real): _sha(self.real)}}}}
         resolved = {'resolved': True}
         if receipt:
-            (work / 'receipt.json').write_text(json.dumps(result))
-            (work / 'resolved.json').write_text(json.dumps(resolved))
+            import test_selection  # the CLI's actual trusted writer
+            test_selection.write_json(work / 'receipt.json', result)
+            test_selection.write_json(work / 'resolved.json', resolved)
         return work, source, result, resolved
 
     def finalize(self, work, source, outcome, observed, resolutions):
@@ -290,6 +293,102 @@ class NativeSealLifecycle(unittest.TestCase):
                 with self.assertRaisesRegex(services.ServiceError, 'trusted native finalizer seal missing'):
                     services.attest_native_lane(work, anchor)
                 self.reset()
+
+
+    def test_trusted_serialization_is_exactly_the_cli_write_json_bytes(self):
+        import test_selection
+        _, _, result, resolved = self.lane(receipt=False)
+        cancelled = dict(result, receipt_kind='lane_failure_v1', job_conclusion='cancelled',
+                         failure={'errors': [{'type': 'KeyboardInterrupt', 'message': 'signal 15'}]})
+        unusual = {'z': [1, 2.5, -0.0, 10 ** 30, {}], 'a': 'café   \U0001f600', 'n': None, 't': True}
+        for index, value in enumerate((result, resolved, cancelled, unusual)):
+            with self.subTest(index):
+                target = self.root / f'writer-{index}.json'
+                test_selection.write_json(target, value)
+                self.assertEqual(services._trusted_output_bytes(value), target.read_bytes())
+
+    def test_pre_seal_raw_identity_refuses_non_original_bytes(self):
+        """Inherited json.loads equality admitted all JSON-equal cases below."""
+        import test_selection
+        def canonical(value):
+            target = self.root / 'canonical.json'
+            test_selection.write_json(target, value)
+            return target.read_bytes()
+        def rewrite(result):
+            return result, json.dumps(result).encode(), True
+        def unsorted(result):
+            return result, (json.dumps(result, indent=2) + '\n').encode(), True
+        def bool_int(result):
+            return result, canonical(dict(result, complete_gate_eligible=0, complete=0)), True
+        def duplicate(result):
+            raw = canonical(result)
+            return result, raw.replace(b'{\n', b'{\n  "complete": true,\n', 1), True
+        def nonfinite_disk(result):
+            observed = dict(result, elapsed=1.5)
+            return observed, canonical(observed).replace(b'1.5', b'NaN'), False
+        def nonfinite_observation(result):
+            observed = dict(result, elapsed=float('nan'))
+            return observed, (json.dumps(observed, sort_keys=True, indent=2) + '\n').encode(), False
+        def trailing(result):
+            return result, canonical(result) + b'\n', True
+        def truncated(result):
+            return result, canonical(result)[:-1], True
+        def bom(result):
+            return result, b'\xef\xbb\xbf' + canonical(result), False
+        cases = {rewrite: 'native output differs', unsorted: 'native output differs', bool_int: 'native output differs',
+                 duplicate: 'native output differs', nonfinite_disk: 'native output differs',
+                 nonfinite_observation: 'not trusted-writer serializable', trailing: 'native output differs',
+                 truncated: 'native output differs', bom: 'native output differs'}
+        for case, message in cases.items():
+            with self.subTest(case.__name__):
+                work, source, result, resolved = self.lane()
+                observed, raw, json_equal = case(result)
+                (work / 'receipt.json').write_bytes(raw)
+                if json_equal:
+                    self.assertEqual(json.loads(raw), observed)  # what the inherited check accepted
+                with self.assertRaisesRegex(services.ServiceError, message):
+                    services.seal_native_lane(work, source, observed, resolved)
+                self.assertFalse((work / 'native-seal.json').exists())
+                self.assertFalse((work / 'source-inputs').exists())
+                self.reset()
+
+    def test_pre_seal_identity_refuses_invalid_shapes_and_resolution_substitution(self):
+        import test_selection
+        def non_object(work, result, resolved):
+            return [result], resolved, 'not a JSON object'
+        def symlink(work, result, resolved):
+            elsewhere = self.root / 'elsewhere.json'
+            test_selection.write_json(elsewhere, result)
+            (work / 'receipt.json').unlink()
+            os.symlink(elsewhere, work / 'receipt.json')
+            return result, resolved, 'native output differs'
+        def directory(work, result, resolved):
+            (work / 'receipt.json').unlink()
+            (work / 'receipt.json').mkdir()
+            return result, resolved, 'native output differs'
+        def resolution_bool_int(work, result, resolved):
+            test_selection.write_json(work / 'resolved.json', {'resolved': 1})
+            self.assertEqual(json.loads((work / 'resolved.json').read_text()), resolved)
+            return result, resolved, 'native resolution differs'
+        for case in (non_object, symlink, directory, resolution_bool_int):
+            with self.subTest(case.__name__):
+                work, source, result, resolved = self.lane()
+                observed, observed_resolution, message = case(work, result, resolved)
+                with self.assertRaisesRegex(services.ServiceError, message):
+                    services.seal_native_lane(work, source, observed, observed_resolution)
+                self.assertFalse((work / 'native-seal.json').exists())
+                self.reset()
+
+    def test_seal_pins_trusted_bytes_not_a_swap_after_comparison(self):
+        work, source, result, resolved = self.lane()
+        native_files = services._native_files
+        def swap_then_hash(path):
+            (work / 'receipt.json').write_text(json.dumps(result))  # JSON-equal, not original bytes
+            return native_files(path)
+        with patch.object(services, '_native_files', swap_then_hash):
+            with self.assertRaisesRegex(services.ServiceError, 'original output changed while sealing'):
+                services.seal_native_lane(work, source, result, resolved)
+        self.assertFalse((work / 'native-seal.json').exists())
 
 
 @unittest.skipUnless(platform.system() == 'Linux', 'actual Linux private services; not native macOS acceptance')
