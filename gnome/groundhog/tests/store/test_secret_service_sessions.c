@@ -382,12 +382,27 @@ store_key_lookup(void)
   return result;
 }
 
-/* The NIP-46 backend's secret-loading search (a lookup's first step). */
+static void
+on_nip46_prepared(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  *(GAsyncResult **)user_data = g_object_ref(result);
+}
+
+/* The NIP-46 backend's secret-loading search (a lookup's first step), after
+ * its preparation on this thread, as a store runs them. */
 static GPtrArray *
 nip46_search(GError **error)
 {
   GhNip46CredentialBackend *backend = gh_nip46_credentials_secret_service_new();
-  GPtrArray *items = backend->search(backend, NIP46_ACCOUNT, FALSE, TRUE, NULL, error);
+  GAsyncResult *result = NULL;
+  backend->prepare_async(backend, NULL, on_nip46_prepared, &result);
+  while (!result) g_main_context_iteration(NULL, TRUE);
+  GObject *prepared = backend->prepare_finish(backend, result, error);
+  g_object_unref(result);
+  GPtrArray *items = prepared ?
+    backend->search(backend, prepared, NIP46_ACCOUNT, FALSE, TRUE, NULL, error) : NULL;
+  g_clear_object(&prepared);
   backend->free(backend);
   return items;
 }

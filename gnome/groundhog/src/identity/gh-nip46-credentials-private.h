@@ -26,14 +26,23 @@ typedef struct _GhNip46CredentialBackend GhNip46CredentialBackend;
 /* search() with load_secrets FALSE must only read item attributes: it may not
  * request secret data or unlock anything, so it can never raise a Keychain
  * access prompt or a keyring unlock prompt (nostrc-p15n5.3). Listing accounts
- * uses it that way; only lookup/store/delete load secrets. */
+ * uses it that way; only lookup/store/delete load secrets.
+ *
+ * prepare_async() is optional. A store runs it on the thread that starts an
+ * operation, in that thread's thread-default context, before the operation's
+ * worker thread; prepare_finish() returns NULL only with an error. Its object
+ * is passed to search/write/remove as @prepared (NULL without prepare). */
 struct _GhNip46CredentialBackend {
-  GPtrArray *(*search)(GhNip46CredentialBackend *self, const gchar *account,
-                       gboolean interactive, gboolean load_secrets,
+  void (*prepare_async)(GhNip46CredentialBackend *self, GCancellable *cancellable,
+                        GAsyncReadyCallback callback, gpointer user_data);
+  GObject *(*prepare_finish)(GhNip46CredentialBackend *self, GAsyncResult *result,
+                             GError **error);
+  GPtrArray *(*search)(GhNip46CredentialBackend *self, GObject *prepared,
+                       const gchar *account, gboolean interactive, gboolean load_secrets,
                        GCancellable *cancellable, GError **error);
-  gboolean (*write)(GhNip46CredentialBackend *self, const gchar *account,
+  gboolean (*write)(GhNip46CredentialBackend *self, GObject *prepared, const gchar *account,
                     GBytes *secret, gboolean interactive, GError **error);
-  gboolean (*remove)(GhNip46CredentialBackend *self, const gchar *account,
+  gboolean (*remove)(GhNip46CredentialBackend *self, GObject *prepared, const gchar *account,
                      gboolean interactive, GError **error);
   void (*free)(GhNip46CredentialBackend *self);
 };

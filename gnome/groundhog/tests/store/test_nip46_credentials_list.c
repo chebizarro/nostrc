@@ -19,10 +19,11 @@ typedef struct {
 } FakeBackend;
 
 static GPtrArray *
-fake_search(GhNip46CredentialBackend *backend, const gchar *acct, gboolean interactive,
-            gboolean load_secrets, GCancellable *cancellable, GError **error)
+fake_search(GhNip46CredentialBackend *backend, GObject *prepared, const gchar *acct,
+            gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
+            GError **error)
 {
-  (void)acct; (void)interactive; (void)cancellable; (void)error;
+  (void)prepared; (void)acct; (void)interactive; (void)cancellable; (void)error;
   FakeBackend *self = (FakeBackend *)backend;
   g_mutex_lock(&self->lock);
   if (load_secrets) {
@@ -48,10 +49,10 @@ fake_search(GhNip46CredentialBackend *backend, const gchar *acct, gboolean inter
   return items;
 }
 
-static gboolean fake_write(GhNip46CredentialBackend *b, const gchar *a, GBytes *s,
-                           gboolean i, GError **e) { (void)b; (void)a; (void)s; (void)i; (void)e; return TRUE; }
-static gboolean fake_remove(GhNip46CredentialBackend *b, const gchar *a, gboolean i,
-                            GError **e) { (void)b; (void)a; (void)i; (void)e; return TRUE; }
+static gboolean fake_write(GhNip46CredentialBackend *b, GObject *p, const gchar *a, GBytes *s,
+                           gboolean i, GError **e) { (void)b; (void)p; (void)a; (void)s; (void)i; (void)e; return TRUE; }
+static gboolean fake_remove(GhNip46CredentialBackend *b, GObject *p, const gchar *a, gboolean i,
+                            GError **e) { (void)b; (void)p; (void)a; (void)i; (void)e; return TRUE; }
 static void fake_free(GhNip46CredentialBackend *b) { (void)b; /* owned by the test */ }
 
 static void
@@ -66,7 +67,9 @@ fake_init(FakeBackend *fake)
   fake->base.free = fake_free;
 }
 
-typedef struct { GPtrArray *list; GhNip46Credential *credential; GError *error; gboolean done; } Result;
+typedef struct {
+  GPtrArray *list; GhNip46Credential *credential; GError *error; gboolean ok; gboolean done;
+} Result;
 
 static void
 on_list(GObject *source, GAsyncResult *result, gpointer data)
@@ -81,6 +84,22 @@ on_lookup(GObject *source, GAsyncResult *result, gpointer data)
 {
   Result *out = data;
   out->credential = gh_nip46_credential_store_lookup_finish(GH_NIP46_CREDENTIAL_STORE(source), result, &out->error);
+  out->done = TRUE;
+}
+
+static void
+on_store(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Result *out = data;
+  out->ok = gh_nip46_credential_store_store_finish(GH_NIP46_CREDENTIAL_STORE(source), result, &out->error);
+  out->done = TRUE;
+}
+
+static void
+on_delete(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Result *out = data;
+  out->ok = gh_nip46_credential_store_delete_finish(GH_NIP46_CREDENTIAL_STORE(source), result, &out->error);
   out->done = TRUE;
 }
 
@@ -155,11 +174,142 @@ test_blocked_lookup_does_not_block_list(void)
   g_object_unref(store); /* the released worker drops the last reference */
 }
 
+/* nostrc-0cfsg.36.30: a backend's preparation runs, and completes, on the
+ * thread that starts the operation before any worker uses it (the Secret
+ * Service backend gets libsecret's default instance there); each worker call
+ * receives that object. A refused preparation fails the operation without a
+ * worker call. */
+typedef struct {
+  GhNip46CredentialBackend base;
+  GMutex lock;
+  GThread *starter;
+  GObject *token;
+  gboolean refuse;
+  guint prepared;     /* prepare_finish() calls */
+  guint worker_calls;
+  gboolean broken;    /* a worker call broke the contract */
+} PrepBackend;
+
+static void
+prep_prepare_async(GhNip46CredentialBackend *backend, GCancellable *cancellable,
+                   GAsyncReadyCallback callback, gpointer user_data)
+{
+  PrepBackend *self = (PrepBackend *)backend;
+  g_assert_true(g_thread_self() == self->starter);
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  if (self->refuse)
+    g_task_return_new_error(task, GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_UNAVAILABLE,
+                            "Secret Service unavailable");
+  else
+    g_task_return_pointer(task, g_object_ref(self->token), g_object_unref);
+  g_object_unref(task);
+}
+
+static GObject *
+prep_prepare_finish(GhNip46CredentialBackend *backend, GAsyncResult *result, GError **error)
+{
+  PrepBackend *self = (PrepBackend *)backend;
+  g_assert_true(g_thread_self() == self->starter);
+  g_mutex_lock(&self->lock);
+  self->prepared++;
+  g_mutex_unlock(&self->lock);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static void
+prep_worker_call(GhNip46CredentialBackend *backend, GObject *prepared)
+{
+  PrepBackend *self = (PrepBackend *)backend;
+  g_mutex_lock(&self->lock);
+  if (prepared != self->token || g_thread_self() == self->starter || self->prepared == 0)
+    self->broken = TRUE;
+  self->worker_calls++;
+  g_mutex_unlock(&self->lock);
+}
+
+static GPtrArray *
+prep_search(GhNip46CredentialBackend *b, GObject *p, const gchar *a, gboolean i, gboolean l,
+            GCancellable *c, GError **e)
+{
+  (void)a; (void)i; (void)l; (void)c; (void)e;
+  prep_worker_call(b, p);
+  return g_ptr_array_new_with_free_func((GDestroyNotify)gh_nip46_credential_item_free);
+}
+static gboolean prep_write(GhNip46CredentialBackend *b, GObject *p, const gchar *a, GBytes *s,
+                           gboolean i, GError **e) { (void)a; (void)s; (void)i; (void)e; prep_worker_call(b, p); return TRUE; }
+static gboolean prep_remove(GhNip46CredentialBackend *b, GObject *p, const gchar *a, gboolean i,
+                            GError **e) { (void)a; (void)i; (void)e; prep_worker_call(b, p); return TRUE; }
+
+static void
+test_prepared_on_starting_thread(void)
+{
+  static PrepBackend prep;
+  prep = (PrepBackend){0};
+  g_mutex_init(&prep.lock);
+  prep.starter = g_thread_self();
+  prep.token = g_object_new(G_TYPE_OBJECT, NULL);
+  prep.base.prepare_async = prep_prepare_async;
+  prep.base.prepare_finish = prep_prepare_finish;
+  prep.base.search = prep_search;
+  prep.base.write = prep_write;
+  prep.base.remove = prep_remove;
+  prep.base.free = fake_free;
+  GhNip46CredentialStore *store = gh_nip46_credential_store_new_with_backend(&prep.base);
+
+  Result found = {0};
+  gh_nip46_credential_store_lookup_async(store, account, NULL, on_lookup, &found);
+  wait_done(&found);
+  g_assert_error(found.error, GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_NOT_FOUND);
+  g_clear_error(&found.error);
+  Result listed = {0};
+  gh_nip46_credential_store_list_async(store, NULL, on_list, &listed);
+  wait_done(&listed);
+  g_assert_no_error(listed.error);
+  g_assert_cmpuint(listed.list->len, ==, 0);
+  g_ptr_array_unref(listed.list);
+  const gchar *relays[] = { "wss://nos.lol", NULL };
+  GError *error = NULL;
+  GhNip46Credential *credential = gh_nip46_credential_new(account,
+    "3333333333333333333333333333333333333333333333333333333333333333",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", relays, &error);
+  g_assert_no_error(error);
+  Result saved = {0};
+  gh_nip46_credential_store_store_async(store, credential, FALSE, NULL, on_store, &saved);
+  wait_done(&saved);
+  g_assert_no_error(saved.error);
+  g_assert_true(saved.ok);
+  gh_nip46_credential_free(credential);
+  Result deleted = {0};
+  gh_nip46_credential_store_delete_async(store, account, FALSE, NULL, on_delete, &deleted);
+  wait_done(&deleted);
+  g_assert_no_error(deleted.error);
+  g_assert_true(deleted.ok);
+  g_mutex_lock(&prep.lock);
+  g_assert_cmpuint(prep.prepared, ==, 4);
+  g_assert_cmpuint(prep.worker_calls, ==, 6); /* one search each, a write, a remove */
+  g_assert_false(prep.broken);
+  g_mutex_unlock(&prep.lock);
+
+  prep.refuse = TRUE;
+  found = (Result){0};
+  gh_nip46_credential_store_lookup_async(store, account, NULL, on_lookup, &found);
+  wait_done(&found);
+  g_assert_error(found.error, GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_UNAVAILABLE);
+  g_clear_error(&found.error);
+  g_mutex_lock(&prep.lock);
+  g_assert_cmpuint(prep.prepared, ==, 5);
+  g_assert_cmpuint(prep.worker_calls, ==, 6);
+  g_mutex_unlock(&prep.lock);
+  g_object_unref(store);
+  g_object_unref(prep.token);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/nip46-credentials/list/attributes-only", test_list_reads_attributes_only);
   g_test_add_func("/nip46-credentials/list/blocked-lookup", test_blocked_lookup_does_not_block_list);
+  g_test_add_func("/nip46-credentials/prepared-on-starting-thread", test_prepared_on_starting_thread);
   return g_test_run();
 }
