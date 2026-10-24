@@ -436,6 +436,26 @@ class HostFrontendGroupLifecycle(unittest.TestCase):
                     self.assertTrue(running(victim.pid, observed[2]))
         (self.root / 'owner.json').unlink()
 
+    def test_exited_process_is_ended_and_never_signalled(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('static_frontend_host', ROOT / HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        token = 'e' * 64
+        child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.exit(0)', token])
+        observed = proc_stat(child.pid)
+        record = dict(kind=helper.KIND, token=token, pid=child.pid, starttime=observed[2],
+                      boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(), uid=os.getuid())
+        deadline = time.monotonic() + 15
+        while proc_stat(child.pid)[0] != 'Z':  # exited, deliberately not yet reaped
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+        self.assertEqual(helper.owner_status(record), 'ended')
+        self.assertFalse(helper.signal_owned(record, signal.SIGTERM))
+        child.wait()
+        self.assertEqual(helper.owner_status(record), 'ended')  # reaped: the number is no longer ours
+        self.assertFalse(helper.signal_owned(record, signal.SIGTERM))
+
     def test_missing_duplicate_tampered_or_unknown_results_refuse(self):
         self.helper([('a', ['true']), ('b', ['true'])])
         self.assertEqual(self.helper_run('start').returncode, 0)

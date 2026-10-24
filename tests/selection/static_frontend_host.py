@@ -116,23 +116,37 @@ def owner_status(record):
     if observed is None or observed[2] != start:
         return 'ended'  # that incarnation is gone; a reused number is never ours
     state, session, _ = observed
-    if state == 'Z':
+    if state in ('Z', 'X'):
         return 'ended'  # exited; only its reaper may remove it
     try:
         info = os.stat('/proc/%d' % pid)
-        argv = Path('/proc/%d/cmdline' % pid).read_bytes().split(b'\0')
+        raw = Path('/proc/%d/cmdline' % pid).read_bytes()
     except OSError:
         return 'ended'
-    if session != pid or info.st_uid != os.getuid() or record.get('token', '').encode() not in argv:
+    if not raw:
+        return 'ended'  # an exiting process has already released its argv; never signalled
+    if session != pid or info.st_uid != os.getuid() or record.get('token', '').encode() not in raw.split(b'\0'):
         raise Refused('pid %d with the recorded start time is not the owned supervisor' % pid)
     return 'alive'
 
 
 def signal_owned(record, signum):
-    if owner_status(record) == 'alive':  # re-verified immediately before every signal
-        os.kill(record['pid'], signum)
+    """Pin the process with a pidfd, THEN verify it, then signal through the pidfd:
+    a number reused after verification can never receive the signal."""
+    try:
+        handle = os.pidfd_open(record['pid'])
+    except ProcessLookupError:
+        return False
+    try:
+        if owner_status(record) != 'alive':
+            return False
+        try:
+            signal.pidfd_send_signal(handle, signum)
+        except ProcessLookupError:
+            return False
         return True
-    return False
+    finally:
+        os.close(handle)
 
 
 def read_owner(directory):
