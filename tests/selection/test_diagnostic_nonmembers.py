@@ -204,8 +204,11 @@ nostrc_finalize_test_inventory()'''))
             original = path.read_bytes()
             path.write_bytes(original + b"\n# changed after full-root audit\n")
             try:
-                with self.assertRaisesRegex(r.RealizationError, "binding changed"):
+                # Configure-bound Ninja generation (CMakeCache/manifests) refuses
+                # at load, before the later nonmember binding comparison.
+                with self.assertRaises(r.RealizationError) as caught:
                     r.run_resolved(resolved, self.build, self.evidence / path.name, input_audit=audit, build=False)
+                self.assertEqual(str(caught.exception), f"stale realization metadata: {path.resolve()}")
             finally:
                 path.write_bytes(original)
 

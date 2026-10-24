@@ -621,6 +621,8 @@ def _profile_fingerprint(realization):
         keys += ("override_inventory",)
     if "default_build_binding" in realization:
         keys += ("default_build_binding",)
+    if "ninja_generation_binding" in realization:
+        keys += ("ninja_generation_binding",)
     return _hash({k: realization.get(k) for k in keys})
 
 
@@ -921,6 +923,72 @@ def _generation_control(realization, tools):
             'tools': tools}
 
 
+class FreshnessError(RealizationError):
+    """Freshness refusal (pending work or binding drift) with its query record."""
+
+    def __init__(self, message, proof):
+        super().__init__(message)
+        self.proof = proof
+
+
+def _native_cache(build):
+    cache_path = Path(build) / 'CMakeCache.txt'
+    if not cache_path.is_file() or cache_path.resolve() != cache_path:
+        raise RealizationError('default build requires a bound native CMake cache')
+    cache = {}
+    for line in cache_path.read_text().splitlines():
+        match = re.match(r'([^:#=]+):[^=]+=(.*)$', line)
+        if match:
+            if match[1] in cache:
+                raise RealizationError('duplicate native CMake cache entry')
+            cache[match[1]] = match[2]
+    return cache_path, cache
+
+
+def _bound_build_tools(realization, cache):
+    """Configured CMake/Ninja must be the build-phase PATH executables."""
+    env = phase_environment(realization["profile"], realization["repo_root"], "build")
+    tools = {}
+    configured_tools = {'ninja': cache.get('CMAKE_MAKE_PROGRAM'),
+                        'cmake': realization['cmake'].get('paths', {}).get('cmake')}
+    for name, configured in configured_tools.items():
+        actual = shutil.which(name, path=env.get('PATH'))
+        if (not configured or not Path(configured).is_absolute() or not actual
+                or Path(configured).resolve() != Path(actual).resolve() or not Path(actual).is_file()):
+            raise RealizationError(f'default configured/PATH build tool identity mismatch: {name}')
+        path = Path(actual).resolve()
+        tools[name] = {'configured': configured, 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    return tools
+
+
+def _ninja_generation_binding(realization):
+    """Configure-time regeneration identity for named-target freshness.
+
+    Named-target lanes have no default attestation, yet their freshness query
+    needs the same bound manifests, tools and VerifyGlobs control. A raw
+    ``ninja -n`` cannot supply it: CMake's always-dirty glob stamp makes the
+    dry-run manifest prepass report regeneration and exit before any target.
+    """
+    build = Path(realization['build_dir'])
+    cache_path, cache = _native_cache(build)
+    tools = _bound_build_tools(realization, cache)
+    return {'schema_version': 1, 'manifests': _ninja_manifests(build), 'build_tools': tools,
+            'generation_control': _generation_control(realization, tools),
+            'cache_sha256': hashlib.sha256(cache_path.read_bytes()).hexdigest()}
+
+
+def _freshness_snapshot(realization):
+    if 'default_build_binding' in realization:
+        return realization['default_build_binding']['snapshot']
+    binding = realization.get('ninja_generation_binding')
+    if binding is None:
+        raise RealizationError('execution build-freshness proof requires configure-bound Ninja '
+                               'generation control; configure and audit again')
+    if binding.get('schema_version') != 1:
+        raise RealizationError('unsupported Ninja generation binding')
+    return binding
+
+
 def _ninja_freshness(realization, targets):
     """Query the unchanged graph without Ninja's manifest-regeneration prepass.
 
@@ -928,10 +996,21 @@ def _ninja_freshness(realization, targets):
     preserves native evaluation of defaults, dependencies, depfiles and tools.
     Regeneration is independently checked against configure-bound identities.
     Callers hold the build lock; this is query evidence, not physical coverage.
+    Every refusal carries its diagnostic record (stage/argv/output) for retention.
     """
-    binding = realization['default_build_binding']
-    snapshot = binding['snapshot']
+    record = {'targets': list(targets), 'stage': 'binding', 'physical_coverage': False}
+    try:
+        return _ninja_freshness_query(realization, targets, record)
+    except FreshnessError:
+        raise
+    except RealizationError as exc:
+        raise FreshnessError(str(exc), dict(record, outcome='refused', error=str(exc))) from exc
+
+
+def _ninja_freshness_query(realization, targets, record):
+    snapshot = _freshness_snapshot(realization)
     control = snapshot['generation_control']
+    record['generation_control_hash'] = _hash(control)
     build = Path(realization['build_dir'])
     env = phase_environment(realization['profile'], realization['repo_root'], 'build')
     tools = snapshot['build_tools']
@@ -945,15 +1024,24 @@ def _ninja_freshness(realization, targets):
                 raise RealizationError('configured/PATH build tool identity changed')
         if _generation_control(realization, tools) != control:
             raise RealizationError('CMake regeneration needed; configure and audit again')
+        # Bytes are also bound in generation_files; this re-derives the whole
+        # named-target binding (cache/manifests/tool bytes/control) under lock.
+        if 'default_build_binding' not in realization and _ninja_generation_binding(realization) != snapshot:
+            raise RealizationError('Ninja generation binding changed; configure and audit again')
         if control['verifier']:
             # CMake reports a mismatch before TOUCH_NOCREATE. Empty combined
             # output is mandatory even when the stamp cannot be touched.
-            output = _command([tools['cmake']['path'], '-P', control['verifier']], cwd=build, env=env)
+            verify = [tools['cmake']['path'], '-P', control['verifier']]
+            record.setdefault('verifier_runs', []).append({'argv': verify})
+            output = _command(verify, cwd=build, env=env)
+            record['verifier_runs'][-1]['output'] = output
             if output != '':
                 raise RealizationError('CMake glob membership changed; configure and audit again: ' + repr(output))
             if _generation_control(realization, tools) != control:
                 raise RealizationError('CMake glob control changed during verification')
+    record['stage'] = 'pre_query_validation'
     validate()
+    record['stage'] = 'query'
     with tempfile.TemporaryDirectory(prefix='nostrc-ninja-query-', dir=build) as directory:
         entry = Path(directory) / 'query.ninja'
         original = str(build / 'build.ninja')
@@ -962,15 +1050,20 @@ def _ninja_freshness(realization, targets):
         escaped = original.replace('$', '$$').replace(' ', '$ ').replace(':', '$:')
         entry.write_text('include ' + escaped + '\n')
         argv = [tools['ninja']['path'], '-f', str(entry), '-n', '-v', *targets]
+        record.update(argv=argv, entry_text=entry.read_text())
         output = _command(argv, cwd=build, env=env)
+        record['output'] = output
+        proof = {'argv': argv, 'entry_text': entry.read_text(),
+                 'entry_sha256': hashlib.sha256(entry.read_bytes()).hexdigest(),
+                 'generation_control_hash': _hash(control), 'output': output,
+                 'physical_coverage': False}
         if output != 'ninja: no work to do.\n':
-            raise RealizationError(('selected targets are' if targets else 'native default is')
-                                   + ' not up to date; build and re-audit before execution')
+            raise FreshnessError(('selected targets are' if targets else 'native default is')
+                                 + ' not up to date; build and re-audit before execution',
+                                 dict(record, **proof, outcome='pending_work'))
+        record['stage'] = 'post_query_validation'
         validate()
-        return {'argv': argv, 'entry_text': entry.read_text(),
-                'entry_sha256': hashlib.sha256(entry.read_bytes()).hexdigest(),
-                'generation_control_hash': _hash(control), 'output': output,
-                'physical_coverage': False}
+        return proof
 
 
 def _default_snapshot(realization):
@@ -985,26 +1078,8 @@ def _default_snapshot(realization):
     build = realization["build_dir"]
     env = phase_environment(realization["profile"], realization["repo_root"], "build")
     manifests = _ninja_manifests(build)
-    cache_path = Path(build) / 'CMakeCache.txt'
-    if not cache_path.is_file() or cache_path.resolve() != cache_path:
-        raise RealizationError('default build requires a bound native CMake cache')
-    cache = {}
-    for line in cache_path.read_text().splitlines():
-        match = re.match(r'([^:#=]+):[^=]+=(.*)$', line)
-        if match:
-            if match[1] in cache:
-                raise RealizationError('duplicate native CMake cache entry')
-            cache[match[1]] = match[2]
-    tools = {}
-    configured_tools = {'ninja': cache.get('CMAKE_MAKE_PROGRAM'),
-                        'cmake': realization['cmake'].get('paths', {}).get('cmake')}
-    for name, configured in configured_tools.items():
-        actual = shutil.which(name, path=env.get('PATH'))
-        if (not configured or not Path(configured).is_absolute() or not actual
-                or Path(configured).resolve() != Path(actual).resolve() or not Path(actual).is_file()):
-            raise RealizationError(f'default configured/PATH build tool identity mismatch: {name}')
-        path = Path(actual).resolve()
-        tools[name] = {'configured': configured, 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    cache_path, cache = _native_cache(build)
+    tools = _bound_build_tools(realization, cache)
     for key, value in cache.items():
         if value and (re.fullmatch(r'CMAKE_\w+_(?:COMPILER_LAUNCHER|LINKER_LAUNCHER|COMPILE_OBJECT|LINK_EXECUTABLE|CREATE_\w+)', key)
                 or re.fullmatch(r'(?:CMAKE_)?RULE_LAUNCH_\w+', key)
@@ -1357,6 +1432,8 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         realization["default_build_binding"] = binding
         default_evidence = build / f"nostrc-default-generator-{token}.json"
         _atomic(default_evidence, raw)
+    elif realization["cmake"].get("generator", {}).get("name") == "Ninja":
+        realization["ninja_generation_binding"] = _ninja_generation_binding(realization)
     if diagnostic_boundary is not None:
         realization['diagnostic_boundary'] = diagnostic_boundary
         _diagnostic_boundary(realization)
@@ -1374,9 +1451,12 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     bound += [reply_dir / t["jsonFile"] for t in configs[0].get("targets", [])]
     bound += list(build.rglob("CTestTestfile.cmake"))
     if "default_build_binding" in realization:
-        bound += [default_evidence, build / 'CMakeCache.txt', *map(Path, binding["snapshot"]["manifests"]["files"])]
-        bound += [Path(tool['path']) for tool in binding['snapshot']['build_tools'].values()]
-        bound += list(map(Path, binding['snapshot']['generation_control']['files']))
+        bound.append(default_evidence)
+    if "default_build_binding" in realization or "ninja_generation_binding" in realization:
+        snapshot = _freshness_snapshot(realization)
+        bound += [build / 'CMakeCache.txt', *map(Path, snapshot["manifests"]["files"])]
+        bound += [Path(tool['path']) for tool in snapshot['build_tools'].values()]
+        bound += list(map(Path, snapshot['generation_control']['files']))
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
     _validate_source_identity(root, identity, build)
     _validate_phase_context(realization)
@@ -3171,17 +3251,19 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     query = ["ctest", "--test-dir", str(build_dir), *config, "--show-only=json-v1"]
     freshness = []
-    if resolved.get("default_build_required"):
-        freshness.append(_ninja_freshness(realization, []))
-    if resolved["build_targets"]:
-        if realization["cmake"].get("generator", {}).get("name") != "Ninja":
-            raise RealizationError("execution build-freshness proof requires the existing Ninja profile")
-        if 'default_build_binding' in realization:
+    try:
+        if resolved.get("default_build_required"):
+            freshness.append(_ninja_freshness(realization, []))
+        if resolved["build_targets"]:
+            if realization["cmake"].get("generator", {}).get("name") != "Ninja":
+                raise RealizationError("execution build-freshness proof requires the existing Ninja profile")
             freshness.append(_ninja_freshness(realization, resolved['build_targets']))
-        else:
-            dry_run = _command(["ninja", "-C", str(build_dir), "-n", *resolved["build_targets"]], env=build_env)
-            if "ninja: no work to do." not in dry_run:
-                raise RealizationError("selected targets are not up to date; build and re-audit before execution")
+    except RealizationError as exc:
+        proof = exc.proof if isinstance(exc, FreshnessError) else {
+            'targets': resolved['build_targets'], 'stage': 'generator', 'outcome': 'refused',
+            'error': str(exc), 'physical_coverage': False}
+        _atomic(directory / 'ninja-freshness-query.json', [*freshness, proof])
+        raise
     if freshness:
         _atomic(directory / 'ninja-freshness-query.json', freshness)
     fresh = [] if realization.get("realization_kind") == "command" else json.loads(_command(query, env=env))["tests"]
