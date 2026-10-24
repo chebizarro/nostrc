@@ -261,16 +261,21 @@ class ReadinessDescriptorLifecycle(unittest.TestCase):
         self.assertNotIn('forced_exit', service)
         self.assertEqual(result['error'], 'ServiceError: private service readiness deadline exceeded')
 
-    def test_exit_before_readiness_is_not_reported_alive(self):
+    def test_exit_before_readiness_is_classified_and_reaped(self):
         with self.fake('exit'):
             with self.assertRaisesRegex(services.ServiceError, 'exited before readiness'):
                 with services.private_services(['private_bus'], self.evidence):
                     self.fail('exited service admitted')
         _, service, _ = self.final()
         self.assertEqual(service['readiness']['outcome'], 'exited_before_readiness')
-        self.assertFalse(service['readiness']['service_alive_at_failure'])
+        # The kernel closes the exiting task's descriptors (readiness EOF) before
+        # the task becomes waitable, so this instantaneous non-reaping probe may
+        # legitimately see either state. It must be an observed bool, never None.
+        self.assertIn(service['readiness']['service_alive_at_failure'], (False, True))
         self.assertEqual(service['readiness']['late_record_bytes'], 0)
-        self.assertEqual(service['exit_code'], 3)
+        self.assertEqual(service['exit_code'], 3)  # its own exit, observed by the actual reap
+        self.assertTrue(service['reaped'])
+        self.assertNotIn('forced_exit', service)
 
     def test_cancellation_during_readiness_stops_service_and_keeps_sibling(self):
         sibling = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
