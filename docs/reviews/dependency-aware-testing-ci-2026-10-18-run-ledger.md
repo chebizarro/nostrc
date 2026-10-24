@@ -2,6 +2,50 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 final-source shadow profile census — snapshot 2026-10-24T11:56:42Z
+
+This entry covers the completed [shadow root 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312):
+- **Run:** `pull_request`, attempt 1, 10:54:03Z–11:41:30Z, conclusion **failure**.
+- **Identity:** head H `1f7dc22b6e860331d590d49fb91f9687dd269335`. Plan `bb45e0f6…` tests S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77` (tree `cabae365`, parents `1d53e6ecd` + H). 13 expected lanes.
+- **Scope:** a single snapshot of one root, not a live counter. No reruns, retries or manual dispatch. The earlier H census and the Static cancellation rows below are unchanged.
+
+| Profile | Job | Exact nonsecret error / publication | Artifact | Outcome |
+|---|---|---|---|---|
+| `core.linux` | [120854301106](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301106) success, step – | –; `publication: published (qualified_exposure_checked)` | receipt [12558341530](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558341530) 164496744B | **normal-qualified, gate-clean** (441 executed registrations) |
+| `core.linux.asan` | [120854301115](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301115) failure, step 21 | `test-gate: core.linux.asan: command exited 1: python3` (raw withheld; inner cause unavailable); `publication: withheld (qualification_skipped)` | withheld [12558335645](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558335645) 499B | qualification_skipped |
+| `core.macos.asan` | [120854301075](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301075) failure, step 21 | `CheckFailure: pre-build input audit failed; original findings retained`; `publication: published (no_signer_in_lane)` | receipt [12557639046](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12557639046) 75478B | lane_failure_v1 |
+| `grotto.linux` | [120854301100](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301100) success, step – | –; `publication: published (qualified_exposure_checked)` | receipt [12558248647](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558248647) 300918511B | **normal-qualified, gate-clean** (461 executed registrations) |
+| `grotto.linux.asan_ubsan` | [120854301083](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301083) failure, step 21 | `test-gate: grotto.linux.asan_ubsan: command exited 1: python3` (raw withheld; inner cause unavailable); `publication: withheld (qualification_skipped)` | withheld [12557599952](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12557599952) 505B | qualification_skipped |
+| `groundhog.linux` | [120854301159](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301159) success, step – | –; `publication: published (qualified_exposure_checked)` | receipt [12558208799](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558208799) 302866010B | **normal-qualified, gate-clean** (471 executed registrations) |
+| `groundhog.linux.sanitizers` | [120854301097](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301097) failure, step 21 | `RealizationError: diagnostic nonmember fresh registration partition differs`; `publication: published (no_signer_in_lane)` | receipt [12558405681](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558405681) 8817B | lane_failure_v1 |
+| `groundhog.mdk011` | [120854301176](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301176) failure, step 21 | `test-gate: groundhog.mdk011: command exited 2: python3` (raw withheld; inner cause unavailable); `publication: withheld (qualification_skipped)` | withheld [12558562086](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558562086) 501B | qualification_skipped |
+| `groundhog.mdk08` | [120854301200](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301200) failure, step 21 | `test-gate: groundhog.mdk08: command exited 2: python3` (raw withheld; inner cause unavailable); `publication: withheld (qualification_skipped)` | withheld [12559036159](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12559036159) 500B | qualification_skipped |
+| `homed.linux.ci` | [120854301244](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301244) success, step – | –; `publication: published (no_signer_in_lane)` | receipt [12557559353](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12557559353) 642279B | **normal-qualified, gate-clean** (5 executed registrations) |
+| `libgo.linux.asan` | [120854301125](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301125) success, step – | `normal qualification: libgo.linux.asan has no authored normal contract; raw receipt unchanged`; `publication: published (no_signer_in_lane)` | receipt [12558027051](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558027051) 61920B | diagnostic_backend |
+| `libgo.macos.asan` | [120854301312](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301312) success, step – | –; `publication: published (no_signer_in_lane)` | receipt [12558250857](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558250857) 65911B | diagnostic_backend |
+| `static.policy` | [120857372294](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120857372294) failure, step 21 | `PolicyError: policy container did not physically exit successfully`; `publication: published (no_signer_in_lane)` | receipt [12558612751](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558612751) 138612B | lane_failure_v1 |
+
+Strict signer verifier (approved .18 outputs; one-lane scope only):
+- `grotto.linux`: `"proved": true`, full scope, 461 executed registrations.
+- `groundhog.linux`: `"proved": true`, full scope, 471 executed registrations.
+- `core.linux`: refuses by design with `not a profile whose inventory can realize the isolation witnesses: core.linux`, so no signer claim is made for it.
+- Literal scope: `hosted pidns delivery/isolation for one qualified lane; not profile, complete-gate or W11 acceptance`.
+
+Gate and broad family:
+- **Gate:** [Dependency gate 120862992020](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120862992020) fails at step 8. [Validation 12559400394](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12559400394) has `passed=false`, `complete_gate_eligible=false`, 261 errors and `shadow_cutover` pending.
+- **Broad family accounting:** [120862020845](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120862020845) **fails** with 16/17. [Broad receipt 12558114003](https://github.com/chebizarro/nostrc/actions/runs/40087734312/artifacts/12558114003) records `groundhog: expected success, observed failure`.
+- **Failing broad job:** [broad / groundhog / groundhog 120854301430](https://github.com/chebizarro/nostrc/actions/runs/40087734312/job/120854301430) fails at step 14, "Stress GUI lifetime callbacks with deterministic completion jitter".
+  - Exact output: `not ok /groundhog/conversation-menu-gui/header-menu - GLib-GObject-FATAL-CRITICAL: object_ref: assertion '!object_already_finalized' failed` (seed 29, max 50 ms).
+  - CTest: `424 - groundhog-conversation-menu-gui (SIGTRAP)`, 1 of 6 failed.
+
+Protected census `pr26-final/profile-census-40087734312`:
+- **`SHA256SUMS`:** `03723b931614d368c3f6bced3b7295d69daa098cf490c1f33374104db3aeed13` (59 entries).
+- **`MATRIX.md`:** `9d3fb2851754c44d7fe5fae2b53f868a656cff96e48b75f60ee1fb9332bd0738`.
+- **`matrix.json`:** `9df7b1b0886021c826ed2feed4ae6cd2b9b439c3311dc3e7396ea7515f327046`.
+- **Reused, not duplicated:** .18's `hosted-signer-40087734312` (2,502 entries, `1524d2edf050903dbce53daef93aa494b5190ce0f1ebe8d1a21102d3a0946b31`).
+
+Reviewed counters stay at **0/20 qualifying PR comparisons, 0/2 successful complete broad integrations and 0 product samples. W11 NOT MET / W12 NOT RUN.** No defaults, protections, publisher, schedule or legacy-trigger cutover.
+
 ## PR26 final-source Static attempt — 2026-10-24T10:54:03Z–11:14:25Z
 
 This is a dated record of one actual hosted attempt plus separate local proofs. It is not a live counter, and the older entries below are unchanged. The parent's source freeze (`pr26-final/source-freeze.json`, snapshot 2026-10-24T10:54:31.914952Z) records:

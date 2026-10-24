@@ -2,6 +2,35 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 final-source shadow acceptance snapshot — 2026-10-24T11:56:42Z
+
+[Shadow root 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) has head H `1f7dc22b6` and tests S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`; it **failed** at 11:41:30Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-shadow-profile-census--snapshot-2026-10-24t115642z).
+
+Per-profile outcome at this root:
+- **Normal-qualified and gate-clean (4):** `core.linux` (441 executed registrations), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5, the standalone five-unit route).
+  - The strict signer proof is true for Grotto (461) and Groundhog (471) only. Its scope is one lane, not profile, complete-gate or W11.
+  - `core.linux`'s verifier refusal is by design; no signer claim is made.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (4):** `core.linux.asan`, `grotto.linux.asan_ubsan`, `groundhog.mdk08` and `groundhog.mdk011`.
+
+Classes compared with the 10:13:56Z H census below. Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| Source-claim qualification refusal | **not recurring**: core, grotto and groundhog Linux qualified and published `qualified_exposure_checked` | `.36.27` fix present in S; parent owns status |
+| Withheld exit 1: `core.linux.asan`, `grotto.linux.asan_ubsan` | unchanged; cause unavailable | `.36.16`; `.36.20` / `.36.24` (profile owners, not attributed) |
+| Withheld exit 2: `groundhog.mdk08`, `groundhog.mdk011` | unchanged; cause unavailable | `.36.20` / `.36.13` (not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained`, 3 `unclaimed_registration` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully`; `policy runtime on an unauthored profile` | unchanged | `.36.29` (backfilled 10:39Z) |
+| libgo `no authored normal contract`, diagnostic receipts | unchanged | `.36.28` (backfilled 10:39Z) |
+| Broad family: groundhog `not ok /groundhog/conversation-menu-gui/header-menu - GLib-GObject-FATAL-CRITICAL: object_ref: assertion '!object_already_finalized' failed` | **new at this root**: broad accounting 16/17 (old H 17/17) | assertion text matches existing `nostrc-hn8y` title (in_progress); the `header-menu` subtest is not named in the `nostrc-hn8y` or `nostrc-rbfc` titles; no cause or owner inferred |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static 20-minute cap | run 40087734351 cancelled (see entry below) | `.36.26` |
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
 ## PR26 final-source Static attempt and local proofs — 2026-10-24T11:14:25Z
 
 Per-step and hash detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-static-attempt--2026-10-24t105403z111425z).
