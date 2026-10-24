@@ -8066,7 +8066,10 @@
         "{source}/tests/selection/w11_post_h_integration_support.py",
         "{source}/tests/selection/fixtures/w11_post_h_integration_20261024.json",
         "{source}/tests/selection/test_w11_post_h_integration.py",
-        "{source}/tests/selection/static_frontend_host.py"
+        "{source}/tests/selection/static_frontend_host.py",
+        "{source}/tests/selection/w11_post_1f7_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_post_1f7_integration_20261024.json",
+        "{source}/tests/selection/test_w11_post_1f7_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [

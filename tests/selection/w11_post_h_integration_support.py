@@ -36,6 +36,9 @@ def witness():
 
 
 def before_source(path, raw):
+    # The newer post-1f7 layer (.36.26 fixture-only bytes) is projected first.
+    from w11_post_1f7_integration_support import before_source as before_newer_source
+    raw = before_newer_source(path, raw)
     record = witness()['sources'].get(path)
     if record is None:
         return raw
@@ -55,8 +58,10 @@ def before_source(path, raw):
 
 
 def before_policy(policy):
+    # The newer post-1f7 layer's clerical enrollment is projected first.
+    from w11_post_1f7_integration_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     jobs = data['maps']['workflow_jobs']

@@ -31,7 +31,9 @@ HELPER = '{source}/tests/selection/static_frontend_host.py'
 
 class PostHIntegration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's view: the newer post-1f7 layer is projected away first.
+        from w11_post_1f7_integration_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_h_era_witnesses_are_byte_identical_to_pushed_h(self):
         for path in (batch2.WITNESS, 'tests/selection/fixtures/w11_matrix_integration_20261024.json',
