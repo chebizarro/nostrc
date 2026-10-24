@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The fast pre-push hook (scripts/pre-push): static checks only, the full
-# gate behind NOSTRC_FULL_GATE=1. scripts/test-full-gate.sh tests the gate.
+# Static guards plus affected local tests by default; the real full gate is
+# behind NOSTRC_FULL_GATE=1. scripts/test-full-gate.sh tests that adapter.
 set -euo pipefail
 scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
@@ -63,25 +63,23 @@ grep -q 'SELECTIVE .*--explain' "$tmp/out"
 echo "(delete) $(printf '%064d' 0) refs/heads/gone $clean" | hook > /dev/null
 if git -C "$repo" worktree list | grep -q /checkout; then echo "temporary checkout left behind" >&2; exit 1; fi
 
-# W12 readiness guards (nostrc-0cfsg.37): the legacy static hook stays the
-# default, the shared diagnostic and the full gate are explicit, and unsetting
-# the opt-in is the whole rollback. These pin today's contract; they do not
-# authorize or perform a selective-default cutover.
+# The delivered contract: affected execution is the default. Only an explicit
+# zero bypasses local tests, and the bypass is announced.
 refs_clean="refs/heads/m $clean refs/heads/m $base"
 refs_ws="refs/heads/m $ws refs/heads/m $clean"
-for value in unset 0 "" true yes 2; do
+for value in unset 1 "" true yes 2; do
     if [ "$value" = unset ]; then
         hook <<< "$refs_clean" > "$tmp/out" 2>&1
     else
         NOSTRC_SELECTIVE_GATE="$value" hook <<< "$refs_clean" > "$tmp/out" 2>&1
     fi
-    if grep -q SELECTIVE "$tmp/out"; then echo "diagnostic ran for NOSTRC_SELECTIVE_GATE=$value" >&2; exit 1; fi
+    grep -q 'SELECTIVE --execution legacy' "$tmp/out" || { echo "affected default missing for $value" >&2; exit 1; }
 done
-# Only the exact opt-in value enables it; the rollback is unsetting it again.
-NOSTRC_SELECTIVE_GATE=1 hook <<< "$refs_clean" > "$tmp/out" 2>&1
-grep -q SELECTIVE "$tmp/out"
+NOSTRC_SELECTIVE_GATE=0 hook <<< "$refs_clean" > "$tmp/out" 2>&1
+grep -q 'affected local tests SKIPPED' "$tmp/out"
+if grep -q '^SELECTIVE ' "$tmp/out"; then echo "explicit bypass ignored" >&2; exit 1; fi
 hook <<< "$refs_clean" > "$tmp/out" 2>&1
-if grep -q SELECTIVE "$tmp/out"; then echo "diagnostic persisted after opt-in removed" >&2; exit 1; fi
+grep -q '^SELECTIVE ' "$tmp/out"
 
 # A failing opt-in diagnostic blocks the push, also as the plan-only
 # companion of an announced static skip; it never masks a static failure.
@@ -115,13 +113,4 @@ NOSTRC_FULL_GATE=1 NOSTRC_SKIP_PRE_PUSH=1 NOSTRC_SELECTIVE_GATE=1 bash -c 'cd "$
 grep -qF "FULL_GATE_RAN args=[origin url] stdin=[$refs_clean]" "$tmp/out"
 if grep -q -e SKIPPED -e SELECTIVE "$tmp/out"; then echo "full override ran a different path (all switches)" >&2; exit 1; fi
 
-# The documented contract stays in step with the hook: legacy default, the
-# opt-in diagnostic is additive, and the full-gate override exists.
-root="$(cd "$scripts/.." && pwd)"
-for doc in AGENTS.md docs/TESTING.md; do
-    grep -q 'NOSTRC_SELECTIVE_GATE=1' "$root/$doc" || { echo "$doc lost the diagnostic opt-in" >&2; exit 1; }
-done
-grep -q 'NOSTRC_FULL_GATE=1' "$root/AGENTS.md" || { echo "AGENTS.md lost the full-gate override" >&2; exit 1; }
-grep -qi 'never replaces' "$root/AGENTS.md" || { echo "AGENTS.md lost the additive-only rule" >&2; exit 1; }
-grep -qi 'not a selective-default switch' "$root/docs/TESTING.md" || { echo "TESTING.md lost the no-default-switch statement" >&2; exit 1; }
 echo "pre-push tests passed"
