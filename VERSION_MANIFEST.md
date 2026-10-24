@@ -31,6 +31,13 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-0cfsg.36.31: the account UI no longer passes an announcement to
+  GTK's fallback test accessibility context (used when no AT-SPI bus is
+  reachable), whose missing announce() made `groundhog --smoke` crash.
+  PATCH-class Groundhog bug fix folded into unreleased 0.12.0; no further
+  bump, public API, storage, configuration or wire-format change. Test
+  diagnostics require no bump; other components and release columns unchanged.
+
 - nostrc-0cfsg.36.30: the NIP-46 credential store obtains libsecret's shared
   default Secret Service on the thread that starts each operation, before its
   worker thread, so libsecret 0.21.4 no longer reports "Global default
