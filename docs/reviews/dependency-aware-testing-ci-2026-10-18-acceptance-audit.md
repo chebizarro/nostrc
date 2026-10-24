@@ -2,6 +2,58 @@
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
 
+## PR26 final-source shadow acceptance snapshot — 2026-10-24T11:56:42Z
+
+[Shadow root 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) has head H `1f7dc22b6` and tests S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`; it **failed** at 11:41:30Z. Per-profile jobs, artifacts and exact errors are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-shadow-profile-census--snapshot-2026-10-24t115642z).
+
+Per-profile outcome at this root:
+- **Normal-qualified and gate-clean (4):** `core.linux` (441 executed registrations), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5, the standalone five-unit route).
+  - The strict signer proof is true for Grotto (461) and Groundhog (471) only. Its scope is one lane, not profile, complete-gate or W11.
+  - `core.linux`'s verifier refusal is by design; no signer claim is made.
+- **Diagnostic only (2):** `libgo.linux.asan` and `libgo.macos.asan`.
+- **Failure, published `lane_failure_v1` (3):** `core.macos.asan`, `groundhog.linux.sanitizers` and `static.policy`.
+- **Failure, withheld, raw unavailable (4):** `core.linux.asan`, `grotto.linux.asan_ubsan`, `groundhog.mdk08` and `groundhog.mdk011`.
+
+Classes compared with the 10:13:56Z H census below. Only literal tracked text is cited, and no withheld cause is inferred.
+
+| Class | At this root | Tracked work |
+|---|---|---|
+| Source-claim qualification refusal | **not recurring**: core, grotto and groundhog Linux qualified and published `qualified_exposure_checked` | `.36.27` fix present in S; parent owns status |
+| Withheld exit 1: `core.linux.asan`, `grotto.linux.asan_ubsan` | unchanged; cause unavailable | `.36.16`; `.36.20` / `.36.24` (profile owners, not attributed) |
+| Withheld exit 2: `groundhog.mdk08`, `groundhog.mdk011` | unchanged; cause unavailable | `.36.20` / `.36.13` (not attributed) |
+| `core.macos.asan` `CheckFailure: pre-build input audit failed; original findings retained`, 3 `unclaimed_registration` | unchanged | `.36.16` |
+| `groundhog.linux.sanitizers` `RealizationError: diagnostic nonmember fresh registration partition differs` | unchanged | `.36.22` |
+| `static.policy` `PolicyError: policy container did not physically exit successfully`; `policy runtime on an unauthored profile` | unchanged | `.36.29` (backfilled 10:39Z) |
+| libgo `no authored normal contract`, diagnostic receipts | unchanged | `.36.28` (backfilled 10:39Z) |
+| Broad family: groundhog `not ok /groundhog/conversation-menu-gui/header-menu - GLib-GObject-FATAL-CRITICAL: object_ref: assertion '!object_already_finalized' failed` | **new at this root**: broad accounting 16/17 (old H 17/17) | assertion text matches existing `nostrc-hn8y` title (in_progress); the `header-menu` subtest is not named in the `nostrc-hn8y` or `nostrc-rbfc` titles; no cause or owner inferred |
+| Global: inventory physical coverage; `shadow_cutover` pending | unchanged | gate labels `.9` / `.5` (closed), not reopened |
+| Static 20-minute cap | run 40087734351 cancelled (see entry below) | `.36.26` |
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** No W11 quota comes from this CI-control PR. It is not a live counter, and there is no new waiver, cutover or bead status change.
+
+## PR26 final-source Static attempt and local proofs — 2026-10-24T11:14:25Z
+
+Per-step and hash detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-final-source-static-attempt--2026-10-24t105403z111425z).
+
+PR26 identities:
+- **Head:** H `1f7dc22b6e860331d590d49fb91f9687dd269335`, pushed with the normal hook.
+- **Tested:** synthetic S `19bd2c6c89703b2e2fe9fa0956711a2cc92ddf77`, with tree `cabae365aca49b402b7943b0be4553a6a42c3b73` (the same tree as H) and parents D `1d53e6ecd` and H.
+
+Hosted outcomes:
+- **Static:** [run 40087734351 / job 120853988147](https://github.com/chebizarro/nostrc/actions/runs/40087734351/job/120853988147) was **CANCELLED again** at the unchanged 20-minute cap (10:54:07Z–11:14:24Z, cleanup included). The testhost step was cancelled and the nine named replays were skipped, so it is **not complete**.
+  - Its [artifact 12558486011](https://github.com/chebizarro/nostrc/actions/runs/40087734351/artifacts/12558486011) is retained.
+  - `.36.26` ("fresh source-bound complete hosted Static integration succeeds under unchanged1200s cap") remains unmet. Its source fix stays under profiling, with no unchanged retry or manual dispatch.
+- **Shadow:** [run 40087734312](https://github.com/chebizarro/nostrc/actions/runs/40087734312) was still running at capture, so no qualifier result is inferred.
+
+Separate local proofs. These give no hosted, profile or W11 credit:
+- **Native at 44d:** 434 passed + 5 skipped, 0 failed (439 accounted). The Linux part is unsupported on Darwin. Summary `8402974a…`.
+- **44d → 1f7 delta:** only two bead files.
+- **LinuxKit at exact `1f7dc22b6`:** DEFAULT 1,420 tests in 476.981s (80 skips, none removed, 36 new passing) and kernel 121 / 0 skipped in 64.098s. All 14 commands exited 0, and `complete`/`eligible`/`native` are all false.
+
+**Backfill:** after the 10:13:56Z census, the tracker added `.36.28` (libgo normal contracts) and `.36.29` (static.policy qualification versus actual exit seam). That census's "none found by read-only tracker search" rows below are historical and kept.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** This is not a live counter, and there is no new waiver or cutover.
+
 ## H profile census acceptance snapshot — 2026-10-24T10:13:56Z
 
 This snapshot covers [PR26 run 40072073551](https://github.com/chebizarro/nostrc/actions/runs/40072073551) and [manual broad run 40072096156](https://github.com/chebizarro/nostrc/actions/runs/40072096156):
