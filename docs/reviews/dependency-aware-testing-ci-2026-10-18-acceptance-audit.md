@@ -1,6 +1,59 @@
 # Dependency-aware testing: acceptance reconciliation
 
+> **PR26 landed — 2026-10-24:** normal merge `9c22f7298` (head H6 `8767f9f6e`, tested S6 `5031ee1c`, same tree). All 12 fresh-source legacy workflows passed, including Groundhog 125/125 + ASan 65/65 and Static 779 s. Exactly 11 `.36` cells closed; `.36.21`/`.32`/`.33` stay open. The shadow S6 gate was still pending, and counters stay 0/20, 0/2 and 0 product samples; W11 NOT MET / W12 NOT RUN. [Delivered receipt](dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#pr26-delivered-at-master-9c22f7298--2026-10-24t181519z) and [S6 run ledger](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-delivered-at-master-9c22f7298-and-s6-shadow-snapshot-2--2026-10-24t181519z).
+
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
+
+## PR26 delivered at master 9c22f7298 — 2026-10-24T18:15:19Z
+
+**Delivered:** PR26 was merged normally as master M `9c22f7298668bf1418dc51753c76ad40a7928800`. Parents are D `1d53e6ecd` + H6 `8767f9f6e`, and tree `1138aee8` equals tested S6 `5031ee1c` (`pr26-smoke-final/actual-master-merge.json`). The parent verified the root-master fast-forward with user-file hashes and `nostrdb` unchanged. Detail and the S6 table are in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-delivered-at-master-9c22f7298-and-s6-shadow-snapshot-2--2026-10-24t181519z).
+
+- **Fresh-source legacy gates:** all 12 automatic workflows at H6 succeeded on attempt 1, with 35 success jobs and 5 skipped as authored.
+  - Groundhog opt-in CI 40115923186: normal 125/125 (#334 and #335 passed) and ASan 65/65, 0 skipped.
+  - Static 40115923206 / job 120937059406: 779 s under the unchanged 1,200 s cap. DEFAULT 1,434 with the same 80 skips; kernel 121 / 0 skipped; 14 container commands and 9 named replays exited 0. `complete`, `gate` and `native` are false.
+  - The job API's step lists were stale (empty, or a 4-step prefix). That raw API output is retained; the full timestamped job log and the artifact are the semantic evidence.
+  - .26's `pr26-smoke-final/OBSERVATION-SHA256SUMS`: `6f836b81c5bd765093ca02a7df2b39b654cc0501fab176953fb69b3f1298f3c5` (48 entries, re-verified).
+- **Closures:** the parent closed exactly 11 finite cells, `.36.1`, `.36.2`, `.36.15`, `.36.18`, `.36.19`, `.36.23`, `.36.25`, `.36.26`, `.36.27`, `.36.30` and `.36.31`. Each has a comment checking its original criteria plus the M proof. These are `.36` sub-cells, not the original top-level `.1`–`.5` criteria. `.36` and the epic stay in progress, and nothing closes W11 or W12.
+- **Still open:**
+  - `.36.21`: the original Xvfb displayfd cause.
+  - `.36.32`: the remaining 26 `gtk_accessible_announce` call sites.
+  - `.36.33`: the old NIP-11 TLS worker racing `OPENSSL_cleanup` at exit. The failed local full-normal 124/125 runs stay retained; this race is not fixed.
+- **Native correction:** the historical macOS AUTO-backend qualification stays withdrawn. The compliant macOS run is 3,010 default targets with 26 pass and 3 skip.
+- **Raw cores:** deleted inside the owned container after M. They were never copied durably; only the full backtraces and core hashes remain.
+- **Owned-resource cleanup after M** (`parent-owned-resource-cleanup.json` `e9e80efe…`, `parent-owned-worktree-cleanup-part1.json` `c903c604…`):
+  - The parent verified 362 evidence hashes and 4 full backtraces, then removed exactly the owned container `2aef2c8e…` and 7 owned `/tmp` directories.
+  - Docker's full image-ID set (212, intermediates included) and its 53 volumes are identical before and after; containers went from 22 to 21. No image was deleted. The earlier figure of 126 was the default visible image listing, a different count.
+  - Read-only keychain guards returned 0 before and after.
+  - 6 source worktrees and 7 branches were removed, including a side branch. 4 temporary tags were archived in a verified 22,644 B bundle (`dceaf865d43037b55f1cd8d449192487ec722c39669d04b47d2436af15f40b15`) and then removed.
+  - This docs worktree stays until its merge.
+- **Shadow S6** ([root 40115923331](https://github.com/chebizarro/nostrc/actions/runs/40115923331)), still not terminal at 18:15:19Z (snapshot 2):
+  - All 13 execute lanes have finished.
+  - `core.linux` (441), `grotto.linux` (461), `groundhog.linux` (471) and `homed.linux.ci` (5) published S6-bound `normal_execution_v1` receipts, but no validation exists. Their gate status is **PENDING**, and they are not recorded as qualified.
+  - `groundhog.linux.sanitizers` failed with the same partition error as S5; `groundhog.mdk011` was withheld (exit 2, cause unavailable). The other lanes are as in snapshot 1.
+  - Broad core macOS ASan failed (`(5 <= 2)`). Two broad grotto jobs were still queued, and the gate and family-accounting jobs had not been created. No broad count is claimed; S5 remains the latest complete census.
+
+**No quota:** local, legacy and single-green results are not counted. **Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** The closed finite cells are not whole-W11 acceptance. No waiver or cutover.
+
+## PR26 smoke-final acceptance snapshot, S6 (PARTIAL) — 2026-10-24T18:08:49Z
+
+[Shadow root 40115923331](https://github.com/chebizarro/nostrc/actions/runs/40115923331) has head H6 `8767f9f6e` and tests S6 `5031ee1c561260c099010bf31dc7e3217f35c3cd` (tree `1138aee8`). At this one snapshot it was **not terminal** (run-level `queued`, no conclusion; gate and broad-accounting jobs not yet created). Detail is in the [dated ledger entry](dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-smoke-final-shadow-snapshot-s6-partial--2026-10-24t180849z). **The latest complete census remains S5 (below) as the dated baseline.** Nothing below is a terminal S6 result.
+
+- **Published S6-bound `normal_execution_v1` receipts (4):** `core.linux` (441), `grotto.linux` (461), `groundhog.linux` (471), `homed.linux.ci` (5). Gate-clean status and `incomplete_lanes` are **PENDING**; no validation existed, so none of these is recorded as qualified.
+- **Diagnostic (2):** both libgo. **`lane_failure_v1` (2):** `core.macos.asan`, `static.policy`, same errors as S5. **Withheld, cause unavailable (3):** `core.linux.asan`, `grotto.linux.asan_ubsan` (exit 1), `groundhog.mdk08` (exit 2).
+- **PENDING / UNKNOWN (2):** `groundhog.linux.sanitizers` and `groundhog.mdk011` were still in progress.
+- **Broad:** broad groundhog passed 125/125 (#327, #334, #335 passed). Broad core macOS ASan **failed** `heartbeat-not-starved` `(5 <= 2)` (`nostrc-0cfsg.11` title; no cause inferred). Three broad grotto jobs were unfinished. Family accounting PENDING; no 17/17 is claimed.
+- **Legacy:** all 12 non-shadow workflow runs at H6 were `completed/success` at the snapshot, including Groundhog opt-in CI 40115923186, both Grotto Preview CI runs, and Static 40115923206. .26 owns their job-level verification.
+
+**Local `.36.31` proof and corrections (local diagnostics only, not hosted, amd64 or W11):**
+- **Native qualification correction:** the earlier macOS runs were built with `NIP55L_SECRET_BACKEND=auto` and `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=auto`. That includes the `.36.30` consumer 21/21 runs and the `.31` `build-gh` build. They are **withdrawn as qualification**; their evidence is retained. The compliant replacement is a fresh Debug `build-ss` with `NIP55L_SECRET_BACKEND=libsecret` and `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`. Its full default build passed (3,010 targets). The keychain guard returned 0 before and after. The 29 affected CTests gave 26 pass and 3 skip: launch had no requested macOS GUI session, and two tests found no `gnome-keyring-daemon`.
+- **Linux:** ASan cohort 65/65, 0 skipped.
+- **Local full normal is not clean:** `groundhog-account-ui` SegFault in 124/125 runs. It reproduces on old `17eac22b`, which has neither `.30` nor `.31`: a NIP-11 TLS fetch worker races `OPENSSL_cleanup` at process exit. That is now tracked as `.36.33`. It earns no clean or retry credit.
+- **Separate open items:** `.36.32` owns classification of the 26 other `gtk_accessible_announce` call sites. The `.36.21` Xvfb displayfd cause stays open.
+- **Evidence:** `nostrc-0cfsg-36-31-named-smoke/run-20261025-gates/SHA256SUMS` `9dbef1f04c8358f9d8d6c540564bcbc4dd8672464af5570edc5588b519825127` (58 entries, re-verified). `cleanup-plan.json` `5bf4792226b1dc840993e7a6b9d2a484175edce888285cdab9161141e599846a`. Raw cores exist only in the owned container, to be deleted after M; full traces and hashes are retained, and no raw core bytes are claimed as retained.
+
+**B2 status:** `.36.1`, `.36.2`, `.36.15`, `.36.18`, `.36.19`, `.36.23`, `.36.25`, `.36.26` and `.36.27` are reviewed as MET pending the actual merge M (still in progress, not closed). `.36.30` and `.36.31` also await fresh CI verification. No W11 claim.
+
+**Reviewed counters stay at 0/20, 0/2 and 0 product samples. W11 NOT MET / W12 NOT RUN.** A broad 17/17 at S6 alone would still not be a complete profile gate. No new waiver, cutover or bead status change.
 
 ## PR26 keyring acceptance snapshot, S5 — 2026-10-24T16:54:26Z
 
