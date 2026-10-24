@@ -29,6 +29,12 @@ JOB = '.github/workflows/static-checks.yml:static-checks'
 HELPER = '{source}/tests/selection/static_frontend_host.py'
 
 
+
+def layer_bytes(path):
+    """This layer's after bytes: the newer post-419 layer is projected away first."""
+    from w11_post_419_integration_support import before_source as before_post_419_source
+    return before_post_419_source(path, (ROOT / path).read_bytes())
+
 class PostHIntegration(unittest.TestCase):
     def policy(self):
         # Exactly this layer's view: the newer post-1f7 layer is projected away first.
@@ -53,7 +59,7 @@ class PostHIntegration(unittest.TestCase):
         for path, (before_prefix, after_prefix, count) in RECORDS.items():
             record = data['sources'][path]
             with self.subTest(path=path):
-                raw = (ROOT / path).read_bytes()
+                raw = layer_bytes(path)
                 self.assertEqual(hashlib.sha256(raw).hexdigest(), record['after_sha256'])
                 self.assertTrue(record['after_sha256'].startswith(after_prefix))
                 self.assertTrue(record['before_sha256'].startswith(before_prefix))
@@ -97,7 +103,7 @@ class PostHIntegration(unittest.TestCase):
     def test_unknown_truncated_or_flipped_bytes_refuse_for_every_record(self):
         import runtime_integration_support as runtime
         for path, record in wave.witness()['sources'].items():
-            raw = (ROOT / path).read_bytes()
+            raw = layer_bytes(path)
             before = wave.before_source(path, raw)
             drifted = [raw + b'\n# unknown bytes\n', before + b'\n# unknown bytes\n', raw[:-1]]
             for restored in record['restored_sha256']:
@@ -106,9 +112,17 @@ class PostHIntegration(unittest.TestCase):
                 start = raw.index(edit['after'].encode())
                 middle = start + len(edit['after'].encode()) // 2
                 drifted.append(raw[:middle] + bytes([raw[middle] ^ 0x01]) + raw[middle + 1:])
+            # The chain entry refuses with the newest layer recording this path; this
+            # layer's own inverse keeps its exact refusal for every recorded path.
+            import w11_post_419_integration_support as post_419
+            import w11_post_1f7_integration_support as post_1f7
+            newest = ('post-419' if path in post_419.witness()['sources'] else
+                      'post-1f7' if path in post_1f7.witness()['sources'] else 'post-H')
             for index, candidate in enumerate(drifted):
                 with self.subTest(path=path, case=index):
                     with self.assertRaisesRegex(ValueError, 'post-H integration source changed: ' + path):
+                        wave.before_own_source(path, candidate)
+                    with self.assertRaisesRegex(ValueError, newest + ' integration source changed: ' + path):
                         wave.before_source(path, candidate)
                     if path.startswith('scripts/'):
                         with self.assertRaises(ValueError):

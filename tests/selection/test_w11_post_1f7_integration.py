@@ -19,7 +19,9 @@ BEFORE, AFTER, EDITS = ('807b93574b9b3e74376c976b79a461d6391f93822b24c95d1b82525
 
 class PostOneF7Integration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's view: the newer post-419 layer is projected away first.
+        from w11_post_419_integration_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_every_frozen_json_witness_is_byte_identical_to_1f7(self):
         names = subprocess.run(['git', '-C', str(ROOT), 'ls-tree', '-r', '--name-only', B, 'tests/selection/fixtures'],

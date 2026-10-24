@@ -36,9 +36,13 @@ def witness():
 
 
 def before_source(path, raw):
-    # The newer post-1f7 layer (.36.26 fixture-only bytes) is projected first.
+    """Chain entry: newer layers (post-1f7, then post-419) first, then this layer's own inverse."""
     from w11_post_1f7_integration_support import before_source as before_newer_source
-    raw = before_newer_source(path, raw)
+    return before_own_source(path, before_newer_source(path, raw))
+
+
+def before_own_source(path, raw):
+    """This layer's own strict inverse only (exactly the pre-split before_source body)."""
     record = witness()['sources'].get(path)
     if record is None:
         return raw
