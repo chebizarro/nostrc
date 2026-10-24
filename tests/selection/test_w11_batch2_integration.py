@@ -289,8 +289,11 @@ class W11Batch2Integration(unittest.TestCase):
         import worker_prerequisite_support as prerequisite
         policy, data = self.policy(), wave.witness()
         record = data['maps']['workflow_jobs'][JOB]
-        validate_job_accounting(policy, ROOT)
-        live = source_job_blocks(ROOT)
+        # Live accounting holds for the live inventory; this layer's records are
+        # compared after the newer post-H job map is projected away.
+        validate_job_accounting(s.load_inventory(ROOT / 'tests/selection/inventory.json'), ROOT)
+        from w11_post_h_integration_support import before_jobs as before_post_h_jobs
+        live = before_post_h_jobs(source_job_blocks(ROOT))
         fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
         self.assertEqual({k: live[JOB][k] for k in fields}, {k: record['after'][k] for k in fields})
         self.assertEqual(policy['workflow_jobs'][JOB], record['after'])

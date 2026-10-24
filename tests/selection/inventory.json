@@ -8065,7 +8065,8 @@
         "{source}/tests/selection/test_w11_batch2_integration.py",
         "{source}/tests/selection/w11_post_h_integration_support.py",
         "{source}/tests/selection/fixtures/w11_post_h_integration_20261024.json",
-        "{source}/tests/selection/test_w11_post_h_integration.py"
+        "{source}/tests/selection/test_w11_post_h_integration.py",
+        "{source}/tests/selection/static_frontend_host.py"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -28299,9 +28300,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "74d407dd489dbf824d30c8a341b6f4667a4deb3963dec4295d6092434a78885b",
+      "source_sha256": "69601f9d1064d215ad53f70bf6c608131629f5f19abce27ed7277d1d3e8f65d0",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "e35ae904ef2c2ab0d6c1c7486526e059de5df970d0bf8692f6f9a4853dc833f2"
+      "workflow_sha256": "0455626887da0517405a2f11a854d02fefd1c4f58fc1199041dcdeced2f3a7b2"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",

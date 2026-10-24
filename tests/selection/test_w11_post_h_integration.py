@@ -20,7 +20,13 @@ RECORDS = {
                                             '7dc389951919', 4),
     'tests/selection/test_post1640_integration.py': (
         '236dec6d6109ab68c06fb476b15e7d46a8afc5b658790147dd208b33d8312a2e', 'dfc0990ead48', 4),
+    # nostrc-0cfsg.36.26 final (3416f85ab); before = 773937575 bytes = post-1640 record after.
+    '.github/workflows/static-checks.yml': ('e35ae904ef2c2ab0d6c1c7486526e059de5df97', '0455626887da', 12),
+    'tests/selection/test_namespace_policy_contract.py': ('b950b306a8ac5d14985abc6b7b396ef0518cfd7', '2be108049190', 7),
 }
+POST1640_PINNED = ('.github/workflows/static-checks.yml', 'tests/selection/test_namespace_policy_contract.py')
+JOB = '.github/workflows/static-checks.yml:static-checks'
+HELPER = '{source}/tests/selection/static_frontend_host.py'
 
 
 class PostHIntegration(unittest.TestCase):
@@ -30,7 +36,9 @@ class PostHIntegration(unittest.TestCase):
     def test_h_era_witnesses_are_byte_identical_to_pushed_h(self):
         for path in (batch2.WITNESS, 'tests/selection/fixtures/w11_matrix_integration_20261024.json',
                      'tests/selection/fixtures/post1640_integration_20261024.json',
-                     'tests/selection/fixtures/worker_prerequisite_20261024.json'):
+                     'tests/selection/fixtures/worker_prerequisite_20261024.json',
+                     'tests/selection/fixtures/hosted_cause_integration_20261024.json',
+                     'tests/selection/fixtures/closeout_interfaces.json'):
             with self.subTest(path=path):
                 pushed = subprocess.run(['git', '-C', str(ROOT), 'show', f'{H}:{path}'], capture_output=True, check=True).stdout
                 self.assertEqual((ROOT / path).read_bytes(), pushed)
@@ -38,23 +46,33 @@ class PostHIntegration(unittest.TestCase):
     def test_records_are_exact_lossless_handoffs_to_the_h_era_layer(self):
         data = wave.witness()
         self.assertEqual(set(data['sources']), set(RECORDS))
-        old = batch2.witness()['sources']
-        for path, (before_sha, after_prefix, count) in RECORDS.items():
+        import post1640_integration_support as post1640
+        old, pinned = batch2.witness()['sources'], post1640.witness()['sources']
+        for path, (before_prefix, after_prefix, count) in RECORDS.items():
             record = data['sources'][path]
             with self.subTest(path=path):
                 raw = (ROOT / path).read_bytes()
                 self.assertEqual(hashlib.sha256(raw).hexdigest(), record['after_sha256'])
                 self.assertTrue(record['after_sha256'].startswith(after_prefix))
-                self.assertEqual((record['before_sha256'], len(record['edits'])), (before_sha, count))
+                self.assertTrue(record['before_sha256'].startswith(before_prefix))
+                self.assertEqual(len(record['edits']), count)
                 before = wave.before_source(path, raw)
-                self.assertEqual(hashlib.sha256(before).hexdigest(), before_sha)
+                self.assertEqual(hashlib.sha256(before).hexdigest(), record['before_sha256'])
                 self.assertEqual(wave.before_source(path, before), before)
+                for restored in record['restored_sha256']:
+                    self.assertNotIn(restored, (record['before_sha256'], record['after_sha256']))
+                if path in POST1640_PINNED:
+                    # Next older pin is post-1640's record; restored = exactly its before.
+                    self.assertNotIn(path, old)
+                    self.assertEqual(record['before_sha256'], pinned[path]['after_sha256'])
+                    self.assertEqual(record['restored_sha256'], [pinned[path]['before_sha256']])
+                    self.assertEqual(hashlib.sha256(post1640.before_source(path, raw)).hexdigest(),
+                                     pinned[path]['before_sha256'])
+                    continue
                 # H bytes are exactly the H-era record's after bytes; restored states are
                 # exactly what that layer accepts unchanged, nothing generic.
-                self.assertEqual(before_sha, old[path]['after_sha256'])
+                self.assertEqual(record['before_sha256'], old[path]['after_sha256'])
                 self.assertEqual(record['restored_sha256'], [old[path]['before_sha256'], *old[path].get('restored_sha256', [])])
-                for restored in record['restored_sha256']:
-                    self.assertNotIn(restored, (before_sha, record['after_sha256']))
                 self.assertEqual(hashlib.sha256(batch2.before_source(path, before)).hexdigest(), old[path]['before_sha256'])
 
     def test_whole_chains_reach_older_witnesses_from_current_bytes(self):
@@ -133,7 +151,8 @@ class PostHIntegration(unittest.TestCase):
         self.assertEqual(s.digest(before), data['base_policy_hash'])
         self.assertEqual(data['base_policy_hash'], batch2.witness()['enrolled_policy_hash'])
         self.assertEqual(wave.before_policy(before), before)
-        self.assertEqual({f for f in policy if policy[f] != before[f]}, {'checks'})
+        self.assertEqual({f for f in policy if policy[f] != before[f]}, {'checks', 'workflow_jobs'})
+        self.assertEqual({i for i in policy['workflow_jobs'] if policy['workflow_jobs'][i] != before['workflow_jobs'][i]}, {JOB})
         self.assertEqual({i for i in policy['checks'] if policy['checks'][i] != before['checks'][i]}, {'selection.contract'})
         inputs = policy['checks']['selection.contract']['runtime_inputs']
         self.assertEqual(inputs[-len(data['runtime_inputs']):], data['runtime_inputs'])
@@ -142,6 +161,51 @@ class PostHIntegration(unittest.TestCase):
         self.assertEqual(s.digest(batch2.before_policy(policy)), batch2.witness()['base_policy_hash'])
         self.assertEqual(s.digest(groundhog.before_policy(policy)), groundhog.witness()['base_policy_hash'])
         self.assertEqual(s.digest(oldest.before_policy(policy)), oldest.witness()['base_policy_hash'])
+
+    def test_static_checks_job_map_is_exact_live_hashes_to_post1640_after(self):
+        from profile_contract_support import source_job_blocks, validate_job_accounting
+        import post1640_integration_support as post1640
+        import worker_prerequisite_support as prerequisite
+        policy, data = self.policy(), wave.witness()
+        self.assertEqual(set(data['maps']), {'workflow_jobs'})
+        self.assertEqual(set(data['maps']['workflow_jobs']), {JOB})
+        record = data['maps']['workflow_jobs'][JOB]
+        validate_job_accounting(policy, ROOT)
+        live = source_job_blocks(ROOT)
+        fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
+        self.assertEqual({k: live[JOB][k] for k in fields}, {k: record['after'][k] for k in fields})
+        self.assertEqual(policy['workflow_jobs'][JOB], record['after'])
+        self.assertEqual(record['before'], post1640.witness()['maps']['workflow_jobs'][JOB]['after'])
+        self.assertEqual({k for k in record['after'] if record['after'][k] != record['before'][k]},
+                         {'source_sha256', 'workflow_sha256'})
+        self.assertEqual(record['after']['workflow_sha256'], data['sources']['.github/workflows/static-checks.yml']['after_sha256'])
+        projected = wave.before_jobs(live)
+        self.assertEqual({k: projected[JOB][k] for k in fields}, {k: record['before'][k] for k in fields})
+        self.assertEqual(wave.before_jobs(projected), projected)
+        # The whole jobs chain (worker -> batch2 -> post-H first) reaches post-1640's reviewed before.
+        chained = post1640.before_jobs(live)
+        expected = post1640.witness()['maps']['workflow_jobs'][JOB]['before']
+        self.assertEqual({k: chained[JOB][k] for k in fields}, {k: expected[k] for k in fields})
+        self.assertEqual(prerequisite.before_jobs(live)[JOB], projected[JOB])
+        bad = copy.deepcopy(live)
+        bad[JOB]['source_sha256'] = '0' * 64
+        self.assertEqual(wave.before_jobs(bad)[JOB], bad[JOB])  # unknown hashes are never projected
+        tampered = copy.deepcopy(policy)
+        tampered['workflow_jobs'][JOB]['source_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'post-H workflow job changed'):
+            wave.before_policy(tampered)
+        unenrolled = copy.deepcopy(wave.before_policy(policy))
+        unenrolled['workflow_jobs'][JOB] = copy.deepcopy(record['after'])
+        with self.assertRaisesRegex(ValueError, 'workflow job hashes without enrollment'):
+            wave.before_policy(unenrolled)
+
+    def test_new_helper_is_enrolled_last_and_only_by_this_layer(self):
+        data, policy = wave.witness(), self.policy()
+        inputs = policy['checks']['selection.contract']['runtime_inputs']
+        self.assertEqual(data['runtime_inputs'][-1], HELPER)
+        self.assertEqual(inputs[-1], HELPER)
+        self.assertEqual(inputs.count(HELPER), 1)
+        self.assertNotIn(HELPER, batch2.witness()['runtime_inputs'])
 
     def test_partial_or_duplicate_enrollment_refuses(self):
         data, policy = wave.witness(), self.policy()

@@ -5,7 +5,13 @@ witness. After H, nostrc-0cfsg.36.27 (14af5ede5, one canonical source-claim
 contract) changed scripts/test_selection_services.py and
 scripts/test_selection_execution.py; this layer records each exact
 current->H delta once (plus the byte-pinned historical post-1640 test it now
-projects) and its clerical selection.contract enrollment. Each record maps only
+projects) and its clerical selection.contract enrollment. nostrc-0cfsg.36.26
+(3416f85ab, bounded Static scheduling with an owned host supervisor) adds exact
+records for .github/workflows/static-checks.yml and
+tests/selection/test_namespace_policy_contract.py (restored_sha256 = exactly
+post-1640's before, the state post-1640 re-offers), the exact static-checks
+workflow_jobs map (reversed by before_policy and before_jobs) and the
+static_frontend_host.py enrollment. Each record maps only
 its exact after bytes. Its before bytes (H) and exactly the older states the
 H-era batch2 layer itself accepts unchanged (that record's before and
 restored_sha256) pass on to the older strict inverses; any other bytes refuse.
@@ -19,7 +25,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/w11_post_h_integration_20261024.json'
-SHA256 = '77fc4064141241a73bdc204e543c9c943a7f437fd1ba7901ec0e45b8b6086fe1'
+SHA256 = '9abce5ad3d32703827270570a7c679d73fff5aee7ef1bfc54858e0655505979e'
 RECORD_FIELDS = {'before_sha256', 'after_sha256', 'authors', 'origin', 'edits', 'restored_sha256'}
 
 
@@ -53,9 +59,27 @@ def before_policy(policy):
     previous = copy.deepcopy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
+    jobs = data['maps']['workflow_jobs']
     if present:
         s.require(len(present) == len(data['runtime_inputs']), 'post-H enrollment partially stripped')
+        for ident, record in jobs.items():
+            s.require(previous['workflow_jobs'].get(ident) == record['after'], 'post-H workflow job changed: ' + ident)
+            previous['workflow_jobs'][ident] = copy.deepcopy(record['before'])
         for path in data['runtime_inputs']:
             s.require(inputs.count(path) == 1, 'post-H input missing/duplicated: ' + path)
             inputs.remove(path)
+    else:
+        for ident, record in jobs.items():
+            s.require(previous['workflow_jobs'].get(ident) != record['after'],
+                      'post-H workflow job hashes without enrollment: ' + ident)
+    return previous
+
+
+def before_jobs(records):
+    """Exact live job hashes -> pre-.36.26 hashes; anything else passes to older guards."""
+    previous = copy.deepcopy(records)
+    fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
+    for ident, record in witness()['maps']['workflow_jobs'].items():
+        if ident in previous and all(previous[ident].get(key) == record['after'][key] for key in fields):
+            previous[ident].update({key: record['before'][key] for key in fields})
     return previous

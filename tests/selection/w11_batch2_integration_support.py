@@ -84,7 +84,9 @@ def before_policy(policy):
 
 def before_jobs(records):
     """Exact live execute-job hashes -> batch base; anything else passes to older guards."""
-    previous = copy.deepcopy(records)
+    # The newer post-H layer (.36.26 static-checks job) is projected first.
+    from w11_post_h_integration_support import before_jobs as before_post_h_jobs
+    previous = before_post_h_jobs(records)
     fields = ('source_sha256', 'workflow_sha256', 'matrix_source')
     for ident, record in witness()['maps']['workflow_jobs'].items():
         if ident in previous and all(previous[ident].get(key) == record['after'][key] for key in fields):
