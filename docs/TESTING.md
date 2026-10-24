@@ -1,5 +1,98 @@
 # Test Strategy & Suite Documentation
 
+## Dependency-aware delivery policy — 2026-10-25
+
+The owner-approved delivery contract is exactly:
+
+1. **Correct affected selection:** relevant changed inputs and downstream tests,
+   including relevant compatibility; explain selection and unrelated omission;
+   conservatively broaden unknown or incomplete relevant dependency information.
+   Building a prerequisite does not select that library's unrelated tests.
+2. **Operational defaults:** affected local development, pre-push and PR checks;
+   broad master/integration, release and manual routes; explicit full override.
+   There is no scheduled/nightly tier.
+3. **Focused representative verification:** show relevant inclusion and unrelated
+   omission and preserve honest failures, cancellations, unavailable prerequisites
+   and unexecuted checks. A skip, plan or partial diagnostic is not execution proof.
+
+This replaces former W11/W12 quotas, five-sample/seven-class baselines, savings
+thresholds, benchmarks, universal custody/profile parity and exhaustive baseline
+repairs as delivery blockers. No new acceptance tasks are required. Existing
+route-specific safety guards stay intact. Prior qualification hardening and
+unrelated bugs remain nonblocking follow-ups, not silently fixed or erased.
+
+The [plan execution index](plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
+records current W11/W12 and bead dispositions. `.39` owns docs/tracker policy;
+`.40` and `.41` implement local selection and CI defaults. The parent verifies the
+integrated delivery; this documentation commit alone claims no operational or
+hosted success. Internal tooling/tests/docs require **no component bump**.
+
+## Dependency-aware commands
+
+```sh
+# Working-change developer feedback (private snapshot, not a pushed-tree receipt)
+scripts/test-gate.sh
+# Exact committed range; explain does not configure, build or execute
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+# Deliberately broad local run and full push override
+scripts/test-gate.sh --broad
+NOSTRC_FULL_GATE=1 git push
+```
+
+The pre-push policy retains static/range checks and affected execution of each
+pushed tree, not the caller's dirty files. It replaces blanket clean root
+build/full CTest requirements for every change. Relevant expensive compatibility
+checks still run in affected mode; unrelated ones do not. Broad routes remain
+broad rather than becoming selected-only release/master validation.
+
+Use `scripts/test-gate.sh --help` and `python3 scripts/test-plan.py --help` for
+route-specific arguments. `--profile <id>` deliberately restricts coverage;
+`--broad --profile <id>` is broad only within that projection, not full CI or
+release proof. `--evidence-dir <dir>` retains unique run evidence. Missing required
+capabilities and selected failures must remain visible; a bypass is not verified
+success. Do not use raw resolve/run commands against a mismatched checkout.
+
+## Focused verification and evidence
+
+Use relevant selector/adapter/workflow regressions and representative change
+plans. Demonstrate an affected consumer/compatibility inclusion, an unrelated
+omission and explained unknown fallback as appropriate to the change. Check that
+local/PR routes are affected and master/release/manual/full override are broad.
+There is no fixed PR count, broad-run count, benchmark or exhaustive matrix gate.
+
+```sh
+python3 -m unittest discover -s tests/selection
+python3 scripts/test-plan.py validate --inventory tests/selection/inventory.json
+```
+
+These are available regression commands, not a claim they ran in this docs pass
+or a requirement to repair every historical test failure. `--strict` validation
+and full-profile normal/custody qualification retain their own technical meaning;
+neither is a universal prerequisite to selective-default delivery. A relevant
+selection/default defect still needs correction, not omission or a fabricated pass.
+
+Report exactly what ran and on which source/environment. Keep failed attempts,
+explicit skips, `not_executed`, `complete=false` and other coverage limits literal.
+Selected success need not mean whole-profile execution, and documentation cannot
+promote partial receipts into broad or release attestations. Existing keychain,
+private-service, signer approval, sanitizer and owned-resource safety rules remain.
+No branch-protection or publisher setting change is asserted here.
+
+## Historical qualification and integration archive
+
+The following pre-reset record is preserved, including failures, hashes, dated
+counters and implementation restrictions. Statements of W11 NOT MET/W12 NOT RUN,
+legacy defaults, schedules or cutover prerequisites inside describe the old
+source/date and acceptance contract. They are **not current delivery mandates**.
+The [acceptance audit](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md)
+and [run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md)
+remain unchanged historical evidence; no refresh or quota credit is required by
+this reset. Route-specific receipt restrictions are not waived or relabeled green.
+
+<details>
+<summary>Pre-reset source-bound diagnostics and qualification receipts</summary>
+
 > **PR26 landed — 2026-10-24:** normal merge `9c22f7298` (head H6 `8767f9f6e`, tested S6 `5031ee1c`, same tree). All 12 fresh-source legacy workflows passed, including Groundhog 125/125 + ASan 65/65 and Static 779 s. Exactly 11 `.36` cells closed; `.36.21`/`.32`/`.33` stay open. The shadow S6 gate was still pending, and counters stay 0/20, 0/2 and 0 product samples; W11 NOT MET / W12 NOT RUN. [Delivered receipt](reviews/dependency-aware-testing-ci-2026-10-18-acceptance-audit.md#pr26-delivered-at-master-9c22f7298--2026-10-24t181519z) and [S6 run ledger](reviews/dependency-aware-testing-ci-2026-10-18-run-ledger.md#pr26-delivered-at-master-9c22f7298-and-s6-shadow-snapshot-2--2026-10-24t181519z).
 
 > **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](reviews/dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
@@ -964,6 +1057,9 @@ That dated bounded evidence and its source-specific hashes remain in
 the [2026-10-16 continuation](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712).
 Documentation/internal-testing changes require **no component bump**.
 
+
+</details>
+
 ## Overview
 
 The gnostr test suite validates memory safety, performance budgets, widget correctness, event flow integrity, and zero-copy sliding window invariants across the three library layers (`nostr-gobject`, `nostr-gtk`) and the application (`apps/gnostr`).
@@ -1165,6 +1261,11 @@ This prevents flaky failures in CI sanitizer jobs where execution is 5-10× slow
 
 ## Build & Run
 
+These are explicit component/manual build examples, not the default pre-push
+acceptance gate. Use the dependency-aware commands above for affected execution.
+On macOS, application smoke/manual builds must use the private Secret Service
+backends and read-only keychain guards from AGENTS; never mutate developer keychains.
+
 ### CMake
 
 ```bash
@@ -1184,7 +1285,7 @@ cd build-san && ctest --output-on-failure
 # Widget tests only (requires Xvfb on Linux)
 ctest -R nostr_gtk --output-on-failure
 
-# Benchmarks (optional, for nightly)
+# Benchmarks (optional manual workload; not delivery acceptance)
 cmake -B build-bench \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DBUILD_BENCHMARKS=ON
@@ -1211,7 +1312,9 @@ ctest -L "memory|nightly" --output-on-failure  # Benchmarks
 
 ### Environment Variables
 
-All tests automatically set:
+The GNostr helpers commonly set the variables below. Inspect the configured
+CTest properties/profile for the test you run; this is not a universal repository
+environment guarantee:
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
@@ -1223,11 +1326,17 @@ All tests automatically set:
 
 ## CI Configuration
 
-| Job | What | When | Sanitizers |
-|-----|------|------|------------|
-| **Linux Debug** | All unit tests (no X) | Every PR | None |
-| **Linux ASan/UBSan** | All tests including widgets under Xvfb | Every PR | `address`, `undefined`, `detect_leaks=1` |
-| **Nightly Perf/Memory** | Benchmarks with RSS ceiling enforcement | Nightly | None (RelWithDebInfo) |
+| Route | Selection policy |
+|---|---|
+| PR / merge-group | Affected checks, including relevant compatibility |
+| Master / integration | Broad checks |
+| Release | Broad exact-source validation; existing publication/package safeguards |
+| Manual | Broad by default |
+
+No scheduled/nightly tier or benchmark acceptance gate. Native, display, sanitizer
+and capability distinctions still apply to the checks actually selected; a missing
+required capability is not a passing check. This table states delivery policy,
+not evidence that any hosted route ran successfully.
 
 ---
 
