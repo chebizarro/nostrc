@@ -1,5 +1,9 @@
 # Dependency-aware testing: acceptance reconciliation
 
+> **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
+
+## Earlier dated snapshots (preserved)
+
 ## PR24 landed parity/measurement source batch — 2026-10-24
 
 [Complete source receipt, original failures and finite remaining criteria](dependency-aware-testing-priority-parity-2026-10-24.md): normal merge `b43ff6160`, reviewed head `bd0b3b2`, actual tested merge `f5d85dec8`, equal tree `1b6b8a9c5` with identities kept distinct. Final hosted Static1261/zero failures/errors/80 skips and separate overlapping kernel81/zero skips pass. Native937439=434pass+5skip remains source937; combined local driver remains incomplete for unsupported hosted-Linux execution. Original937 hosted1259/one failure and incompletebeb437 remain retained, not stitched/relabelled. One combined review's cancellation finding is fixed; exact two-document classification repair preserves unknown-path broadening.

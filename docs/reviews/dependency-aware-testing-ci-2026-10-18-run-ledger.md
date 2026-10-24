@@ -1,5 +1,9 @@
 ## PR24 final-source ledger — 2026-10-24T00:50:15Z–00:50:52Z
 
+> **PR25 landed — 2026-10-24:** [Exact source receipt and remaining criteria](dependency-aware-testing-ninja-readiness-2026-10-24.md). Normal merge `ab2fddeea`, head `257c4047`, tested `27fa54a5`: hosted DEFAULT1,304/zero failures/errors/80 skips plus overlapping kernel87/no skips. Native `cdaf8de2` remains separately labelled434pass+5skip/zero failures, not final-head/profile acceptance. Groundhog ownership, named-target generation binding and readiness cleanup/diagnostics landed; sanitizer partition renewal and the original hosted startup cause did not. Reviewed0/20 comparisons,0/2 complete broad integrations and zero real product samples; W11 NOT MET/W12 NOT RUN. No policy cutover. Earlier entries below are historical.
+
+## Earlier dated snapshots (preserved)
+
 This bounded snapshot precedes normal PR24 landing `b43ff6160` at00:58:13Z and excludes later merge/metadata-triggered roots. It is not a live all-history counter. [Full receipt, identities, retained attempts, raw-capture references and criterion reconciliation](dependency-aware-testing-priority-parity-2026-10-24.md).
 
 | Observation | Exact source / result |

@@ -71,6 +71,15 @@ This installs the fast pre-push hook (static checks, no build; CI builds and tes
   original graph from its original cwd; exact no-work and pre/post binding checks
   are required under the build lock. Query evidence is not physical coverage.
   No graph filtering, execution-time-only verifier trust or `-d norebuild` flag.
+  Named-target single-config Ninja lanes also author configure-bound
+  `ninja_generation_binding`; stale/missing execution bindings require fresh
+  configure/audit, never a raw dry-run fallback. Targetless Ninja lanes bind tools
+  too, but do not invent a target-freshness query or physical coverage.
+  Failed readiness keeps its pipe readable through reserved-pidfd teardown and
+  retains bounded late data/liveness in `services.json`. The 15-second deadline
+  and failure remain; late data or exit0 cannot establish readiness or fix the
+  unresolved hosted Xvfb startup cause. See the
+  [PR25 source receipt](docs/reviews/dependency-aware-testing-ninja-readiness-2026-10-24.md).
 - Tool capabilities are not resource setup: `nak` and `gnome_keyring` require
   actual executable fingerprints, distinct from display/private-bus evidence.
   Existing keyring CTests own their private HOME/bus/supervised Secret Service,
