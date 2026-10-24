@@ -8,7 +8,9 @@ import post1640_integration_support as wave
 
 class Post1640Integration(unittest.TestCase):
     def policy(self):
-        return s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # Exactly this layer's view: the newer W11 batch2 integration layer is projected away first.
+        from w11_batch2_integration_support import before_policy as before_newer_policy
+        return before_newer_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
 
     def test_exact_1640_inverse_and_composed_historical_projections(self):
         policy = self.policy()
@@ -65,9 +67,10 @@ class Post1640Integration(unittest.TestCase):
         self.assertNotIn('homed.linux.ci', before['profiles'])
 
     def test_exact_source_inverse_idempotence_and_unreviewed_byte_refusal(self):
+        from w11_batch2_integration_support import before_source as before_batch2_source
         for path, record in wave.witness()['sources'].items():
             with self.subTest(path=path):
-                raw = (ROOT / path).read_bytes()
+                raw = before_batch2_source(path, (ROOT / path).read_bytes())
                 before = wave.before_source(path, raw)
                 self.assertEqual(hashlib.sha256(before).hexdigest(), record['before_sha256'])
                 self.assertEqual(wave.before_source(path, before), before)
@@ -126,11 +129,12 @@ class Post1640Integration(unittest.TestCase):
 
     def test_original_witnesses_and_author_production_bytes_unchanged(self):
         from worker_prerequisite_support import before_source as before_newer_source
+        from w11_batch2_integration_support import before_source as before_batch2_source
         data = wave.witness()
         for field in ('protected_witnesses', 'author_sources'):
             for path, digest in data[field].items():
                 with self.subTest(field=field, path=path):
-                    raw = before_newer_source(path, (ROOT / path).read_bytes())
+                    raw = before_newer_source(path, before_batch2_source(path, (ROOT / path).read_bytes()))
                     self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)
 
     def test_new_runtime_inputs_have_live_command_ownership(self):

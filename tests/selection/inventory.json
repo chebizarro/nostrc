@@ -8056,7 +8056,13 @@
         "{source}/tests/selection/fixtures/groundhog_app_enrollment_20261024.json",
         "{source}/tests/selection/test_groundhog_app_enrollment.py",
         "{source}/tests/selection/fixtures/sanitizer_partition_drift_20261024.json",
-        "{source}/tests/selection/test_sanitizer_partition_drift.py"
+        "{source}/tests/selection/test_sanitizer_partition_drift.py",
+        "{source}/scripts/signer-scope-proof.py",
+        "{source}/tests/selection/test_signer_credential_scope.py",
+        "{source}/tests/selection/test_signer_scope_proof.py",
+        "{source}/tests/selection/w11_batch2_integration_support.py",
+        "{source}/tests/selection/fixtures/w11_batch2_integration_20261024.json",
+        "{source}/tests/selection/test_w11_batch2_integration.py"
       ],
       "working_directory": "{source}",
       "requires": [

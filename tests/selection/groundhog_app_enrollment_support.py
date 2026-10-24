@@ -7,8 +7,8 @@ lacked the six app nodes its default build compiles (322 edges). Descriptors of
 the 46 and their three support fixtures equal same-source groundhog.mdk08's,
 whose audit passed with zero gaps under the same nine supported.apps checks.
 Only those nine projections, the six nodes and this layer's clerical enrollment
-are reversed for historical views. This is the newest exact layer; it changes
-no source bytes.
+are reversed for historical views. It changes no source bytes; the newer W11
+batch2 integration layer is projected first.
 """
 import copy
 import hashlib
@@ -28,8 +28,10 @@ def witness():
 
 
 def before_policy(policy):
+    # The newer W11 batch2 integration layer (.36.25/.36.18/.36.23) is projected first.
+    from w11_batch2_integration_support import before_policy as before_newer_policy
     data = witness()
-    previous = copy.deepcopy(policy)
+    previous = before_newer_policy(policy)
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     records = data['maps']['checks']

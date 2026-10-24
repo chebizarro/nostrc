@@ -118,6 +118,11 @@ class W11MatrixIntegration(unittest.TestCase):
         'scripts/test_selection_realization.py': 'post608c',
     }
 
+    def current(self, path):
+        # This leaf's after bytes: the newer W11 batch2 layer is projected away first.
+        from w11_batch2_integration_support import before_source as before_batch2_source
+        return before_batch2_source(path, (ROOT / path).read_bytes())
+
     def older(self, path):
         import post608c_integration_support as post608c
         import runtime_integration_support as runtime
@@ -130,7 +135,7 @@ class W11MatrixIntegration(unittest.TestCase):
         self.assertEqual(set(data['sources']), set(self.COMPOSED))
         for path, record in data['sources'].items():
             with self.subTest(path=path):
-                raw = (ROOT / path).read_bytes()
+                raw = self.current(path)
                 self.assertEqual(hashlib.sha256(raw).hexdigest(), record['after_sha256'])
                 for edit in record['edits']:
                     self.assertEqual(raw.count(edit['after'].encode()), 1)
@@ -155,7 +160,7 @@ class W11MatrixIntegration(unittest.TestCase):
         import runtime_integration_support as runtime
         for path in self.COMPOSED:  # fixed set: a missing record cannot pass vacuously
             record = wave.witness()['sources'][path]
-            raw = (ROOT / path).read_bytes()
+            raw = self.current(path)
             before = wave.before_source(path, raw)
             drifted = [raw + b'\n# unknown bytes\n', before + b'\n# unknown bytes\n', raw[:-1]]
             for edit in record['edits']:
@@ -173,7 +178,7 @@ class W11MatrixIntegration(unittest.TestCase):
         from unittest import mock
         original = wave.witness()
         path = 'scripts/test_selection_realization.py'
-        raw = (ROOT / path).read_bytes()
+        raw = self.current(path)
         tampers = {
             'changed before text': (lambda r: r['edits'][0].__setitem__('before', r['edits'][0]['before'] + '#'),
                                     'W11 matrix historical source changed'),

@@ -30,6 +30,12 @@ def core_source_witness():
 def before_core_producer_source(path, content):
     """Reverse only exact root producer edits for immutable historical tests."""
     record = core_source_witness()['source_edits'].get(path)
+    # An already-restored core producer source must not be offered to newer layers;
+    # otherwise the newer W11 batch2 layer reverses .36.23's exact Gnostr CMake delta first.
+    if record is not None and hashlib.sha256(content).hexdigest() == record['before_sha256']:
+        return content
+    from w11_batch2_integration_support import before_source as before_batch2_source
+    content = before_batch2_source(path, content)
     if record is None:
         return content
     digest = hashlib.sha256(content).hexdigest()
