@@ -1001,13 +1001,43 @@ def _evidence_errors(verification, limit=8):
     return f': {len(errors)} path(s): {shown}' + ('; ...' if len(errors) > limit else '')
 
 
+def _trusted_output_bytes(original):
+    """Exact bytes test_selection.write_json publishes for an observed object.
+
+    write_json is the CLI's only writer of receipt.json/resolved.json. Serialized
+    in memory: a same-UID workload can race any scratch file the seal would use.
+    """
+    if type(original) is not dict:
+        raise ServiceError('native original observation is not a JSON object')
+    try:
+        text = json.dumps(original, sort_keys=True, indent=2, ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ServiceError('native original observation is not trusted-writer serializable: ' + str(exc)) from exc
+    return (text + '\n').encode('ascii')
+
+
 def _original_output(path, original, message):
-    """Published bytes must be exactly the observed original; no observation, no file."""
+    """Published raw bytes must equal the trusted writer's bytes for the observation.
+
+    Never parsed or normalized: JSON equality admitted bool/int substitution,
+    duplicate keys and NaN. Returns the bytes' sha256; no observation, no file.
+    """
     if original is None:
-        if path.exists() or path.is_symlink():
+        if os.path.lexists(path):
             raise ServiceError(message + ': published without an original in-memory observation')
-    elif path.is_symlink() or not path.is_file() or json.loads(path.read_text()) != original:
-        raise ServiceError(message)
+        return None
+    expected = _trusted_output_bytes(original)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise ServiceError(message + ': ' + os.strerror(exc.errno)) from exc
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise ServiceError(message + ': not a regular file')
+    with os.fdopen(fd, 'rb') as stream:
+        if stream.read(len(expected) + 1) != expected:
+            raise ServiceError(message)
+    return hashlib.sha256(expected).hexdigest()
 
 
 def seal_native_lane(work, source, result, resolved):
@@ -1019,8 +1049,10 @@ def seal_native_lane(work, source, result, resolved):
     """
     from test_selection_custody import retained_files, attest_retained_evidence, digest
     work, source = Path(work).resolve(strict=True), Path(source).resolve(strict=True)
-    _original_output(work / 'receipt.json', result, 'native output differs from original in-memory receipt')
-    _original_output(work / 'resolved.json', resolved, 'native resolution differs from original in-memory contract')
+    outputs = {'receipt.json': _original_output(work / 'receipt.json', result,
+                                                'native output differs from original in-memory receipt'),
+               'resolved.json': _original_output(work / 'resolved.json', resolved,
+                                                 'native resolution differs from original in-memory contract')}
     source_claims = _source_claims(result, source) if result is not None else {}
     retained_source = work / 'source-inputs'
     retained_source.mkdir(mode=0o700)
@@ -1032,8 +1064,12 @@ def seal_native_lane(work, source, result, resolved):
         with destination.open('xb') as stream:
             stream.write(raw)
     snapshot = retained_files(work, NATIVE_ROOTS)
+    files = _native_files(work)
+    # The pinned hashes must be the trusted bytes, not a swap after comparison.
+    if any(files.get(name) != sha for name, sha in outputs.items()):
+        raise ServiceError('native original output changed while sealing')
     seal = {'schema_version': 1, 'retained_evidence': snapshot, 'retained_evidence_hash': digest(snapshot),
-            'files': _native_files(work), 'source_claims': source_claims}
+            'files': files, 'source_claims': source_claims}
     verification = attest_retained_evidence(work, result or {}, seal, roots=NATIVE_ROOTS, claim_root=work)
     if verification['status'] != 'verified':
         raise ServiceError('native original receipt hashes differ from pre-exit seal' + _evidence_errors(verification))

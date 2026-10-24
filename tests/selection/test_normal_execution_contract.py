@@ -114,8 +114,9 @@ class NormalFixture(Project):
             (self.work / name).unlink(missing_ok=True)
         import shutil
         shutil.rmtree(self.work / 'source-inputs', ignore_errors=True)
-        (self.work / 'receipt.json').write_text(json.dumps(self.original))
-        (self.work / 'resolved.json').write_text(json.dumps(self.resolved))
+        # The CLI's own trusted writer; the seal requires its exact bytes.
+        s.write_json(self.work / 'receipt.json', self.original)
+        s.write_json(self.work / 'resolved.json', self.resolved)
         anchor = services.seal_native_lane(self.work, self.root, self.original, self.resolved)
         (self.work / 'native-final.json').write_text(json.dumps(services.attest_native_lane(self.work, anchor)))
         self.public_path.write_text(json.dumps(services.native_public_receipt(self.work)))
