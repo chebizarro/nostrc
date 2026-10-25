@@ -26,7 +26,7 @@ ALLOWLIST = "scripts/package-boundaries.allowlist"
 LAYERS = {
     "libgo": 0, "libjson": 0, "third_party": 0,
     "libnostr": 1, "nips/bud02": 2, "libblossom": 3, "libmarmot": 3,
-    "libporthome": 4, "libvault": 5, "libhanami": 5,
+    "libporthome": 4, "libvault": 5, "libvault-marmot": 5, "libhanami": 5,
     "nostr-gobject": 6, "marmot-gobject": 6, "bindings/rust": 6,
 }
 SOURCE_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm"}

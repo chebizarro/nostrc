@@ -336,6 +336,28 @@ MarmotError marmot_get_pending_welcomes(
 
 ---
 
+## Application MLS Exporter (since 0.13.0)
+
+```c
+MarmotError marmot_export_secret(
+    Marmot *m, const MarmotGroupId *mls_group_id,
+    const uint8_t *label, size_t label_len,
+    const uint8_t *context, size_t context_len,
+    uint8_t *out, size_t out_len);
+```
+
+RFC 9420 §8.5 MLS-Exporter over the current canonical epoch, using raw binary
+label/context and output length 1..8160 (SHA-256). This does not return or
+re-export the MIP-03 NIP-44 transport key. Errors wipe the caller's output;
+callers must wipe successful output after use. Serialize access to the Marmot
+instance. Missing/inactive groups, missing MLS state, mismatched metadata epochs
+and exporter-stripped reader states fail closed. This API performs no writes.
+Retained reader epochs intentionally no longer contain the raw exporter secret,
+so there is no retained-epoch exporter API.
+
+`libvault-marmot` uses label `porthome/v2/vault`, context equal to the 32 raw
+`vault_id` bytes and L=32. See [the adapter](../libvault-marmot/README.md).
+
 ## MIP-03: Group Messages
 
 ```c

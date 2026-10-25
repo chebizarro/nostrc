@@ -1479,6 +1479,22 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
                                          const MarmotPagination *pagination,
                                          MarmotWelcome ***out_welcomes, size_t *out_count);
 
+/* RFC 9420 section 8.5 MLS-Exporter over the current canonical MLS epoch.
+ * label/context are raw bytes (NULL only when their length is zero); output
+ * length is 1..8160 for the SHA-256 ciphersuite. out must address out_len
+ * writable bytes and must not alias inputs. Every failure wipes that range.
+ * The caller must wipe a successful result after use. Serialize calls on m.
+ * No MIP-03 conversation key substitution, epoch cache or storage writes.
+ * Inactive/removed groups, missing MLS state, metadata/state epoch mismatch
+ * and reader-only (exporter-stripped) state are refused. Retained reader
+ * epochs intentionally no longer contain the MLS exporter secret.
+ * Since 0.13.0 (nostrc-hl30i.7).
+ */
+MarmotError marmot_export_secret(Marmot *m, const MarmotGroupId *mls_group_id,
+                                  const uint8_t *label, size_t label_len,
+                                  const uint8_t *context, size_t context_len,
+                                  uint8_t *out, size_t out_len);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-03: Group Messages
  * ══════════════════════════════════════════════════════════════════════════ */

@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.4.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
-| libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -31,6 +31,7 @@ files already declare a version.
 | libvault | `libvault/` | 0.2.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
+| libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -47,6 +48,16 @@ files already declare a version.
   an independently released CLI. No bump to libporthome, libvault or their C
   dependencies: their shipped sources, headers and build contracts are unchanged.
   CI/selection changes are internal and do not require a component bump.
+
+- nostrc-hl30i.7 (SV-7): libvault-marmot initial 0.1.0 adds the optional
+  Layer-5 `nostrc::vault-marmot` adapter, exporter-seed helper, kind-445 grant
+  carrier and lookup-result-based preference helper. libmarmot MINOR 0.12.0 ->
+  0.13.0 adds only the public, current-epoch RFC 9420 MLS-Exporter API required
+  by this adapter; existing APIs and wire/storage behavior are unchanged.
+  CMake and Meson agree. libvault remains 0.2.0, libporthome remains 0.4.0,
+  and all other components need no bump: no owned shipped changes to them.
+  Aggregate CMake/boundary/selection registration is build/test wiring for the
+  new component, not a release or a change to libvault's dependency closure.
 
 - nostrc-hl30i.4 (SV-4): libvault MINOR 0.1.0 -> 0.2.0 adds the NIP-59
   grant carrier through a separate `<vault/nip59.h>`; existing `vault.h`,
