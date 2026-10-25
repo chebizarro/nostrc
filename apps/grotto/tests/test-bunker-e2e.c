@@ -145,7 +145,7 @@ static gboolean grant_scoped_account_ops(Fixture *f, guint crypto_ttl) {
     guint8 pubkey[32]; gchar *identity = NULL;
     REQUIRE(nostr_hex2bin(pubkey, f->account_pk, 32) && !nostr_nip19_encode_npub(pubkey, &identity), "canonical account identity");
     g_autofree gchar *principal = g_strdup_printf("nip46:%s", f->client_pk);
-    const gchar *operations[] = {"connect", "get_public_key", "event", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
+    const gchar *operations[] = {"get_public_key", "event", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
     GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
     for (guint i = 0; i < G_N_ELEMENTS(operations); i++) {
         GVariantBuilder row; g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
@@ -153,8 +153,8 @@ static gboolean grant_scoped_account_ops(Fixture *f, guint crypto_ttl) {
         g_variant_builder_add(&row, "{sv}", "identity", g_variant_new_string(identity));
         g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string(operations[i]));
         g_variant_builder_add(&row, "{sv}", "decision", g_variant_new_string("allow"));
-        g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(i == 2 ? NOSTR_KIND_TEXT_NOTE : -1));
-        g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(time(NULL) + (i >= 3 ? crypto_ttl : 600)));
+        g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(!strcmp(operations[i], "event") ? NOSTR_KIND_TEXT_NOTE : -1));
+        g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(time(NULL) + (g_str_has_prefix(operations[i], "nip") ? crypto_ttl : 600)));
         g_variant_builder_add_value(&rows, g_variant_builder_end(&row));
     }
     gboolean ok = control(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", principal, identity, g_variant_builder_end(&rows), revision));
@@ -1127,7 +1127,7 @@ static void approval_requested(GDBusConnection *bus, const gchar *sender, const 
     /* Pairing the peer must not silently approve a previously rejected event
      * that a relay replays after admission. Such a Low-tier request is denied. */
     approver_submit(f, bus, "/org/nostr/signer", "org.nostr.Signer", "ApproveRequest",
-        g_variant_new("(sbbt)", id, allow, allow, (guint64)600));
+        g_variant_new("(sbbt)", id, allow, allow && strcmp(op, "connect"), (guint64)600));
 }
 static gboolean configure_schema(Fixture *f, const gchar *schema_source, const gchar *compiler)
 {
@@ -1166,7 +1166,7 @@ static void provision_headless(Fixture *f) {
     g_autoptr(SignerPermissions) permissions = signer_permissions_new(NULL);
     g_assert_nonnull(clients); g_assert_true(signer_permissions_reload(permissions, NULL));
     const gchar *pubkeys[] = {f->client_pk, f->second_pk};
-    const gchar *operations[] = {"connect", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
+    const gchar *operations[] = {"nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
     for (guint i = 0; i < G_N_ELEMENTS(pubkeys); i++) {
         g_autofree gchar *principal = g_strdup_printf("nip46:%s", pubkeys[i]);
         g_assert_true(grotto_clients_record(clients, principal, "NIP46", "", identity, TRUE, FALSE, NULL));

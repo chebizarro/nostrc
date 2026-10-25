@@ -99,8 +99,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwActionRow" id="confirmation">
-            <property name="title" translatable="yes">Always confirm these event types</property>
-            <property name="subtitle" translatable="yes">Overrides remembered allows and trust levels</property>
+            <property name="title" translatable="yes">Ask-by-default event types</property>
+            <property name="subtitle" translatable="yes">Ask before a scoped first grant; saved permissions still apply</property>
             <property name="activatable">true</property>
             <child type="suffix">
               <object class="GtkImage">

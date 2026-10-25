@@ -16,7 +16,7 @@ const gchar *gn_page_history_operation_label(const gchar *operation) {
     {"get_relays", N_("Read relay list")}, {"ping", N_("Check connection")}, {"connect", N_("Connect app")},
     {"nip04_encrypt", N_("Encrypt message (legacy)")}, {"nip04_decrypt", N_("Decrypt message (legacy)")},
     {"nip44_encrypt", N_("Encrypt message")}, {"nip44_decrypt", N_("Decrypt message")},
-    {"nip44_conversation_key", N_("Export conversation key")}, {"zap_decrypt", N_("Decrypt payment")},
+    {"zap_decrypt", N_("Decrypt payment")},
     {"self_test", N_("Verify identity")}
   };
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) if (!g_strcmp0(operation, names[i].operation)) return _(names[i].label);

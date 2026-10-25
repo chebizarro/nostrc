@@ -1,16 +1,21 @@
 # NIP-55L Linux Signer
 
-**Component version: 0.5.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
+**Component version: 0.7.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
 source `NOSTR_NIP55L_VERSION_*` in `include/nostr/nip55l/signer_ops.h`).
-0.5.0 is additive: `EnableTypedApprovalErrors` opts a bus connection in to
+0.7.0 removes the unreleased conversation-key export (D-Bus and C API).
+Clients must use scoped `nip44_encrypt` / `nip44_decrypt`; nostr-seal uses
+`NIP44DecryptB64ForApp` to open its existing stanza payload. Dormant saved
+allows require explicit policy review before activation. Existing Full clients
+retain their previous ceiling until an explicit preset upgrade.
+
+0.5.0 was additive: `EnableTypedApprovalErrors` opts a bus connection in to
 `Error.ApprovalTimedOut` and `Error.NoApprovalAgent` where it would otherwise
 get `Error.ApprovalDenied` (see below). 0.4.0 changes the ACL semantics: grants are keyed on a bus-derived caller
 principal plus the resolved npub and request kind, `GetPublicKey`,
 `GetRelays`, NIP-04/NIP-44 and `DecryptZapEvent` are approval-gated, only the
 installed approval UI may call `ApproveRequest`, and `*ForApp` /
 `GetApprovalInfo` were added (see *Access control* below and
-`docs/dbus-interface.md`). 0.3.0 was additive: new approval-gated `NIP44DeriveConversationKey` (used by
-`nostr-seal`, nostrc-da9c). 0.2.0 was a breaking change for D-Bus clients:
+`docs/dbus-interface.md`). 0.2.0 was a breaking change for D-Bus clients:
 `SignEvent` returns the complete signed event JSON instead of the bare
 signature — see below.
 
@@ -94,7 +99,7 @@ An absent identity returns `NOT_FOUND` (D-Bus `NoKeyConfigured`); an unreadable
 key store returns `BACKEND` (D-Bus `Internal`). Secret keys enter through
 `StoreKey`, the environment, or the key store, not through selectors.
 
-## Access control (0.4.0)
+## Access control
 
 - **Principal** — derived from the D-Bus connection (`GetConnectionCredentials`
   + `/proc/<pid>`): `flatpak:<id>`, `app:<id>;exe:<path>`, `snap:<name>;exe:<path>`,
@@ -102,11 +107,15 @@ key store returns `BACKEND` (D-Bus `Internal`). Secret keys enter through
 - **Web origins** — an `app_id` like `https://site` is the principal only when
   the caller is the installed `nostr-signer-webext-host` (path + inode); from
   anyone else it is an unverified label. Same rule as the wallet agent.
-- **Grants** — `$XDG_CONFIG_HOME/gnostr/signer-grants.ini`, section = request
-  kind, key `<principal>|<npub>` or `<principal>|*`, value
-  `allow|deny[:<until>]`. The npub is what the identity selector resolves to,
-  so `""`, a key_id and the npub hit the same grant. The old
-  `signer-acl.ini` is not read.
+- **Permissions** — `$XDG_CONFIG_HOME/gnostr/signer-permissions-v2.ini`,
+  version 3 records keyed by principal, resolved npub, operation and exact event
+  kind (plus canonical relay URL for AUTH). Explicit deny wins; explicit live
+  allow precedes ask-by-default preset defaults. New reusable decisions default
+  to until revoked, with 24 hours available. Dormant old allows remain inactive
+  as `policy-review` until explicitly activated; expired rows remain visible.
+  Legacy grant files are migrated, not used as parallel authority. The npub is
+  what the identity selector resolves to; selecting a different default does
+  not transfer its permissions.
 - **NIP-5F socket** — opt-in (`NOSTR_SIGNER_ENDPOINT=unix:<path>`,
   `nip55l_nip5f.h`, `src/glib/signer_nip5f.c`): every method goes through the
   same gate (`src/glib/signer_gate.h`). The principal comes from the socket
@@ -127,14 +136,16 @@ key store returns `BACKEND` (D-Bus `Internal`). Secret keys enter through
   `NOSTR_SIGNER_TEST_APPROVERS`.
 - **macOS** — the bus reports no client PIDs, so callers are keyed as
   `claimed:<app_id>` and any same-user process may approve (unverified).
+  Named claims are not verified app identities. Empty `claimed:` callers may
+  receive one-time consent only; no reusable permission or preset is accepted.
 
 ## DBus API
 
 Interface: `org.nostr.Signer`
 
 Every method below except `StoreKey`/`ClearKey` is approval-gated (0.4.0);
-each gated method except `SignEvent` and `NIP44DeriveConversationKey` (which
-already take one) has a `…ForApp` twin with a trailing `app_id`.
+each gated method except `SignEvent` (which already takes one) has a
+`…ForApp` twin with a trailing `app_id`.
 
 - `GetPublicKey() -> (s npub)`
   - Returns the `npub1...` for the current secret key.
@@ -154,20 +165,6 @@ already take one) has a `…ForApp` twin with a trailing `app_id`.
 - `NIP44Decrypt(in s cipherB64, in s peerPubHex, in s currentUser) -> (s plaintext)`
 
 - `NIP44EncryptB64` / `NIP44DecryptB64`: binary-safe NIP-44 (plaintext side is base64).
-
-- `NIP44DeriveConversationKey(in s peerPubKey, in s identity, in s app_id) -> (s conversationKey)`
-  - Since 0.3.0. The NIP-44 v2 conversation key between `identity` and the
-    64-hex x-only `peerPubKey` (`HKDF-extract(SHA256, ECDH shared-x, "nip44-v2")`,
-    same as `nostr_nip44_convkey`), as 64 lowercase hex. The secret key never
-    leaves the daemon.
-  - **Approval-gated** like `SignEvent`, kind `nip44_conversation_key`,
-    preview `derive NIP-44 conversation key with <peer>`.
-  - The returned key opens every NIP-44 payload exchanged with that peer, so
-    grant it for throwaway peers: `nostr-seal` only ever asks with a per-file
-    ephemeral key.
-  - Errors: `Error.InvalidInput` (not 64-hex / not on the curve — refused
-    before any prompt), `Error.ApprovalDenied`, `Error.RateLimited`,
-    `Error.NoKeyConfigured`, `Error.Internal`.
 
 - `EnableTypedApprovalErrors() -> ()`
   - Since 0.5.0; ungated. Opts the calling bus connection in, until it

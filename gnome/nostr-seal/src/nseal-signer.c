@@ -61,7 +61,7 @@ gboolean nseal_signer_public_key(NsealSigner *s, uint8_t out[32], GError **error
     return nseal_parse_pubkey(s->identity, out, error);
   GError *e = NULL;
   GVariant *r = g_dbus_connection_call_sync(s->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_IFACE,
-                                            "GetPublicKey", NULL, G_VARIANT_TYPE("(s)"),
+                                            "GetPublicKeyForApp", g_variant_new("(s)", NSEAL_SIGNER_APP_ID), G_VARIANT_TYPE("(s)"),
                                             G_DBUS_CALL_FLAGS_NONE, 30000, NULL, &e);
   if (!r) { signer_error(error, e, "GetPublicKey"); g_error_free(e); return FALSE; }
   const char *npub = NULL;
@@ -84,40 +84,12 @@ gboolean nseal_signer_unwrap(gpointer signer, const uint8_t eph[32], const char 
   to_hex(eph, 32, eph_hex);
 
   GError *e = NULL;
+  /* The existing stanza is a binary 32-byte key. Use the binary-safe
+   * NIP44Decrypt variant, under the ordinary nip44_decrypt permission.
+   * Neither conversation keys nor account secrets leave the signer. */
   GVariant *r = g_dbus_connection_call_sync(s->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_IFACE,
-                                            "NIP44DeriveConversationKey",
-                                            g_variant_new("(sss)", eph_hex, s->identity, NSEAL_SIGNER_APP_ID),
-                                            G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE,
-                                            APPROVAL_TIMEOUT_MS, NULL, &e);
-  if (r) {
-    const char *hex = NULL;
-    g_variant_get(r, "(&s)", &hex);
-    uint8_t ck[32];
-    gboolean ok = strlen(hex) == 64;
-    for (int i = 0; i < 32 && ok; i++) {
-      int hi = g_ascii_xdigit_value(hex[2*i]), lo = g_ascii_xdigit_value(hex[2*i+1]);
-      if (hi < 0 || lo < 0) ok = FALSE; else ck[i] = (uint8_t)((hi << 4) | lo);
-    }
-    g_variant_unref(r);
-    if (!ok) {
-      g_set_error_literal(error, NSEAL_ERROR, NSEAL_ERROR_SIGNER, "signer returned a malformed conversation key");
-      return FALSE;
-    }
-    ok = nseal_unwrap_with_convkey(ck, payload, out_file_key, error);
-    OPENSSL_cleanse(ck, sizeof ck);
-    return ok;
-  }
-  if (!g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)) {
-    signer_error(error, e, "NIP44DeriveConversationKey");
-    g_error_free(e);
-    return FALSE;
-  }
-  g_clear_error(&e);
-
-  /* Pre-0.3.0 signer: have it open the standard NIP-44 payload itself. */
-  r = g_dbus_connection_call_sync(s->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_IFACE,
-                                  "NIP44DecryptB64",
-                                  g_variant_new("(sss)", payload, eph_hex, s->identity),
+                                  "NIP44DecryptB64ForApp",
+                                  g_variant_new("(ssss)", payload, eph_hex, s->identity, NSEAL_SIGNER_APP_ID),
                                   G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE,
                                   APPROVAL_TIMEOUT_MS, NULL, &e);
   if (!r) { signer_error(error, e, "NIP44DecryptB64"); g_error_free(e); return FALSE; }

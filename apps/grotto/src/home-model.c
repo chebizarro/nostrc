@@ -124,7 +124,9 @@ GVariant *grotto_home_model_requests(GrottoHomeModel *s) { return s->requests; }
 GVariant *grotto_home_model_activity(GrottoHomeModel *s) { return s->activity; }
 GDBusProxy *grotto_home_model_proxy(GrottoHomeModel *s) { return s->proxy; }
 gboolean grotto_home_model_writable(GrottoHomeModel *s) {
-  guint version = 0;
-  return s->status && !s->loading && !s->error && g_variant_lookup(s->status, "control_version", "u", &version) && version == 1;
+  guint version = 0, policy = 0;
+  return s->status && !s->loading && !s->error &&
+      g_variant_lookup(s->status, "control_version", "u", &version) && version == 1 &&
+      g_variant_lookup(s->status, "permission_policy_version", "u", &policy) && policy == 3;
 }
 const gchar *grotto_home_model_error(GrottoHomeModel *s) { return s->error; }

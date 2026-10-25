@@ -126,13 +126,13 @@ static void management_settings_changed(GSettings *settings, const gchar *key, g
       }
     }
     c->confirmation_policy_valid = valid;
-    if (!user) g_array_append_vals(kinds, signer_default_required_confirmation_kinds, G_N_ELEMENTS(signer_default_required_confirmation_kinds));
+    if (!user) g_array_append_vals(kinds, signer_default_ask_by_default_kinds, G_N_ELEMENTS(signer_default_ask_by_default_kinds));
     if (!valid) {
       /* Invalid owner configuration must not silently weaken confirmation. */
       g_array_set_size(kinds, 0);
       for (guint32 kind = 0; kind <= G_MAXUINT16; kind++) g_array_append_val(kinds, kind);
     }
-    signer_permissions_set_required_confirmation(permissions(c), (guint32 *)kinds->data, kinds->len, NULL);
+    signer_permissions_set_ask_by_default(permissions(c), (guint32 *)kinds->data, kinds->len, NULL);
     refresh(c);
   }
   if (!key || !strcmp(key, "log-retention-days")) gn_event_history_set_retention_days(c->history, CLAMP(g_settings_get_int(settings, "log-retention-days"), 1, 30));
@@ -159,6 +159,8 @@ static GVariant *status(GrottoControl *c) {
   g_variant_builder_add(&caps, "{sb}", "pairing", c->bunker != NULL);
   const gchar *disabled[] = {"key-lock"};
   for (guint i = 0; i < G_N_ELEMENTS(disabled); i++) g_variant_builder_add(&caps, "{sb}", disabled[i], FALSE);
+  g_variant_builder_add(&caps, "{sb}", "decision-modes", TRUE);
+  g_variant_builder_add(&row, "{sv}", "permission_policy_version", g_variant_new_uint32(3));
   g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(1));
   g_variant_builder_add(&row, "{sv}", "confirmation_policy_valid", g_variant_new_boolean(c->confirmation_policy_valid));
   g_variant_builder_add(&row, "{sv}", "control_epoch", g_variant_new_string(c->epoch));
@@ -641,6 +643,18 @@ static void create_pairing(GrottoControl *c, GDBusMethodInvocation *inv, const g
   g_autoptr(GTask) task = g_task_new(NULL, NULL, pairing_identity_ready, NULL);
   g_task_set_task_data(task, job, pairing_identity_free); g_task_run_in_thread(task, pairing_identity_worker);
 }
+static gboolean client_decision(const gchar *principal, const gchar *mode, gpointer data, GError **error) {
+  GrottoControl *c = data;
+  gboolean ok = grotto_clients_decide(c->clients, principal, mode, error);
+  if (ok) refresh(c);
+  return ok;
+}
+static void decision_done(gpointer data, gboolean ok, const gchar *error, const gchar *message) {
+  GDBusMethodInvocation *inv = data;
+  if (error) g_dbus_method_invocation_return_dbus_error(inv, error, message);
+  else g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", ok));
+  g_object_unref(inv);
+}
 static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     const gchar *interface, const gchar *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
   (void)path; (void)interface; GrottoControl *c = data;
@@ -656,6 +670,10 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
   g_autoptr(GError) error = NULL;
   if (!strcmp(method, "GetStatus")) {
     reply_dict(inv, status(c)); return;
+  }
+  if (!strcmp(method, "DecideRequest")) {
+    const gchar *id, *mode; g_variant_get(args, "(&s&s)", &id, &mode);
+    signer_approval_service_decide_mode(c->approval, id, mode, decision_done, g_object_ref(inv)); return;
   }
   if (!strcmp(method, "ListRequests")) { reply_rows(inv, requests(c)); return; }
   if (!strcmp(method, "ListClients")) {
@@ -880,6 +898,7 @@ GrottoControl *grotto_control_new(GDBusConnection *connection, SignerApprovalSer
       node->interfaces[0], &vtable, c, NULL, error);
   if (!c->registration) { grotto_control_free(c); return NULL; }
   signer_permissions_set_trust_lookup(permissions(c), grotto_clients_trust, c->clients);
+  signer_approval_service_set_trust_decision(approval, client_decision, c);
   c->trust_installed = TRUE;
   c->subscription = signer_approval_service_subscribe(approval, approval_changed, c);
   signer_approval_service_set_changed(approval, approval_table_changed, c);
@@ -950,6 +969,7 @@ void grotto_control_free(GrottoControl *c) {
   if (c->registration) g_dbus_connection_unregister_object(c->connection, c->registration);
   if (c->trust_installed) {
     signer_approval_service_set_changed(c->approval, NULL, NULL);
+    signer_approval_service_set_trust_decision(c->approval, NULL, NULL);
     signer_permissions_set_trust_lookup(permissions(c), NULL, NULL);
   }
   c->subscription = c->registration = 0;

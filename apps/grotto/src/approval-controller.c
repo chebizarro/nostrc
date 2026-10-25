@@ -117,8 +117,6 @@ static gchar *operation_label(GVariant *info) {
     return g_strdup("Connect application");
   if (!strcmp(op, "get_public_key"))
     return g_strdup("Share public key");
-  if (!strcmp(op, "nip44_conversation_key"))
-    return g_strdup("Share conversation key");
   if (g_str_has_suffix(op, "encrypt"))
     return g_strdup("Encrypt message");
   if (g_str_has_suffix(op, "decrypt"))
@@ -268,7 +266,7 @@ static gboolean expired(gpointer data) {
 }
 static gboolean same_scope(GVariant *a, GVariant *b) {
   const char *keys[] = {"identity",      "principal", "transport", "operation",    "event_kind",
-                        "event_summary", "flow_id", "flow_size", "purpose", "flow_seals_required", "reason", "reason_source"};
+                        "event_summary", "flow_id", "flow_size", "purpose", "reason", "reason_source"};
   for (guint i = 0; i < G_N_ELEMENTS(keys); i++) {
     g_autoptr(GVariant) left = g_variant_lookup_value(a, keys[i], NULL);
     g_autoptr(GVariant) right = g_variant_lookup_value(b, keys[i], NULL);
@@ -461,14 +459,16 @@ static void status_done(GObject *source, GAsyncResult *result, gpointer data) {
       g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
   if (fetch_current(f)) {
     f->self->checking_owner = FALSE;
-    guint32 version = 0;
+    guint32 version = 0; gboolean decision_modes = FALSE;
     if (reply) {
       g_autoptr(GVariant) row = g_variant_get_child_value(reply, 0);
       g_variant_lookup(row, "control_version", "u", &version);
+      g_autoptr(GVariant) caps = g_variant_lookup_value(row, "capabilities", G_VARIANT_TYPE("a{sb}"));
+      if (caps) g_variant_lookup(caps, "decision-modes", "b", &decision_modes);
     }
     g_debug("Approval controller: Control1 version %u", version);
-    f->self->compatible = version == 1;
-    if (version == 1)
+    f->self->compatible = version == 1 && decision_modes;
+    if (f->self->compatible)
       grotto_approval_controller_reconcile(f->self);
     else {
       message(f->self, "Update Grotto to review requests. This daemon is read-only.");
@@ -679,10 +679,11 @@ typedef struct {
   Fetch *fetch;
   gboolean allow, remember, flow, encrypt, seals;
   guint64 ttl;
+  gchar *mode;
 } Decision;
 static void decision_free(Decision *d) {
   fetch_free(d->fetch);
-  g_free(d);
+  g_free(d->mode); g_free(d);
 }
 static void decision_done(GObject *source, GAsyncResult *result, gpointer data) {
   GTask *task = data;
@@ -695,8 +696,9 @@ static void decision_done(GObject *source, GAsyncResult *result, gpointer data) 
   if (reply)
     g_variant_get(reply, "(b)", &ok);
   if (reply) {
-    if (fetch_current(f))
+    if (fetch_current(f) && g_strcmp0(d->mode, "discard-saved"))
       resolve(f->self, f->request->id, GROTTO_APPROVAL_RESOLVED);
+    else if (fetch_current(f)) { f->request->state = GROTTO_APPROVAL_READY; grotto_approval_controller_reconcile(f->self); }
     if (ok)
       g_task_return_boolean(task, TRUE);
     else
@@ -764,19 +766,27 @@ static void decision_checked(GObject *source, GAsyncResult *result, gpointer dat
   }
   /* Keep cleanup anchored to the original deadline even while a decision
    * or its recovery snapshot is uncertain. The daemon arbitrates execution. */
-  g_dbus_connection_call(f->self->bus, f->self->owner, SIGNER_PATH, SIGNER, d->flow ? "ApproveFlowRequest" : "ApproveRequest",
-                         g_variant_new("(sbbt)", f->request->id,
-                             d->flow ? d->encrypt : d->allow,
-                             d->flow ? d->seals : d->remember, d->ttl),
+  const gchar *mode = d->mode ? d->mode : d->allow ?
+      (d->remember ? (d->ttl == 86400 ? "allow-24h" : "allow") : "allow-once") :
+      (d->remember ? "block-operation" : "deny-once");
+  g_dbus_connection_call(f->self->bus, f->self->owner, d->flow ? SIGNER_PATH : CONTROL_PATH,
+                         d->flow ? SIGNER : CONTROL, d->flow ? "ApproveFlowRequest" : "DecideRequest",
+                         d->flow ? g_variant_new("(sbbt)", f->request->id, d->encrypt, d->seals, d->ttl)
+                                 : g_variant_new("(ss)", f->request->id, mode),
                          G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 30000, f->self->cancel,
                          decision_done, task);
 }
 static void decide_async(GrottoApprovalController *s, const char *id,
                                              gboolean allow, gboolean remember, guint64 ttl,
-                                             gboolean flow, gboolean encrypt, gboolean seals,
+                                             gboolean flow, gboolean encrypt, gboolean seals, const gchar *mode,
                                              GCancellable *cancel, GAsyncReadyCallback callback,
                                              gpointer data) {
   GTask *task = g_task_new(s, cancel, callback, data);
+  if (remember && !flow && ttl != 0 && ttl != 86400) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+        "Reusable review consent must be until revoked or 24 hours.");
+    g_object_unref(task); return;
+  }
   GrottoApprovalRequest *r = g_hash_table_lookup(s->requests, id);
   if (s->stopped || !s->compatible || !r || r->state != GROTTO_APPROVAL_READY ||
       r->deadline <= g_get_monotonic_time()) {
@@ -790,7 +800,7 @@ static void decide_async(GrottoApprovalController *s, const char *id,
   d->fetch = fetch_new(s, r);
   d->allow = allow;
   d->remember = remember;
-  d->ttl = ttl; d->flow = flow; d->encrypt = encrypt; d->seals = seals;
+  d->ttl = ttl; d->flow = flow; d->encrypt = encrypt; d->seals = seals; d->mode = g_strdup(mode);
   g_task_set_task_data(task, d, (GDestroyNotify)decision_free);
   g_dbus_connection_call(s->bus, s->owner, SIGNER_PATH, SIGNER, "GetApprovalInfo",
                          g_variant_new("(s)", id), G_VARIANT_TYPE("(a{sv})"),
@@ -799,11 +809,11 @@ static void decide_async(GrottoApprovalController *s, const char *id,
 void grotto_approval_controller_decide_async(GrottoApprovalController *s, const char *id,
     gboolean allow, gboolean remember, guint64 ttl, GCancellable *cancel,
     GAsyncReadyCallback callback, gpointer data) {
-  decide_async(s, id, allow, remember, ttl, FALSE, FALSE, FALSE, cancel, callback, data);
+  decide_async(s, id, allow, remember, ttl, FALSE, FALSE, FALSE, NULL, cancel, callback, data);
 }
 void grotto_approval_controller_decide_flow_async(GrottoApprovalController *s, const char *id,
     gboolean encrypt, gboolean seals, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
-  decide_async(s, id, TRUE, FALSE, 600, TRUE, encrypt, seals, cancel, callback, data);
+  decide_async(s, id, TRUE, FALSE, 600, TRUE, encrypt, seals, NULL, cancel, callback, data);
 }
 gboolean grotto_approval_controller_decide_finish(GrottoApprovalController *s, GAsyncResult *result,
                                                   GError **error) {
@@ -855,6 +865,14 @@ static void review_decision(gboolean allow, gboolean remember, const char *ident
   GVariant *info = g_variant_ref(r->info);
   /* Never destroy the dialog from inside its decision callback. */
   grotto_approval_controller_decide_async(s, id, allow, remember, ttl, NULL, review_decided, info);
+}
+static void review_mode(GnostrApprovalDialog *dialog, const gchar *mode, gpointer data) {
+  (void)dialog;
+  GrottoApprovalController *s = data;
+  GrottoApprovalRequest *r = s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
+  if (!r) return;
+  gboolean allow = strcmp(mode, "block-operation") && strcmp(mode, "block-app") && strcmp(mode, "discard-saved");
+  decide_async(s, r->id, allow, TRUE, 0, FALSE, FALSE, FALSE, mode, NULL, review_decided, g_variant_ref(r->info));
 }
 static void review_flow(GnostrApprovalDialog *dialog, gboolean encrypt, gboolean seals, gpointer data) {
   (void)dialog;
@@ -946,33 +964,6 @@ static void review_step(GnostrApprovalDialog *dialog, int delta, gpointer data) 
   if (next >= 0 && next < (gint)ids->len)
     grotto_approval_controller_review(s, ids->pdata[next]);
 }
-static void tier_done(GObject *source, GAsyncResult *result, gpointer data) {
-  Fetch *f = data;
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GVariant) reply =
-      g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
-  if (fetch_current(f)) {
-    gboolean pairing = f->request && !strcmp(text_field(f->request->info, "operation"), "connect");
-    message(f->self, reply ? (pairing ? "Trust choice saved. A new client still needs pairing approval. Remembered permissions are unchanged."
-                                      : "Trust level changed. Remembered permissions are unchanged.")
-                           : "Trust level could not be changed. No request was approved.");
-  }
-  fetch_free(f);
-}
-static void change_tier(GnostrApprovalDialog *dialog, const char *tier, gpointer data) {
-  (void)dialog;
-  GrottoApprovalController *s = data;
-  GrottoApprovalRequest *r = s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
-  if (!r || !s->compatible || r->state != GROTTO_APPROVAL_READY)
-    return;
-  Fetch *f = fetch_new(s, r);
-  f->held = TRUE;
-  hold(s);
-  g_dbus_connection_call(s->bus, s->owner, CONTROL_PATH, CONTROL, "SetClientTrust",
-                         g_variant_new("(ss)", text_field(r->info, "principal"), tier),
-                         G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, 5000, s->cancel, tier_done,
-                         f);
-}
 void grotto_approval_controller_review(GrottoApprovalController *s, const char *id) {
   if (s->stopped)
     return;
@@ -1041,7 +1032,7 @@ void grotto_approval_controller_review(GrottoApprovalController *s, const char *
   g_signal_connect(s->dialog, "approve-selected", G_CALLBACK(review_selected), s);
   g_signal_connect(s->dialog, "deferred", G_CALLBACK(review_deferred), s);
   g_signal_connect(s->dialog, "step", G_CALLBACK(review_step), s);
-  g_signal_connect(s->dialog, "change-trust-level", G_CALLBACK(change_tier), s);
+  g_signal_connect(s->dialog, "decision-mode", G_CALLBACK(review_mode), s);
   adw_dialog_present(ADW_DIALOG(s->dialog), win);
   grotto_approval_controller_reconcile(s);
 }

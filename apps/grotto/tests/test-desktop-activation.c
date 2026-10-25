@@ -53,6 +53,10 @@ static void method(GDBusConnection *bus, const char *sender, const char *path, c
   if (!strcmp(method_name, "GetStatus")) {
     GVariantBuilder values; g_variant_builder_init(&values, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&values, "{sv}", "control_version", g_variant_new_uint32(1));
+    g_variant_builder_add(&values, "{sv}", "permission_policy_version", g_variant_new_uint32(3));
+    GVariantBuilder caps; g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
+    g_variant_builder_add(&caps, "{sb}", "decision-modes", TRUE);
+    g_variant_builder_add(&values, "{sv}", "capabilities", g_variant_builder_end(&caps));
     g_variant_builder_add(&values, "{sv}", "paused", g_variant_new_boolean(paused));
     g_variant_builder_add(&values, "{sv}", "session_lock_available", g_variant_new_boolean(TRUE));
     g_variant_builder_add(&values, "{sv}", "session_locked", g_variant_new_boolean(FALSE));

@@ -14,7 +14,7 @@ struct _GrottoClientDetail {
   AdwNavigationPage parent_instance;
   AdwNavigationView *navigation;
   AdwEntryRow *label_entry;
-  AdwActionRow *fingerprint, *connected_since, *permissions;
+  AdwActionRow *fingerprint, *connected_since, *permissions, *full_access_row;
   GtkLabel *message;
   AdwBanner *permission_banner;
   Editor *editor;
@@ -28,6 +28,7 @@ struct _GrottoClientDetail {
   GCancellable *cancel;
   gchar *principal, *tier, *epoch, *owner;
   guint64 revision;
+  gboolean previous_policy, blocked;
   gboolean updating, loading, busy, snapshot_ready, client_present, read_failed;
 };
 G_DEFINE_TYPE(GrottoClientDetail, grotto_client_detail, ADW_TYPE_NAVIGATION_PAGE)
@@ -156,7 +157,7 @@ static void open_permissions(AdwActionRow *row, gpointer data) {
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->permission_banner));
     GtkWidget *prefs = adw_preferences_page_new(); self->effective = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
     adw_preferences_group_set_title(self->effective, _("Effective from Trust Level"));
-    adw_preferences_group_set_description(self->effective, _("Read-only policy. Explicit denials win; required-confirmation events and key exports still need review."));
+    adw_preferences_group_set_description(self->effective, _("Explicit denials win. Saved permissions override presets. Ask-by-default kinds need a scoped first grant."));
     adw_preferences_page_add(ADW_PREFERENCES_PAGE(prefs), self->effective);
     AdwPreferencesGroup *explicit = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
     adw_preferences_group_set_title(explicit, _("Remembered Permissions"));
@@ -277,7 +278,9 @@ static void edited(GtkButton *button, gpointer data) {
     g_autoptr(GVariant) row = g_variant_get_child_value(e->snapshot, i);
     if (strcmp(text(row, "identity"), target) || g_variant_equal(row, e->original)) continue;
     gint existing_kind = -1; g_variant_lookup(row, "event-kind", "i", &existing_kind);
-    if (!remove && existing_kind == kind && !strcmp(text(row, "operation"), text(e->original, "operation"))) {
+    const gchar *relay = kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? text(e->original, "relay") : "";
+    if (!remove && existing_kind == kind && !strcmp(text(row, "operation"), text(e->original, "operation")) &&
+        !strcmp(text(row, "relay"), relay)) {
       g_variant_builder_clear(&rows); gtk_label_set_text(e->error, _("This exact scope already has a permission. Edit that entry instead.")); return;
     }
     g_variant_builder_add_value(&rows, row);
@@ -286,20 +289,11 @@ static void edited(GtkButton *button, gpointer data) {
     GVariantDict d; g_variant_dict_init(&d, e->original);
     g_variant_dict_insert(&d, "identity", "s", target); g_variant_dict_insert(&d, "decision", "s", decision);
     g_variant_dict_insert(&d, "event-kind", "i", kind); g_variant_dict_insert(&d, "expires-at", "t", expires);
+    if (kind != NOSTR_KIND_CLIENT_AUTHENTICATION) g_variant_dict_remove(&d, "relay");
     g_variant_builder_add_value(&rows, g_variant_dict_end(&d));
   }
   g_clear_pointer(&e->save->rows, g_variant_unref); e->save->rows = g_variant_ref_sink(g_variant_builder_end(&rows));
-  if (!remove && !expires) {
-    Save *s = g_new0(Save, 1); s->page = g_object_ref(self); s->rows = g_variant_ref(e->save->rows);
-    s->identity = g_strdup(e->save->identity); s->owner = g_strdup(e->save->owner); s->revision = e->save->revision;
-    g_autofree gchar *event_scope = !e->kind ? g_strdup("") : kind < 0 ? g_strdup(_(" · all event types")) : g_strdup_printf(_(" · %s (%d)"), gnostr_approval_kind_name(kind), kind);
-    g_autofree gchar *scope = g_strdup_printf(_("Remember %s for %s, identity %s, operation %s%s forever?"), decision_label(decision),
-        s->page->principal, s->identity, gn_page_history_operation_label(text(e->original, "operation")), event_scope);
-    AdwDialog *d = adw_alert_dialog_new(_("Remember Forever?"), scope);
-    adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "save", _("Remember"), NULL);
-    adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel");
-    adw_alert_dialog_choose(ADW_ALERT_DIALOG(d), GTK_WIDGET(s->page), NULL, confirmed, s);
-  } else save_rows(e->save);
+  save_rows(e->save);
   gtk_widget_set_sensitive(GTK_WIDGET(e->submit), !self->busy);
 }
 static void editor_retry(AdwBanner *banner, gpointer data) {
@@ -319,8 +313,11 @@ static void edit_row(AdwActionRow *row, gpointer data) {
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 18); gtk_widget_set_margin_bottom(box, 18);
   g_autofree gchar *scope = g_strdup_printf(_("Client: %s\nIdentity: %s\nOperation: %s"), self->principal, e->save->identity, gn_page_history_operation_label(text(e->original, "operation")));
+  if (*text(e->original, "relay")) {
+    gchar *base = scope; scope = g_strdup_printf(_("%s\nRelay claimed by app: %s"), base, text(e->original, "relay")); g_free(base);
+  }
   GtkWidget *label = gtk_label_new(scope); gtk_label_set_wrap(GTK_LABEL(label), TRUE); gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR); gtk_box_append(GTK_BOX(box), label);
-  if (!strcmp(e->save->identity, "*") && !strcmp(text(e->original, "state"), "needs-review")) {
+  if (!strcmp(e->save->identity, "*") && !strcmp(text(e->original, "state"), "inactive")) {
     e->identities = g_ptr_array_new_with_free_func(g_free); GtkStringList *names = gtk_string_list_new(NULL);
     gtk_string_list_append(names, _("Choose an identity"));
     g_autoptr(GPtrArray) accounts = accounts_store_list(accounts_store_get_default());
@@ -365,8 +362,8 @@ static void edit_row(AdwActionRow *row, gpointer data) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(picker), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Search event types"), -1);
     g_signal_connect(picker, "notify::selected", G_CALLBACK(catalog_selected), e); gtk_box_append(GTK_BOX(box), picker);
   }
-  const gchar *durations[] = {_("Keep current expiry"), _("10 minutes"), _("1 hour"), _("24 hours"), _("Forever"), NULL};
-  e->expiry = GTK_DROP_DOWN(gtk_drop_down_new_from_strings(durations)); gtk_drop_down_set_selected(e->expiry, !strcmp(text(e->original, "state"), "needs-review") ? 1 : 0);
+  const gchar *durations[] = {_("Keep current expiry"), _("10 minutes"), _("1 hour"), _("24 hours"), _("Until revoked"), NULL};
+  e->expiry = GTK_DROP_DOWN(gtk_drop_down_new_from_strings(durations)); gtk_drop_down_set_selected(e->expiry, !strcmp(text(e->original, "state"), "inactive") ? 1 : 0);
   gtk_accessible_update_property(GTK_ACCESSIBLE(e->expiry), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Permission expiry"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(e->expiry));
   e->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(e->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(e->error));
   GtkWidget *save = gtk_button_new_with_label(_("Save Permission")); e->submit = GTK_BUTTON(save); g_signal_connect(save, "clicked", G_CALLBACK(edited), e); gtk_box_append(GTK_BOX(box), save);
@@ -382,28 +379,59 @@ static void edit_row(AdwActionRow *row, gpointer data) {
   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(e->feedback));
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll); adw_dialog_set_child(e->dialog, toolbar); adw_dialog_present(e->dialog, GTK_WIDGET(self));
 }
+static void upgrade_confirmed(GObject *source, GAsyncResult *result, gpointer data) {
+  GrottoClientDetail *self = data;
+  if (!strcmp(adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result), "upgrade"))
+    mutate(self, "SetClientTrust", g_variant_new("(ss)", self->principal, "full"));
+  g_object_unref(self);
+}
+static void upgrade_policy(GtkButton *button, gpointer data) {
+  (void)button; GrottoClientDetail *self = data;
+  AdwDialog *dialog = adw_alert_dialog_new(_("Upgrade access policy?"),
+      _("Use the current routine preset. Custom kinds are no longer included. Ask-by-default kinds need a scoped first grant. Existing saved permissions and blocks remain."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "upgrade", _("Upgrade access policy"), NULL);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(self), NULL, upgrade_confirmed, g_object_ref(self));
+}
+static void unblock_app(GtkButton *button, gpointer data) {
+  (void)button; GrottoClientDetail *self = data;
+  mutate(self, "SetClientTrust", g_variant_new("(ss)", self->principal, "low"));
+}
 static void render_permissions(GrottoClientDetail *self) {
   if (!self->explicit_list) return;
   for (guint i = 0; i < self->effective_rows->len; i++) adw_preferences_group_remove(self->effective, self->effective_rows->pdata[i]);
   g_ptr_array_set_size(self->effective_rows, 0);
+  if (self->previous_policy || self->blocked) {
+    GtkWidget *button = gtk_button_new_with_label(self->blocked ? _("Remove app block") : _("Upgrade previous access policy…"));
+    g_signal_connect(button, "clicked", self->blocked ? G_CALLBACK(unblock_app) : G_CALLBACK(upgrade_policy), self);
+    adw_preferences_group_add(self->effective, button); g_ptr_array_add(self->effective_rows, button);
+  }
+  if (self->blocked) {
+    GtkWidget *row = adw_action_row_new();
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), _("App blocked"));
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), _("All operations are denied. Saved permissions are retained, but inactive until the block is removed."));
+    adw_preferences_group_add(self->effective, row); g_ptr_array_add(self->effective_rows, row);
+  } else {
   const gchar *tier = self->tier ? self->tier : "low";
   const gchar *basics[] = {_("Share public key (after first consent)"), _("Read relay list"), _("Check connection")};
   for (guint i = 0; i < (!strcmp(tier, "low") ? 1u : 3u); i++) {
     GtkWidget *row = adw_action_row_new(); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), basics[i]);
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), !strcmp(tier, "full") ? _("From Full trust") : !strcmp(tier, "medium") ? _("From Medium trust") : _("From Low trust"));
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), !strcmp(tier, "full") ? _("From Full trust") : !strcmp(tier, "medium") ? _("From Medium trust") : _("Ask unless permitted: first-consent public-key access"));
     adw_preferences_group_add(self->effective, row); g_ptr_array_add(self->effective_rows, row);
   }
   if (!strcmp(tier, "medium")) {
     for (guint i = 0; i < G_N_ELEMENTS(signer_public_publishing_kinds); i++) {
       guint32 kind = signer_public_publishing_kinds[i]; GtkWidget *row = adw_action_row_new();
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), gnostr_approval_kind_name(kind));
-      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), _("From Medium trust · required-confirmation settings still apply"));
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), _("From Medium access · ask-by-default kinds need a scoped first grant"));
       adw_preferences_group_add(self->effective, row); g_ptr_array_add(self->effective_rows, row);
     }
   } else if (!strcmp(tier, "full")) {
-    GtkWidget *row = adw_action_row_new(); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), _("All permitted operations and event types"));
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), _("From Full trust · method allowlist applies · key exports and required-confirmation events excluded"));
+    GtkWidget *row = adw_action_row_new(); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), self->previous_policy ? _("Previous access policy") : _("Routine operations, not custom event types"));
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), self->previous_policy ? _("Unchanged previous ceiling. Upgrade explicitly to the current routine preset.") : _("Routine reads, publishing and messaging. Ask-by-default kinds and AUTH relays need a scoped first grant."));
     adw_preferences_group_add(self->effective, row); g_ptr_array_add(self->effective_rows, row);
+  }
   }
   GtkWidget *child; while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->explicit_list)))) gtk_list_box_remove(self->explicit_list, child);
   g_autoptr(GHashTable) scopes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -420,8 +448,10 @@ static void render_permissions(GrottoClientDetail *self) {
     g_autofree gchar *title = kind >= 0 ? g_strdup_printf(_("%s · %s (%d)"), decision_label(text(permission, "decision")), gnostr_approval_kind_name(kind), kind) : g_strdup_printf(_("%s · %s"), decision_label(text(permission, "decision")), gn_page_history_operation_label(op));
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     g_autoptr(GDateTime) date = expires ? g_date_time_new_from_unix_local(expires) : NULL;
-    g_autofree gchar *when = date ? g_date_time_format(date, _("%F %R")) : g_strdup(_("Forever"));
-    g_autofree gchar *subtitle = g_strdup_printf("%s\n%s%s", identity, !strcmp(text(permission, "state"), "needs-review") ? _("Needs review · Not executable · ") : _("Expires: "), when);
+    g_autofree gchar *when = date ? g_date_time_format(date, _("%F %R")) : g_strdup(_("Until revoked"));
+    g_autofree gchar *subtitle = g_strdup_printf("%s\n%s · %s · %s%s%s", identity,
+        text(permission, "state"), text(permission, "reason"), when,
+        *text(permission, "relay") ? " · " : "", text(permission, "relay"));
     adw_action_row_set_subtitle(row, subtitle); adw_action_row_set_subtitle_lines(row, 3); gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
     g_object_set_data_full(G_OBJECT(row), "permission", g_variant_ref(permission), (GDestroyNotify)g_variant_unref);
     g_signal_connect(row, "activated", G_CALLBACK(edit_row), self); gtk_list_box_append(self->explicit_list, GTK_WIDGET(row));
@@ -494,6 +524,12 @@ static void model_changed(GrottoHomeModel *model, gpointer data) {
     gboolean pairing_pending = FALSE; g_variant_lookup(client, "pairing-pending-ack", "b", &pairing_pending);
     adw_action_row_set_subtitle(self->connected_since, pairing_pending ? _("Approved — waiting for relay acknowledgement") : when);
     g_free(self->tier); self->tier = g_strdup(text(client, "trust-tier"));
+    self->previous_policy = !strcmp(text(client, "access-policy"), "Previous access policy");
+    g_variant_lookup(client, "blocked", "b", &self->blocked);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->full_access_row),
+        self->previous_policy ? _("Previous access policy") : _("Routine access"));
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->full), GTK_ACCESSIBLE_PROPERTY_LABEL,
+        self->previous_policy ? _("Previous access policy") : _("Routine access"), -1);
     gtk_check_button_set_active(!strcmp(self->tier, "full") ? self->full : !strcmp(self->tier, "medium") ? self->medium : self->low, TRUE);
     g_variant_unref(client);
   } else gtk_label_set_text(self->message, _("Client unavailable or revoked."));
@@ -528,7 +564,7 @@ static void grotto_client_detail_class_init(GrottoClientDetailClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass); gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-client-detail.ui");
 #define BIND(x) gtk_widget_class_bind_template_child(wc, GrottoClientDetail, x)
   BIND(navigation); BIND(label_entry); BIND(fingerprint); BIND(connected_since); BIND(permissions); BIND(message);
-  BIND(full); BIND(medium); BIND(low); BIND(clear_permissions); BIND(revoke); BIND(activity);
+  BIND(full_access_row); BIND(full); BIND(medium); BIND(low); BIND(clear_permissions); BIND(revoke); BIND(activity);
 #undef BIND
 }
 static void grotto_client_detail_init(GrottoClientDetail *self) {

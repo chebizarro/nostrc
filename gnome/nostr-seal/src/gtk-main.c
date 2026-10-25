@@ -4,7 +4,7 @@
  *
  * Shows who a .nsealed file is sealed for, preselects the signer's active
  * identity (org.nostr.Signer.GetPublicKey) and opens the file through the
- * signer (NIP44DeriveConversationKey — the signer shows its own approval
+ * signer (NIP44DecryptB64ForApp — the signer shows its own approval
  * prompt), or asks for the passphrase of a NIP-49 sealed file. The
  * plaintext lands next to the sealed file. Bead nostrc-da9c.
  */

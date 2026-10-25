@@ -21,7 +21,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
   if (!strcmp(method, "GetStatus")) {
     GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
 #define ADD(key,value) g_variant_builder_add(&b, "{sv}", key, g_variant_new_uint32(value))
-    ADD("control_version", version); ADD("signed_today", signed_count); ADD("client_count", client_count); ADD("pending_count", pending_count);
+    ADD("control_version", version); ADD("permission_policy_version", 3); ADD("signed_today", signed_count); ADD("client_count", client_count); ADD("pending_count", pending_count);
 #undef ADD
     g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", g_variant_builder_end(&b)));
   } else if (!strcmp(method, "ListClients")) {

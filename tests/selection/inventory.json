@@ -19175,6 +19175,59 @@
         "gnostr-test-nip29-migration"
       ],
       "runtime_inputs": []
+    },
+    "grotto.permissions.repeat": {
+      "nodes": [
+        "grotto.daemon",
+        "grotto.gui",
+        "nip55l.dbus_contract",
+        "nip55l.glib",
+        "nip55l.test_inputs",
+        "testing.common_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "core.linux.asan",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "signer/permission-repeat"
+        ],
+        "core.linux.asan": [
+          "signer/permission-repeat"
+        ],
+        "groundhog.linux": [
+          "signer/permission-repeat"
+        ],
+        "groundhog.mdk08": [
+          "signer/permission-repeat"
+        ],
+        "groundhog.mdk011": [
+          "signer/permission-repeat"
+        ],
+        "grotto.linux": [
+          "signer/permission-repeat"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "signer/permission-repeat"
+        ]
+      },
+      "build_targets": [
+        "test-permission-repeat"
+      ],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
     }
   },
   "coverage_gaps": [

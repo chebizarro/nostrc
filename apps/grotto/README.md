@@ -107,9 +107,9 @@ module owns `org.nostr.Shell.Signer1`, preventing duplicate indicators.
   Local apps need no pairing. Approved remote connections waiting for relay OK
   remain visibly incomplete, not paired.
 - **Preferences**: background/login, appearance/accessibility, management lock,
-  screen-lock pause, required-confirmation event types, remote runtime/configuration,
-  1–30 day activity retention, and About. Required-confirmation defaults and Medium's
-  public-publishing set come from G03 policy data; final membership awaits owner sign-off.
+  screen-lock pause, ask-by-default event types, remote runtime/configuration,
+  1–30 day activity retention, and About. The owner-approved ask-by-default list
+  never overrides a saved grant; Medium's public-publishing set is unchanged.
 
 A client opens its label, verified principal, Full/Medium/Low trust, effective
 read-only policy rows, explicit editable permissions with absolute expiry, recent
@@ -119,6 +119,38 @@ are preserved. Editors use an owner/epoch/revision-bracketed permission snapshot
 submit once with `expected_revision`, and surface conflicts instead of overwriting.
 Identity avatars open G09's pinned identity/backup page. “Default for older apps”
 is a separate daemon action, never changed by management selection.
+
+### Permission choices
+
+**Allow once** is the default. **Always allow this app to <operation/kind> as <identity>**
+saves that exact scope until revoked; **24 hours** is the temporary alternative.
+There is no always-confirm class, TTL dropdown or Forever confirmation. **Deny once**
+always denies just this request. **Block this operation for this app** saves a scoped
+deny; **Block app…** requires confirmation and denies the whole app until unblocked
+on its Permissions page. Initial remote connection offers **Pair application**, not
+a remembered connect grant. Paired reconnect uses separate pairing admission.
+
+**Trust this app for routine operations** is one approver-only Control1 decision
+that saves the versioned Full preset and completes this request. Routine access
+includes reads, publishing and messaging; ask-by-default kinds (AUTH, DM/seal/wrap,
+profile/contacts/relay-list, deletion and zap requests) need their first scoped grant.
+Unknown/custom kinds need an explicit grant. Old Full clients show **Previous access
+policy** and keep their old ceiling until one explicit upgrade. Lowering access
+never removes saved permissions. Exact npub grants do not move to a new default identity.
+
+AUTH permissions name one canonical relay URL, not a challenge. Every requested
+AUTH event must have one relay, one nonempty challenge, empty content and a timestamp
+within ten minutes. This validates the app's claim, not its transport provenance.
+Named claims on macOS are unverifiable; the shared empty `claimed:` principal cannot
+receive reusable consent. No conversation-key export method exists; use NIP-44 decrypt.
+
+Dormant old grants migrate before evaluation to inactive **policy-review** rows,
+not the legacy 90-day review state. Their provenance and original absolute expiry,
+including zero indefinitely, are retained. Review offers activation, allow once or
+discard. AUTH activation names the current relay. The Permissions page shows the
+daemon's active/inactive/expired state and reason, and owns duration editing.
+Flow encryption/seal choices are fully ephemeral, with the same bounded first-arrival
+window; neither writes disk rows. Grant/preset changes re-evaluate waiting requests.
 
 Blueprint is authoritative. Use **blueprint-compiler 0.22.2** (official GNOME
 release), GTK ≥4.14, libadwaita ≥1.5 and GLib ≥2.80. Meson uses prebuilt nostrc libraries; select another CMake build with
@@ -233,8 +265,8 @@ grotto
 ## Security Considerations
 
 - Private keys are stored encrypted using the system keyring (Linux: libsecret, macOS: Keychain)
-- Requests use the shared daemon gate: explicit denies, required-confirmation kinds,
-  per-client tiers and scoped permissions determine whether a new review is needed.
+- Requests use the shared daemon gate: explicit denies, scoped permissions,
+  bounded ephemeral consent and versioned access presets determine whether review is needed.
 - Grotto is not a security boundary against same-user malware. PID-attested Linux
   checks installed executable paths/inodes; UID-only buses have weaker inherited
   caller/approver guarantees (see the D-Bus interface limitations).

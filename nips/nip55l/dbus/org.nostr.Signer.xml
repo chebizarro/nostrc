@@ -3,7 +3,7 @@
     <!-- Access control (nip55l 0.4.0). Every method below except StoreKey,
          ClearKey, ApproveRequest, ApproveFlowRequest and GetApprovalInfo is approval-gated:
          GetPublicKey, GetRelays, SignEvent, NIP04*, NIP44* (incl. B64),
-         NIP44DeriveConversationKey and DecryptZapEvent, plus their *ForApp
+         DecryptZapEvent, plus their *ForApp
          variants. The caller is identified from its bus connection
          (Flatpak app id, systemd app scope + executable, or executable) -
          never from an argument. A remembered decision is keyed on
@@ -14,7 +14,7 @@
          identity, operation and canonical arguments share a request; each
          continuation is cancelled independently on disconnect. IDs are
          opaque CSPRNG values, not enumerable counters. Kinds: event,
-         nip44_conversation_key, get_public_key, get_relays, nip04_encrypt,
+         get_public_key, get_relays, nip04_encrypt,
          nip04_decrypt, nip44_encrypt, nip44_decrypt, zap_decrypt.
          An app_id argument is a web-origin sub-principal only when the
          caller is the installed browser bridge (nostr-signer-webext-host);
@@ -50,7 +50,7 @@
          calls on one connection are handled in order, so a client may send
          this, unawaited, right before a gated call. -->
     <!-- CallWithContext (0.7.0, additive): arguments is the exact input tuple
-         of SignEvent, NIP44DeriveConversationKey,
+         of SignEvent,
          NIP04Encrypt/Decrypt or NIP44Encrypt/Decrypt; reply wraps that method's
          output tuple. Same caller authentication, gate and backend as direct
          calls. GetPublicKey/GetRelays remain direct-only: D-Bus cannot encode
@@ -177,24 +177,6 @@
       <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="plaintextB64" />
     </method>
-    <!-- NIP44DeriveConversationKey (nip55l 0.3.0): the NIP-44 v2
-         conversation key between `identity` and peerPubKey (64-hex x-only),
-         i.e. HKDF-extract(SHA256, ECDH shared-x, salt "nip44-v2"), as 64
-         lowercase hex. The secret key never leaves the signer, but the
-         returned key opens every NIP-44 payload exchanged with that peer, so
-         the call goes through the same approval flow as SignEvent (kind
-         "nip44_conversation_key", preview = the peer). nostr-seal (nostrc-da9c) derives
-         with a per-file ephemeral peer, so the key it obtains opens one
-         file's key stanza and nothing else.
-         Errors: Error.InvalidInput (peer not a curve point / not 64-hex),
-         Error.ApprovalDenied, Error.RateLimited, Error.NoKeyConfigured,
-         Error.Internal. -->
-    <method name="NIP44DeriveConversationKey">
-      <arg type="s" direction="in" name="peerPubKey" />
-      <arg type="s" direction="in" name="identity" />
-      <arg type="s" direction="in" name="app_id" />
-      <arg type="s" direction="out" name="conversationKey" />
-    </method>
     <method name="DecryptZapEvent">
       <arg type="s" direction="in" name="eventJson" />
       <arg type="s" direction="in" name="identity" />
@@ -242,12 +224,12 @@
          (grotto, by executable path and inode, or its Flatpak) may
          call these; anyone else gets Error.PermissionDenied. remember=true
          stores the decision for (principal, identity, kind), for
-         ttl_seconds or forever (0); it is ignored for an unidentified
-         caller. A decision covers every queued call that joined the
+         ttl_seconds or until revoked (0). Unidentified, empty-claim, management
+         self-test and connect requests cannot receive reusable consent. A decision covers every queued call that joined the
          request. Unanswered requests expire after 300 s. -->
     <!-- Approver-only explicit room-send choices, pinned to the pending request.
-         Encryption creates an expiring scoped permission; required seal signing
-         creates bounded in-memory flow consent. ttl_seconds is 1..600. -->
+         Both encryption and seal signing create only bounded in-memory flow
+         consent. No disk rows. One first-arrival deadline; ttl_seconds is 1..600. -->
     <method name="ApproveFlowRequest">
       <arg type="s" direction="in" name="request_id" />
       <arg type="b" direction="in" name="encrypt" />

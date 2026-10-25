@@ -130,6 +130,9 @@ static void test_flow_invalidation(void) {
     g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
         "lifecycle", 3, 0, "first", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
     g_assert_true(signer_permissions_consent_room(p, principal, identity, 0, "lifecycle", 3, TRUE, TRUE, 600, NULL));
+    /* Flow consent writes no rows. An independently saved grant forces the
+     * fallible durable revocation path, without confusing it with flow scope. */
+    g_assert_true(signer_permissions_remember(p, principal, identity, "nip44_decrypt", -1, TRUE, 0, NULL));
     g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
         "lifecycle", 3, 0, "used", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
     g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-permissions-v2.ini", NULL);
@@ -158,7 +161,7 @@ static void test_flow_invalidation(void) {
       g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &old), ==, 0); signal(SIGXFSZ, handler);
       g_assert_false(ok); g_assert_true(removed);
       g_autofree gchar *after = NULL; g_assert_true(g_file_get_contents(path, &after, NULL, NULL));
-      g_assert_cmpstr(original, ==, after); /* persistent encryption survives failed write, flow does not */
+      g_assert_cmpstr(original, ==, after); /* explicit decryption survives failed write, flow does not */
     }
     g_assert_false(signer_permissions_revision_is_current(p, revision));
     g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
@@ -189,9 +192,12 @@ static void test_pause_generation_and_no_identity(void) {
   Reply connect = {0}; Decision e = {0};
   g_autoptr(SignerGateHandle) hc = submit(s, who, "new-connection", SIGNER_GATE_CONNECT, NULL, NULL, &connect);
   wait_prompts(&w, 2); signer_approval_service_decide(s, request_id(&w, 1), TRUE, TRUE, 0, decided, &e);
+  g_assert_cmpuint(e.count, ==, 1); g_assert_false(e.ok); g_assert_cmpuint(connect.count, ==, 0);
+  g_free(e.error); e = (Decision){0};
+  signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &e);
   wait_count(&connect.count, 1); wait_count(&e.count, 1);
   g_assert_cmpstr(connect.result, ==, "ack"); g_assert_true(e.ok);
-  g_autoptr(GVariant) grants = signer_approval_service_list_grants(s); g_assert_cmpuint(g_variant_n_children(grants), ==, 1);
+  g_autoptr(GVariant) grants = signer_approval_service_list_grants(s); g_assert_cmpuint(g_variant_n_children(grants), ==, 0);
   reply_clear(&ping); reply_clear(&connect); stop(s, &w); g_setenv("NOSTR_SIGNER_SECKEY_HEX", KEY, TRUE);
 }
 #ifdef NIP55L_TEST_TRUST_ENV
@@ -257,13 +263,16 @@ static void test_revoke_queued_scope(void) {
   wait_prompts(&w, 3);
   g_autoptr(GVariant) info = signer_approval_service_info(s, request_id(&w, 1));
   const gchar *identity = NULL; g_assert_true(g_variant_lookup(info, "identity", "&s", &identity));
-  g_assert_true(signer_permissions_remember(signer_approval_service_permissions(s), who.principal,
-      identity, "event", NOSTR_KIND_TEXT_NOTE, TRUE, 0, NULL));
   signer_approval_service_decide(s, request_id(&w, 0), TRUE, FALSE, 0, decided, &first);
   g_mutex_lock(&barrier.lock); gint64 bound = g_get_monotonic_time() + 20 * G_USEC_PER_SEC;
   while (!barrier.ready) g_assert_true(g_cond_wait_until(&barrier.cond, &barrier.lock, bound));
   g_mutex_unlock(&barrier.lock);
+  /* A grant now retires eligible pending work immediately. Occupy the worker
+   * first, then grant, so the event is queued (not already executed) at revoke. */
+  g_assert_true(signer_permissions_remember(signer_approval_service_permissions(s), who.principal,
+      identity, "event", NOSTR_KIND_TEXT_NOTE, TRUE, 0, NULL));
   signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &de);
+  g_assert_cmpuint(de.count, ==, 1); g_assert_false(de.ok); /* already auto-admitted */
   signer_approval_service_decide(s, request_id(&w, 2), TRUE, FALSE, 0, decided, &dr);
   gboolean removed = FALSE;
   g_assert_true(signer_approval_service_revoke_grant(s, "event", who.principal, identity, &removed));
@@ -608,7 +617,9 @@ static void test_connect_scope_hints(void) {
   g_assert_cmpstr(values[2], ==, "nip44_encrypt"); g_free(values);
   const gchar *source = NULL; g_assert_true(g_variant_lookup(summary, "requested_permissions_source", "&s", &source));
   g_assert_cmpstr(source, ==, "client-hints");
-  signer_approval_service_decide(s, request_id(&w, 0), TRUE, TRUE, 600, decided, &decision);
+  gboolean rememberable = TRUE;
+  g_assert_true(g_variant_lookup(info, "rememberable", "b", &rememberable)); g_assert_false(rememberable);
+  signer_approval_service_decide(s, request_id(&w, 0), TRUE, FALSE, 0, decided, &decision);
   wait_count(&result.count, 1); g_assert_null(result.error); g_assert_cmpstr(result.result, ==, "ack");
   g_assert_cmpint(signer_permissions_evaluate(signer_approval_service_permissions(s), who->principal, "*", "event", 1, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   reply_clear(&result); g_free(decision.error); stop(s, &w);
@@ -689,8 +700,8 @@ static void test_headless_defaults(void) {
 static GVariant *event_summary(SignerApprovalService *s, Watch *w, guint32 kind,
                                const gchar *tags, const gchar *content) {
   guint index = w->pending->len;
-  g_autofree gchar *json = g_strdup_printf("{\"kind\":%u,\"tags\":%s,\"content\":\"%s\"}",
-                                          kind, tags, content);
+  g_autofree gchar *json = g_strdup_printf("{\"kind\":%u,\"created_at\":%" G_GINT64_FORMAT ",\"tags\":%s,\"content\":\"%s\"}",
+                                          kind, g_get_real_time() / G_USEC_PER_SEC, tags, content);
   g_autofree gchar *connection = g_strdup_printf("summary-%u", index);
   SignerCaller who = local_caller();
   Reply result = {0};
@@ -708,20 +719,25 @@ static void assert_summary_string(GVariant *summary, const gchar *key, const gch
   g_assert_true(g_variant_lookup(summary, key, "&s", &value));
   g_assert_cmpstr(value, ==, expected);
 }
+static void invalid_auth(SignerApprovalService *s, Watch *w, const gchar *tags) {
+  guint before = w->pending->len;
+  g_autofree gchar *json = g_strdup_printf("{\"kind\":22242,\"created_at\":%" G_GINT64_FORMAT ",\"tags\":%s,\"content\":\"\"}",
+      g_get_real_time() / G_USEC_PER_SEC, tags);
+  SignerCaller who = local_caller(); Reply result = {0};
+  g_autoptr(SignerGateHandle) h = submit(s, &who, "invalid-auth", SIGNER_GATE_SIGN_EVENT, json, NULL, &result);
+  wait_count(&result.count, 1); g_assert_cmpstr(result.error, ==, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT);
+  g_assert_cmpuint(w->pending->len, ==, before); reply_clear(&result);
+}
 static void test_readable_summaries(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w);
   g_autoptr(GVariant) auth = event_summary(s, &w, NOSTR_KIND_CLIENT_AUTHENTICATION,
-      "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "PRIVATE-PAYLOAD");
-  assert_summary_string(auth, "auth_relay", "wss://nos.lol");
+      "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "");
+  assert_summary_string(auth, "auth_relay", "wss://nos.lol/");
   g_autofree gchar *auth_dump = g_variant_print(auth, FALSE);
   g_assert_null(strstr(auth_dump, "PAIRING-TOKEN"));
   g_assert_null(strstr(auth_dump, "PRIVATE-PAYLOAD"));
-  g_autoptr(GVariant) unsafe = event_summary(s, &w, NOSTR_KIND_CLIENT_AUTHENTICATION,
-      "[[\"relay\",\"wss://user:password@nos.lol/?token=SECRET\"]]", "");
-  g_assert_null(g_variant_lookup_value(unsafe, "auth_relay", NULL));
-  g_autoptr(GVariant) ambiguous = event_summary(s, &w, NOSTR_KIND_CLIENT_AUTHENTICATION,
-      "[[\"relay\",\"wss://nos.lol\"],[\"relay\",\"wss://relay.nostr.band\"]]", "");
-  g_assert_null(g_variant_lookup_value(ambiguous, "auth_relay", NULL));
+  invalid_auth(s, &w, "[[\"relay\",\"wss://user:password@nos.lol/?token=SECRET\"],[\"challenge\",\"x\"]]");
+  invalid_auth(s, &w, "[[\"relay\",\"wss://nos.lol\"],[\"relay\",\"wss://relay.nostr.band\"],[\"challenge\",\"x\"]]");
   g_autoptr(GVariant) deletion = event_summary(s, &w, NOSTR_KIND_DELETION,
       "[[\"e\",\"target-1\"],[\"e\",\"target-2\"],[\"a\",\"address\"],[\"k\",\"1\"]]", "");
   guint count = 0;

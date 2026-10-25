@@ -53,16 +53,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Trust Level</property>
-                        <property name="description" translatable="yes">Required-confirmation events and key exports still need review. Explicit denials always win.</property>
+                        <property name="description" translatable="yes">Explicit denials win. Saved permissions override presets; ask-by-default kinds need a scoped first grant.</property>
                         <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Full</property>
-                            <property name="subtitle" translatable="yes">Auto-sign all requests</property>
+                          <object class="AdwActionRow" id="full_access_row">
+                            <property name="title" translatable="yes">Routine access</property>
+                            <property name="subtitle" translatable="yes">Routine operations, not custom kinds</property>
                             <property name="activatable-widget">full</property>
                             <child type="prefix">
                               <object class="GtkCheckButton" id="full">
                                 <accessibility>
-                                  <property name="label" translatable="yes">Full: Auto-sign all requests</property>
+                                  <property name="label" translatable="yes">Full: Routine operations, not custom kinds</property>
                                 </accessibility>
                               </object>
                             </child>
@@ -85,15 +85,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Low</property>
-                            <property name="subtitle" translatable="yes">Ask for every request</property>
+                            <property name="title" translatable="yes">Ask unless permitted</property>
+                            <property name="subtitle" translatable="yes">Ask unless permitted</property>
                             <property name="activatable-widget">low</property>
                             <child type="prefix">
                               <object class="GtkCheckButton" id="low">
                                 <property name="group">full</property>
                                 <property name="active">true</property>
                                 <accessibility>
-                                  <property name="label" translatable="yes">Low: Ask for every request</property>
+                                  <property name="label" translatable="yes">Ask unless permitted</property>
                                 </accessibility>
                               </object>
                             </child>

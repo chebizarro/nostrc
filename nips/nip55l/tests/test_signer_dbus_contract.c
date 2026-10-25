@@ -4,9 +4,8 @@
  * nostr-signer-daemon on it, and drives the full round-trip through the
  * generated org.nostr.Signer glue: GetPublicKey → SignEvent (with a
  * pre-populated ACL) → parse and cryptographically verify the returned
- * event → NIP44EncryptB64 → NIP44DecryptB64 → NIP44DeriveConversationKey
- * (ACL allow / ACL deny / interactive ApprovalRequested → ApproveRequest
- * approve + deny / malformed peer) → GetRelays → StoreKey /
+ * event → named NIP44EncryptB64 / NIP44DecryptB64 variants → removed
+ * conversation-key methods return UnknownMethod → GetRelays → StoreKey /
  * ClearKey (best-effort; libsecret required and skipped clean if absent).
  * Phase 3 (nostrc-bml6, needs gnome-keyring-daemon; skipped clean if absent)
  * runs a real Secret Service on the private bus: legacy-schema items seeded
@@ -173,8 +172,35 @@ static void wait_for_vanished(GDBusConnection *bus, const char *name, guint time
   CHECK(w.appeared);
 }
 
+/* Reusable-consent contract cases explicitly identify their test app. Plain
+ * claimless methods on UID-only buses are covered by G15's refusal test, not
+ * provisioned with the former shared claimed: authority. Invalid tuples are
+ * deliberately left untouched so the wire still rejects their real signature. */
+static const gchar *named_client_method(const gchar *method, GVariant **args, gchar **owned) {
+  static const struct { const gchar *name, *signature; } methods[] = {
+    {"GetPublicKey", NULL}, {"GetRelays", NULL},
+    {"NIP04Encrypt", "(sss)"}, {"NIP04Decrypt", "(sss)"},
+    {"NIP44Encrypt", "(sss)"}, {"NIP44Decrypt", "(sss)"},
+    {"NIP44EncryptB64", "(sss)"}, {"NIP44DecryptB64", "(sss)"},
+    {"DecryptZapEvent", "(ss)"}
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(methods); i++) {
+    if (strcmp(method, methods[i].name) ||
+        (methods[i].signature ? !*args || !g_variant_is_of_type(*args, G_VARIANT_TYPE(methods[i].signature)) : *args != NULL)) continue;
+    g_autoptr(GVariant) original = *args ? g_variant_ref_sink(*args) : NULL;
+    GVariantBuilder tuple; g_variant_builder_init(&tuple, G_VARIANT_TYPE_TUPLE);
+    for (gsize j = 0; original && j < g_variant_n_children(original); j++) {
+      g_autoptr(GVariant) child = g_variant_get_child_value(original, j);
+      g_variant_builder_add_value(&tuple, child);
+    }
+    g_variant_builder_add(&tuple, "s", "contract-test");
+    *args = g_variant_builder_end(&tuple); *owned = g_strconcat(method, "ForApp", NULL); return *owned;
+  }
+  return method;
+}
 static GVariant *call(GDBusConnection *bus, const char *method, GVariant *args,
                       const char *reply_sig, GError **err) {
+  g_autofree gchar *named = NULL; method = named_client_method(method, &args, &named);
   return g_dbus_connection_call_sync(bus, BUS_NAME, OBJ_PATH, IFACE, method,
                                      args, G_VARIANT_TYPE(reply_sig),
                                      G_DBUS_CALL_FLAGS_NONE, 10000, NULL, err);
@@ -380,7 +406,7 @@ static void seed_fixture_permissions(Ctx *ctx, const gchar *body, const gchar *n
 }
 
 static char *expand_grants(const Ctx *ctx, const char *tmpl) {
-  static const char *claims[] = { "claimed:", "claimed:contract-test" };
+  static const char *claims[] = { "claimed:contract-test" };
   GString *o = g_string_new(NULL);
   gchar **lines = g_strsplit(tmpl, "\n", -1);
   for (guint i = 0; lines[i]; i++) {
@@ -478,7 +504,7 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
 #ifdef __linux__
   CHECK(ctx->attested);
 #endif
-  ctx->principal = ctx->attested ? self_principal() : g_strdup("claimed:");
+  ctx->principal = ctx->attested ? self_principal() : g_strdup("claimed:contract-test");
 
   /* Grants ($XDG_CONFIG_HOME/gnostr/signer-grants.ini): section = request
    * kind, key "<principal>|<npub or *>". */
@@ -536,7 +562,7 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
 /* Phases 1-2 run with full grants for this process: the lanes themselves
  * are under test there, the gate is exercised in the gating phase. */
 #define ALL_KINDS_GRANT \
-  "[event]\n@P|*=allow\n[nip44_conversation_key]\n@P|@N=allow\n" \
+  "[event]\n@P|*=allow\n" \
   "[get_public_key]\n@P|*=allow\n[get_relays]\n@P|*=allow\n" \
   "[nip44_encrypt]\n@P|@N=allow\n[nip44_decrypt]\n@P|@N=allow\n"
 
@@ -636,13 +662,13 @@ static void test_sign_event_ok(Ctx *ctx) {
   /* Zero created_at is filled with the current time. */
   int64_t before = (int64_t)time(NULL);
   g_autofree gchar *auth = g_strdup_printf("{\"kind\":%d,\"created_at\":0,"
-      "\"tags\":[[\"challenge\",\"abc\"]],\"content\":\"\"}", NOSTR_KIND_CLIENT_AUTHENTICATION);
-  /* AUTH always needs fresh consent, even in a fixture with publishing grants. */
+      "\"tags\":[],\"content\":\"\"}", NOSTR_KIND_ARTICLE);
+  /* An ungranted article prompts. AUTH instead requires a caller-supplied fresh timestamp. */
   ret = interactive(ctx, "SignEvent", g_variant_new("(sss)", auth, "", "contract-test"),
       "event", pr(ctx, "contract-test"), TRUE, FALSE, NULL, &err);
   CHECK(ret != NULL);
   g_variant_get(ret, "(&s)", &signed_json);
-  assert_signed_event(signed_json, ctx->pk_hex, NOSTR_KIND_CLIENT_AUTHENTICATION, before);
+  assert_signed_event(signed_json, ctx->pk_hex, NOSTR_KIND_ARTICLE, before);
   g_variant_unref(ret);
 }
 
@@ -743,20 +769,6 @@ static void test_nip44_b64_roundtrip(Ctx *ctx) {
   g_free(b64_in);
   free(peer_sk);
   free(peer_pk);
-}
-
-/* ---- NIP44DeriveConversationKey (nostrc-da9c) --------------------------- */
-
-static char *expected_convkey_hex(const char *peer_sk_hex, const char *my_pk_hex) {
-  /* ECDH is symmetric: convkey(my_sk, peer_pk) == convkey(peer_sk, my_pk). */
-  uint8_t sk[32], pk[32], ck[32];
-  CHECK(nostr_hex2bin(sk, peer_sk_hex, sizeof sk));
-  CHECK(nostr_hex2bin(pk, my_pk_hex, sizeof pk));
-  CHECK(nostr_nip44_convkey(sk, pk, ck) == 0);
-  char *hex = g_malloc(65);
-  for (int i = 0; i < 32; i++) g_snprintf(hex + 2 * i, 3, "%02x", ck[i]);
-  hex[64] = '\0';
-  return hex;
 }
 
 static void expect_remote_error(GError *err, const char *name) {
@@ -876,6 +888,7 @@ static void watch_stop(Ctx *ctx, Watch *w) {
 }
 
 static void watch_call(Ctx *ctx, Watch *w, const char *method, GVariant *args) {
+  g_autofree gchar *named = NULL; method = named_client_method(method, &args, &named);
   w->a.pending_replies++;
   g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, method, args,
                          G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL,
@@ -950,62 +963,14 @@ static GVariant *no_prompt(Ctx *ctx, const char *method, GVariant *args, GError 
 }
 
 static void test_nip44_derive_conversation_key(Ctx *ctx) {
-  char *peer_sk = nostr_key_generate_private();
-  char *peer_pk = nostr_key_get_public(peer_sk);
-  CHECK(peer_sk && peer_pk);
-  char *want = expected_convkey_hex(peer_sk, ctx->pk_hex);
-
-  /* Granted: answered immediately, equal to the NIP-44 derivation on the
-   * peer's side, and usable with the stock NIP-44 v2 cipher. */
-  GError *err = NULL;
-  GVariant *ret = no_prompt(ctx, "NIP44DeriveConversationKey",
-                            g_variant_new("(sss)", peer_pk, "", "contract-test"), &err);
-  if (!ret) { g_printerr("NIP44DeriveConversationKey: %s\n", err ? err->message : "?"); exit(1); }
-  const char *hex = NULL;
-  g_variant_get(ret, "(&s)", &hex);
-  CHECK(strlen(hex) == 64);
-  CHECK(g_strcmp0(hex, want) == 0);
-  {
-    uint8_t ck[32], peer_sk_bin[32], my_pk_bin[32];
-    CHECK(nostr_hex2bin(ck, hex, sizeof ck));
-    CHECK(nostr_hex2bin(peer_sk_bin, peer_sk, sizeof peer_sk_bin));
-    CHECK(nostr_hex2bin(my_pk_bin, ctx->pk_hex, sizeof my_pk_bin));
-    char *payload = NULL;
-    CHECK(nostr_nip44_encrypt_v2(peer_sk_bin, my_pk_bin, (const uint8_t *)"sealed", 6, &payload) == 0);
-    uint8_t *pt = NULL; size_t pt_len = 0;
-    CHECK(nostr_nip44_decrypt_v2_with_convkey(ck, payload, &pt, &pt_len) == 0);
-    CHECK(pt_len == 6 && memcmp(pt, "sealed", 6) == 0);
-    free(pt); free(payload);
-  }
-  g_variant_unref(ret);
-
-  /* Uppercase hex peers are the same key. */
-  gchar *upper = g_ascii_strup(peer_pk, -1);
-  ret = call(ctx->bus, "NIP44DeriveConversationKey",
-             g_variant_new("(sss)", upper, "", "contract-test"), "(s)", &err);
-  CHECK(ret != NULL);
-  g_variant_get(ret, "(&s)", &hex);
-  CHECK(g_strcmp0(hex, want) == 0);
-  g_variant_unref(ret);
-  g_free(upper);
-
-  /* Malformed and off-curve peers: InvalidInput, never an approval prompt.
-   * x = 5 has no point on secp256k1 (5^3 + 7 = 132 is a non-residue). */
-  const char *bad[] = {
-    "zz", "not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-hex",
-    "0000000000000000000000000000000000000000000000000000000000000005",
-  };
-  for (size_t i = 0; i < G_N_ELEMENTS(bad); i++) {
-    ret = call(ctx->bus, "NIP44DeriveConversationKey",
-               g_variant_new("(sss)", bad[i], "", "contract-test"), "(s)", &err);
+  const gchar *removed[] = {"NIP44DeriveConversationKey", "NIP44DeriveConversationKeyForApp"};
+  for (guint i = 0; i < G_N_ELEMENTS(removed); i++) {
+    GError *err = NULL;
+    GVariant *ret = call(ctx->bus, removed[i], g_variant_new("(sss)", "", "", ""), "(s)", &err);
     CHECK(ret == NULL);
-    expect_remote_error(err, ERR_INVALID);
+    expect_remote_error(err, "org.freedesktop.DBus.Error.UnknownMethod");
     g_clear_error(&err);
   }
-
-  g_free(want);
-  free(peer_sk);
-  free(peer_pk);
 }
 
 /* Incoming NIP-44 / NIP-04 payloads addressed to the daemon's identity. */
@@ -1180,7 +1145,7 @@ static void test_readable_summary_contract(Ctx *ctx) {
   g_autofree gchar *targets = g_strdup_printf("[[\"e\",\"%s\"],[\"k\",\"%u\"]]", id, NOSTR_KIND_TEXT_NOTE);
   g_autofree gchar *recipient = g_strdup_printf("[[\"p\",\"%s\"]]", id);
   struct { guint32 kind; const gchar *tags, *content, *key, *expected; } cases[] = {
-    {NOSTR_KIND_CLIENT_AUTHENTICATION, "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "", "auth_relay", "wss://nos.lol"},
+    {NOSTR_KIND_CLIENT_AUTHENTICATION, "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "", "auth_relay", "wss://nos.lol/"},
     {NOSTR_KIND_DELETION, targets, "", NULL, NULL},
     {NOSTR_KIND_REPOST, targets, "EMBEDDED-PRIVATE-JSON", "target_event_id", id},
     {NOSTR_KIND_GENERIC_REPOST, targets, "", "target_event_id", id},
@@ -1191,8 +1156,8 @@ static void test_readable_summary_contract(Ctx *ctx) {
   for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
     Watch w; watch_start(ctx, &w);
     GDBusConnection *consumer = open_conn(); /* fresh sender; no prompt-limit sleep */
-    g_autofree gchar *json = g_strdup_printf("{\"kind\":%u,\"tags\":%s,\"content\":\"%s\"}",
-                                            cases[i].kind, cases[i].tags, cases[i].content);
+    g_autofree gchar *json = g_strdup_printf("{\"kind\":%u,\"created_at\":%" G_GINT64_FORMAT ",\"tags\":%s,\"content\":\"%s\"}",
+                                            cases[i].kind, g_get_real_time() / G_USEC_PER_SEC, cases[i].tags, cases[i].content);
     w.a.pending_replies++;
     g_dbus_connection_call(consumer, BUS_NAME, OBJ_PATH, IFACE, "SignEvent",
         g_variant_new("(sss)", json, ctx->npub, "summary-contract"), G_VARIANT_TYPE("(s)"),
@@ -1458,16 +1423,6 @@ static void test_gating(Ctx *ctx) {
     CHECK(r != NULL); g_variant_get(r, "(b)", &removed); CHECK(!removed); g_variant_unref(r);
   }
 
-  /* Convkey: remembered deny → denied by policy without a prompt. */
-  r = interactive(ctx, "NIP44DeriveConversationKey", g_variant_new("(sss)", peer_pk, "", "contract-ask"),
-                  "nip44_conversation_key", pr(ctx, "contract-ask"), FALSE, TRUE, &preview, &err);
-  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
-  CHECK(preview && strstr(preview, peer_pk) != NULL);
-  g_free(preview); preview = NULL;
-  r = no_prompt(ctx, "NIP44DeriveConversationKey", g_variant_new("(sss)", peer_pk, "", "contract-ask"), &err);
-  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
-  g_usleep(150 * 1000);
-
   /* Queued identical calls share one prompt; one approval answers all. */
   {
     g_usleep(120 * 1000);
@@ -1620,8 +1575,8 @@ static GError *answer_parked(Ctx *ctx, GDBusConnection *c, const char *peer_pk,
   Watch w;
   watch_start(ctx, &w);
   w.a.pending_replies++;
-  g_dbus_connection_call(c, BUS_NAME, OBJ_PATH, IFACE, "NIP44Encrypt",
-                         g_variant_new("(sss)", "hi", peer_pk, selector), G_VARIANT_TYPE("(s)"),
+  g_dbus_connection_call(c, BUS_NAME, OBJ_PATH, IFACE, "NIP44EncryptForApp",
+                         g_variant_new("(ssss)", "hi", peer_pk, selector, "contract-test"), G_VARIANT_TYPE("(s)"),
                          G_DBUS_CALL_FLAGS_NONE, 15000, NULL, on_async_reply, &w.a);
   watch_wait_request(&w, 1);
   CHECK(g_strcmp0(w.a.identity, want_identity) == 0);
@@ -2203,8 +2158,6 @@ static void test_selector_not_key_material(Ctx *ctx) {
   r = call(ctx->bus, "SignEvent", g_variant_new("(sss)", tmpl, onsec, "contract-test"), "(s)", &err);
   CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
   /* Same rule for the other identity-taking methods. */
-  r = call(ctx->bus, "NIP44DeriveConversationKey", g_variant_new("(sss)", opk, osk, "contract-test"), "(s)", &err);
-  CHECK(r == NULL); expect_remote_error(err, "org.nostr.Signer.Error.NoKeyConfigured"); g_clear_error(&err);
   r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", opk, ctx->pk_hex), "(s)", &err);
   if (!r) { g_printerr("NIP44Encrypt(own hex pubkey selector): %s\n", err ? err->message : "?"); exit(1); }
   g_variant_unref(r);
@@ -3143,7 +3096,7 @@ static char *sign_with(Ctx *ctx, const char *selector, GError **err) {
  * that resolves is served at once, never parked for approval. */
 #define IDENTITY_GRANTS \
   "[event]\n@P|*=allow\n[nip44_encrypt]\n@P|*=allow\n" \
-  "[nip44_conversation_key]\n@P|*=allow\n[get_public_key]\n@P|*=allow\n"
+  "[get_public_key]\n@P|*=allow\n"
 
 /* SignEvent with @selector signs as @want_pk_hex. */
 static void expect_signs_as(Ctx *ctx, const char *selector, const char *want_pk_hex) {
@@ -3154,7 +3107,7 @@ static void expect_signs_as(Ctx *ctx, const char *selector, const char *want_pk_
   g_free(pk);
 }
 
-/* SignEvent, NIP44Encrypt and NIP44DeriveConversationKey with @selector all
+/* SignEvent and NIP44Encrypt with @selector both
  * fail with @want (nostrc-f6l29: NoKeyConfigured only when the signer holds
  * no such identity, Internal when its key store cannot be read). */
 static void expect_identity_error(Ctx *ctx, const char *selector, const char *want) {
@@ -3165,11 +3118,6 @@ static void expect_identity_error(Ctx *ctx, const char *selector, const char *wa
   expect_remote_error(err, want);
   g_clear_error(&err);
   GVariant *r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", ctx->pk_hex, selector), "(s)", &err);
-  CHECK(r == NULL);
-  expect_remote_error(err, want);
-  g_clear_error(&err);
-  r = call(ctx->bus, "NIP44DeriveConversationKey",
-           g_variant_new("(sss)", ctx->pk_hex, selector, "contract-test"), "(s)", &err);
   CHECK(r == NULL);
   expect_remote_error(err, want);
   g_clear_error(&err);

@@ -10,9 +10,8 @@ extern "C" {
 /* nip55l component version (see VERSION_MANIFEST.md). 0.2.0: the
  * org.nostr.Signer.SignEvent D-Bus method returns the complete signed event
  * JSON (nostr_nip55l_sign_event_json) instead of the bare signature.
- * 0.3.0 (additive): org.nostr.Signer.NIP44DeriveConversationKey, an
- * approval-gated export of the NIP-44 v2 conversation key for one peer
- * (nostr_nip55l_nip44_conversation_key; used by nostr-seal, nostrc-da9c).
+ * 0.7.0 (unreleased breaking correction): conversation-key export removed.
+ * Use NIP-44 encrypt/decrypt; no key material is exported.
  * 0.4.0 (ACL semantics): grants are keyed on a bus-derived caller principal
  * plus the npub the identity selector resolves to (never on the caller's
  * app_id string), GetPublicKey / GetRelays / NIP-04 / NIP-44 / DecryptZapEvent
@@ -116,13 +115,6 @@ int nostr_nip55l_nip44_encrypt_b64(const char *plaintext_b64, const char *peer_p
                                    const char *current_user, char **out_cipher_b64);
 int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_hex,
                                    const char *current_user, char **out_plaintext_b64);
-/* NIP-44 v2 conversation key between the selected identity and peer_pub_hex
- * (64-hex x-only), returned as 64 lowercase hex. Same derivation as
- * nostr_nip44_convkey; the secret key stays in the signer. INVALID_KEY for a
- * malformed or off-curve peer. Caller frees *out_convkey_hex with free(). */
-int nostr_nip55l_nip44_conversation_key(const char *peer_pub_hex,
-                                        const char *current_user,
-                                        char **out_convkey_hex);
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                    const char *current_user, char **out_json);
 /* GetRelays: the user's explicitly configured relays as a JSON array of

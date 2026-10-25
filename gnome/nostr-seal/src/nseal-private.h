@@ -9,8 +9,8 @@ G_BEGIN_DECLS
 
 gboolean nseal_write_all(int fd, const void *buf, gsize len, GError **error);
 
-/* Open one NIP-44 key stanza payload with an already-derived conversation
- * key (the signer lane derives it via NIP44DeriveConversationKey). */
+/* Local secret-key lane only. The remote signer lane uses nip44_decrypt
+ * and never obtains a conversation key. */
 gboolean nseal_unwrap_with_convkey(const uint8_t convkey[32], const char *payload,
                                    uint8_t out_file_key[NSEAL_FILE_KEY_LEN],
                                    GError **error);

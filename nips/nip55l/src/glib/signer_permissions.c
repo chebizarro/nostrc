@@ -18,7 +18,7 @@ struct _SignerPermissions {
   gpointer trust_data;
   SignerPermissionsChanged changed;
   gpointer changed_data;
-  GArray *required;
+  GArray *ask_by_default;
   GHashTable *flows, *flow_windows;
 #ifdef NIP55L_TEST_TRUST_ENV
   gint64 (*wall_clock)(gpointer);
@@ -28,7 +28,7 @@ struct _SignerPermissions {
 #endif
 };
 typedef struct {
-  gchar *principal, *identity, *operation, *decision, *legacy;
+  gchar *principal, *identity, *operation, *decision, *legacy, *relay;
   gint kind;
   guint64 expires, created;
 } Row;
@@ -54,7 +54,7 @@ static void flow_window_free(FlowWindow *w) {
 }
 static void row_free(Row *r) {
   g_free(r->principal); g_free(r->identity); g_free(r->operation);
-  g_free(r->decision); g_free(r->legacy); g_free(r);
+  g_free(r->decision); g_free(r->legacy); g_free(r->relay); g_free(r);
 }
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(Row, row_free)
 static guint64 now_seconds(SignerPermissions *p) {
@@ -87,9 +87,25 @@ void signer_permissions_set_flow_clock_for_test(SignerPermissions *p,
 static gboolean fail(GError **error, GIOErrorEnum code, const gchar *message) {
   g_set_error_literal(error, G_IO_ERROR, code, message); return FALSE;
 }
+gchar *signer_permissions_canonical_relay(const gchar *url) {
+  if (!url || !*url || strlen(url) > 2048) return NULL;
+  for (const gchar *p = url; *p; p++) if ((guchar)*p <= 32 || (guchar)*p >= 127) return NULL;
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_ENCODED, NULL);
+  if (!uri || !g_uri_get_host(uri) || !*g_uri_get_host(uri) || g_uri_get_userinfo(uri) ||
+      g_uri_get_query(uri) || g_uri_get_fragment(uri)) return NULL;
+  g_autofree gchar *scheme = g_ascii_strdown(g_uri_get_scheme(uri), -1);
+  g_autofree gchar *host = g_ascii_strdown(g_uri_get_host(uri), -1);
+  if (g_strcmp0(scheme, "ws") && g_strcmp0(scheme, "wss")) return NULL;
+  gint port = g_uri_get_port(uri);
+  if (port == 0 || port > 65535) return NULL;
+  if ((!strcmp(scheme, "ws") && port == 80) || (!strcmp(scheme, "wss") && port == 443)) port = -1;
+  const gchar *path = g_uri_get_path(uri);
+  /* Preserve encoded path bytes: %2F is not an interchangeable path separator. */
+  return g_uri_join(G_URI_FLAGS_ENCODED, scheme, NULL, host, port, path && *path ? path : "/", NULL, NULL);
+}
 static gboolean known_operation(const gchar *op) {
   static const gchar *const operations[] = {"event", "get_public_key", "get_relays", "ping", "connect",
-    "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", "nip44_conversation_key", "zap_decrypt", NULL};
+    "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", "zap_decrypt", NULL};
   return op && g_strv_contains(operations, op);
 }
 static gboolean valid_row(Row *r) {
@@ -97,8 +113,9 @@ static gboolean valid_row(Row *r) {
       !g_utf8_validate(r->principal, -1, NULL) || !g_utf8_validate(r->identity, -1, NULL) ||
       strlen(r->principal) > 4096 || strlen(r->identity) > 4096 || !r->operation || !*r->operation ||
       strlen(r->operation) > 64 || !g_utf8_validate(r->operation, -1, NULL) ||
+      !strcmp(r->operation, "nip44_conversation_key") ||
       (!known_operation(r->operation) && strcmp(r->decision, "deny")) ||
-      (strcmp(r->decision, "allow") && strcmp(r->decision, "deny") && g_strcmp0(r->decision, "review"))) return FALSE;
+      (strcmp(r->decision, "allow") && strcmp(r->decision, "deny") && g_strcmp0(r->decision, "review") && g_strcmp0(r->decision, "policy-review"))) return FALSE;
   gboolean event = !strcmp(r->operation, "event");
   if (r->kind < -1 || r->kind > G_MAXUINT16 || (!event && r->kind != -1)) return FALSE;
   if (event && r->kind == -1 && !strcmp(r->decision, "allow")) return FALSE;
@@ -109,6 +126,8 @@ static gboolean valid_row(Row *r) {
       strcmp(r->operation, "get_relays") && !inherited) return FALSE;
   if (!*r->identity && strcmp(r->operation, "get_relays") && strcmp(r->operation, "ping") && strcmp(r->operation, "connect")) return FALSE;
   if (!g_strcmp0(r->decision, "review") && (!r->created || !r->legacy || !*r->legacy)) return FALSE;
+  if (!g_strcmp0(r->decision, "policy-review") && (!r->legacy || !*r->legacy)) return FALSE;
+  if (r->relay && (!*r->relay || strcmp(r->operation, "event") || r->kind != NOSTR_KIND_CLIENT_AUTHENTICATION)) return FALSE;
   return TRUE;
 }
 static gchar *row_id(Row *r) {
@@ -121,6 +140,10 @@ static gchar *row_id(Row *r) {
   }
   g_autofree gchar *kind = g_strdup_printf(":%d", r->kind);
   g_checksum_update(hash, (const guchar *)kind, strlen(kind));
+  if (r->relay) {
+    g_autofree gchar *scope = g_strdup_printf(":relay:%" G_GSIZE_FORMAT ":%s", strlen(r->relay), r->relay);
+    g_checksum_update(hash, (const guchar *)scope, strlen(scope));
+  }
   gchar *id = g_strconcat("record-", g_checksum_get_string(hash), NULL);
   g_checksum_free(hash); return id;
 }
@@ -155,6 +178,7 @@ static Row *read_row(GKeyFile *kf, const gchar *id, GError **out_error) {
     if (*error) goto bad;
   }
   r->legacy = g_key_file_get_string(kf, id, "legacy-scope", NULL);
+  r->relay = g_key_file_get_string(kf, id, "relay", NULL);
   if (!valid_row(r)) { fail(error, G_IO_ERROR_INVALID_DATA, "invalid permission record"); goto bad; }
   expected = row_id(r);
   if (strcmp(expected, id)) { fail(error, G_IO_ERROR_INVALID_DATA, "permission record id does not match scope"); goto bad; }
@@ -174,10 +198,11 @@ static void write_row(GKeyFile *kf, Row *r) {
   g_key_file_set_uint64(kf, id, "expires-at", r->expires);
   if (r->created) g_key_file_set_uint64(kf, id, "created-at", r->created);
   if (r->legacy) g_key_file_set_string(kf, id, "legacy-scope", r->legacy);
+  if (r->relay) g_key_file_set_string(kf, id, "relay", r->relay);
 }
 static GKeyFile *new_records(void) {
   GKeyFile *kf = g_key_file_new();
-  g_key_file_set_integer(kf, "permissions", "version", 2); return kf;
+  g_key_file_set_integer(kf, "permissions", "version", 3); return kf;
 }
 static gchar *path_for(SignerPermissions *p, const gchar *name, GError **error) {
   g_autofree gchar *dir = g_build_filename(p->config_home, "gnostr", NULL);
@@ -218,14 +243,14 @@ SignerPermissions *signer_permissions_new(const gchar *config_home) {
   g_mutex_init(&p->lock); p->records = new_records(); p->revision = 1;
   p->flows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)flow_free);
   p->flow_windows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)flow_window_free);
-  p->required = g_array_new(FALSE, FALSE, sizeof(guint32));
-  g_array_append_vals(p->required, signer_default_required_confirmation_kinds,
-                      G_N_ELEMENTS(signer_default_required_confirmation_kinds)); return p;
+  p->ask_by_default = g_array_new(FALSE, FALSE, sizeof(guint32));
+  g_array_append_vals(p->ask_by_default, signer_default_ask_by_default_kinds,
+                      G_N_ELEMENTS(signer_default_ask_by_default_kinds)); return p;
 }
 void signer_permissions_free(SignerPermissions *p) {
   if (!p) return;
   g_hash_table_unref(p->flows); g_hash_table_unref(p->flow_windows);
-  g_key_file_unref(p->records); g_array_unref(p->required); g_mutex_clear(&p->lock); g_free(p->config_home); g_free(p);
+  g_key_file_unref(p->records); g_array_unref(p->ask_by_default); g_mutex_clear(&p->lock); g_free(p->config_home); g_free(p);
 }
 guint64 signer_permissions_revision(SignerPermissions *p) {
   g_mutex_lock(&p->lock);
@@ -244,13 +269,13 @@ void signer_permissions_policy_changed(SignerPermissions *p) { changed(p); }
 void signer_permissions_set_trust_lookup(SignerPermissions *p, SignerTrustLookup fn, gpointer data) {
   p->trust = fn; p->trust_data = data; changed(p);
 }
-gboolean signer_permissions_set_required_confirmation(SignerPermissions *p,
+gboolean signer_permissions_set_ask_by_default(SignerPermissions *p,
     const guint32 *kinds, gsize count, GError **error) {
-  if (count && !kinds) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "missing required-confirmation kinds");
+  if (count && !kinds) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "missing ask-by-default kinds");
   for (gsize i = 0; i < count; i++) if (kinds[i] > G_MAXUINT16)
-    return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid required-confirmation kind");
-  g_array_set_size(p->required, 0);
-  if (count) g_array_append_vals(p->required, kinds, count);
+    return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid ask-by-default kind");
+  g_array_set_size(p->ask_by_default, 0);
+  if (count) g_array_append_vals(p->ask_by_default, kinds, count);
   changed(p); return TRUE;
 }
 static void update_expiry_fence(SignerPermissions *p, GKeyFile *records) {
@@ -263,6 +288,7 @@ static void update_expiry_fence(SignerPermissions *p, GKeyFile *records) {
   }
   g_mutex_lock(&p->lock); p->next_expiry = next_expiry; g_mutex_unlock(&p->lock);
 }
+static gboolean contains_kind(const guint32 *kinds, gsize count, gint kind);
 static gboolean same_data(GKeyFile *a, GKeyFile *b) {
   g_autofree gchar *left = g_key_file_to_data(a, NULL, NULL);
   g_autofree gchar *right = g_key_file_to_data(b, NULL, NULL);
@@ -306,7 +332,7 @@ static void migrate(SignerPermissions *p, GKeyFile *records, GKeyFile *legacy) {
 }
 /* After import the legacy file is sanitation-only input, never authority. */
 static gboolean sanitize_legacy(GKeyFile *legacy) {
-  gboolean dirty = FALSE;
+  gboolean dirty = g_key_file_remove_group(legacy, "nip44_conversation_key", NULL);
   g_auto(GStrv) keys = g_key_file_get_keys(legacy, "event", NULL, NULL);
   for (guint i = 0; keys && keys[i]; i++) {
     g_autofree gchar *value = g_key_file_get_string(legacy, "event", keys[i], NULL);
@@ -338,7 +364,8 @@ gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
   g_autoptr(GKeyFile) legacy = g_key_file_new();
   gboolean exists = FALSE;
   if (!load_optional(next, path, &exists, error)) return FALSE;
-  if (g_key_file_get_integer(next, "permissions", "version", NULL) != 2)
+  gint version = g_key_file_get_integer(next, "permissions", "version", NULL);
+  if (version != 2 && version != 3)
     return fail(error, G_IO_ERROR_NOT_SUPPORTED, "unsupported permissions file version");
   /* Pre-marker v2 files from G03 are already authoritative. Never re-import
    * legacy data merely because an older v2 writer did not know this marker. */
@@ -373,11 +400,27 @@ gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
   g_auto(GStrv) groups = g_key_file_get_groups(next, NULL);
   for (guint i = 0; groups[i]; i++) {
     if (!strcmp(groups[i], "permissions") || !strcmp(groups[i], "imports")) continue;
+    g_autofree gchar *operation = g_key_file_get_string(next, groups[i], "operation", NULL);
+    if (!g_strcmp0(operation, "nip44_conversation_key")) {
+      g_key_file_remove_group(next, groups[i], NULL); continue;
+    }
     g_autoptr(Row) r = read_row(next, groups[i], NULL);
     if (!r) { g_message("nostr-signer: quarantined invalid permission record"); continue; }
+    if (version < 3 && !strcmp(r->decision, "allow") &&
+        ((!strcmp(r->operation, "event") && contains_kind(signer_default_ask_by_default_kinds,
+          G_N_ELEMENTS(signer_default_ask_by_default_kinds), r->kind)) ||
+         (!strcmp(r->operation, "event") && contains_kind((guint32 *)p->ask_by_default->data, p->ask_by_default->len, r->kind)) ||
+         !strcmp(r->operation, "connect") || !strcmp(r->principal, "claimed:"))) {
+      g_free(r->decision); r->decision = g_strdup("policy-review");
+      gchar *provenance = g_strconcat("previous access policy; inactive until explicitly activated",
+          r->legacy ? "; " : "", r->legacy ? r->legacy : "", NULL);
+      g_free(r->legacy); r->legacy = provenance;
+      write_row(next, r);
+    }
     if (!strcmp(r->decision, "review") && now_seconds(p) >= r->created &&
         now_seconds(p) - r->created >= REVIEW_LIFETIME) g_key_file_remove_group(next, groups[i], NULL);
   }
+  g_key_file_set_integer(next, "permissions", "version", 3);
   g_autofree gchar *after = g_key_file_to_data(next, NULL, NULL);
   if (strcmp(before, after) && !save_file(next, path, error)) return FALSE;
   gboolean differs = !same_data(p->records, next);
@@ -391,16 +434,40 @@ static gboolean contains_kind(const guint32 *kinds, gsize count, gint kind) {
   for (gsize i = 0; i < count; i++) if (kind >= 0 && kinds[i] == (guint32)kind) return TRUE;
   return FALSE;
 }
-gboolean signer_permissions_kind_requires_confirmation(SignerPermissions *p, gint kind) {
-  return contains_kind((guint32 *)p->required->data, p->required->len, kind);
+gboolean signer_permissions_kind_asks_by_default(SignerPermissions *p, gint kind) {
+  return contains_kind((guint32 *)p->ask_by_default->data, p->ask_by_default->len, kind);
+}
+gboolean signer_permissions_is_routine(const gchar *op, gint kind) {
+  return known_operation(op) && strcmp(op, "connect") &&
+      (strcmp(op, "event") ? kind == -1 :
+       contains_kind(signer_public_publishing_kinds, G_N_ELEMENTS(signer_public_publishing_kinds), kind) ||
+       contains_kind(signer_default_ask_by_default_kinds, G_N_ELEMENTS(signer_default_ask_by_default_kinds), kind));
+}
+gboolean signer_permissions_can_remember(const gchar *principal, const gchar *op, gint kind) {
+  return principal && *principal && strcmp(principal, "claimed:") && known_operation(op) &&
+      strcmp(op, "connect") && (!strcmp(op, "event") ? kind >= 0 && kind <= G_MAXUINT16 : kind == -1);
 }
 SignerPermissionResult signer_permissions_evaluate(SignerPermissions *p,
     const gchar *principal, const gchar *identity, const gchar *op, gint kind,
     gboolean first_party_default, GError **error) {
+  return signer_permissions_evaluate_scoped(p, principal, identity, op, kind, NULL, first_party_default, error);
+}
+static SignerPermissionResult evaluate_loaded(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op, gint kind, const gchar *relay, gboolean first_party_default);
+SignerPermissionResult signer_permissions_evaluate_scoped(SignerPermissions *p,
+    const gchar *principal, const gchar *identity, const gchar *op, gint kind,
+    const gchar *relay, gboolean first_party_default, GError **error) {
   if (!signer_permissions_reload(p, error)) return SIGNER_PERMISSION_ERROR;
+  return evaluate_loaded(p, principal, identity, op, kind, relay, first_party_default);
+}
+static SignerPermissionResult evaluate_loaded(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op, gint kind, const gchar *relay, gboolean first_party_default) {
+  g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+  if (relay && !canonical) return SIGNER_PERMISSION_DENY;
+  relay = canonical;
   gboolean valid_input = known_operation(op) && kind >= -1 && kind <= G_MAXUINT16 &&
       (!g_strcmp0(op, "event") ? kind >= 0 : kind == -1);
-  gboolean allow = FALSE;
+  gboolean allow = FALSE, review = FALSE;
   g_auto(GStrv) groups = g_key_file_get_groups(p->records, NULL);
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
@@ -412,22 +479,27 @@ SignerPermissionResult signer_permissions_evaluate(SignerPermissions *p,
     }
     if (g_strcmp0(principal, r->principal) || g_strcmp0(op, r->operation) || !row_live(p, r) ||
         (g_strcmp0(identity ? identity : "", r->identity) && strcmp(r->identity, "*")) ||
-        (r->kind != -1 && r->kind != kind)) continue;
+        (r->kind != -1 && r->kind != kind) ||
+        (r->relay && g_strcmp0(r->relay, relay))) continue;
     if (!strcmp(r->decision, "deny")) return SIGNER_PERMISSION_DENY;
-    if (!strcmp(r->decision, "allow")) allow = TRUE;
+    if (!strcmp(r->decision, "policy-review")) review = TRUE;
+    if (!strcmp(r->decision, "allow") &&
+        (kind != NOSTR_KIND_CLIENT_AUTHENTICATION || (relay && r->relay))) allow = TRUE;
   }
-  if (!valid_input) return SIGNER_PERMISSION_ASK;
-  if (!strcmp(op, "event") && contains_kind((guint32 *)p->required->data, p->required->len, kind))
-    return SIGNER_PERMISSION_ASK;
-  /* Pairing never inherits a cached signing permission. Conversation-key
-   * export requires explicit consent: only a scoped allow (including an
-   * inherited legacy allow) can authorise it, never a tier/default shortcut. */
-  if (!principal || !strcmp(op, "connect") || (!strcmp(op, "nip44_conversation_key") && !allow))
-    return SIGNER_PERMISSION_ASK;
-  if (allow || first_party_default) return SIGNER_PERMISSION_ALLOW;
   gboolean consented = FALSE;
-  SignerTrustTier tier = p->trust ? p->trust(principal, &consented, p->trust_data) : SIGNER_TRUST_LOW;
-  if (tier == SIGNER_TRUST_FULL) return SIGNER_PERMISSION_ALLOW;
+  SignerTrustTier tier = p->trust && principal && *principal ? p->trust(principal, &consented, p->trust_data) : SIGNER_TRUST_LOW;
+  if (tier == SIGNER_TRUST_BLOCKED) return SIGNER_PERMISSION_DENY;
+  if (!valid_input) return SIGNER_PERMISSION_ASK;
+  if (!principal || !*principal || !strcmp(principal, "claimed:") || !strcmp(op, "connect"))
+    return SIGNER_PERMISSION_ASK;
+  if (allow) return SIGNER_PERMISSION_ALLOW;
+  if (review) return SIGNER_PERMISSION_ASK;
+  /* Ask-by-default is a preset default, never an override of a user's grant. */
+  if (!strcmp(op, "event") && signer_permissions_kind_asks_by_default(p, kind)) return SIGNER_PERMISSION_ASK;
+  if (first_party_default) return SIGNER_PERMISSION_ALLOW;
+  if (tier == SIGNER_TRUST_PREVIOUS_FULL) return SIGNER_PERMISSION_ALLOW;
+  if (tier == SIGNER_TRUST_FULL && signer_permissions_is_routine(op, kind))
+    return SIGNER_PERMISSION_ALLOW;
   if (tier == SIGNER_TRUST_MEDIUM && (!strcmp(op, "get_public_key") || !strcmp(op, "get_relays") ||
       !strcmp(op, "ping") || (!strcmp(op, "event") && contains_kind(signer_public_publishing_kinds,
         G_N_ELEMENTS(signer_public_publishing_kinds), kind)))) return SIGNER_PERMISSION_ALLOW;
@@ -444,7 +516,7 @@ static gboolean valid_flow(const gchar *principal, const gchar *identity, guint 
     const gchar *op, gint kind, const gchar *flow_id, guint size) {
   Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity, .operation=(gchar *)op,
     .kind=kind, .decision="allow"};
-  return valid_row(&row) && identity && *identity && strcmp(identity, "*") &&
+  return signer_permissions_can_remember(principal, op, kind) && valid_row(&row) && identity && *identity && strcmp(identity, "*") &&
       transport <= 3 && flow_id && *flow_id && strlen(flow_id) <= 64 &&
       g_utf8_validate(flow_id, -1, NULL) && size > 0 && size <= 1024;
 }
@@ -534,7 +606,9 @@ SignerPermissionResult signer_permissions_evaluate_flow(SignerPermissions *p,
     return SIGNER_PERMISSION_ASK;
   }
   if (g_hash_table_contains(f->requests, request_id)) return SIGNER_PERMISSION_ALLOW;
-  if (w->closed || g_hash_table_size(f->requests) >= f->size) return SIGNER_PERMISSION_ASK;
+  /* Closing one scope prevents re-minting consent, not spending the other
+   * already-approved scope's remaining budget before the shared deadline. */
+  if (g_hash_table_size(f->requests) >= f->size) return SIGNER_PERMISSION_ASK;
   g_hash_table_add(f->requests, g_strdup(request_id));
   if (g_hash_table_size(f->requests) == f->size) close_window(w, flow_now(p));
   return SIGNER_PERMISSION_ALLOW;
@@ -562,7 +636,7 @@ gboolean signer_permissions_invalidate_flows(SignerPermissions *p, const gchar *
   if (removed) changed(p);
   return removed;
 }
-static void variant_row(GVariantBuilder *rows, Row *r) {
+static void variant_row(SignerPermissions *p, GVariantBuilder *rows, Row *r) {
   GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&b, "{sv}", "principal", g_variant_new_string(r->principal));
   g_variant_builder_add(&b, "{sv}", "identity", g_variant_new_string(r->identity));
@@ -570,7 +644,18 @@ static void variant_row(GVariantBuilder *rows, Row *r) {
   g_variant_builder_add(&b, "{sv}", "event-kind", g_variant_new_int32(r->kind));
   g_variant_builder_add(&b, "{sv}", "decision", g_variant_new_string(r->decision));
   g_variant_builder_add(&b, "{sv}", "expires-at", g_variant_new_uint64(r->expires));
-  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string(!strcmp(r->decision, "review") ? "needs-review" : "explicit"));
+  gboolean review = !strcmp(r->decision, "review") || !strcmp(r->decision, "policy-review") ||
+      (!strcmp(r->decision, "allow") && (!signer_permissions_can_remember(r->principal, r->operation, r->kind) ||
+       (r->kind == NOSTR_KIND_CLIENT_AUTHENTICATION && !r->relay)));
+  gboolean blocked = !review && row_live(p, r) && !strcmp(r->decision, "allow") &&
+      evaluate_loaded(p, r->principal, r->identity, r->operation, r->kind,
+          r->relay, FALSE) != SIGNER_PERMISSION_ALLOW;
+  const gchar *state = !row_live(p, r) ? "expired" : review || blocked ? "inactive" : "active";
+  const gchar *reason = !row_live(p, r) ? "Permission expired" : review ? "Pending policy review" :
+      blocked ? "Blocked by current policy" : "In effect";
+  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string(state));
+  g_variant_builder_add(&b, "{sv}", "reason", g_variant_new_string(reason));
+  if (r->relay) g_variant_builder_add(&b, "{sv}", "relay", g_variant_new_string(r->relay));
   if (r->legacy) g_variant_builder_add(&b, "{sv}", "legacy-scope", g_variant_new_string(r->legacy));
   g_variant_builder_add_value(rows, g_variant_builder_end(&b));
 }
@@ -581,7 +666,7 @@ GVariant *signer_permissions_list(SignerPermissions *p, const gchar *principal, 
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
     g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
-    if (r && (!principal || !strcmp(principal, r->principal)) && row_live(p, r)) variant_row(&b, r);
+    if (r && (!principal || !strcmp(principal, r->principal))) variant_row(p, &b, r);
   }
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }
@@ -589,8 +674,10 @@ gboolean signer_permissions_needs_review(SignerPermissions *p, const gchar *prin
   g_autoptr(GVariant) rows = signer_permissions_list(p, principal, error);
   if (!rows) return FALSE;
   for (gsize i = 0; i < g_variant_n_children(rows); i++) {
-    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i); const gchar *state = NULL;
-    if (g_variant_lookup(row, "state", "&s", &state) && !strcmp(state, "needs-review")) return TRUE;
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
+    const gchar *decision = NULL;
+    if (g_variant_lookup(row, "decision", "&s", &decision) &&
+        (!strcmp(decision, "review") || !strcmp(decision, "policy-review"))) return TRUE;
   }
   return FALSE;
 }
@@ -632,27 +719,21 @@ gboolean signer_permissions_consent_room(SignerPermissions *p,
   FlowWindow *w = g_hash_table_lookup(p->flow_windows, window_key);
   if (!w || w->closed || w->size != size || w->first_seen + (gint64)ttl * G_USEC_PER_SEC <= flow_now(p))
     return fail(error, G_IO_ERROR_EXISTS, "flow is missing, completed or expired; approve this request once");
-  gboolean flow_seals = seals && signer_permissions_kind_requires_confirmation(p, NOSTR_KIND_SEAL);
   g_autofree gchar *key = flow_key(principal, identity, transport, "event", NOSTR_KIND_SEAL, flow_id);
-  if (flow_seals && (g_hash_table_contains(p->flows, key) || g_hash_table_size(p->flows) >= 1024))
+  if (seals && (g_hash_table_contains(p->flows, key) || g_hash_table_size(p->flows) >= 1024))
     return fail(error, G_IO_ERROR_EXISTS, "flow cannot be reset or enlarged; approve this request once");
-  if (encrypt || (seals && !flow_seals)) {
-    guint64 now = now_seconds(p);
-    if (ttl > G_MAXUINT64 - now) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "permission expiry overflow");
-    g_autoptr(GKeyFile) next = copy_records(p);
-    Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity,
-      .operation="nip44_encrypt", .kind=-1, .decision="allow", .expires=now + ttl};
-    if (encrypt) write_row(next, &row);
-    if (seals && !flow_seals) { row.operation = "event"; row.kind = NOSTR_KIND_SEAL; write_row(next, &row); }
-    if (!commit(p, next, error)) return FALSE;
-  }
-  /* No fallible work or owner-context dispatch after the persistent commit. */
+  g_autofree gchar *encrypt_key = flow_key(principal, identity, transport, "nip44_encrypt", -1, flow_id);
+  if (encrypt && (g_hash_table_contains(p->flows, encrypt_key) ||
+      g_hash_table_size(p->flows) + (seals ? 1 : 0) >= 1024))
+    return fail(error, G_IO_ERROR_EXISTS, "flow cannot be reset or enlarged");
   w->deadline = MIN(w->deadline, w->first_seen + (gint64)ttl * G_USEC_PER_SEC);
-  if (flow_seals) {
+  if (seals) {
     g_hash_table_insert(p->flows, g_steal_pointer(&key),
         flow_new(principal, identity, transport, "event", NOSTR_KIND_SEAL, flow_id, size, w->deadline));
-    update_flow_expiry_fence(p);
   }
+  if (encrypt) g_hash_table_insert(p->flows, g_steal_pointer(&encrypt_key),
+      flow_new(principal, identity, transport, "nip44_encrypt", -1, flow_id, size, w->deadline));
+  update_flow_expiry_fence(p);
   return TRUE;
 }
 gboolean signer_permissions_clear(SignerPermissions *p, const gchar *principal,
@@ -670,13 +751,52 @@ gboolean signer_permissions_clear(SignerPermissions *p, const gchar *principal,
 }
 gboolean signer_permissions_remember(SignerPermissions *p, const gchar *principal,
     const gchar *identity, const gchar *op, gint kind, gboolean allow, guint64 ttl, GError **error) {
+  return signer_permissions_remember_scoped(p, principal, identity, op, kind, NULL, allow, ttl, error);
+}
+gboolean signer_permissions_remember_scoped(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op, gint kind, const gchar *relay, gboolean allow, guint64 ttl, GError **error) {
+  if (!principal || !*principal || !strcmp(principal, "claimed:") ||
+      (allow && !signer_permissions_can_remember(principal, op, kind)) ||
+      (allow && kind == NOSTR_KIND_CLIENT_AUTHENTICATION && (!relay || !*relay)))
+    return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "this scope cannot receive reusable consent");
   guint64 now = now_seconds(p);
   if (ttl > G_MAXUINT64 - now) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "permission expiry overflow");
   Row row = {.principal=(gchar *)principal, .identity=(gchar *)(identity ? identity : ""),
     .operation=(gchar *)op, .kind=kind, .decision=allow ? "allow" : "deny", .expires=ttl ? now + ttl : 0};
+  g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+  if (relay && !canonical) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid AUTH relay");
+  row.relay = canonical;
   if (!valid_row(&row)) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid remembered permission scope");
   if (!signer_permissions_reload(p, error)) return FALSE;
   g_autoptr(GKeyFile) next = copy_records(p); write_row(next, &row);
+  return commit(p, next, error);
+}
+gboolean signer_permissions_review_saved(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op, gint kind, const gchar *relay, gboolean activate, GError **error) {
+  g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+  if (relay && (!canonical || g_strcmp0(op, "event") || kind != NOSTR_KIND_CLIENT_AUTHENTICATION))
+    return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid saved AUTH scope");
+  relay = canonical;
+  if (!signer_permissions_reload(p, error)) return FALSE;
+  g_autoptr(GKeyFile) next = copy_records(p);
+  g_auto(GStrv) groups = g_key_file_get_groups(next, NULL);
+  gboolean found = FALSE;
+  for (guint i = 0; groups[i]; i++) {
+    if (!g_str_has_prefix(groups[i], "record-")) continue;
+    g_autoptr(Row) r = read_row(next, groups[i], NULL);
+    if (!r || strcmp(r->decision, "policy-review") || !matches(r, principal, identity, op) || r->kind != kind ||
+        (r->relay && g_strcmp0(r->relay, relay))) continue;
+    if (activate && (!row_live(p, r) || !signer_permissions_can_remember(principal, op, kind) ||
+        (kind == NOSTR_KIND_CLIENT_AUTHENTICATION && !relay)))
+      return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "saved permission cannot be activated for this scope");
+    g_key_file_remove_group(next, groups[i], NULL); found = TRUE;
+    if (activate) {
+      g_free(r->decision); r->decision = g_strdup("allow");
+      g_free(r->relay); r->relay = g_strdup(relay);
+      write_row(next, r); /* Preserve original absolute expiry, including zero. */
+    }
+  }
+  if (!found) return fail(error, G_IO_ERROR_NOT_FOUND, "no saved permission awaits policy review");
   return commit(p, next, error);
 }
 gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal,
@@ -690,7 +810,7 @@ gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal
   g_autoptr(GHashTable) ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (gsize i = 0; i < g_variant_n_children(rows); i++) {
     g_autoptr(GVariant) item = g_variant_get_child_value(rows, i);
-    const gchar *who = NULL, *id = NULL, *op = NULL, *decision = NULL;
+    const gchar *who = NULL, *id = NULL, *op = NULL, *decision = NULL, *relay = NULL;
     gint kind = -2; guint64 expires = 0;
     if (!g_variant_lookup(item, "principal", "&s", &who) || !g_variant_lookup(item, "identity", "&s", &id) ||
         !g_variant_lookup(item, "operation", "&s", &op) || !g_variant_lookup(item, "decision", "&s", &decision) ||
@@ -698,20 +818,29 @@ gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal
         strcmp(who, principal) || strcmp(id, identity)) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "replacement scope mismatch");
     Row row = {.principal=(gchar *)who, .identity=(gchar *)id, .operation=(gchar *)op,
       .decision=(gchar *)decision, .kind=kind, .expires=expires};
+    g_variant_lookup(item, "relay", "&s", &relay);
+    g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+    if (relay && (!canonical || strcmp(canonical, relay))) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "AUTH relay must be canonical");
+    row.relay = canonical;
     /* Review entries may be retained, but only using the existing migration metadata. */
     g_autofree gchar *key = row_id(&row);
     g_autoptr(Row) previous = read_row(p->records, key, NULL);
-    if (previous && !strcmp(decision, "review") && !strcmp(previous->decision, "review")) {
+    if (previous && (!strcmp(decision, "review") || !strcmp(decision, "policy-review")) && !strcmp(previous->decision, decision)) {
       row.created = previous->created; row.legacy = previous->legacy;
     } else if (previous && !strcmp(decision, "allow") && !strcmp(previous->decision, "allow") &&
                previous->legacy && previous->expires == expires) {
       /* Retain, never manufacture or extend, a grandfathered wildcard scope. */
       row.legacy = previous->legacy;
     }
-    if (!valid_row(&row) || !g_hash_table_add(ids, g_strdup(key)))
+    if ((!strcmp(decision, "allow") && (!signer_permissions_can_remember(who, op, kind) ||
+        (kind == NOSTR_KIND_CLIENT_AUTHENTICATION && !relay))) ||
+        !valid_row(&row) || !g_hash_table_add(ids, g_strdup(key)))
       return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid or duplicate replacement record");
     write_row(next, &row);
   }
+  /* Replacing identity policy retires overlapping ephemeral consent, including
+   * queued automatic jobs through the revision fence. No flow survives an edit. */
+  signer_permissions_invalidate_flows(p, principal, identity, NULL);
   return commit(p, next, error);
 }
 GVariant *signer_permissions_list_legacy(SignerPermissions *p, GError **error) {
@@ -721,7 +850,7 @@ GVariant *signer_permissions_list_legacy(SignerPermissions *p, GError **error) {
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
     g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
-    if (r && r->kind == -1 && strcmp(r->decision, "review"))
+    if (r && r->kind == -1 && (!strcmp(r->decision, "allow") || !strcmp(r->decision, "deny")))
       g_variant_builder_add(&b, "(sssbt)", r->operation, r->principal, r->identity, !strcmp(r->decision, "allow"), r->expires);
   }
   return g_variant_ref_sink(g_variant_builder_end(&b));

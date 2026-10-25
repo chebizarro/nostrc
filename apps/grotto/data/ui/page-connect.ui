@@ -11,7 +11,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <child>
       <object class="AdwPreferencesGroup">
         <property name="title" translatable="yes">Connect an Application</property>
-        <property name="description" translatable="yes">Choose an identity and review the connection before any supplied relay is contacted. New apps start at Low trust.</property>
+        <property name="description" translatable="yes">Choose an identity and review the connection before any supplied relay is contacted. New apps ask unless permitted.</property>
         <child>
           <object class="AdwActionRow" id="paste">
             <property name="title" translatable="yes">Paste a Nostr Connect link</property>

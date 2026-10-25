@@ -15,7 +15,7 @@ template $PageSettings: Adw.PreferencesPage {
     Adw.ComboRow lock_timeout { title: _("Lock management after"); model: StringList { strings [_("Never"), _("1 minute"), _("5 minutes"), _("15 minutes"), _("30 minutes"), _("1 hour")] }; }
     Adw.SwitchRow lock_idle { title: _("Lock management on system idle"); }
     Adw.SwitchRow pause_lock { title: _("Pause signing on screen lock"); subtitle: _("Resume requires an unlocked, observed session"); }
-    Adw.ActionRow confirmation { title: _("Always confirm these event types"); subtitle: _("Overrides remembered allows and trust levels"); activatable: true;
+    Adw.ActionRow confirmation { title: _("Ask-by-default event types"); subtitle: _("Ask before a scoped first grant; saved permissions still apply"); activatable: true;
       [suffix] Image { icon-name: "go-next-symbolic"; }
     }
     Button { label: _("Pause Signing"); action-name: "app.pause-signing"; halign: start; }

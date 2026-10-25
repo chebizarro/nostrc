@@ -549,6 +549,13 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
   set_tests_properties(signer/approval-integration PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;integration"
     ENVIRONMENT "${_UI_TEST_ENV}")
   add_dependencies(signer-tests test-approval-integration)
+  add_executable(test-permission-repeat test-permission-repeat.c ${_APPROVAL_GRESOURCE_C})
+  target_link_libraries(test-permission-repeat PRIVATE grotto_approval_test_core nostrc-test-bus ${SIGNER_TEST_LIBS})
+  target_link_directories(test-permission-repeat PRIVATE ${SIGNER_TEST_LINK_DIRS})
+  add_dependencies(test-permission-repeat grotto-daemon grotto-schemas test_nip55l_dbus_contract)
+  add_test(NAME signer/permission-repeat COMMAND test-permission-repeat $<TARGET_FILE:grotto-daemon> $<TARGET_FILE:test_nip55l_dbus_contract>)
+  set_tests_properties(signer/permission-repeat PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;integration;security" ENVIRONMENT "${_UI_TEST_ENV}")
+  add_dependencies(signer-tests test-permission-repeat)
   if(BUILD_GROUNDHOG)
     set(_room_schemas "${CMAKE_CURRENT_BINARY_DIR}/room-schemas")
     add_custom_command(OUTPUT "${_room_schemas}/gschemas.compiled"

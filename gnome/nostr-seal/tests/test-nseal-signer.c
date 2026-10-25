@@ -1,10 +1,10 @@
 /* test-nseal-signer.c — nostr-seal CLI against the real nostr-signer-daemon.
  * SPDX-License-Identifier: MIT
  *
- * Private session bus (GTestDBus), the actual daemon with an env-lane key,
+ * Helper-managed private session bus, the actual daemon with an env-lane key,
  * and the installed-shape CLI driven as a subprocess:
  *   encrypt --to-self --to <other>  → inspect lists both
- *   decrypt (NIP44DeriveConversationKey, granted to the nostr-seal CLI)
+ *   decrypt (NIP44DecryptB64ForApp, granted to the nostr-seal CLI)
  *   decrypt of a file not sealed for the signer → "not a recipient", no output
  *   decrypt once the grant says deny → "denied", no output
  *   passphrase round-trip through --passphrase-file
@@ -19,6 +19,7 @@
 
 #include "nostr-seal.h"
 #include "signer_permissions.h"
+#include "nostrc-test-bus.h"
 #include <keys.h>
 #include <nostr-utils.h>
 
@@ -54,16 +55,22 @@ static char *npub_of_hex(const char *hex) {
   return nseal_pubkey_to_npub(pk);
 }
 
-int main(void) {
-  g_autofree char *tmpl = g_build_filename(g_get_tmp_dir(), "nseal-signerXXXXXX", NULL);
-  tmp = g_mkdtemp(tmpl);
-  CHECK(tmp);
+static void appeared(GDBusConnection *c, const gchar *n, const gchar *o, gpointer data) {
+  (void)c; (void)n; (void)o; *(gboolean *)data = TRUE;
+}
+static gboolean timeout(gpointer data) { (void)data; g_error("signer did not acquire its name"); return G_SOURCE_REMOVE; }
+int main(int argc, char **argv) {
+  g_test_init(&argc, &argv, NULL);
+  if (!nostrc_test_bus_available()) return 77;
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(bus);
+  tmp = (char *)nostrc_test_bus_get_dir(bus);
+  g_setenv("NOSTRC_TEST_ISOLATION", "1", TRUE);
   g_autofree char *cfg = g_build_filename(tmp, "config", NULL);
   g_autofree char *gdir = g_build_filename(cfg, "gnostr", NULL);
   g_mkdir_with_parents(gdir, 0700);
   g_setenv("XDG_CONFIG_HOME", cfg, TRUE);
   g_setenv("HOME", tmp, TRUE);
-  g_unsetenv("DBUS_SESSION_BUS_ADDRESS");
 
   char *sk = nostr_key_generate_private(), *pk = nostr_key_get_public(sk);
   char *osk = nostr_key_generate_private(), *opk = nostr_key_get_public(osk);
@@ -74,36 +81,25 @@ int main(void) {
   /* nip55l 0.4.0 grants: [kind] "<principal>|<npub>", where the principal
    * is derived from the caller's connection - here the CLI's executable
    * (exe:<path>; run outside an app scope) - and on buses that report no
-   * PID (macOS) the claimed app_id ("org.nostr.Seal" for the conversation
-   * key, none for GetPublicKey). The grant covers every selector that
+   * PID (macOS) the explicit named app claim ("org.nostr.Seal"). The grant covers every selector that
    * resolves to this key. */
   g_autofree char *cli_real = realpath(NSEAL_CLI_PATH, NULL);
   CHECK(cli_real);
   g_autofree char *grants = g_build_filename(gdir, "signer-grants.ini", NULL);
   g_autofree char *grants_body = g_strdup_printf(
-      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip44_conversation_key]\nexe:%1$s|%2$s=allow\nclaimed:org.nostr.Seal|%2$s=allow\n",
+      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:org.nostr.Seal|*=allow\n"
+      "[nip44_decrypt]\nexe:%1$s|%2$s=allow\nclaimed:org.nostr.Seal|%2$s=allow\n",
       cli_real, me);
   CHECK(g_file_set_contents(grants, grants_body, -1, NULL));
 
-  GTestDBus *bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(bus);
-  GError *e = NULL;
-  GSubprocess *daemon = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-                                         &e, NSEAL_DAEMON_PATH, NULL);
-  CHECK(daemon);
-  GDBusConnection *c = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-  for (int i = 0; i < 200; i++) {
-    GVariant *r = g_dbus_connection_call_sync(c, "org.freedesktop.DBus", "/org/freedesktop/DBus",
-                                              "org.freedesktop.DBus", "NameHasOwner",
-                                              g_variant_new("(s)", "org.nostr.Signer"),
-                                              G_VARIANT_TYPE("(b)"), 0, 1000, NULL, NULL);
-    gboolean has = FALSE;
-    if (r) { g_variant_get(r, "(b)", &has); g_variant_unref(r); }
-    if (has) break;
-    g_usleep(50 * 1000);
-    CHECK(i < 199);
-  }
+  GDBusConnection *c = nostrc_test_bus_connect(bus);
+  gboolean online = FALSE;
+  guint watch = g_bus_watch_name_on_connection(c, "org.nostr.Signer", 0, appeared, NULL, &online, NULL);
+  const gchar *command[] = {NSEAL_DAEMON_PATH, NULL};
+  nostrc_test_bus_spawn_supervised(bus, "nseal-daemon.log", NULL, command);
+  guint bound = g_timeout_add_seconds(20, timeout, NULL);
+  while (!online) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(bound);
 
   g_autofree char *plain = g_build_filename(tmp, "report.pdf", NULL);
   const char *body = "%PDF-1.7 pretend\n\x00\x01\x02 binary tail";
@@ -123,7 +119,7 @@ int main(void) {
   CHECK(rc == 0 && strstr(o, me) && strstr(o, other));
   g_free(o); g_free(r);
 
-  /* Decrypt through NIP44DeriveConversationKey. */
+  /* Decrypt through NIP44DecryptB64ForApp. */
   CHECK(g_unlink(plain) == 0);
   rc = run_cli(&o, &r, "decrypt", "report.pdf.nsealed", NULL);
   if (rc) { g_printerr("decrypt: %s\n", r); exit(1); }
@@ -147,9 +143,9 @@ int main(void) {
   g_autoptr(SignerPermissions) permissions = signer_permissions_new(cfg);
   g_autofree char *exe_principal = g_strdup_printf("exe:%s", cli_real);
   CHECK(signer_permissions_remember(permissions, exe_principal, me,
-                                   "nip44_conversation_key", -1, FALSE, 0, NULL));
+                                   "nip44_decrypt", -1, FALSE, 0, NULL));
   CHECK(signer_permissions_remember(permissions, "claimed:org.nostr.Seal", me,
-                                   "nip44_conversation_key", -1, FALSE, 0, NULL));
+                                   "nip44_decrypt", -1, FALSE, 0, NULL));
   rc = run_cli(NULL, &r, "decrypt", "-o", "denied.out", "report.pdf.nsealed", NULL);
   CHECK(rc != 0 && strstr(r, "denied"));
   g_free(r);
@@ -172,14 +168,8 @@ int main(void) {
   CHECK(g_file_get_contents(pw_out, &back, &n, NULL) && n == 30 && memcmp(back, body, 30) == 0);
   g_free(back);
 
-  g_subprocess_force_exit(daemon);
-  (void)g_subprocess_wait(daemon, NULL, NULL);
-  g_object_unref(daemon);
-  g_object_unref(c);
-  g_test_dbus_down(bus);
-  g_object_unref(bus);
-  g_autofree char *cmd = g_strdup_printf("rm -rf '%s'", tmp);
-  if (system(cmd) != 0) { /* best effort */ }
+  g_bus_unwatch_name(watch);
+  nostrc_test_bus_down(bus);
   free(sk); free(pk); free(osk); free(opk);
   g_print("test-nostr-seal-signer: PASS\n");
   return 0;

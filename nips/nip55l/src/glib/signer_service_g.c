@@ -104,7 +104,6 @@ static void approver_summon(GDBusConnection *bus, const char *id){
 
 typedef SignerGateOp SignerOp;
 #define OP_SIGN_EVENT SIGNER_GATE_SIGN_EVENT
-#define OP_CONVKEY SIGNER_GATE_CONVERSATION_KEY
 #define OP_GET_PUBLIC_KEY SIGNER_GATE_GET_PUBLIC_KEY
 #define OP_GET_RELAYS SIGNER_GATE_GET_RELAYS
 #define OP_NIP04_ENCRYPT SIGNER_GATE_NIP04_ENCRYPT
@@ -195,7 +194,7 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
     const gchar *method, GVariant *arguments, GVariant *context) {
   static const struct { const gchar *name, *signature; SignerOp op; } methods[] = {
     /* D-Bus cannot carry () inside v: no-input methods remain direct-only. */
-    {"SignEvent", "(sss)", OP_SIGN_EVENT}, {"NIP44DeriveConversationKey", "(sss)", OP_CONVKEY},
+    {"SignEvent", "(sss)", OP_SIGN_EVENT},
     {"NIP04Encrypt", "(sss)", OP_NIP04_ENCRYPT}, {"NIP04Decrypt", "(sss)", OP_NIP04_DECRYPT},
     {"NIP44Encrypt", "(sss)", OP_NIP44_ENCRYPT}, {"NIP44Decrypt", "(sss)", OP_NIP44_DECRYPT}
   };
@@ -228,7 +227,7 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
     if (strcmp(method, methods[i].name)) continue;
     if (!g_variant_is_of_type(tuple, G_VARIANT_TYPE(methods[i].signature))) goto invalid;
     const gchar *a = NULL, *b = NULL, *selector = "", *claimed = "";
-    if (methods[i].op == OP_SIGN_EVENT || methods[i].op == OP_CONVKEY)
+    if (methods[i].op == OP_SIGN_EVENT)
       g_variant_get(tuple, "(&s&s&s)", &a, &selector, &claimed);
     else g_variant_get(tuple, "(&s&s&s)", &a, &b, &selector);
     gated_call_full(o, inv, methods[i].op, a, b, selector, claimed, &ctx, TRUE);
@@ -386,11 +385,6 @@ static gboolean handle_get_relays_for_app(NostrSigner *o, GDBusMethodInvocation 
 static gboolean handle_sign_event(NostrSigner *o, GDBusMethodInvocation *inv,
                                   const gchar *eventJson, const gchar *identity, const gchar *app_id)
 { gated_call(o, inv, OP_SIGN_EVENT, eventJson, NULL, identity, app_id); return TRUE; }
-
-static gboolean handle_nip44_derive_conversation_key(NostrSigner *o, GDBusMethodInvocation *inv,
-                                                     const gchar *peerPubKey, const gchar *identity,
-                                                     const gchar *app_id)
-{ gated_call(o, inv, OP_CONVKEY, peerPubKey, NULL, identity, app_id); return TRUE; }
 
 #define CRYPT_HANDLERS(name, OP)                                                            \
   static gboolean handle_##name(NostrSigner *o, GDBusMethodInvocation *inv,                 \
@@ -652,7 +646,6 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-nip44-decrypt-b64-for-app",     G_CALLBACK(handle_nip44_decrypt_b64_for_app) },
     { "handle-decrypt-zap-event",             G_CALLBACK(handle_decrypt_zap_event) },
     { "handle-decrypt-zap-event-for-app",     G_CALLBACK(handle_decrypt_zap_event_for_app) },
-    { "handle-nip44-derive-conversation-key", G_CALLBACK(handle_nip44_derive_conversation_key) },
     { "handle-get-relays",                    G_CALLBACK(handle_get_relays) },
     { "handle-get-relays-for-app",            G_CALLBACK(handle_get_relays_for_app) },
     { "handle-store-key",                     G_CALLBACK(handle_store_key) },

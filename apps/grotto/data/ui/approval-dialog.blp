@@ -52,7 +52,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
             orientation: vertical;
             spacing: 8;
             Box batch_box { orientation: vertical; spacing: 8; }
-            Button btn_approve_selected { label: _("Approve Selected Once"); sensitive: false; }
+            Button btn_approve_selected { label: _("Allow selected once"); sensitive: false; }
           }
         }
         Label label_scope { wrap: true; wrap-mode: word_char; xalign: 0; styles ["dim-label"] }
@@ -61,16 +61,18 @@ template $GnostrApprovalDialog: Adw.Dialog {
           orientation: vertical;
           spacing: 8;
           Label label_flow { wrap: true; xalign: 0; }
-          CheckButton chk_flow_encrypt { label: _("Allow NIP-44 encryption for this client and identity for 10 minutes"); }
+          CheckButton chk_flow_encrypt { label: _("Allow NIP-44 encryption in this flow only"); }
           CheckButton chk_flow_seals { label: _("Allow encrypted-message seals within this flow's limit (up to 10 minutes)"); }
         }
-        CheckButton chk_remember { label: _("Remember this decision for this scope"); }
-        DropDown ttl_dropdown { sensitive: false; }
+        CheckButton chk_remember { label: _("Always allow this app for this operation and identity"); }
+        CheckButton chk_24h { label: _("For 24 hours instead of until revoked"); visible: false; }
+        Button btn_activate_saved { label: _("Activate saved permission"); visible: false; }
+        Button btn_discard_saved { label: _("Discard saved permission"); visible: false; }
         Box {
           homogeneous: true;
           spacing: 8;
-          Button btn_deny { label: _("Deny"); tooltip-text: _("Deny once (Ctrl+D, Escape)"); }
-          Button btn_approve { label: _("Approve"); receives-default: false; tooltip-text: _("Approve (Ctrl+A)"); styles ["suggested-action"] }
+          Button btn_deny { label: _("Deny once"); tooltip-text: _("Deny once (Ctrl+D, Escape)"); }
+          Button btn_approve { label: _("Allow once"); receives-default: false; tooltip-text: _("Allow once (Ctrl+A)"); styles ["suggested-action"] }
           Button btn_not_now { label: _("Not Now"); tooltip-text: _("Keep this request waiting"); }
         }
         Expander details_expander {
@@ -80,9 +82,10 @@ template $GnostrApprovalDialog: Adw.Dialog {
             spacing: 8;
             Label label_details { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; }
             Label label_timestamp { wrap: true; xalign: 0; }
-            Label label_trust_explanation { label: _("Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions."); wrap: true; xalign: 0; }
-            DropDown trust_dropdown { }
-            Button btn_change_trust { label: _("Change Trust Level…"); sensitive: false; }
+            Label label_trust_explanation { wrap: true; xalign: 0; }
+            Button btn_change_trust { label: _("Trust this app for routine operations"); sensitive: false; }
+            Button btn_block_operation { label: _("Block this operation for this app"); }
+            Button btn_block_app { label: _("Block app…"); }
           }
         }
       }

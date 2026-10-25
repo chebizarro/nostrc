@@ -46,7 +46,7 @@ static void model_changed(GrottoHomeModel *model, gpointer data) {
   g_autofree gchar *summary = g_strdup_printf("%s%s%s", gn_page_history_remote_state_label(state), *error ? " · " : "", *error ? _("Remote signing needs attention. Check the relay configuration.") : "");
   adw_action_row_set_subtitle(self->runtime, summary);
   gboolean valid = TRUE; if (status) g_variant_lookup(status, "confirmation_policy_valid", "b", &valid);
-  adw_action_row_set_subtitle(self->confirmation, valid ? _("Overrides remembered allows and trust levels") : _("Invalid saved policy: all event types require review. Open to repair or restore defaults."));
+  adw_action_row_set_subtitle(self->confirmation, valid ? _("Ask before the first scoped grant; saved permissions still apply") : _("Invalid saved defaults: presets cannot grant event types. Saved permissions still apply. Open to repair or restore defaults."));
   gtk_widget_set_sensitive(GTK_WIDGET(self->relays), grotto_home_model_writable(model));
   gtk_widget_set_sensitive(GTK_WIDGET(self->reset), grotto_home_model_writable(model));
 }
@@ -88,7 +88,7 @@ static void policy_save(GtkButton *button, gpointer data) {
   }
   g_ptr_array_add(values, NULL);
   if (!g_settings_set_strv(p->settings, "require-confirmation-kinds", (const gchar *const *)values->pdata)) {
-    gtk_label_set_text(p->error, _("The confirmation policy could not be saved.")); return;
+    gtk_label_set_text(p->error, _("The ask-by-default policy could not be saved.")); return;
   }
   adw_dialog_close(p->dialog);
 }
@@ -97,7 +97,7 @@ static void policy_default(GtkButton *button, gpointer data) {
 }
 static void confirmation(AdwActionRow *row, gpointer data) {
   (void)row; PageSettings *self = data; Policy *p = g_new0(Policy, 1); p->settings = g_object_ref(self->settings); p->checks = g_ptr_array_new();
-  p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Always Confirm Event Types")); adw_dialog_set_content_width(p->dialog, 400);
+  p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Ask-by-default event types")); adw_dialog_set_content_width(p->dialog, 400);
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
   GtkWidget *scroll = gtk_scrolled_window_new(), *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -105,8 +105,8 @@ static void confirmation(AdwActionRow *row, gpointer data) {
   g_autoptr(GVariant) configured = g_settings_get_user_value(self->settings, "require-confirmation-kinds");
   g_auto(GStrv) values = configured ? g_variant_dup_strv(configured, NULL) : NULL;
   GString *others = g_string_new("");
-  for (guint i = 0; i < G_N_ELEMENTS(signer_default_required_confirmation_kinds); i++) {
-    guint32 kind = signer_default_required_confirmation_kinds[i]; g_autofree gchar *number = g_strdup_printf("%u", kind);
+  for (guint i = 0; i < G_N_ELEMENTS(signer_default_ask_by_default_kinds); i++) {
+    guint32 kind = signer_default_ask_by_default_kinds[i]; g_autofree gchar *number = g_strdup_printf("%u", kind);
     GtkWidget *check = gtk_check_button_new_with_label(gnostr_approval_kind_name(kind));
     gtk_check_button_set_active(GTK_CHECK_BUTTON(check), !configured || g_strv_contains((const gchar *const *)values, number));
     g_object_set_data_full(G_OBJECT(check), "kind", g_strdup(number), g_free); gtk_box_append(GTK_BOX(box), check); g_ptr_array_add(p->checks, check);
@@ -120,7 +120,7 @@ static void confirmation(AdwActionRow *row, gpointer data) {
   gtk_editable_set_text(GTK_EDITABLE(p->custom), others->str); g_string_free(others, TRUE);
   gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Additional custom event types"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));
   p->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(p->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->error));
-  GtkWidget *save = gtk_button_new_with_label(_("Save Confirmation Policy")); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
+  GtkWidget *save = gtk_button_new_with_label(_("Save ask-by-default policy")); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
   GtkWidget *defaults = gtk_button_new_with_label(_("Restore Defaults")); g_signal_connect(defaults, "clicked", G_CALLBACK(policy_default), p); gtk_box_append(GTK_BOX(box), defaults);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box); adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll);
   g_object_set_data_full(G_OBJECT(p->dialog), "policy", p, policy_free); adw_dialog_set_child(p->dialog, toolbar); adw_dialog_present(p->dialog, GTK_WIDGET(self));

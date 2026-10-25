@@ -69,9 +69,19 @@ GrottoClients *grotto_clients_new(const gchar *config_home, GError **error) {
   if (g_key_file_get_integer(c->records, "clients", "version", NULL) != 1) {
     invalid(error, "unsupported clients.ini version"); return NULL;
   }
+  gboolean migrate_presets = FALSE;
   g_auto(GStrv) groups = g_key_file_get_groups(c->records, NULL);
   for (guint i = 0; groups[i]; i++) {
     const gchar *id = groups[i]; if (!strcmp(id, "clients")) continue;
+    if (!g_key_file_has_key(c->records, id, "preset-version", NULL)) migrate_presets = TRUE;
+    else {
+      gint preset = g_key_file_get_integer(c->records, id, "preset-version", &local);
+      if (local || preset < 0 || preset > 1) { invalid(error, "unsupported client preset version"); return NULL; }
+    }
+    if (g_key_file_has_key(c->records, id, "blocked", NULL)) {
+      g_key_file_get_boolean(c->records, id, "blocked", &local);
+      if (local) { invalid(error, "invalid app block"); return NULL; }
+    }
     g_autofree gchar *p = g_key_file_get_string(c->records, id, "principal", NULL);
     g_autofree gchar *t = g_key_file_get_string(c->records, id, "transport", NULL);
     g_autofree gchar *identity = g_key_file_get_string(c->records, id, "identity", NULL);
@@ -106,6 +116,13 @@ GrottoClients *grotto_clients_new(const gchar *config_home, GError **error) {
     for (guint j = 0; relays && relays[j]; j++)
       if (!text_ok(relays[j], 2048, FALSE)) { invalid(error, "invalid client relay"); return NULL; }
   }
+  if (migrate_presets) {
+    g_autoptr(GKeyFile) next = copy_records(c);
+    for (guint i = 0; groups[i]; i++)
+      if (strcmp(groups[i], "clients") && !g_key_file_has_key(next, groups[i], "preset-version", NULL))
+        g_key_file_set_integer(next, groups[i], "preset-version", 0);
+    if (!commit(c, next, error)) return NULL;
+  }
   return g_steal_pointer(&c);
 }
 void grotto_clients_free(GrottoClients *c) {
@@ -123,8 +140,39 @@ SignerTrustTier grotto_clients_trust(const gchar *principal, gboolean *consented
   if (!principal || !grotto_clients_principal_valid(principal)) return SIGNER_TRUST_LOW;
   g_autofree gchar *id = record_id(principal);
   if (!g_key_file_has_group(c->records, id)) return SIGNER_TRUST_LOW;
+  if (g_key_file_get_boolean(c->records, id, "blocked", NULL)) return SIGNER_TRUST_BLOCKED;
   *consented = g_key_file_get_uint64(c->records, id, "first-consented-at", NULL) != 0;
-  return g_key_file_get_integer(c->records, id, "tier", NULL);
+  SignerTrustTier tier = g_key_file_get_integer(c->records, id, "tier", NULL);
+  if (tier == SIGNER_TRUST_FULL && !g_key_file_get_integer(c->records, id, "preset-version", NULL))
+    return SIGNER_TRUST_PREVIOUS_FULL;
+  return tier;
+}
+static void ensure_record(GKeyFile *next, const gchar *id, const gchar *principal) {
+  if (g_key_file_has_group(next, id)) return;
+  g_key_file_set_string(next, id, "principal", principal);
+  g_key_file_set_string(next, id, "label", ""); g_key_file_set_integer(next, id, "tier", SIGNER_TRUST_LOW);
+  g_key_file_set_integer(next, id, "preset-version", 1);
+  g_key_file_set_string(next, id, "transport", g_str_has_prefix(principal, "nip46:") ? "NIP46" : "DBUS");
+  g_key_file_set_string(next, id, "claimed-name", ""); g_key_file_set_string(next, id, "identity", "");
+  g_key_file_set_boolean(next, id, "paired", FALSE);
+  g_key_file_set_string_list(next, id, "relays", NULL, 0);
+  g_key_file_set_uint64(next, id, "first-consented-at", 0); g_key_file_set_uint64(next, id, "last-used-at", 0);
+}
+gboolean grotto_clients_decide(GrottoClients *c, const gchar *principal, const gchar *mode, GError **error) {
+  if (!grotto_clients_principal_valid(principal) || !strcmp(principal, "claimed:") ||
+      (strcmp(mode, "trust-routine") && strcmp(mode, "block-app"))) return invalid(error, "invalid reusable client decision");
+  g_autofree gchar *id = record_id(principal);
+  g_autoptr(GKeyFile) next = copy_records(c);
+  ensure_record(next, id, principal);
+  gboolean block = !strcmp(mode, "block-app");
+  g_key_file_set_boolean(next, id, "blocked", block);
+  if (!block) {
+    g_key_file_set_integer(next, id, "tier", SIGNER_TRUST_FULL);
+    g_key_file_set_integer(next, id, "preset-version", 1);
+    if (!g_key_file_get_uint64(next, id, "first-consented-at", NULL))
+      g_key_file_set_uint64(next, id, "first-consented-at", g_get_real_time() / G_USEC_PER_SEC);
+  }
+  return commit(c, next, error);
 }
 gboolean grotto_clients_record(GrottoClients *c, const gchar *principal, const gchar *transport,
     const gchar *claimed, const gchar *identity, gboolean consented, gboolean used, GError **error) {
@@ -132,15 +180,7 @@ gboolean grotto_clients_record(GrottoClients *c, const gchar *principal, const g
       (claimed && !text_ok(claimed, 512, TRUE)) || (identity && !text_ok(identity, 4096, TRUE)))
     return invalid(error, "invalid client metadata");
   g_autofree gchar *id = record_id(principal); g_autoptr(GKeyFile) next = copy_records(c);
-  if (!g_key_file_has_group(next, id)) {
-    g_key_file_set_string(next, id, "principal", principal);
-    g_key_file_set_string(next, id, "label", ""); g_key_file_set_integer(next, id, "tier", SIGNER_TRUST_LOW);
-    g_key_file_set_string(next, id, "transport", g_str_has_prefix(principal, "nip46:") ? "NIP46" : "DBUS");
-    g_key_file_set_string(next, id, "claimed-name", ""); g_key_file_set_string(next, id, "identity", "");
-    g_key_file_set_boolean(next, id, "paired", FALSE);
-    g_key_file_set_string_list(next, id, "relays", NULL, 0);
-    g_key_file_set_uint64(next, id, "first-consented-at", 0); g_key_file_set_uint64(next, id, "last-used-at", 0);
-  }
+  ensure_record(next, id, principal);
   if (transport) g_key_file_set_string(next, id, "transport", transport);
   if (claimed) g_key_file_set_string(next, id, "claimed-name", claimed);
   if (identity) g_key_file_set_string(next, id, "identity", identity);
@@ -163,11 +203,16 @@ gboolean grotto_clients_set_label(GrottoClients *c, const gchar *p, const gchar 
 }
 gboolean grotto_clients_set_tier(GrottoClients *c, const gchar *p, SignerTrustTier tier, GError **error) {
   g_autofree gchar *id = NULL;
+  if (!g_strcmp0(p, "claimed:")) return invalid(error, "unidentified callers cannot receive reusable trust");
   if (tier < SIGNER_TRUST_LOW || tier > SIGNER_TRUST_FULL) return invalid(error, "invalid trust tier");
   if (!existing(c, p, &id, error)) return FALSE;
   if (!g_key_file_get_uint64(c->records, id, "first-consented-at", NULL) && tier != SIGNER_TRUST_LOW)
     return invalid(error, "trust requires explicit client consent");
-  g_autoptr(GKeyFile) next = copy_records(c); g_key_file_set_integer(next, id, "tier", tier); return commit(c, next, error);
+  g_autoptr(GKeyFile) next = copy_records(c);
+  g_key_file_set_integer(next, id, "tier", tier);
+  g_key_file_set_integer(next, id, "preset-version", 1);
+  g_key_file_set_boolean(next, id, "blocked", FALSE);
+  return commit(c, next, error);
 }
 gchar *grotto_clients_paired_identity(GrottoClients *c, const gchar *principal) {
   if (!c || !grotto_clients_principal_valid(principal) || !g_str_has_prefix(principal, "nip46:")) return NULL;
@@ -194,7 +239,10 @@ static gboolean pairing_update(GrottoClients *c, const gchar *p, gboolean paired
   if (pending) g_key_file_set_string(next, id, "pairing-pending-id", attempt);
   else g_key_file_remove_key(next, id, "pairing-pending-id", NULL);
   g_key_file_set_string_list(next, id, "relays", relays, n);
-  if (tier >= SIGNER_TRUST_LOW) g_key_file_set_integer(next, id, "tier", tier);
+  if (tier >= SIGNER_TRUST_LOW) {
+    g_key_file_set_integer(next, id, "tier", tier);
+    g_key_file_set_integer(next, id, "preset-version", 1);
+  }
   if (label && *label) g_key_file_set_string(next, id, "label", label);
   return commit(c, next, error);
 }
@@ -239,6 +287,11 @@ GVariant *grotto_clients_list(GrottoClients *c) {
     gint tier = g_key_file_get_integer(c->records, id, "tier", NULL);
     const gchar *tiers[] = {"low", "medium", "full"};
     g_variant_builder_add(&row, "{sv}", "trust-tier", g_variant_new_string(tiers[tier]));
+    gint preset = g_key_file_get_integer(c->records, id, "preset-version", NULL);
+    g_variant_builder_add(&row, "{sv}", "preset-version", g_variant_new_uint32(preset));
+    g_variant_builder_add(&row, "{sv}", "access-policy", g_variant_new_string(
+        tier == SIGNER_TRUST_FULL && !preset ? "Previous access policy" : "Current access policy"));
+    g_variant_builder_add(&row, "{sv}", "blocked", g_variant_new_boolean(g_key_file_get_boolean(c->records, id, "blocked", NULL)));
     g_variant_builder_add(&row, "{sv}", "paired", g_variant_new_boolean(g_key_file_get_boolean(c->records, id, "paired", NULL)));
     g_variant_builder_add(&row, "{sv}", "pairing-pending-ack", g_variant_new_boolean(g_key_file_get_boolean(c->records, id, "pairing-pending-ack", NULL)));
     const gchar *numbers[] = {"first-consented-at", "last-used-at"};

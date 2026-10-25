@@ -24,6 +24,7 @@ static const char xml[] =
     "<method name='GetStatus'><arg type='a{sv}' direction='out'/></method>"
     "<method name='ListRequests'><arg type='aa{sv}' direction='out'/></method>"
     "<method name='ListClients'><arg type='aa{sv}' direction='out'/></method>"
+    "<method name='DecideRequest'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='b' direction='out'/></method>"
     "</interface><interface name='org.nostr.Signer'>"
     "<method name='GetApprovalInfo'><arg type='s' direction='in'/><arg type='a{sv}' "
     "direction='out'/></method>"
@@ -76,6 +77,9 @@ static void method(GDBusConnection *bus, const char *sender, const char *path,
     GVariantBuilder row;
     g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(f->status_version));
+    GVariantBuilder caps; g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
+    g_variant_builder_add(&caps, "{sb}", "decision-modes", TRUE);
+    g_variant_builder_add(&row, "{sv}", "capabilities", g_variant_builder_end(&caps));
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{sv})", &row));
   } else if (!strcmp(name, "ListClients")) {
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(aa{sv})", NULL));
@@ -115,7 +119,10 @@ static void method(GDBusConnection *bus, const char *sender, const char *path,
       } else
         g_dbus_method_invocation_return_value(invocation,
                                               g_variant_new("(@a{sv})", row));
-    } else if (!strcmp(name, "ApproveRequest")) {
+    } else if (!strcmp(name, "DecideRequest")) {
+      const gchar *mode; g_variant_get_child(args, 1, "&s", &mode);
+      g_assert_true(!strcmp(mode, "allow") || !strcmp(mode, "allow-24h") ||
+          !strcmp(mode, "allow-once") || !strcmp(mode, "deny-once") || !strcmp(mode, "block-operation"));
       f->decisions++;
       if (f->fail_decision)
         g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Signer.Error.Paused",
@@ -332,7 +339,7 @@ static void decision_rechecks(Fixture *f, gconstpointer data) {
   WAIT(ready(f));
   guint before = f->infos;
   Reply r = {0};
-  grotto_approval_controller_decide_async(f->controller, "decision", TRUE, TRUE, 600, NULL, decided,
+  grotto_approval_controller_decide_async(f->controller, "decision", TRUE, TRUE, 0, NULL, decided,
                                           &r);
   Reply second = {0};
   grotto_approval_controller_decide_async(f->controller, "decision", TRUE, FALSE, 0, NULL, decided,

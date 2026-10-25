@@ -4,7 +4,7 @@ template $GrottoPageConnect: Adw.PreferencesPage {
   title: _("Connect");
   Adw.PreferencesGroup {
     title: _("Connect an Application");
-    description: _("Choose an identity and review the connection before any supplied relay is contacted. New apps start at Low trust.");
+    description: _("Choose an identity and review the connection before any supplied relay is contacted. New apps ask unless permitted.");
     Adw.ActionRow paste {
       title: _("Paste a Nostr Connect link"); subtitle: _("Preview a link from your clipboard"); activatable: true;
       [prefix] Image { icon-name: "edit-paste-symbolic"; }

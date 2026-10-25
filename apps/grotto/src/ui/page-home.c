@@ -129,13 +129,19 @@ static void render(GrottoHomeModel *model, gpointer data) {
     adw_action_row_set_title_lines(row, 1);
     adw_action_row_add_prefix(row, adw_avatar_new(32, *label ? label : principal, TRUE));
     GtkWidget *badges = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4); gtk_widget_set_valign(badges, GTK_ALIGN_CENTER);
-    GtkWidget *transport_badge = gtk_label_new(badge), *trust_badge = gtk_label_new(!strcmp(tier, "full") ? _("Full") : !strcmp(tier, "medium") ? _("Medium") : _("Low"));
+    const gchar *policy = NULL; gboolean blocked = FALSE;
+    g_variant_lookup(client, "access-policy", "&s", &policy);
+    g_variant_lookup(client, "blocked", "b", &blocked);
+    const gchar *access = blocked ? _("Blocked") : !g_strcmp0(policy, "Previous access policy") ? _("Previous access policy") :
+        !strcmp(tier, "full") ? _("Routine operations") : !strcmp(tier, "medium") ? _("Medium") : _("Ask unless permitted");
+    GtkWidget *transport_badge = gtk_label_new(badge), *trust_badge = gtk_label_new(access);
+    gtk_label_set_wrap(GTK_LABEL(trust_badge), TRUE);
     gtk_widget_add_css_class(transport_badge, "grotto-badge"); gtk_widget_add_css_class(trust_badge, "grotto-badge");
     gtk_widget_add_css_class(trust_badge, !strcmp(tier, "full") ? "accent" : "dim-label");
     gtk_box_append(GTK_BOX(badges), transport_badge); gtk_box_append(GTK_BOX(badges), trust_badge);
     adw_action_row_add_suffix(row, badges);
-    g_autofree gchar *accessible = g_strdup_printf(_("%s · %s · %s trust · %s"), *label ? label : principal, badge,
-        !strcmp(tier, "full") ? _("Full") : !strcmp(tier, "medium") ? _("Medium") : _("Low"), subtitle);
+    g_autofree gchar *accessible = g_strdup_printf(_("%s · %s · %s · %s"), *label ? label : principal, badge,
+        access, subtitle);
     gtk_accessible_update_property(GTK_ACCESSIBLE(row), GTK_ACCESSIBLE_PROPERTY_LABEL, accessible, -1);
     adw_action_row_add_suffix(row, gtk_image_new_from_icon_name("go-next-symbolic"));
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);

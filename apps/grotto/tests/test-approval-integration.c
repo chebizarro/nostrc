@@ -65,7 +65,7 @@ static void clear_reply(Reply *r) {
 static void sign_tags(GDBusConnection *bus, guint32 kind, const char *tags, const char *content,
                       Reply *r) {
   g_autofree gchar *json = g_strdup_printf(
-      "{\"kind\":%u,\"created_at\":1,\"tags\":%s,\"content\":\"%s\"}", kind, tags, content);
+      "{\"kind\":%u,\"created_at\":%" G_GINT64_FORMAT ",\"tags\":%s,\"content\":\"%s\"}", kind, g_get_real_time() / G_USEC_PER_SEC, tags, content);
   g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
                          "SignEvent", g_variant_new("(sss)", json, "", "spoofed-name"),
                          G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, bus_done, r);
@@ -183,6 +183,10 @@ static void desktop_call(GDBusConnection *bus, const char *sender, const char *p
     GVariantBuilder b;
     g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&b, "{sv}", "control_version", g_variant_new_uint32(d->version));
+    g_variant_builder_add(&b, "{sv}", "permission_policy_version", g_variant_new_uint32(3));
+    GVariantBuilder caps; g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
+    g_variant_builder_add(&caps, "{sb}", "decision-modes", TRUE);
+    g_variant_builder_add(&b, "{sv}", "capabilities", g_variant_builder_end(&caps));
     g_dbus_method_invocation_return_value(inv, g_variant_new("(a{sv})", &b));
   } else if (!strcmp(name, "ListRequests")) {
     d->lists++;
@@ -318,6 +322,8 @@ static GDBusConnection *consumer_connection(void) {
 static void live_navigation(GrottoApprovalController *controller, GApplication *app) {
   GListModel *model = grotto_approval_controller_get_pending(controller);
   g_autoptr(GPtrArray) callers = g_ptr_array_new_with_free_func(g_object_unref);
+  /* Use an ungranted relay: the earlier UI matrix deliberately remembered
+   * nos.lol, so requests there must not enter this navigation-only review. */
   Reply results[3] = {{0}};
   gchar *ids[3] = {NULL};
   for (guint i = 0; i < 3; i++) {
@@ -325,8 +331,8 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
     g_ptr_array_add(callers, caller);
     g_autofree gchar *json =
         g_strdup_printf("{\"kind\":%u,\"tags\":[[\"relay\",\"wss://"
-                        "nos.lol\"],[\"challenge\",\"step-%u\"]],\"content\":\"\"}",
-                        NOSTR_KIND_CLIENT_AUTHENTICATION, i);
+                        "navigation.example\"],[\"challenge\",\"step-%u\"]],\"content\":\"\",\"created_at\":%" G_GINT64_FORMAT "}",
+                        NOSTR_KIND_CLIENT_AUTHENTICATION, i, g_get_real_time() / G_USEC_PER_SEC);
     GVariantBuilder context;
     g_variant_builder_init(&context, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&context, "{sv}", "flow_id", g_variant_new_string("live-stepper"));
@@ -487,7 +493,7 @@ static void stale_app_actions(GrottoApprovalController *controller, GApplication
   g_dbus_connection_unregister_object(bus, signer_registration);
 }
 static void click_review(GrottoApprovalController *controller, GApplication *app, const char *id,
-                         gboolean allow, gboolean remember, const char *expected_preview) {
+                         gboolean allow, gboolean remember, gboolean temporary, const char *expected_preview) {
   (void)controller;
   g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(id));
   GList *windows = gtk_application_get_windows(GTK_APPLICATION(app));
@@ -508,61 +514,10 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
   GtkCheckButton *check = GTK_CHECK_BUTTON(gtk_widget_get_template_child(
       GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "chk_remember"));
   gtk_check_button_set_active(check, remember);
-  if (!allow) {
-    GtkExpander *details = GTK_EXPANDER(gtk_widget_get_template_child(
-        GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "details_expander"));
-    gtk_expander_set_expanded(details, TRUE);
-    GtkWidget *change = GTK_WIDGET(gtk_widget_get_template_child(
-        GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "btn_change_trust"));
-    WAIT(gtk_widget_get_sensitive(change) && gtk_widget_get_mapped(change));
-    GtkDropDown *picker = GTK_DROP_DOWN(gtk_widget_get_template_child(
-        GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "trust_dropdown"));
-    gtk_drop_down_set_selected(picker, 1);
-    guint before = trust_changes;
-    g_signal_emit_by_name(change, "clicked");
-    AdwDialog *alert = adw_window_get_visible_dialog(ADW_WINDOW(host));
-    g_assert_true(ADW_IS_ALERT_DIALOG(alert));
-    WAIT(gtk_widget_get_mapped(GTK_WIDGET(alert)));
-    guint alert_frames = 0;
-    gtk_widget_add_tick_callback(GTK_WIDGET(alert), count_frame, &alert_frames, NULL);
-    WAIT(alert_frames >= 2);
-    GtkWidget *confirm = find_button(GTK_WIDGET(alert), "Change Trust Level");
-    g_assert_nonnull(confirm);
-    g_signal_emit_by_name(confirm, "clicked");
-    WAIT(trust_changes > before);
-    AdwDialog *notice = adw_window_get_visible_dialog(ADW_WINDOW(host));
-    g_test_message("Trust feedback on review host: %s",
-                   notice ? G_OBJECT_TYPE_NAME(notice) : "none");
-    if (ADW_IS_ALERT_DIALOG(notice)) {
-      wait_frames(GTK_WIDGET(notice));
-      GtkWidget *close = find_button(GTK_WIDGET(notice), "Close");
-      g_assert_nonnull(close);
-      g_signal_emit_by_name(close, "clicked");
-      WAIT(adw_window_get_visible_dialog(ADW_WINDOW(host)) != notice);
-    }
-    g_test_message("Trust feedback dismissed; original review visible: %d",
-                   review_dialog(app) == dialog);
-    /* Tier mutation travels Control1; the required-confirmation contact-list
-     * request remains pending, and Remember still travels ApproveRequest. */
-    Reply clients = {0};
-    g_dbus_connection_call(g_application_get_dbus_connection(app), "org.nostr.Signer",
-                           "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ListClients",
-                           NULL, G_VARIANT_TYPE("(aa{sv})"), 0, 5000, NULL, bus_done, &clients);
-    WAIT(clients.done);
-    g_assert_no_error(clients.error);
-    g_assert_nonnull(clients.reply);
-    g_autoptr(GVariant) rows = g_variant_get_child_value(clients.reply, 0);
-    gboolean medium = FALSE;
-    for (gsize i = 0; i < g_variant_n_children(rows); i++) {
-      g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
-      const char *tier = NULL;
-      if (g_variant_lookup(row, "trust-tier", "&s", &tier) && !strcmp(tier, "medium"))
-        medium = TRUE;
-    }
-    g_assert_true(medium);
-    g_assert_true(ready(controller));
-    clear_reply(&clients);
-  }
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(dialog_child(dialog, "chk_24h")), temporary);
+  /* Deny always means once, regardless of reusable-allow selection. */
+  if (!allow) g_assert_cmpstr(gtk_widget_get_tooltip_text(dialog_child(dialog, "btn_deny")), ==,
+      "Deny once (Ctrl+D, Escape)");
   GtkWidget *button = GTK_WIDGET(gtk_widget_get_template_child(
       GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, allow ? "btn_approve" : "btn_deny"));
   g_assert_true(gtk_widget_get_sensitive(button));
@@ -593,12 +548,12 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
 #ifndef __APPLE__
   if (gui) {
     pending_reachability(controller, app, consumer, grotto_approval_request_get_id(request));
-    click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE, "first");
+    click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE, FALSE, "first");
     decision.done = 1;
   } else
 #endif
     grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(request),
-                                            TRUE, TRUE, 600, NULL, decision_done, &decision);
+                                            TRUE, TRUE, 0, NULL, decision_done, &decision);
   WAIT(result.done && decision.done);
   verify(&result, NOSTR_KIND_TEXT_NOTE);
   g_assert_no_error(decision.error);
@@ -620,7 +575,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
     const gchar *tags, *body, *preview, *key, *value;
   } cases[] = {{NOSTR_KIND_CLIENT_AUTHENTICATION,
                 "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "",
-                "wss://nos.lol", "auth_relay", "wss://nos.lol"},
+                "wss://nos.lol/", "auth_relay", "wss://nos.lol/"},
                {NOSTR_KIND_DELETION, target_tags, "", "Delete 1 target(s)", NULL, NULL},
                {NOSTR_KIND_REPOST, target_tags, "", peer, "target_event_id", peer},
                {NOSTR_KIND_GENERIC_REPOST, target_tags, "", peer, "target_event_id", peer},
@@ -659,13 +614,13 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
     g_assert_null(strstr(dump, "PAIRING-TOKEN"));
 #ifndef __APPLE__
     if (gui) {
-      click_review(controller, app, grotto_approval_request_get_id(request), TRUE, FALSE,
+      click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE, i % 2 == 0,
                    cases[i].preview);
       decision.done = 1;
     } else
 #endif
       grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(request),
-                                              TRUE, FALSE, 0, NULL, decision_done, &decision);
+                                              TRUE, TRUE, i % 2 == 0 ? 86400 : 0, NULL, decision_done, &decision);
     WAIT(result.done && decision.done);
     verify(&result, cases[i].kind);
     g_assert_no_error(decision.error);
@@ -673,6 +628,10 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
          grotto_approval_controller_get_holds(controller) == 0);
     clear_reply(&result);
     clear_reply(&decision);
+    sign_tags(caller, cases[i].kind, cases[i].tags, cases[i].body, &result);
+    WAIT(result.done); verify(&result, cases[i].kind);
+    g_assert_cmpuint(g_list_model_get_n_items(pending), ==, 0);
+    clear_reply(&result);
     g_dbus_connection_close_sync(caller, NULL, NULL);
   }
   /* A new connection avoids the deliberate per-connection prompt-rate limit;
@@ -697,7 +656,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   request = g_list_model_get_item(pending, 0);
 #ifndef __APPLE__
   if (gui) {
-    click_review(controller, app, grotto_approval_request_get_id(request), FALSE, FALSE, NULL);
+    click_review(controller, app, grotto_approval_request_get_id(request), FALSE, FALSE, FALSE, NULL);
     decision.done = 1;
   } else
 #endif
@@ -711,6 +670,26 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   clear_reply(&decision);
 #ifndef __APPLE__
   if (gui) {
+    /* The real button, production controller and one Control1 decision must
+     * both complete this request and save its ask-by-default first grant. */
+    g_autoptr(GDBusConnection) routine_consumer = g_dbus_connection_new_for_address_sync(
+        g_getenv("DBUS_SESSION_BUS_ADDRESS"), G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+        G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, NULL);
+    g_assert_nonnull(routine_consumer);
+    sign_tags(routine_consumer, NOSTR_KIND_ZAP_REQUEST, "[]", "", &result);
+    WAIT(ready(controller) || result.done); g_assert_true(ready(controller));
+    g_clear_object(&request); request = g_list_model_get_item(pending, 0);
+    g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(grotto_approval_request_get_id(request)));
+    AdwDialog *dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+    gtk_expander_set_expanded(GTK_EXPANDER(dialog_child(dialog, "details_expander")), TRUE);
+    GtkWidget *trust = dialog_child(dialog, "btn_change_trust");
+    WAIT(gtk_widget_get_mapped(trust) && gtk_widget_get_sensitive(trust));
+    g_signal_emit_by_name(trust, "clicked");
+    WAIT(result.done); verify(&result, NOSTR_KIND_ZAP_REQUEST); clear_reply(&result);
+    WAIT(g_list_model_get_n_items(pending) == 0);
+    sign_tags(routine_consumer, NOSTR_KIND_ZAP_REQUEST, "[]", "", &result);
+    WAIT(result.done); verify(&result, NOSTR_KIND_ZAP_REQUEST); clear_reply(&result);
+    g_assert_cmpuint(g_list_model_get_n_items(pending), ==, 0);
     live_navigation(controller, app);
     stale_app_actions(controller, app, connection);
   }

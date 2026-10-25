@@ -97,8 +97,8 @@
 
     <key name="require-confirmation-kinds" type="as">
       <default>[]</default>
-      <summary>Kinds requiring confirmation</summary>
-      <description>When unset, uses the named signer policy defaults. A user-set list overrides them; an explicit empty list clears event-type overrides, not key-export safeguards. Invalid entries make all event types require review until repaired.</description>
+      <summary>Ask-by-default event types</summary>
+      <description>Compatibility key name for ask-by-default policy. When unset, uses the owner-approved defaults. A user-set list replaces preset defaults; an empty list clears those defaults. Invalid entries prevent preset event grants until repaired. Explicit saved permissions always take precedence; initial connect still requires pairing.</description>
     </key>
 
     <!-- Network Settings -->

@@ -4,7 +4,7 @@
 G_BEGIN_DECLS
 
 typedef struct _SignerPermissions SignerPermissions;
-typedef enum { SIGNER_TRUST_LOW, SIGNER_TRUST_MEDIUM, SIGNER_TRUST_FULL } SignerTrustTier;
+typedef enum { SIGNER_TRUST_LOW, SIGNER_TRUST_MEDIUM, SIGNER_TRUST_FULL, SIGNER_TRUST_PREVIOUS_FULL, SIGNER_TRUST_BLOCKED } SignerTrustTier;
 typedef enum { SIGNER_PERMISSION_ASK, SIGNER_PERMISSION_ALLOW, SIGNER_PERMISSION_DENY,
                SIGNER_PERMISSION_ERROR } SignerPermissionResult;
 /* Called only on the owning thread. Unknown clients must return Low with
@@ -32,7 +32,7 @@ void signer_permissions_set_trust_lookup(SignerPermissions *permissions,
                                          SignerTrustLookup fn, gpointer data);
 /* G04 calls this after a live tier/client-admission change. */
 void signer_permissions_policy_changed(SignerPermissions *permissions);
-gboolean signer_permissions_set_required_confirmation(SignerPermissions *permissions,
+gboolean signer_permissions_set_ask_by_default(SignerPermissions *permissions,
     const guint32 *kinds, gsize count, GError **error);
 SignerPermissionResult signer_permissions_evaluate(SignerPermissions *permissions,
     const gchar *principal, const gchar *identity, const gchar *operation,
@@ -49,9 +49,9 @@ void signer_permissions_set_wall_clock_for_test(SignerPermissions *permissions,
 void signer_permissions_set_flow_clock_for_test(SignerPermissions *permissions,
     gint64 (*clock)(gpointer), gpointer data);
 #endif
-gboolean signer_permissions_kind_requires_confirmation(SignerPermissions *permissions, gint kind);
-/* Atomically persist selected non-required scopes and install optional seal flow
- * consent in an observed window. TTL is measured from first request arrival. */
+gboolean signer_permissions_kind_asks_by_default(SignerPermissions *permissions, gint kind);
+/* Install only in-memory encrypt/seal scopes. One monotonic deadline,
+ * measured from first request arrival; no durable permission rows. */
 gboolean signer_permissions_consent_room(SignerPermissions *permissions,
     const gchar *principal, const gchar *identity, guint transport,
     const gchar *flow_id, guint flow_size, gboolean encrypt, gboolean seals,
@@ -65,9 +65,22 @@ SignerPermissionResult signer_permissions_evaluate_flow(SignerPermissions *permi
 gboolean signer_permissions_invalidate_flows(SignerPermissions *permissions,
     const gchar *principal, const gchar *identity, const gchar *operation);
 /* Rows are aa{sv}: principal, identity, operation, event-kind:i (-1 means
- * operation-wide), decision, expires-at:t, state (explicit|needs-review),
+ * operation-wide), decision, expires-at:t, state (active|inactive|expired), reason, relay (AUTH only),
  * legacy-scope for review rows. These are explicit rows; effective tier policy
  * is available through evaluate(), not expanded into persisted grants. */
+gboolean signer_permissions_can_remember(const gchar *principal, const gchar *operation, gint kind);
+gboolean signer_permissions_is_routine(const gchar *operation, gint kind);
+/* AUTH uses the canonical relay as an additional exact scope, never a challenge. */
+gchar *signer_permissions_canonical_relay(const gchar *url);
+SignerPermissionResult signer_permissions_evaluate_scoped(SignerPermissions *permissions,
+    const gchar *principal, const gchar *identity, const gchar *operation, gint kind,
+    const gchar *relay, gboolean first_party_default, GError **error);
+gboolean signer_permissions_review_saved(SignerPermissions *permissions,
+    const gchar *principal, const gchar *identity, const gchar *operation, gint kind,
+    const gchar *relay, gboolean activate, GError **error);
+gboolean signer_permissions_remember_scoped(SignerPermissions *permissions,
+    const gchar *principal, const gchar *identity, const gchar *operation, gint kind,
+    const gchar *relay, gboolean allow, guint64 ttl_seconds, GError **error);
 GVariant *signer_permissions_list(SignerPermissions *permissions,
                                   const gchar *principal, GError **error);
 gboolean signer_permissions_needs_review(SignerPermissions *permissions,

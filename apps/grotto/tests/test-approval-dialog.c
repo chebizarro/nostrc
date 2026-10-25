@@ -11,7 +11,7 @@ typedef struct {
   gchar **selected_ids;
   gboolean decision, remember, closed;
   guint64 ttl;
-  gchar *identity;
+  gchar *identity, *mode;
 } Fixture;
 static void decision(gboolean allow, gboolean remember, const char *identity, guint64 ttl,
                      gpointer data) {
@@ -29,6 +29,9 @@ static void selected(GnostrApprovalDialog *dialog, gchar **ids, gpointer data) {
   f->selected++;
   g_strfreev(f->selected_ids);
   f->selected_ids = g_strdupv(ids);
+}
+static void mode_selected(GnostrApprovalDialog *dialog, const gchar *mode, gpointer data) {
+  (void)dialog; Fixture *f = data; g_free(f->mode); f->mode = g_strdup(mode);
 }
 static void flow_selected(GnostrApprovalDialog *dialog, gboolean encrypt, gboolean seals, gpointer data) {
   (void)dialog; Fixture *f = data;
@@ -62,6 +65,7 @@ static void setup(Fixture *f, gconstpointer data) {
   g_signal_connect(f->dialog, "deferred", G_CALLBACK(deferred), f);
   g_signal_connect(f->dialog, "approve-selected", G_CALLBACK(selected), f);
   g_signal_connect(f->dialog, "approve-flow", G_CALLBACK(flow_selected), f);
+  g_signal_connect(f->dialog, "decision-mode", G_CALLBACK(mode_selected), f);
   f->window = adw_window_new();
   gtk_window_set_default_size(GTK_WINDOW(f->window), 800, 700);
   gtk_window_present(GTK_WINDOW(f->window));
@@ -81,7 +85,7 @@ static void teardown(Fixture *f, gconstpointer data) {
   while (g_main_context_iteration(NULL, FALSE)) {
   }
   g_object_unref(f->dialog);
-  g_free(f->identity);
+  g_free(f->identity); g_free(f->mode);
   g_strfreev(f->selected_ids);
 }
 static GtkWidget *child(Fixture *f, const char *name) {
@@ -185,12 +189,65 @@ static void fixed_identity_remember(Fixture *f, gconstpointer data) {
   g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_reason"))),
                           "Reason supplied by the application"));
   gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_remember")), TRUE);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(child(f, "ttl_dropdown")), 1);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_24h")), TRUE);
   click(f, "btn_approve");
   wait_closed(f);
   g_assert_cmpstr(f->identity, ==, "npub-pinned-by-daemon");
   g_assert_true(f->remember);
-  g_assert_cmpuint(f->ttl, ==, 3600);
+  g_assert_cmpuint(f->ttl, ==, 86400);
+}
+static void until_revoked(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) row = info(NOSTR_KIND_PROFILE_METADATA, "sign_event", 120);
+  gnostr_approval_dialog_set_info(f->dialog, row, "Verified client");
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_remember"))));
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_24h"))));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "Allow once");
+  g_assert_nonnull(strstr(gtk_check_button_get_label(GTK_CHECK_BUTTON(child(f, "chk_remember"))), "as npub-pinned-by-daemon"));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_remember")), TRUE);
+  click(f, "btn_approve"); wait_closed(f);
+  g_assert_true(f->decision); g_assert_true(f->remember); g_assert_cmpuint(f->ttl, ==, 0);
+}
+static void deny_with_reusable_allow(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) row = info(NOSTR_KIND_PROFILE_METADATA, "sign_event", 120);
+  gnostr_approval_dialog_set_info(f->dialog, row, "Verified client");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_remember")), TRUE);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(child(f, "btn_deny")), ==, "Deny once (Ctrl+D, Escape)");
+  click(f, "btn_deny"); wait_closed(f);
+  g_assert_false(f->decision); g_assert_false(f->remember); g_assert_cmpuint(f->ttl, ==, 0);
+}
+static void explicit_mode(Fixture *f, gconstpointer data) {
+  const gchar *mode = data;
+  g_autoptr(GVariant) row = info(NOSTR_KIND_PROFILE_METADATA, "sign_event", 120);
+  GVariantDict d; g_variant_dict_init(&d, row);
+  g_variant_dict_insert(&d, "policy_review", "b", TRUE); g_variant_dict_insert(&d, "identity_drift", "b", TRUE);
+  g_autoptr(GVariant) with_review = g_variant_ref_sink(g_variant_dict_end(&d));
+  gnostr_approval_dialog_set_info(f->dialog, with_review, "Verified client");
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_trust_explanation"))), "different identity"));
+  const gchar *button = !strcmp(mode, "trust-routine") ? "btn_change_trust" :
+      !strcmp(mode, "activate-saved") ? "btn_activate_saved" :
+      !strcmp(mode, "discard-saved") ? "btn_discard_saved" : "btn_block_operation";
+  g_assert_true(gtk_widget_get_sensitive(child(f, button)));
+  click(f, button); wait_closed(f); g_assert_cmpstr(f->mode, ==, mode); g_assert_cmpuint(f->calls, ==, 0);
+}
+static GtkWidget *button_named(GtkWidget *root, const gchar *label) {
+  if (GTK_IS_BUTTON(root) && !g_strcmp0(gtk_button_get_label(GTK_BUTTON(root)), label)) return root;
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = button_named(child, label); if (found) return found;
+  }
+  return NULL;
+}
+static void block_app_confirmation(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "sign_event", 120);
+  gnostr_approval_dialog_set_info(f->dialog, row, "Client");
+  click(f, "btn_block_app");
+  AdwDialog *alert = adw_window_get_visible_dialog(ADW_WINDOW(f->window));
+  g_assert_true(ADW_IS_ALERT_DIALOG(alert)); g_assert_null(f->mode); g_assert_cmpuint(f->calls, ==, 0);
+  GtkWidget *block = button_named(GTK_WIDGET(alert), "Block app"); g_assert_nonnull(block);
+  g_signal_emit_by_name(block, "clicked"); wait_closed(f);
+  g_assert_cmpstr(f->mode, ==, "block-app"); g_assert_cmpuint(f->calls, ==, 0);
 }
 static void unicode(Fixture *f, gconstpointer data) {
   (void)data;
@@ -245,10 +302,10 @@ static void previews(Fixture *f, gconstpointer data) {
   g_autoptr(GVariant) exact = g_variant_ref_sink(g_variant_dict_end(&outer));
   gnostr_approval_dialog_set_info(f->dialog, exact, "Client");
   g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), relay));
-  g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "nip44_conversation_key", 120);
+  g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "nip44_decrypt", 120);
   gnostr_approval_dialog_set_info(f->dialog, row, "Client");
   g_assert_nonnull(
-      strstr(gtk_label_get_text(GTK_LABEL(child(f, "subtitle_label"))), "every NIP-44 message"));
+      strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), "Private message bodies are not shown"));
   g_assert_nonnull(
       strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), "peer-fingerprint"));
 }
@@ -399,6 +456,14 @@ int main(int argc, char **argv) {
   ADD("not-now", not_now);
   ADD("disabled-approve", disabled_approve);
   ADD("fixed-identity-remember", fixed_identity_remember);
+  ADD("until-revoked-default", until_revoked);
+  ADD("deny-with-reusable-allow", deny_with_reusable_allow);
+  ADD("block-app-confirmation", block_app_confirmation);
+  const gchar *modes[] = {"trust-routine", "block-operation", "activate-saved", "discard-saved"};
+  for (guint i = 0; i < G_N_ELEMENTS(modes); i++) {
+    g_autofree gchar *path = g_strconcat("/signer/approval-dialog/", modes[i], NULL);
+    g_test_add(path, Fixture, modes[i], setup, explicit_mode, teardown);
+  }
   ADD("unicode", unicode);
   ADD("completion-cancels", completion_cancels);
   ADD("previews", previews);

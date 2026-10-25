@@ -636,8 +636,8 @@ Description: Encrypt files for Nostr public keys or a passphrase
  authenticated.
  .
  Opening a file sealed for an npub goes through the org.nostr.Signer D-Bus
- service (NIP44DeriveConversationKey, approval-gated), so the nsec never
- leaves the signer. Ships the nostr-seal CLI, the nostr-seal-gtk
+ service (binary-safe NIP44Decrypt, approval-gated). Account and conversation
+ keys stay in the signer; only the per-file stanza is decrypted. Ships the nostr-seal CLI, the nostr-seal-gtk
  double-click handler and the application/vnd.nostr.sealed (*.nsealed)
  MIME type.
 

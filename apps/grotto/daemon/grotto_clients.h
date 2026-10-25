@@ -21,6 +21,7 @@ gboolean grotto_clients_record(GrottoClients *clients, const gchar *principal,
     gboolean consented, gboolean used, GError **error);
 gboolean grotto_clients_set_label(GrottoClients *clients, const gchar *principal,
     const gchar *label, GError **error);
+gboolean grotto_clients_decide(GrottoClients *clients, const gchar *principal, const gchar *mode, GError **error);
 gboolean grotto_clients_set_tier(GrottoClients *clients, const gchar *principal,
     SignerTrustTier tier, GError **error);
 /* G06 persists signature-authenticated pairing admission, including relays.

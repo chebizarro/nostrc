@@ -272,6 +272,39 @@ static void test_store_failures(ControlFixture *f, gconstpointer data) {
   g_autoptr(GrottoClients) newer = grotto_clients_new(dir, &error); g_assert_null(newer); g_assert_nonnull(error);
   g_unlink(path); g_autofree gchar *parent = g_path_get_dirname(path); g_rmdir(parent); g_rmdir(dir);
 }
+static void test_preset_migration(ControlFixture *f, gconstpointer data) {
+  (void)f; (void)data;
+  g_autofree gchar *dir = g_dir_make_tmp("g15-preset-XXXXXX", NULL);
+  g_autoptr(GrottoClients) store = grotto_clients_new(dir, NULL);
+  const gchar *principal = "exe:/preset-client";
+  g_assert_true(grotto_clients_record(store, principal, "DBUS", "", "identity", TRUE, FALSE, NULL));
+  g_assert_true(grotto_clients_set_tier(store, principal, SIGNER_TRUST_FULL, NULL));
+  g_autofree gchar *path = g_build_filename(dir, "grotto", "clients.ini", NULL);
+  g_autofree gchar *key = g_compute_checksum_for_string(G_CHECKSUM_SHA256, principal, -1);
+  g_autoptr(GKeyFile) old = g_key_file_new(); g_assert_true(g_key_file_load_from_file(old, path, 0, NULL));
+  g_key_file_remove_key(old, key, "preset-version", NULL);
+  g_autofree gchar *bytes = g_key_file_to_data(old, NULL, NULL); g_assert_true(g_file_set_contents(path, bytes, -1, NULL));
+  g_clear_pointer(&store, grotto_clients_free); store = grotto_clients_new(dir, NULL); g_assert_nonnull(store);
+  gboolean consented = FALSE;
+  g_assert_cmpint(grotto_clients_trust(principal, &consented, store), ==, SIGNER_TRUST_PREVIOUS_FULL);
+  g_assert_true(consented);
+  g_autoptr(SignerPermissions) policy = signer_permissions_new(dir);
+  signer_permissions_set_trust_lookup(policy, grotto_clients_trust, store);
+  g_assert_cmpint(signer_permissions_evaluate(policy, principal, "identity", "event", 65535, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate(policy, principal, "identity", "event", NOSTR_KIND_PROFILE_METADATA, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_autoptr(GVariant) rows = grotto_clients_list(store); g_autoptr(GVariant) row = g_variant_get_child_value(rows, 0);
+  const gchar *label; g_assert_true(g_variant_lookup(row, "access-policy", "&s", &label)); g_assert_cmpstr(label, ==, "Previous access policy");
+  g_assert_true(grotto_clients_set_tier(store, principal, SIGNER_TRUST_FULL, NULL));
+  signer_permissions_policy_changed(policy);
+  g_assert_cmpint(grotto_clients_trust(principal, &consented, store), ==, SIGNER_TRUST_FULL);
+  g_assert_cmpint(signer_permissions_evaluate(policy, principal, "identity", "event", 65535, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_true(grotto_clients_decide(store, principal, "block-app", NULL));
+  signer_permissions_policy_changed(policy);
+  g_assert_cmpint(signer_permissions_evaluate(policy, principal, "identity", "get_public_key", -1, FALSE, NULL), ==, SIGNER_PERMISSION_DENY);
+  g_unlink(path); g_autofree gchar *parent = g_path_get_dirname(path); g_rmdir(parent);
+  g_autofree gchar *permission_path = g_build_filename(dir, "gnostr", "signer-permissions-v2.ini", NULL); g_unlink(permission_path);
+  g_autofree gchar *permission_dir = g_path_get_dirname(permission_path); g_rmdir(permission_dir); g_rmdir(dir);
+}
 static void test_export(ControlFixture *f, gconstpointer data) {
   (void)data; char *identity = NULL; g_assert_cmpint(nostr_nip55l_get_public_key(&identity), ==, 0);
   g_autoptr(GVariant) raw = control_call(f, "ExportRawIdentity", g_variant_new("(s)", identity));
@@ -340,6 +373,7 @@ int main(int argc, char **argv) {
   ADD("/clients/transports-origins-identity", test_transports); ADD("/clients/failed-not-admitted", test_failed_not_client);
   ADD("/clients/permission-created-observed-use", test_permission_created_client);
   ADD("/clients/persistence-failure-version", test_store_failures);
+  ADD("/clients/preset-migration", test_preset_migration);
 #ifdef NIP55L_TEST_TRUST_ENV
   ADD("/clients/live-tier-lowering", test_live_tier_lowering);
   ADD("/control/join-detach-execution-revisions", test_request_revisions);

@@ -133,6 +133,18 @@ class PolicyTests(unittest.TestCase):
                 for prefix in case.get("excluded_prefixes", []):
                     self.assertFalse(any(x.startswith(prefix) for x in result["selected_checks"]))
 
+    def test_permission_repeat_enrollment(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for path in ("apps/grotto/tests/test-permission-repeat.c",
+                     "apps/grotto/daemon/grotto_control.c",
+                     "nips/nip55l/src/glib/signer_permissions.c",
+                     "nips/nip55l/dbus/org.nostr.Signer.xml",
+                     "tests/common/nostrc-test-bus.c"):
+            with self.subTest(path=path):
+                self.assertIn("grotto.permissions.repeat", plan(p, paths=(path,))["selected_checks"])
+        self.assertNotIn("grotto.permissions.repeat",
+                         plan(p, paths=("apps/relayd/src/relay_ingress.c",))["selected_checks"])
+
     def test_inventory_covers_all_tracked_paths_or_explicit_broadening(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         import os

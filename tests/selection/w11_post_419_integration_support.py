@@ -51,6 +51,25 @@ def before_source(path, raw):
 def before_policy(policy):
     data = witness()
     previous = copy.deepcopy(policy)
+    # The permission-repeat check postdates this immutable historical view.
+    # Reverse only its exact enrollment; do not alter any predecessor check.
+    ident = 'grotto.permissions.repeat'
+    profiles = ['core.linux', 'core.linux.asan', 'grotto.linux',
+                'grotto.linux.asan_ubsan', 'groundhog.linux',
+                'groundhog.mdk011', 'groundhog.mdk08']
+    expected = {
+        'nodes': ['grotto.daemon', 'grotto.gui', 'nip55l.dbus_contract',
+                  'nip55l.glib', 'nip55l.test_inputs', 'testing.common_inputs'],
+        'profiles': profiles, 'kind': 'ctest', 'cost': 'ordinary',
+        'requirement': 'blocking', 'expected_outcome': 'pass',
+        'ctest_tests': {p: ['signer/permission-repeat'] for p in profiles},
+        'build_targets': ['test-permission-repeat'], 'runtime_inputs': [],
+        'requires': ['private_bus'],
+    }
+    if ident in previous['checks']:
+        s.require(previous['checks'][ident] == expected,
+                  'permission-repeat enrollment changed in historical view')
+        del previous['checks'][ident]
     inputs = previous['checks']['selection.contract']['runtime_inputs']
     present = [path for path in data['runtime_inputs'] if path in inputs]
     if present:

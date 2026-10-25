@@ -145,7 +145,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_approve_selected">
-                            <property name="label" translatable="yes">Approve Selected Once</property>
+                            <property name="label" translatable="yes">Allow selected once</property>
                             <property name="sensitive">false</property>
                           </object>
                         </child>
@@ -176,7 +176,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkCheckButton" id="chk_flow_encrypt">
-                        <property name="label" translatable="yes">Allow NIP-44 encryption for this client and identity for 10 minutes</property>
+                        <property name="label" translatable="yes">Allow NIP-44 encryption in this flow only</property>
                       </object>
                     </child>
                     <child>
@@ -188,12 +188,25 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkCheckButton" id="chk_remember">
-                    <property name="label" translatable="yes">Remember this decision for this scope</property>
+                    <property name="label" translatable="yes">Always allow this app for this operation and identity</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkDropDown" id="ttl_dropdown">
-                    <property name="sensitive">false</property>
+                  <object class="GtkCheckButton" id="chk_24h">
+                    <property name="label" translatable="yes">For 24 hours instead of until revoked</property>
+                    <property name="visible">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_activate_saved">
+                    <property name="label" translatable="yes">Activate saved permission</property>
+                    <property name="visible">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_discard_saved">
+                    <property name="label" translatable="yes">Discard saved permission</property>
+                    <property name="visible">false</property>
                   </object>
                 </child>
                 <child>
@@ -202,15 +215,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="spacing">8</property>
                     <child>
                       <object class="GtkButton" id="btn_deny">
-                        <property name="label" translatable="yes">Deny</property>
+                        <property name="label" translatable="yes">Deny once</property>
                         <property name="tooltip-text" translatable="yes">Deny once (Ctrl+D, Escape)</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_approve">
-                        <property name="label" translatable="yes">Approve</property>
+                        <property name="label" translatable="yes">Allow once</property>
                         <property name="receives-default">false</property>
-                        <property name="tooltip-text" translatable="yes">Approve (Ctrl+A)</property>
+                        <property name="tooltip-text" translatable="yes">Allow once (Ctrl+A)</property>
                         <style>
                           <class name="suggested-action"/>
                         </style>
@@ -247,18 +260,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkLabel" id="label_trust_explanation">
-                            <property name="label" translatable="yes">Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions.</property>
                             <property name="wrap">true</property>
                             <property name="xalign">0</property>
                           </object>
                         </child>
                         <child>
-                          <object class="GtkDropDown" id="trust_dropdown"></object>
+                          <object class="GtkButton" id="btn_change_trust">
+                            <property name="label" translatable="yes">Trust this app for routine operations</property>
+                            <property name="sensitive">false</property>
+                          </object>
                         </child>
                         <child>
-                          <object class="GtkButton" id="btn_change_trust">
-                            <property name="label" translatable="yes">Change Trust Level…</property>
-                            <property name="sensitive">false</property>
+                          <object class="GtkButton" id="btn_block_operation">
+                            <property name="label" translatable="yes">Block this operation for this app</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_block_app">
+                            <property name="label" translatable="yes">Block app…</property>
                           </object>
                         </child>
                       </object>

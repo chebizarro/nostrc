@@ -131,11 +131,11 @@ if(BUILD_TESTING)
   add_test(NAME nostr_seal_big COMMAND test-nostr-seal --big)
   set_tests_properties(nostr_seal_big PROPERTIES LABELS "nostr-seal;slow" TIMEOUT 1200)
 
-  # CLI ↔ real nostr-signer-daemon on a private bus (NIP44DeriveConversationKey).
+  # CLI ↔ real nostr-signer-daemon, binary-safe nip44_decrypt only.
   if(TARGET nostr-signer-daemon)
     add_executable(test-nostr-seal-signer tests/test-nseal-signer.c)
     target_compile_options(test-nostr-seal-signer PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(test-nostr-seal-signer PRIVATE nostr_seal_core nostr_nip55l_glib)
+    target_link_libraries(test-nostr-seal-signer PRIVATE nostr_seal_core nostr_nip55l_glib nostrc-test-bus)
     target_include_directories(test-nostr-seal-signer PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
     target_compile_definitions(test-nostr-seal-signer PRIVATE
       "NSEAL_DAEMON_PATH=\"$<TARGET_FILE:nostr-signer-daemon>\""

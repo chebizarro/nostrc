@@ -68,6 +68,25 @@ set passes; do not close one merely because another platform or a fixture passed
 | B9 | Replace interactive drop-in with headless example (one install-policy restart). Exercise pre-paired scoped signing, unknown pairing and review-required call. | --bunker --no-approval-ui; scoped work succeeds, new consent fails promptly typed NoApprovalAgent, no GUI activation. Relaxing IP filter alone is not headless setup. | .7.1 |
 | B10 | Upgrade a disposable legacy profile with broad allows/denials and old autostart preferences, then restart twice; attempt failed writes/higher schema on copies only. | Unsafe broad event allows become non-executable Needs review; denials and valid non-event scopes preserved; old allowlist is not pairing; migration idempotent, corrupt/future state fails closed, write failure not reported as remembered success. Do not restore broad allows into a live old binary. | .14.1 |
 
+### G15 permission-model dogfood (required before Preview promotion)
+
+Run a **30-minute real-client session with gnostr and Groundhog** on a native
+installed Linux desktop, using only disposable identities. This is not satisfied
+by the macOS private-bus daemon matrix or native widget tests. Record the package
+and commit, each choice, the next matching request and a daemon restart.
+
+| Step | Action | Expected result | Bead |
+|---|---|---|---|
+| B11 | For profile 0, contacts 3, relay list 10002, deletion 5, zap 9734, DM seals/wraps 13/1059, AUTH 22242 and NIP-44 encrypt/decrypt, choose Always allow (until revoked); repeat, restart daemon, repeat. Also grant one custom kind explicitly. | No second matching prompt. Scope names app, exact identity and operation/kind; AUTH additionally names the canonical relay. No always-confirm class. | .14.1 |
+| B12 | Use Allow once, Deny once, 24-hour allow, Block operation, Trust routine operations, Block app and Pair application. Select reusable allow then Deny once. Edit duration on Permissions; revoke/unblock. | Each action matches its wording. Default is once; reusable default is until revoked; no TTL dropdown or Forever confirmation. Deny once stays once. Routine decision is atomic and excludes custom kinds; ask-by-default kinds need the first scoped grant. Block app asks confirmation. | .14.1 |
+| B13 | Upgrade a copy containing permanent dormant required-kind allows and an old Full client; restart twice. Activate one saved permission, allow another once, discard another. Upgrade Previous access policy explicitly. | Dormant allows remain inactive policy-review with provenance and expiry zero preserved indefinitely, separate from 90-day legacy review. No silent Full expansion. Activation keeps original expiry and binds AUTH to current relay. Active/inactive/expired markers and reasons come from the daemon. | .14.1 |
+| B14 | Use two AUTH relays, canonical-equivalent URLs, fresh challenges, malformed/duplicate tags and stale timestamps. Change default identity A→B while keeping explicit A grants. Grant a scope with other matching requests waiting. | Relay grant isolation, no remembered challenge, invalid AUTH refused. Relay claim is not transport provenance. B review explains the different saved identity; A grant remains exact. Newly authorised pending requests retire without duplicate signing. | .14.1 |
+| B15 | Send a multi-recipient Groundhog room message with flow choices, then use another flow/identity/transport and restart. Open a real disposable .nsealed file through nostr-seal. | Flow encrypt/seal consent writes no disk rows, uses one first-arrival deadline and shows remaining time; effective routine/scoped access avoids the flow prompt. File opens through binary-safe NIP44Decrypt only; removed conversation-key methods are absent. | .14.1 |
+
+On the separate macOS development route, verify a named app claim is labelled
+unverifiable and an empty `claimed:` principal cannot save consent or trust.
+This does not establish Linux attestation or native installed acceptance.
+
 ## C. Live Shell extension (all G13 obligations)
 
 Run the full `gnome/nostr-shell-extension/README.md` manual matrix as well. The

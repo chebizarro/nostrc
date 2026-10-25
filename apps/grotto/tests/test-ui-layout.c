@@ -16,6 +16,7 @@
 #include "nostrc-test-gdk-frame.h"
 #include <glib/gstdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <locale.h>
 static GDBusConnection *server; static gchar *npub; static guint frames, tier_writes, permission_writes;
 static const gchar *tier = "medium";
@@ -38,7 +39,7 @@ static void fixture_permission(GVariantBuilder *rows, const gchar *identity, gin
   g_variant_builder_add(&b, "{sv}", "operation", g_variant_new_string("event"));
   g_variant_builder_add(&b, "{sv}", "event-kind", g_variant_new_int32(kind));
   g_variant_builder_add(&b, "{sv}", "decision", g_variant_new_string(decision));
-  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string(!strcmp(decision, "review") ? "needs-review" : "explicit"));
+  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string(!strcmp(decision, "review") ? "inactive" : "active"));
   g_variant_builder_add(&b, "{sv}", "expires-at", g_variant_new_uint64(expires_at));
   g_variant_builder_add_value(rows, g_variant_builder_end(&b));
 }
@@ -101,7 +102,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
       if (!strcmp(row_text(row, "decision"), "allow")) g_assert_cmpstr(identity, !=, "*");
       gint kind; g_variant_lookup(row, "event-kind", "i", &kind);
       if (kind == NOSTR_KIND_FOLLOW_LIST) { guint64 expiry; g_variant_lookup(row, "expires-at", "t", &expiry); g_assert_cmpuint(expiry, ==, expires_at); }
-      GVariantDict d; g_variant_dict_init(&d, row); g_variant_dict_insert(&d, "state", "s", !strcmp(row_text(row, "decision"), "review") ? "needs-review" : "explicit");
+      GVariantDict d; g_variant_dict_init(&d, row); g_variant_dict_insert(&d, "state", "s", !strcmp(row_text(row, "decision"), "review") ? "inactive" : "active");
       g_variant_builder_add_value(&next, g_variant_dict_end(&d));
     }
     gboolean legacy_present = contains_permission("*", "review");
@@ -115,7 +116,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
   if (!strcmp(method, "GetStatus")) {
     GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
 #define ADD(k,v) g_variant_builder_add(&b, "{sv}", k, v)
-    ADD("control_version", g_variant_new_uint32(1)); ADD("control_epoch", g_variant_new_string("fixture")); ADD("permissions_revision", g_variant_new_uint64(revision));
+    ADD("control_version", g_variant_new_uint32(1)); ADD("permission_policy_version", g_variant_new_uint32(3)); ADD("control_epoch", g_variant_new_string("fixture")); ADD("permissions_revision", g_variant_new_uint64(revision));
     ADD("signed_today", g_variant_new_uint32(117)); ADD("client_count", g_variant_new_uint32(1)); ADD("pending_count", g_variant_new_uint32(0)); ADD("bunker_state", g_variant_new_string("DISABLED"));
     g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", g_variant_builder_end(&b))); return;
   }
@@ -182,6 +183,25 @@ static GtkWidget *find_identity_picker(GtkWidget *widget) {
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) { GtkWidget *found = find_identity_picker(child); if (found) return found; }
   return NULL;
 }
+static GtkWidget *find_relay_permission(GtkWidget *widget, const gchar *relay) {
+  GVariant *row = g_object_get_data(G_OBJECT(widget), "permission");
+  if (row && !strcmp(row_text(row, "relay"), relay)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_relay_permission(child, relay); if (found) return found;
+  }
+  return NULL;
+}
+static GtkWidget *find_expiry(GtkWidget *widget) {
+  if (GTK_IS_DROP_DOWN(widget)) {
+    GListModel *model = gtk_drop_down_get_model(GTK_DROP_DOWN(widget));
+    g_autoptr(GtkStringObject) first = model && g_list_model_get_n_items(model) ? g_list_model_get_item(model, 0) : NULL;
+    if (first && !strcmp(gtk_string_object_get_string(first), _("Keep current expiry"))) return widget;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_expiry(child); if (found) return found;
+  }
+  return NULL;
+}
 static void finalised(gpointer data, GObject *object) { (void)object; (*(guint *)data)++; }
 static void layout_activate(GApplication *application, gpointer data) {
   (void)data; AdwApplication *app = ADW_APPLICATION(application);
@@ -207,7 +227,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(signed_today), GTK_ACCESSIBLE_PROPERTY_LABEL, signed_name);
   GtkWidget *client_list = GTK_WIDGET(gtk_widget_get_template_child(home, GROTTO_TYPE_PAGE_HOME, "clients_list"));
   GtkWidget *client_row = gtk_widget_get_first_child(client_list); g_assert_nonnull(client_row);
-  g_autofree gchar *client_name = g_strdup_printf(_("%s · %s · %s trust · %s"), "Jank", _("Browser bridge"), _("Medium"), adw_action_row_get_subtitle(ADW_ACTION_ROW(client_row)));
+  g_autofree gchar *client_name = g_strdup_printf(_("%s · %s · %s · %s"), "Jank", _("Browser bridge"), _("Medium"), adw_action_row_get_subtitle(ADW_ACTION_ROW(client_row)));
   if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(client_row), GTK_ACCESSIBLE_PROPERTY_LABEL, client_name);
   GtkWidget *avatars = GTK_WIDGET(gtk_widget_get_template_child(home, GROTTO_TYPE_PAGE_HOME, "avatars"));
   GtkWidget *selected_avatar = NULL, *watch_avatar = NULL;
@@ -354,6 +374,38 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_signal_emit_by_name(find_button(GTK_WIDGET(editor), _("Remove Permission")), "clicked"); WAIT(permission_writes == 5);
       WAIT(editors_gone == 4 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_false(contains_permission("*", "review"));
+      /* Duration edits must preserve independent AUTH grants for two relays. */
+      GVariantBuilder auth; g_variant_builder_init(&auth, G_VARIANT_TYPE("aa{sv}"));
+      for (gsize i = 0; i < g_variant_n_children(permission_rows); i++) {
+        g_autoptr(GVariant) row = g_variant_get_child_value(permission_rows, i); g_variant_builder_add_value(&auth, row);
+      }
+      const gchar *relays[] = {"wss://nos.lol/", "wss://relay.nostr.band/"};
+      for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+        GVariantBuilder one; g_variant_builder_init(&one, G_VARIANT_TYPE("aa{sv}"));
+        fixture_permission(&one, npub, NOSTR_KIND_CLIENT_AUTHENTICATION, "allow");
+        g_autoptr(GVariant) array = g_variant_ref_sink(g_variant_builder_end(&one));
+        g_autoptr(GVariant) row = g_variant_get_child_value(array, 0);
+        GVariantDict d; g_variant_dict_init(&d, row); g_variant_dict_insert(&d, "relay", "s", relays[i]);
+        g_variant_builder_add_value(&auth, g_variant_dict_end(&d));
+      }
+      g_clear_pointer(&permission_rows, g_variant_unref); permission_rows = g_variant_ref_sink(g_variant_builder_end(&auth)); revision++;
+      g_dbus_connection_emit_signal(server, NULL, "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ClientsChanged", g_variant_new("(t)", revision), NULL);
+      GtkWidget *auth_row = NULL; WAIT((auth_row = find_relay_permission(detail, relays[0])) && gtk_widget_is_sensitive(auth_row));
+      g_signal_emit_by_name(auth_row, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+      g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
+      GtkWidget *expiry_picker = find_expiry(GTK_WIDGET(editor)); g_assert_nonnull(expiry_picker);
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(expiry_picker), 3);
+      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), _("Save Permission")), "clicked");
+      WAIT(permission_writes == 6 && editors_gone == 5);
+      g_assert_nonnull(find_relay_permission(detail, relays[1]));
+      gboolean edited_auth = FALSE;
+      for (gsize i = 0; i < g_variant_n_children(permission_rows); i++) {
+        g_autoptr(GVariant) row = g_variant_get_child_value(permission_rows, i);
+        if (strcmp(row_text(row, "relay"), relays[0])) continue;
+        guint64 expiry; g_assert_true(g_variant_lookup(row, "expires-at", "t", &expiry));
+        g_assert_cmpint(llabs((gint64)expiry - g_get_real_time() / G_USEC_PER_SEC - 86400), <=, 3); edited_auth = TRUE;
+      }
+      g_assert_true(edited_auth);
       fail_permission_read = TRUE; g_signal_emit_by_name(feedback, "button-clicked");
       WAIT(!strcmp(adw_banner_get_title(feedback), _("Permissions could not be loaded. No edit was saved. Refresh to try again.")));
       g_assert_true(adw_banner_get_revealed(feedback));
@@ -370,7 +422,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
   WAIT(windows_gone == 1);
   WAIT(pages_gone == 6);
-  WAIT(editors_gone == 4);
+  WAIT(editors_gone == 5);
   g_application_quit(application);
 }
 static void layout(void) {

@@ -11,6 +11,9 @@
 <node name="/org/nostr/signer/grotto">
   <interface name="org.nostr.Grotto.Control1">
     <method name="GetStatus"><arg name="status" type="a{sv}" direction="out"/></method>
+    <!-- One approver-only decision: allow-once, allow, allow-24h, deny-once,
+         block-operation, block-app, trust-routine, activate-saved, discard-saved. -->
+    <method name="DecideRequest"><arg name="request_id" type="s" direction="in"/><arg name="mode" type="s" direction="in"/><arg name="ok" type="b" direction="out"/></method>
     <method name="ListRequests"><arg name="requests" type="aa{sv}" direction="out"/></method>
     <method name="ListClients"><arg name="clients" type="aa{sv}" direction="out"/></method>
     <method name="ListPermissions">

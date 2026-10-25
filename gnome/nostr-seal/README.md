@@ -79,20 +79,18 @@ No new KDF, MAC or AEAD construction is introduced.
 
 Sealing needs no signer at all (ephemeral sender key). Opening does:
 
-1. `GetPublicKey` (or `--identity npub1…`) picks the identity; the tool finds
-   the stanza naming it.
-2. `org.nostr.Signer.NIP44DeriveConversationKey(ephemeral_pubkey_hex, identity,
-   "org.nostr.Seal")` (nip55l ≥ 0.3.0) returns the conversation key with the
-   stanza's **ephemeral** key. It goes through the signer's approval flow (ACL
-   section `[NIP44DeriveConversationKey]`, else an `ApprovalRequested` prompt
-   of kind `nip44_conversation_key`). Because the peer is a throwaway key, the
-   returned key opens this one stanza and nothing else.
-3. nostr-seal opens the NIP-44 payload locally and gets the file key.
+1. `GetPublicKeyForApp("org.nostr.Seal")` (or `--identity npub1…`) picks the
+   exact identity; the tool finds the stanza naming it.
+2. `NIP44DecryptB64ForApp(payload, ephemeral_pubkey_hex, identity, "org.nostr.Seal")`
+   asks the signer to open the standard NIP-44 stanza. The B64 output is necessary
+   because the existing file key is 32 binary bytes, not a D-Bus UTF-8 string.
+   Approval uses ordinary `nip44_decrypt`, never conversation-key export.
+3. nostr-seal decodes just this file key and opens the file locally. Account and
+   conversation keys stay in the signer. The nsealed v1 format is unchanged.
 
-Signers that predate the method answer `UnknownMethod`; nostr-seal then asks
-them to open the stanza payload directly with `NIP44DecryptB64` (it is an
-ordinary NIP-44 v2 payload, so any NIP-44-capable signer — including a NIP-46
-bunker via `nip44_decrypt` — can open it).
+There is no conversation-key export method or fallback. The named claim makes the
+macOS development path explicitly attributable but still unverifiable; it is not
+Linux attestation proof.
 
 ## Format (`.nsealed`, version 1)
 
@@ -221,7 +219,7 @@ sparse file seals and opens in ~21 MiB RSS). Limits: 2^22 chunks per file
 | `nostr_seal_config` | `seal.conf` parsing (missing / valid / bad recipient / bad values) and the CLI sealing for the configured default recipient |
 | `nostr_seal_unit` | 0 B / 1 B / C−1 / exactly one chunk / C+1 / multi-chunk round trips and exact size geometry; exactly one default chunk; 3-recipient; wrong recipient / wrong key; tamper matrix (header fields, key commitment, own and foreign stanzas, transplanted stanza from another file, chunk bytes and tags, chunk swap, dropped chunk, index, footer, truncation, append); identical chunks seal differently; passphrase round-trip with NFKC, wrong passphrase, work-factor cap; pipe input; decrypt refuses a pipe |
 | `nostr_seal_big` | multi-GB streaming by fd on a sparse file (`NSEAL_TEST_BIG_BYTES`, default 3 GiB + 12 345), bounded RSS |
-| `nostr_seal_signer` | CLI ↔ real `nostr-signer-daemon` on a private bus: `--to-self`, `inspect`, decrypt through `NIP44DeriveConversationKey`, not-a-recipient, signer policy deny, passphrase via `--passphrase-file` |
+| `nostr_seal_signer` | CLI ↔ real `nostr-signer-daemon` on a private bus: `--to-self`, `inspect`, decrypt through `NIP44DecryptB64ForApp` only, not-a-recipient, signer policy deny, passphrase via `--passphrase-file` |
 
 The signer method itself is covered by `nip55l_dbus_contract` (ACL allow /
 deny, interactive `ApprovalRequested` → `ApproveRequest` approve and deny,
@@ -261,7 +259,3 @@ it). `nostr-seal-gtk` does not offer publishing yet.
 ## Not yet
 
 * A "Publish" button in `nostr-seal-gtk`.
-* `grotto-daemon` exports the same nip55l GLib service, so it serves
-  `NIP44DeriveConversationKey` as-is; the grotto approval dialog shows
-  it with the generic kind/preview text, and its remembered-decision store is
-  keyed by (app, account) without the request kind — follow-up bead.

@@ -1,12 +1,9 @@
 /* nseal-signer.h — org.nostr.Signer client lane for nostr-seal.
  * SPDX-License-Identifier: MIT
  *
- * The secret key stays in the signer daemon. Decrypt asks it for the
- * NIP-44 conversation key with the stanza's *ephemeral* public key
- * (NIP44DeriveConversationKey, nip55l >= 0.3.0, approval-gated) — that key
- * opens this one stanza and nothing else. Signers without the method are
- * asked to open the stanza payload directly (NIP44DecryptB64), which is a
- * standard NIP-44 v2 payload. */
+ * The secret key stays in the signer daemon. Decrypt asks it to open the
+ * stanza's standard NIP-44 v2 payload with NIP44DecryptB64ForApp. Only the
+ * per-file key is returned; no conversation key is exported. */
 #ifndef NSEAL_SIGNER_H
 #define NSEAL_SIGNER_H
 

@@ -25,7 +25,10 @@ static void one_review_no_grants(ControlFixture *f, gconstpointer data) {
   g_assert_true(g_variant_lookup(row, "preview", "&s", &preview)); g_assert_nonnull(strstr(preview, "unpublished")); g_assert_nonnull(strstr(preview, "encrypt and decrypt"));
   g_assert_true(g_variant_lookup(row, "rememberable", "b", &rememberable)); g_assert_false(rememberable);
   g_assert_true(g_variant_lookup(row, "principal", "&s", &principal));
-  decision(f, id, TRUE, TRUE); /* An old/malicious UI's remember=true cannot create a grant. */
+  /* Management is once-only. Reusable consent is refused, not silently saved. */
+  expect_control_error(f, "DecideRequest", g_variant_new("(ss)", id, "allow"),
+      "org.nostr.Signer.Error.InvalidInput");
+  decision(f, id, TRUE, FALSE);
   wait_count(&result.done, 1); g_assert_no_error(result.error);
   const gchar *verdict; g_variant_get(result.value, "(&s)", &verdict); g_assert_cmpstr(verdict, ==, "passed");
   g_autoptr(GVariant) permissions = get_rows(f, "ListPermissions", g_variant_new("(s)", principal));
@@ -36,7 +39,7 @@ static void one_review_no_grants(ControlFixture *f, gconstpointer data) {
 static void denied_no_grants(ControlFixture *f, gconstpointer data) {
   (void)data; char *identity = NULL; g_assert_cmpint(nostr_nip55l_get_public_key(&identity), ==, 0);
   BusReply result = {0}; begin_test(f, identity, &result);
-  const gchar *id = pending_id(f, 0); decision(f, id, FALSE, TRUE);
+  const gchar *id = pending_id(f, 0); decision(f, id, FALSE, FALSE);
   wait_count(&result.done, 1); g_assert_nonnull(result.error);
   g_autofree gchar *remote = g_dbus_error_get_remote_error(result.error);
   g_assert_cmpstr(remote, ==, "org.nostr.Signer.Error.ApprovalDenied");
@@ -258,7 +261,7 @@ static void tampered_self_test(gconstpointer data) {
   ControlFixture fixture = {0}; fixture_setup(&fixture, NULL);
   char *identity = NULL; g_assert_cmpint(nostr_nip55l_get_public_key(&identity), ==, 0);
   BusReply result = {0}; begin_test(&fixture, identity, &result);
-  const gchar *id = pending_id(&fixture, 0); decision(&fixture, id, TRUE, TRUE); wait_count(&result.done, 1);
+  const gchar *id = pending_id(&fixture, 0); decision(&fixture, id, TRUE, FALSE); wait_count(&result.done, 1);
   g_assert_nonnull(result.error);
   g_autofree gchar *name = g_dbus_error_get_remote_error(result.error);
   g_assert_cmpstr(name, ==, "org.nostr.Signer.Error.VerificationFailed");

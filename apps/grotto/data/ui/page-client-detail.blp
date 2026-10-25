@@ -16,18 +16,18 @@ template $GrottoClientDetail: Adw.NavigationPage {
           }
           Adw.PreferencesGroup {
             title: _("Trust Level");
-            description: _("Required-confirmation events and key exports still need review. Explicit denials always win.");
-            Adw.ActionRow { title: _("Full"); subtitle: _("Auto-sign all requests");
+            description: _("Explicit denials win. Saved permissions override presets; ask-by-default kinds need a scoped first grant.");
+            Adw.ActionRow full_access_row { title: _("Routine access"); subtitle: _("Routine operations, not custom kinds");
               activatable-widget: full;
-              [prefix] CheckButton full { accessibility { label: _("Full: Auto-sign all requests"); } }
+              [prefix] CheckButton full { accessibility { label: _("Full: Routine operations, not custom kinds"); } }
             }
             Adw.ActionRow { title: _("Medium"); subtitle: _("Ask for sensitive operations");
               activatable-widget: medium;
               [prefix] CheckButton medium { group: full; accessibility { label: _("Medium: Ask for sensitive operations"); } }
             }
-            Adw.ActionRow { title: _("Low"); subtitle: _("Ask for every request");
+            Adw.ActionRow { title: _("Ask unless permitted"); subtitle: _("Ask unless permitted");
               activatable-widget: low;
-              [prefix] CheckButton low { group: full; active: true; accessibility { label: _("Low: Ask for every request"); } }
+              [prefix] CheckButton low { group: full; active: true; accessibility { label: _("Ask unless permitted"); } }
             }
             Adw.ActionRow permissions { title: _("Permissions"); activatable: true;
               [suffix] Image { icon-name: "go-next-symbolic"; }

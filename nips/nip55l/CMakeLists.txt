@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.22)
 
 set(NIP55L_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Consent policy must be owner-approved before it can enter a shipped build.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_permission_policy.h"
+  _nip55l_proposed_policy REGEX "[Pp][Rr][Oo][Pp][Oo][Ss][Ee][Dd]")
+if(_nip55l_proposed_policy)
+  message(FATAL_ERROR "nip55l: proposed consent policy cannot be shipped")
+endif()
+
 set(NIP55L_CORE_SRC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signer_ops.c
 )

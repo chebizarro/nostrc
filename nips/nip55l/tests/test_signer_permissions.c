@@ -167,7 +167,7 @@ static void test_review_pruning_and_load_failure(void) {
 static void test_schema_and_profile_guard(void) {
   g_autoptr(SignerPermissions) p = start();
   g_autofree gchar *path = store_path("signer-permissions-v2.ini");
-  g_assert_true(g_file_set_contents(path, "[permissions]\nversion=3\n", -1, NULL));
+  g_assert_true(g_file_set_contents(path, "[permissions]\nversion=4\n", -1, NULL));
   GError *error = NULL; g_assert_false(signer_permissions_reload(p, &error));
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED); g_clear_error(&error);
   g_assert_cmpint(g_unlink(path), ==, 0);
@@ -216,10 +216,9 @@ static void test_one_time_non_event_import(void) {
   g_assert_true(g_file_set_contents(path, legacy, -1, NULL));
   g_assert_cmpint(evaluate(p, "get_public_key", -1), ==, SIGNER_PERMISSION_ALLOW);
   g_assert_cmpint(evaluate(p, "get_relays", -1), ==, SIGNER_PERMISSION_ALLOW);
-  g_assert_cmpint(evaluate(p, "nip44_conversation_key", -1), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "nip44_conversation_key", -1), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpuint(listed_expiry(p, "get_public_key", "*"), ==, expiry);
   g_assert_cmpuint(listed_expiry(p, "get_relays", "*"), ==, 0);
-  g_assert_cmpuint(listed_expiry(p, "nip44_conversation_key", IDENTITY), ==, 0);
   guint64 revision = signer_permissions_revision(p);
   g_autofree gchar *late = g_strdup_printf(
       "[get_public_key]\n%s|*=deny\n[get_relays]\n%s|*=deny\n"
@@ -243,7 +242,6 @@ static void test_one_time_non_event_import(void) {
   g_assert_true(g_file_set_contents(v2, pre_marker, -1, NULL));
   g_autoptr(SignerPermissions) restarted = signer_permissions_new(NULL);
   g_assert_cmpuint(listed_expiry(restarted, "nip44_encrypt", IDENTITY), ==, expiry);
-  g_assert_cmpuint(listed_expiry(restarted, "nip44_conversation_key", IDENTITY), ==, 0);
   g_assert_cmpint(evaluate(restarted, "nip44_decrypt", -1), ==, SIGNER_PERMISSION_ASK);
   g_key_file_set_boolean(kf, "permissions", "legacy-imported", TRUE);
   g_key_file_set_boolean(kf, "permissions", "legacy-complete", FALSE);
@@ -343,21 +341,27 @@ static void test_tiers(void) {
   g_assert_cmpint(evaluate(p, "event", G_MAXUINT16), ==, SIGNER_PERMISSION_ASK);
   client.tier = SIGNER_TRUST_FULL; signer_permissions_policy_changed(p);
   g_assert_cmpint(evaluate(p, "nip44_decrypt", -1), ==, SIGNER_PERMISSION_ALLOW);
-  g_assert_cmpint(evaluate(p, "event", G_MAXUINT16), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "event", G_MAXUINT16), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(evaluate(p, "nip44_conversation_key", -1), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(evaluate(p, "raw_key_export", -1), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(evaluate(p, "connect", -1), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "connect", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
-  remember(p, "", "connect", -1, TRUE, 0);
+  g_assert_false(signer_permissions_remember(p, PRINCIPAL, "", "connect", -1, TRUE, 0, NULL));
   g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, "", "connect", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "nip44_conversation_key", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate(p, NULL, IDENTITY, "get_public_key", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
-  remember(p, IDENTITY, "nip44_conversation_key", -1, TRUE, 0);
-  g_assert_cmpint(evaluate(p, "nip44_conversation_key", -1), ==, SIGNER_PERMISSION_ALLOW);
-  for (guint i = 0; i < G_N_ELEMENTS(signer_default_required_confirmation_kinds); i++) {
-    gint kind = signer_default_required_confirmation_kinds[i];
-    remember(p, IDENTITY, "event", kind, TRUE, 0);
-    g_assert_cmpint(evaluate(p, "event", kind), ==, SIGNER_PERMISSION_ASK);
+  g_assert_false(signer_permissions_remember(p, PRINCIPAL, IDENTITY, "nip44_conversation_key", -1, TRUE, 0, NULL));
+  for (guint i = 0; i < G_N_ELEMENTS(signer_default_ask_by_default_kinds); i++) {
+    gint kind = signer_default_ask_by_default_kinds[i];
+    g_assert_cmpint(evaluate(p, "event", kind), ==, SIGNER_PERMISSION_ASK); /* preset is not the first grant */
+    if (kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
+      g_assert_true(signer_permissions_remember_scoped(p, PRINCIPAL, IDENTITY, "event", kind, "wss://nos.lol/", TRUE, 0, NULL));
+      g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", kind, "wss://nos.lol/", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+      g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", kind, "wss://relay.nostr.band/", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+    } else {
+      remember(p, IDENTITY, "event", kind, TRUE, 0);
+      g_assert_cmpint(evaluate(p, "event", kind), ==, SIGNER_PERMISSION_ALLOW);
+    }
     remember(p, IDENTITY, "event", kind, FALSE, 0);
     g_assert_cmpint(evaluate(p, "event", kind), ==, SIGNER_PERMISSION_DENY);
   }
@@ -367,10 +371,10 @@ static void test_tiers(void) {
   g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_TEXT_NOTE), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate(p, "unknown", IDENTITY, "get_public_key", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   guint32 required[] = {NOSTR_KIND_TEXT_NOTE};
-  g_assert_true(signer_permissions_set_required_confirmation(p, required, G_N_ELEMENTS(required), NULL));
+  g_assert_true(signer_permissions_set_ask_by_default(p, required, G_N_ELEMENTS(required), NULL));
   remember(p, IDENTITY, "event", NOSTR_KIND_TEXT_NOTE, TRUE, 0);
-  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_TEXT_NOTE), ==, SIGNER_PERMISSION_ASK);
-  g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_TEXT_NOTE, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_TEXT_NOTE), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_TEXT_NOTE, TRUE, NULL), ==, SIGNER_PERMISSION_ALLOW);
   /* Explicit denies also beat attested built-in headless defaults. */
   remember(p, IDENTITY, "get_public_key", -1, FALSE, 0);
   g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "get_public_key", -1, TRUE, NULL), ==, SIGNER_PERMISSION_DENY);
@@ -390,7 +394,6 @@ static SignerPermissionResult flow_eval(SignerPermissions *p, const gchar *id) {
 }
 static void test_flow_scope_budget_and_restart(void) {
   g_autoptr(SignerPermissions) p = start();
-  remember(p, IDENTITY, "event", NOSTR_KIND_SEAL, TRUE, 600);
   g_assert_cmpint(flow_eval(p, "first-seen"), ==, SIGNER_PERMISSION_ASK);
   g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
       "room-flow", 2, FALSE, TRUE, 600, NULL));
@@ -420,7 +423,7 @@ static void test_flow_scope_budget_and_restart(void) {
   g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
       "long-flow", 2, FALSE, TRUE, 601, NULL));
   g_autoptr(GVariant) rows = signer_permissions_list(p, PRINCIPAL, NULL);
-  g_assert_cmpuint(g_variant_n_children(rows), ==, 1); /* ordinary grant only */
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 0); /* flow consent never persists */
   g_autofree gchar *path = store_path("signer-permissions-v2.ini");
   g_autofree gchar *contents = NULL;
   g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
@@ -447,16 +450,25 @@ static void test_room_consent_atomic_failure_and_nonrequired(void) {
   g_assert_cmpint(g_rmdir(path), ==, 0);
   g_assert_cmpint(evaluate(p, "nip44_encrypt", -1), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ASK);
-  g_assert_true(signer_permissions_set_required_confirmation(p, NULL, 0, NULL));
+  g_assert_true(signer_permissions_set_ask_by_default(p, NULL, 0, NULL));
   g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
       "room-flow", 2, TRUE, TRUE, 600, NULL));
-  g_assert_cmpint(evaluate(p, "nip44_encrypt", -1), ==, SIGNER_PERMISSION_ALLOW);
-  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "nip44_encrypt", -1), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
+      "room-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
   g_autoptr(GVariant) rows = signer_permissions_list(p, PRINCIPAL, NULL);
-  g_assert_cmpuint(g_variant_n_children(rows), ==, 2);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 0);
   guint32 required = NOSTR_KIND_SEAL;
-  g_assert_true(signer_permissions_set_required_confirmation(p, &required, 1, NULL));
-  g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ASK); /* ordinary grant is not flow consent */
+  g_assert_true(signer_permissions_set_ask_by_default(p, &required, 1, NULL));
+  g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ALLOW); /* ask-by-default never overrides consent */
+  g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
+      "room-flow", 2, 0, "2", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  /* Exhausting encryption cannot steal the separately approved seal budget. */
+  g_assert_cmpint(flow_eval(p, "2"), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(flow_eval(p, "3"), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
+      "room-flow", 2, 0, "3", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
 }
 #ifdef NIP55L_TEST_TRUST_ENV
 static gint64 fixture_flow_clock(gpointer data) { return *(gint64 *)data; }
@@ -501,14 +513,112 @@ static void test_flow_first_seen_and_tombstone(void) {
   g_assert_cmpint(flow_eval(p, "fresh"), ==, SIGNER_PERMISSION_ALLOW);
 }
 #endif
+static void test_policy_review_migration(void) {
+  g_autoptr(SignerPermissions) p = start();
+  remember(p, IDENTITY, "event", NOSTR_KIND_PROFILE_METADATA, TRUE, 0);
+  remember(p, IDENTITY, "event", NOSTR_KIND_DELETION, FALSE, 0);
+  g_autofree gchar *path = store_path("signer-permissions-v2.ini");
+  g_autoptr(GKeyFile) kf = g_key_file_new();
+  g_assert_true(g_key_file_load_from_file(kf, path, 0, NULL));
+  g_key_file_set_integer(kf, "permissions", "version", 2);
+  /* Literal v2 AUTH scope has no relay field or relay bytes in its row ID. */
+  g_autofree gchar *scope = g_strdup_printf("%" G_GSIZE_FORMAT ":%s%" G_GSIZE_FORMAT ":%s5:event:22242",
+      strlen(PRINCIPAL), PRINCIPAL, strlen(IDENTITY), IDENTITY);
+  g_autofree gchar *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, scope, -1);
+  g_autofree gchar *auth_key = g_strconcat("record-", hash, NULL);
+  g_key_file_set_string(kf, auth_key, "principal", PRINCIPAL); g_key_file_set_string(kf, auth_key, "identity", IDENTITY);
+  g_key_file_set_string(kf, auth_key, "operation", "event"); g_key_file_set_string(kf, auth_key, "decision", "allow");
+  g_key_file_set_integer(kf, auth_key, "event-kind", NOSTR_KIND_CLIENT_AUTHENTICATION); g_key_file_set_uint64(kf, auth_key, "expires-at", 0);
+  /* Removed operations are purged even if their old scope is not parseable. */
+  g_key_file_set_string(kf, "record-removed-export", "operation", "nip44_conversation_key");
+  g_autofree gchar *old = g_key_file_to_data(kf, NULL, NULL);
+  g_assert_true(g_file_set_contents(path, old, -1, NULL));
+  g_autoptr(SignerPermissions) migrated = signer_permissions_new(NULL);
+  g_assert_cmpint(evaluate(migrated, "event", NOSTR_KIND_PROFILE_METADATA), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(evaluate(migrated, "event", NOSTR_KIND_DELETION), ==, SIGNER_PERMISSION_DENY);
+  g_autoptr(GVariant) rows = signer_permissions_list(migrated, PRINCIPAL, NULL);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 3);
+  gboolean inactive = FALSE;
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
+    const gchar *decision = NULL, *state = NULL; guint64 expires = 1;
+    g_variant_lookup(row, "decision", "&s", &decision); g_variant_lookup(row, "state", "&s", &state);
+    g_variant_lookup(row, "expires-at", "t", &expires);
+    if (!strcmp(decision, "policy-review")) { inactive = TRUE; g_assert_cmpstr(state, ==, "inactive"); g_assert_cmpuint(expires, ==, 0); }
+  }
+  g_assert_true(inactive);
+  g_autoptr(SignerPermissions) restarted = signer_permissions_new(NULL);
+#ifdef NIP55L_TEST_TRUST_ENV
+  gint64 future = g_get_real_time() + (gint64)400 * 86400 * G_USEC_PER_SEC;
+  signer_permissions_set_wall_clock_for_test(restarted, fixture_flow_clock, &future);
+#endif
+  g_autoptr(GVariant) again = signer_permissions_list(restarted, PRINCIPAL, NULL);
+  g_assert_true(g_variant_equal(rows, again));
+  g_assert_true(signer_permissions_review_saved(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_PROFILE_METADATA, NULL, TRUE, NULL));
+  g_assert_cmpint(evaluate(restarted, "event", NOSTR_KIND_PROFILE_METADATA), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "wss://nos.lol/", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_true(signer_permissions_review_saved(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "wss://relay.nostr.band/", TRUE, NULL));
+  g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "wss://relay.nostr.band/", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "wss://nos.lol/", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_autofree gchar *contents = NULL; g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
+  g_assert_null(strstr(contents, "nip44_conversation_key"));
+}
+static void test_auth_canonical(void) {
+  g_autofree gchar *canonical = signer_permissions_canonical_relay("WSS://NOS.LOL:443");
+  g_assert_cmpstr(canonical, ==, "wss://nos.lol/");
+  g_autofree gchar *encoded = signer_permissions_canonical_relay("wss://nos.lol/auth%2Fpeer");
+  g_autofree gchar *separator = signer_permissions_canonical_relay("wss://nos.lol/auth/peer");
+  g_assert_cmpstr(encoded, !=, separator);
+  const gchar *invalid[] = {"https://nos.lol", "wss://user:password@nos.lol/", "wss://nos.lol/?token=x", "wss://nos.lol/#fragment", "wss://nos.lol:0/"};
+  for (guint i = 0; i < G_N_ELEMENTS(invalid); i++) g_assert_null(signer_permissions_canonical_relay(invalid[i]));
+}
+static void test_empty_claim_refusal(void) {
+  g_autoptr(SignerPermissions) p = start();
+  g_assert_false(signer_permissions_can_remember("claimed:", "nip44_encrypt", -1));
+  g_assert_false(signer_permissions_remember(p, "claimed:", IDENTITY, "nip44_encrypt", -1, TRUE, 0, NULL));
+  g_autoptr(GVariant) rows = replacement("nip44_encrypt", -1, "allow", 0);
+  g_assert_false(signer_permissions_replace(p, "claimed:", IDENTITY, rows, signer_permissions_revision(p), NULL));
+  g_assert_cmpint(signer_permissions_evaluate(p, "claimed:", IDENTITY, "nip44_encrypt", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
+}
+#ifdef NIP55L_TEST_TRUST_ENV
+static void test_reusable_durations(void) {
+  g_autoptr(SignerPermissions) p = start(); gint64 now = (gint64)2000000000 * G_USEC_PER_SEC;
+  signer_permissions_set_wall_clock_for_test(p, fixture_flow_clock, &now);
+  remember(p, IDENTITY, "event", NOSTR_KIND_SEAL, TRUE, 86400);
+  remember(p, IDENTITY, "event", NOSTR_KIND_PROFILE_METADATA, TRUE, 0);
+  g_autoptr(SignerPermissions) restarted = signer_permissions_new(NULL);
+  signer_permissions_set_wall_clock_for_test(restarted, fixture_flow_clock, &now);
+  now += (gint64)86399 * G_USEC_PER_SEC;
+  g_assert_cmpint(evaluate(restarted, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ALLOW);
+  now += G_USEC_PER_SEC;
+  g_assert_cmpint(evaluate(restarted, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ASK);
+  now += (gint64)365 * 86400 * G_USEC_PER_SEC;
+  g_assert_cmpint(evaluate(restarted, "event", NOSTR_KIND_PROFILE_METADATA), ==, SIGNER_PERMISSION_ALLOW);
+  g_autoptr(GVariant) rows = signer_permissions_list(restarted, PRINCIPAL, NULL);
+  gboolean expired = FALSE;
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i); const gchar *state = NULL;
+    if (g_variant_lookup(row, "state", "&s", &state) && !strcmp(state, "expired")) expired = TRUE;
+  }
+  g_assert_true(expired);
+}
+#endif
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_setenv("NOSTRC_TEST_ISOLATION", "1", TRUE);
   g_autofree gchar *config = g_dir_make_tmp("signer-permissions-XXXXXX", NULL);
   g_assert_nonnull(config); g_setenv("XDG_CONFIG_HOME", config, TRUE);
   g_autofree gchar *dir = g_build_filename(config, "gnostr", NULL); g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
+  g_test_add_func("/permissions/policy-review-migration", test_policy_review_migration);
+  g_test_add_func("/permissions/auth-canonical", test_auth_canonical);
+  g_test_add_func("/permissions/empty-claim-refusal", test_empty_claim_refusal);
   g_test_add_func("/permissions/flow-scope-budget-restart", test_flow_scope_budget_and_restart);
 #ifdef NIP55L_TEST_TRUST_ENV
+  g_test_add_func("/permissions/reusable-durations", test_reusable_durations);
   g_test_add_func("/permissions/flow-expiry", test_flow_expiry);
   g_test_add_func("/permissions/flow-first-seen-tombstone", test_flow_first_seen_and_tombstone);
 #endif

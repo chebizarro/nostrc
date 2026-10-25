@@ -39,6 +39,8 @@ endforeach()
 _grotto_test(signer/approval-controller test-approval-controller grotto.gui REQUIRES display private_bus)
 _grotto_test(signer/approval-integration test-approval-integration "grotto.gui;grotto.daemon"
   TARGETS grotto-daemon REQUIRES display private_bus INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp")
+_grotto_test(signer/permission-repeat test-permission-repeat "grotto.gui;grotto.daemon"
+  TARGETS grotto-daemon test_nip55l_dbus_contract REQUIRES private_bus)
 _grotto_test(signer/room-flow test-room-flow "grotto.gui;grotto.daemon"
   TARGETS grotto-daemon room-flow-schemas REQUIRES display private_bus
   INPUTS "${CMAKE_SOURCE_DIR}/gnome/groundhog/data/org.nostr.Groundhog.gschema.xml")

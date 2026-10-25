@@ -25,6 +25,16 @@ Client signing/encryption APIs never return private keys. The trusted Grotto man
 
 ## Grotto management: `org.nostr.Grotto.Control1` (G04)
 
+G15 adds the `decision-modes` capability (Control1 version remains 1). New review
+UIs require it, otherwise remain read-only. `DecideRequest` accepts `allow-once`,
+`allow` (until revoked), `allow-24h`, `deny-once`, `block-operation`, `block-app`,
+`trust-routine`, `activate-saved`, `discard-saved`. Trust-and-approve is a single
+approver-only server decision, never SetClientTrust followed by ApproveRequest.
+Discard keeps the request pending; activation preserves the saved absolute expiry.
+Initial pairing offers only Pair application/once-only denial, not reusable connect.
+Named UID-only claims are explicitly unverifiable; empty `claimed:` principals
+cannot receive reusable grants, flow consent or client trust.
+
 Canonical XML: [`apps/grotto/data/org.nostr.Grotto.Control1.xml`](../apps/grotto/data/org.nostr.Grotto.Control1.xml).
 It is exported on the **existing daemon connection**, bus **`org.nostr.Signer`**,
 object **`/org/nostr/signer/grotto`**. The GUI's `org.nostr.Grotto` name is not the
@@ -80,7 +90,8 @@ are rejected by GDBus using the canonical XML before dispatch.
 | `GetStatus` | `() → a{sv}` | Coarse version, capabilities, runtime and store health |
 | `ListRequests` | `() → aa{sv}` | Full pending snapshots from the shared approval service |
 | `ListClients` | `() → aa{sv}` | Durable consent/permission clients, trust tier, pairing/relays, permission count and needs-review flag |
-| `ListPermissions` | `(principal:s) → aa{sv}` | G03's explicit/needs-review rows, unmodified; live tier policy is in the client record, never expanded into fake persisted grants |
+| `DecideRequest` | `(request_id:s, mode:s) → ok:b` | One approver-only decision; modes below |
+| `ListPermissions` | `(principal:s) → aa{sv}` | Daemon-reported active, inactive and expired rows with reason;  live tier policy is in the client record, never expanded into fake persisted grants |
 | `SetPermissions` | `(principal:s, identity:s, permissions:aa{sv}, expected_revision:t) → ()` | G03 validates/persists a complete replacement for this principal/identity pair; stale revision → `Conflict` |
 | `RevokeClient` | `(principal:s) → ()` | Cancel pending/queued work, remove tier/pairing admission, clear G03 permissions and disconnect bunker bookkeeping; retry is idempotent |
 | `SetClientLabel` | `(principal:s, label:s) → ()` | Edit an existing client, never register a forged caller |
@@ -247,7 +258,7 @@ OFF), for headless installs that ship no gnostr-signer. Never install both.
 Every method that uses or reveals key material or configuration is
 approval-gated: `GetPublicKey`, `GetRelays`, `SignEvent`, `NIP04Encrypt`,
 `NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`, `NIP44EncryptB64`,
-`NIP44DecryptB64`, `NIP44DeriveConversationKey`, `DecryptZapEvent` and their
+`NIP44DecryptB64`, `DecryptZapEvent` and their
 `*ForApp` variants (nostrc-y02q, nostrc-1e31). `StoreKey`/`ClearKey` keep
 their own trusted-approver gate (the daemon's explicit
 `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` override is only for tests/scripts).
@@ -309,21 +320,31 @@ If the active identity changes while a request is pending, approving it
 fails instead of using the new key.
 
 **Permissions (0.7.0).** `$XDG_CONFIG_HOME/gnostr/signer-permissions-v2.ini`
-stores principal + pinned identity + operation + optional validated event kind.
+stores principal + pinned identity + operation + optional validated event kind,
+plus the canonical relay URL for AUTH. Schema version 3 keeps the historical filename.
 Event approvals and denials are exact-kind by default; crypto operations remain
-separate (`nip44_conversation_key`, `nip04_encrypt/decrypt`,
+separate (`nip04_encrypt/decrypt`,
 `nip44_encrypt/decrypt`, `zap_decrypt`). Raw/B64 variants share the same operation
 scope. Expiry is absolute Unix seconds, 0 = forever, never extended by use.
 Explicit deny wins, including legacy operation-wide/wildcard denials;
-required-confirmation kinds always prompt despite remembered allows or trust tiers.
+live saved allows apply to every supported operation/kind. Initial connect always prompts
+(paired reconnect uses separately verified pairing admission);
+ask-by-default kinds require a scoped first grant before a preset can authorise them.
 New identity-wildcard allows are supported only for `get_relays`; valid inherited
 non-event wildcard allows are preserved during the one-time legacy import.
 The single nip55l evaluator applies live per-client Low/Medium/Full policy (unknown
 clients Low) through Grotto's daemon-owned `clients.ini` trust lookup. Control1
 trust/admission mutations invalidate the same evaluator immediately; lowering a
 tier preserves explicit grants and denies.
-Conversation-key export requires an explicit allow, not a tier/default shortcut;
-pairing cannot inherit a remembered allow.
+Conversation-key export is removed entirely. Pairing cannot inherit a remembered allow.
+Full is a versioned routine-operation preset, excluding unknown/custom kinds; existing
+Full clients retain their previous ceiling until an explicit upgrade. Dormant v2 allows
+for formerly-required kinds migrate to `policy-review`, preserving provenance and expiry
+(including zero indefinitely), not the 90-day legacy `review` state. They remain inactive
+until explicitly activated, or can be discarded. AUTH activation binds the current relay.
+Listing exposes `state` = active/inactive/expired plus `reason`, without filtering expired
+rows. Replacement edits invalidate overlapping identity flows and fence queued automatic work;
+grant/preset changes also retire eligible pending requests by re-evaluating current policy.
 The compatibility `signer-grants.ini` is re-sanitised on every load, but imported
 only before v2 exists. Valid non-event rows retain their original expiry (including
 forever); broad event denies remain operation-wide. Broad event allows become
@@ -534,42 +555,15 @@ user's messages without a prompt. `NIP44DecryptForApp` /
 
 ---
 
-#### NIP44DeriveConversationKey
+#### Removed unreleased conversation-key export
 
-*Since nip55l 0.3.0.* Returns the NIP-44 v2 conversation key between the
-selected identity and a peer, so a client can open NIP-44 payloads addressed
-to that peer without ever seeing the nsec. Used by `nostr-seal` (nostrc-da9c)
-with a per-file ephemeral peer.
-
-```xml
-<method name="NIP44DeriveConversationKey">
-  <arg name="peerPubKey" type="s" direction="in"/>
-  <arg name="identity" type="s" direction="in"/>
-  <arg name="app_id" type="s" direction="in"/>
-  <arg name="conversationKey" type="s" direction="out"/>
-</method>
-```
-
-**Parameters**:
-- `peerPubKey` (string): Peer's x-only public key (64-char hex, any case)
-- `identity` (string): Identity selector (empty = active identity)
-- `app_id` (string): Web origin from the browser bridge, else an unverified label
-
-**Returns**:
-- `conversationKey` (string): 64 lowercase hex, `HKDF-extract(SHA-256, IKM = ECDH shared x, salt = "nip44-v2")`
-
-**Approval**: same flow as `SignEvent`, kind `nip44_conversation_key`; with
-no grant the call is held, `ApprovalRequested` is emitted with preview
-`derive NIP-44 conversation key with <peer hex>`, and `ApproveRequest`
-completes it. Grant it only for throwaway peers — the key opens every NIP-44
-payload exchanged with that peer.
-
-**Errors**:
-- `org.nostr.Signer.Error.InvalidInput`: peer is not 64-hex or not on secp256k1 (checked before prompting)
-- `org.nostr.Signer.Error.ApprovalDenied`: denied by policy or by the user
-- `org.nostr.Signer.Error.RateLimited`: more than one prompt per 100 ms from a sender
-- `org.nostr.Signer.Error.NoKeyConfigured`: no key for this identity
-
+The unreleased `NIP44DeriveConversationKey` surface, including any ForApp variant,
+is removed in 0.7.0. It is outside NIP-07/NIP-55 and exports excessive authority.
+Calls return UnknownMethod; saved `nip44_conversation_key` rows are deleted by
+migration. Use NIP44Encrypt/NIP44Decrypt. For binary stanzas, nostr-seal uses the
+existing NIP44DecryptB64ForApp method under the ordinary `nip44_decrypt` scope;
+account and conversation keys remain inside the signer. This breaking 0.x
+correction is folded into untagged 0.7.0 (see VERSION_MANIFEST.md).
 ---
 
 #### NIP04Encrypt
@@ -749,10 +743,11 @@ Responds to a pending approval request (from UI).
 - `remember` (boolean): Remember the decision for (principal, pinned identity,
   operation, validated event kind) in the v2 permission store; ignored for an
   unidentified caller. Since 0.7.0, `event` no longer grants every event kind.
-  Required-confirmation kinds still require fresh approval on subsequent calls;
-  remembered denial wins. Persistence failure returns failure, never confirmed
+  Every supported operation and event kind honours a live scoped allow;
+  remembered denial wins. The review defaults reusable consent to until revoked
+  (ttl=0), with 24 hours as an explicit temporary option. Persistence failure returns failure, never confirmed
   remembered access.
-- `ttl_seconds` (uint64): How long to remember (0 = forever)
+- `ttl_seconds` (uint64): How long to remember (0 = until revoked; review's temporary choice is 86400 seconds).
 
 **Returns**:
 - `ok` (boolean): True if the request was found and every queued call succeeded
@@ -783,7 +778,8 @@ principal), `claimed_app_id` (the caller's unverified `app_id` argument),
 (`b`); `calls` (`u`, calls that joined the request).
 Added in 0.7.0 (all existing fields and signatures preserved): `transport`,
 `operation`, `reason`, `reason_source` (`caller` or `signer`), `flow_id`, `purpose`,
-`state` (`s`); `flow_size` (`u`, 0 without flow consent), `flow_seals_required` (`b`);
+`state` (`s`); `flow_size` (`u`, 0 without flow consent), `flow_remaining_seconds` (`u`),
+`policy_review` and `identity_drift` (`b`);
 `event_kind` (`u`, only when present; absence is not kind 0);
 `event_summary` (`a{sv}`, safe validated type/preview/tag count/peer metadata);
 `expires_at` (`t`, Unix seconds); `remaining_seconds` (`u`, authoritative
@@ -798,10 +794,10 @@ Unknown request: `Error.NotFound`.
 | `type` | `s` | `event`, or the validated operation name |
 | `preview` | `s` | Bounded public note/article/comment preview; otherwise generic event or encrypted-message text. Crypto operations contain only operation/peer metadata. |
 | `content` | `s` | Public note/article/comment plain text only; valid UTF-8, at most 280 Unicode characters, ASCII controls replaced with spaces |
-| `peer` | `s` | Validated public peer fingerprint for encrypt/decrypt/conversation-key operations, never a private message body |
+| `peer` | `s` | Validated public peer fingerprint for encrypt/decrypt operations, never a private message body |
 | `tag_count` | `u` | Total tag count for signing |
 | `tag_counts` | `a{su}` | Sorted counts keyed by tag name, not values: ASCII alphanumeric/underscore/hyphen names of 1–32 bytes, at most 64 distinct names; other names omitted |
-| `auth_relay` | `s` | Exact sole AUTH relay URI, printable ASCII and at most 2048 bytes; valid `ws`/`wss` host, no credentials, query or fragment. Missing for unsafe/ambiguous relay tags. Challenges are never included. |
+| `auth_relay` | `s` | Canonical sole AUTH relay claim, printable ASCII ≤2048 bytes: lower-case ws/wss scheme and host, default port omitted, empty path becomes /; encoded path bytes retained. No credentials, query or fragment. The same daemon parser validates one relay, one nonempty challenge, empty content and ±600-second freshness before policy. Malformed/stale AUTH is rejected. Challenges are never cached as grants or included here; transport provenance is not established. |
 | `delete_target_count` | `u` | Number of `e`/`a` deletion target tags; no target payloads |
 | `target_event_id` | `s` | Last `e` tag for repost/generic repost/reaction, only when a validated 64-hex public event ID; lowercase |
 | `target_kind` | `u` | Last `k` tag for those operations, only when a validated decimal kind in 0–65535 |
@@ -819,7 +815,7 @@ These are presentation fields, not permission grants or fetched profile data.
 *Additive in 0.7.0.* `(method:s, arguments:v, context:a{sv}) → reply:v`.
 `arguments` wraps the exact existing input **tuple**; `reply` wraps the
 existing output tuple, currently `(s)`. Whitelist: `SignEvent`,
-`NIP44DeriveConversationKey`, `NIP04Encrypt`,
+`NIP04Encrypt`,
 `NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`. All use the same validated
 shared-service submission as their direct handlers; no self-D-Bus calls.
 `GetPublicKey`/`GetRelays` remain direct-only because D-Bus cannot encode
@@ -842,17 +838,16 @@ calls. Consumers feature-detect and fall back to direct methods if absent.
 is trusted-approver-only, like `ApproveRequest`. It approves that pending request and
 creates only the explicitly selected room-send permissions; neither boolean is
 implicitly enabled. The daemon pins scopes to the request's resolved identity,
-verified principal and transport, and requires `purpose="nip17-room-send"`, a
+canonical principal and transport (named claims are unverifiable on UID-only buses), and requires `purpose="nip17-room-send"`, a
 nonempty flow ID, announced size, and a NIP-44 encrypt or kind-13 seal request.
-`ttl_seconds` is 1..600. Encryption creates an exact principal/identity
-`nip44_encrypt` permission (not decrypt or conversation-key access). Seal signing
-creates exact-kind in-memory flow consent when the kind requires confirmation;
-otherwise it creates the ordinary scoped expiring permission. Flow consent is
+`ttl_seconds` is 1..600. Both encryption and seal signing create only in-memory
+flow consent, never durable rows, using one first-arrival deadline. No decrypt
+permission is granted. Flow consent is
 never persisted or returned by `ListGrants`/`ListPermissions`. It covers at most
 the announced number of distinct requests for that scope; policy rechecks reuse
 a request's reservation. Size changes, another flow/caller/identity/transport,
-expiry or daemon restart require review again. Explicit denies still win, and
-ordinary remembered grants still cannot bypass required-confirmation kinds.
+expiry or daemon restart require review again. Explicit denies still win;
+live reusable grants apply to every kind, before flow consent.
 The window starts at the first flow-bearing room request's daemon arrival time,
 not the approval time; granting consent never restarts or extends that window.
 Only the explicitly selected operation/exact kind is covered, with `flow_size`
@@ -924,7 +919,7 @@ arguments: `Error.InvalidInput`.
 
 #### ApprovalRequested
 
-Emitted when a signing operation or a conversation-key export requires user approval.
+Emitted when a supported signing, read, encryption or decryption operation requires user approval.
 
 ```xml
 <signal name="ApprovalRequested">
@@ -941,7 +936,7 @@ Emitted when a signing operation or a conversation-key export requires user appr
   caller's `app_id` argument (use `GetApprovalInfo` for that)
 - `identity`: The npub the request will use (0.4.0: resolved, never empty
   when a key exists)
-- `kind`: `event`, `nip44_conversation_key`, `get_public_key`, `get_relays`,
+- `kind`: `event`, `get_public_key`, `get_relays`,
   `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`,
   `zap_decrypt`
 - `preview`: Human-readable preview of the content (truncated)

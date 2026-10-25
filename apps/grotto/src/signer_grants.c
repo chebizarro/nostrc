@@ -53,7 +53,6 @@ static const gchar *kind_label(const gchar *kind) {
     { "nip04_decrypt",          "Decrypt messages (NIP-04)" },
     { "nip44_encrypt",          "Encrypt messages" },
     { "nip44_decrypt",          "Decrypt messages" },
-    { "nip44_conversation_key", "Derive conversation keys" },
     { "zap_decrypt",            "Decrypt private zaps" },
   };
   for (gsize i = 0; i < G_N_ELEMENTS(k); i++)

@@ -36,6 +36,11 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *service,
     const SignerGateContext *context, SignerGateReplyFn reply, gpointer data);
 void signer_approval_service_decide(SignerApprovalService *service, const gchar *id,
     gboolean allow, gboolean remember, guint64 ttl, SignerApprovalDecisionFn fn, gpointer data);
+/* Approver-only adapter supplies one durable client-policy decision hook. */
+void signer_approval_service_set_trust_decision(SignerApprovalService *service,
+    gboolean (*fn)(const gchar *principal, const gchar *mode, gpointer, GError **), gpointer data);
+void signer_approval_service_decide_mode(SignerApprovalService *service, const gchar *id,
+    const gchar *mode, SignerApprovalDecisionFn fn, gpointer data);
 void signer_approval_service_decide_flow(SignerApprovalService *service, const gchar *id,
     gboolean encrypt, gboolean seals, guint64 ttl, SignerApprovalDecisionFn fn, gpointer data);
 GVariant *signer_approval_service_info(SignerApprovalService *service, const gchar *id);
