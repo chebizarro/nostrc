@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: bud02
+Description: BUD-02 kind-24242 Blossom authorization codec
+Version: @bud02_VERSION@
+Requires: libnostr
+Requires.private: openssl
+Libs: -L${libdir} -lbud02
+Cflags: -I${includedir}

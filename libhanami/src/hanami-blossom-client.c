@@ -6,7 +6,7 @@
 
 #include "hanami/hanami-blossom-client.h"
 #include "hanami/hanami-blossom-shim.h"
-#include "hanami/hanami-bud02-auth.h"
+#include <nostr/bud02/auth.h>
 #include "hanami/hanami-index.h"
 #include "hanami/hanami-server-capability.h"
 #include "nostr-event.h"
@@ -116,7 +116,7 @@ static void strip_trailing_slash(char *s)
  * ========================================================================= */
 
 static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
-                                       hanami_bud02_action_t action,
+                                       nostr_bud02_action_t action,
                                        const char *sha256_hex,
                                        char **out_header)
 {
@@ -124,7 +124,7 @@ static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
         return HANAMI_ERR_AUTH;
 
     /* Create the BUD-02 auth event */
-    NostrEvent *ev = hanami_bud02_create_auth_event(
+    NostrEvent *ev = nostr_bud02_create_auth_event(
         action, sha256_hex, 0, c->endpoint);
     if (!ev)
         return HANAMI_ERR_NOSTR;
@@ -169,7 +169,7 @@ static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
     nostr_event_free(ev);
 
     /* Create the auth header */
-    char *header_val = hanami_bud02_create_auth_header(signed_ev);
+    char *header_val = nostr_bud02_create_auth_header(signed_ev);
     nostr_event_free(signed_ev);
     if (!header_val)
         return HANAMI_ERR_AUTH;
@@ -610,7 +610,7 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
 
     /* Create auth header */
     char *auth_header = NULL;
-    hanami_error_t err = make_auth_header(client, HANAMI_BUD02_ACTION_UPLOAD,
+    hanami_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_UPLOAD,
                                           sha256_hex, &auth_header);
     if (err != HANAMI_OK) return err;
 
@@ -696,7 +696,7 @@ hanami_error_t hanami_blossom_delete(hanami_blossom_client_t *client,
 
     /* Create auth header */
     char *auth_header = NULL;
-    hanami_error_t err = make_auth_header(client, HANAMI_BUD02_ACTION_DELETE,
+    hanami_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_DELETE,
                                           sha256_hex, &auth_header);
     if (err != HANAMI_OK) return err;
 
@@ -903,13 +903,13 @@ static char *mint_batch_auth_header(hanami_blossom_client_t *c,
                                     const char *const *hashes, size_t count,
                                     const char *server_url_or_null)
 {
-    NostrEvent *ev = hanami_bud02_create_batch_auth_event(
-        HANAMI_BUD02_ACTION_UPLOAD, hashes, count, 0, server_url_or_null);
+    NostrEvent *ev = nostr_bud02_create_batch_auth_event(
+        NOSTR_BUD02_ACTION_UPLOAD, hashes, count, 0, server_url_or_null);
     if (!ev) return NULL;
     NostrEvent *signed_ev = sign_event_via_client(c, ev);
     nostr_event_free(ev);
     if (!signed_ev) return NULL;
-    char *hv = hanami_bud02_create_auth_header(signed_ev);
+    char *hv = nostr_bud02_create_auth_header(signed_ev);
     nostr_event_free(signed_ev);
     return hv;
 }
@@ -920,13 +920,13 @@ static char *mint_batch_auth_header(hanami_blossom_client_t *c,
 static char *mint_single_auth_header(hanami_blossom_client_t *c,
                                      const char *hash)
 {
-    NostrEvent *ev = hanami_bud02_create_auth_event(
-        HANAMI_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+    NostrEvent *ev = nostr_bud02_create_auth_event(
+        NOSTR_BUD02_ACTION_UPLOAD, hash, 0, NULL);
     if (!ev) return NULL;
     NostrEvent *signed_ev = sign_event_via_client(c, ev);
     nostr_event_free(ev);
     if (!signed_ev) return NULL;
-    char *hv = hanami_bud02_create_auth_header(signed_ev);
+    char *hv = nostr_bud02_create_auth_header(signed_ev);
     nostr_event_free(signed_ev);
     return hv;
 }
@@ -1104,14 +1104,14 @@ static char *probe_mint_header(const char *sk_hex,
                                const char *const *hashes, size_t count,
                                const char *server_url_or_null,
                                bool batch,
-                               hanami_bud02_action_t action)
+                               nostr_bud02_action_t action)
 {
     NostrEvent *ev = NULL;
     if (batch) {
-        ev = hanami_bud02_create_batch_auth_event(
+        ev = nostr_bud02_create_batch_auth_event(
             action, hashes, count, 0, server_url_or_null);
     } else {
-        ev = hanami_bud02_create_auth_event(
+        ev = nostr_bud02_create_auth_event(
             action, hashes ? hashes[0] : NULL, 0, server_url_or_null);
     }
     if (!ev) return NULL;
@@ -1119,7 +1119,7 @@ static char *probe_mint_header(const char *sk_hex,
         nostr_event_free(ev);
         return NULL;
     }
-    char *hv = hanami_bud02_create_auth_header(ev);
+    char *hv = nostr_bud02_create_auth_header(ev);
     nostr_event_free(ev);
     return hv;
 }
@@ -1212,7 +1212,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
     {
         const char *hh[1] = { h1 };
         char *hv = probe_mint_header(sk_hex, hh, 1, c->endpoint,
-                                     false, HANAMI_BUD02_ACTION_UPLOAD);
+                                     false, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
             long st = 0; hanami_error_t err;
             put_one_blob(c, h1, blob1, sizeof blob1, hv, &st, &err);
@@ -1232,7 +1232,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
     {
         const char *hh[2] = { h1, h2 };
         char *hv = probe_mint_header(sk_hex, hh, 2, NULL,
-                                     true, HANAMI_BUD02_ACTION_UPLOAD);
+                                     true, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
             long st1 = 0, st2 = 0; hanami_error_t err;
             put_one_blob(c, h1, blob1, sizeof blob1, hv, &st1, &err);
@@ -1257,7 +1257,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
     {
         const char *hh[1] = { h1 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
-                                     false, HANAMI_BUD02_ACTION_UPLOAD);
+                                     false, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
             long st = 0; hanami_error_t err;
             put_one_blob(c, h2, blob2, sizeof blob2, hv, &st, &err);
@@ -1286,7 +1286,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         probe_sha256_hex(blob3, sizeof blob3, h3);
         const char *hh[1] = { h3 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
-                                     false, HANAMI_BUD02_ACTION_UPLOAD);
+                                     false, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
             long st = 0; hanami_error_t err;
             put_one_blob(c, h3, blob3, sizeof blob3, hv, &st, &err);
@@ -1322,7 +1322,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
                 const char *hh[1] = { h_shim };
                 char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
                                              false,
-                                             HANAMI_BUD02_ACTION_UPLOAD);
+                                             NOSTR_BUD02_ACTION_UPLOAD);
                 if (hv) {
                     /* Temporarily flip the client's preferred
                      * Content-Type to image/png so put_one_blob picks
@@ -1363,25 +1363,25 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
     if (put_b_success || put_c_success_h1) {
         const char *hh[1] = { h1 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
-                                     false, HANAMI_BUD02_ACTION_DELETE);
+                                     false, NOSTR_BUD02_ACTION_DELETE);
         if (hv) { probe_delete_blob(c, h1, hv); free(hv); }
     }
     if (put_c_success_h2) {
         const char *hh[1] = { h2 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
-                                     false, HANAMI_BUD02_ACTION_DELETE);
+                                     false, NOSTR_BUD02_ACTION_DELETE);
         if (hv) { probe_delete_blob(c, h2, hv); free(hv); }
     }
     if (put_e_success) {
         const char *hh[1] = { h3 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
-                                     false, HANAMI_BUD02_ACTION_DELETE);
+                                     false, NOSTR_BUD02_ACTION_DELETE);
         if (hv) { probe_delete_blob(c, h3, hv); free(hv); }
     }
     if (put_f_success) {
         const char *hh[1] = { h_shim };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
-                                     false, HANAMI_BUD02_ACTION_DELETE);
+                                     false, NOSTR_BUD02_ACTION_DELETE);
         if (hv) { probe_delete_blob(c, h_shim, hv); free(hv); }
     }
 
@@ -1404,7 +1404,7 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
 
     /* Create auth header (no specific hash for mirror) */
     char *auth_header = NULL;
-    hanami_error_t err = make_auth_header(client, HANAMI_BUD02_ACTION_MIRROR,
+    hanami_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_MIRROR,
                                           NULL, &auth_header);
     if (err != HANAMI_OK) return err;
 

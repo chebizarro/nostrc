@@ -1,10 +1,10 @@
 /*
- * hanami-bud02-auth.c - BUD-02 Blossom authorization (kind 24242)
+ * auth.c - BUD-02 Blossom authorization (kind 24242)
  *
  * SPDX-License-Identifier: MIT
  */
 
-#include "hanami/hanami-bud02-auth.h"
+#include <nostr/bud02/auth.h>
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-kinds.h"
@@ -25,35 +25,35 @@
  * ========================================================================= */
 
 static const char *ACTION_STRINGS[] = {
-    [HANAMI_BUD02_ACTION_UPLOAD] = "upload",
-    [HANAMI_BUD02_ACTION_DELETE] = "delete",
-    [HANAMI_BUD02_ACTION_GET]    = "get",
-    [HANAMI_BUD02_ACTION_LIST]   = "list",
-    [HANAMI_BUD02_ACTION_MIRROR] = "mirror",
+    [NOSTR_BUD02_ACTION_UPLOAD] = "upload",
+    [NOSTR_BUD02_ACTION_DELETE] = "delete",
+    [NOSTR_BUD02_ACTION_GET]    = "get",
+    [NOSTR_BUD02_ACTION_LIST]   = "list",
+    [NOSTR_BUD02_ACTION_MIRROR] = "mirror",
 };
 
 #define ACTION_COUNT (sizeof(ACTION_STRINGS) / sizeof(ACTION_STRINGS[0]))
 
-const char *hanami_bud02_action_str(hanami_bud02_action_t action)
+const char *nostr_bud02_action_str(nostr_bud02_action_t action)
 {
     if ((size_t)action < ACTION_COUNT)
         return ACTION_STRINGS[action];
     return NULL;
 }
 
-hanami_bud02_result_t hanami_bud02_action_from_str(const char *str,
-                                                    hanami_bud02_action_t *out)
+nostr_bud02_result_t nostr_bud02_action_from_str(const char *str,
+                                                    nostr_bud02_action_t *out)
 {
     if (!str || !out)
-        return HANAMI_BUD02_ERR_NULL_PARAM;
+        return NOSTR_BUD02_ERR_NULL_PARAM;
 
     for (size_t i = 0; i < ACTION_COUNT; i++) {
         if (strcmp(str, ACTION_STRINGS[i]) == 0) {
-            *out = (hanami_bud02_action_t)i;
-            return HANAMI_BUD02_OK;
+            *out = (nostr_bud02_action_t)i;
+            return NOSTR_BUD02_OK;
         }
     }
-    return HANAMI_BUD02_ERR_INVALID_ACTION;
+    return NOSTR_BUD02_ERR_INVALID_ACTION;
 }
 
 /* =========================================================================
@@ -179,12 +179,12 @@ static StringArray *make_tag2(const char *key, const char *value)
  * Event creation
  * ========================================================================= */
 
-NostrEvent *hanami_bud02_create_auth_event(hanami_bud02_action_t action,
+NostrEvent *nostr_bud02_create_auth_event(nostr_bud02_action_t action,
                                            const char *sha256_hex,
                                            int64_t expiration,
                                            const char *server_url)
 {
-    const char *action_str = hanami_bud02_action_str(action);
+    const char *action_str = nostr_bud02_action_str(action);
     if (!action_str)
         return NULL;
 
@@ -193,13 +193,13 @@ NostrEvent *hanami_bud02_create_auth_event(hanami_bud02_action_t action,
         return NULL;
 
     int64_t now = (int64_t)time(NULL);
-    nostr_event_set_kind(event, HANAMI_BUD02_KIND);
+    nostr_event_set_kind(event, NOSTR_BUD02_KIND);
     nostr_event_set_created_at(event, now);
     nostr_event_set_content(event, "Authorize " /* human-friendly */ );
 
     /* Default expiration: now + 5 minutes */
     if (expiration <= 0)
-        expiration = now + HANAMI_BUD02_DEFAULT_EXPIRATION;
+        expiration = now + NOSTR_BUD02_DEFAULT_EXPIRATION;
 
     /* Count tags: t + expiration + optional x + optional server */
     int tag_count = 2; /* t + expiration always present */
@@ -261,7 +261,7 @@ fail:
     return NULL;
 }
 
-NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
+NostrEvent *nostr_bud02_create_batch_auth_event(nostr_bud02_action_t action,
                                                  const char *const *sha256_hex_array,
                                                  size_t count,
                                                  int64_t expiration,
@@ -270,7 +270,7 @@ NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
     if (!sha256_hex_array || count == 0)
         return NULL;
 
-    const char *action_str = hanami_bud02_action_str(action);
+    const char *action_str = nostr_bud02_action_str(action);
     if (!action_str)
         return NULL;
 
@@ -286,7 +286,7 @@ NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
         return NULL;
 
     int64_t now = (int64_t)time(NULL);
-    nostr_event_set_kind(event, HANAMI_BUD02_KIND);
+    nostr_event_set_kind(event, NOSTR_BUD02_KIND);
     nostr_event_set_created_at(event, now);
     nostr_event_set_content(event, "Authorize (batch)");
 
@@ -295,9 +295,9 @@ NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
      *  - anything > cap -> clamp to cap
      * Prevents callers from minting long-lived tokens by accident. */
     if (expiration <= 0)
-        expiration = now + HANAMI_BUD02_BATCH_DEFAULT_EXPIRATION;
-    if (expiration - now > HANAMI_BUD02_BATCH_MAX_EXPIRATION)
-        expiration = now + HANAMI_BUD02_BATCH_MAX_EXPIRATION;
+        expiration = now + NOSTR_BUD02_BATCH_DEFAULT_EXPIRATION;
+    if (expiration - now > NOSTR_BUD02_BATCH_MAX_EXPIRATION)
+        expiration = now + NOSTR_BUD02_BATCH_MAX_EXPIRATION;
 
     /* Tag layout: [t] + N * [x] + [expiration] + optional [server] */
     size_t tag_count = 2 + count; /* t + expiration + N x */
@@ -363,7 +363,7 @@ batch_fail:
  * Header creation/parsing
  * ========================================================================= */
 
-char *hanami_bud02_create_auth_header(const NostrEvent *event)
+char *nostr_bud02_create_auth_header(const NostrEvent *event)
 {
     if (!event)
         return NULL;
@@ -390,11 +390,11 @@ char *hanami_bud02_create_auth_header(const NostrEvent *event)
     return header;
 }
 
-hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
+nostr_bud02_result_t nostr_bud02_parse_auth_header(const char *header,
                                                      NostrEvent **out_event)
 {
     if (!header || !out_event)
-        return HANAMI_BUD02_ERR_NULL_PARAM;
+        return NOSTR_BUD02_ERR_NULL_PARAM;
 
     *out_event = NULL;
 
@@ -404,26 +404,26 @@ hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
 
     /* Check "Nostr " prefix (case-insensitive) */
     if (strncasecmp(header, "Nostr ", 6) != 0)
-        return HANAMI_BUD02_ERR_INVALID_HEADER;
+        return NOSTR_BUD02_ERR_INVALID_HEADER;
     header += 6;
 
     while (*header && isspace((unsigned char)*header))
         header++;
 
     if (*header == '\0')
-        return HANAMI_BUD02_ERR_INVALID_HEADER;
+        return NOSTR_BUD02_ERR_INVALID_HEADER;
 
     /* Decode base64 */
     uint8_t *decoded = NULL;
     size_t decoded_len = 0;
     if (bud02_base64_decode(header, &decoded, &decoded_len) != 0)
-        return HANAMI_BUD02_ERR_DECODE;
+        return NOSTR_BUD02_ERR_DECODE;
 
     /* Null-terminate for JSON parsing */
     char *json = malloc(decoded_len + 1);
     if (!json) {
         free(decoded);
-        return HANAMI_BUD02_ERR_ALLOC;
+        return NOSTR_BUD02_ERR_ALLOC;
     }
     memcpy(json, decoded, decoded_len);
     json[decoded_len] = '\0';
@@ -433,104 +433,104 @@ hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
     NostrEvent *event = nostr_event_new();
     if (!event) {
         free(json);
-        return HANAMI_BUD02_ERR_ALLOC;
+        return NOSTR_BUD02_ERR_ALLOC;
     }
 
     if (nostr_event_deserialize_compact(event, json, NULL) != 1) {
         nostr_event_free(event);
         free(json);
-        return HANAMI_BUD02_ERR_DECODE;
+        return NOSTR_BUD02_ERR_DECODE;
     }
     free(json);
 
     *out_event = event;
-    return HANAMI_BUD02_OK;
+    return NOSTR_BUD02_OK;
 }
 
 /* =========================================================================
  * Validation
  * ========================================================================= */
 
-hanami_bud02_result_t hanami_bud02_validate_auth_event(
+nostr_bud02_result_t nostr_bud02_validate_auth_event(
     const NostrEvent *event,
-    hanami_bud02_action_t expected_action,
-    const hanami_bud02_validate_options_t *options)
+    nostr_bud02_action_t expected_action,
+    const nostr_bud02_validate_options_t *options)
 {
     if (!event)
-        return HANAMI_BUD02_ERR_NULL_PARAM;
+        return NOSTR_BUD02_ERR_NULL_PARAM;
 
     /* 1. Check kind */
-    if (nostr_event_get_kind(event) != HANAMI_BUD02_KIND)
-        return HANAMI_BUD02_ERR_INVALID_KIND;
+    if (nostr_event_get_kind(event) != NOSTR_BUD02_KIND)
+        return NOSTR_BUD02_ERR_INVALID_KIND;
 
     /* 2. Check "t" tag matches expected action */
     const char *t_val = find_tag_value(event, "t");
     if (!t_val)
-        return HANAMI_BUD02_ERR_MISSING_TAG;
+        return NOSTR_BUD02_ERR_MISSING_TAG;
 
-    const char *expected_str = hanami_bud02_action_str(expected_action);
+    const char *expected_str = nostr_bud02_action_str(expected_action);
     if (!expected_str)
-        return HANAMI_BUD02_ERR_INVALID_ACTION;
+        return NOSTR_BUD02_ERR_INVALID_ACTION;
     if (strcmp(t_val, expected_str) != 0)
-        return HANAMI_BUD02_ERR_ACTION_MISMATCH;
+        return NOSTR_BUD02_ERR_ACTION_MISMATCH;
 
     /* 3. Check expiration (mandatory per BUD-02 spec) */
     const char *exp_val = find_tag_value(event, "expiration");
     if (!exp_val)
-        return HANAMI_BUD02_ERR_MISSING_EXPIRATION;
-    
+        return NOSTR_BUD02_ERR_MISSING_EXPIRATION;
+
     int64_t exp_ts = strtoll(exp_val, NULL, 10);
     int64_t now = (options && options->now_override > 0)
                       ? options->now_override
                       : (int64_t)time(NULL);
     if (exp_ts <= now)
-        return HANAMI_BUD02_ERR_EXPIRED;
+        return NOSTR_BUD02_ERR_EXPIRED;
 
     /* 4. Optional: check "x" hash tag */
     if (options && options->expected_sha256) {
         const char *x_val = find_tag_value(event, "x");
         if (!x_val)
-            return HANAMI_BUD02_ERR_MISSING_TAG;
+            return NOSTR_BUD02_ERR_MISSING_TAG;
         if (strcmp(x_val, options->expected_sha256) != 0)
-            return HANAMI_BUD02_ERR_HASH_MISMATCH;
+            return NOSTR_BUD02_ERR_HASH_MISMATCH;
     }
 
     /* 5. Check signature */
     if (!nostr_event_check_signature((NostrEvent *)event))
-        return HANAMI_BUD02_ERR_SIGNATURE;
+        return NOSTR_BUD02_ERR_SIGNATURE;
 
     /* 6. Optional: check pubkey */
     if (options && options->expected_pubkey) {
         const char *event_pubkey = nostr_event_get_pubkey(event);
         if (!event_pubkey || strcmp(event_pubkey, options->expected_pubkey) != 0)
-            return HANAMI_BUD02_ERR_PUBKEY_MISMATCH;
+            return NOSTR_BUD02_ERR_PUBKEY_MISMATCH;
     }
 
-    return HANAMI_BUD02_OK;
+    return NOSTR_BUD02_OK;
 }
 
 /* =========================================================================
  * Accessors
  * ========================================================================= */
 
-const char *hanami_bud02_get_action(const NostrEvent *event)
+const char *nostr_bud02_get_action(const NostrEvent *event)
 {
     return find_tag_value(event, "t");
 }
 
-const char *hanami_bud02_get_hash(const NostrEvent *event)
+const char *nostr_bud02_get_hash(const NostrEvent *event)
 {
     return find_tag_value(event, "x");
 }
 
-int64_t hanami_bud02_get_expiration(const NostrEvent *event)
+int64_t nostr_bud02_get_expiration(const NostrEvent *event)
 {
     const char *val = find_tag_value(event, "expiration");
     if (!val) return 0;
     return strtoll(val, NULL, 10);
 }
 
-const char *hanami_bud02_get_server(const NostrEvent *event)
+const char *nostr_bud02_get_server(const NostrEvent *event)
 {
     return find_tag_value(event, "server");
 }
@@ -539,29 +539,29 @@ const char *hanami_bud02_get_server(const NostrEvent *event)
  * Error strings
  * ========================================================================= */
 
-const char *hanami_bud02_strerror(hanami_bud02_result_t result)
+const char *nostr_bud02_strerror(nostr_bud02_result_t result)
 {
     switch (result) {
-    case HANAMI_BUD02_OK:               return "Success";
-    case HANAMI_BUD02_ERR_NULL_PARAM:   return "Null parameter";
-    case HANAMI_BUD02_ERR_ALLOC:        return "Memory allocation failed";
-    case HANAMI_BUD02_ERR_INVALID_KIND: return "Invalid event kind (expected 24242)";
-    case HANAMI_BUD02_ERR_EXPIRED:      return "Authorization event has expired";
-    case HANAMI_BUD02_ERR_ACTION_MISMATCH:
+    case NOSTR_BUD02_OK:               return "Success";
+    case NOSTR_BUD02_ERR_NULL_PARAM:   return "Null parameter";
+    case NOSTR_BUD02_ERR_ALLOC:        return "Memory allocation failed";
+    case NOSTR_BUD02_ERR_INVALID_KIND: return "Invalid event kind (expected 24242)";
+    case NOSTR_BUD02_ERR_EXPIRED:      return "Authorization event has expired";
+    case NOSTR_BUD02_ERR_ACTION_MISMATCH:
         return "Action tag does not match expected action";
-    case HANAMI_BUD02_ERR_HASH_MISMATCH:
+    case NOSTR_BUD02_ERR_HASH_MISMATCH:
         return "Blob SHA-256 does not match expected hash";
-    case HANAMI_BUD02_ERR_SIGNATURE:    return "Event signature is invalid";
-    case HANAMI_BUD02_ERR_MISSING_TAG:  return "Required tag missing from event";
-    case HANAMI_BUD02_ERR_ENCODE:       return "Base64 encoding failed";
-    case HANAMI_BUD02_ERR_DECODE:       return "Base64 decoding or JSON parsing failed";
-    case HANAMI_BUD02_ERR_INVALID_HEADER:
+    case NOSTR_BUD02_ERR_SIGNATURE:    return "Event signature is invalid";
+    case NOSTR_BUD02_ERR_MISSING_TAG:  return "Required tag missing from event";
+    case NOSTR_BUD02_ERR_ENCODE:       return "Base64 encoding failed";
+    case NOSTR_BUD02_ERR_DECODE:       return "Base64 decoding or JSON parsing failed";
+    case NOSTR_BUD02_ERR_INVALID_HEADER:
         return "Invalid Authorization header format";
-    case HANAMI_BUD02_ERR_INVALID_ACTION:
+    case NOSTR_BUD02_ERR_INVALID_ACTION:
         return "Invalid BUD-02 action string";
-    case HANAMI_BUD02_ERR_PUBKEY_MISMATCH:
+    case NOSTR_BUD02_ERR_PUBKEY_MISMATCH:
         return "Event pubkey does not match expected pubkey";
-    case HANAMI_BUD02_ERR_MISSING_EXPIRATION:
+    case NOSTR_BUD02_ERR_MISSING_EXPIRATION:
         return "Expiration tag is missing (required by BUD-02)";
     default:                            return "Unknown BUD-02 error";
     }

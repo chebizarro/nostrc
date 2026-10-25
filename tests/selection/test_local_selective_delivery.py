@@ -40,6 +40,38 @@ class AffectedDeliveryTests(unittest.TestCase):
         renamed = s.make_plan(p, [change("docs/moved.txt", status="R100", old="libmarmot/src/marmot.c")], head="a" * 40)
         self.assertTrue(any(ident.startswith("mdk") for ident in renamed["selected_checks"]))
 
+    def test_bud02_inputs_select_codec_and_hanami_not_unrelated_suites(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        families = {"root.asan.bud02", "supported.nips.bud02",
+                    "root.asan.libhanami", "supported.libhanami"}
+        for path in ("nips/bud02/src/auth.c", "nips/bud02/include/nostr/bud02/auth.h",
+                     "nips/bud02/CMakeLists.txt", "nips/bud02/bud02.pc.in"):
+            with self.subTest(path=path):
+                selected = s.make_plan(p, [change(path)], head="a" * 40)
+                self.assertEqual(selected["effective_mode"], "affected")
+                self.assertEqual(selected["broadening_reasons"], [])
+                self.assertTrue(families <= set(selected["selected_checks"]))
+                self.assertNotIn("root.asan.libnostr", selected["selected_checks"])
+                self.assertNotIn("root.asan.nip98", selected["selected_checks"])
+                self.assertEqual(selected["witnesses"]["libhanami"], ["bud02", "libhanami"])
+        for family in ("root.asan.bud02", "supported.nips.bud02"):
+            self.assertEqual(p["checks"][family]["build_targets"], ["test-bud02-auth"])
+            for tests in p["checks"][family]["ctest_tests"].values():
+                self.assertEqual(tests, ["test-bud02-auth"])
+        for family in ("root.asan.libhanami", "supported.libhanami"):
+            for tests in p["checks"][family]["ctest_tests"].values():
+                self.assertEqual(len(tests), 15)
+                self.assertNotIn("test-bud02-auth", tests)
+
+    def test_bud02_test_inputs_do_not_select_hanami_consumers(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        selected = s.make_plan(p, [change("nips/bud02/tests/test_bud02_auth.c")], head="a" * 40)
+        self.assertEqual(selected["effective_mode"], "affected")
+        self.assertEqual(selected["selected_checks"], ["root.asan.bud02", "supported.nips.bud02"])
+        selected = s.make_plan(p, [change("libhanami/src/hanami-blossom-client.c")], head="a" * 40)
+        self.assertNotIn("root.asan.bud02", selected["selected_checks"])
+        self.assertNotIn("supported.nips.bud02", selected["selected_checks"])
+
     def test_fixture_closure_transitive_and_missing_refusal(self):
         def test(name, **props):
             return dict(name=name, properties=[dict(name=k, value=v) for k, v in props.items()])

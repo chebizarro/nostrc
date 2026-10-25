@@ -388,6 +388,11 @@ endif()
 
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 
+option(ENABLE_BUD02 "Build BUD-02 Blossom authorization codec" ON)
+if(ENABLE_BUD02)
+  add_subdirectory(nips/bud02)
+endif()
+
 # nostr-homed consumes libnostr and, for experimental roaming only, NIP-19.
 # Register it after those targets exist; its own features are disabled by default.
 if (ENABLE_NOSTR_HOMED)

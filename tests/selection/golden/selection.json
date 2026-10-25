@@ -430,6 +430,7 @@
       "supported.libmarmot",
       "supported.libnostr",
       "supported.marmot.gobject",
+      "supported.nips.bud02",
       "supported.nips.nip.cas0010",
       "supported.nips.nip04",
       "supported.nips.nip05",
