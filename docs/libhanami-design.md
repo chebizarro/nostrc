@@ -2,7 +2,7 @@
 
 > **Library Name**: libhanami
 > **Language**: C
-> **Dependencies**: libgit2, libnostr (nostrc), libcurl, OpenSSL
+> **Dependencies**: libgit2, libblossom, libporthome, libnostr, nip34, SQLite, OpenSSL
 > **Date**: 2026-04-20
 > **Status**: Design
 
@@ -39,16 +39,16 @@ No centralized Git server is required.
 │         (clone, commit, push, fetch, etc.)       │
 ├──────────┬──────────┬───────────────────────────┤
 │  ODB     │  RefDB   │  Transport                │
-│ Backend  │ Backend  │  (blossom://)              │
+│ Backend  │ Backend  │  (blossom://, nostr://)    │
 ├──────────┴──────────┴───────────────────────────┤
 │                  libhanami                        │
 │  ┌────────────┐ ┌──────────┐ ┌────────────────┐ │
-│  │ Blossom    │ │ Nostr    │ │ OID ↔ SHA-256  │ │
-│  │ HTTP Client│ │ Ref Mgr  │ │ Index          │ │
+│  │ GRASP      │ │ NIP-34   │ │ SQLite index   │ │
+│  │ Client     │ │ Helpers  │ │ implementation │ │
 │  └────────────┘ └──────────┘ └────────────────┘ │
 ├─────────────────────────────────────────────────┤
 │           nostrc primitives                      │
-│  libnostr · nip34 · nip98 · blossom-cache        │
+│  libblossom · libporthome · libnostr · nip34     │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -113,9 +113,15 @@ nostrc's `nip98` module provides `nostr_nip98_create_auth_event()` and
 
 ## 4. Components
 
+Hanami owns Git-specific behavior only. Blossom HTTP, shim and capability
+probing belong to **libblossom**; BUD-02 authorization belongs to
+**nips/bud02**. The storage-independent OID-to-sealed-address index interface
+belongs to **libporthome** (`<porthome/index.h>`). Hanami retains its SQLite
+implementation and Git-facing row adapter, not a second shared index interface.
+
 ### 4.1 Blossom ODB Backend (`hanami_odb_backend`)
 
-Implements `git_odb_backend` vtable:
+Implements `git_odb_backend` vtable, delegating HTTP operations to libblossom:
 
 | Method | Behavior |
 |--------|----------|
@@ -149,7 +155,7 @@ maintainer. The backend subscribes to relay updates and caches locally.
 
 ### 4.3 Blossom Transport (`hanami_transport`)
 
-Registers `blossom://` URL scheme with libgit2:
+Registers `blossom://` and `nostr://` URL schemes with libgit2:
 
 ```c
 git_transport_register("blossom", hanami_transport_new);
@@ -162,50 +168,39 @@ Handles:
 
 **Source**: `hanami-transport.c`, `hanami-transport.h`
 
-### 4.4 OID ↔ Blossom Hash Index (`hanami_index`)
+### 4.4 SQLite Index Implementation (`hanami_index`)
 
-A local database mapping Git object IDs to Blossom SHA-256 hashes:
+Persists Git OID mappings in SQLite. `hanami_index_porthome()` exposes a
+borrowed `porthome_index` view implementing libporthome's storage-independent
+interface. The legacy `hanami_index_entry_t` is a Git-specific row adapter;
+the shared OID/sealed-address/key-id type and vtable live in libporthome.
+Raw-mode rows use key id zero. Sealed ODB and private ref-state composition
+are separate work; this implementation does not itself seal objects.
 
-```c
-typedef struct {
-    char git_oid[65];       // hex SHA-1 (40) or SHA-256 (64) + null
-    char blossom_hash[65];  // hex SHA-256 of raw content + null
-    git_object_t type;      // blob, tree, commit, tag
-    size_t size;            // object size
-    int64_t timestamp;      // last access time
-} hanami_index_entry;
-```
+**Source**: `hanami-index-sqlite.c`, `hanami-index.h`
 
-Storage options (compile-time):
-- SQLite (default, via nostrc's existing SQLite integration)
-- LMDB (optional, via nostrc's LMDB backend from blossom-cache)
+### 4.5 GRASP Client (`hanami_grasp`)
 
-**Source**: `hanami-index.c`, `hanami-index.h`
+Git repository discovery and publication using NIP-34 announcements, GRASP
+server URL parsing, and GRASP-specific announcement tags. Uses the NIP-34
+helpers below; it does not implement Blossom HTTP or BUD-02 authentication.
 
-### 4.5 Blossom HTTP Client (`hanami_blossom_client`)
-
-Thin wrapper around libcurl implementing BUD-01/BUD-02 endpoints:
-
-| Function | Endpoint | Auth |
-|----------|----------|------|
-| `hanami_blossom_get(hash)` | `GET /<sha256>` | None |
-| `hanami_blossom_head(hash)` | `HEAD /<sha256>` | None |
-| `hanami_blossom_upload(data, len)` | `PUT /upload` | NIP-98 (kind 24242) |
-| `hanami_blossom_delete(hash)` | `DELETE /<sha256>` | NIP-98 (kind 24242) |
-| `hanami_blossom_list(pubkey)` | `GET /list/<pubkey>` | Optional |
-| `hanami_blossom_mirror(url)` | `PUT /mirror` | NIP-98 (kind 24242) |
-
-Reuses patterns from `BcUpstreamClient` in blossom-cache.
-
-**Source**: `hanami-blossom-client.c`, `hanami-blossom-client.h`
+**Source**: `hanami-grasp.c`, `hanami-grasp.h`
 
 ### 4.6 Nostr Client Integration (`hanami_nostr`)
 
-Uses libnostr for:
-- Relay connection management (`NostrRelay`, `NostrSimplePool`)
-- Event creation and signing (`NostrEvent`)
-- Subscription/filter management (`NostrFilter`, `NostrSubscription`)
-- NIP-34 event parsing (from `nips/nip34`)
+Keeps NIP-34 event construction/parsing, signer adaptation and tight
+kind/author/`#d` filters in Hanami. Delegates connection ownership, reconnect,
+subscription dispatch and EOSE/CLOSED observation to libnostr's
+`NostrSimplePool`. Snapshot queries reduce replayed IDs idempotently and choose
+the newest event across subscribed relays, with the NIP-01 event-id tie-break.
+EOSE completes catch-up; the deadline reports an error, not empty history.
+
+The pool has no publish API, so Hanami retains its best-effort policy over
+pool-owned relays using `nostr_relay_publish_and_wait()`: success requires at
+least one `OK true`, never just a successful websocket send. `OK false` and
+`CLOSED` fail visibly. NIP-42 challenges return an authentication error rather
+than implicitly authorizing relay login. NIP-11 probing is not added here.
 
 **Source**: `hanami-nostr.c`, `hanami-nostr.h`
 
@@ -334,15 +329,15 @@ add_library(hanami
     src/hanami-odb-backend.c
     src/hanami-refdb-backend.c
     src/hanami-transport.c
-    src/hanami-index.c
-    src/hanami-blossom-client.c
+    src/hanami-index-sqlite.c
+    src/hanami-grasp.c
     src/hanami-nostr.c
     src/hanami-config.c
 )
 
 target_link_libraries(hanami
-    PUBLIC  git2
-    PRIVATE nostr nip34 nip98 curl sqlite3 OpenSSL::Crypto
+    PUBLIC  PkgConfig::LIBGIT2 nostrc::blossom nostrc::porthome
+    PRIVATE nostr nip34 PkgConfig::SQLITE3 OpenSSL::Crypto pthread
 )
 ```
 

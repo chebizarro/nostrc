@@ -7,12 +7,11 @@
 #include "hanami/hanami-nostr.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
-#include "nostr-relay.h"
-#include "nostr-subscription.h"
+#include "nostr-simple-pool.h"
 #include "nostr-tag.h"
 #include "nostr-kinds.h"
 #include "channel.h"
-#include "context.h"
+#include "select.h"
 #include "error.h"
 #include <nip34.h>
 
@@ -31,10 +30,9 @@ struct hanami_nostr_ctx {
     hanami_signer_t signer; /* Shallow copy — caller owns pointed-to data */
     bool has_signer;
 
-    /* Lazily connected relays */
-    NostrRelay **relays;    /* Owned array, NULL until connected */
-    bool relays_connected;
-    pthread_mutex_t relay_mutex;
+    NostrSimplePool *pool;  /* Owns connections, reconnect and subscriptions */
+    GoChannel *notice;
+    pthread_mutex_t relay_mutex; /* Serialize synchronous operations */
 };
 
 /* =========================================================================
@@ -95,14 +93,9 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx)
 {
     if (!ctx) return;
 
-    /* Free relays */
-    if (ctx->relays) {
-        for (size_t i = 0; i < ctx->relay_count; i++) {
-            if (ctx->relays[i])
-                nostr_relay_free(ctx->relays[i]);
-        }
-        free(ctx->relays);
-    }
+    nostr_simple_pool_free(ctx->pool);
+    if (ctx->notice)
+        go_channel_free(ctx->notice);
 
     /* Free URLs */
     if (ctx->relay_urls) {
@@ -120,35 +113,48 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx)
  * Lazy relay connection
  * ========================================================================= */
 
+enum { QUERY_DONE = 1, AUTH_REQUIRED = 2 };
+#define RELAY_TIMEOUT_MS 10000
+
+/* Hanami has no NIP-42 credential policy. Fail explicitly rather than signing
+ * an authentication event without caller approval or ignoring the challenge. */
+static void auth_required(NostrRelay *relay, const char *challenge, void *data)
+{
+    (void)relay;
+    (void)challenge;
+    hanami_nostr_ctx_t *ctx = data;
+    go_channel_try_send(ctx->notice, (void *)(uintptr_t)AUTH_REQUIRED);
+}
+
+/* Called with relay_mutex held. Relay creation/dial/backoff belong to libnostr. */
 static hanami_error_t ensure_relays(hanami_nostr_ctx_t *ctx)
 {
-    pthread_mutex_lock(&ctx->relay_mutex);
-
-    if (ctx->relays_connected) {
-        pthread_mutex_unlock(&ctx->relay_mutex);
-        return HANAMI_OK;
-    }
-
-    ctx->relays = calloc(ctx->relay_count, sizeof(NostrRelay *));
-    if (!ctx->relays) {
-        pthread_mutex_unlock(&ctx->relay_mutex);
-        return HANAMI_ERR_NOMEM;
-    }
-
-    bool any_connected = false;
-    for (size_t i = 0; i < ctx->relay_count; i++) {
-        Error *err = NULL;
-        ctx->relays[i] = nostr_relay_new(NULL, ctx->relay_urls[i], &err);
-        if (ctx->relays[i]) {
-            any_connected = true;
-        } else if (err) {
-            free_error(err);  /* prevent leak on connection failure */
+    if (!ctx->pool) {
+        ctx->notice = go_channel_create(1);
+        if (!ctx->notice)
+            return HANAMI_ERR_NOMEM;
+        ctx->pool = nostr_simple_pool_new();
+        if (!ctx->pool) {
+            go_channel_free(ctx->notice);
+            ctx->notice = NULL;
+            return HANAMI_ERR_NOMEM;
         }
     }
 
-    ctx->relays_connected = true;
-    pthread_mutex_unlock(&ctx->relay_mutex);
-    return any_connected ? HANAMI_OK : HANAMI_ERR_NETWORK;
+    void *old_notice;
+    while (go_channel_try_receive(ctx->notice, &old_notice) == 0) {}
+    for (size_t i = 0; i < ctx->relay_count; i++)
+        nostr_simple_pool_ensure_relay(ctx->pool, ctx->relay_urls[i]);
+
+    bool connected = false;
+    pthread_mutex_lock(&ctx->pool->pool_mutex);
+    for (size_t i = 0; i < ctx->pool->relay_count; i++) {
+        NostrRelay *relay = ctx->pool->relays[i];
+        nostr_relay_set_auth_callback(relay, auth_required, ctx);
+        connected |= nostr_relay_is_connected(relay);
+    }
+    pthread_mutex_unlock(&ctx->pool->pool_mutex);
+    return connected ? HANAMI_OK : HANAMI_ERR_NETWORK;
 }
 
 /* =========================================================================
@@ -215,23 +221,40 @@ hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
     if (!ctx || !event)
         return HANAMI_ERR_INVALID_ARG;
 
+    pthread_mutex_lock(&ctx->relay_mutex);
     hanami_error_t err = ensure_relays(ctx);
-    if (err != HANAMI_OK)
-        return err;
-
-    /* Publish to all connected relays (best-effort).
-     * Only publish to relays that are actually connected — calling
-     * nostr_relay_publish on an unconnected relay blocks for 5s waiting
-     * on a write channel that has no consumer. */
     bool any_published = false;
-    for (size_t i = 0; i < ctx->relay_count; i++) {
-        if (ctx->relays[i] && nostr_relay_is_connected(ctx->relays[i])) {
-            nostr_relay_publish(ctx->relays[i], event);
-            any_published = true;
+    if (err == HANAMI_OK) {
+        err = HANAMI_ERR_NETWORK;
+        /* The pool owns relays; it has no publish API. Keep only the NIP-34
+         * best-effort acceptance policy here, using libnostr's OK waiter. */
+        for (size_t i = 0; i < ctx->pool->relay_count; i++) {
+            NostrRelay *relay = ctx->pool->relays[i];
+            if (!nostr_relay_is_connected(relay))
+                continue;
+            Error *publish_err = NULL;
+            if (nostr_relay_publish_and_wait(relay, event, RELAY_TIMEOUT_MS,
+                                             &publish_err)) {
+                any_published = true;
+            } else if (publish_err && publish_err->message) {
+                if (strstr(publish_err->message, "auth-required:"))
+                    err = HANAMI_ERR_AUTH;
+                else if (strstr(publish_err->message, "relay rejected"))
+                    err = HANAMI_ERR_NOSTR;
+                else if (strstr(publish_err->message, "timed out"))
+                    err = HANAMI_ERR_TIMEOUT;
+                else
+                    err = HANAMI_ERR_NOSTR;
+            }
+            free_error(publish_err);
         }
+        void *notice = NULL;
+        if (go_channel_try_receive(ctx->notice, &notice) == 0 &&
+            (uintptr_t)notice == AUTH_REQUIRED)
+            err = HANAMI_ERR_AUTH;
     }
-
-    return any_published ? HANAMI_OK : HANAMI_ERR_NETWORK;
+    pthread_mutex_unlock(&ctx->relay_mutex);
+    return any_published ? HANAMI_OK : err;
 }
 
 hanami_error_t hanami_nostr_publish_repo(hanami_nostr_ctx_t *ctx,
@@ -344,84 +367,98 @@ NostrFilter *hanami_nostr_build_patches_filter(const char *repo_addr)
 }
 
 /* =========================================================================
- * Querying (using relay subscribe + collect first match)
+ * Querying (pool catch-up, completed only by EOSE)
  * ========================================================================= */
 
-/* Query timeout for single-event queries (seconds) */
-#define QUERY_TIMEOUT_SECONDS 10
+typedef struct {
+    hanami_nostr_ctx_t *ctx;
+    size_t remaining;
+    NostrEvent *latest;
+    hanami_error_t error;
+} repo_query;
 
-/* Internal: query relays with a filter and collect the most recent event.
- * Uses the subscription events channel with a timeout context to receive
- * the first matching event. */
-static NostrEvent *query_single_event(hanami_nostr_ctx_t *ctx,
-                                      NostrFilter *filter)
+static void collect_event(NostrIncomingEvent *incoming, void *data)
 {
+    repo_query *query = data;
+    NostrEvent *event = incoming->event;
+    /* The pool assumes validation at ingestion. Unlike nostrdb consumers,
+     * Hanami must validate here before admitting a repository state. */
+    if (!nostr_event_check_signature(event)) {
+        nostr_event_free(event);
+        return;
+    }
+    /* NIP-01 replaceable-event ordering, independent of relay arrival order. */
+    if (!query->latest || event->created_at > query->latest->created_at ||
+        (event->created_at == query->latest->created_at &&
+         strcmp(event->id, query->latest->id) < 0)) {
+        nostr_event_free(query->latest);
+        query->latest = event;
+    } else {
+        nostr_event_free(event);
+    }
+}
+
+static void query_boundary(NostrRelay *relay, const char *state,
+                           const char *reason, void *data)
+{
+    (void)relay;
+    repo_query *query = data;
+    if (strcmp(state, "CLOSED") == 0) {
+        query->error = reason && strncmp(reason, "auth-required:", 14) == 0
+                     ? HANAMI_ERR_AUTH : HANAMI_ERR_NOSTR;
+    } else if (strcmp(state, "EOSE") != 0) {
+        return;
+    }
+    if (query->error != HANAMI_OK || --query->remaining == 0)
+        go_channel_try_send(query->ctx->notice, (void *)(uintptr_t)QUERY_DONE);
+}
+
+static hanami_error_t query_single_event(hanami_nostr_ctx_t *ctx,
+                                         NostrFilter *filter, NostrEvent **out)
+{
+    *out = NULL;
+    pthread_mutex_lock(&ctx->relay_mutex);
     hanami_error_t err = ensure_relays(ctx);
-    if (err != HANAMI_OK) {
-        nostr_filter_free(filter);
-        return NULL;
+    if (err != HANAMI_OK)
+        goto done;
+
+    repo_query query = { .ctx = ctx, .error = HANAMI_OK };
+    NostrFilters filters = { .filters = filter, .count = 1 };
+    nostr_simple_pool_set_auto_unsub_on_eose(ctx->pool, true);
+    nostr_simple_pool_set_event_middleware_ex(ctx->pool, collect_event, &query);
+    nostr_simple_pool_set_subscription_callback(ctx->pool, query_boundary, &query);
+    nostr_simple_pool_subscribe(ctx->pool, (const char **)ctx->relay_urls,
+                               ctx->relay_count, filters, false);
+    /* Each fetch is a fresh snapshot. Pool-wide seen IDs persist across
+     * subscriptions, so replay reduction belongs to collect_event here. */
+    query.remaining = ctx->pool->subs_count;
+    if (query.remaining == 0) {
+        err = HANAMI_ERR_NETWORK;
+    } else {
+        nostr_simple_pool_start(ctx->pool);
+        void *notice = NULL;
+        GoSelectCase wait = { .op = GO_SELECT_RECEIVE, .chan = ctx->notice,
+                              .recv_buf = &notice };
+        GoSelectResult result = go_select_timeout(&wait, 1, RELAY_TIMEOUT_MS);
+        /* EOSE is notified before the pool delivers its final event batch.
+         * Join before reading latest or releasing callback data. */
+        nostr_simple_pool_stop(ctx->pool);
+        err = result.selected_case != 0 ? HANAMI_ERR_TIMEOUT
+            : (uintptr_t)notice == AUTH_REQUIRED ? HANAMI_ERR_AUTH : query.error;
     }
-
-    NostrFilters *filters = nostr_filters_new();
-    if (!filters) {
-        nostr_filter_free(filter);
-        return NULL;
+    nostr_simple_pool_set_subscription_callback(ctx->pool, NULL, NULL);
+    nostr_simple_pool_set_event_middleware_ex(ctx->pool, NULL, NULL);
+    if (err == HANAMI_OK) {
+        *out = query.latest;
+        if (!*out)
+            err = HANAMI_ERR_NOT_FOUND;
+    } else {
+        nostr_event_free(query.latest);
     }
-    nostr_filters_add(filters, filter);
-
-    /* Create a timeout context for the query */
-    GoContext *timeout_ctx = go_context_background();
-    if (timeout_ctx) {
-        go_context_init(timeout_ctx, QUERY_TIMEOUT_SECONDS);
-    }
-
-    /* Try each relay until we get a result */
-    NostrEvent *result = NULL;
-    for (size_t i = 0; i < ctx->relay_count && !result; i++) {
-        if (!ctx->relays[i]) continue;
-
-        /* Prepare and fire subscription */
-        struct NostrSubscription *sub = nostr_relay_prepare_subscription(
-            ctx->relays[i], timeout_ctx, filters);
-        if (!sub) continue;
-
-        Error *sub_err = NULL;
-        bool ok = nostr_subscription_fire(sub, &sub_err);
-        if (!ok) {
-            nostr_subscription_free(sub);
-            continue;
-        }
-
-        /* Wait for EOSE or an event, whichever comes first */
-        GoChannel *events_ch = nostr_subscription_get_events_channel(sub);
-        if (events_ch) {
-            void *data = NULL;
-            int rc = go_channel_receive_with_context(events_ch, &data, timeout_ctx);
-            if (rc == 0 && data) {
-                /* We received an event — clone it since sub cleanup will free originals */
-                NostrEvent *received = (NostrEvent *)data;
-                char *json = nostr_event_serialize_compact(received);
-                if (json) {
-                    result = nostr_event_new();
-                    if (result) {
-                        if (nostr_event_deserialize_compact(result, json, NULL) != 1) {
-                            nostr_event_free(result);
-                            result = NULL;
-                        }
-                    }
-                    free(json);
-                }
-            }
-        }
-
-        nostr_subscription_unsubscribe(sub);
-        nostr_subscription_free(sub);
-    }
-
-    nostr_filters_free(filters);
-    if (timeout_ctx)
-        go_context_unref(timeout_ctx);
-    return result;
+done:
+    nostr_filter_free(filter);
+    pthread_mutex_unlock(&ctx->relay_mutex);
+    return err;
 }
 
 hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
@@ -438,9 +475,10 @@ hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
     if (!f)
         return HANAMI_ERR_NOMEM;
 
-    NostrEvent *ev = query_single_event(ctx, f);
-    if (!ev)
-        return HANAMI_ERR_NOT_FOUND;
+    NostrEvent *ev = NULL;
+    hanami_error_t err = query_single_event(ctx, f, &ev);
+    if (err != HANAMI_OK)
+        return err;
 
     nip34_result_t res = nip34_parse_repository(ev, out);
     nostr_event_free(ev);
@@ -462,9 +500,10 @@ hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
     if (!f)
         return HANAMI_ERR_NOMEM;
 
-    NostrEvent *ev = query_single_event(ctx, f);
-    if (!ev)
-        return HANAMI_ERR_NOT_FOUND;
+    NostrEvent *ev = NULL;
+    hanami_error_t err = query_single_event(ctx, f, &ev);
+    if (err != HANAMI_OK)
+        return err;
 
     nip34_result_t res = nip34_parse_repo_state(ev, out);
     nostr_event_free(ev);

@@ -54,7 +54,9 @@ typedef void (*hanami_nostr_event_cb)(const NostrEvent *event, void *user_data);
  * @out: (out): created context
  *
  * Create a Nostr context for NIP-34 operations.
- * The relay connections are established lazily on first use.
+ * The libnostr pool establishes relay connections lazily on first use.
+ * Operations on a context are serialized. NIP-42 challenges fail with
+ * HANAMI_ERR_AUTH; this API does not automatically authorize relay login.
  *
  * Returns: HANAMI_OK on success
  */
@@ -117,8 +119,11 @@ hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
  * @event: signed event to publish (borrowed)
  *
  * Publish a pre-built, pre-signed event to all connected relays.
+ * Waits for NIP-01 OK acknowledgments, not just websocket sends.
  *
- * Returns: HANAMI_OK on success
+ * Returns: HANAMI_OK if at least one relay accepts the event; otherwise
+ * HANAMI_ERR_NOSTR on rejection, HANAMI_ERR_AUTH if authentication is required,
+ * HANAMI_ERR_TIMEOUT on missing OK, or HANAMI_ERR_NETWORK if none connected.
  */
 hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
                                           NostrEvent *event);
@@ -136,7 +141,11 @@ hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
  *
  * Query relays for the latest kind 30617 event for this repo.
  *
- * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND if no event found
+ * Waits for EOSE from all successfully subscribed relays. A deadline is an
+ * error, never evidence of empty or complete history.
+ *
+ * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND after empty EOSE;
+ * network, CLOSED, AUTH and timeout failures remain errors.
  */
 hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
                                        const char *repo_id,
@@ -152,7 +161,11 @@ hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
  *
  * Query relays for the latest kind 30618 event for this repo.
  *
- * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND if no event found
+ * Waits for EOSE from all successfully subscribed relays. A deadline is an
+ * error, never evidence of empty or complete history.
+ *
+ * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND after empty EOSE;
+ * network, CLOSED, AUTH and timeout failures remain errors.
  */
 hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
                                         const char *repo_id,
