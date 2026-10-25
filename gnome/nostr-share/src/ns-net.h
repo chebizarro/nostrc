@@ -17,6 +17,8 @@
 
 G_BEGIN_DECLS
 
+gboolean ns_net_blossom_server_ok(const gchar *server, gboolean allow_loopback_http);
+
 #define NS_APP_ID            "org.nostr.Share"
 /* The session relay speaks NIP-01 over WebSocket on a Unix socket; this
  * URL is only the HTTP handshake target and the relay's identity in the

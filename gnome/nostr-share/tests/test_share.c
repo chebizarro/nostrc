@@ -16,7 +16,6 @@
 #include <nostr/nip44/nip44.h>
 #include <nostr/nip59/nip59.h>
 #include <libsoup/soup.h>
-#include <blossom/capability.h>
 
 #include "nostr-event.h"
 #include "nostr-keys.h"
@@ -1374,9 +1373,8 @@ test_private_upload_unlinked(void)
     relays_reset();
     can_inboxes(FALSE);
     FakeBlossom *b = blossom_start(cases[c].strict ? K.pk : NULL);
-    /* This fixture accepts raw bytes. Keep auth-attempt assertions scoped
-     * to the file upload, not libblossom's separate capability probes. */
-    blossom_shim_cache_set(b->url, BLOSSOM_CAP_YES, BLOSSOM_CAP_NO);
+    /* Media uploads retain exact wire bytes through GnBlossomClient:
+     * no capability probes or shimming can change this encrypted address. */
     g_autofree gchar *jpg = tmpfile_with("photo.jpg", TINY_JPEG, sizeof(TINY_JPEG));
     const gchar *args[] = { jpg, NULL };
     GError *err = NULL;
@@ -1416,7 +1414,6 @@ test_private_upload_unlinked(void)
     }
     g_mutex_unlock(&b->lock);
     blossom_stop(b);
-    blossom_shim_cache_reset();
   }
 }
 

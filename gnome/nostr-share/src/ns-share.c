@@ -3,7 +3,12 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ns-share.h"
-#include "ns-blossom.h"
+#include <nostr-gobject-1.0/gn-blossom-client.h>
+#include <nostr/bud02/auth.h>
+#include <nostr-event.h>
+#include <nostr-keys.h>
+#include <openssl/crypto.h>
+#include <stdlib.h>
 #include "ns-dav.h"
 #include "ns-git.h"
 #include "ns-strip.h"
@@ -1022,6 +1027,98 @@ say(NsProgressFunc progress, gpointer user_data, const gchar *fmt, ...)
   progress(msg, user_data);
 }
 
+static void
+media_uploaded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  *(GAsyncResult **)data = g_object_ref(result);
+}
+
+/* The CLI is synchronous; the dialog already calls this engine on a GTask
+ * worker. Drive only this operation's private context, never the UI context. */
+static gboolean
+upload_media(const gchar *const *servers, NostrPublishSigner *signer,
+             const gchar *pubkey, gboolean anonymous, gboolean loopback_http,
+             const gchar *mime, GBytes *bytes, const gchar *hash,
+             gchar **out_url, gchar **out_server, gboolean *auth_refused, GError **error)
+{
+  if (auth_refused) *auth_refused = FALSE;
+  if (!servers || !servers[0]) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_NO_SERVERS, "no Blossom servers configured");
+    return FALSE;
+  }
+  char *sk = anonymous ? nostr_key_generate_private() : NULL;
+  char *pk = sk ? nostr_key_get_public(sk) : NULL;
+  if (anonymous && !pk) {
+    if (sk) { OPENSSL_cleanse(sk, strlen(sk)); free(sk); }
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_UPLOAD, "no throwaway upload key");
+    return FALSE;
+  }
+  g_autoptr(GMainContext) context = g_main_context_new();
+  g_main_context_push_thread_default(context);
+  g_autoptr(GString) failures = g_string_new(NULL);
+  guint tried = 0, refused = 0;
+  gboolean success = FALSE;
+  for (guint i = 0; servers[i] && !success; i++) {
+    if (!ns_net_blossom_server_ok(servers[i], loopback_http)) {
+      g_string_append_printf(failures, "\n  %s: refused (https:// only)", servers[i]);
+      continue;
+    }
+    NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+    nostr_event_set_pubkey(event, anonymous ? pk : pubkey);
+    char expected_id[65];
+    gboolean valid = nostr_event_compute_id(event, expected_id) == NOSTR_EVENT_VALIDATION_OK;
+    char *raw = nostr_event_serialize_compact(event);
+    g_autoptr(GError) local = NULL;
+    g_autofree gchar *signed_json = NULL;
+    if (anonymous && nostr_event_sign(event, sk) == 0) {
+      char *signed_raw = nostr_event_serialize_compact(event);
+      signed_json = g_strdup(signed_raw); free(signed_raw);
+    } else if (!anonymous) {
+      signed_json = nostr_publish_signer_sign_event_json(signer, raw, NULL, &local);
+    }
+    free(raw); nostr_event_free(event);
+    NostrEvent *signed_event = nostr_event_new();
+    valid = valid && signed_json &&
+      nostr_event_deserialize_signed(signed_event, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+      g_strcmp0(nostr_event_get_id(signed_event), expected_id) == 0;
+    nostr_event_free(signed_event);
+    if (!valid) {
+      g_string_append_printf(failures, "\n  %s: upload signing failed", servers[i]);
+      continue;
+    }
+    g_autoptr(GnBlossomClient) client = gn_blossom_client_new(servers[i]);
+    gn_blossom_client_set_network(client, NULL, loopback_http ? GN_BLOSSOM_NETWORK_LOCAL_TEST : GN_BLOSSOM_NETWORK_DEFAULT);
+    /* Keep the former libblossom default cap and nostr-share's timeout/agent. */
+    gn_blossom_client_set_limits(client, 0, 120, "nostr-share/" NS_VERSION);
+    GAsyncResult *result = NULL;
+    tried++;
+    gn_blossom_client_upload_async(client, bytes, hash, mime, signed_json, NULL, media_uploaded, &result);
+    while (!result) g_main_context_iteration(context, TRUE);
+    g_autofree gchar *url = gn_blossom_client_upload_finish(client, result, &local);
+    g_object_unref(result);
+    if (!url) {
+      if (g_error_matches(local, GN_BLOSSOM_ERROR, GN_BLOSSOM_ERROR_AUTH)) refused++;
+      g_string_append_printf(failures, "\n  %s: %s", servers[i], local ? local->message : "upload failed");
+      continue;
+    }
+    g_autofree gchar *endpoint = g_strdup(servers[i]);
+    gsize n = strlen(endpoint);
+    while (n && endpoint[n - 1] == '/') endpoint[--n] = 0;
+    *out_url = g_str_has_prefix(url, "https://") ? g_strdup(url) : ns_blossom_blob_url(endpoint, hash, mime);
+    if (out_server) *out_server = g_strdup(endpoint);
+    success = TRUE;
+  }
+  g_main_context_pop_thread_default(context);
+  if (sk) { OPENSSL_cleanse(sk, strlen(sk)); free(sk); }
+  free(pk);
+  if (!success) {
+    if (auth_refused) *auth_refused = tried > 0 && tried == refused;
+    g_set_error(error, NS_ERROR, NS_ERROR_UPLOAD, "Blossom upload failed:%s", failures->str);
+  }
+  return success;
+}
+
 gboolean
 ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
                 gpointer user_data, GError **error)
@@ -1053,8 +1150,8 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
       g_autofree gchar *url = NULL, *server = NULL;
       gboolean refused = FALSE;
       GError *local = NULL;
-      if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
-                             share->pubkey_hex, NS_BLOSSOM_AUTH_THROWAWAY,
+      if (!upload_media((const gchar *const *)share->servers, share->signer,
+                             share->pubkey_hex, TRUE,
                              share->cfg->allow_loopback_relays, f->sealed_blob.mime,
                              f->sealed, f->sealed_blob.sha256, &url, &server, &refused,
                              &local)) {
@@ -1071,8 +1168,8 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
         g_clear_error(&local);
         say(progress, user_data, "The Blossom server only takes uploads signed by your "
             "key: uploading the encrypted %s as you…", f->display_name);
-        if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
-                               share->pubkey_hex, NS_BLOSSOM_AUTH_ACCOUNT,
+        if (!upload_media((const gchar *const *)share->servers, share->signer,
+                               share->pubkey_hex, FALSE,
                                share->cfg->allow_loopback_relays, f->sealed_blob.mime,
                                f->sealed, f->sealed_blob.sha256, &url, &server, NULL, error))
           return FALSE;
@@ -1094,8 +1191,8 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
       say(progress, user_data, "Uploading %s (%" G_GUINT64_FORMAT " KiB)…",
           f->display_name, f->blob.size / 1024u);
       g_autofree gchar *url = NULL, *server = NULL;
-      if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
-                             share->pubkey_hex, NS_BLOSSOM_AUTH_ACCOUNT,
+      if (!upload_media((const gchar *const *)share->servers, share->signer,
+                             share->pubkey_hex, FALSE,
                              share->cfg->allow_loopback_relays, f->blob.mime, f->bytes,
                              f->blob.sha256, &url, &server, NULL, error))
         return FALSE;

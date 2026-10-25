@@ -4,7 +4,7 @@
 # Open With via org.nostr.Share.desktop (bead nostrc-1xak).
 #
 # Requires: glib/gio >= 2.70, json-glib, libsoup-3, libnostr-publish,
-#           libblossom (uploads), libhanami (Git), nip34, nip19, libnostr.
+#           nostr-gobject (uploads), libhanami (Git), nip34, nip19, libnostr.
 # Optional: gtk4 + libadwaita-1 >= 1.4 for the dialog (NOSTR_SHARE_UI).
 #
 # SPDX-License-Identifier: MIT
@@ -15,11 +15,11 @@ find_package(PkgConfig REQUIRED)
 
 set(NOSTR_SHARE_VERSION 0.1.0)
 
-foreach(_ns_dep nostr-publish blossom hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core)
+foreach(_ns_dep nostr-publish nostr_gobject hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core)
   if (NOT TARGET ${_ns_dep})
     message(FATAL_ERROR
-      "nostr-share needs the '${_ns_dep}' target (enable BUILD_LIBHANAMI and "
-      "ENABLE_NOSTR_SHARE together)")
+      "nostr-share needs the '${_ns_dep}' target (enable BUILD_LIBHANAMI, "
+      "BUILD_NOSTR_GOBJECT and ENABLE_NOSTR_SHARE together)")
   endif()
 endforeach()
 
@@ -49,7 +49,6 @@ add_library(nostr-share-core STATIC
   src/ns-strip-isobmff.c
   src/ns-config.c
   src/ns-net.c
-  src/ns-blossom.c
   src/ns-git.c
   src/ns-dav.c
   src/ns-private.c
@@ -59,7 +58,7 @@ target_include_directories(nostr-share-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_compile_definitions(nostr-share-core PUBLIC NS_VERSION="${NOSTR_SHARE_VERSION}")
 target_compile_options(nostr-share-core PRIVATE ${NS_WARNING_FLAGS})
 target_link_libraries(nostr-share-core PUBLIC
-  nostr-publish nostrc::blossom hanami nip34 nip19 nostr nostr_nip59_core
+  nostr-publish nostr_gobject nostrc::bud02 hanami nip34 nip19 nostr nostr_nip59_core
   OpenSSL::Crypto
   PkgConfig::NS_GLIB PkgConfig::NS_JSONGLIB PkgConfig::NS_SOUP)
 
@@ -89,6 +88,12 @@ if (BUILD_TESTING)
       nostr-publish-fake-session-relay nostr_nip59_core)
     target_compile_options(test-nostr-share-${_ns_test} PRIVATE ${NS_WARNING_FLAGS})
     add_test(NAME nostr-share-${_ns_test} COMMAND test-nostr-share-${_ns_test})
+    if(_ns_test STREQUAL "share" AND COMMAND nostrc_describe_test)
+      nostrc_describe_test("nostr-share-${_ns_test}"
+        OWNER gnome.nostr_share nostr.gobject libblossom bud02
+        TARGETS test-nostr-share-${_ns_test}
+        INPUTS tests/test_share.c)
+    endif()
     set_tests_properties(nostr-share-${_ns_test} PROPERTIES
       TIMEOUT 60 LABELS "nostr-share;unit"
       ENVIRONMENT "NOSTR_SHARE_SESSION_RELAY_SOCKET=/nonexistent;NOSTR_SHARE_CONFIG=/nonexistent")
