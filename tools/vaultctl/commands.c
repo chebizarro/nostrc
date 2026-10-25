@@ -359,24 +359,6 @@ done:
                s->history ? "true" : "false");
     return rc;
 }
-static int retain_names(vc_app *a, const vault_tree *old, const vault_tree *next)
-{
-    for (size_t i = 0; i < vault_tree_count(old); i++) {
-        const porthome_dir_node *n = vault_tree_node_at(old, i, NULL),
-                                *m = vault_tree_node_at(next, i, NULL);
-        if (n->entries_len != m->entries_len)
-            return VAULT_ERR_ARG;
-        for (size_t j = 0; j < n->entries_len; j++) {
-            const char *name = NULL;
-            int rc = vc_name_get(a, n->node_id, n->entries[j].name_enc, &name);
-            if (!rc)
-                rc = vc_name_put(a, m->node_id, m->entries[j].name_enc, name);
-            if (rc)
-                return rc;
-        }
-    }
-    return 0;
-}
 static int distribute(vc_app *a)
 {
     vc_state *s = &a->state;
@@ -431,15 +413,10 @@ int vc_command_revoke(vc_app *a)
         if (rc)
             return rc;
         vault_tree *next = NULL;
-        rc = vault_tree_revoke(s->tree, p, a->pub, s->member, next_time(p), vc_name_get, a, &next);
+        rc = vault_tree_revoke(s->tree, p, a->pub, s->member, next_time(p), &next);
         head_free(p);
         if (rc)
             return rc;
-        rc = retain_names(a, s->tree, next);
-        if (rc) {
-            vault_tree_free(next);
-            return rc;
-        }
         vault_tree_free(s->tree);
         s->tree = next;
         s->phase = VC_PHASE_REVOKE;
@@ -461,7 +438,7 @@ int vc_command_revoke(vc_app *a)
     vault_tree_reseal_result *result = NULL;
     vault_blob_io io = {a, vc_blob_read, vc_blob_put};
     a->chunk_io = 1;
-    rc = vault_tree_reseal(s->tree, vc_length_get, a, s->eager, a->options.budget, &io, &result);
+    rc = vault_tree_reseal(s->tree, s->eager, a->options.budget, &io, &result);
     a->chunk_io = 0;
     if (result)
         s->migrating = result->remaining != 0;
@@ -539,7 +516,7 @@ int vc_command_fsck(vc_app *a)
             break;
         vault_blob_io io = {a, vc_blob_read, vc_blob_put};
         vault_tree_check_result stats;
-        rc = vault_tree_check(tree, vc_length_get, a, &io, &stats);
+        rc = vault_tree_check(tree, &io, &stats);
         vault_record_free(again);
         vault_tree_free(tree);
         if (rc)

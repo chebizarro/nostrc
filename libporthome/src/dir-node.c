@@ -29,6 +29,11 @@ static int utf8_valid(const unsigned char *s, size_t n) {
     }
     return 1;
 }
+static int name_valid(const char s[256]) {
+    size_t n = strnlen(s,256);
+    return n && n <= 255 && !strchr(s,'/') && !strchr(s,'\\') &&
+        strcmp(s,".") && strcmp(s,"..") && utf8_valid((const unsigned char *)s,n);
+}
 static int link_valid(const char *s) {
     if (!s) return 0;
     size_t n = strnlen(s, PORTHOME_MAX_SYMLINK_LEN + 1);
@@ -60,7 +65,7 @@ static int node_valid(const porthome_dir_node *n) {
     }
     for (size_t i = 0; i < n->entries_len; ++i) {
         const porthome_node_entry *e = &n->entries[i];
-        if (!tag_valid(e->name_enc) || e->has_key_override < 0 || e->has_key_override > 1)
+        if (!tag_valid(e->name_enc) || !name_valid(e->name_plain) || e->has_key_override < 0 || e->has_key_override > 1)
             return PORTHOME_ERR_ARG;
         if (e->kind == PORTHOME_KIND_DIR) {
             if (!e->child_epoch || e->chunks_len || e->chunks || e->symlink_target || e->size_plain)
@@ -69,9 +74,14 @@ static int node_valid(const porthome_dir_node *n) {
             if (e->symlink_target || e->child_epoch || e->has_key_override ||
                 (e->chunks_len && !e->chunks) || (e->size_plain && !e->chunks_len)) return PORTHOME_ERR_ARG;
             if (e->chunks_len > PORTHOME_NODE_MAX_CHUNKS) return PORTHOME_ERR_TOO_LARGE;
-            for (size_t j = 0; j < e->chunks_len; ++j)
-                if (!e->chunks[j].chunk_key_id || e->chunks[j].size_sealed < PORTHOME_SEAL_OVERHEAD)
-                    return PORTHOME_ERR_ARG;
+            uint64_t total = 0;
+            for (size_t j = 0; j < e->chunks_len; ++j) {
+                const porthome_node_chunk *c = &e->chunks[j];
+                if (!c->chunk_key_id || c->size_sealed < PORTHOME_SEAL_OVERHEAD ||
+                    UINT64_MAX-total < c->size_plain) return PORTHOME_ERR_ARG;
+                total += c->size_plain;
+            }
+            if (total != e->size_plain) return PORTHOME_ERR_ARG;
         } else if (e->kind == PORTHOME_KIND_SYMLINK) {
             if (e->chunks || e->chunks_len || e->child_epoch || e->has_key_override ||
                 e->size_plain || !link_valid(e->symlink_target)) return PORTHOME_ERR_ARG;
@@ -85,6 +95,11 @@ static int node_valid(const porthome_dir_node *n) {
         int duplicate = 0;
         for (size_t i = 1; i < n->entries_len; ++i)
             if (!strcmp(names[i-1], names[i])) { duplicate = 1; break; }
+        if (!duplicate) {
+            for(size_t i=0;i<n->entries_len;i++)names[i]=n->entries[i].name_plain;
+            qsort(names,n->entries_len,sizeof(*names),compare_names);
+            for(size_t i=1;i<n->entries_len;i++)if(!strcmp(names[i-1],names[i])){duplicate=1;break;}
+        }
         free(names);
         if (duplicate) return PORTHOME_ERR_ARG;
     }
@@ -106,7 +121,7 @@ int porthome_dir_node_encode(const porthome_dir_node *n, uint8_t **out, size_t *
     porthome_cbor_write_uint(&e,3); porthome_cbor_write_array_hdr(&e,n->entries_len);
     for (size_t i = 0; i < n->entries_len && !e.err; ++i) {
         const porthome_node_entry *v = &n->entries[i];
-        porthome_cbor_write_map_hdr(&e,6);
+        porthome_cbor_write_map_hdr(&e,7);
         porthome_cbor_write_uint(&e,0); porthome_cbor_write_tstr(&e,v->name_enc);
         WU(1,v->kind); WU(2,v->mode); WU(3,v->mtime_ns); WU(4,v->size_plain);
         porthome_cbor_write_uint(&e,5);
@@ -117,10 +132,11 @@ int porthome_dir_node_encode(const porthome_dir_node *n, uint8_t **out, size_t *
         } else if (v->kind == PORTHOME_KIND_FILE) {
             porthome_cbor_write_array_hdr(&e,v->chunks_len);
             for (size_t j = 0; j < v->chunks_len; ++j) {
-                porthome_cbor_write_map_hdr(&e,3);
-                WB(0,v->chunks[j].sha256); WU(1,v->chunks[j].size_sealed); WU(2,v->chunks[j].chunk_key_id);
+                porthome_cbor_write_map_hdr(&e,4);
+                WB(0,v->chunks[j].sha256); WU(1,v->chunks[j].size_sealed); WU(2,v->chunks[j].chunk_key_id); WU(3,v->chunks[j].size_plain);
             }
         } else porthome_cbor_write_tstr(&e,v->symlink_target);
+        porthome_cbor_write_uint(&e,6); porthome_cbor_write_tstr(&e,v->name_plain);
         if (e.len > PORTHOME_MAX_CBOR_BYTES) { rc = PORTHOME_ERR_TOO_LARGE; goto done; }
     }
     if (n->vault) {
@@ -173,7 +189,7 @@ static int vault_read(porthome_cbor_dec *d, porthome_vault_info *v) {
 }
 static int entry_read(porthome_cbor_dec *d, porthome_node_entry *v) {
     uint64_t n, value; const uint8_t *s; size_t len;
-    if (porthome_cbor_read_map_hdr(d,&n) || n != 6 || key(d,0) ||
+    if (porthome_cbor_read_map_hdr(d,&n) || n != 7 || key(d,0) ||
         porthome_cbor_read_tstr(d,&s,&len) || len != 48) return -1;
     memcpy(v->name_enc,s,48);
     if (key(d,1) || porthome_cbor_read_uint(d,&value) || value < 1 || value > 3) return -1;
@@ -197,9 +213,10 @@ static int entry_read(porthome_cbor_dec *d, porthome_node_entry *v) {
         v->chunks_len = (size_t)n;
         for (size_t j = 0; j < v->chunks_len; ++j) {
             porthome_node_chunk *c = &v->chunks[j];
-            if (porthome_cbor_read_map_hdr(d,&n) || n != 3 || key(d,0) || bytes32(d,c->sha256) ||
+            if (porthome_cbor_read_map_hdr(d,&n) || n != 4 || key(d,0) || bytes32(d,c->sha256) ||
                 key(d,1) || porthome_cbor_read_uint(d,&c->size_sealed) ||
-                key(d,2) || porthome_cbor_read_uint(d,&c->chunk_key_id)) return -1;
+                key(d,2) || porthome_cbor_read_uint(d,&c->chunk_key_id) ||
+                key(d,3) || porthome_cbor_read_uint(d,&c->size_plain)) return -1;
         }
     } else {
         if (porthome_cbor_read_tstr(d,&s,&len) || !len || len > PORTHOME_MAX_SYMLINK_LEN || memchr(s,0,len)) return -1;
@@ -207,6 +224,8 @@ static int entry_read(porthome_cbor_dec *d, porthome_node_entry *v) {
         if (!v->symlink_target) return PORTHOME_ERR_OOM;
         memcpy(v->symlink_target,s,len); v->symlink_target[len] = 0;
     }
+    if(key(d,6) || porthome_cbor_read_tstr(d,&s,&len) || !len || len>255 || memchr(s,0,len))return -1;
+    memcpy(v->name_plain,s,len);v->name_plain[len]=0;
     return 0;
 }
 void porthome_dir_node_dispose(porthome_dir_node *n) {

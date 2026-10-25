@@ -27,7 +27,7 @@ typedef struct {
     uint64_t epoch;
 } vc_head;
 typedef struct {
-    int dirfd, lockfd, objectsfd, namesfd, lengthsfd, acksfd, ringsfd;
+    int dirfd, lockfd, objectsfd, acksfd, ringsfd;
     vault_tree *tree;
     vc_head heads[VAULT_MAX_HEADS];
     size_t heads_len, current;
@@ -61,12 +61,10 @@ typedef struct {
     blossom_client_t *clients[VC_MAX_ENDPOINTS];
     blossom_signer_t signer;
     int local_put, chunk_io;
-    size_t active_length;
-    uint64_t active_epoch;
     uint8_t (*verified)[32];
     size_t verified_len, verified_cap;
     vault_ring resolved_ring;
-    char name_buffer[256], error[256];
+    char error[256];
 } vc_app;
 
 void vc_error(vc_app *, const char *, ...);
@@ -79,10 +77,6 @@ int vc_private_read(int dirfd, const char *, size_t limit, uint8_t **, size_t *)
 int vc_private_write(int dirfd, const char *, const uint8_t *, size_t);
 int vc_cache_put(vc_app *, const uint8_t hash[32], const uint8_t *, size_t);
 int vc_cache_get(vc_app *, const uint8_t hash[32], uint8_t **, size_t *);
-int vc_name_put(vc_app *, const uint8_t id[32], const char tag[49], const char *name);
-int vc_name_get(void *, const uint8_t id[32], const char tag[49], const char **);
-int vc_length_put(vc_app *, const uint8_t hash[32], uint64_t epoch, size_t length);
-int vc_length_get(void *, const uint8_t hash[32], uint64_t epoch, size_t *);
 int vc_ack_get(vc_app *, const uint8_t hash[32], uint64_t *);
 int vc_ack_put(vc_app *, const uint8_t hash[32], uint64_t);
 int vc_head_add(vc_app *, const NostrEvent *, uint64_t epoch, size_t *index);

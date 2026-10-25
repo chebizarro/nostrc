@@ -59,12 +59,11 @@ done:
     free(canonical);
     return rc;
 }
-int vault_tree_check(const vault_tree *t, vault_tree_length_fn lengths, void *ctx,
-                     const vault_blob_io *io, vault_tree_check_result *out)
+int vault_tree_check(const vault_tree *t, const vault_blob_io *io, vault_tree_check_result *out)
 {
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!out || !lengths || !io || !io->read)
+    if (!out || !io || !io->read)
         return VAULT_ERR_ARG;
     int rc = vault_tree_validate(t);
     if (rc)
@@ -78,10 +77,9 @@ int vault_tree_check(const vault_tree *t, vault_tree_length_fn lengths, void *ct
                 continue;
             uint64_t total = 0;
             for (size_t k = 0; k < e->chunks_len; ++k) {
-                size_t length = 0;
-                rc = lengths(ctx, e->chunks[k].sha256, e->chunks[k].chunk_key_id, &length);
-                if (rc)
-                    return rc;
+                if (e->chunks[k].size_plain > SIZE_MAX)
+                    return PORTHOME_ERR_TOO_LARGE;
+                size_t length = (size_t)e->chunks[k].size_plain;
                 rc = check_chunk(&e->chunks[k], &t->nodes[i].ring, length, io);
                 if (rc)
                     return rc;

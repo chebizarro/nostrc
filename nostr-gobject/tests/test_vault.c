@@ -80,6 +80,8 @@ static void fixture_init(Fixture *f)
       &f->sealed, &f->sealed_len, f->chunk.sha256), ==, 0);
   f->chunk.chunk_key_id = 1;
   f->chunk.size_sealed = f->sealed_len;
+  f->chunk.size_plain = sizeof(plain);
+  strcpy(f->entry.name_plain, "file");
   memset(f->entry.name_enc, 'a', 48);
   f->entry.kind = PORTHOME_KIND_FILE;
   f->entry.mode = 0600;
@@ -451,7 +453,7 @@ static int put_blob(void *ctx, const guint8 *bytes, size_t len, const guint8 add
 static void test_revoke_reseal(void)
 {
   Fixture f; fixture_init(&f);
-  porthome_node_entry parent = {.kind = PORTHOME_KIND_DIR, .child_epoch = 1};
+  porthome_node_entry parent = {.kind = PORTHOME_KIND_DIR, .name_plain = "subtree", .child_epoch = 1};
   memset(parent.name_enc, 'b', 48);
   memcpy(parent.node_id, f.node.node_id, 32);
   guint8 *sealed = NULL;
@@ -481,7 +483,7 @@ static void test_revoke_reseal(void)
   g_assert_cmpuint(r->node->vault->readers_len, ==, 0);
   g_assert_cmpuint(f.node.epoch, ==, 1);
   g_assert_cmpuint(f.ring.count, ==, 1);
-  vault_reseal_item item = {r->node, &r->ring, 0, 0, 3};
+  vault_reseal_item item = {r->node, &r->ring, 0, 0};
   vault_blob_io io = {&f, read_blob, put_blob};
   vault_reseal_task *task = NULL;
   g_assert_cmpint(vault_reseal_task_new(&item, 1, 0, &task), ==, 0);
@@ -523,7 +525,7 @@ static void test_revoke_reseal(void)
   g_assert_nonnull(r->head_payload);
   g_assert_false(r->has_parent);
   vault_record_free(current);
-  item = (vault_reseal_item){r->node, &r->ring, 0, 0, 3};
+  item = (vault_reseal_item){r->node, &r->ring, 0, 0};
   g_assert_cmpint(vault_reseal_task_new(&item, 1, 0, &task), ==, 0);
   f.fail_put = TRUE;
   f.reads = f.puts = 0;

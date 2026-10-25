@@ -193,12 +193,11 @@ static int clone_tree(const vault_tree *t, vault_tree **out)
     return rc;
 }
 int vault_tree_revoke(const vault_tree *old, const porthome_head *head, const uint8_t actor[32],
-                      const uint8_t member[32], uint64_t when, vault_tree_name_fn names, void *ctx,
-                      vault_tree **out)
+                      const uint8_t member[32], uint64_t when, vault_tree **out)
 {
     if (out)
         *out = NULL;
-    if (!out || !head || !actor || !member || !names)
+    if (!out || !head || !actor || !member)
         return VAULT_ERR_ARG;
     int rc = vault_tree_validate(old);
     if (rc)
@@ -237,15 +236,7 @@ int vault_tree_revoke(const vault_tree *old, const porthome_head *head, const ui
         const uint8_t *key = vault_ring_latest(&t->nodes[i].ring)->node_key;
         for (size_t j = 0; j < n->entries_len; ++j) {
             porthome_node_entry *e = &n->entries[j];
-            const char *name = NULL;
-            rc = names(ctx, n->node_id, e->name_enc, &name);
-            if (rc)
-                goto fail;
-            if (!name || strnlen(name, 256) > 255) {
-                rc = VAULT_ERR_INCOMPLETE;
-                goto fail;
-            }
-            rc = porthome_encrypt_name_v2(key, name, e->name_enc);
+            rc = porthome_encrypt_name_v2(key, e->name_plain, e->name_enc);
             if (rc)
                 goto fail;
             if (e->kind == PORTHOME_KIND_DIR) {
@@ -369,12 +360,12 @@ void vault_tree_reseal_result_free(vault_tree_reseal_result *r)
     free(r->changes);
     free(r);
 }
-int vault_tree_reseal(vault_tree *t, vault_tree_length_fn lengths, void *ctx, int eager,
-                      uint64_t budget, const vault_blob_io *io, vault_tree_reseal_result **out)
+int vault_tree_reseal(vault_tree *t, int eager, uint64_t budget, const vault_blob_io *io,
+                      vault_tree_reseal_result **out)
 {
     if (out)
         *out = NULL;
-    if (!out || !lengths || !io)
+    if (!out || !io)
         return VAULT_ERR_ARG;
     int rc = vault_tree_validate(t);
     if (rc)
@@ -408,12 +399,12 @@ int vault_tree_reseal(vault_tree *t, vault_tree_length_fn lengths, void *ctx, in
             porthome_node_entry *e = &t->nodes[i].node->entries[j];
             for (size_t k = 0; k < e->chunks_len; ++k)
                 if (e->chunks[k].chunk_key_id != t->nodes[i].node->epoch) {
-                    size_t length = 0;
-                    rc = lengths(ctx, e->chunks[k].sha256, e->chunks[k].chunk_key_id, &length);
-                    if (rc)
+                    if (e->chunks[k].size_plain > SIZE_MAX) {
+                        rc = PORTHOME_ERR_TOO_LARGE;
                         goto fail;
-                    items[used] =
-                        (vault_reseal_item){t->nodes[i].node, &t->nodes[i].ring, j, k, length};
+                    }
+                    size_t length = (size_t)e->chunks[k].size_plain;
+                    items[used] = (vault_reseal_item){t->nodes[i].node, &t->nodes[i].ring, j, k};
                     memcpy(r->changes[used].before, e->chunks[k].sha256, 32);
                     r->changes[used].size_plain = length;
                     r->changes[used].epoch = t->nodes[i].node->epoch;

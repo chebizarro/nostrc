@@ -14,15 +14,14 @@
 static void usage(FILE *out)
 {
     fputs(
-        "vaultctl 0.1.0\nUsage: vaultctl COMMAND --state DIR --key-file FILE [options] [SUBTREE]\n"
+        "vaultctl 0.2.0\nUsage: vaultctl COMMAND --state DIR --key-file FILE [options] [SUBTREE]\n"
         "Commands: share, grant, revoke, fold, fsck\n"
         "  --relay wss://URL --blossom https://URL (repeatable on share; retained)\n"
         "  --recipient HEX [--write] [--history] (grant)\n"
         "  --member HEX [--budget BYTES] [--eager] (revoke)\n"
         "  --resume [--reconcile] (resume saved operation, never rotate again)\n"
         "  --deadline-ms N (default 30000), --allow-local (loopback fixtures only)\n"
-        "Private state contains keys and local names. Missing inventory is incomplete, not "
-        "healthy.\n",
+        "Private state contains keys and decoded manifests. Names and chunk lengths travel in sealed manifests.\n",
         out);
 }
 static int number(const char *s, uint64_t *n)
@@ -76,7 +75,7 @@ static int options(int argc, char **argv, vc_options *o)
         return 1;
     }
     if (!strcmp(argv[1], "--version")) {
-        puts("vaultctl 0.1.0");
+        puts("vaultctl 0.2.0");
         return 1;
     }
     o->command = argv[1];
@@ -165,8 +164,7 @@ static int options(int argc, char **argv, vc_options *o)
 int main(int argc, char **argv)
 {
     vc_app a = {0};
-    a.state.dirfd = a.state.lockfd = a.state.objectsfd = a.state.namesfd = a.state.lengthsfd =
-        a.state.acksfd = a.state.ringsfd = -1;
+    a.state.dirfd = a.state.lockfd = a.state.objectsfd = a.state.acksfd = a.state.ringsfd = -1;
     a.state.current = SIZE_MAX;
     int parsed = options(argc, argv, &a.options);
     if (parsed) {

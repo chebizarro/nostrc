@@ -58,11 +58,10 @@ static int file_chunks(vc_app *a, int fd, const uint8_t key[32], porthome_node_e
         if (!rc)
             rc = vc_cache_put(a, chunk->sha256, sealed, n);
         free(sealed);
-        if (!rc)
-            rc = vc_length_put(a, chunk->sha256, 1, cut);
         if (rc)
             goto done;
         chunk->size_sealed = n;
+        chunk->size_plain = cut;
         chunk->chunk_key_id = 1;
         entry->chunks_len++;
         entry->size_plain += cut;
@@ -157,7 +156,7 @@ static int walk(importer *im, int fd, const uint8_t id[32], const uint8_t key[32
         e->mtime_ns = st.st_mtime < 0 ? 0 : (uint64_t)st.st_mtime * 1000000000;
         rc = porthome_encrypt_name_v2(key, de->d_name, e->name_enc);
         if (!rc)
-            rc = vc_name_put(im->app, id, e->name_enc, de->d_name);
+            strcpy(e->name_plain,de->d_name);
         if (rc)
             break;
         if (S_ISDIR(st.st_mode)) {

@@ -70,31 +70,11 @@ static int remember(vc_app *a, const uint8_t hash[32])
     memcpy(a->verified[a->verified_len++], hash, 32);
     return 0;
 }
-static int job_context(vc_app *a, const uint8_t hash[32])
-{
-    for (size_t i = 0; i < vault_tree_count(a->state.tree); i++) {
-        const porthome_dir_node *node = vault_tree_node_at(a->state.tree, i, NULL);
-        for (size_t j = 0; j < node->entries_len; j++)
-            for (size_t k = 0; k < node->entries[j].chunks_len; k++) {
-                const porthome_node_chunk *c = &node->entries[j].chunks[k];
-                if (c->chunk_key_id != node->epoch && !memcmp(c->sha256, hash, 32)) {
-                    a->active_epoch = node->epoch;
-                    return vc_length_get(a, hash, c->chunk_key_id, &a->active_length);
-                }
-            }
-    }
-    return VAULT_ERR_INCOMPLETE;
-}
 int vc_blob_read(void *ctx, const uint8_t hash[32], uint8_t **b, size_t *n)
 {
     vc_app *a = ctx;
     *b = NULL;
     *n = 0;
-    if (a->chunk_io) {
-        int rc = job_context(a, hash);
-        if (rc)
-            return rc;
-    }
     if (a->local_put || verified(a, hash))
         return vc_cache_get(a, hash, b, n);
     char h[65];
@@ -120,7 +100,6 @@ int vc_blob_put(void *ctx, const uint8_t *b, size_t n, const uint8_t hash[32])
     int rc = vc_cache_put(a, hash, b, n);
     if (!rc && a->chunk_io) {
         a->state.needs_publication = 1;
-        rc = vc_length_put(a, hash, a->active_epoch, a->active_length);
     }
     if (rc || a->local_put)
         return rc;

@@ -2,6 +2,7 @@
 #include "test_helpers.h"
 #include <porthome/dir-node.h>
 #include <porthome/cbor.h>
+#include <stdio.h>
 
 static void drop(porthome_dir_node *n) { porthome_dir_node_dispose(n); free(n); }
 static void refuse(const uint8_t *b, size_t n) {
@@ -33,9 +34,24 @@ int main(void) {
     memcpy(bad,bytes,len); bad[len]=0; refuse(bad,len+1);
     free(bytes);
 
+    /* Byte-exact completed v2 schema: required basename and chunk true size. */
+    porthome_node_chunk one_chunk={.sha256={0x11},.size_sealed=61,.chunk_key_id=1,.size_plain=3};
+    porthome_node_entry one={.name_plain="file",.kind=PORTHOME_KIND_FILE,.size_plain=3,.chunks=&one_chunk,.chunks_len=1};
+    memset(one.name_enc,'a',48);porthome_dir_node vector={.epoch=1,.entries=&one,.entries_len=1};
+    assert(porthome_dir_node_encode(&vector,&bytes,&len)==0);
+    expect_hex(bytes,len,"a40002015820000000000000000000000000000000000000000000000000000000000000000002010381a700783061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616101010200030004030581a4005820110000000000000000000000000000000000000000000000000000000000000001183d02010303066466696c65");
+    assert(len==153);uint8_t changed[160];
+    memcpy(changed,bytes,len-6);changed[42]=0xa6;refuse(changed,len-6); /* old entry without name */
+    memcpy(changed,bytes,145);memcpy(changed+145,bytes+147,len-147);changed[104]=0xa3;refuse(changed,len-2); /* old chunk without size_plain */
+    memcpy(changed,bytes,len);changed[146]=4;refuse(changed,len); /* per-file sum mismatch */
+    memcpy(changed,bytes,len);changed[147]=7;refuse(changed,len); /* unknown name key */
+    memcpy(changed,bytes,len);changed[149]=0;refuse(changed,len); /* embedded NUL */
+    memcpy(changed,bytes,len);changed[149]=0xc0;changed[150]=0xaf;refuse(changed,len); /* non-shortest UTF-8 */
+    memcpy(changed,bytes,len);changed[149]='.';changed[150]='.';changed[148]=0x62;refuse(changed,len-2); /* traversal */
+    free(bytes);
     porthome_node_chunk chunks[2] = {
-        {.sha256={0x21},.size_sealed=61,.chunk_key_id=1},
-        {.sha256={0x22},.size_sealed=125,.chunk_key_id=3}
+        {.sha256={0x21},.size_sealed=61,.chunk_key_id=1,.size_plain=7},
+        {.sha256={0x22},.size_sealed=125,.chunk_key_id=3,.size_plain=78}
     };
     porthome_node_entry entries[4] = {
         {.kind=PORTHOME_KIND_DIR,.mode=0700,.mtime_ns=123,.node_id={0x31},.child_epoch=7,
@@ -44,7 +60,7 @@ int main(void) {
         {.kind=PORTHOME_KIND_SYMLINK,.mode=0777,.symlink_target="dir/file"},
         {.kind=PORTHOME_KIND_DIR,.mode=0755,.node_id={0x41},.child_epoch=1,.manifest_sha256={0x42}}
     };
-    for (size_t i = 0; i < 4; ++i) { memset(entries[i].name_enc,'a'+(int)i,48); entries[i].name_enc[48]=0; }
+    for (size_t i = 0; i < 4; ++i) { memset(entries[i].name_enc,'a'+(int)i,48); entries[i].name_enc[48]=0; snprintf(entries[i].name_plain,256,"entry-%zu",i); }
     uint8_t writers[2][32] = {{0x51},{0x52}}, readers[1][32] = {{0x61}};
     porthome_vault_info vault = {.vault_id={0x11},.owner={0x12},.writers=writers,.writers_len=2,
         .readers=readers,.readers_len=1,.grants_rev=UINT64_MAX};
@@ -60,6 +76,7 @@ int main(void) {
     assert(!memcmp(out->entries[0].key_override,entries[0].key_override,32));
     assert(!memcmp(out->entries[0].manifest_sha256,entries[0].manifest_sha256,32));
     assert(out->entries[1].chunks_len==2 && out->entries[1].chunks[0].chunk_key_id==1 && out->entries[1].chunks[1].chunk_key_id==3);
+    assert(!strcmp(out->entries[1].name_plain,"entry-1")&&out->entries[1].chunks[0].size_plain==7&&out->entries[1].chunks[1].size_plain==78);
     assert(out->entries[1].size_plain==85 && out->entries[1].mtime_ns==456 && out->entries[1].mode==0600);
     assert(!strcmp(out->entries[2].symlink_target,"dir/file") && !out->entries[3].has_key_override);
     uint8_t *again = NULL; size_t again_len = 0;
@@ -71,6 +88,9 @@ int main(void) {
     size_t b = tag_at(bytes,len,'b');
     memcpy(copy,bytes,len); memset(copy+b,'a',48); refuse(copy,len); /* duplicate name */
     memcpy(copy,bytes,len); copy[b]='A'; refuse(copy,len);
+    memcpy(copy,bytes,len);
+    for(size_t i=0;i+7<=len;i++)if(!memcmp(copy+i,"entry-1",7)){memcpy(copy+i,"entry-0",7);break;}
+    refuse(copy,len); /* duplicate plaintext name, distinct indexes */
     memcpy(copy,bytes,len); copy[b+49]=4; refuse(copy,len); /* unknown kind */
     free(copy); free(bytes);
     entries[2].symlink_target="caf\xc3\xa9/file";
@@ -80,6 +100,15 @@ int main(void) {
     assert(porthome_dir_node_encode(&node,&bytes,&len)==PORTHOME_ERR_ARG && !bytes);
     entries[2].symlink_target="dir/file";
 
+    /* Safe plaintext basenames are required, not optional side metadata. */
+    const char *unsafe[]={"", ".", "..", "a/b", "a\\b", "bad\xc0\xaf"};
+    for(size_t i=0;i<sizeof unsafe/sizeof unsafe[0];i++){strcpy(entries[0].name_plain,unsafe[i]);assert(porthome_dir_node_encode(&node,&bytes,&len)==PORTHOME_ERR_ARG&&!bytes);}
+    memset(entries[0].name_plain,'x',256);assert(porthome_dir_node_encode(&node,&bytes,&len)==PORTHOME_ERR_ARG);
+    strcpy(entries[0].name_plain,"entry-1");assert(porthome_dir_node_encode(&node,&bytes,&len)==PORTHOME_ERR_ARG);
+    strcpy(entries[0].name_plain,"caf\xc3\xa9");assert(porthome_dir_node_encode(&node,&bytes,&len)==0);assert(porthome_dir_node_decode(bytes,len,&out)==0&&!strcmp(out->entries[0].name_plain,"caf\xc3\xa9"));drop(out);free(bytes);
+    strcpy(entries[0].name_plain,"entry-0");
+    chunks[0].size_plain++;assert(porthome_dir_node_encode(&node,&bytes,&len)==PORTHOME_ERR_ARG);chunks[0].size_plain--;
+    uint64_t saved=chunks[0].size_plain;chunks[0].size_plain=UINT64_MAX;assert(porthome_dir_node_encode(&node,&bytes,&len)==PORTHOME_ERR_ARG);chunks[0].size_plain=saved;
     uint8_t root[32], key[32]; fixture(root,key);
     porthome_ring_entry_t ring_entries[2] = {{.epoch=1},{.epoch=3}};
     memcpy(ring_entries[0].node_key,root,32); memcpy(ring_entries[1].node_key,key,32);
@@ -102,7 +131,7 @@ int main(void) {
     /* Do not carry the legacy Phase-1 fixture's 64-chunk cap into vaults,
      * or reject referenced 4 MiB v1 chunks during no-reseal migration. */
     porthome_node_chunk historical[65] = {0};
-    for (size_t i = 0; i < 65; ++i) { historical[i].chunk_key_id=1; historical[i].size_sealed=4u*1024u*1024u+29; }
+    for (size_t i = 0; i < 65; ++i) { historical[i].chunk_key_id=1; historical[i].size_sealed=4u*1024u*1024u+29; historical[i].size_plain=4u*1024u*1024u; }
     entries[1].chunks=historical; entries[1].chunks_len=65; entries[1].size_plain=65u*4u*1024u*1024u;
     assert(porthome_dir_node_encode(&node,&bytes,&len)==0 && porthome_dir_node_decode(bytes,len,&out)==0);
     assert(out->entries[1].chunks_len==65 && out->entries[1].chunks[0].size_sealed==4u*1024u*1024u+29); drop(out); free(bytes);

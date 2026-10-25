@@ -27,13 +27,13 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.5.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
-| vaultctl | `tools/vaultctl/` | 0.1.0 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.3.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| vaultctl | `tools/vaultctl/` | 0.2.0 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
+| libvault | `libvault/` | 0.4.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -43,6 +43,21 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-hl30i.10 (SV-10 prerequisite): libporthome MINOR 0.4.0 -> 0.5.0
+  completes the unreleased dir_node v2 encoding in place with required safe
+  plaintext basenames inside sealed entries and true plaintext lengths in each
+  chunk descriptor. Strict decode rejects the incomplete earlier v2 maps; PCS
+  v1/flat-manifest decoding remains unchanged. Public entry/chunk layouts change.
+  libvault MINOR 0.3.0 -> 0.4.0 removes the redundant tree name/length callbacks
+  and reseal-item length; rekey/check/reseal read authenticated manifest fields.
+  This is an intentional 0.x source/ABI and unreleased-v2 format change approved
+  by the maintainer; there are no published v2 clients/data to preserve.
+  vaultctl MINOR 0.1.0 -> 0.2.0 consumes the completed format and removes basename
+  and chunk-length sidecars from import/revoke/checking. Private state embedding
+  the old incomplete dir_nodes is not compatible. No bumps for libblossom,
+  libnostr/nips, libhanami, libvault-marmot or Rust bindings (no owned shipped
+  artifact changes), nor nostr-gobject (fixture-only changes). No release tags.
 
 - nostrc-er4fz.7 (R6): porthome-sys and vault-sys start at 0.1.0 for new,
   experimental raw Rust APIs generated from installed C headers by bindgen.

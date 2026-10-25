@@ -152,14 +152,21 @@ dir_node {
        grants_rev : uint                   # bumps whenever writers/readers change
      }
   entries        : [{
-       name_enc   : hex48                  # PCS §7, under this node's name_key
+       name_enc   : hex48                  # PCS §7 keyed-hash index, under this node's name_key
+       name_plain : utf8 basename          # required, inside this AEAD-sealed body (PCS §7)
        kind       : dir | file | symlink
        mode, mtime, size_plain
        dir:   { node_id, ⊕ key_override?: bytes32, ⊕ child_epoch: uint, manifest_sha256 }
-       file:  { chunks: [{ sha256, size_sealed, ⊕ chunk_key_id }] }
+       file:  { chunks: [{ sha256, size_sealed, size_plain, ⊕ chunk_key_id }] }
      }]
 }
 ```
+
+Each chunk's `size_plain` is required for §4.2 truncation after AEAD; the lengths
+sum exactly to the entry's file `size_plain`. Basenames are safe single UTF-8
+components (1–255 bytes, no NUL, slash, backslash, `.` or `..`). These are manifest
+body data, not an owner-private inventory. The unreleased v2 codec includes them
+in place and strictly rejects missing, duplicate, unknown or malformed fields.
 
 `readers` is explicitly *not* enforced anywhere — it exists so a UI can show "shared with" without a side channel. The enforcement is the key ring. Writing a pubkey into `readers` without sending it a grant shares nothing; sending a grant without listing it shares everything. The owner's client keeps the two in step; the protocol does not depend on it.
 

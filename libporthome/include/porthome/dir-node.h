@@ -22,11 +22,12 @@ typedef struct {
 
 typedef struct {
     uint8_t sha256[32];
-    uint64_t size_sealed, chunk_key_id;
+    uint64_t size_sealed, chunk_key_id, size_plain;
 } porthome_node_chunk;
 
 typedef struct {
-    char name_enc[PORTHOME_NAME_HEX_LEN]; /* Exactly 48 lowercase hex chars. */
+    char name_enc[PORTHOME_NAME_HEX_LEN]; /* Exactly 48 lowercase hex chars; keyed index. */
+    char name_plain[256]; /* Required UTF-8 basename, 1..255 bytes, inside sealed body. */
     porthome_entry_kind kind;
     uint32_t mode;
     uint64_t mtime_ns, size_plain;
@@ -53,9 +54,12 @@ typedef struct {
  * duplicate, missing or non-shortest keys/values, no trailing bytes.
  * Node map: 0=version(2), 1=node_id, 2=epoch, 3=entries, 4=vault(optional).
  * Vault: 0=vault_id, 1=owner, 2=writers, 3=readers, 4=grants_rev.
- * Entry: 0=name_enc, 1=kind, 2=mode, 3=mtime_ns, 4=size_plain, 5=payload.
+ * Entry: 0=name_enc, 1=kind, 2=mode, 3=mtime_ns, 4=size_plain, 5=payload,
+ *        6=name_plain (required safe single-component UTF-8 basename).
  * Dir payload: 0=node_id, 1=child_epoch, 2=manifest_sha256, 3=override(optional).
- * File payload: array of {0=sha256, 1=size_sealed, 2=chunk_key_id}.
+ * File payload: array of {0=sha256, 1=size_sealed, 2=chunk_key_id, 3=size_plain}.
+ * Chunk plaintext lengths sum exactly to the file length without overflow.
+ * This completes the unreleased v2 format in place; incomplete v2 maps fail.
  * Symlink payload: safe relative target text. Entry order is preserved; duplicate
  * names are refused. Epochs are nonzero, names are single tags (not paths).
  * Entry/text/CBOR caps reuse manifest.h; chunk/member resource caps are above.

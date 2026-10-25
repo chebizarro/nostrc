@@ -68,7 +68,7 @@ static inline int put_blob(void *ctx, const uint8_t *bytes, size_t len, const ui
 static inline porthome_node_chunk chunk(world *w, const uint8_t key[32], uint64_t epoch,
                                         const uint8_t *pt, size_t len)
 {
-    porthome_node_chunk c = {.chunk_key_id = epoch};
+    porthome_node_chunk c = {.chunk_key_id = epoch, .size_plain=len};
     uint8_t *b = NULL;
     size_t n = 0;
     assert(porthome_encrypt_chunk_v2(key, pt, len, &b, &n, c.sha256) == 0);
@@ -107,6 +107,7 @@ static inline void world_init(world *w)
     w->chunks[1] = chunk(w, w->key, 1, data1, sizeof(data1));
     for (size_t i = 0; i < 2; ++i) {
         memset(w->entries[i].name_enc, 'a' + (int)i, 48);
+        strcpy(w->entries[i].name_plain,i ? "other-file" : "root-file");
         w->entries[i].kind = PORTHOME_KIND_FILE;
         w->entries[i].mode = 0600;
         w->entries[i].mtime_ns = 1;
