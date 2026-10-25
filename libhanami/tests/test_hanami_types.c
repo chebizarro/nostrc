@@ -140,7 +140,7 @@ static void test_refdb_backend_null_out(void)
 static void test_repo_open_null_out(void)
 {
     hanami_error_t err = hanami_repo_open(NULL, "https://example.com",
-                                          NULL, "repo", "pubkey", NULL, NULL);
+                                          NULL, "repo", "pubkey", NULL, NULL, NULL);
     assert(err == HANAMI_ERR_INVALID_ARG);
 }
 

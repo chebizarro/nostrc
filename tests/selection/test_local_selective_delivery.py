@@ -60,7 +60,12 @@ class AffectedDeliveryTests(unittest.TestCase):
                 self.assertEqual(tests, ["test-bud02-auth"])
         for family in ("root.asan.libhanami", "supported.libhanami"):
             for tests in p["checks"][family]["ctest_tests"].values():
-                self.assertEqual(len(tests), 9)
+                self.assertEqual(set(tests), {
+                    "test-hanami-config", "test-hanami-grasp", "test-hanami-index",
+                    "test-hanami-integration", "test-hanami-nostr", "test-hanami-odb-backend",
+                    "test-hanami-refdb-backend", "test-hanami-transport", "test-hanami-types",
+                    "test-hanami-nostr-protocol", "test_hanami_sealed_roundtrip",
+                })
                 self.assertNotIn("test-bud02-auth", tests)
 
     def test_bud02_test_inputs_do_not_select_hanami_consumers(self):

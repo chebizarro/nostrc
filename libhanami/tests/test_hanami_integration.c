@@ -76,7 +76,8 @@ static void test_version_info(void)
     const char *v = hanami_version(&major, &minor, &patch);
     assert(v != NULL);
     assert(major == 0);
-    assert(minor == 1);
+    assert(minor == 4);
+    assert(strcmp(v, "0.4.0") == 0);
     assert(patch == 0);
 }
 
@@ -369,11 +370,11 @@ static void test_repo_open_null_args(void)
 {
     git_repository *repo = NULL;
     assert(hanami_repo_open(NULL, "ep", (const char *[]){"wss://r", NULL},
-                            "id", "pk", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+                            "id", "pk", NULL, NULL, NULL) == HANAMI_ERR_INVALID_ARG);
     assert(hanami_repo_open(&repo, NULL, (const char *[]){"wss://r", NULL},
-                            "id", "pk", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+                            "id", "pk", NULL, NULL, NULL) == HANAMI_ERR_INVALID_ARG);
     assert(hanami_repo_open(&repo, "ep", NULL,
-                            "id", "pk", NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+                            "id", "pk", NULL, NULL, NULL) == HANAMI_ERR_INVALID_ARG);
 }
 
 static void test_clone_null_args(void)

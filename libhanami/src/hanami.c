@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: MIT
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #include "hanami/hanami.h"
+#include "hanami-sealed.h"
 #include <git2/sys/odb_backend.h>
 #include <git2/sys/refdb_backend.h>
 #include <stdatomic.h>
@@ -12,11 +16,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
-
-#define HANAMI_VERSION_MAJOR 0
-#define HANAMI_VERSION_MINOR 1
-#define HANAMI_VERSION_PATCH 0
-#define HANAMI_VERSION_STRING "0.1.0"
+#include <ftw.h>
+#include <limits.h>
 
 static _Atomic int hanami_ref_count = 0;
 
@@ -136,7 +137,8 @@ static hanami_error_t attach_blossom_backends(
     blossom_client_opts_t blossom_opts = {
         .endpoint = endpoint,
         .timeout_seconds = 30,
-        .user_agent = "libhanami/0.1"
+        .allow_insecure = hanami_config_get_allow_insecure(config),
+        .user_agent = "libhanami/0.4"
     };
     blossom_client_t *client = NULL;
     err = blossom_client_new(&blossom_opts, signer, &client);
@@ -207,13 +209,20 @@ static hanami_error_t attach_blossom_backends(
     return HANAMI_OK;
 }
 
+static int remove_temp_entry(const char *path, const struct stat *st, int kind, struct FTW *ftw)
+{
+    (void)st; (void)kind; (void)ftw;
+    return remove(path);
+}
+
 hanami_error_t hanami_repo_open(git_repository **out,
                                 const char *endpoint,
                                 const char **relay_urls,
                                 const char *repo_id,
                                 const char *owner_pubkey,
                                 const hanami_signer_t *signer,
-                                const hanami_config_t *config)
+                                const hanami_config_t *config,
+                                const porthome_ring_t *vault)
 {
     if (!out || !endpoint || !relay_urls || !repo_id || !owner_pubkey)
         return HANAMI_ERR_INVALID_ARG;
@@ -221,19 +230,49 @@ hanami_error_t hanami_repo_open(git_repository **out,
     *out = NULL;
 
     /* 1. Create bare repository in a unique temp directory */
-    char tmpdir[] = "/tmp/hanami-repo-XXXXXX";
+    char tmpdir[PATH_MAX];
+    const char *tmp_root = getenv("TMPDIR");
+    if (!tmp_root || !*tmp_root) tmp_root = "/tmp";
+    int n = snprintf(tmpdir, sizeof(tmpdir), "%s/hanami-repo-XXXXXX", tmp_root);
+    if (n < 0 || (size_t)n >= sizeof(tmpdir)) return HANAMI_ERR_IO;
     if (!mkdtemp(tmpdir))
         return HANAMI_ERR_IO;
 
     git_repository *repo = NULL;
-    if (git_repository_init(&repo, tmpdir, 1) < 0)
+    if (git_repository_init(&repo, tmpdir, 1) < 0) {
+        nftw(tmpdir, remove_temp_entry, 16, FTW_DEPTH | FTW_PHYS);
         return HANAMI_ERR_LIBGIT2;
+    }
 
     /* 2. Attach Blossom ODB + Nostr RefDB backends */
-    hanami_error_t err = attach_blossom_backends(
-        repo, endpoint, relay_urls, repo_id, owner_pubkey, signer, config);
+    hanami_error_t err;
+    if (vault) {
+        hanami_sealed *sealed = NULL;
+        err = hanami_sealed_new(&sealed, endpoint, relay_urls, repo_id,
+                                owner_pubkey, signer, vault, config);
+        if (err == HANAMI_OK) {
+            err = hanami_sealed_attach_odb(repo, sealed);
+            git_refdb_backend *backend = NULL;
+            git_refdb *refdb = NULL;
+            if (err == HANAMI_OK)
+                err = hanami_sealed_refdb_new(&backend, sealed);
+            if (err == HANAMI_OK) {
+                if (git_repository_refdb(&refdb, repo) < 0 ||
+                    git_refdb_set_backend(refdb, backend) < 0) {
+                    backend->free(backend);
+                    err = HANAMI_ERR_LIBGIT2;
+                }
+                git_refdb_free(refdb);
+            }
+            hanami_sealed_release(sealed);
+        }
+    } else {
+        err = attach_blossom_backends(
+            repo, endpoint, relay_urls, repo_id, owner_pubkey, signer, config);
+    }
     if (err != HANAMI_OK) {
         git_repository_free(repo);
+        nftw(tmpdir, remove_temp_entry, 16, FTW_DEPTH | FTW_PHYS);
         return err;
     }
 
@@ -447,13 +486,18 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
     if (!repo || !endpoint || !signer || !relay_urls || !repo_id)
         return HANAMI_ERR_INVALID_ARG;
 
+    hanami_sealed *sealed = hanami_sealed_for_repo(repo);
+    if (hanami_repo_private(repo))
+        return HANAMI_ERR_AUTH;
+
     hanami_error_t err;
 
     /* 1. Create Blossom client for uploads */
     blossom_client_opts_t blossom_opts = {
         .endpoint = endpoint,
         .timeout_seconds = 60,
-        .user_agent = "libhanami/0.1"
+        .allow_insecure = sealed && sealed->allow_insecure,
+        .user_agent = "libhanami/0.4"
     };
     blossom_client_t *client = NULL;
     err = blossom_client_new(&blossom_opts, signer, &client);

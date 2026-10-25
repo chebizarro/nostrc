@@ -6,5 +6,7 @@ Name: hanami
 Description: Blossom filesystem extension and tools for libgit2
 Version: @HANAMI_PKG_VERSION@
 Requires: blossom porthome libgit2
+Requires.private: vault jansson nostr
+Libs.private: -lnip34 -lsqlite3 -lcrypto -lpthread
 Libs: -L${libdir} -lhanami
 Cflags: -I${includedir}

@@ -3,6 +3,14 @@ if(NOT COMMAND nostrc_add_test_owners)
   return()
 endif()
 
+if(TEST "test_hanami_sealed_roundtrip")
+  nostrc_describe_test("test_hanami_sealed_roundtrip"
+    OWNER libhanami nip34
+    TARGETS test_hanami_sealed_roundtrip
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/sealed_fixture.py"
+    EXPECTED pass)
+endif()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "test-hanami-config")
   nostrc_add_test_owners("test-hanami-config" OWNER nip34)

@@ -5,6 +5,7 @@
  */
 
 #include "hanami/hanami-nostr.h"
+#include "hanami-sealed.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-simple-pool.h"
@@ -509,4 +510,37 @@ hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
     nostr_event_free(ev);
 
     return (res == NIP34_OK) ? HANAMI_OK : HANAMI_ERR_NOSTR;
+}
+
+hanami_error_t hanami_nostr_fetch_head(hanami_nostr_ctx_t *ctx,
+    const uint8_t vault_id[32], const char *writer, NostrEvent **out)
+{
+    if (!ctx || !vault_id || !writer || !out) return HANAMI_ERR_INVALID_ARG;
+    char d[PORTHOME_HEAD_D_LEN];
+    if (porthome_head_d_tag(vault_id, d) != PORTHOME_OK) return HANAMI_ERR_INVALID_ARG;
+    NostrFilter *filter = nostr_filter_new();
+    if (!filter) return HANAMI_ERR_NOMEM;
+    nostr_filter_add_kind(filter, PORTHOME_HEAD_KIND);
+    nostr_filter_add_author(filter, writer);
+    nostr_filter_tags_append(filter, "d", d, NULL);
+    nostr_filter_set_limit(filter, 1);
+    hanami_error_t err = query_single_event(ctx, filter, out);
+    if (err == HANAMI_OK &&
+        (nostr_event_get_kind(*out) != PORTHOME_HEAD_KIND ||
+         strcmp(nostr_event_get_pubkey(*out), writer) != 0)) {
+        nostr_event_free(*out);
+        *out = NULL;
+        return HANAMI_ERR_AUTH;
+    }
+    return err;
+}
+
+hanami_error_t hanami_nostr_sign_head(hanami_nostr_ctx_t *ctx, NostrEvent *event)
+{
+    hanami_error_t err = sign_event(ctx, event);
+    if (err == HANAMI_OK &&
+        (!nostr_event_check_signature(event) ||
+         strcmp(nostr_event_get_pubkey(event), ctx->signer.pubkey) != 0))
+        err = HANAMI_ERR_AUTH;
+    return err;
 }

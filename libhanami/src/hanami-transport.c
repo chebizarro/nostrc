@@ -9,6 +9,7 @@
  */
 
 #include "hanami/hanami-transport.h"
+#include "hanami-sealed.h"
 #include "hanami/hanami-nostr.h"
 #include <blossom/client.h>
 
@@ -363,6 +364,10 @@ static int blossom_push(git_transport *_transport, git_push *push)
 {
     hanami_transport_t *t = (hanami_transport_t *)_transport;
     (void)push;
+
+    /* A public transport must never project a private repository's refs. */
+    if (hanami_repo_private(t->repo))
+        return -1;
 
     /* The blossom:// transport push flow:
      * Object upload is handled by the ODB backend's write() vtable — when

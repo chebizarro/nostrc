@@ -26,7 +26,7 @@ files already declare a version.
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
-| libhanami | `libhanami/` | 0.3.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | libvault | `libvault/` | 0.2.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
@@ -74,6 +74,16 @@ files already declare a version.
   Native libvault inputs stay caller-owned; boxed secret-bearing results and
   GLib fold/progress results add no policy. No libvault, libporthome, application,
   storage or wire-format change; other components retain their versions.
+
+- nostrc-hl30i.8 (SV-8/R7): libhanami 0.3.1 -> 0.4.0 MINOR for sealed
+  ODB/private ref-state, ring-aware clone, writer-branch import, and explicit
+  irreversible privacy lift. The extra `hanami_repo_open` ring argument is
+  source/ABI incompatible for this 0.x component;
+  existing source callers must pass NULL for raw mode and rebuild. Runtime
+  version now consumes the same CMake authority as the installed artifact.
+  libporthome remains 0.4.0 (no bump: existing public primitives consumed,
+  no changes); libvault retains upstream 0.2.0 (no SV-8 changes). No release
+  tag is published.
 
 - nostrc-hl30i.3 (SV-3/R5): new Layer-5 libvault starts at 0.1.0 with
   owned rings/epoch changes, atomic revoke proposals, budgeted lazy/eager

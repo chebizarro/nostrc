@@ -82,6 +82,9 @@ const char *hanami_config_get_index_backend(const hanami_config_t *config);
 size_t hanami_config_get_upload_threshold(const hanami_config_t *config);
 int hanami_config_get_prefetch_concurrency(const hanami_config_t *config);
 bool hanami_config_get_verify_on_read(const hanami_config_t *config);
+/* Explicit local-fixture opt-in; default false. Never inferred from a URL. */
+bool hanami_config_get_allow_insecure(const hanami_config_t *config);
+void hanami_config_set_allow_insecure(hanami_config_t *config, bool allow);
 
 /* =========================================================================
  * Setters

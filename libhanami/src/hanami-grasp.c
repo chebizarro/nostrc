@@ -8,6 +8,7 @@
  */
 
 #include "hanami/hanami-grasp.h"
+#include "hanami-sealed.h"
 #include "hanami/hanami-nostr.h"
 
 #include <git2.h>
@@ -588,6 +589,8 @@ hanami_error_t hanami_push_to_grasp(git_repository *repo,
     if (err != HANAMI_OK)
         return err;
     hanami_grasp_info_free(info);
+    if (hanami_repo_private(repo))
+        return HANAMI_ERR_AUTH;
 
     /* Step 1: Collect local refs to publish */
     size_t ref_count = 0;

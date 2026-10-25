@@ -17,8 +17,8 @@ if(NOT COMMAND declare_component_version)
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
-set(HANAMI_VERSION_MINOR 3)
-set(HANAMI_VERSION_MICRO 1)
+set(HANAMI_VERSION_MINOR 4)
+set(HANAMI_VERSION_MICRO 0)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
   ${HANAMI_VERSION_MINOR}
@@ -34,12 +34,17 @@ if(NOT TARGET nostrc::porthome)
   message(FATAL_ERROR "libhanami requires libporthome. Set BUILD_LIBPORTHOME=ON or BUILD_LIBHANAMI=OFF.")
 endif()
 
+if(NOT TARGET nostrc::vault)
+  message(FATAL_ERROR "libhanami requires libvault. Set BUILD_LIBVAULT=ON or BUILD_LIBHANAMI=OFF.")
+endif()
+
 # libgit2 (required)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
 
 # SQLite3 (required — default index backend)
 pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
+pkg_check_modules(HANAMI_JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 # OpenSSL (required — SHA-1/SHA-256 computation, inherited from parent)
 # OpenSSL::Crypto is already available from the top-level find_package(OpenSSL)
@@ -68,6 +73,7 @@ endif()
 
 set(HANAMI_SOURCES
   src/hanami.c
+  src/hanami-sealed.c
   src/hanami-index-sqlite.c
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
@@ -96,6 +102,11 @@ set_target_properties(hanami PROPERTIES
 apply_versioning(hanami)
 
 target_compile_features(hanami PRIVATE c_std_11)
+target_compile_definitions(hanami PRIVATE
+  HANAMI_VERSION_MAJOR=${HANAMI_VERSION_MAJOR}
+  HANAMI_VERSION_MINOR=${HANAMI_VERSION_MINOR}
+  HANAMI_VERSION_PATCH=${HANAMI_VERSION_MICRO}
+  HANAMI_VERSION_STRING="${HANAMI_VERSION_STRING}")
 target_compile_options(hanami PRIVATE -Wall -Wextra -Wpedantic)
 
 target_include_directories(hanami
@@ -112,6 +123,8 @@ target_link_libraries(hanami
     nostrc::blossom
     nostrc::porthome
   PRIVATE
+    nostrc::vault
+    PkgConfig::HANAMI_JANSSON
     nostr              # libnostr for Nostr event/relay operations
     PkgConfig::SQLITE3
     OpenSSL::Crypto
@@ -222,6 +235,19 @@ if(BUILD_TESTING)
   endif()
 
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  find_package(CURL REQUIRED)
+  add_executable(test_hanami_sealed_roundtrip tests/test_hanami_sealed_roundtrip.c)
+  target_compile_options(test_hanami_sealed_roundtrip PRIVATE -Wall -Wextra -UNDEBUG)
+  target_link_libraries(test_hanami_sealed_roundtrip PRIVATE hanami nostr nip34
+    PkgConfig::HANAMI_JANSSON CURL::libcurl)
+  add_test(NAME test_hanami_sealed_roundtrip
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sealed_fixture.py"
+            $<TARGET_FILE:test_hanami_sealed_roundtrip>)
+  set_tests_properties(test_hanami_sealed_roundtrip PROPERTIES
+    TIMEOUT 180 LABELS "libhanami;sealed;integration")
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test_hanami_sealed_roundtrip)
+  endif()
   add_executable(test-hanami-nostr-protocol tests/test_hanami_nostr_protocol.c)
   target_link_libraries(test-hanami-nostr-protocol PRIVATE hanami nostr nip34)
   add_test(NAME test-hanami-nostr-protocol
