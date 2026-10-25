@@ -45,6 +45,10 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-clqf4: nostr-homed remains 0.5.0 (no bump). Gate the NIP-46
+  wrap-key test on its auth-runtime prerequisite; test registration only,
+  with no shipped artifact or public contract change. No release tags.
+
 - nostrc-er4fz.8: nostr-homed remains 0.5.0 (no bump). Remove the internal,
   non-installed nh_porthome_blossom adapter and use libblossom's existing pool
   API directly. Preserve the local-harness insecure opt-in at constructor call
