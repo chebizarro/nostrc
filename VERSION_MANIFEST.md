@@ -28,7 +28,7 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.5.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.5.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
@@ -50,6 +50,12 @@ files already declare a version.
   from libnostr-json. Sources and public C API are unchanged; GLib-enabled
   consumers retain the existing link path. Other components have no shipped
   changes in this fix. No release tags.
+
+- nostrc-5xg38: libporthome PATCH 0.5.0 -> 0.5.1 includes the current
+  partially decoded manifest entry in error cleanup. All strict CBOR/schema
+  rejection rules and wire/API contracts remain unchanged. Existing homed
+  manifest tests add v1/v2 truncation cleanup coverage; nostr-homed has test-only
+  changes (no bump). No release tags or other component bumps.
 
 - nostrc-k1zq6: libblossom PATCH 0.2.0 -> 0.2.1 fixes ownership of canonical
   event IDs returned by the signer validation path, including authenticated GET

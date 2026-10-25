@@ -299,7 +299,44 @@ static int test_reject_nonzero_chunk_key_id(void) {
     return 0;
 }
 
+static int test_partial_entry_cleanup(void) {
+    const uint8_t key[32] = {1};
+    for (int version = 1; version <= 2; version++) {
+        nh_porthome_manifest m;
+        ASSERT_EQ(build_fixture(&m, key, 1), 0);
+        ASSERT_EQ(nh_porthome_manifest_add_symlink(&m, strdup("link"),
+            0777, 1000, 1000, 0, strdup("file")), 0);
+        if (version == 2) {
+            m.version = NH_PORTHOME_MANIFEST_SCHEMA_VERSION_V2;
+            m.entries[0].name_plain = strdup("file");
+            m.entries[1].name_plain = strdup("link");
+            ASSERT(m.entries[0].name_plain && m.entries[1].name_plain);
+            ASSERT_EQ(nh_porthome_manifest_seal_names(&m, key), 0);
+        }
+        uint8_t *cbor = NULL; size_t len = 0;
+        ASSERT_EQ(nh_porthome_manifest_encode(&m, &cbor, &len), 0);
+        nh_porthome_manifest *decoded = NULL;
+        ASSERT_EQ(nh_porthome_manifest_decode(cbor, len, &decoded), 0);
+        nh_porthome_manifest_dispose(decoded); free(decoded);
+        for (size_t cut = 1; cut < len; cut++) {
+            decoded = NULL;
+            ASSERT(nh_porthome_manifest_decode(cbor, cut, &decoded) != 0);
+            ASSERT(decoded == NULL);
+        }
+        uint8_t *trailing = malloc(len + 1);
+        ASSERT(trailing);
+        memcpy(trailing, cbor, len); trailing[len] = 0;
+        decoded = NULL;
+        ASSERT(nh_porthome_manifest_decode(trailing, len + 1, &decoded) != 0);
+        ASSERT(decoded == NULL);
+        free(trailing); free(cbor);
+        nh_porthome_manifest_dispose(&m);
+    }
+    return 0;
+}
+
 int main(void) {
+    if (test_partial_entry_cleanup()) return 1;
     if (test_encode_decode_roundtrip(1))  return 1;
     if (test_encode_decode_roundtrip(50)) return 1;
     if (test_property())                  return 1;

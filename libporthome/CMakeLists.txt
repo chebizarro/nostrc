@@ -41,7 +41,7 @@ if(NOT BUILD_SHARED_LIBS)
   target_compile_definitions(porthome PUBLIC PORTHOME_STATIC_DEFINE)
 endif()
 set_target_properties(porthome PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(porthome 0 5 0)
+declare_component_version(porthome 0 5 1)
 set_target_properties(porthome PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/porthome")
 apply_versioning(porthome)
