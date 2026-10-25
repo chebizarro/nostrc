@@ -98,7 +98,7 @@ const char *hanami_version(int *major, int *minor, int *patch)
 
 #include "hanami/hanami-config.h"
 #include "hanami/hanami-index.h"
-#include "hanami/hanami-blossom-client.h"
+#include <blossom/client.h>
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-refdb-backend.h"
 #include "hanami/hanami-nostr.h"
@@ -133,13 +133,13 @@ static hanami_error_t attach_blossom_backends(
     }
 
     /* 2. Create Blossom client */
-    hanami_blossom_client_opts_t blossom_opts = {
+    blossom_client_opts_t blossom_opts = {
         .endpoint = endpoint,
         .timeout_seconds = 30,
         .user_agent = "libhanami/0.1"
     };
-    hanami_blossom_client_t *client = NULL;
-    err = hanami_blossom_client_new(&blossom_opts, signer, &client);
+    blossom_client_t *client = NULL;
+    err = blossom_client_new(&blossom_opts, signer, &client);
     if (err != HANAMI_OK) {
         hanami_index_close(index);
         return err;
@@ -155,7 +155,7 @@ static hanami_error_t attach_blossom_backends(
     git_odb_backend *odb_be = NULL;
     err = hanami_odb_backend_new(&odb_be, &odb_opts);
     if (err != HANAMI_OK) {
-        hanami_blossom_client_free(client);
+        blossom_client_free(client);
         hanami_index_close(index);
         return err;
     }
@@ -385,7 +385,7 @@ hanami_error_t hanami_clone(git_repository **out,
 
 typedef struct {
     git_odb *odb;
-    hanami_blossom_client_t *client;
+    blossom_client_t *client;
     hanami_index_t *index;
     bool upload_failed;
 } push_upload_ctx_t;
@@ -408,10 +408,10 @@ static int push_upload_object_cb(const git_oid *oid, void *payload)
     if (blossom_client_address(ctx->client, data, size, blossom_hash) == HANAMI_OK) {
         /* Check if already on server */
         bool exists = false;
-        hanami_blossom_head(ctx->client, blossom_hash, &exists);
+        blossom_client_head(ctx->client, blossom_hash, &exists);
 
         if (!exists) {
-            hanami_error_t uerr = hanami_blossom_upload(
+            hanami_error_t uerr = blossom_client_put(
                 ctx->client, (const uint8_t *)data, size,
                 blossom_hash, NULL);
             if (uerr != HANAMI_OK) {
@@ -450,13 +450,13 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
     hanami_error_t err;
 
     /* 1. Create Blossom client for uploads */
-    hanami_blossom_client_opts_t blossom_opts = {
+    blossom_client_opts_t blossom_opts = {
         .endpoint = endpoint,
         .timeout_seconds = 60,
         .user_agent = "libhanami/0.1"
     };
-    hanami_blossom_client_t *client = NULL;
-    err = hanami_blossom_client_new(&blossom_opts, signer, &client);
+    blossom_client_t *client = NULL;
+    err = blossom_client_new(&blossom_opts, signer, &client);
     if (err != HANAMI_OK)
         return err;
 
@@ -464,7 +464,7 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
     hanami_index_t *index = NULL;
     err = hanami_index_open(&index, ":memory:", NULL);
     if (err != HANAMI_OK) {
-        hanami_blossom_client_free(client);
+        blossom_client_free(client);
         return err;
     }
 
@@ -476,7 +476,7 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
     git_odb *odb = NULL;
     if (git_repository_odb(&odb, repo) < 0) {
         hanami_index_close(index);
-        hanami_blossom_client_free(client);
+        blossom_client_free(client);
         return HANAMI_ERR_LIBGIT2;
     }
 
@@ -491,7 +491,7 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
 
     git_odb_free(odb);
     hanami_index_close(index);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
 
     if (upload_failed)
         return HANAMI_ERR_UPLOAD;

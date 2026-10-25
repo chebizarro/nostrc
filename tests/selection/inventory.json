@@ -21374,7 +21374,9 @@
     "gnome.nostr_share": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
       "depends_on": [
-        "nostr.gobject"
+        "nostr.gobject",
+        "libblossom",
+        "libhanami"
       ],
       "id": "gnome.nostr_share",
       "owner_paths": [

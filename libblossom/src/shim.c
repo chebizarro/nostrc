@@ -1,9 +1,9 @@
 /*
- * hanami-blossom-shim.c - PNG-shim wrapper for Blossom uploads (nostrc-bpum)
+ * shim.c - PNG-shim wrapper for Blossom uploads (nostrc-bpum)
  *
  * SPDX-License-Identifier: MIT
  *
- * See hanami-blossom-shim.h for the wire layout and design rationale.
+ * See <blossom/shim.h> for the wire layout and design rationale.
  */
 
 #include "blossom/shim.h"

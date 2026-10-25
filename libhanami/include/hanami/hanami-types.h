@@ -83,18 +83,6 @@ typedef struct {
 } hanami_ref_entry_t;
 
 /* =========================================================================
- * Blossom blob descriptor (returned from PUT /upload)
- * ========================================================================= */
-
-/**
- * hanami_blob_descriptor_t:
- *
- * Descriptor returned by a Blossom server after upload.
- */
-typedef blossom_blob_descriptor_t hanami_blob_descriptor_t;
-#define hanami_blob_descriptor_free blossom_blob_descriptor_free
-
-/* =========================================================================
  * Signer callback
  * ========================================================================= */
 

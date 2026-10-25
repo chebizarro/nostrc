@@ -6,7 +6,7 @@
 
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-index.h"
-#include "hanami/hanami-blossom-client.h"
+#include <blossom/client.h>
 
 #include <git2/odb.h>
 #include <git2/oid.h>
@@ -24,7 +24,7 @@
 typedef struct {
     git_odb_backend parent;     /* Must be first — libgit2 casts to this */
     hanami_index_t *index;      /* Borrowed */
-    hanami_blossom_client_t *client; /* Borrowed */
+    blossom_client_t *client; /* Borrowed */
     bool verify_on_read;
 } hanami_odb_blossom_t;
 
@@ -120,7 +120,7 @@ static int blossom_odb_write(git_odb_backend *_backend, const git_oid *oid,
         return -1;
 
     /* Upload to Blossom */
-    err = hanami_blossom_upload(be->client, (const uint8_t *)data, len,
+    err = blossom_client_put(be->client, (const uint8_t *)data, len,
                                 blossom_hash, NULL);
     if (err != HANAMI_OK)
         return -1;

@@ -298,7 +298,7 @@ static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
 
     /* PNG-shim detection (nostrc-bpum): if the pusher shimmed this blob
      * to bypass a body-sniffing Blossom server, the downloaded bytes
-     * begin with the deterministic PNG shim (hanami-blossom-shim.h).
+     * begin with the deterministic PNG shim (blossom/shim.h).
      * Strip BLOSSOM_PNG_SHIM_LEN bytes off the front and shift
      * the ciphertext down. Detection is unambiguous because porthome
      * D4 ciphertext always begins with 0x01; a shimmed blob begins
@@ -439,7 +439,7 @@ static int host_all_addrs_public(const char *host) {
 /* Pre-resolve every Blossom server host from the control payload;
  * refuse the whole run if ANY host resolves to a private / link-local
  * / loopback address. This is a syntactic + name-resolution SSRF gate
- * BEFORE libhanami-blossom opens its libcurl handle. Returns 0 iff
+ * BEFORE libblossom opens its libcurl handle. Returns 0 iff
  * all hosts passed. */
 static int ssrf_precheck_servers(const nh_porthome_fetch_ctl *c) {
     for (size_t i = 0; i < c->blossom_servers_count; i++) {

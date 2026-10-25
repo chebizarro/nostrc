@@ -37,15 +37,20 @@ files already declare a version.
 
 - nostrc-er4fz.3 (R2): new libblossom starts at 0.1.0. libhanami's
   MINOR-class 0.x ABI/build extraction folds into its still-unreleased 0.2.0
-  from R1 (no second increment). Old Blossom headers are source aliases;
-  exported Blossom symbols now belong to libblossom. Rebuild consumers and
+  from R1 (no second increment). The old Blossom client/shim/capability
+  headers and hanami_* aliases are removed outright; callers use
+  <blossom/*.h> and blossom_* directly. Exported Blossom symbols now
+  belong to libblossom. Rebuild consumers and
   link `nostrc::blossom` / `blossom.pc`. nostr-homed takes MINOR 0.3.0,
   superseding its unreleased 0.2.2 patch: the obsolete `nostr_blossom.h`
   file API and kind-27235 upload path are removed; the porthome adapter uses
   neutral Blossom types without a transitive libgit2 include. BUD-02 only,
   probe-selected shimming (retired shim environment override), HTTPS/SSRF
   and bounded/hash-verified bodies now apply to every migrated consumer.
-  No release tags or latest-release columns change.
+  nostr-share: no additional bump for the mechanical direct-libblossom
+  source/build migration; its Git path still uses libhanami. R4 owns the
+  later GnBlossomClient migration. No release tags or latest-release
+  columns change.
 
 - nostrc-2age4: bud02's pkg-config dependency name is corrected from
   libnostr to the installed nostr.pc name. Packaging correction folded

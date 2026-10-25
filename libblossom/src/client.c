@@ -1,5 +1,5 @@
 /*
- * hanami-blossom-client.c - Blossom HTTP client (BUD-01/BUD-02)
+ * client.c - Blossom HTTP client (BUD-01/BUD-02)
  *
  * SPDX-License-Identifier: MIT
  */

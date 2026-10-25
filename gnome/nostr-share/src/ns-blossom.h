@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Thin layer over libhanami's hanami_blossom_client_* (the same client
+ * Thin layer over libblossom's blossom_client_* (the same client
  * nh_porthome_blossom wraps). We do not reuse nh_porthome_blossom_*
  * itself: it is gated behind NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL,
  * lives in nostr-homed's private static library, sends every blob as
