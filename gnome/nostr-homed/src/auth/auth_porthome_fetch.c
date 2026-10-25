@@ -11,7 +11,7 @@
 
 #ifdef NH_AUTH_BROKER_ENABLE_PORTHOME
 
-#include "../porthome-fetch/porthome_fetch_ctl.h"
+#include "porthome_fetch_ctl.h"
 
 #include <errno.h>
 #include <fcntl.h>

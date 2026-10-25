@@ -1,0 +1,21 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(PkgConfig)
+foreach(component IN LISTS nostrc_FIND_COMPONENTS)
+  if(NOT component MATCHES "^(bud02|blossom|porthome)$")
+    set(nostrc_${component}_FOUND FALSE)
+    continue()
+  endif()
+  # Installed dependency closure only; no source/build-tree paths exported.
+  set(_nostrc_saved_args "${PKG_CONFIG_ARGN}")
+  list(APPEND PKG_CONFIG_ARGN --static)
+  pkg_check_modules(NOSTRC_${component} QUIET IMPORTED_TARGET ${component})
+  set(PKG_CONFIG_ARGN "${_nostrc_saved_args}")
+  set(nostrc_${component}_FOUND ${NOSTRC_${component}_FOUND})
+  if(NOSTRC_${component}_FOUND AND NOT TARGET nostrc::${component})
+    add_library(nostrc::${component} INTERFACE IMPORTED)
+    set_property(TARGET nostrc::${component} PROPERTY
+      INTERFACE_LINK_LIBRARIES PkgConfig::NOSTRC_${component})
+  endif()
+endforeach()
+check_required_components(nostrc)

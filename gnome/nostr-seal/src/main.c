@@ -34,7 +34,7 @@
 #include <openssl/crypto.h>
 
 #ifndef NOSTR_SEAL_VERSION
-#define NOSTR_SEAL_VERSION "0.1.0"
+#define NOSTR_SEAL_VERSION "0.1.1"
 #endif
 
 static void wipe_free(char *s) {

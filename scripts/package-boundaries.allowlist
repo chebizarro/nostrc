@@ -411,7 +411,6 @@ include|gnome/groundhog/src/ui/gh-mls-new-group-page.c|../app/gh-test-async-cont
 include|gnome/groundhog/tests/store/test_nip46_credentials_keychain.c|../../../../tests/common/nostrc-test-keychain-guard.h
 include|gnome/groundhog/tests/store/test_store_key_keychain.c|../../../../tests/common/nostrc-test-keychain-guard.h
 include|gnome/groundhog/tests/ui/test_nip46_pair_nak.c|../../../../tests/common/nostrc-test-keychain-guard.h
-include|gnome/nostr-homed/src/auth/auth_porthome_fetch.c|../porthome-fetch/porthome_fetch_ctl.h
 include|gnome/nostr-homed/src/pam/pam_qr_render.c|../../third_party/qrcodegen/qrcodegen.h
 include|libgo/fiber/bench/bench_pingpong.c|../include/libgo/fiber.h
 include|libgo/fiber/bench/bench_pingpong.c|../include/libgo/fiber_chan.h

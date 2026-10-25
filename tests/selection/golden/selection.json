@@ -430,6 +430,7 @@
       "supported.libhanami",
       "supported.libmarmot",
       "supported.libnostr",
+      "supported.libporthome",
       "supported.marmot.gobject",
       "supported.nips.bud02",
       "supported.nips.nip.cas0010",

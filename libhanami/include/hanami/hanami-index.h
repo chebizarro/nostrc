@@ -12,6 +12,7 @@
 #define HANAMI_INDEX_H
 
 #include "hanami-types.h"
+#include <porthome/index.h>
 #include <git2/oid.h>
 
 #ifdef __cplusplus
@@ -44,6 +45,11 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
  * @idx: (transfer full) (nullable): index to close and free
  */
 void hanami_index_close(hanami_index_t *idx);
+
+/* Borrowed storage-agnostic view; valid until hanami_index_close().
+ * Does not seal objects: legacy raw-mode hashes remain raw addresses with
+ * key id zero. Sealed ODB/ref-state behavior belongs to R7. */
+porthome_index *hanami_index_porthome(hanami_index_t *idx);
 
 /* =========================================================================
  * CRUD operations

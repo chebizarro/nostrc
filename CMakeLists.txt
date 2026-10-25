@@ -350,16 +350,11 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   endif()
 endif()
 
-# Build order ensures libgo is available for libnostr/libjson as needed.
+# Layer 0 foundations precede Layer 1 libnostr.
 add_subdirectory(libgo)
-add_subdirectory(libnostr)
 add_subdirectory(libjson)
-
-# Signet NIP-46 bunker service (requires libnostr)
-option(SIGNET_ENABLE "Build Signet NIP-46 bunker service (signetd + signetctl)" ON)
-if (SIGNET_ENABLE AND EXISTS ${CMAKE_SOURCE_DIR}/signet/CMakeLists.txt)
-  add_subdirectory(signet)
-endif()
+add_subdirectory(libnostr)
+nostrc_link_json_core()
 
 # libhanami option (subdirectory added after NipOptions so nip34 target is available)
 option(BUILD_LIBHANAMI "Build libhanami (Blossom + libgit2 integration)" ON)
@@ -391,23 +386,6 @@ include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 option(ENABLE_BUD02 "Build BUD-02 Blossom authorization codec" ON)
 if(ENABLE_BUD02)
   add_subdirectory(nips/bud02)
-endif()
-
-option(BUILD_LIBBLOSSOM "Build libblossom HTTP transport" ON)
-if(BUILD_LIBBLOSSOM)
-  add_subdirectory(libblossom)
-endif()
-
-# nostr-homed consumes libnostr and, for experimental roaming only, NIP-19.
-# Register it after those targets exist; its own features are disabled by default.
-if (ENABLE_NOSTR_HOMED)
-  add_subdirectory(gnome/nostr-homed)
-endif()
-
-# libhanami: Blossom filesystem extension & tools for libgit2 (requires nip34)
-# Must come after NipOptions so the nip34 target exists.
-if(BUILD_LIBHANAMI AND EXISTS ${CMAKE_SOURCE_DIR}/libhanami/CMakeLists.txt)
-  add_subdirectory(libhanami)
 endif()
 
 # GObject wrapper option is declared early so the testkit guard below can see it.
@@ -482,6 +460,20 @@ if (BUILD_LIBMARMOT)
   add_subdirectory(libmarmot)
 endif()
 
+# Layer 3 transport, Layer 4 portable codecs, then Layer 5 Git integration.
+option(BUILD_LIBBLOSSOM "Build libblossom HTTP transport" ON)
+if(BUILD_LIBBLOSSOM)
+  add_subdirectory(libblossom)
+endif()
+option(BUILD_LIBPORTHOME "Build libporthome portable sealed-object codecs" ON)
+if(BUILD_LIBPORTHOME)
+  add_subdirectory(libporthome)
+endif()
+if(BUILD_LIBHANAMI)
+  add_subdirectory(libhanami)
+endif()
+
+# Layer 6 GObject wrappers follow all their lower-layer dependencies.
 # Marmot GObject wrapper (requires libmarmot + GLib/GObject/GIO)
 option(BUILD_MARMOT_GOBJECT "Build marmot-gobject GObject wrapper (requires libmarmot + GLib)" ON)
 if (BUILD_MARMOT_GOBJECT AND BUILD_LIBMARMOT)
@@ -513,6 +505,12 @@ endif()
 # Add the shared test tree after its library dependencies.
 if(BUILD_TESTING)
   add_subdirectory(tests)
+endif()
+
+# Layer 7 services and applications follow the libraries.
+option(SIGNET_ENABLE "Build Signet NIP-46 bunker service (signetd + signetctl)" ON)
+if (SIGNET_ENABLE AND EXISTS ${CMAKE_SOURCE_DIR}/signet/CMakeLists.txt)
+  add_subdirectory(signet)
 endif()
 
 # GNostr apps (GTK4/GLib/libsecret) — make building apps optional for CI jobs that only need libraries
@@ -551,6 +549,12 @@ if (ENABLE_NOSTRDB_DEMO)
   endif()
 endif()
 
+
+# GNOME consumers are registered last, including nostr-homed's optional
+# syncd/FUSE assembly. Its base PAM/authd targets never link that assembly.
+if (ENABLE_NOSTR_HOMED)
+  add_subdirectory(gnome/nostr-homed)
+endif()
 
 if (BUILD_GROUNDHOG)
   add_subdirectory(gnome/groundhog)

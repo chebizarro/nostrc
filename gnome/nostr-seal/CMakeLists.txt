@@ -5,11 +5,8 @@
 # nostr-homed tree to be configured.
 #
 # Primitive reuse, not re-implementation:
-#   * porthome D4 container: the single reviewed TU
-#     gnome/nostr-homed/src/porthome/nh_porthome_crypto.c is compiled in,
-#     exactly as libnostr_porthome itself compiles nips/nip44's HKDF TU —
-#     linking the whole libnostr_porthome would drag libhanami, the fetch
-#     sandbox and the provisioner into a file-encryption CLI.
+#   * porthome D4 container: nostrc::porthome owns the portable crypto.
+#     No copied sibling source, libhanami, sandbox or provisioner is linked.
 #   * NIP-44: the nostr_nip44_core static target (convkey, v2 cipher, HKDF).
 #   * NIP-49: its TUs are compiled into a private static lib (the in-tree
 #     nip49 shared library is unversioned and not shipped). NIP-19 links the
@@ -32,7 +29,9 @@ foreach(_t nostr nostr_nip44_core)
 endforeach()
 
 set(_ns_root ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-set(_ns_porthome_crypto ${_ns_root}/gnome/nostr-homed/src/porthome/nh_porthome_crypto.c)
+if(NOT TARGET nostrc::porthome)
+  message(FATAL_ERROR "nostr-seal requires BUILD_LIBPORTHOME=ON or ENABLE_NOSTR_SEAL=OFF.")
+endif()
 
 if(NOT TARGET nip19)
   message(FATAL_ERROR "nostr-seal requires ENABLE_NIP19=ON")
@@ -55,15 +54,13 @@ add_library(nostr_seal_core STATIC
   src/nseal-output.c
   src/nseal-signer.c
   src/nseal-config.c
-  src/nseal-publish.c
-  ${_ns_porthome_crypto})
+  src/nseal-publish.c)
 target_include_directories(nostr_seal_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${_ns_root}/gnome/nostr-homed/include)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(nostr_seal_core PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(nostr_seal_core PUBLIC
-  nostr_seal_nips nostr_nip44_core nostr OpenSSL::Crypto PkgConfig::NSEAL_GIO)
+  nostr_seal_nips nostr_nip44_core nostrc::porthome nostr OpenSSL::Crypto PkgConfig::NSEAL_GIO)
 set_property(TARGET nostr_seal_core PROPERTY POSITION_INDEPENDENT_CODE ON)
 # Target names resolve at generate time, so nostr-share (added after this
 # directory) can still provide nostr-share-core here.

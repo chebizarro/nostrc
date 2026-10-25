@@ -31,6 +31,26 @@ class PackageBoundarySelection(unittest.TestCase):
                         self.assertIn("selection.operational.linux", check["profiles"])
                         self.assertIn("selection.operational.macos", check["profiles"])
 
+    def test_porthome_move_retains_real_consumers_and_omits_prerequisite_suites(self):
+        for path in ("libporthome/src/crypto.c", "libporthome/src/index.c",
+                     "libporthome/include/porthome/compat-nh.h"):
+            with self.subTest(path=path):
+                self.assertEqual(s.classify(self.policy, path)["nodes"], ["libporthome"])
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                selected = set(plan["selected_checks"])
+                self.assertTrue({"supported.libporthome", "supported.libhanami",
+                                 "homed.units", "nostr_seal.unit",
+                                 "nostr_seal.streaming"} <= selected)
+                self.assertNotIn("supported.libblossom", selected)
+                self.assertNotIn("supported.nips.bud02", selected)
+
+    def test_porthome_test_only_input_does_not_select_hanami_or_homed(self):
+        plan = s.make_plan(self.policy, [change("libporthome/tests/test_api.c")],
+                           head="a" * 40, base="b" * 40, context="ci")
+        self.assertEqual(set(plan["selected_checks"]),
+                         {"supported.libporthome", "root.asan.libporthome"})
+
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
                            head="a" * 40, base="b" * 40, context="ci")

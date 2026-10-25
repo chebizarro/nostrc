@@ -28,7 +28,7 @@
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
 
-#include "nh_porthome_crypto.h"
+#include <porthome/compat-nh.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
 #include <nostr/nip49/nip49.h>

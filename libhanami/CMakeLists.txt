@@ -17,7 +17,7 @@ if(NOT COMMAND declare_component_version)
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
-set(HANAMI_VERSION_MINOR 2)
+set(HANAMI_VERSION_MINOR 3)
 set(HANAMI_VERSION_MICRO 0)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
@@ -28,6 +28,10 @@ set(HANAMI_VERSION_STRING "${HANAMI_VERSION}")
 # --- Dependencies ---
 if(NOT TARGET nostrc::blossom)
   message(FATAL_ERROR "libhanami requires libblossom. Set BUILD_LIBBLOSSOM=ON or BUILD_LIBHANAMI=OFF.")
+endif()
+
+if(NOT TARGET nostrc::porthome)
+  message(FATAL_ERROR "libhanami requires libporthome. Set BUILD_LIBPORTHOME=ON or BUILD_LIBHANAMI=OFF.")
 endif()
 
 # libgit2 (required)
@@ -68,7 +72,7 @@ endif()
 set(HANAMI_SOURCES
   src/hanami.c
   # Future sources will be added here as components are implemented:
-  src/hanami-index.c
+  src/hanami-index-sqlite.c
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
   src/hanami-nostr.c
@@ -110,6 +114,7 @@ target_link_libraries(hanami
   PUBLIC
     PkgConfig::LIBGIT2
     nostrc::blossom
+    nostrc::porthome
   PRIVATE
     nostr              # libnostr for Nostr event/relay operations
     CURL::libcurl

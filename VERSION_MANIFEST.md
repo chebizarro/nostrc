@@ -19,21 +19,44 @@ files already declare a version.
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
-| nostr-homed | `gnome/nostr-homed/` | 0.3.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
+| nostr-homed | `gnome/nostr-homed/` | 0.4.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | Grotto (Preview) | `apps/grotto/` | 0.1.0 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
-| libhanami | `libhanami/` | 0.2.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libhanami | `libhanami/` | 0.3.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libporthome | `libporthome/` | 0.1.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.1.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
-| nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
+| nostr-seal | `gnome/nostr-seal/` | 0.1.1 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-er4fz.4 (R3): new libporthome starts at 0.1.0. Portable crypto,
+  canonical CBOR, manifest/name and wrapkey APIs move to `<porthome/*.h>`
+  and `porthome_*` symbols; `porthome/compat-nh.h` provides one-release
+  source compatibility, not binary aliases. PCS v1 and manifest v1/v2
+  bytes are unchanged; PCS v2 sealing/chunking remains SV-1 work.
+  nostr-homed takes MINOR 0.3.0 -> 0.4.0 for the 0.x build/API extraction:
+  consumers must link `nostrc::porthome`; its filesystem/service assembly
+  stays in homed. libhanami takes MINOR 0.2.0 -> 0.3.0 for the additive
+  storage-agnostic index view and the changed entry ABI (`chunk_key_id`).
+  SQLite persistence and Git hash helpers stay in hanami per the owner's
+  R3 clarification; legacy SQLite rows migrate with key id zero.
+  nostr-seal takes PATCH 0.1.0 -> 0.1.1 for linking the promoted package
+  instead of compiling the removed sibling source; nsealed v1 is unchanged.
+  NIP-44's core archive is now installed for static consumers of its public
+  KDF header (packaging correction); nip44 has no declared component version,
+  so none is invented. libblossom keeps unreleased 0.1.0: its package-config
+  dispatcher is shared with libporthome to prevent colliding installed configs
+  (packaging correction folded into the initial release); its C API is unchanged.
+  bud02 has no change or bump. libjson's delayed core-link registration preserves
+  its existing static/shared policy and shipped ABI: no version change.
+  Selection/test-only changes need no version. Release columns do not change.
 
 - nostrc-er4fz.3 (R2): new libblossom starts at 0.1.0. libhanami's
   MINOR-class 0.x ABI/build extraction folds into its still-unreleased 0.2.0
