@@ -123,6 +123,7 @@ jobs:
     with:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
+      selection_artifact: ${{ needs.select.outputs.selection_artifact }}
   homed:
     needs: select
     if: contains(fromJSON(needs.select.outputs.families), 'homed')

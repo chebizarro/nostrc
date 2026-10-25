@@ -251,6 +251,9 @@ def validate_inventory(policy):
     for ident, node in nodes.items():
         require(node.get("id", ident) == ident, f"node ID mismatch: {ident}")
         _ids(node.get("depends_on", []), nodes, f"{ident}.depends_on")
+        _ids(node.get("build_depends_on", []), nodes, f"{ident}.build_depends_on")
+        if node.get("build_depends_on"):
+            require(bool(node.get("build_dependency_reason")), f"{ident}: build dependency rationale required")
         require(isinstance(node.get("owner_paths"), list) and node["owner_paths"], f"{ident}: missing owner_paths")
         for path in node["owner_paths"]:
             normalized_path(path.rstrip("/"))
@@ -288,6 +291,10 @@ def validate_inventory(policy):
     claimed = {}
     for ident, check in checks.items():
         _ids(check.get("nodes", []), nodes, f"{ident}.nodes")
+        _ids(check.get("build_only_nodes", []), nodes, f"{ident}.build_only_nodes")
+        require(set(check.get("build_only_nodes", [])) <= set(check.get("nodes", [])), f"{ident}: build-only nodes must be declared inputs")
+        if check.get("build_only_nodes"):
+            require(bool(check.get("build_dependency_reason")), f"{ident}: build-only rationale required")
         _ids(check.get("profiles", []), profiles, f"{ident}.profiles")
         require(check.get("nodes") and check.get("profiles"), f"{ident}: empty ownership/profiles")
         require(check.get("kind") in {"ctest", "command", "build_contract"}, f"{ident}: invalid kind")
@@ -407,6 +414,50 @@ def omitted_context_profiles(policy, context):
             if context not in profile.get('contexts', ['local', 'ci', 'release'])]
 
 
+def inventory_delta_profiles(policy, base_policies):
+    """Check edits select those entries; profile edits broaden only those profiles.
+
+    Ownership, selector policy and unknown metadata changes remain conservative.
+    Both sides of changed/removed checks contribute profiles; lost profiles cannot
+    be represented as successful execution of the remaining inventory.
+    """
+    if not base_policies:
+        return set(), {}, set(), ["inventory changed without a trustworthy base inventory"]
+    affected, changed_checks, full_profiles, reasons = set(), {}, set(), []
+    for old in base_policies:
+        changed_keys = {key for key in policy.keys() | old.keys() if policy.get(key) != old.get(key)}
+        unsafe = changed_keys - {"checks", "profiles"}
+        if unsafe:
+            reasons.append("inventory ownership/policy changed: " + ", ".join(sorted(unsafe)))
+        for key in ("checks", "profiles"):
+            before, after = old[key], policy[key]
+            for ident in before.keys() | after.keys():
+                if before.get(ident) == after.get(ident):
+                    continue
+                if key == "profiles":
+                    affected.add(ident)
+                    full_profiles.add(ident)
+                else:
+                    previous, current = before.get(ident, {}), after.get(ident, {})
+                    profiles = set(previous.get("profiles", [])) | set(current.get("profiles", []))
+                    common_before = {k: v for k, v in previous.items() if k not in {"profiles", "ctest_tests"}}
+                    common_after = {k: v for k, v in current.items() if k not in {"profiles", "ctest_tests"}}
+                    changed = profiles if common_before != common_after else {
+                        profile for profile in profiles
+                        if (profile in previous.get("profiles", [])) != (profile in current.get("profiles", []))
+                        or previous.get("ctest_tests", {}).get(profile) != current.get("ctest_tests", {}).get(profile)}
+                    if ident in after:
+                        changed_checks.setdefault(ident, set()).update(changed & set(current["profiles"]))
+                        full_profiles.update(set(previous.get("profiles", [])) - set(current["profiles"]))
+                    else:
+                        full_profiles.update(previous["profiles"])
+                    affected.update(changed)
+    removed = affected - policy["profiles"].keys()
+    if removed:
+        reasons.append("inventory removed execution profiles: " + ", ".join(sorted(removed)))
+    return affected & policy["profiles"].keys(), changed_checks, full_profiles & policy["profiles"].keys(), reasons
+
+
 def make_plan(policy, changes, *, head, base=None, context="local", mode="affected", event=None, profiles=None, broadening=None, base_policies=None, source_identity=None):
     validate_inventory(policy)
     require(context in {"local", "ci", "release"} and mode in {"affected", "broad"}, "invalid context/mode")
@@ -420,11 +471,23 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
         reasons.append("release requires broad validation")
     classifications, seeds = [], set()
     records = sorted({canonical(c): c for c in changes}.values(), key=lambda c: canonical(c))
+    inventory_changed = any("tests/selection/inventory.json" in (c.get("old_path"), c.get("new_path")) for c in records)
+    metadata_profiles, metadata_checks, metadata_broad_profiles = set(), {}, set()
+    if inventory_changed:
+        metadata_profiles, metadata_checks, metadata_broad_profiles, metadata_reasons = inventory_delta_profiles(policy, base_policies)
+        reasons.extend(metadata_reasons)
     for change in records:
         require(isinstance(change.get("status"), str) and change["status"], "missing changed status")
         for side in ("old_path", "new_path"):
             path = change.get(side)
             if path is None:
+                continue
+            if path == "tests/selection/inventory.json":
+                owners = ["selection.operational"] if "selection.operational" in policy["nodes"] else []
+                classifications.append({"path": path, "effect": "impact", "nodes": owners,
+                                        "reason": "Inventory entry delta selects changed checks and changed/removed-entry profiles plus operational regressions.",
+                                        "unclassified": False, "policy": "entry_delta"})
+                seeds.update(owners)
                 continue
             candidates = [("head", policy)]
             if side == "old_path":
@@ -443,15 +506,19 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
                         reasons.append(f"{node}: {policy['nodes'][node]['coverage_gap']}")
     witnesses = impact_closure(policy, seeds & set(policy["nodes"]))
     effective = "broad" if mode == "broad" or reasons else "affected"
-    selected, excluded = [], []
+    selected, excluded, impacted_checks = [], [], set()
     for ident, check in sorted(policy["checks"].items()):
-        if effective == "broad" or set(check["nodes"]) & witnesses.keys():
+        if (set(check["nodes"]) - set(check.get("build_only_nodes", []))) & witnesses.keys():
+            impacted_checks.add(ident)
+        if effective == "broad" or ident in impacted_checks or ident in metadata_checks or metadata_broad_profiles.intersection(check["profiles"]):
             selected.append(ident)
         else:
             excluded.append({"check": ident, "reason": "unaffected"})
     lanes = []
     for profile, config in sorted(policy["profiles"].items()):
-        members = [c for c in selected if profile in policy["checks"][c]["profiles"]]
+        members = [c for c in selected if profile in policy["checks"][c]["profiles"] and (
+            effective == "broad" or profile in metadata_broad_profiles or profile in metadata_checks.get(c, set())
+            or c in impacted_checks)]
         if members and profile not in omitted_ids and (not restriction or profile in restriction):
             lanes.append({"id": profile, "profile": profile, "profile_hash": digest(config), "checks": members})
     active = {c for lane in lanes for c in lane["checks"]}
@@ -462,7 +529,9 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
               "base": base, "head": head, "tested_sha": head, "event": event or {},
               "source_identity": source_identity or {"kind": "committed", "sha": head},
               "inventory_hash": digest(policy), "changes": records, "classifications": classifications,
-              "broadening_reasons": sorted(set(reasons)), "selected_checks": sorted(active),
+              "broadening_reasons": sorted(set(reasons)), "metadata_affected_profiles": sorted(metadata_profiles),
+              "metadata_broad_profiles": sorted(metadata_broad_profiles), "metadata_changed_checks": sorted(metadata_checks),
+              "metadata_check_profiles": {k: sorted(v) for k, v in sorted(metadata_checks.items())}, "selected_checks": sorted(active),
               "excluded_checks": excluded, "witnesses": witnesses, "lanes": lanes,
               "expected_lane_ids": [lane["id"] for lane in lanes], "partial_profiles": restriction,
               **coverage_state(policy)}
@@ -563,8 +632,9 @@ def git_plan(repo, policy, *, head, base=None, context="local", mode="affected",
             record["old_executable"] = old_modes.get(record.get("old_path")) == b"100755"
             record["old_gitlink"] = old_modes.get(record.get("old_path")) == b"160000"
         changes.extend(records)
-        if any(inventory_path in (c.get("old_path"), c.get("new_path")) for c in records):
-            reasons.append("inventory changed: broad before trusting candidate ownership")
+        if inventory_path != "tests/selection/inventory.json" and any(
+                inventory_path in (c.get("old_path"), c.get("new_path")) for c in records):
+            reasons.append("noncanonical inventory changed: broad validation")
         raw = git(repo, "show", f"{before}:{inventory_path}", check=False)
         if raw.returncode:
             if any(c.get("old_path") for c in changes):

@@ -2443,7 +2443,7 @@ def _owners(inventory, relative):
     return {n for r in rules for n in r.get("nodes", [])}, rules[0].get("effect", "impact")
 
 
-def _impact_prerequisites(inventory, owners):
+def _impact_prerequisites(inventory, owners, *, include_build=False):
     seen, todo = set(), list(owners)
     while todo:
         node = todo.pop()
@@ -2453,6 +2453,8 @@ def _impact_prerequisites(inventory, owners):
             raise RealizationError(f"unknown impact owner {node}")
         seen.add(node)
         todo.extend(inventory["nodes"][node].get("depends_on", []))
+        if include_build:
+            todo.extend(inventory["nodes"][node].get("build_depends_on", []))
     return seen
 
 
@@ -2536,10 +2538,12 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             gap("unowned_registration", test=name)
             continue
         covered = _impact_prerequisites(inventory, owners)
-        check_owners = set()
+        check_owners, check_impact_owners = set(), set()
         for check in inventory["checks"].values():
             if _eligible(check, realization["profile_id"]) and name in _membership(check, realization["profile_id"]):
-                check_owners.update(check.get("nodes", check.get("impact_nodes", [])))
+                declared = set(check.get("nodes", check.get("impact_nodes", [])))
+                check_owners.update(declared)
+                check_impact_owners.update(declared - set(check.get("build_only_nodes", [])))
         expected = desc.get("expected", [])
         if expected not in ([], ["pass"], ["fixture"], ["mdk09_incompatibility"]):
             gap("unsupported_expected_outcome", test=name, expected=expected)
@@ -2553,7 +2557,8 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         # Logical checks may add test-only input nodes without making a
         # production component depend on its own fixtures/vectors. Audit that
         # actual selection coverage as well as the registration's owning node.
-        covered.update(_impact_prerequisites(inventory, check_owners))
+        covered.update(_impact_prerequisites(inventory, check_impact_owners))
+        compiled_covered = _impact_prerequisites(inventory, owners | check_owners, include_build=True)
         props = _properties(test)
         support = bool(props.get("FIXTURES_SETUP") or props.get("FIXTURES_CLEANUP") or desc.get("expected") == ["fixture"])
         if not support and not check_owners and name not in excluded_names:
@@ -2660,7 +2665,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 continue
             if effect == "non_execution" or not input_owners:
                 gap("unowned_input", test=name, input=relative, input_kind=kind)
-            elif input_owners.isdisjoint(covered):
+            elif input_owners.isdisjoint(covered if kind == "runtime" else compiled_covered):
                 gap("missing_impact_edge", test=name, input=relative,
                     input_kind=kind, owners=sorted(owners), missing_nodes=sorted(input_owners - covered))
     # Selection must reach EACH consumer when ANY of its execution inputs
@@ -2670,7 +2675,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         if primary not in tests:
             continue
         check = inventory["checks"][ident]
-        covered = _impact_prerequisites(inventory, check.get("nodes", check.get("impact_nodes", [])))
+        declared = set(check.get("nodes", check.get("impact_nodes", [])))
+        covered = _impact_prerequisites(inventory, declared - set(check.get("build_only_nodes", [])))
+        compiled = _impact_prerequisites(inventory, declared, include_build=True)
         try:
             closure = _fixture_closure([primary], tests, descriptors)
         except RealizationError as exc:
@@ -2680,7 +2687,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             for relative, kind, input_owners, effect in execution_inputs.get(support_name, []):
                 if effect == "global" or not input_owners or effect == "non_execution":
                     continue  # unowned/non-execution inputs already block above
-                if input_owners.isdisjoint(covered):
+                if input_owners.isdisjoint(covered if kind == "runtime" else compiled):
                     gap("missing_impact_edge", check=ident, test=primary,
                         support_test=support_name, input=relative, input_kind=kind,
                         owners=sorted(check.get("nodes", check.get("impact_nodes", []))),

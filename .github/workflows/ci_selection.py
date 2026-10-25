@@ -21,10 +21,12 @@ FAMILY_NODES = {
     'gi': {'libnostr', 'nostr.gobject'},
     'groundhog': {'execution.groundhog', 'packaging.groundhog'},
     'grotto': {'execution.grotto', 'packaging.grotto', 'gnome.seahorse'},
-    'nip55l': {'nip55l', 'nip55l.core', 'nip55l.glib', 'nip55l.dbus_contract'},
+    'nip55l': {'nip55l', 'nip55l.core', 'nip55l.glib', 'nip55l.dbus_contract',
+               'gnome.nostr_seal', 'gnome.nostr_seal.streaming', 'desktop.signer_adapters',
+               'gnostr.signer_adapter'},
     'homed': {'execution.homed', 'gnome.nostr_homed', 'gnome.nostr_homed.test_inputs'},
     'signet': {'signet'},
-    'static': {'static.policy', 'selection.contract', 'testing.framework'},
+    'static': {'static.policy', 'selection.contract', 'selection.operational', 'testing.framework'},
     'appimage': {'gnostr', 'packaging.gnostr', 'gnostr.schema_inputs'},
     'windows': {'grotto.gui', 'grotto.daemon', 'grotto.native_host', 'packaging.grotto'},
     'bp': {'benchmarks'},
@@ -42,6 +44,29 @@ def project(plan):
     """Project affected ownership, never prerequisite/diagnostic profile membership."""
     nodes = set(plan['witnesses'])
     families = {family for family, owners in FAMILY_NODES.items() if nodes & owners}
+    # Inventory-only test enrollment has no source witnesses for its consumers.
+    # Project the changed profiles as well; never silently omit their execution.
+    metadata = set(plan.get('metadata_affected_profiles', []))
+    unrouted_metadata = set()
+    for profile in metadata:
+        if profile.startswith(('nostr_seal.', 'desktop.signer.', 'groundhog.identity_compat.')):
+            families.add('nip55l')
+        elif profile == 'static.policy' or profile.startswith('selection.operational.'):
+            families.add('static')
+        elif profile.startswith('grotto.'):
+            families.add('grotto')
+        elif profile.startswith('groundhog.'):
+            families.add('groundhog')
+        elif profile.startswith('core.'):
+            families.add('core')
+        elif profile.startswith('libgo.'):
+            families.add('libgo')
+        elif profile.startswith('homed.'):
+            families.add('homed')
+        else:
+            unrouted_metadata.add(profile)
+    if 'groundhog.identity_auth' in nodes or 'groundhog.identity_api' in nodes:
+        families.add('nip55l')  # bounded MLS link compatibility profile
     accounted = set().union(*FAMILY_NODES.values())
     for node in nodes:
         if node.startswith('groundhog.'):
@@ -60,7 +85,9 @@ def project(plan):
     unhandled = nodes - accounted
     if unhandled:
         reasons.append('No bounded legacy runner projection for: ' + ', '.join(sorted(unhandled)))
-    broad = plan['effective_mode'] == 'broad' or bool(unhandled)
+    if unrouted_metadata:
+        reasons.append('No bounded legacy runner projection for inventory profiles: ' + ', '.join(sorted(unrouted_metadata)))
+    broad = plan['effective_mode'] == 'broad' or bool(unhandled) or bool(unrouted_metadata)
     if broad:
         families = set(BROAD_FAMILIES)
     return {'schema_version': 1, 'kind': 'ci_legacy_dispatch_v1',

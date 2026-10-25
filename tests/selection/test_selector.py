@@ -108,26 +108,14 @@ class PolicyTests(unittest.TestCase):
         self.assertNotEqual(d1["plan_id"], d2["plan_id"])
 
     def test_checked_inventory_golden_cases(self):
-        from test_selection_subset import before_full_ownership_policy
-        from w11_worker_support import before_worker_policy
-        from w11_policy_support import before_policy_enrollment
-        from homed_profile_support import before_homed_policy
-        p = before_worker_policy(before_policy_enrollment(before_full_ownership_policy(
-            before_homed_policy(s.load_inventory(ROOT / "tests/selection/inventory.json")))))
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         cases = s.read_json(ROOT / "tests/selection/golden/selection.json")
         for case in cases:
             with self.subTest(case=case["name"]):
                 result = plan(p, paths=case["paths"])
                 self.assertEqual(result["effective_mode"], case["mode"])
                 if "checks" in case:
-                    expected_checks = case["checks"]
-                    if case["name"] == "grotto_workflow_only":
-                        from grotto_nip49_projection import grotto_nip49_current_workflow_checks
-                        expected_checks = grotto_nip49_current_workflow_checks(
-                            expected_checks, p["diagnostic_nonmember_subsets"]["grotto.linux"])
-                    from supported_profile_support import supported_golden_checks
-                    expected_checks = supported_golden_checks(case['name'], expected_checks, p)
-                    self.assertEqual(result["selected_checks"], expected_checks)
+                    self.assertEqual(result["selected_checks"], case["checks"])
                 for prefix in case.get("required_prefixes", []):
                     self.assertTrue(any(x.startswith(prefix) for x in result["selected_checks"]))
                 for prefix in case.get("excluded_prefixes", []):

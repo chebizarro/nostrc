@@ -599,6 +599,10 @@ def execute(head, events, number, dirty=False):
             print("  impact: " + " -> ".join(witness), flush=True)
         for reason in plan["broadening_reasons"]:
             print(f"  broad: {reason}", flush=True)
+        if plan.get("metadata_changed_checks"):
+            print("  inventory entries: " + ", ".join(plan["metadata_changed_checks"]), flush=True)
+        if plan.get("metadata_broad_profiles"):
+            print("  inventory profile scope: " + ", ".join(plan["metadata_broad_profiles"]), flush=True)
         for lane in plan["lanes"]:
             print(f"  {lane['profile']}: {', '.join(lane['checks'])}", flush=True)
         record["status"] = "planned"

@@ -12,6 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = (
     "test_selector",
+    "test_nip55l_selection",
     "test_git_ranges",
     "test_selector_cli",
     "test_selector_checkout_binding",

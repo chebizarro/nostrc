@@ -23,8 +23,9 @@ import test_selection as selection
 
 DEFAULT_PROFILES = {
     "Linux": {"core.linux", "grotto.linux", "groundhog.linux", "homed.linux.units",
-              "groundhog.mdk08", "groundhog.mdk011"},
-    "Darwin": {"core.macos.asan", "libgo.macos.asan"},
+              "groundhog.mdk08", "groundhog.mdk011", "nostr_seal.linux", "desktop.signer.linux",
+              "groundhog.identity_compat.linux", "selection.operational.linux"},
+    "Darwin": {"core.macos.asan", "libgo.macos.asan", "selection.operational.macos"},
 }
 GUARDS = (
     ("scripts/check-unsequenced-args.py", ["--root", "{source}"]),
@@ -297,7 +298,7 @@ def run(policy, plan, source, directory, record, *, command, materialize, profil
                 # A conservative broad fallback executes the whole configured
                 # universe, including new registrations absent from inventory.
                 closure = fixture_closure(export, names)
-                if plan["effective_mode"] == "broad":
+                if plan["effective_mode"] == "broad" or profile_id in plan.get("metadata_broad_profiles", []):
                     closure = sorted(test["name"] for test in export["tests"])
                 fixture_caps = fixture_capabilities(build, configuration, closure)
                 extra = fixture_caps - caps - {"private_bus", "display"}

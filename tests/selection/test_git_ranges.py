@@ -109,10 +109,13 @@ class RangeTests(GitCase):
         self.assertEqual(len(result["changes"]), 2)
         self.assertEqual(result["selected_checks"], ["app.live", "app.unit", "core.unit"])
 
-    def test_inventory_change_broadens_even_if_new_rules_narrow(self):
+    def test_inventory_format_only_does_not_broaden(self):
         self.write("tests/selection/inventory.json", json.dumps(self.p, indent=2))
         self.commit()
-        self.assertEqual(self.select()["effective_mode"], "broad")
+        result = self.select()
+        self.assertEqual(result["effective_mode"], "affected")
+        self.assertEqual(result["selected_checks"], [])
+        self.assertEqual(result["metadata_affected_profiles"], [])
 
     def test_bad_base_inventory_broadens(self):
         self.write("tests/selection/inventory.json", "{}"); before = self.commit()

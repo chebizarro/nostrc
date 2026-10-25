@@ -135,6 +135,20 @@ class SharedDependencyEdges(Project):
                             for g in r.check_inputs(runtime_broken, realized)["gaps"]))
         self.assertEqual(r.load_realization(self.build, self.identity), realized)
 
+    def test_build_only_edges_preserve_compile_audits_not_runtime_coverage(self):
+        node = self.inventory['nodes']['groundhog.identity_auth']
+        node['depends_on'].remove('gnome.seahorse')
+        node['build_depends_on'] = ['gnome.seahorse']
+        realized = self.configure()
+        audit = r.check_inputs(self.inventory, realized)
+        self.assertFalse(any(g.get('test') != 'omitted' for g in audit['gaps']))
+        # A compile-only declaration cannot satisfy an actual runtime input.
+        self.inventory['checks']['identity']['build_only_nodes'] = ['vectors']
+        bad = r.check_inputs(self.inventory, realized)
+        self.assertTrue(any(g['kind'] == 'missing_impact_edge' and g.get('test') == 'identity'
+                            and g.get('input') == 'vector.txt' and g.get('input_kind') == 'runtime'
+                            for g in bad['gaps']))
+
     def test_selector_edges_and_existing_boundaries(self):
         for owner, dependency, path, _ in EDGES:
             with self.subTest(owner=owner, dependency=dependency):
@@ -289,16 +303,21 @@ class RelayJsonDependencyEdges(Project):
         self.assertEqual(r.load_realization(self.build, self.identity), realized)
 
     def test_actual_selector_plan_deltas_and_ui_mdk_isolation(self):
-        from supported_profile_support import before_supported_batch_policy
-        self.policy = before_supported_batch_policy(self.policy)
         previous = copy.deepcopy(self.policy)
         for owner, dependency, _, _, _ in self.edges:
             previous["nodes"][owner]["depends_on"].remove(dependency)
+        json_consumers = {
+            'supported.tests.shared.tests', 'supported.tests.shared.tests.expensive',
+            'supported.tests.shared.tests.libjson', 'supported.tests.shared.tests.libjson.nip04',
+            'supported.tests.shared.tests.libjson.nip86',
+            'supported.nostr.gobject.nostr.gobject.nip06.nip11.nip46.nip49.nip55l.relayd',
+            'supported.nostr.gobject.nostr.gobject.nip06.nip11.nip46.nip49.nip55l.relayd.testkit',
+        }
         for path, additions in (
-            ("libjson/src/json.c", {"sanitizer.groundhog_store_key_keyring"}),
-            ("libjson/include/nostr_jansson.h", {"sanitizer.groundhog_store_key_keyring"}),
-            ("apps/relayd/src/relay_ingress.c", set()),
-            ("apps/relayd/include/relay_ingress.h", set()),
+            ("libjson/src/json.c", json_consumers),
+            ("libjson/include/nostr_jansson.h", json_consumers),
+            ("apps/relayd/src/relay_ingress.c", {'supported.apps.grelay.tests'}),
+            ("apps/relayd/include/relay_ingress.h", {'supported.apps.grelay.tests'}),
             ("nostr-gtk/data/ui/gnostr-composer.blp", set()),
             ("nostr-gtk/src/note-card-binding-ctx.h", set()),
         ):
@@ -424,10 +443,8 @@ nostrc_finalize_test_inventory()
         self.assertEqual(r.load_realization(self.build, self.identity), realized)
 
     def test_exact_check_owner_and_existing_selector_boundaries(self):
-        from supported_profile_support import before_supported_batch_policy
-        self.policy = before_supported_batch_policy(self.policy)
         check = self.policy["checks"]["groundhog.media"]
-        self.assertEqual(check["nodes"], ["groundhog.media", "execution.groundhog", "groundhog.unclassified"])
+        self.assertTrue({"groundhog.media", "execution.groundhog", "groundhog.unclassified"} <= set(check["nodes"]))
         self.assertEqual(check["profiles"], ["groundhog.linux"])
         self.assertEqual(check["ctest_tests"], {"groundhog.linux": ["groundhog-media"]})
         self.assertEqual(check["build_targets"], ["test-groundhog-media"])

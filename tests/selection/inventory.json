@@ -1936,7 +1936,12 @@
         "core.linux.asan"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisite only; these tests do not exercise the NIP55L signer adapter."
     },
     "root.asan.schema": {
       "build_targets": [],
@@ -2075,7 +2080,6 @@
           "MockRelayServerBasic",
           "Nip46MockRelay",
           "Nip46QRSocket",
-          "SignerIntegration",
           "TestHarnessExample"
         ],
         "core.linux.asan": [
@@ -2083,7 +2087,6 @@
           "MockRelayServerBasic",
           "Nip46MockRelay",
           "Nip46QRSocket",
-          "SignerIntegration",
           "TestHarnessExample"
         ]
       },
@@ -2112,7 +2115,13 @@
         "core.linux.asan"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.core",
+        "version.contract"
+      ],
+      "build_dependency_reason": "Only the split SignerIntegration execution exercises NIP55L; other testing framework registrations use independent fixture protocols."
     },
     "sanitizer.groundhog_identity": {
       "build_targets": [
@@ -2214,7 +2223,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_account_relays": {
       "build_targets": [
@@ -2263,7 +2278,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_dm_send": {
       "build_targets": [
@@ -2317,7 +2338,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_relay": {
       "build_targets": [
@@ -2359,7 +2386,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_relay_wire": {
       "build_targets": [
@@ -2402,7 +2434,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_relay_publish": {
       "build_targets": [
@@ -2444,7 +2481,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_relay_publish_wire": {
       "build_targets": [
@@ -2487,7 +2529,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_nip29": {
       "build_targets": [
@@ -2533,7 +2580,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_conversations": {
       "build_targets": [
@@ -2577,7 +2629,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_dm_inbox": {
       "build_targets": [
@@ -2635,7 +2692,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_store_key": {
       "build_targets": [
@@ -2743,7 +2806,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_nip46_credentials_keyring": {
       "build_targets": [
@@ -2792,7 +2861,13 @@
       "runtime_inputs": [],
       "requires": [
         "gnome_keyring"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.account_policy_controller": {
       "build_targets": [
@@ -2826,7 +2901,12 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.account_policy_relays": {
       "build_targets": [
@@ -2856,7 +2936,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.account_policy_auth": {
       "build_targets": [
@@ -3193,7 +3277,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.model_store_conversations": {
       "build_targets": [
@@ -3220,7 +3308,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_store": {
       "build_targets": [
@@ -3310,7 +3402,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_store_marmot": {
       "build_targets": [
@@ -3373,7 +3471,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_outbox": {
       "build_targets": [
@@ -3421,7 +3524,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_account_store": {
       "build_targets": [
@@ -3478,7 +3586,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_link_policy": {
       "build_targets": [
@@ -3522,7 +3636,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_background": {
       "build_targets": [
@@ -3576,7 +3695,12 @@
       ],
       "requires": [
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_notifier": {
       "build_targets": [
@@ -3634,7 +3758,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_inbox_setup": {
       "build_targets": [
@@ -3694,7 +3824,13 @@
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
         "gnome/groundhog/data/relay-suggestions.json"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_expiry": {
       "build_targets": [
@@ -3742,7 +3878,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_auth_policy": {
       "build_targets": [
@@ -3840,7 +3981,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_reactions": {
       "build_targets": [
@@ -3884,7 +4031,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_reaction_send": {
       "build_targets": [
@@ -3931,7 +4083,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_privacy_e2e": {
       "build_targets": [
@@ -3988,7 +4146,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_new_message": {
       "build_targets": [
@@ -4074,7 +4238,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_privacy_summary": {
       "build_targets": [
@@ -4152,7 +4322,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_nip29_service": {
       "build_targets": [
@@ -4200,7 +4376,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_service": {
       "build_targets": [
@@ -4249,7 +4430,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_privacy_mls": {
       "build_targets": [
@@ -4298,7 +4484,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_kp_lifecycle": {
       "build_targets": [
@@ -4344,7 +4535,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_kp_lifecycle_adopted": {
       "build_targets": [
@@ -4390,7 +4586,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_net": {
       "build_targets": [
@@ -4437,7 +4638,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_tls_resumption": {
       "build_targets": [
@@ -4484,7 +4690,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_group_ui": {
       "build_targets": [
@@ -4536,7 +4747,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_ui": {
       "build_targets": [
@@ -4584,7 +4800,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_conversation_menu": {
       "build_targets": [
@@ -4637,7 +4858,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_multi_send": {
       "build_targets": [
@@ -4687,7 +4914,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_media": {
       "build_targets": [
@@ -4734,7 +4966,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_blossom": {
       "build_targets": [
@@ -4785,7 +5022,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_media_purge": {
       "build_targets": [
@@ -4833,7 +5075,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_relay_guard": {
       "build_targets": [
@@ -4879,7 +5126,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_media_cache_binding": {
       "build_targets": [
@@ -4930,7 +5182,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_attachments": {
       "build_targets": [
@@ -4985,7 +5242,13 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_media": {
       "build_targets": [
@@ -5028,7 +5291,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_files": {
       "build_targets": [
@@ -5080,7 +5348,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_mls_poll": {
       "build_targets": [
@@ -5142,7 +5415,12 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "gnome/groundhog/tests/media/fixtures/voice"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_icons": {
       "build_targets": [
@@ -5218,7 +5496,12 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.groundhog_two_instance_acceptance": {
       "build_targets": [
@@ -5279,7 +5562,12 @@
       "requires": [
         "display",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "sanitizer.nostrc_test_bus_selftest": {
       "build_targets": [
@@ -5304,7 +5592,11 @@
         "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisite only; these tests do not exercise the NIP55L signer adapter."
     },
     "sanitizer.test_relay_teardown_leaks": {
       "build_targets": [
@@ -6214,7 +6506,13 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.media": {
       "build_targets": [
@@ -6240,7 +6538,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.mls_files": {
       "build_targets": [],
@@ -6267,7 +6569,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.blossom": {
       "build_targets": [
@@ -6297,7 +6603,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.media_cache_binding": {
       "build_targets": [
@@ -6327,7 +6637,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.media_purge": {
       "build_targets": [
@@ -6353,7 +6667,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.mls_media": {
       "build_targets": [],
@@ -6379,7 +6697,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.mls_service": {
       "build_targets": [],
@@ -6406,7 +6728,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.mls_ui": {
       "build_targets": [],
@@ -6434,7 +6760,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.mls_ui_gui": {
       "build_targets": [],
@@ -6478,7 +6808,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.packaging_version": {
       "build_targets": [],
@@ -6551,7 +6886,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.shell": {
       "build_targets": [],
@@ -6601,7 +6941,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "libgo.channel": {
       "build_targets": [],
@@ -6769,7 +7114,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.adopted_welcome": {
       "build_targets": [],
@@ -6805,7 +7154,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.concurrent_commits": {
       "build_targets": [],
@@ -6841,7 +7194,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.control": {
       "build_targets": [],
@@ -6877,7 +7234,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.groundhog_invites_mdk": {
       "build_targets": [],
@@ -6913,7 +7274,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.mdk09_probe": {
       "build_targets": [],
@@ -6953,7 +7318,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.mdk_invites_groundhog": {
       "build_targets": [],
@@ -6989,7 +7358,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.mdk_invites_groundhog_gui": {
       "build_targets": [],
@@ -7026,7 +7399,11 @@
         "display",
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.media_policy": {
       "build_targets": [],
@@ -7062,7 +7439,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.polls": {
       "build_targets": [],
@@ -7098,7 +7479,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.routing_rotation": {
       "build_targets": [],
@@ -7134,7 +7519,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.white_noise_dm": {
       "build_targets": [],
@@ -7170,7 +7559,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.white_noise_media": {
       "build_targets": [],
@@ -7206,7 +7599,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.white_noise_reactions": {
       "build_targets": [],
@@ -7242,7 +7639,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.white_noise_voice": {
       "build_targets": [],
@@ -7278,7 +7679,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk011.white_noise_welcome": {
       "build_targets": [],
@@ -7314,7 +7719,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "mdk08.compatibility": {
       "build_targets": [],
@@ -7349,7 +7758,11 @@
       "requires": [
         "docker",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "gnostr.resource_build": {
       "build_targets": [],
@@ -7435,7 +7848,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.transport_publish": {
       "build_targets": [
@@ -7474,7 +7891,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.transport_publish_wire": {
       "build_targets": [
@@ -7515,7 +7936,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.transport_scope": {
       "build_targets": [
@@ -7554,7 +7979,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.transport_tls": {
       "build_targets": [
@@ -7597,7 +8026,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "groundhog.transport_wire": {
       "build_targets": [
@@ -7637,7 +8070,11 @@
         "groundhog.linux"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "selection.contract": {
       "build_targets": [],
@@ -8139,7 +8576,11 @@
         "groundhog.linux.arm64.prepared011"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisite only; these tests do not exercise the NIP55L signer adapter."
     },
     "supported.apps.relayd.tests": {
       "nodes": [
@@ -8265,7 +8706,11 @@
         "groundhog-test-schemas",
         "test-groundhog-account-store"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.account.store.display": {
       "nodes": [
@@ -8320,7 +8765,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.account.ui.display": {
       "nodes": [
@@ -8373,7 +8823,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.agent.events": {
       "nodes": [
@@ -8415,7 +8870,12 @@
       "build_targets": [
         "test-groundhog-agent-events"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.agents.page": {
       "nodes": [
@@ -8459,7 +8919,12 @@
       "build_targets": [
         "test-groundhog-agents-page"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.attachment.ui.display": {
       "nodes": [
@@ -8512,7 +8977,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.attachments": {
       "nodes": [
@@ -8556,7 +9026,11 @@
         "groundhog-test-schemas",
         "test-groundhog-attachments"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.background.display": {
       "nodes": [
@@ -8611,7 +9085,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.background.private_bus": {
       "nodes": [
@@ -8661,7 +9140,11 @@
       "runtime_inputs": [],
       "requires": [
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.bus.probe.private_bus": {
       "nodes": [
@@ -8716,7 +9199,12 @@
       "runtime_inputs": [],
       "requires": [
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.composer.display": {
       "nodes": [
@@ -8771,7 +9259,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.contact.directory": {
       "nodes": [
@@ -8816,7 +9309,12 @@
         "groundhog-test-schemas",
         "test-groundhog-contact-directory"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.contract.background.desktop": {
       "nodes": [
@@ -8939,7 +9437,12 @@
       "build_targets": [
         "groundhog"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.contract.desktop": {
       "nodes": [
@@ -9219,7 +9722,11 @@
       "requires": [
         "display",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.contract.two.instance.remote.acceptance.display.private_bus": {
       "nodes": [
@@ -9274,7 +9781,12 @@
       "requires": [
         "display",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.conversation.info": {
       "nodes": [
@@ -9319,7 +9831,11 @@
         "groundhog-test-schemas",
         "test-groundhog-conversation-info"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.conversation.info.display": {
       "nodes": [
@@ -9372,7 +9888,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.conversation.list.display": {
       "nodes": [
@@ -9425,7 +9946,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.conversation.menu": {
       "nodes": [
@@ -9470,7 +9996,11 @@
         "groundhog-test-schemas",
         "test-groundhog-conversation-menu"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.conversation.menu.display": {
       "nodes": [
@@ -9523,7 +10053,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.conversation.view.display": {
       "nodes": [
@@ -9576,7 +10111,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.diagnostics": {
       "nodes": [
@@ -9664,7 +10204,11 @@
         "groundhog-test-schemas",
         "test-groundhog-dm-inbox"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.dm.send": {
       "nodes": [
@@ -9710,7 +10254,11 @@
         "groundhog-test-schemas",
         "test-groundhog-dm-send"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.e2e.dm.display": {
       "nodes": [
@@ -9765,7 +10313,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.expiry": {
       "nodes": [
@@ -9811,7 +10364,11 @@
         "groundhog-test-schemas",
         "test-groundhog-expiry"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.gdk.frame.tolerance": {
       "nodes": [
@@ -9895,7 +10452,12 @@
       "build_targets": [
         "groundhog"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.groundhog.display.private_bus": {
       "nodes": [
@@ -9948,7 +10510,12 @@
       "requires": [
         "display",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.group.ui": {
       "nodes": [
@@ -9993,7 +10560,11 @@
         "groundhog-test-schemas",
         "test-groundhog-group-ui"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.group.ui.display": {
       "nodes": [
@@ -10046,7 +10617,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.i18n": {
       "nodes": [
@@ -10173,7 +10749,11 @@
         "groundhog-test-schemas",
         "test-groundhog-inbox-setup"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.issue.uploader": {
       "nodes": [
@@ -10220,7 +10800,12 @@
         "groundhog-test-schemas",
         "test-groundhog-issue-uploader"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.link.policy": {
       "nodes": [
@@ -10260,7 +10845,11 @@
       "build_targets": [
         "test-groundhog-link-policy"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.message.reply": {
       "nodes": [
@@ -10300,7 +10889,11 @@
       "build_targets": [
         "test-groundhog-message-reply"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.kp.lifecycle": {
       "nodes": [
@@ -10343,7 +10936,11 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-kp-lifecycle"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.kp.lifecycle.adopted": {
       "nodes": [
@@ -10386,7 +10983,11 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-kp-lifecycle-adopted"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.poll": {
       "nodes": [
@@ -10471,7 +11072,12 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-remote"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.multi.send": {
       "nodes": [
@@ -10517,7 +11123,11 @@
         "groundhog-test-schemas",
         "test-groundhog-multi-send"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.new.message": {
       "nodes": [
@@ -10596,7 +11206,11 @@
       "build_targets": [
         "test-groundhog-nip29"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip29.group.list": {
       "nodes": [
@@ -10644,7 +11258,12 @@
         "groundhog-test-schemas",
         "test-groundhog-nip29-group-list"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip29.service": {
       "nodes": [
@@ -10687,7 +11306,11 @@
         "groundhog-test-schemas",
         "test-groundhog-nip29-service"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.credentials.keyring.gnome_keyring": {
       "nodes": [
@@ -10730,7 +11353,12 @@
       "runtime_inputs": [],
       "requires": [
         "gnome_keyring"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.inbox.nak.nak": {
       "nodes": [
@@ -10781,7 +11409,12 @@
       "runtime_inputs": [],
       "requires": [
         "nak"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.nak.nak": {
       "nodes": [
@@ -10826,7 +11459,13 @@
       "runtime_inputs": [],
       "requires": [
         "nak"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.pair.dialog.display": {
       "nodes": [
@@ -10879,7 +11518,13 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.pair.nak.display.gnome_keyring.nak": {
       "nodes": [
@@ -10934,7 +11579,13 @@
         "display",
         "gnome_keyring",
         "nak"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.wire": {
       "nodes": [
@@ -10976,7 +11627,13 @@
       "build_targets": [
         "test-groundhog-nip46-wire"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.notifier": {
       "nodes": [
@@ -11021,7 +11678,11 @@
         "groundhog-test-schemas",
         "test-groundhog-notifier"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.notifier.display": {
       "nodes": [
@@ -11074,7 +11735,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.onboarding.display": {
       "nodes": [
@@ -11128,7 +11794,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.outbox": {
       "nodes": [
@@ -11174,7 +11845,11 @@
         "groundhog-test-schemas",
         "test-groundhog-outbox"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.portable.singleton": {
       "nodes": [
@@ -11215,7 +11890,12 @@
       "build_targets": [
         "test-groundhog-portable-singleton"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.preferences.display": {
       "nodes": [
@@ -11267,7 +11947,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.privacy.e2e": {
       "nodes": [
@@ -11315,7 +12000,11 @@
         "groundhog-test-schemas",
         "test-groundhog-privacy-e2e"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.privacy.mls": {
       "nodes": [
@@ -11358,7 +12047,11 @@
         "groundhog-test-schemas",
         "test-groundhog-privacy-mls"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.privacy.summary": {
       "nodes": [
@@ -11438,7 +12131,13 @@
       "build_targets": [
         "test-groundhog-profile-guard"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.public.note.post": {
       "nodes": [
@@ -11481,7 +12180,12 @@
       "build_targets": [
         "test-groundhog-public-note-post"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.reaction.send": {
       "nodes": [
@@ -11522,7 +12226,11 @@
       "build_targets": [
         "test-groundhog-reaction-send"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.reactions": {
       "nodes": [
@@ -11562,7 +12270,11 @@
       "build_targets": [
         "test-groundhog-reactions"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.relay.guard": {
       "nodes": [
@@ -11604,7 +12316,11 @@
         "groundhog-test-schemas",
         "test-groundhog-relay-guard"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.relay.publish.wire": {
       "nodes": [
@@ -11647,7 +12363,11 @@
       "build_targets": [
         "test-groundhog-relay-publish-wire"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.remote.feature.matrix": {
       "nodes": [
@@ -11694,7 +12414,12 @@
         "groundhog-test-schemas",
         "test-groundhog-remote-feature-matrix"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.requests": {
       "nodes": [
@@ -11739,7 +12464,11 @@
         "groundhog-test-schemas",
         "test-groundhog-requests"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.requests.display": {
       "nodes": [
@@ -11792,7 +12521,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.resource": {
       "nodes": [
@@ -11836,7 +12570,12 @@
       "build_targets": [
         "test-groundhog-resource"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.secret.service.sessions": {
       "nodes": [
@@ -11877,7 +12616,12 @@
       "build_targets": [
         "test-groundhog-secret-service-sessions"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.status.notifier": {
       "nodes": [
@@ -11995,7 +12739,11 @@
       "build_targets": [
         "test-groundhog-store-sqlite"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.two.instance.private_bus": {
       "nodes": [
@@ -12048,7 +12796,12 @@
       "runtime_inputs": [],
       "requires": [
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.update.handoff": {
       "nodes": [
@@ -12123,7 +12876,11 @@
       "build_targets": [
         "test-groundhog-voice"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.voice.ui.display": {
       "nodes": [
@@ -12172,7 +12929,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.libhanami": {
       "nodes": [
@@ -15207,7 +15969,12 @@
         "test_nostr_gobject_nip19",
         "test_nostr_gobject_subscription_eose_order"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisite only; these tests do not exercise the NIP55L signer adapter."
     },
     "supported.nostr.gobject.nostr.gobject.nip06.nip11.nip46.nip49.nip55l.relayd.testing.framework": {
       "nodes": [
@@ -15262,7 +16029,12 @@
         "test_nostr_gobject_relay_connect",
         "test_nostr_gobject_relay_teardown"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisite only; these tests do not exercise the NIP55L signer adapter."
     },
     "supported.nostr.gobject.nostr.gobject.nip06.nip11.nip46.nip49.nip55l.relayd.testkit": {
       "nodes": [
@@ -15352,7 +16124,12 @@
         "test_nostr_gobject_profile_service_batching",
         "test_nostr_gobject_store_contract"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisite only; these tests do not exercise the NIP55L signer adapter."
     },
     "supported.nostr.gtk.nostr.gtk": {
       "nodes": [
@@ -15464,7 +16241,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.nostr.gtk.nostr.gtk.nip06.nip11.nip34.nip46.nip49.nip55l.relayd": {
       "nodes": [
@@ -15519,7 +16301,12 @@
         "test_nostr_gtk_markdown_pango",
         "test_nostr_gtk_og_metadata"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.nostr.gtk.nostr.gtk.nip06.nip11.nip34.nip46.nip49.nip55l.relayd.shared.tests.display": {
       "nodes": [
@@ -15607,7 +16394,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.nostr.gtk.nostr.gtk.nip06.nip11.nip46.nip49.nip55l.relayd": {
       "nodes": [
@@ -15655,7 +16447,12 @@
       "build_targets": [
         "test_nostr_gtk_content_parser"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.nostr.gtk.nostr.gtk.nip34": {
       "nodes": [
@@ -16711,7 +17508,12 @@
         "groundhog-test-schemas",
         "test-groundhog-about"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.about.display": {
       "nodes": [
@@ -16760,7 +17562,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.account": {
       "nodes": [
@@ -16801,7 +17608,12 @@
         "groundhog-test-schemas",
         "test-groundhog-account"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.account.backends": {
       "nodes": [
@@ -16881,7 +17693,11 @@
         "groundhog-test-schemas",
         "test-groundhog-account-relays"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.account.remote.switch": {
       "nodes": [
@@ -16962,7 +17778,12 @@
         "groundhog-test-schemas",
         "test-groundhog-auth-policy"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.blossom": {
       "nodes": [
@@ -17000,7 +17821,11 @@
         "groundhog-test-schemas",
         "test-groundhog-blossom"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.contract.packaging.version": {
       "nodes": [
@@ -17068,7 +17893,11 @@
       "build_targets": [
         "test-groundhog-conversations"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.identity": {
       "nodes": [
@@ -17107,7 +17936,12 @@
         "groundhog-test-schemas",
         "test-groundhog-identity"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "groundhog.identity_auth",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.media": {
       "nodes": [
@@ -17142,7 +17976,11 @@
       "build_targets": [
         "test-groundhog-media"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.media.cache.binding": {
       "nodes": [
@@ -17180,7 +18018,11 @@
         "groundhog-test-schemas",
         "test-groundhog-media-cache-binding"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.media.purge": {
       "nodes": [
@@ -17215,7 +18057,11 @@
       "build_targets": [
         "test-groundhog-media-purge"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.files": {
       "nodes": [
@@ -17254,7 +18100,11 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-files"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.media": {
       "nodes": [
@@ -17292,7 +18142,11 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-media"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.service": {
       "nodes": [
@@ -17331,7 +18185,11 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-service"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.ui": {
       "nodes": [
@@ -17371,7 +18229,11 @@
         "groundhog-test-schemas",
         "test-groundhog-mls-ui"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.mls.ui.display": {
       "nodes": [
@@ -17419,7 +18281,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.net": {
       "nodes": [
@@ -17458,7 +18325,11 @@
         "groundhog-test-schemas",
         "test-groundhog-net"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.nip46.credentials.list": {
       "nodes": [
@@ -17580,7 +18451,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.relay": {
       "nodes": [
@@ -17615,7 +18491,11 @@
       "build_targets": [
         "test-groundhog-relay"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.relay.publish": {
       "nodes": [
@@ -17650,7 +18530,11 @@
       "build_targets": [
         "test-groundhog-relay-publish"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.relay.wire": {
       "nodes": [
@@ -17686,7 +18570,11 @@
       "build_targets": [
         "test-groundhog-relay-wire"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.shell.display": {
       "nodes": [
@@ -17731,7 +18619,12 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.signer.nip46": {
       "nodes": [
@@ -17836,7 +18729,11 @@
       "build_targets": [
         "test-groundhog-store-conversations"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.groundhog.store.key": {
       "nodes": [
@@ -17945,7 +18842,11 @@
         "groundhog-test-schemas",
         "test-groundhog-tls-resumption"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.apps.gnostr.expensive": {
       "nodes": [
@@ -17975,7 +18876,11 @@
       "build_targets": [
         "gnostr-test-live-state-kinds"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "supported.apps.gnostr": {
       "nodes": [
@@ -18038,7 +18943,6 @@
           "gnostr-test-profile-guard",
           "gnostr-test-relays",
           "gnostr-test-resource-icons",
-          "gnostr-test-signer-nip55l-identity",
           "gnostr-test-startup-live-eose",
           "gnostr-test-sync-bridge-mute-reload",
           "gnostr-test-sync-bridge-user-state",
@@ -18091,7 +18995,6 @@
           "gnostr-test-profile-guard",
           "gnostr-test-relays",
           "gnostr-test-resource-icons",
-          "gnostr-test-signer-nip55l-identity",
           "gnostr-test-startup-live-eose",
           "gnostr-test-sync-bridge-mute-reload",
           "gnostr-test-sync-bridge-user-state",
@@ -18159,7 +19062,11 @@
         "gnostr-test-timeline-source",
         "gnostr-test-youtube-url"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.apps.gnostr.display": {
       "nodes": [
@@ -18205,7 +19112,11 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared generated signer binding/compile prerequisites, not a protocol consumer; the real gnostr and Groundhog signer adapters own behavioral compatibility."
     },
     "supported.apps.gnostr.plugins.mls.groups": {
       "nodes": [
@@ -19032,7 +19943,11 @@
       "runtime_inputs": [],
       "requires": [
         "display"
-      ]
+      ],
+      "build_only_nodes": [
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "supported.signet.tests": {
       "nodes": [
@@ -19228,6 +20143,351 @@
       "requires": [
         "private_bus"
       ]
+    },
+    "gnostr.signer_adapter": {
+      "nodes": [
+        "execution.core",
+        "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "gnostr.schema_inputs",
+        "gnostr.signer_adapter",
+        "marmot.gobject",
+        "nip47",
+        "nip51",
+        "nip55l",
+        "nip55l.dbus_contract",
+        "relayd.async_storage_api",
+        "testing.common_inputs",
+        "testing.framework",
+        "testkit"
+      ],
+      "profiles": [
+        "core.linux",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "gnostr-test-signer-nip55l-identity"
+        ],
+        "groundhog.mdk08": [
+          "gnostr-test-signer-nip55l-identity"
+        ]
+      },
+      "build_targets": [
+        "gnostr-test-signer-nip55l-identity"
+      ],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "nostr_seal.unit": {
+      "nodes": [
+        "gnome.nostr_seal"
+      ],
+      "profiles": [
+        "nostr_seal.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "nostr_seal.linux": [
+          "nostr_seal_unit",
+          "nostr_seal_config"
+        ]
+      },
+      "build_targets": [
+        "test-nostr-seal",
+        "test-nostr-seal-config",
+        "nostr-seal",
+        "nostr-seal-gtk"
+      ],
+      "runtime_inputs": [],
+      "requires": []
+    },
+    "nostr_seal.signer": {
+      "nodes": [
+        "gnome.nostr_seal",
+        "nip55l"
+      ],
+      "profiles": [
+        "nostr_seal.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "nostr_seal.linux": [
+          "nostr_seal_signer"
+        ]
+      },
+      "build_targets": [
+        "test-nostr-seal-signer",
+        "nostr-signer-daemon",
+        "nostr-seal"
+      ],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "nostr_seal.publish": {
+      "nodes": [
+        "gnome.nostr_seal",
+        "gnome.nostr_share"
+      ],
+      "profiles": [
+        "nostr_seal.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "nostr_seal.linux": [
+          "nostr_seal_publish"
+        ]
+      },
+      "build_targets": [
+        "test-nostr-seal-publish",
+        "nostr-seal"
+      ],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "nostr_seal.streaming": {
+      "nodes": [
+        "gnome.nostr_seal.streaming"
+      ],
+      "profiles": [
+        "nostr_seal.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "nostr_seal.linux": [
+          "nostr_seal_big"
+        ]
+      },
+      "build_targets": [
+        "test-nostr-seal"
+      ],
+      "runtime_inputs": [],
+      "requires": []
+    },
+    "desktop.signer.publish": {
+      "nodes": [
+        "desktop.signer_adapters"
+      ],
+      "profiles": [
+        "desktop.signer.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "desktop.signer.linux": [
+          "nostr-publish-policy",
+          "nostr-publish-publisher",
+          "nostr-publish-session-relay"
+        ]
+      },
+      "build_targets": [],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "desktop.signer.dav": {
+      "nodes": [
+        "desktop.signer_adapters"
+      ],
+      "profiles": [
+        "desktop.signer.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "desktop.signer.linux": [
+          "nostr-dav-auth-required",
+          "nostr-dav-publish-rollback"
+        ]
+      },
+      "build_targets": [],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "desktop.signer.share": {
+      "nodes": [
+        "desktop.signer_adapters"
+      ],
+      "profiles": [
+        "desktop.signer.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "desktop.signer.linux": [
+          "nostr-share-share",
+          "nostr-share-e2e"
+        ]
+      },
+      "build_targets": [],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "desktop.signer.settings": {
+      "nodes": [
+        "desktop.signer_adapters"
+      ],
+      "profiles": [
+        "desktop.signer.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "desktop.signer.linux": [
+          "nostr-settings-lists",
+          "nostr-settings-identity",
+          "nostr-settings-config"
+        ]
+      },
+      "build_targets": [],
+      "runtime_inputs": [],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "groundhog.identity_mls_compat": {
+      "nodes": [
+        "groundhog.identity_auth",
+        "groundhog.identity_api"
+      ],
+      "profiles": [
+        "groundhog.identity_compat.linux"
+      ],
+      "kind": "build_contract",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "build_targets": [
+        "test-groundhog-mls-service"
+      ],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}",
+        "--target",
+        "test-groundhog-mls-service"
+      ],
+      "working_directory": "{source}",
+      "environment": {},
+      "runtime_inputs": []
+    },
+    "selection.operational.linux": {
+      "nodes": [
+        "selection.operational"
+      ],
+      "profiles": [
+        "selection.operational.linux"
+      ],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": [
+        "python3",
+        "{source}/scripts/test-selection-operational.py"
+      ],
+      "working_directory": "{source}",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "runtime_inputs": [],
+      "build_targets": []
+    },
+    "selection.operational.macos": {
+      "nodes": [
+        "selection.operational"
+      ],
+      "profiles": [
+        "selection.operational.macos"
+      ],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": [
+        "python3",
+        "{source}/scripts/test-selection-operational.py"
+      ],
+      "working_directory": "{source}",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "runtime_inputs": [],
+      "build_targets": []
+    },
+    "root.asan.signer_integration": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "SignerIntegration"
+        ],
+        "core.linux.asan": [
+          "SignerIntegration"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "gnome.seahorse",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.core",
+        "testing.framework",
+        "vendor.nostrdb",
+        "version.contract"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -19891,15 +21151,18 @@
       "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
     },
     "gnome.nostr_seal": {
-      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
       "depends_on": [
-        "nostr.gobject"
+        "nip55l",
+        "nip19",
+        "nip44",
+        "nip49",
+        "gnome.nostr_share"
       ],
       "id": "gnome.nostr_seal",
       "owner_paths": [
         "gnome/nostr-seal"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "gnome/nostr-seal/CMakeLists.txt: nseal core/CLI, private NIP49 TUs, nh_porthome_crypto.c, optional nostr-share publish and real nostr-signer-daemon integration. Registration/targets pinned by operational regression."
     },
     "gnome.nostr_search_provider": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
@@ -20032,32 +21295,40 @@
     },
     "groundhog.account_relays": {
       "depends_on": [
-        "groundhog.identity_auth",
+        "groundhog.identity_api",
         "groundhog.relay"
       ],
       "id": "groundhog.account_relays",
       "owner_paths": [
         "gnome/groundhog/CMakeLists.txt"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure.",
+      "build_depends_on": [
+        "groundhog.identity_auth"
+      ],
+      "build_dependency_reason": "Consumes the stable identity/auth interfaces; signer implementations are validated by adapter/auth tests plus the bounded MLS link compatibility profile. Interface changes still select full downstream consumers."
     },
     "groundhog.conversations": {
       "depends_on": [
         "groundhog.store",
-        "groundhog.identity_auth",
+        "groundhog.identity_api",
         "nostr.gtk.portable"
       ],
       "id": "groundhog.conversations",
       "owner_paths": [
         "gnome/groundhog/CMakeLists.txt"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure.",
+      "build_depends_on": [
+        "groundhog.identity_auth"
+      ],
+      "build_dependency_reason": "Consumes the stable identity/auth interfaces; signer implementations are validated by adapter/auth tests plus the bounded MLS link compatibility profile. Interface changes still select full downstream consumers."
     },
     "groundhog.dm": {
       "depends_on": [
         "groundhog.conversations",
         "groundhog.account_relays",
-        "groundhog.identity_auth",
+        "groundhog.identity_api",
         "nip17",
         "nip59"
       ],
@@ -20065,7 +21336,11 @@
       "owner_paths": [
         "gnome/groundhog/CMakeLists.txt"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure.",
+      "build_depends_on": [
+        "groundhog.identity_auth"
+      ],
+      "build_dependency_reason": "Consumes the stable identity/auth interfaces; signer implementations are validated by adapter/auth tests plus the bounded MLS link compatibility profile. Interface changes still select full downstream consumers."
     },
     "groundhog.group_ui": {
       "depends_on": [
@@ -20084,7 +21359,9 @@
       "depends_on": [
         "nostr.gobject",
         "gnome.seahorse",
-        "groundhog.relay"
+        "groundhog.relay",
+        "groundhog.identity_api",
+        "nip55l"
       ],
       "id": "groundhog.identity_auth",
       "owner_paths": [
@@ -20138,7 +21415,7 @@
       "depends_on": [
         "groundhog.mls_store",
         "groundhog.dm",
-        "groundhog.identity_auth",
+        "groundhog.identity_api",
         "groundhog.conversations",
         "groundhog.account_relays",
         "nip17",
@@ -20148,7 +21425,11 @@
       "owner_paths": [
         "gnome/groundhog/CMakeLists.txt"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure.",
+      "build_depends_on": [
+        "groundhog.identity_auth"
+      ],
+      "build_dependency_reason": "Consumes the stable identity/auth interfaces; signer implementations are validated by adapter/auth tests plus the bounded MLS link compatibility profile. Interface changes still select full downstream consumers."
     },
     "groundhog.mls_store": {
       "depends_on": [
@@ -20946,7 +22227,8 @@
     "nip55l.glib": {
       "depends_on": [
         "nip55l.core",
-        "nostr.gobject"
+        "nostr.gobject",
+        "nip55l.dbus_contract"
       ],
       "id": "nip55l.glib",
       "owner_paths": [
@@ -21478,14 +22760,13 @@
         "libnostr",
         "libjson",
         "nip44",
-        "nip46",
-        "nip55l"
+        "nip46"
       ],
       "id": "signet",
       "owner_paths": [
         "signet"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Signet owns its D-Bus signing implementation (signet/src/dbus_unix.c); CMake/Meson do not link NIP55L. Shared crypto prerequisites remain explicit."
     },
     "static.policy": {
       "depends_on": [],
@@ -21770,6 +23051,56 @@
         "tests/runtime/nip5f_approver.c"
       ],
       "rationale": "Fixture-only daemon Secret Service prerequisites; not a dependency of the product NIP-5F library or readiness attestation."
+    },
+    "groundhog.identity_api": {
+      "id": "groundhog.identity_api",
+      "owner_paths": [
+        "gnome/groundhog/src/identity/gh-identity.h",
+        "gnome/groundhog/src/identity/gh-signer.h",
+        "gnome/groundhog/src/app/gh-auth-policy.h",
+        "gnome/groundhog/src/app/gh-account-auth.h"
+      ],
+      "depends_on": [],
+      "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
+    },
+    "gnostr.signer_adapter": {
+      "id": "gnostr.signer_adapter",
+      "owner_paths": [
+        "apps/gnostr/src/ipc",
+        "apps/gnostr/tests/test_signer_nip55l_identity.c"
+      ],
+      "depends_on": [
+        "nip55l"
+      ],
+      "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
+    },
+    "gnome.nostr_seal.streaming": {
+      "id": "gnome.nostr_seal.streaming",
+      "owner_paths": [
+        "gnome/nostr-seal/src/nseal.c",
+        "gnome/nostr-homed/src/porthome/nh_porthome_crypto.c"
+      ],
+      "depends_on": [],
+      "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
+    },
+    "desktop.signer_adapters": {
+      "id": "desktop.signer_adapters",
+      "owner_paths": [
+        "gnome/libnostr-publish/src/nostr-publish-signer-dbus.c"
+      ],
+      "depends_on": [
+        "nip55l"
+      ],
+      "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
+    },
+    "selection.operational": {
+      "id": "selection.operational",
+      "owner_paths": [
+        "tests/selection",
+        "scripts/test-selection-operational.py"
+      ],
+      "depends_on": [],
+      "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
     }
   },
   "path_rules": [
@@ -26195,6 +27526,152 @@
         "selection.contract"
       ],
       "reason": "Official hash-pinned fuzz toolchain producer/probe inputs retain component impact and full policy source auditing; no fuzz ownership or waiver promotion."
+    },
+    {
+      "exact": "gnome/groundhog/src/identity/gh-identity.h",
+      "nodes": [
+        "groundhog.identity_api"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/groundhog/src/identity/gh-signer.h",
+      "nodes": [
+        "groundhog.identity_api"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/groundhog/src/app/gh-auth-policy.h",
+      "nodes": [
+        "groundhog.identity_api"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/groundhog/src/app/gh-account-auth.h",
+      "nodes": [
+        "groundhog.identity_api"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/groundhog/tests/identity/test_identity.c",
+      "nodes": [
+        "groundhog.identity_auth"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/groundhog/tests/app/test_auth_policy.c",
+      "nodes": [
+        "groundhog.identity_auth"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "prefix": "apps/gnostr/src/ipc",
+      "nodes": [
+        "gnostr.signer_adapter"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "apps/gnostr/tests/test_signer_nip55l_identity.c",
+      "nodes": [
+        "gnostr.signer_adapter"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/nostr-seal/src/nseal.c",
+      "nodes": [
+        "gnome.nostr_seal",
+        "gnome.nostr_seal.streaming"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome/nh_porthome_crypto.c",
+      "nodes": [
+        "gnome.nostr_seal",
+        "gnome.nostr_seal.streaming"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "gnome/libnostr-publish/src/nostr-publish-signer-dbus.c",
+      "nodes": [
+        "desktop.signer_adapters"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "tests/selection/inventory.json",
+      "nodes": [
+        "selection.operational"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "tests/selection/test_selector.py",
+      "nodes": [
+        "selection.operational"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "tests/selection/w11_post_419_integration_support.py",
+      "nodes": [
+        "selection.operational"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "tests/selection/test_nip55l_selection.py",
+      "nodes": [
+        "selection.operational"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "scripts/test-selection-operational.py",
+      "nodes": [
+        "selection.operational"
+      ],
+      "effect": "impact",
+      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
+    },
+    {
+      "exact": "browser-extension/nip07/README.md",
+      "nodes": [
+        "grotto.native_host"
+      ],
+      "effect": "impact",
+      "reason": "NIP07 native-host install and signer permission contract documentation; component-owned input, not an unknown implementation path."
+    },
+    {
+      "exact": "tests/selection/fixtures/nip55l_affected.json",
+      "nodes": [
+        "selection.operational"
+      ],
+      "effect": "impact",
+      "reason": "Signer affected-selection regression paths and expected sets; runs the operational suite."
     }
   ],
   "profiles": {
@@ -27354,6 +28831,155 @@
         ],
         "reason": "Distinct native-prepared inputs; no original Docker image-build receipt, old-profile coverage, or full root registration union is claimed."
       }
+    },
+    "nostr_seal.linux": {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "build_type": "Debug",
+      "instrumentation": "none",
+      "source_dir": ".",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+        "-DENABLE_NOSTR_SEAL=ON",
+        "-DENABLE_NOSTR_SHARE=ON",
+        "-DBUILD_LIBHANAMI=ON",
+        "-DBUILD_RELAYD=ON",
+        "-DNOSTR_SEAL_ENABLE_GTK=ON"
+      ],
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
+      "capabilities": [
+        "private_bus"
+      ],
+      "setup": "docs/TESTING.md#signer-consumer-selection",
+      "local_availability": "host_or_container",
+      "parallelism": 1,
+      "timeout_seconds": 3600
+    },
+    "desktop.signer.linux": {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "build_type": "Debug",
+      "instrumentation": "none",
+      "source_dir": ".",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service",
+        "-DENABLE_NOSTR_DAV=ON",
+        "-DENABLE_NOSTR_SHARE=ON",
+        "-DENABLE_NOSTR_SETTINGS=ON",
+        "-DENABLE_NOSTR_SEAL=ON",
+        "-DBUILD_LIBHANAMI=ON",
+        "-DBUILD_RELAYD=ON"
+      ],
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
+      "capabilities": [
+        "private_bus"
+      ],
+      "setup": "docs/TESTING.md#signer-consumer-selection",
+      "local_availability": "host_or_container",
+      "parallelism": 1,
+      "timeout_seconds": 3600
+    },
+    "groundhog.identity_compat.linux": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_RELAYD=ON",
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_MDK011_INTEROP=OFF",
+        "-DBUILD_MDK_INTEROP=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+      ],
+      "environment": {
+        "NOSTRC_TEST_NIP5F_APPROVAL": "unidentified-get-public-key-once"
+      },
+      "feature_variants": [],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": "docs/TESTING.md#signer-consumer-selection",
+      "source_dir": ".",
+      "timeout_seconds": 3600,
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {}
+      },
+      "build_parallelism": 2,
+      "test_parallelism": 2
+    },
+    "selection.operational.linux": {
+      "platform": "linux",
+      "architecture": "any",
+      "compiler": "gcc",
+      "build_type": "Debug",
+      "instrumentation": "none",
+      "source_dir": ".",
+      "configure_args": [],
+      "environment": {},
+      "capabilities": [],
+      "setup": "scripts/test-selection-operational.py",
+      "local_availability": "host",
+      "parallelism": 1
+    },
+    "selection.operational.macos": {
+      "platform": "macos",
+      "architecture": "any",
+      "compiler": "clang",
+      "build_type": "Debug",
+      "instrumentation": "none",
+      "source_dir": ".",
+      "configure_args": [],
+      "environment": {},
+      "capabilities": [],
+      "setup": "scripts/test-selection-operational.py",
+      "local_availability": "host",
+      "parallelism": 1,
+      "contexts": [
+        "local"
+      ]
     }
   },
   "release_components": {

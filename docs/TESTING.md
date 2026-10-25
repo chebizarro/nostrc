@@ -55,6 +55,47 @@ release proof. `--evidence-dir <dir>` retains unique run evidence. Missing requi
 capabilities and selected failures must remain visible; a bypass is not verified
 success. Do not use raw resolve/run commands against a mismatched checkout.
 
+### Signer consumer selection
+
+NIP-55L implementation or D-Bus changes select the signer suites, browser host,
+gnostr signer service, Groundhog's real `gh-signer-nip55l.c` adapter through
+`groundhog-identity`, and account/auth-policy checks. They also select the
+`nostr_seal.linux` profile (unit/config, publish adapter and real CLI/daemon signer
+integration) and `desktop.signer.linux` (DAV/share/settings publish adapters).
+These Linux profiles are executed by the NIP-55L CI family and the local gate's
+Linux defaults. A missing target, selected registration or capability is a
+failure, not permission to omit the check. These are authored execution recipes,
+not evidence that a native or hosted run has passed.
+
+`groundhog.identity_compat.linux` builds/links the real
+`test-groundhog-mls-service` executable without running its suite. This bounded
+compatibility check retains identity/auth's real MLS consumer without selecting
+MLS, NIP-29, poll or voice runtime suites for a signer implementation change.
+Changes to the identity/auth interface headers still select downstream runtime
+consumers. `build_depends_on` records compile prerequisites separately from
+behavioral `depends_on`; a check's `build_only_nodes` retains audited compile
+inputs without selecting that runtime check. Both need a rationale. Input audits
+still verify compile/header closure and do not accept build-only coverage for
+runtime inputs. Prerequisites are built; their unrelated tests are not selected.
+
+Inventory edits compare parsed base/head entries. Adding or editing a check
+selects that check in its affected profiles, plus the selection operational suite;
+it does not select every other check sharing those profiles. Changing a profile
+configuration, removing a check, or dropping one of its profile memberships selects
+all remaining checks in those profiles. Removing a profile, changing ownership or
+other policy metadata, missing/unreadable base inventories, and production selector
+or runner changes still force repository-wide broad selection. JSON formatting
+alone selects only the operational suite. Regression-test-only changes to
+`test_selector.py` and the G15 enrollment helper select the operational suite;
+production logic lives in `scripts/test_selection.py`, not that test module.
+Unknown source paths retain conservative broad fallback.
+
+`--explain --head` uses the policy in that committed tree. It cannot retroactively
+change a historical inventory. Replaying historical paths with new policy must
+identify the new source-bound replay commits, separately from the original plan.
+The G15 path fixture in `tests/selection/fixtures/nip55l_affected.json` pins the
+expected current-policy signer set and explicitly excludes MLS/NIP-29/voice tests.
+
 ## Focused verification and evidence
 
 Use relevant selector/adapter/workflow regressions and representative change

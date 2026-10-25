@@ -150,7 +150,7 @@ def main():
     if args.tsan:
         names = sorted(set(names) & TSAN_TESTS)
     if args.command == 'prepare':
-        outputs = {'affected': not dispatch['broad'], 'has_checks': bool(checks),
+        outputs = {'affected': not dispatch['broad'] and args.profile not in plan.get('metadata_broad_profiles', []), 'has_checks': bool(checks),
                    'needs_grotto': needs_grotto(checks, args.profile),
                    'needs_native_host': needs_native_host(checks, args.profile),
                    'needs_nak': any('nak' in c.get('requires', []) for c in checks.values())
@@ -162,7 +162,8 @@ def main():
         print(json.dumps({'profile': args.profile, 'checks': sorted(checks),
                           'ctest_names': names, **outputs}, indent=2))
         return
-    selection.require(not dispatch['broad'], 'broad runs must use the ordinary broad runner')
+    selection.require(not dispatch['broad'] and args.profile not in plan.get('metadata_broad_profiles', []),
+                      'broad runs must use the ordinary broad runner')
     # Keep sanitizer policy from the ordinary workflow; add only authored test env.
     for key, value in policy['profiles'][args.profile].get('environment', {}).items():
         os.environ.setdefault(key, value)

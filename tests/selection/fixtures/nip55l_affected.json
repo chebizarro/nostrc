@@ -1,0 +1,484 @@
+{
+  "description": "G15 changed-path replay against the current audited policy; not an assertion that immutable historical inventory has changed. Baseline differs only by the G15-added permission-repeat check.",
+  "base": "9e184be8666a06e7d867570a37a53a90c31f1817",
+  "head": "eb8d85a153938e5a4ec31468a6a88fc0cf30b9dd",
+  "changes": [
+    {
+      "status": "M",
+      "old_path": "VERSION_MANIFEST.md",
+      "new_path": "VERSION_MANIFEST.md"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/README.md",
+      "new_path": "apps/grotto/README.md"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/daemon/grotto_clients.c",
+      "new_path": "apps/grotto/daemon/grotto_clients.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/daemon/grotto_clients.h",
+      "new_path": "apps/grotto/daemon/grotto_clients.h"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/daemon/grotto_control.c",
+      "new_path": "apps/grotto/daemon/grotto_control.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
+      "new_path": "apps/grotto/data/org.nostr.Grotto.Control1.xml"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/org.nostr.Grotto.gschema.xml",
+      "new_path": "apps/grotto/data/org.nostr.Grotto.gschema.xml"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/approval-dialog.blp",
+      "new_path": "apps/grotto/data/ui/approval-dialog.blp"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/approval-dialog.ui",
+      "new_path": "apps/grotto/data/ui/approval-dialog.ui"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/page-client-detail.blp",
+      "new_path": "apps/grotto/data/ui/page-client-detail.blp"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/page-client-detail.ui",
+      "new_path": "apps/grotto/data/ui/page-client-detail.ui"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/page-connect.blp",
+      "new_path": "apps/grotto/data/ui/page-connect.blp"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/page-connect.ui",
+      "new_path": "apps/grotto/data/ui/page-connect.ui"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/page-settings.blp",
+      "new_path": "apps/grotto/data/ui/page-settings.blp"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/data/ui/page-settings.ui",
+      "new_path": "apps/grotto/data/ui/page-settings.ui"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/native-host/README.md",
+      "new_path": "apps/grotto/native-host/README.md"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/native-host/nm_provider_nip07.c",
+      "new_path": "apps/grotto/native-host/nm_provider_nip07.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/native-host/tests/test_nm_e2e.c",
+      "new_path": "apps/grotto/native-host/tests/test_nm_e2e.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/approval-controller.c",
+      "new_path": "apps/grotto/src/approval-controller.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/home-model.c",
+      "new_path": "apps/grotto/src/home-model.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/signer_grants.c",
+      "new_path": "apps/grotto/src/signer_grants.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/ui/approval_dialog.c",
+      "new_path": "apps/grotto/src/ui/approval_dialog.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/ui/page-client-detail.c",
+      "new_path": "apps/grotto/src/ui/page-client-detail.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/ui/page-history.c",
+      "new_path": "apps/grotto/src/ui/page-history.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/ui/page-home.c",
+      "new_path": "apps/grotto/src/ui/page-home.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/src/ui/page-settings.c",
+      "new_path": "apps/grotto/src/ui/page-settings.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/CMakeLists.txt",
+      "new_path": "apps/grotto/tests/CMakeLists.txt"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/TestInventory.cmake",
+      "new_path": "apps/grotto/tests/TestInventory.cmake"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-approval-controller.c",
+      "new_path": "apps/grotto/tests/test-approval-controller.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-approval-dialog.c",
+      "new_path": "apps/grotto/tests/test-approval-dialog.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-approval-integration.c",
+      "new_path": "apps/grotto/tests/test-approval-integration.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-bunker-e2e.c",
+      "new_path": "apps/grotto/tests/test-bunker-e2e.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-clients.c",
+      "new_path": "apps/grotto/tests/test-clients.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-desktop-activation.c",
+      "new_path": "apps/grotto/tests/test-desktop-activation.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-home-dashboard.c",
+      "new_path": "apps/grotto/tests/test-home-dashboard.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-identity-management.c",
+      "new_path": "apps/grotto/tests/test-identity-management.c"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "new_path": "apps/grotto/tests/test-permission-repeat.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-room-flow.c",
+      "new_path": "apps/grotto/tests/test-room-flow.c"
+    },
+    {
+      "status": "M",
+      "old_path": "apps/grotto/tests/test-ui-layout.c",
+      "new_path": "apps/grotto/tests/test-ui-layout.c"
+    },
+    {
+      "status": "M",
+      "old_path": "browser-extension/nip07/README.md",
+      "new_path": "browser-extension/nip07/README.md"
+    },
+    {
+      "status": "M",
+      "old_path": "debian/control",
+      "new_path": "debian/control"
+    },
+    {
+      "status": "M",
+      "old_path": "docs/dbus-interface.md",
+      "new_path": "docs/dbus-interface.md"
+    },
+    {
+      "status": "M",
+      "old_path": "docs/plans/grotto-signer-ux-2026-10-12.md",
+      "new_path": "docs/plans/grotto-signer-ux-2026-10-12.md"
+    },
+    {
+      "status": "M",
+      "old_path": "docs/proposals/55L.md",
+      "new_path": "docs/proposals/55L.md"
+    },
+    {
+      "status": "A",
+      "old_path": null,
+      "new_path": "docs/reviews/grotto-g15-permission-model-security-contract-review-2026-10-25.md"
+    },
+    {
+      "status": "M",
+      "old_path": "docs/testing/grotto-manual-acceptance.md",
+      "new_path": "docs/testing/grotto-manual-acceptance.md"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/groundhog/src/identity/gh-signer-nip55l.c",
+      "new_path": "gnome/groundhog/src/identity/gh-signer-nip55l.c"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/groundhog/tests/identity/test_identity.c",
+      "new_path": "gnome/groundhog/tests/identity/test_identity.c"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/CMakeLists.txt",
+      "new_path": "gnome/nostr-seal/CMakeLists.txt"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/README.md",
+      "new_path": "gnome/nostr-seal/README.md"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/src/gtk-main.c",
+      "new_path": "gnome/nostr-seal/src/gtk-main.c"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/src/nseal-private.h",
+      "new_path": "gnome/nostr-seal/src/nseal-private.h"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/src/nseal-signer.c",
+      "new_path": "gnome/nostr-seal/src/nseal-signer.c"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/src/nseal-signer.h",
+      "new_path": "gnome/nostr-seal/src/nseal-signer.h"
+    },
+    {
+      "status": "M",
+      "old_path": "gnome/nostr-seal/tests/test-nseal-signer.c",
+      "new_path": "gnome/nostr-seal/tests/test-nseal-signer.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/CMakeLists.txt",
+      "new_path": "nips/nip55l/CMakeLists.txt"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/README.md",
+      "new_path": "nips/nip55l/README.md"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/dbus/org.nostr.Signer.xml",
+      "new_path": "nips/nip55l/dbus/org.nostr.Signer.xml"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/include/nostr/nip55l/signer_ops.h",
+      "new_path": "nips/nip55l/include/nostr/nip55l/signer_ops.h"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/core/signer_ops.c",
+      "new_path": "nips/nip55l/src/core/signer_ops.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_approval_service.c",
+      "new_path": "nips/nip55l/src/glib/signer_approval_service.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_approval_service.h",
+      "new_path": "nips/nip55l/src/glib/signer_approval_service.h"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_gate.h",
+      "new_path": "nips/nip55l/src/glib/signer_gate.h"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_permission_policy.h",
+      "new_path": "nips/nip55l/src/glib/signer_permission_policy.h"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_permissions.c",
+      "new_path": "nips/nip55l/src/glib/signer_permissions.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_permissions.h",
+      "new_path": "nips/nip55l/src/glib/signer_permissions.h"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/src/glib/signer_service_g.c",
+      "new_path": "nips/nip55l/src/glib/signer_service_g.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/tests/test_signer_approval_service.c",
+      "new_path": "nips/nip55l/tests/test_signer_approval_service.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/tests/test_signer_dbus_contract.c",
+      "new_path": "nips/nip55l/tests/test_signer_dbus_contract.c"
+    },
+    {
+      "status": "M",
+      "old_path": "nips/nip55l/tests/test_signer_permissions.c",
+      "new_path": "nips/nip55l/tests/test_signer_permissions.c"
+    },
+    {
+      "status": "M",
+      "old_path": "packaging/rpm/nostr-login.spec",
+      "new_path": "packaging/rpm/nostr-login.spec"
+    },
+    {
+      "status": "M",
+      "old_path": "tests/selection/inventory.json",
+      "new_path": "tests/selection/inventory.json"
+    },
+    {
+      "status": "M",
+      "old_path": "tests/selection/test_selector.py",
+      "new_path": "tests/selection/test_selector.py"
+    },
+    {
+      "status": "M",
+      "old_path": "tests/selection/w11_post_419_integration_support.py",
+      "new_path": "tests/selection/w11_post_419_integration_support.py"
+    }
+  ],
+  "inventory_added_checks": [
+    "grotto.permissions.repeat"
+  ],
+  "signer_path": "nips/nip55l/src/glib/signer_service_g.c",
+  "expected_signer_checks": [
+    "core.default_build",
+    "desktop.signer.dav",
+    "desktop.signer.publish",
+    "desktop.signer.settings",
+    "desktop.signer.share",
+    "gnostr.signer_adapter",
+    "grotto.build_contract",
+    "grotto.default_build",
+    "grotto.lsan_counterfactual",
+    "grotto.package_contract.asan_ubsan",
+    "grotto.package_contract.native",
+    "grotto.permissions.repeat",
+    "grotto.quarantine_contract.asan_ubsan",
+    "grotto.quarantine_contract.native",
+    "grotto.signer.asan_ubsan",
+    "grotto.signer.native",
+    "groundhog.account_policy_auth",
+    "groundhog.account_policy_identity",
+    "groundhog.default_build",
+    "groundhog.identity_account_backends",
+    "groundhog.identity_account_remote_switch",
+    "groundhog.identity_credentials_list",
+    "groundhog.identity_mls_compat",
+    "groundhog.identity_nip46_session",
+    "groundhog.identity_signer_nip46",
+    "nostr_seal.publish",
+    "nostr_seal.signer",
+    "nostr_seal.unit",
+    "root.asan.nip55l",
+    "root.asan.signer_integration",
+    "sanitizer.groundhog_auth_policy",
+    "sanitizer.groundhog_identity",
+    "supported.apps.grotto",
+    "supported.apps.grotto.native.host",
+    "supported.apps.grotto.native.host.private_bus",
+    "supported.apps.grotto.tests",
+    "supported.apps.grotto.tests.display",
+    "supported.apps.grotto.tests.display.private_bus",
+    "supported.apps.grotto.tests.private_bus",
+    "supported.groundhog.account.backends",
+    "supported.groundhog.account.remote.switch",
+    "supported.groundhog.nip46.credentials.list",
+    "supported.groundhog.nip46.session",
+    "supported.groundhog.signer.nip46",
+    "supported.nips.nip55l",
+    "supported.nips.nip5f.signer_endpoint",
+    "supported.testing.testing.framework.gnome.seahorse.nip04.nip06.nip44.nip49.nip55l.version.contract"
+  ],
+  "expected_g15_checks": [
+    "core.default_build",
+    "desktop.signer.dav",
+    "desktop.signer.publish",
+    "desktop.signer.settings",
+    "desktop.signer.share",
+    "gnostr.signer_adapter",
+    "grotto.build_contract",
+    "grotto.default_build",
+    "grotto.lsan_counterfactual",
+    "grotto.package_contract.asan_ubsan",
+    "grotto.package_contract.native",
+    "grotto.permissions.repeat",
+    "grotto.quarantine_contract.asan_ubsan",
+    "grotto.quarantine_contract.native",
+    "grotto.signer.asan_ubsan",
+    "grotto.signer.native",
+    "groundhog.account_policy_auth",
+    "groundhog.account_policy_identity",
+    "groundhog.default_build",
+    "groundhog.identity_account_backends",
+    "groundhog.identity_account_remote_switch",
+    "groundhog.identity_credentials_list",
+    "groundhog.identity_mls_compat",
+    "groundhog.identity_nip46_session",
+    "groundhog.identity_signer_nip46",
+    "groundhog.packaging_version",
+    "nostr_seal.publish",
+    "nostr_seal.signer",
+    "nostr_seal.unit",
+    "root.asan.nip55l",
+    "root.asan.signer_integration",
+    "sanitizer.groundhog_auth_policy",
+    "sanitizer.groundhog_identity",
+    "selection.contract",
+    "selection.operational.linux",
+    "selection.operational.macos",
+    "supported.apps.grotto",
+    "supported.apps.grotto.native.host",
+    "supported.apps.grotto.native.host.private_bus",
+    "supported.apps.grotto.tests",
+    "supported.apps.grotto.tests.display",
+    "supported.apps.grotto.tests.display.private_bus",
+    "supported.apps.grotto.tests.private_bus",
+    "supported.groundhog.account.backends",
+    "supported.groundhog.account.remote.switch",
+    "supported.groundhog.contract.packaging.version",
+    "supported.groundhog.nip46.credentials.list",
+    "supported.groundhog.nip46.session",
+    "supported.groundhog.signer.nip46",
+    "supported.nips.nip55l",
+    "supported.nips.nip5f.signer_endpoint",
+    "supported.testing.testing.framework.gnome.seahorse.nip04.nip06.nip44.nip49.nip55l.version.contract"
+  ]
+}
