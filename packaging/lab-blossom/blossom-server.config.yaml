@@ -1,5 +1,6 @@
-# Schema: blossom-server 6.4.1. Authorization is enforced by vsp-auth +
-# nginx, before any store lookup (including nonexistent hashes).
+# Permissive lab schema: blossom-server 6.4.1. Native BUD-02 upload auth
+# only; no service pubkey allowlist, public GET/HEAD. VSP-01 adds a separate
+# nginx/auth override before all store lookups, including nonexistent hashes.
 port: 3000
 host: 0.0.0.0
 database:
@@ -15,6 +16,9 @@ upload:
   enabled: true
   requireAuth: true
   requirePubkeyInRule: false
+  # Replaces the legacy MAX_FILE_SIZE knob. 4 MiB porthome chunks +
+  # ~14 KiB AEAD overhead + 41-byte shim fit within this 8 MiB cap.
+  # Shared by permissive and VSP-01 modes; neither mode may drop the cap.
   maxSize: 8388608
   workers: 1
   maxJobsPerWorker: 2
@@ -23,8 +27,8 @@ mirror:
   requireAuth: true
 list:
   enabled: true
-  requireAuth: true
-  allowListOthers: false
+  requireAuth: false
+  allowListOthers: true
 delete:
   requireAuth: true
 media:
@@ -32,6 +36,6 @@ media:
 report:
   enabled: false
 landing:
-  enabled: false
+  enabled: true
 # 6.4.1 uploads use the declared Content-Type, not file-type sniffing.
 # Wildcard retention accepts application/octet-stream with no rewriting.

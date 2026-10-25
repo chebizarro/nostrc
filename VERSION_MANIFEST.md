@@ -62,8 +62,10 @@ files already declare a version.
   `version` identity field is operator metadata, not component versioning.
   lab-blossom packaging is likewise unversioned; the reference upstream image
   moves from the unavailable v1.0.0 tag to digest-pinned 6.4.1 with matching
-  schema and private ingress. Tests/docs require no independent bump. No
-  versioned library API/ABI or release columns change.
+  schema; the permissive porthome demo remains the default, with private ingress
+  in an explicit VSP-01 Compose override. Both modes retain the 8 MiB upload cap.
+  The opt-in correction changes no versioned artifact. Tests/docs require no
+  independent bump. No versioned library API/ABI or release columns change.
 
 - nostrc-0cfsg.36.31: the account UI no longer passes an announcement to
   GTK's fallback test accessibility context (used when no AT-SPI bus is

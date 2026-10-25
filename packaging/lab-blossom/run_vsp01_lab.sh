@@ -15,7 +15,10 @@ umask 077
 work=$(mktemp -d "${TMPDIR:-/tmp}/sv9-vsp01.XXXXXX")
 project="sv9-vsp01-$(basename "$work" | tr '[:upper:].' '[:lower:]-')"
 relay_pid=
-compose() { docker compose -p "$project" -f "$root/docker-compose.yml" "$@"; }
+compose() {
+  docker compose -p "$project" -f "$root/docker-compose.yml" \
+    -f "$root/docker-compose.vsp01.yml" "$@"
+}
 cleanup() {
   rc=$?
   trap - EXIT INT TERM

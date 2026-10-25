@@ -47,6 +47,13 @@ for (const auth of [undefined, token(outsider, "upload", hash)]) {
   check(denied.status === 401 && denied.headers.get("WWW-Authenticate") === "Nostr", "nonmember upload");
   await denied.arrayBuffer();
 }
+const oversize = await fetch(blossom + "/upload", {
+  method: "HEAD",
+  headers: { Authorization: token(member, "upload", hash), "X-SHA-256": hash,
+    "X-Content-Type": "application/octet-stream", "X-Content-Length": "8388609" },
+  signal: AbortSignal.timeout(15000),
+});
+check(oversize.status === 413, "private mode must retain the 8 MiB cap");
 const uploaded = await http("/upload", "PUT", token(member, "upload", hash), blob);
 check([200, 201].includes(uploaded.status), `member upload: ${uploaded.status} ${await uploaded.text()}`);
 const head = await http("/" + hash, "HEAD", token(member, "get", hash));
