@@ -530,17 +530,27 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_variant_dict_init(&dict, base);
   g_variant_dict_insert(&dict, "claimed_app_id", "s", "attacker supplied name");
   g_variant_dict_insert(&dict, "reason", "s", "private reason");
+  gboolean management = !g_strcmp0(data, "management");
+  gboolean executable = data && g_str_has_prefix(data, "exe:");
   if (data) {
     g_variant_dict_insert(&dict, "verified", "b", TRUE);
     g_variant_dict_insert(&dict, "principal", "s", (const char *)data);
     g_variant_dict_insert(&dict, "transport", "s",
                           g_str_has_prefix(data, "nip46:") ? "NIP46" : "DBUS");
     g_variant_dict_insert(&dict, "app_id", "s", "");
+    if (executable)
+      g_variant_dict_insert(&dict, "exe", "s", (const char *)data + 4);
+    if (management) {
+      g_variant_dict_insert(&dict, "transport", "s", "MANAGEMENT");
+      g_variant_dict_insert(&dict, "operation", "s", "self_test");
+    }
   }
   g_ptr_array_add(f->rows, g_variant_ref_sink(g_variant_dict_end(&dict)));
   arrive(f, "notification-one");
-  WAIT(f->notification_body && strstr(f->notification_body, "Text note"));
-  g_assert_cmpstr(f->notification_title, ==, "Unverified app");
+  WAIT(f->notification_body && strstr(f->notification_body,
+      management ? "Verify stored identity" : "Text note"));
+  g_assert_cmpstr(f->notification_title, ==,
+      management ? "Grotto" : executable ? "client" : "Unverified app");
   gboolean review = FALSE, deny = FALSE;
   for (guint i = 1; f->notification_actions[i - 1] && f->notification_actions[i]; i += 2) {
     review |= !strcmp(f->notification_actions[i], "Review");
@@ -591,6 +601,8 @@ int main(int argc, char **argv) {
 #ifndef __APPLE__
   g_test_add("/signer/approval-controller/notifications", Fixture, NULL, setup, notifications,
              teardown);
+  g_test_add("/signer/approval-controller/notifications-management", Fixture,
+             "management", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-nameless-executable", Fixture,
              "exe:/home/alice/private-directory/client", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-nameless-nip46", Fixture,

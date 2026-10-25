@@ -167,6 +167,16 @@ static void close_during_commit(Fixture *f, gconstpointer data) {
   guint timeout = g_timeout_add_seconds(10, bound, NULL); while (!gone) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
   g_assert_cmpuint(f->finished, ==, 0); g_assert_cmpstr(stored_identity, ==, f->npub);
 }
+static void pending_inbox_host(Fixture *f, gconstpointer data) {
+  (void)data;
+  create_waiting(f); stored(f);
+  GtkWidget *group = adw_preferences_group_new();
+  onboarding_assistant_set_pending_group(f->assistant, group);
+  g_assert_true(gtk_widget_get_parent(group) == child(f, "pending_requests"));
+  g_assert_true(gtk_widget_get_root(group) == GTK_ROOT(f->assistant));
+  g_assert_true(gtk_widget_get_child_visible(gtk_widget_get_parent(child(f, "pending_requests"))));
+  g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_TEST_WAITING);
+}
 static void successful_seed_cleanup(Fixture *f, gconstpointer data) {
   (void)data; create_waiting(f); stored(f);
   g_dbus_connection_emit_signal(server, g_dbus_method_invocation_get_sender(f->test), "/org/nostr/signer/grotto",
@@ -491,6 +501,7 @@ int main(int argc, char **argv) {
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0), NULL, 0, 5000, NULL, NULL);
   gtk_init(); adw_init(); g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
 #define ADD(name, data, fn) g_test_add("/onboarding/" name, Fixture, data, setup, fn, teardown)
+  ADD("pending-inbox-host", NULL, pending_inbox_host);
   ADD("older-daemon-readonly", "older", readonly_older_daemon);
   ADD("delayed-storage", NULL, delayed_commit); ADD("close-during-storage", NULL, close_during_commit);
   ADD("seed-cleanup", NULL, successful_seed_cleanup); ADD("denied", "org.nostr.Signer.Error.ApprovalDenied", failed_test);

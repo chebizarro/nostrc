@@ -16,6 +16,7 @@ typedef void (*OnboardingAssistantFinishedCb)(gboolean verified, gpointer user_d
 OnboardingAssistant *onboarding_assistant_new(void);
 void onboarding_assistant_present(GtkWindow *parent);
 void onboarding_assistant_verify_identity(GtkWindow *parent, const gchar *npub);
+void onboarding_assistant_set_pending_group(OnboardingAssistant *self, GtkWidget *group);
 void onboarding_assistant_set_on_finished(OnboardingAssistant *self, OnboardingAssistantFinishedCb cb, gpointer user_data);
 OnboardingState onboarding_assistant_get_state(OnboardingAssistant *self);
 gboolean onboarding_assistant_identity_stored(OnboardingAssistant *self);

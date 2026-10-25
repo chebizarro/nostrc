@@ -216,6 +216,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
+                              <object class="GtkBox" id="pending_requests">
+                                <property name="orientation">1</property>
+                              </object>
+                            </child>
+                            <child>
                               <object class="GtkButton" id="btn_retry">
                                 <property name="label" translatable="yes">Retry Self-Test</property>
                               </object>

@@ -23,7 +23,7 @@ struct _OnboardingAssistant {
   GtkCheckButton *radio_create, *radio_import, *radio_connect, *radio_import_seed, *seed_written_down;
   GtkEntry *entry_profile_name, *entry_import_label;
   GtkEntry *text_import_data;
-  GtkBox *seed_words;
+  GtkBox *seed_words, *pending_requests;
   GtkBox *box_import_passphrase_container;
   GnSecureEntry *import_passphrase;
   GtkLabel *import_passphrase_label, *lbl_status, *ready_summary;
@@ -376,7 +376,7 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
   BIND(steps); BIND(btn_back); BIND(btn_next); BIND(btn_skip); BIND(btn_retry); BIND(btn_copy_seed);
   BIND(radio_create); BIND(radio_import); BIND(radio_connect); BIND(radio_import_seed); BIND(seed_written_down);
   BIND(entry_profile_name); BIND(entry_import_label); BIND(text_import_data); BIND(box_import_passphrase_container);
-  BIND(import_passphrase_label); BIND(lbl_status); BIND(seed_words); BIND(ready_summary); BIND(spinner_status);
+  BIND(import_passphrase_label); BIND(lbl_status); BIND(seed_words); BIND(pending_requests); BIND(ready_summary); BIND(spinner_status);
 #undef BIND
 }
 static void onboarding_assistant_init(OnboardingAssistant *self) {
@@ -425,6 +425,10 @@ void onboarding_assistant_present(GtkWindow *parent) {
   gtk_window_set_transient_for(GTK_WINDOW(self), parent);
   gtk_window_set_application(GTK_WINDOW(self), gtk_window_get_application(parent));
   gtk_window_present(GTK_WINDOW(self));
+}
+void onboarding_assistant_set_pending_group(OnboardingAssistant *self, GtkWidget *group) {
+  g_return_if_fail(ONBOARDING_IS_ASSISTANT(self));
+  gtk_box_append(self->pending_requests, group);
 }
 void onboarding_assistant_set_on_finished(OnboardingAssistant *self, OnboardingAssistantFinishedCb cb, gpointer data) {
   g_return_if_fail(ONBOARDING_IS_ASSISTANT(self)); self->on_finished = cb; self->on_finished_data = data;

@@ -11,6 +11,9 @@
 #include "main_app.h"
 #include "ui/page-home.h"
 #include "ui/signer-window.h"
+#include "ui/onboarding-assistant.h"
+#include "backup-recovery.h"
+#include "accounts_store.h"
 #include <signal.h>
 #endif
 
@@ -123,7 +126,8 @@ static GtkWindow *management(GApplication *app) {
 }
 static AdwDialog *review_dialog(GApplication *app) {
   for (GList *w = gtk_application_get_windows(GTK_APPLICATION(app)); w; w = w->next) {
-    AdwDialog *dialog = ADW_IS_WINDOW(w->data) ? adw_window_get_visible_dialog(w->data) : NULL;
+    AdwDialog *dialog = ADW_IS_WINDOW(w->data) ? adw_window_get_visible_dialog(w->data) :
+        ADW_IS_APPLICATION_WINDOW(w->data) ? adw_application_window_get_visible_dialog(w->data) : NULL;
     if (dialog && GNOSTR_IS_APPROVAL_DIALOG(dialog))
       return dialog;
   }
@@ -150,6 +154,7 @@ static void bus_name(GDBusConnection *bus, const char *name, gboolean claim) {
 typedef struct {
   guint notifications, version, lists, decisions, infos, model_changes;
   gboolean fail_list, valid_request;
+  gchar notification_title[256];
 } Desktop;
 static GVariant *other_request(void) {
   GVariantBuilder b;
@@ -174,6 +179,9 @@ static void desktop_call(GDBusConnection *bus, const char *sender, const char *p
     guint replace = 0;
     g_variant_get_child(args, 1, "u", &replace);
     d->notifications++;
+    const char *title;
+    g_variant_get_child(args, 3, "&s", &title);
+    g_strlcpy(d->notification_title, title, sizeof d->notification_title);
     g_dbus_method_invocation_return_value(
         inv, g_variant_new("(u)", replace ? replace : d->notifications));
   } else if (!strcmp(name, "GetCapabilities")) {
@@ -231,6 +239,85 @@ static const char desktop_xml[] =
     "direction='in'/>"
     "<arg type='b' direction='in'/><arg type='b' direction='in'/><arg type='t' direction='in'/>"
     "<arg type='b' direction='out'/></method></interface></node>";
+static void onboarding_review(GrottoApprovalController *controller, GApplication *app,
+                               GDBusConnection *bus) {
+  Desktop desktop = {0};
+  g_autoptr(GDBusNodeInfo) xml = g_dbus_node_info_new_for_xml(desktop_xml, NULL);
+  static const GDBusInterfaceVTable table = {.method_call = desktop_call};
+  guint registration = g_dbus_connection_register_object(bus, "/org/freedesktop/Notifications",
+      xml->interfaces[0], &table, &desktop, NULL, NULL);
+  bus_name(bus, "org.freedesktop.Notifications", TRUE);
+  WAIT(grotto_approval_controller_notifications_available(controller));
+
+  g_autofree gchar *npub = NULL;
+  g_assert_true(gn_backup_get_npub(
+      "0000000000000000000000000000000000000000000000000000000000000001", &npub, NULL));
+  accounts_store_add(accounts_store_get_default(), npub, "Self-test fixture", NULL);
+  GtkWindow *parent = GTK_WINDOW(adw_window_new());
+  gtk_window_set_application(parent, GTK_APPLICATION(app));
+  onboarding_assistant_verify_identity(parent, npub);
+  OnboardingAssistant *assistant = NULL;
+  for (GList *w = gtk_application_get_windows(GTK_APPLICATION(app)); w; w = w->next)
+    if (ONBOARDING_IS_ASSISTANT(w->data)) assistant = w->data;
+  g_assert_nonnull(assistant);
+  g_object_ref(assistant);
+  gtk_window_destroy(parent);
+  WAIT(ready(controller) && desktop.notifications > 0);
+  g_assert_null(management(app));
+  g_assert_cmpstr(desktop.notification_title, ==, "Grotto");
+  GListModel *pending = grotto_approval_controller_get_pending(controller);
+  g_autoptr(GrottoApprovalRequest) request = g_list_model_get_item(pending, 0);
+  GVariant *info = grotto_approval_request_get_info(request);
+  const char *transport = NULL, *operation = NULL;
+  gboolean rememberable = TRUE;
+  g_assert_true(g_variant_lookup(info, "transport", "&s", &transport));
+  g_assert_cmpstr(transport, ==, "MANAGEMENT");
+  g_assert_true(g_variant_lookup(info, "operation", "&s", &operation));
+  g_assert_cmpstr(operation, ==, "self_test");
+  g_assert_true(g_variant_lookup(info, "rememberable", "b", &rememberable));
+  g_assert_false(rememberable);
+
+  g_action_group_activate_action(G_ACTION_GROUP(app), "review-request",
+      g_variant_new_string(grotto_approval_request_get_id(request)));
+  AdwDialog *dialog = adw_window_get_visible_dialog(ADW_WINDOW(assistant));
+  g_assert_true(GNOSTR_IS_APPROVAL_DIALOG(dialog));
+  wait_frames(GTK_WIDGET(dialog));
+  g_assert_null(management(app));
+  const char *from = gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_from")));
+  g_assert_nonnull(strstr(from, "Grotto"));
+  g_assert_null(strstr(from, "Unverified app"));
+  g_assert_null(strstr(gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_details"))), "Unverified app"));
+  g_assert_false(gtk_widget_get_visible(dialog_child(dialog, "chk_remember")));
+  g_signal_emit_by_name(dialog_child(dialog, "btn_not_now"), "clicked");
+  WAIT(adw_window_get_visible_dialog(ADW_WINDOW(assistant)) == NULL);
+
+  /* The inbox action must stay in onboarding, not wait for its completion. */
+  g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(""));
+  GtkWidget *group = g_object_get_data(G_OBJECT(assistant), "grotto-pending-group");
+  g_assert_nonnull(group);
+  wait_frames(group);
+  GPtrArray *rows = g_object_get_data(G_OBJECT(group), "rows");
+  g_assert_cmpuint(rows->len, ==, 1);
+  g_assert_cmpstr(adw_preferences_row_get_title(rows->pdata[0]), ==, "Grotto");
+  g_signal_emit_by_name(rows->pdata[0], "activated");
+  dialog = adw_window_get_visible_dialog(ADW_WINDOW(assistant));
+  g_assert_true(GNOSTR_IS_APPROVAL_DIALOG(dialog));
+  wait_frames(GTK_WIDGET(dialog));
+  g_signal_emit_by_name(dialog_child(dialog, "btn_approve"), "clicked");
+  WAIT(onboarding_assistant_self_test_passed(assistant));
+  g_assert_cmpint(onboarding_assistant_get_state(assistant), ==, ONBOARDING_BACKUP);
+  WAIT(g_list_model_get_n_items(pending) == 0);
+  /* The seeded test key has no mnemonic. This still proves the real self-test
+   * completed and advanced to backup, without inventing recovery material. */
+  WAIT(gtk_widget_get_sensitive(GTK_WIDGET(gtk_widget_get_template_child(
+      GTK_WIDGET(assistant), TYPE_ONBOARDING_ASSISTANT, "btn_skip"))));
+  gtk_window_destroy(GTK_WINDOW(assistant));
+  g_object_unref(assistant);
+  bus_name(bus, "org.freedesktop.Notifications", FALSE);
+  WAIT(!grotto_approval_controller_notifications_available(controller));
+  g_dbus_connection_unregister_object(bus, registration);
+  g_print("onboarding: real daemon self-test reviewed by action and inbox, advanced to backup\n");
+}
 static void model_changed(GListModel *m, guint p, guint r, guint a, gpointer data) {
   (void)m;
   (void)p;
@@ -261,6 +348,9 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   AdwDialog *dialog = review_dialog(app);
   g_assert_nonnull(dialog);
   wait_frames(GTK_WIDGET(dialog));
+  const char *from = gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_from")));
+  g_assert_nonnull(strstr(from, "Verified caller:"));
+  g_assert_null(strstr(from, "Unverified app"));
   g_signal_emit_by_name(dialog_child(dialog, "btn_not_now"), "clicked");
   WAIT(review_dialog(app) == NULL);
   g_assert_true(ready(controller));
@@ -496,10 +586,7 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
                          gboolean allow, gboolean remember, gboolean temporary, const char *expected_preview) {
   (void)controller;
   g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(id));
-  GList *windows = gtk_application_get_windows(GTK_APPLICATION(app));
-  g_assert_nonnull(windows);
-  g_autoptr(GtkWindow) host = g_object_ref(windows->data);
-  AdwDialog *dialog = adw_window_get_visible_dialog(ADW_WINDOW(host));
+  AdwDialog *dialog = review_dialog(app);
   g_assert_nonnull(dialog);
   WAIT(gtk_widget_get_mapped(GTK_WIDGET(dialog)));
   guint frames = 0;
@@ -617,6 +704,10 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   g_assert_true(g_variant_lookup(info, "principal", "&s", &principal));
   g_assert_cmpstr(principal, !=, "spoofed-name");
 #ifndef __APPLE__
+  gboolean verified_caller = FALSE;
+  g_assert_true(g_variant_lookup(info, "verified", "b", &verified_caller));
+  g_assert_true(verified_caller);
+  g_assert_true(g_str_has_prefix(principal, "exe:") || g_str_has_prefix(principal, "app:"));
   if (gui) {
     pending_reachability(controller, app, consumer, grotto_approval_request_get_id(request));
     click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE, FALSE, "first");
@@ -852,6 +943,7 @@ int main(int argc, char **argv) {
                                                NULL, NULL, NULL);
     g_assert_nonnull(consumer);
     WAIT(g_object_get_data(G_OBJECT(app), "grotto-approval-controller") != NULL);
+    onboarding_review(g_object_get_data(G_OBJECT(app), "grotto-approval-controller"), app, connection);
     run_flow(connection, consumer, app, TRUE);
     g_signal_emit_by_name(app, "shutdown");
     while (gtk_application_get_windows(GTK_APPLICATION(app)))

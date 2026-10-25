@@ -96,6 +96,9 @@ static gchar *notification_id(const char *id) {
   return g_strconcat("grotto-request-", id, NULL);
 }
 static const char *client_name(GrottoApprovalController *s, GVariant *info) {
+  if (!strcmp(text_field(info, "transport"), "MANAGEMENT") &&
+      !strcmp(text_field(info, "operation"), "self_test"))
+    return "Grotto";
   const char *principal = text_field(info, "principal");
   const char *label = g_hash_table_lookup(s->labels, principal);
   if (label && *label)
@@ -106,13 +109,19 @@ static const char *client_name(GrottoApprovalController *s, GVariant *info) {
   if (!verified)
     return "Unverified app";
   const char *app_id = text_field(info, "app_id");
-  return *app_id ? app_id : "Unverified app";
+  if (*app_id)
+    return app_id;
+  const char *exe = text_field(info, "exe");
+  const char *basename = strrchr(exe, G_DIR_SEPARATOR);
+  return basename && basename[1] ? basename + 1 : "Unverified app";
 }
 static gchar *operation_label(GVariant *info) {
   const char *op = text_field(info, "operation");
   guint32 kind;
   if (!strcmp(op, "sign_event") && g_variant_lookup(info, "event_kind", "u", &kind))
     return g_strdup_printf("Sign event · %s (kind %u)", gnostr_approval_kind_name(kind), kind);
+  if (!strcmp(op, "self_test"))
+    return g_strdup("Verify stored identity");
   if (!strcmp(op, "connect"))
     return g_strdup("Connect application");
   if (!strcmp(op, "get_public_key"))
@@ -999,12 +1008,19 @@ void grotto_approval_controller_review(GrottoApprovalController *s, const char *
   g_autoptr(GApplication) app = g_weak_ref_get(&s->app);
   if (!app || !GTK_IS_APPLICATION(app))
     return;
+  GtkWindow *parent = gtk_application_get_active_window(GTK_APPLICATION(app));
+  g_autoptr(GtkWindow) previous_host = g_weak_ref_get(&s->review_window);
+  if (parent == previous_host)
+    parent = NULL;
   close_review(s);
-  GtkWidget *win = adw_window_new();
-  gtk_window_set_application(GTK_WINDOW(win), GTK_APPLICATION(app));
-  gtk_window_set_title(GTK_WINDOW(win), "Grotto · Review request");
-  gtk_window_set_default_size(GTK_WINDOW(win), 480, 640);
-  g_weak_ref_set(&s->review_window, win);
+  g_debug("Approval review parent: %s", parent ? G_OBJECT_TYPE_NAME(parent) : "standalone");
+  GtkWidget *win = parent ? GTK_WIDGET(parent) : adw_window_new();
+  if (!parent) {
+    gtk_window_set_application(GTK_WINDOW(win), GTK_APPLICATION(app));
+    gtk_window_set_title(GTK_WINDOW(win), "Grotto · Review request");
+    gtk_window_set_default_size(GTK_WINDOW(win), 480, 640);
+    g_weak_ref_set(&s->review_window, win);
+  }
   gtk_window_present(GTK_WINDOW(win));
   s->review_id = g_strdup(id);
   s->dialog = gnostr_approval_dialog_new();

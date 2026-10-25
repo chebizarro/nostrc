@@ -457,6 +457,10 @@ gboolean gnostr_approval_info_can_approve(GVariant *info) {
 }
 void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info, const char *name) {
   const char *op = field(info, "operation");
+  gboolean self_test = !strcmp(op, "self_test") &&
+      !strcmp(field(info, "transport"), "MANAGEMENT");
+  if (self_test)
+    name = "Grotto";
   gboolean verified = FALSE, rememberable = FALSE;
   g_variant_lookup(info, "verified", "b", &verified);
   g_variant_lookup(info, "rememberable", "b", &rememberable);
@@ -464,8 +468,8 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
                                      field(info, "preview"));
   gnostr_approval_dialog_set_identity(self, field(info, "identity"));
   g_autofree gchar *caller =
-      g_strdup_printf("From: %s\n%s%s", name, verified ? "Verified caller: " : "Unverified app",
-                      verified ? field(info, "principal") : "");
+      g_strdup_printf("From: %s\n%s%s", name, self_test ? "Identity self-test" : verified ? "Verified caller: " : "Unverified app",
+                      !self_test && verified ? field(info, "principal") : "");
   gtk_label_set_text(self->label_from, caller);
   guint32 remaining = 0;
   g_variant_lookup(info, "remaining_seconds", "u", &remaining);
@@ -659,7 +663,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_label_set_text(self->subtitle_label, impact);
   g_autofree gchar *details =
       g_strdup_printf("%s\nPrincipal: %s\nTransport: %s\nClaimed name (unverified): %s",
-                      verified ? "Verified caller" : "Unverified app", field(info, "principal"),
+                      self_test ? "Grotto identity self-test" : verified ? "Verified caller" : "Unverified app", field(info, "principal"),
                       field(info, "transport"), field(info, "claimed_app_id"));
   gtk_label_set_text(self->label_details, details);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust && self->ready);

@@ -73,6 +73,7 @@ template $OnboardingAssistant: Adw.Window {
               orientation: vertical; spacing: 18;
               Label { label: _("Verify Your Stored Identity"); styles ["title-1"] wrap: true; }
               Label { label: _("One review covers signing an unpublished event and verifying it, then NIP-44 encryption and decryption with an ephemeral peer. Nothing goes to relays, and no client permissions are created."); wrap: true; xalign: 0; }
+              Box pending_requests { orientation: vertical; }
               Button btn_retry { label: _("Retry Self-Test"); }
             };
           }

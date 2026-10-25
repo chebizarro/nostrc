@@ -327,13 +327,22 @@ static void attach_pending_group(GtkWindow *win) {
     signer_window_add_background_group(SIGNER_WINDOW(win), group);
     g_object_set_data(G_OBJECT(win), "grotto-background-group", group);
   }
-  if (!SIGNER_IS_WINDOW(win) || !approval_controller ||
+  if ((!SIGNER_IS_WINDOW(win) && !ONBOARDING_IS_ASSISTANT(win)) || !approval_controller ||
       g_object_get_data(G_OBJECT(win), "grotto-pending-group")) return;
   GtkWidget *group = grotto_approval_pending_group_new(approval_controller);
-  signer_window_set_pending_group(SIGNER_WINDOW(win), group);
+  if (ONBOARDING_IS_ASSISTANT(win))
+    onboarding_assistant_set_pending_group(ONBOARDING_ASSISTANT(win), group);
+  else
+    signer_window_set_pending_group(SIGNER_WINDOW(win), group);
   g_object_set_data(G_OBJECT(win), "grotto-pending-group", group);
 }
 static GtkWindow *present_pending(GtkApplication *app) {
+  for (GList *w = gtk_application_get_windows(app); w; w = w->next)
+    if (ONBOARDING_IS_ASSISTANT(w->data)) {
+      attach_pending_group(w->data);
+      gtk_window_present(w->data);
+      return w->data;
+    }
   GtkWindow *win = NULL;
   for (GList *w = gtk_application_get_windows(app); w; w = w->next)
     if (SIGNER_IS_WINDOW(w->data)) { win = w->data; break; }
@@ -344,7 +353,11 @@ static GtkWindow *present_pending(GtkApplication *app) {
     if (!win) {
       /* An onboarding window is the single management surface until finished. */
       for (GList *w = gtk_application_get_windows(app); w; w = w->next)
-        if (ONBOARDING_IS_ASSISTANT(w->data)) { gtk_window_present(w->data); return w->data; }
+        if (ONBOARDING_IS_ASSISTANT(w->data)) {
+          attach_pending_group(w->data);
+          gtk_window_present(w->data);
+          return w->data;
+        }
       win = GTK_WINDOW(signer_window_new(ADW_APPLICATION(app)));
     }
   }
@@ -375,9 +388,8 @@ static void on_approval_message(GrottoApprovalController *controller, const char
 static void on_review_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)data; const char *id = g_variant_get_string(parameter, NULL);
   review_activation = TRUE;
-  GtkWindow *win = present_pending(global_app);
+  present_pending(global_app);
   review_activation = FALSE;
-  if (!SIGNER_IS_WINDOW(win)) { g_free(queued_review); queued_review = g_strdup(id); return; }
   if (!*id) {
     g_clear_pointer(&queued_review, g_free);
     if (approval_controller) grotto_approval_controller_review(approval_controller, "");
@@ -449,7 +461,7 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
   g_signal_connect(approval_controller, "reconciled", G_CALLBACK(on_reconciled), global_app);
   for (GList *w = gtk_application_get_windows(global_app); w; w = w->next)
     attach_pending_group(w->data);
-  if (queued_review && management_window(global_app) && SIGNER_IS_WINDOW(management_window(global_app))) {
+  if (queued_review && management_window(global_app)) {
     grotto_approval_controller_review(approval_controller, queued_review);
     g_clear_pointer(&queued_review, g_free);
   }
@@ -762,6 +774,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_debug("Created onboarding assistant: %p", onboarding);
     onboarding_assistant_set_on_finished(onboarding, on_onboarding_finished, app);
     gtk_application_add_window(app, GTK_WINDOW(onboarding));
+    attach_pending_group(GTK_WINDOW(onboarding));
     gtk_window_present(GTK_WINDOW(onboarding));
 
     /* Schedule deferred init */
@@ -967,6 +980,7 @@ static void on_app_show_onboarding(GSimpleAction *action, GVariant *param, gpoin
   }
 
   gtk_application_add_window(app, GTK_WINDOW(onboarding));
+  attach_pending_group(GTK_WINDOW(onboarding));
   gtk_window_present(GTK_WINDOW(onboarding));
 }
 
