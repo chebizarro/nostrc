@@ -52,6 +52,12 @@ int main(void)
     assert(porthome_decrypt_chunk_v2(&old, 1, w.store[0].bytes, w.store[0].len, 7, &pt, &n) == 0 &&
            n == 7);
     free(pt);
+    /* A new-epoch-only grant must refuse old data before any key trial. */
+    porthome_ring_t only_new = {&r->ring.entries[1], 1};
+    assert(only_new.entries[0].epoch == 2);
+    assert(porthome_decrypt_chunk_v2(&only_new, 1, w.store[0].bytes, w.store[0].len, 7, &pt, &n) ==
+               PORTHOME_ERR_EPOCH &&
+           !pt && !n);
     assert(porthome_encrypt_chunk_v2(r->ring.entries[1].node_key, (uint8_t *)"new", 3, &fresh, &z,
                                      NULL) == 0);
     assert(porthome_decrypt_chunk_v2(&old, 2, fresh, z, 3, &pt, &n) == PORTHOME_ERR_EPOCH && !pt &&
