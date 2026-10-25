@@ -103,5 +103,45 @@ void gn_blossom_client_download_async(GnBlossomClient *self, const gchar *url,
  * Returns: (transfer full): verified wire bytes
  */
 GBytes *gn_blossom_client_download_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
+/**
+ * gn_blossom_client_list_async:
+ * @self: a client
+ * @pubkey: owner public key in hex
+ * @cancellable: (nullable): cancellation
+ * @callback: (scope async): completion callback
+ * @user_data: (closure): callback data
+ *
+ * Public unauthenticated BUD-01 listing. Response bytes are bounded by the
+ * configured limit. The caller parses the JSON and treats descriptors as untrusted.
+ */
+void gn_blossom_client_list_async(GnBlossomClient *self, const gchar *pubkey,
+    GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
+/**
+ * gn_blossom_client_list_finish:
+ * @self: a client
+ * @result: async result
+ * @error: return location for an error
+ * Returns: (transfer full): bounded listing JSON bytes
+ */
+GBytes *gn_blossom_client_list_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
+/**
+ * gn_blossom_client_delete_async:
+ * @self: a client
+ * @sha256: blob SHA-256 in hex
+ * @signed_event: signed BUD-02 delete event; verified before transmission
+ * @cancellable: (nullable): cancellation
+ * @callback: (scope async): completion callback
+ * @user_data: (closure): callback data
+ */
+void gn_blossom_client_delete_async(GnBlossomClient *self, const gchar *sha256,
+    const gchar *signed_event, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
+/**
+ * gn_blossom_client_delete_finish:
+ * @self: a client
+ * @result: async result
+ * @error: return location for an error
+ * Returns: whether the server accepted deletion
+ */
+gboolean gn_blossom_client_delete_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
 G_END_DECLS
 #endif

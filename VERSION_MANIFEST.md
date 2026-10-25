@@ -14,11 +14,11 @@ files already declare a version.
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 1.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.4.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 2.5.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
-| gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
+| gnostr | `apps/gnostr/` | 0.1.1 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
 | nostr-homed | `gnome/nostr-homed/` | 0.5.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
@@ -35,7 +35,7 @@ files already declare a version.
 
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
 | libvault | `libvault/` | 0.5.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
-| libblossom | `libblossom/` | 0.2.1 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| libblossom | `libblossom/` | 0.3.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -65,6 +65,14 @@ files already declare a version.
   rejection rules and wire/API contracts remain unchanged. Existing homed
   manifest tests add v1/v2 truncation cleanup coverage; nostr-homed has test-only
   changes (no bump). No release tags or other component bumps.
+
+- nostrc-er4fz.9: gnostr PATCH 0.1.0 -> 0.1.1 replaces duplicated Blossom
+  HTTP/auth with GnBlossomClient and nips/bud02, retaining app signer/UI and
+  fallback policy. nostr-gobject MINOR 2.4.0 -> 2.5.0 adds bounded public list
+  and externally signed delete GTask APIs. libblossom MINOR 0.2.1 -> 0.3.0
+  adds verified externally signed deletion; existing APIs remain compatible.
+  BUD-02 and libmarmot are unchanged consumers (no bump); selection/tests are
+  not shipped components (no bump). No release tags or release-column changes.
 
 - nostrc-k1zq6: libblossom PATCH 0.2.0 -> 0.2.1 fixes ownership of canonical
   event IDs returned by the signer validation path, including authenticated GET

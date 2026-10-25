@@ -3,7 +3,7 @@
 /**
  * gnostr Blossom Service Implementation
  *
- * BUD-01 Blossom media server client using libsoup for HTTP.
+ * Blossom app policy and signer adapter over GnBlossomClient.
  */
 
 #include "blossom.h"
@@ -13,9 +13,10 @@
 #include <glib.h>
 #include <json-glib/json-glib.h>
 
-#ifdef HAVE_SOUP3
-#include <libsoup/soup.h>
-#endif
+#include <nostr-gobject-1.0/gn-blossom-client.h>
+#include <nostr/bud02/auth.h>
+#include <nostr-event.h>
+#include <nostr-tag.h>
 
 /* For file hashing */
 #include <gio/gio.h>
@@ -118,88 +119,47 @@ char *gnostr_blossom_build_auth_event(const char *action,
                                        const char *server_url,
                                        gint64 file_size,
                                        const char *mime_type) {
-  g_autoptr(JsonBuilder) builder = json_builder_new();
-
-  json_builder_begin_object(builder);
-
-  /* Kind 24242 for Blossom auth */
-  json_builder_set_member_name(builder, "kind");
-  json_builder_add_int_value(builder, 24242);
-
-  /* Created at (current time) */
-  json_builder_set_member_name(builder, "created_at");
-  json_builder_add_int_value(builder, (gint64)g_get_real_time() / G_USEC_PER_SEC);
-
-  /* Content is empty per BUD-01 */
-  json_builder_set_member_name(builder, "content");
-  json_builder_add_string_value(builder, "");
-
-  /* Tags array */
-  json_builder_set_member_name(builder, "tags");
-  json_builder_begin_array(builder);
-
-  /* t tag: action type */
-  json_builder_begin_array(builder);
-  json_builder_add_string_value(builder, "t");
-  json_builder_add_string_value(builder, action);
-  json_builder_end_array(builder);
-
-  /* x tag: file hash (for upload/delete) */
-  if (sha256 && *sha256) {
-    json_builder_begin_array(builder);
-    json_builder_add_string_value(builder, "x");
-    json_builder_add_string_value(builder, sha256);
-    json_builder_end_array(builder);
-  }
-
-  /* server tag: server URL */
-  if (server_url && *server_url) {
-    json_builder_begin_array(builder);
-    json_builder_add_string_value(builder, "server");
-    json_builder_add_string_value(builder, server_url);
-    json_builder_end_array(builder);
-  }
-
-  /* size tag: file size (upload only) */
+  nostr_bud02_action_t bud_action;
+  if (nostr_bud02_action_from_str(action, &bud_action) != NOSTR_BUD02_OK)
+    return NULL;
+  NostrEvent *event = nostr_bud02_create_auth_event(bud_action,
+      sha256 && *sha256 ? sha256 : NULL, 0,
+      server_url && *server_url ? server_url : NULL);
+  if (!event) return NULL;
+  /* Keep the app's optional metadata and signer-facing content. */
+  nostr_event_set_content(event, "");
   if (file_size > 0) {
-    char size_str[32];
-    g_snprintf(size_str, sizeof(size_str), "%" G_GINT64_FORMAT, file_size);
-    json_builder_begin_array(builder);
-    json_builder_add_string_value(builder, "size");
-    json_builder_add_string_value(builder, size_str);
-    json_builder_end_array(builder);
+    g_autofree char *size = g_strdup_printf("%" G_GINT64_FORMAT, file_size);
+    nostr_tags_append(event->tags, nostr_tag_new("size", size, NULL));
   }
-
-  /* type tag: MIME type (upload only) */
-  if (mime_type && *mime_type) {
-    json_builder_begin_array(builder);
-    json_builder_add_string_value(builder, "type");
-    json_builder_add_string_value(builder, mime_type);
-    json_builder_end_array(builder);
-  }
-
-  /* expiration tag: valid for 5 minutes */
-  gint64 expiration = (g_get_real_time() / G_USEC_PER_SEC) + 300;
-  char exp_str[32];
-  g_snprintf(exp_str, sizeof(exp_str), "%" G_GINT64_FORMAT, expiration);
-  json_builder_begin_array(builder);
-  json_builder_add_string_value(builder, "expiration");
-  json_builder_add_string_value(builder, exp_str);
-  json_builder_end_array(builder);
-
-  json_builder_end_array(builder); /* End tags */
-
-  json_builder_end_object(builder);
-
-  g_autoptr(JsonGenerator) gen = json_generator_new();
-  json_generator_set_root(gen, json_builder_get_root(builder));
-  char *json_str = json_generator_to_data(gen, NULL);
-
-
-  return json_str;
+  if (mime_type && *mime_type)
+    nostr_tags_append(event->tags, nostr_tag_new("type", mime_type, NULL));
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  return json;
 }
 
-#ifdef HAVE_SOUP3
+static GError *map_transfer_error(GError *error, GnostrBlossomError code) {
+  if (error && (error->domain == GN_BLOSSOM_ERROR ||
+                g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))) {
+    GError *mapped = g_error_new_literal(GNOSTR_BLOSSOM_ERROR, code, error->message);
+    g_error_free(error);
+    return mapped;
+  }
+  return error; /* Preserve GIO transport errors, especially cancellation. */
+}
+
+static GnBlossomClient *new_client(const char *server, guint timeout) {
+  GnBlossomClient *client = gn_blossom_client_new(server);
+#ifdef GNOSTR_BLOSSOM_LOCAL_TEST
+  /* Compiled only into the in-process transport fixture, never the app. */
+  gn_blossom_client_set_network(client, NULL, GN_BLOSSOM_NETWORK_LOCAL_TEST);
+#else
+  gn_blossom_client_set_network(client, g_proxy_resolver_get_default(), GN_BLOSSOM_NETWORK_DEFAULT);
+#endif
+  gn_blossom_client_set_limits(client, 0, timeout, NULL);
+  return client;
+}
 
 /* Upload context */
 typedef struct {
@@ -212,7 +172,7 @@ typedef struct {
   GnostrBlossomUploadCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  SoupSession *session;
+  GnBlossomClient *client;
   char *auth_event_json;  /* Unsigned auth event for signing */
 } BlossomUploadContext;
 
@@ -225,7 +185,7 @@ static void upload_ctx_free(BlossomUploadContext *ctx) {
   g_free(ctx->auth_event_json);
   if (ctx->file_data) g_bytes_unref(ctx->file_data);
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
-  if (ctx->session) g_object_unref(ctx->session);
+  g_clear_object(&ctx->client);
   g_free(ctx);
 }
 
@@ -233,76 +193,26 @@ static void on_upload_response(GObject *source, GAsyncResult *res, gpointer user
   BlossomUploadContext *ctx = (BlossomUploadContext *)user_data;
   GError *error = NULL;
 
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-
-  if (error) {
-    if (ctx->callback) {
-      ctx->callback(NULL, error, ctx->user_data);
-    }
+  char *url = gn_blossom_client_upload_finish(GN_BLOSSOM_CLIENT(source), res, &error);
+  error = map_transfer_error(error, GNOSTR_BLOSSOM_ERROR_UPLOAD_FAILED);
+  if (!url) {
+    if (ctx->callback) ctx->callback(NULL, error, ctx->user_data);
     g_clear_error(&error);
     upload_ctx_free(ctx);
     return;
   }
-
-  /* Check response status from the message */
-  SoupMessage *msg = soup_session_get_async_result_message(SOUP_SESSION(source), res);
-  guint status = soup_message_get_status(msg);
-
-  if (status < 200 || status >= 300) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_UPLOAD_FAILED,
-                               "Upload failed with status %u", status);
-    if (ctx->callback) {
-      ctx->callback(NULL, err, ctx->user_data);
-    }
-    g_error_free(err);
-    if (bytes) g_bytes_unref(bytes);
-    upload_ctx_free(ctx);
-    return;
-  }
-
-  /* Parse response JSON to get blob info */
-  gsize len = 0;
-  const char *data = g_bytes_get_data(bytes, &len);
 
   GnostrBlossomBlob *blob = g_new0(GnostrBlossomBlob, 1);
   blob->sha256 = g_strdup(ctx->sha256);
   blob->size = ctx->file_size;
   blob->mime_type = g_strdup(ctx->mime_type);
 
-  /* Try to parse server response for URL */
-  if (data && len > 0) {
-    g_autoptr(JsonParser) parser = json_parser_new();
-    if (json_parser_load_from_data(parser, data, len, NULL)) {
-      JsonNode *root = json_parser_get_root(parser);
-      if (root && JSON_NODE_HOLDS_OBJECT(root)) {
-        JsonObject *obj = json_node_get_object(root);
-        if (json_object_has_member(obj, "url")) {
-          blob->url = g_strdup(json_object_get_string_member(obj, "url"));
-        }
-        if (json_object_has_member(obj, "sha256")) {
-          g_free(blob->sha256);
-          blob->sha256 = g_strdup(json_object_get_string_member(obj, "sha256"));
-        }
-        if (json_object_has_member(obj, "type")) {
-          g_free(blob->mime_type);
-          blob->mime_type = g_strdup(json_object_get_string_member(obj, "type"));
-        }
-        if (json_object_has_member(obj, "size")) {
-          blob->size = json_object_get_int_member(obj, "size");
-        }
-      }
-    }
-  }
+  blob->url = url;
 
   /* Construct URL if not provided by server */
   if (!blob->url || !*blob->url) {
     g_free(blob->url);
-    /* Use the ORIGINAL mime type (ctx->mime_type) for the extension, not
-     * blob->mime_type which may have been overwritten by the server response
-     * (e.g. server converts jpg→webp and reports type:"image/webp").
-     * If we used the server type, ALL uploads get .webp regardless of the
-     * original file type. */
+    /* Extensions follow the original media type; the wire hash is verified. */
     const char *ext = "";
     const char *orig_mime = ctx->mime_type;
     if (orig_mime) {
@@ -319,8 +229,6 @@ static void on_upload_response(GObject *source, GAsyncResult *res, gpointer user
     blob->url = g_strdup_printf("%s/%s%s", ctx->server_url, blob->sha256, ext);
   }
 
-  g_bytes_unref(bytes);
-
   if (ctx->callback) {
     ctx->callback(blob, NULL, ctx->user_data);
   } else {
@@ -330,43 +238,6 @@ static void on_upload_response(GObject *source, GAsyncResult *res, gpointer user
   upload_ctx_free(ctx);
 }
 
-static void upload_with_auth(BlossomUploadContext *ctx, const char *auth_header) {
-  /* Build upload URL */
-  char *url = g_strdup_printf("%s/upload", ctx->server_url);
-
-  SoupMessage *msg = soup_message_new("PUT", url);
-  g_free(url);
-
-  if (!msg) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_UPLOAD_FAILED,
-                               "Failed to create upload request");
-    if (ctx->callback) {
-      ctx->callback(NULL, err, ctx->user_data);
-    }
-    g_error_free(err);
-    upload_ctx_free(ctx);
-    return;
-  }
-
-  /* Set headers */
-  SoupMessageHeaders *headers = soup_message_get_request_headers(msg);
-  soup_message_headers_append(headers, "Authorization", auth_header);
-  soup_message_headers_append(headers, "Content-Type", ctx->mime_type);
-
-  /* Set body */
-  soup_message_set_request_body_from_bytes(msg, ctx->mime_type, ctx->file_data);
-
-  /* Send async */
-  soup_session_send_and_read_async(ctx->session, msg, G_PRIORITY_DEFAULT,
-                                    ctx->cancellable, on_upload_response, ctx);
-  g_object_unref(msg);
-}
-
-/**
- * Callback when unified signer returns signed event for upload.
- * The signed event contains id, pubkey, and sig - we just base64-encode it.
- */
 static void on_upload_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   BlossomUploadContext *ctx = (BlossomUploadContext *)user_data;
   (void)source;
@@ -377,7 +248,9 @@ static void on_upload_sign_complete(GObject *source, GAsyncResult *res, gpointer
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+    g_free(signed_event_json);
+    GError *err = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+      ? g_error_copy(error) : g_error_new(GNOSTR_BLOSSOM_ERROR,
                                GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
                                "Failed to sign auth event: %s",
                                error ? error->message : "unknown");
@@ -390,17 +263,9 @@ static void on_upload_sign_complete(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  /* Base64 encode the signed event for Authorization header */
-  gchar *base64 = g_base64_encode((const guchar *)signed_event_json, strlen(signed_event_json));
+  gn_blossom_client_upload_async(ctx->client, ctx->file_data, ctx->sha256,
+      ctx->mime_type, signed_event_json, ctx->cancellable, on_upload_response, ctx);
   g_free(signed_event_json);
-
-  /* Build auth header: "Nostr <base64-encoded-signed-event>" per BUD-01 */
-  char *auth_header = g_strdup_printf("Nostr %s", base64);
-  g_free(base64);
-
-  /* Proceed with upload */
-  upload_with_auth(ctx, auth_header);
-  g_free(auth_header);
 }
 
 void gnostr_blossom_upload_async(const char *server_url,
@@ -435,8 +300,9 @@ void gnostr_blossom_upload_async(const char *server_url,
   char *contents = NULL;
   gsize length = 0;
 
-  if (!g_file_load_contents(file, NULL, &contents, &length, NULL, &error)) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+  if (!g_file_load_contents(file, cancellable, &contents, &length, NULL, &error)) {
+    GError *err = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+      ? g_error_copy(error) : g_error_new(GNOSTR_BLOSSOM_ERROR,
                                GNOSTR_BLOSSOM_ERROR_FILE_READ,
                                "Failed to read file: %s", error->message);
     g_clear_error(&error);
@@ -445,20 +311,9 @@ void gnostr_blossom_upload_async(const char *server_url,
     return;
   }
 
-  /* Compute hash */
-  char sha256[65];
-  GError *hash_error = NULL;
-  if (!gnostr_blossom_sha256_file(file_path, sha256, &hash_error)) {
-    g_free(contents);
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_FILE_READ,
-                               "Failed to compute file hash: %s",
-                               hash_error ? hash_error->message : "unknown error");
-    g_clear_error(&hash_error);
-    if (callback) callback(NULL, err, user_data);
-    g_error_free(err);
-    return;
-  }
+  /* Address the exact bytes read, not a second potentially changed file. */
+  g_autofree char *sha256 = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+      (const guchar *)contents, length);
 
   /* Detect MIME type if not provided */
   const char *detected_mime = mime_type ? mime_type : gnostr_blossom_detect_mime_type(file_path);
@@ -474,8 +329,9 @@ void gnostr_blossom_upload_async(const char *server_url,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->session = soup_session_new();
-  soup_session_set_timeout(ctx->session, 60); /* 60 second timeout for uploads */
+  ctx->client = new_client(server_url, 60);
+  /* The app already holds these bytes; do not impose the download default on uploads. */
+  gn_blossom_client_set_limits(ctx->client, MAX(length, 1), 60, NULL);
 
   /* Build auth event (unsigned) */
   ctx->auth_event_json = gnostr_blossom_build_auth_event("upload", sha256, server_url,
@@ -499,7 +355,7 @@ typedef struct {
   GnostrBlossomListCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  SoupSession *session;
+  GnBlossomClient *client;
 } BlossomListContext;
 
 static void list_ctx_free(BlossomListContext *ctx) {
@@ -507,7 +363,7 @@ static void list_ctx_free(BlossomListContext *ctx) {
   g_free(ctx->server_url);
   g_free(ctx->pubkey_hex);
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
-  if (ctx->session) g_object_unref(ctx->session);
+  g_clear_object(&ctx->client);
   g_free(ctx);
 }
 
@@ -515,29 +371,11 @@ static void on_list_response(GObject *source, GAsyncResult *res, gpointer user_d
   BlossomListContext *ctx = (BlossomListContext *)user_data;
   GError *error = NULL;
 
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-
-  if (error) {
-    if (ctx->callback) {
-      ctx->callback(NULL, error, ctx->user_data);
-    }
+  GBytes *bytes = gn_blossom_client_list_finish(GN_BLOSSOM_CLIENT(source), res, &error);
+  error = map_transfer_error(error, GNOSTR_BLOSSOM_ERROR_SERVER_ERROR);
+  if (!bytes) {
+    if (ctx->callback) ctx->callback(NULL, error, ctx->user_data);
     g_clear_error(&error);
-    list_ctx_free(ctx);
-    return;
-  }
-
-  SoupMessage *msg = soup_session_get_async_result_message(SOUP_SESSION(source), res);
-  guint status = soup_message_get_status(msg);
-
-  if (status < 200 || status >= 300) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_SERVER_ERROR,
-                               "List failed with status %u", status);
-    if (ctx->callback) {
-      ctx->callback(NULL, err, ctx->user_data);
-    }
-    g_error_free(err);
-    if (bytes) g_bytes_unref(bytes);
     list_ctx_free(ctx);
     return;
   }
@@ -616,28 +454,9 @@ void gnostr_blossom_list_async(const char *server_url,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->session = soup_session_new();
-  soup_session_set_timeout(ctx->session, 30);
-
-  /* Build list URL */
-  char *url = g_strdup_printf("%s/list/%s", server_url, pubkey_hex);
-
-  SoupMessage *msg = soup_message_new("GET", url);
-  g_free(url);
-
-  if (!msg) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_PARSE_ERROR,
-                               "Failed to create list request");
-    if (callback) callback(NULL, err, user_data);
-    g_error_free(err);
-    list_ctx_free(ctx);
-    return;
-  }
-
-  soup_session_send_and_read_async(ctx->session, msg, G_PRIORITY_DEFAULT,
-                                    ctx->cancellable, on_list_response, ctx);
-  g_object_unref(msg);
+  ctx->client = new_client(server_url, 30);
+  gn_blossom_client_list_async(ctx->client, pubkey_hex, ctx->cancellable,
+      on_list_response, ctx);
 }
 
 /* Delete context */
@@ -648,7 +467,7 @@ typedef struct {
   GnostrBlossomDeleteCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  SoupSession *session;
+  GnBlossomClient *client;
 } BlossomDeleteContext;
 
 static void delete_ctx_free(BlossomDeleteContext *ctx) {
@@ -657,7 +476,7 @@ static void delete_ctx_free(BlossomDeleteContext *ctx) {
   g_free(ctx->sha256);
   g_free(ctx->auth_event_json);
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
-  if (ctx->session) g_object_unref(ctx->session);
+  g_clear_object(&ctx->client);
   g_free(ctx);
 }
 
@@ -665,71 +484,13 @@ static void on_delete_response(GObject *source, GAsyncResult *res, gpointer user
   BlossomDeleteContext *ctx = (BlossomDeleteContext *)user_data;
   GError *error = NULL;
 
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-
-  if (error) {
-    if (ctx->callback) {
-      ctx->callback(FALSE, error, ctx->user_data);
-    }
-    g_clear_error(&error);
-    delete_ctx_free(ctx);
-    return;
-  }
-
-  SoupMessage *msg = soup_session_get_async_result_message(SOUP_SESSION(source), res);
-  guint status = soup_message_get_status(msg);
-
-  if (bytes) g_bytes_unref(bytes);
-
-  gboolean success = (status >= 200 && status < 300);
-
-  if (!success) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_SERVER_ERROR,
-                               "Delete failed with status %u", status);
-    if (ctx->callback) {
-      ctx->callback(FALSE, err, ctx->user_data);
-    }
-    g_error_free(err);
-  } else {
-    if (ctx->callback) {
-      ctx->callback(TRUE, NULL, ctx->user_data);
-    }
-  }
-
+  gboolean success = gn_blossom_client_delete_finish(GN_BLOSSOM_CLIENT(source), res, &error);
+  error = map_transfer_error(error, GNOSTR_BLOSSOM_ERROR_SERVER_ERROR);
+  if (ctx->callback) ctx->callback(success, error, ctx->user_data);
+  g_clear_error(&error);
   delete_ctx_free(ctx);
 }
 
-static void delete_with_auth(BlossomDeleteContext *ctx, const char *auth_header) {
-  char *url = g_strdup_printf("%s/%s", ctx->server_url, ctx->sha256);
-
-  SoupMessage *msg = soup_message_new("DELETE", url);
-  g_free(url);
-
-  if (!msg) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                               GNOSTR_BLOSSOM_ERROR_PARSE_ERROR,
-                               "Failed to create delete request");
-    if (ctx->callback) {
-      ctx->callback(FALSE, err, ctx->user_data);
-    }
-    g_error_free(err);
-    delete_ctx_free(ctx);
-    return;
-  }
-
-  SoupMessageHeaders *headers = soup_message_get_request_headers(msg);
-  soup_message_headers_append(headers, "Authorization", auth_header);
-
-  soup_session_send_and_read_async(ctx->session, msg, G_PRIORITY_DEFAULT,
-                                    ctx->cancellable, on_delete_response, ctx);
-  g_object_unref(msg);
-}
-
-/**
- * Callback when unified signer returns signed event for delete.
- * The signed event contains id, pubkey, and sig - we just base64-encode it.
- */
 static void on_delete_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
   BlossomDeleteContext *ctx = (BlossomDeleteContext *)user_data;
   (void)source;
@@ -740,7 +501,9 @@ static void on_delete_sign_complete(GObject *source, GAsyncResult *res, gpointer
   gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
-    GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
+    g_free(signed_event_json);
+    GError *err = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+      ? g_error_copy(error) : g_error_new(GNOSTR_BLOSSOM_ERROR,
                                GNOSTR_BLOSSOM_ERROR_SIGNING_FAILED,
                                "Failed to sign auth event: %s",
                                error ? error->message : "unknown");
@@ -753,17 +516,9 @@ static void on_delete_sign_complete(GObject *source, GAsyncResult *res, gpointer
     return;
   }
 
-  /* Base64 encode the signed event for Authorization header */
-  gchar *base64 = g_base64_encode((const guchar *)signed_event_json, strlen(signed_event_json));
+  gn_blossom_client_delete_async(ctx->client, ctx->sha256, signed_event_json,
+      ctx->cancellable, on_delete_response, ctx);
   g_free(signed_event_json);
-
-  /* Build auth header: "Nostr <base64-encoded-signed-event>" per BUD-01 */
-  char *auth_header = g_strdup_printf("Nostr %s", base64);
-  g_free(base64);
-
-  /* Proceed with delete */
-  delete_with_auth(ctx, auth_header);
-  g_free(auth_header);
 }
 
 void gnostr_blossom_delete_async(const char *server_url,
@@ -797,8 +552,7 @@ void gnostr_blossom_delete_async(const char *server_url,
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->session = soup_session_new();
-  soup_session_set_timeout(ctx->session, 30);
+  ctx->client = new_client(server_url, 30);
 
   /* Build auth event for delete (unsigned) */
   ctx->auth_event_json = gnostr_blossom_build_auth_event("delete", sha256, server_url, 0, NULL);
@@ -854,6 +608,12 @@ static void on_fallback_upload_complete(GnostrBlossomBlob *blob, GError *error, 
     } else {
       gnostr_blossom_blob_free(blob);
     }
+    fallback_ctx_free(ctx);
+    return;
+  }
+
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    if (ctx->callback) ctx->callback(NULL, error, ctx->user_data);
     fallback_ctx_free(ctx);
     return;
   }
@@ -959,62 +719,3 @@ void gnostr_blossom_upload_with_fallback_async(const char *file_path,
   /* Start with first server */
   try_next_server(ctx);
 }
-
-#else /* !HAVE_SOUP3 */
-
-/* Stub implementations when libsoup is not available */
-
-void gnostr_blossom_upload_async(const char *server_url,
-                                  const char *file_path,
-                                  const char *mime_type,
-                                  GnostrBlossomUploadCallback callback,
-                                  gpointer user_data,
-                                  GCancellable *cancellable) {
-  (void)server_url; (void)file_path; (void)mime_type; (void)cancellable;
-  GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                             GNOSTR_BLOSSOM_ERROR_UPLOAD_FAILED,
-                             "Blossom upload requires libsoup3");
-  if (callback) callback(NULL, err, user_data);
-  g_error_free(err);
-}
-
-void gnostr_blossom_list_async(const char *server_url,
-                                const char *pubkey_hex,
-                                GnostrBlossomListCallback callback,
-                                gpointer user_data,
-                                GCancellable *cancellable) {
-  (void)server_url; (void)pubkey_hex; (void)cancellable;
-  GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                             GNOSTR_BLOSSOM_ERROR_SERVER_ERROR,
-                             "Blossom list requires libsoup3");
-  if (callback) callback(NULL, err, user_data);
-  g_error_free(err);
-}
-
-void gnostr_blossom_delete_async(const char *server_url,
-                                  const char *sha256,
-                                  GnostrBlossomDeleteCallback callback,
-                                  gpointer user_data,
-                                  GCancellable *cancellable) {
-  (void)server_url; (void)sha256; (void)cancellable;
-  GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                             GNOSTR_BLOSSOM_ERROR_SERVER_ERROR,
-                             "Blossom delete requires libsoup3");
-  if (callback) callback(FALSE, err, user_data);
-  g_error_free(err);
-}
-
-void gnostr_blossom_upload_with_fallback_async(const char *file_path,
-                                                 const char *mime_type,
-                                                 GnostrBlossomUploadCallback callback,
-                                                 gpointer user_data,
-                                                 GCancellable *cancellable) {
-  (void)file_path; (void)mime_type; (void)cancellable;
-  GError *err = g_error_new(GNOSTR_BLOSSOM_ERROR,
-                             GNOSTR_BLOSSOM_ERROR_UPLOAD_FAILED,
-                             "Blossom upload requires libsoup3");
-  if (callback) callback(NULL, err, user_data);
-  g_error_free(err);
-}
-
-#endif /* HAVE_SOUP3 */

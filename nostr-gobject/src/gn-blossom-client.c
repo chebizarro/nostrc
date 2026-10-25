@@ -24,6 +24,7 @@ typedef struct {
   GnBlossomNetworkFlags flags;
   gsize max_bytes;
   guint timeout;
+  enum { REQUEST_UPLOAD, REQUEST_DOWNLOAD, REQUEST_LIST, REQUEST_DELETE } operation;
   GError *route_error;
 } Request;
 
@@ -121,7 +122,7 @@ static GError *operation_error(Request *r, blossom_error_t code, blossom_client_
     return g_error_new_literal(G_IO_ERROR, G_IO_ERROR_NETWORK_UNREACHABLE, "Cannot reach Blossom server through the selected route");
   GnBlossomError error = GN_BLOSSOM_ERROR_FAILED;
   const gchar *message = "Blossom request failed";
-  if (code == BLOSSOM_ERR_AUTH) { error = GN_BLOSSOM_ERROR_AUTH; message = "Blossom server refused upload authorization"; }
+  if (code == BLOSSOM_ERR_AUTH) { error = GN_BLOSSOM_ERROR_AUTH; message = "Blossom server refused authorization"; }
   else if (code == BLOSSOM_ERR_TOO_LARGE) { error = GN_BLOSSOM_ERROR_TOO_LARGE; message = "Blossom file or response exceeds the size limit"; }
   else if (code == BLOSSOM_ERR_HASH_MISMATCH) { error = GN_BLOSSOM_ERROR_BAD_RESPONSE; message = "Blossom server answered with a different file"; }
   if (status && (status < 200 || status >= 300))
@@ -157,6 +158,12 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
     if (rc == BLOSSOM_OK)
       answer = g_strdup(desc->url ? desc->url : "");
     blossom_blob_descriptor_free(desc);
+  } else if (rc == BLOSSOM_OK && r->operation == REQUEST_DELETE) {
+    rc = blossom_client_delete_signed(client, r->hash, r->auth);
+  } else if (rc == BLOSSOM_OK && r->operation == REQUEST_LIST) {
+    char *json = NULL; size_t size = 0;
+    rc = blossom_client_list(client, r->hash, &json, &size);
+    if (rc == BLOSSOM_OK) answer = g_bytes_new_with_free_func(json, size, free, json);
   } else if (rc == BLOSSOM_OK) {
     uint8_t *bytes = NULL; size_t size = 0;
     rc = blossom_client_get_url(client, r->url, r->hash, &bytes, &size);
@@ -166,6 +173,7 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
     }
   }
   if (rc != BLOSSOM_OK) g_task_return_error(task, operation_error(r, rc, client));
+  else if (r->operation == REQUEST_DELETE) g_task_return_boolean(task, TRUE);
   else g_task_return_pointer(task, answer, r->bytes ? g_free : (GDestroyNotify)g_bytes_unref);
   blossom_client_free(client);
 }
@@ -206,6 +214,7 @@ void gn_blossom_client_download_async(GnBlossomClient *self, const gchar *url,
   GTask *task = request_new(self, cancel, callback, data);
   g_task_set_source_tag(task, gn_blossom_client_download_async);
   Request *r = g_task_get_task_data(task);
+  r->operation = REQUEST_DOWNLOAD;
   r->url = g_strdup(url); r->hash = g_strdup(hash);
   g_task_run_in_thread(task, worker); g_object_unref(task);
 }
@@ -214,6 +223,38 @@ GBytes *gn_blossom_client_download_finish(GnBlossomClient *self, GAsyncResult *r
   g_return_val_if_fail(g_task_is_valid(result, self) &&
     g_task_get_source_tag(G_TASK(result)) == gn_blossom_client_download_async, NULL);
   return g_task_propagate_pointer(G_TASK(result), error);
+}
+void gn_blossom_client_list_async(GnBlossomClient *self, const gchar *pubkey,
+    GCancellable *cancel, GAsyncReadyCallback callback, gpointer data)
+{
+  g_return_if_fail(GN_IS_BLOSSOM_CLIENT(self) && pubkey);
+  GTask *task = request_new(self, cancel, callback, data);
+  g_task_set_source_tag(task, gn_blossom_client_list_async);
+  Request *r = g_task_get_task_data(task);
+  r->operation = REQUEST_LIST; r->hash = g_strdup(pubkey);
+  g_task_run_in_thread(task, worker); g_object_unref(task);
+}
+GBytes *gn_blossom_client_list_finish(GnBlossomClient *self, GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self) &&
+    g_task_get_source_tag(G_TASK(result)) == gn_blossom_client_list_async, NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+void gn_blossom_client_delete_async(GnBlossomClient *self, const gchar *hash,
+    const gchar *auth, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data)
+{
+  g_return_if_fail(GN_IS_BLOSSOM_CLIENT(self) && hash && auth);
+  GTask *task = request_new(self, cancel, callback, data);
+  g_task_set_source_tag(task, gn_blossom_client_delete_async);
+  Request *r = g_task_get_task_data(task);
+  r->operation = REQUEST_DELETE; r->hash = g_strdup(hash); r->auth = g_strdup(auth);
+  g_task_run_in_thread(task, worker); g_object_unref(task);
+}
+gboolean gn_blossom_client_delete_finish(GnBlossomClient *self, GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self) &&
+    g_task_get_source_tag(G_TASK(result)) == gn_blossom_client_delete_async, FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
 }
 GnBlossomClient *gn_blossom_client_new(const gchar *endpoint)
 {

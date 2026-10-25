@@ -11,7 +11,7 @@ static const gchar payload[] = "exact encrypted wire bytes";
 static gchar *base, *hash;
 static SoupServer *server;
 static GAsyncResult *completed;
-static guint upload_count;
+static guint upload_count, delete_count, list_count;
 static GCancellable *active_cancel;
 static gboolean bad_descriptor, auth_refused;
 static void done(GObject *source, GAsyncResult *result, gpointer data)
@@ -32,7 +32,21 @@ static void handler(SoupServer *s, SoupServerMessage *m, const gchar *path,
     g_autofree gchar *url = g_strdup_printf("%s/%s.bin", base, hash);
     soup_server_message_set_redirect(m, 302, url); return;
   }
-  if (g_str_equal(soup_server_message_get_method(m), "PUT")) {
+  if (g_str_has_prefix(path, "/list/")) {
+    list_count++;
+    g_assert_null(soup_message_headers_get_one(soup_server_message_get_request_headers(m), "Authorization"));
+    soup_server_message_set_response(m, "application/json", SOUP_MEMORY_STATIC, "[]", 2);
+    soup_server_message_set_status(m, auth_refused ? 401 : 200, NULL);
+  } else if (g_str_equal(soup_server_message_get_method(m), "DELETE")) {
+    delete_count++;
+    const gchar *header = soup_message_headers_get_one(soup_server_message_get_request_headers(m), "Authorization");
+    NostrEvent *ev = NULL;
+    g_assert_cmpint(nostr_bud02_parse_auth_header(header, &ev), ==, NOSTR_BUD02_OK);
+    nostr_bud02_validate_options_t opts = { .expected_sha256 = hash };
+    g_assert_cmpint(nostr_bud02_validate_auth_event(ev, NOSTR_BUD02_ACTION_DELETE, &opts), ==, NOSTR_BUD02_OK);
+    nostr_event_free(ev);
+    soup_server_message_set_status(m, auth_refused ? 403 : 204, NULL);
+  } else if (g_str_equal(soup_server_message_get_method(m), "PUT")) {
     upload_count++;
     SoupMessageBody *body = soup_server_message_get_request_body(m);
     g_assert_cmpmem(body->data, body->length, payload, sizeof payload - 1);
@@ -60,10 +74,10 @@ static GnBlossomClient *client(gsize cap)
   gn_blossom_client_set_limits(c, cap, 3, "");
   return c;
 }
-static gchar *authorization(void)
+static gchar *authorization_for(nostr_bud02_action_t action)
 {
   char *sk = nostr_key_generate_private();
-  NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+  NostrEvent *event = nostr_bud02_create_auth_event(action, hash, 0, NULL);
   g_assert_cmpint(nostr_event_sign(event, sk), ==, 0);
   char *raw = nostr_event_serialize_compact(event);
   gchar *json = g_strdup(raw); free(raw);
@@ -76,7 +90,7 @@ static void upload(void)
   guint before = upload_count;
   g_autoptr(GnBlossomClient) c = client(sizeof payload - 1);
   g_autoptr(GBytes) bytes = g_bytes_new_static(payload, sizeof payload - 1);
-  g_autofree gchar *auth = authorization();
+  g_autofree gchar *auth = authorization_for(NOSTR_BUD02_ACTION_UPLOAD);
   g_autoptr(GError) error = NULL;
   gn_blossom_client_upload_async(c, bytes, hash, "application/octet-stream", auth, NULL, done, NULL);
   wait_done();
@@ -87,6 +101,40 @@ static void upload(void)
   g_assert_cmpuint(upload_count, ==, before + 1);
   g_clear_object(&completed);
 }
+static void list_case(void)
+{
+  g_autoptr(GnBlossomClient) c = client(1024);
+  g_autoptr(GError) error = NULL;
+  guint before = list_count;
+  gn_blossom_client_list_async(c, hash, NULL, done, NULL);
+  wait_done();
+  g_autoptr(GBytes) json = gn_blossom_client_list_finish(c, completed, &error);
+  g_assert_no_error(error);
+  g_assert_cmpmem(g_bytes_get_data(json, NULL), g_bytes_get_size(json), "[]", 2);
+  g_assert_cmpuint(list_count, ==, before + 1);
+  g_clear_object(&completed);
+}
+static void delete_case(gboolean wrong_action, gboolean cancel)
+{
+  g_autoptr(GnBlossomClient) c = client(1024);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GCancellable) cancellable = g_cancellable_new();
+  g_autofree gchar *auth = authorization_for(wrong_action ? NOSTR_BUD02_ACTION_UPLOAD : NOSTR_BUD02_ACTION_DELETE);
+  guint before = delete_count;
+  if (cancel) g_cancellable_cancel(cancellable);
+  gn_blossom_client_delete_async(c, hash, auth, cancellable, done, NULL);
+  wait_done();
+  gboolean ok = gn_blossom_client_delete_finish(c, completed, &error);
+  if (cancel) g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  else if (wrong_action || auth_refused) g_assert_error(error, GN_BLOSSOM_ERROR, GN_BLOSSOM_ERROR_AUTH);
+  else { g_assert_no_error(error); g_assert_true(ok); }
+  g_assert_cmpuint(delete_count, ==, before + (!cancel && !wrong_action));
+  g_clear_object(&completed);
+}
+static void delete_ok(void) { delete_case(FALSE, FALSE); }
+static void delete_bad_auth(void) { delete_case(TRUE, FALSE); }
+static void delete_cancel(void) { delete_case(FALSE, TRUE); }
+static void delete_refused(void) { auth_refused = TRUE; delete_case(FALSE, FALSE); auth_refused = FALSE; }
 static void bad_answer(void) { bad_descriptor = TRUE; upload(); bad_descriptor = FALSE; }
 static void refused(void) { auth_refused = TRUE; upload(); auth_refused = FALSE; }
 static void download_case(const gchar *path, gsize cap, gboolean cancel, gboolean wrong_hash)
@@ -209,6 +257,11 @@ int main(int argc, char **argv)
   g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
   hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, payload, sizeof payload - 1);
   g_test_add_func("/blossom/upload", upload);
+  g_test_add_func("/blossom/list", list_case);
+  g_test_add_func("/blossom/delete", delete_ok);
+  g_test_add_func("/blossom/delete-bad-auth", delete_bad_auth);
+  g_test_add_func("/blossom/delete-cancel", delete_cancel);
+  g_test_add_func("/blossom/delete-refused", delete_refused);
   g_test_add_func("/blossom/bad-descriptor", bad_answer);
   g_test_add_func("/blossom/auth-refused", refused);
   g_test_add_func("/blossom/download", download);

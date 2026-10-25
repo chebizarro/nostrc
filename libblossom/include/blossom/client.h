@@ -76,6 +76,9 @@ BLOSSOM_API blossom_error_t blossom_client_put_batch(blossom_client_t *, const b
 BLOSSOM_API blossom_error_t blossom_client_mirror(blossom_client_t *, const char *, blossom_blob_descriptor_t **);
 BLOSSOM_API blossom_error_t blossom_client_list(blossom_client_t *, const char *, char **, size_t *);
 BLOSSOM_API blossom_error_t blossom_client_delete(blossom_client_t *, const char *);
+/* Delete with an externally signed BUD-02 delete event. Signature, action,
+ * expiration and hash are verified before any request is sent. */
+BLOSSOM_API blossom_error_t blossom_client_delete_signed(blossom_client_t *, const char *sha256_hex, const char *signed_event_json);
 BLOSSOM_API const blossom_server_capabilities_t *blossom_client_get_capabilities(blossom_client_t *);
 BLOSSOM_API blossom_error_t blossom_client_set_upload_content_type(blossom_client_t *, const char *);
 /* Cached for 24h per normalized endpoint. Server-info is read without the
