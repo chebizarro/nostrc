@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.2.2 LANGUAGES C)
+project(nostr_homed VERSION 0.3.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -52,11 +52,11 @@ option(NOSTR_HOMED_ENABLE_PROFILE
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 # Phase-1 primitives for the portable-home epic (nostrc-h10m). Ships a
 # STANDALONE library `libnostr_porthome.a` (crypto + manifest + Blossom
-# wrapper) NOT linked into the base nostr-login stack. Requires libhanami
+# wrapper) NOT linked into the base nostr-login stack. Requires libblossom
 # and OpenSSL. Every public header is loudly marked EXPERIMENTAL — see
 # docs/designs/porthome-crypto-spec.md.
 option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
-  "Build the experimental portable-home primitives library (requires libhanami)" OFF)
+  "Build the experimental portable-home primitives library (requires libblossom)" OFF)
 # Phase-3 (bead nostrc-p6qp). Ships the user-scoped sync daemon
 # nostr-home-syncd + a small libnostr_syncd_core the unit + integration
 # tests link against. Gated behind its own option ON TOP OF the
@@ -694,7 +694,7 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
     src/common/nostr_manifest.c
     src/common/nostr_cache.c
     src/common/relay_fetch.c
-    src/common/blossom_client.c
+    src/fs/nostrfs-blossom.c
     src/common/secrets_tmpfs.c
     src/common/secrets_decrypt.c
     src/common/nip46_client_dbus.c
@@ -702,7 +702,7 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   target_include_directories(nostr_homed_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(nostr_homed_common PUBLIC
-    libnostr nostr_json libgo nip19 PkgConfig::JANSSON PkgConfig::GLIB2
+    libnostr nostr_json libgo nip19 nostrc::blossom PkgConfig::JANSSON PkgConfig::GLIB2
     OpenSSL::Crypto ${SECP256K1_LIB} SQLite3::SQLite3 CURL::libcurl Threads::Threads)
 
   add_executable(nostrfs src/fs/nostrfs.c)
@@ -1355,20 +1355,9 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       "${_porthome_nip44_hkdf} but the file is missing.")
   endif()
 
-  # libhanami is the substrate for the Blossom wrapper. In the in-tree
-  # build (root CMakeLists.txt) libhanami's add_subdirectory() runs
-  # AFTER gnome/nostr-homed/, so `if(TARGET hanami)` here is always
-  # false. CMake tolerates linking to a target defined later in the
-  # same configure pass, so we just spell the name and let the linker
-  # phase resolve it. A stand-alone build (with pkg-config-installed
-  # libhanami) is out of Phase-1 scope; a future BUILD_STANDALONE knob
-  # can add pkg_check_modules(HANAMI ...) here.
-  if(NOT BUILD_LIBHANAMI)
-    message(FATAL_ERROR
-      "NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL requires BUILD_LIBHANAMI=ON "
-      "(the in-tree libhanami provides the Blossom client).")
+  if(NOT TARGET nostrc::blossom)
+    message(FATAL_ERROR "Experimental porthome requires BUILD_LIBBLOSSOM=ON.")
   endif()
-  set(_porthome_hanami hanami)
 
   add_library(nostr_porthome STATIC
     src/porthome/nh_porthome_crypto.c
@@ -1393,7 +1382,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome
     ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip44/include)
   target_link_libraries(nostr_porthome
-    PUBLIC OpenSSL::Crypto ${_porthome_hanami})
+    PUBLIC OpenSSL::Crypto nostrc::blossom)
 
   # ────────────────────────────────────────────────────────────────
   # Phase 5 I1 (bead nostrc-h10m.1): unified UX seams.
@@ -1472,7 +1461,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fetch)
 
   # The helper binary. Only built when we have a libnostr (for the
-  # relay REQ / EOSE lifecycle) plus curl (transitively via libhanami)
+  # relay REQ / EOSE lifecycle) plus curl (transitively via libblossom)
   # plus the porthome primitives. Runs unprivileged — never installed
   # into the base package.
   find_package(PkgConfig QUIET)
@@ -1525,7 +1514,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   # the broker's PROVISION_HOME code path. Ships in $BINDIR under
   # NOSTR_HOMED_ENABLE_AUTH_INSTALL alongside nostr-home-status.
   #
-  # Links the full porthome stack (libhanami transitively via
+  # Links the full porthome stack (libblossom transitively via
   # nostr_porthome, libnostr for kind-30078 signing).  It is a
   # USER-SPACE operator tool; the dep-purity gate on nostr-authd +
   # pam_nostr is enforced separately below (they never grow a link
@@ -1726,7 +1715,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     # Driver used by the Python integration test; not a standalone add_test.
     add_executable(porthome_smallhome_driver
       tests/integration/porthome_smallhome_driver.c)
-    target_link_libraries(porthome_smallhome_driver PRIVATE nostr_porthome)
+    target_link_libraries(porthome_smallhome_driver PRIVATE nostr_porthome nostrc::bud02)
     target_compile_options(porthome_smallhome_driver PRIVATE
       -Wall -Wextra -Werror -Wno-misleading-indentation)
 

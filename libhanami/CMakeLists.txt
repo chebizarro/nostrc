@@ -26,6 +26,9 @@ declare_component_version(HANAMI
 set(HANAMI_VERSION_STRING "${HANAMI_VERSION}")
 
 # --- Dependencies ---
+if(NOT TARGET nostrc::blossom)
+  message(FATAL_ERROR "libhanami requires libblossom. Set BUILD_LIBBLOSSOM=ON or BUILD_LIBHANAMI=OFF.")
+endif()
 
 # libgit2 (required)
 find_package(PkgConfig REQUIRED)
@@ -66,9 +69,6 @@ set(HANAMI_SOURCES
   src/hanami.c
   # Future sources will be added here as components are implemented:
   src/hanami-index.c
-  src/hanami-server-capability.c
-  src/hanami-blossom-shim.c
-  src/hanami-blossom-client.c
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
   src/hanami-nostr.c
@@ -81,6 +81,7 @@ set(HANAMI_SOURCES
 
 add_library(hanami ${HANAMI_SOURCES})
 add_library(libhanami ALIAS hanami)
+add_library(nostrc::hanami ALIAS hanami)
 
 # Bridge component version vars (declare_component_version stored them under the
 # HANAMI_ prefix; the target is lowercase `hanami`) and apply VERSION + SOVERSION
@@ -108,7 +109,7 @@ target_include_directories(hanami
 target_link_libraries(hanami
   PUBLIC
     PkgConfig::LIBGIT2
-    nostrc::bud02      # public BUD-02 codec dependency
+    nostrc::blossom
   PRIVATE
     nostr              # libnostr for Nostr event/relay operations
     CURL::libcurl
@@ -116,10 +117,6 @@ target_link_libraries(hanami
     OpenSSL::Crypto
     pthread            # POSIX threads for relay connection mutex
 )
-
-if(NOT TARGET nostrc::bud02)
-  message(FATAL_ERROR "libhanami requires bud02. Set ENABLE_BUD02=ON or BUILD_LIBHANAMI=OFF.")
-endif()
 
 # NIP-34 (required — Git collaboration protocol)
 if(NOT TARGET nip34)
@@ -175,16 +172,6 @@ install(TARGETS hanami
 install(DIRECTORY include/hanami/
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hanami)
 
-# --- Optional live capability probe tool (nostrc-ypn2) ---
-# Not installed. Enable with -DHANAMI_BUILD_LIVE_PROBE=ON when you want to
-# smoke the probe against real Blossom servers from a workstation.
-option(HANAMI_BUILD_LIVE_PROBE "Build the live Blossom capability probe tool (out-of-tree smoke test)" OFF)
-if(HANAMI_BUILD_LIVE_PROBE)
-  add_executable(hanami-probe-capabilities-live tools/probe_capabilities_live.c)
-  target_compile_features(hanami-probe-capabilities-live PRIVATE c_std_11)
-  target_link_libraries(hanami-probe-capabilities-live PRIVATE hanami)
-endif()
-
 # --- Tests ---
 
 if(BUILD_TESTING)
@@ -212,92 +199,6 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-index)
-  endif()
-
-  add_executable(test-hanami-blossom-client tests/test_hanami_blossom_client.c)
-  target_compile_features(test-hanami-blossom-client PRIVATE c_std_11)
-  target_link_libraries(test-hanami-blossom-client PRIVATE hanami)
-  add_test(NAME test-hanami-blossom-client COMMAND test-hanami-blossom-client)
-  set_tests_properties(test-hanami-blossom-client PROPERTIES
-    TIMEOUT 30
-    LABELS "libhanami;blossom;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-blossom-client)
-  endif()
-
-  # Batch upload + probe (nostrc-xeby / nostrc-ypn2)
-  add_executable(test-hanami-blossom-batch tests/test_hanami_blossom_batch.c)
-  target_compile_features(test-hanami-blossom-batch PRIVATE c_std_11)
-  target_link_libraries(test-hanami-blossom-batch PRIVATE hanami nostr pthread)
-  add_test(NAME test-hanami-blossom-batch COMMAND test-hanami-blossom-batch)
-  set_tests_properties(test-hanami-blossom-batch PROPERTIES
-    TIMEOUT 60
-    LABELS "libhanami;blossom;batch;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-blossom-batch)
-  endif()
-
-  # Upload Content-Type resolver (nostrc-bpum)
-  add_executable(test-hanami-blossom-content-type tests/test_hanami_blossom_content_type.c)
-  target_compile_features(test-hanami-blossom-content-type PRIVATE c_std_11)
-  target_link_libraries(test-hanami-blossom-content-type PRIVATE hanami nostr pthread)
-  add_test(NAME test-hanami-blossom-content-type COMMAND test-hanami-blossom-content-type)
-  set_tests_properties(test-hanami-blossom-content-type PROPERTIES
-    TIMEOUT 60
-    LABELS "libhanami;blossom;content-type;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-blossom-content-type)
-  endif()
-
-  # PNG-shim primitives for body-sniffer bypass (nostrc-bpum)
-  add_executable(test-hanami-blossom-shim tests/test_hanami_blossom_shim.c)
-  target_compile_features(test-hanami-blossom-shim PRIVATE c_std_11)
-  target_link_libraries(test-hanami-blossom-shim PRIVATE hanami)
-  add_test(NAME test-hanami-blossom-shim COMMAND test-hanami-blossom-shim)
-  set_tests_properties(test-hanami-blossom-shim PROPERTIES
-    TIMEOUT 30
-    LABELS "libhanami;blossom;shim;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-blossom-shim)
-  endif()
-
-  # Probe-driven auto-shim decision (nostrc-si30)
-  add_executable(test-hanami-blossom-shim-auto tests/test_hanami_blossom_shim_auto.c)
-  target_compile_features(test-hanami-blossom-shim-auto PRIVATE c_std_11)
-  target_link_libraries(test-hanami-blossom-shim-auto PRIVATE hanami)
-  add_test(NAME test-hanami-blossom-shim-auto COMMAND test-hanami-blossom-shim-auto)
-  set_tests_properties(test-hanami-blossom-shim-auto PROPERTIES
-    TIMEOUT 30
-    LABELS "libhanami;blossom;shim;auto;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-blossom-shim-auto)
-  endif()
-
-  # Raw + shim body-sniffer probe extension (nostrc-prli)
-  add_executable(test-hanami-server-capability-probe-shim
-                 tests/test_hanami_server_capability_probe_shim.c)
-  target_compile_features(test-hanami-server-capability-probe-shim PRIVATE c_std_11)
-  target_link_libraries(test-hanami-server-capability-probe-shim
-                        PRIVATE hanami nostr pthread)
-  add_test(NAME test-hanami-server-capability-probe-shim
-           COMMAND test-hanami-server-capability-probe-shim)
-  set_tests_properties(test-hanami-server-capability-probe-shim PROPERTIES
-    TIMEOUT 60
-    LABELS "libhanami;blossom;probe;shim;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-server-capability-probe-shim)
   endif()
 
   add_executable(test-hanami-odb-backend tests/test_hanami_odb_backend.c)

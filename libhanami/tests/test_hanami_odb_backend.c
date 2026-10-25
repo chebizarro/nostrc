@@ -69,7 +69,7 @@ static void test_backend_new_success(void)
 
     /* Create a client (won't actually connect) */
     hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
     hanami_blossom_client_t *client = NULL;
@@ -112,7 +112,7 @@ static void test_backend_exists_with_index(void)
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
     hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
     hanami_blossom_client_t *client = NULL;
@@ -160,7 +160,7 @@ static void test_backend_read_header_from_index(void)
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
     hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
     hanami_blossom_client_t *client = NULL;
@@ -215,7 +215,7 @@ static void test_backend_read_not_found(void)
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
     hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
     hanami_blossom_client_t *client = NULL;
@@ -255,7 +255,7 @@ static void test_backend_exists_prefix_not_supported(void)
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
     hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
     hanami_blossom_client_t *client = NULL;
@@ -290,7 +290,7 @@ static void test_backend_read_indexed_oid_network_error(void)
 
     /* Point client to nonexistent endpoint — will fail with network error */
     hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
     hanami_blossom_client_t *client = NULL;

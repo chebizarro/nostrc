@@ -25,27 +25,27 @@
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_blossom.h"
-#include <hanami/hanami-types.h>
+#include <blossom/types.h>
 #include <string.h>
 
-/* Passthrough signer for the acceptance test only: fake_blossom
- * does not verify the BUD-02 kind-24242 signature, so this is
- * sufficient to unblock the wrapper's upload path. Production
- * paths must use a real signer — a NIP-46 client, a local
- * secret-key signer, or the delegate-key signer described in
- * docs/designs/home-from-relay.md §4.3 D9. */
-static hanami_error_t passthrough_sign(const char *event_json,
-                                       char **out_signed_json,
-                                       void *user_data) {
-    (void)user_data;
-    *out_signed_json = strdup(event_json);
-    return *out_signed_json ? HANAMI_OK : HANAMI_ERR_NOMEM;
+/* Deterministic public test key; exercises the real kind-24242 signing path. */
+#include <nostr-event.h>
+#define TEST_SK "0000000000000000000000000000000000000000000000000000000000000001"
+static blossom_error_t fixture_sign(const char *json, char **out, void *user_data) {
+    (void)user_data; *out = NULL;
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) return BLOSSOM_ERR_NOMEM;
+    if (nostr_event_deserialize_compact(ev, json, NULL) == 1 && nostr_event_sign(ev, TEST_SK) == 0)
+        *out = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    return *out ? BLOSSOM_OK : BLOSSOM_ERR_AUTH;
 }
-static const hanami_signer_t g_test_signer = {
-    .pubkey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    .sign = passthrough_sign,
-    .user_data = NULL,
+static const blossom_signer_t g_test_signer = {
+    .pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    .sign = fixture_sign,
 };
+
+
 
 #include <dirent.h>
 #include <errno.h>

@@ -53,14 +53,14 @@ class AffectedDeliveryTests(unittest.TestCase):
                 self.assertTrue(families <= set(selected["selected_checks"]))
                 self.assertNotIn("root.asan.libnostr", selected["selected_checks"])
                 self.assertNotIn("root.asan.nip98", selected["selected_checks"])
-                self.assertEqual(selected["witnesses"]["libhanami"], ["bud02", "libhanami"])
+                self.assertEqual(selected["witnesses"]["libhanami"], ["bud02", "libblossom", "libhanami"])
         for family in ("root.asan.bud02", "supported.nips.bud02"):
             self.assertEqual(p["checks"][family]["build_targets"], ["test-bud02-auth"])
             for tests in p["checks"][family]["ctest_tests"].values():
                 self.assertEqual(tests, ["test-bud02-auth"])
         for family in ("root.asan.libhanami", "supported.libhanami"):
             for tests in p["checks"][family]["ctest_tests"].values():
-                self.assertEqual(len(tests), 15)
+                self.assertEqual(len(tests), 9)
                 self.assertNotIn("test-bud02-auth", tests)
 
     def test_bud02_test_inputs_do_not_select_hanami_consumers(self):
@@ -68,9 +68,24 @@ class AffectedDeliveryTests(unittest.TestCase):
         selected = s.make_plan(p, [change("nips/bud02/tests/test_bud02_auth.c")], head="a" * 40)
         self.assertEqual(selected["effective_mode"], "affected")
         self.assertEqual(selected["selected_checks"], ["root.asan.bud02", "supported.nips.bud02"])
-        selected = s.make_plan(p, [change("libhanami/src/hanami-blossom-client.c")], head="a" * 40)
+        selected = s.make_plan(p, [change("libhanami/src/hanami-odb-backend.c")], head="a" * 40)
         self.assertNotIn("root.asan.bud02", selected["selected_checks"])
         self.assertNotIn("supported.nips.bud02", selected["selected_checks"])
+
+    def test_blossom_inputs_select_transport_and_consumers_not_codec_prerequisite(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for path in ("libblossom/src/client.c", "libblossom/include/blossom/client.h",
+                     "libblossom/CMakeLists.txt", "libblossom/blossom.pc.in"):
+            result = s.make_plan(p, [change(path)], head="a" * 40)
+            self.assertEqual(result["effective_mode"], "affected")
+            self.assertEqual(result["broadening_reasons"], [])
+            self.assertTrue({"root.asan.libblossom", "supported.libblossom",
+                             "root.asan.libhanami", "supported.libhanami", "homed.units"}
+                            <= set(result["selected_checks"]))
+            self.assertNotIn("root.asan.bud02", result["selected_checks"])
+            self.assertNotIn("root.asan.libnostr", result["selected_checks"])
+        result = s.make_plan(p, [change("libblossom/tests/test_blossom_shim.c")], head="a" * 40)
+        self.assertEqual(result["selected_checks"], ["root.asan.libblossom", "supported.libblossom"])
 
     def test_fixture_closure_transitive_and_missing_refusal(self):
         def test(name, **props):

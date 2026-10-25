@@ -436,7 +436,7 @@ void nh_syncd_lock_release(nh_syncd_lock *l);
  * Push closure.
  *
  * Test injection points:
- *   - `bud02_signer`: a hanami_signer_t for BUD-02 (fake or real).
+ *   - `bud02_signer`: a blossom_signer_t for BUD-02 (fake or real).
  *   - `event_signer_nsec_hex`: 64-hex secp256k1 nsec used to sign the
  *     kind-30078 pointer. Env-configured in prod; test-injected in
  *     integration. A NULL nsec makes the push return NH_SYNCD_ERR_ARG.
@@ -457,7 +457,7 @@ void nh_syncd_lock_release(nh_syncd_lock *l);
  * header directly. This is the same tradeoff nh_porthome_blossom.h
  * makes — every caller of this API already has libhanami on the
  * include path. */
-#include <hanami/hanami-types.h>
+#include <blossom/types.h>
 
 /* Signature used by test-only publish override. Return 0 on OK. */
 typedef int (*nh_syncd_publish_fn)(void *ud,
@@ -530,7 +530,7 @@ typedef struct {
     const char *const *blossom_servers;
     size_t             n_blossom_servers;
     size_t             min_replication;             /* 0 => default 2 */
-    const hanami_signer_t *bud02_signer;            /* required for real Blossom */
+    const blossom_signer_t *bud02_signer;            /* required for real Blossom */
 
     /* Encryption / manifest. */
     uint8_t            home_key[NH_PORTHOME_KEY_LEN];

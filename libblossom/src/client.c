@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "hanami/hanami-blossom-client.h"
-#include "hanami/hanami-blossom-shim.h"
+#include "blossom/client.h"
+#include "blossom/shim.h"
 #include <nostr/bud02/auth.h>
-#include "hanami/hanami-index.h"
-#include "hanami/hanami-server-capability.h"
+
+#include "blossom/capability.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-keys.h"
@@ -23,27 +23,117 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <openssl/sha.h>
+#include <openssl/crypto.h>
+#include <jansson.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <ctype.h>
+#include "internal.h"
 
 /* =========================================================================
  * Internal structures
  * ========================================================================= */
 
-struct hanami_blossom_client {
+struct blossom_client {
     char *endpoint;         /* Owned, no trailing slash */
     char *user_agent;       /* Owned */
     long timeout;           /* Seconds */
-    hanami_signer_t signer; /* Copied at creation */
+    size_t max_blob_bytes;
+    bool allow_insecure;
+    char upload_content_type[BLOSSOM_PREFERRED_CT_MAX];
+    blossom_signer_t signer; /* Copied at creation */
     bool has_signer;
     /* Session-scoped per-server capability record (nostrc-xeby / ypn2).
      * Not persisted; lives for the lifetime of this client handle. */
-    hanami_server_capabilities_t caps;
+    blossom_server_capabilities_t caps;
 };
+
+static bool valid_hex(const char *s) {
+    if (!s || strlen(s) != 64) return false;
+    for (size_t i = 0; i < 64; i++) if (!isxdigit((unsigned char)s[i])) return false;
+    return true;
+}
+
+static bool public_ipv4(uint32_t host) {
+    return (host >> 24) != 0 && (host >> 24) != 10 &&
+        (host >> 24) != 127 && (host >> 16) != 0xa9fe &&
+        (host >> 20) != 0xac1 && (host >> 16) != 0xc0a8 &&
+        (host >> 22) != 0x191 && (host >> 24) < 224;
+}
+static bool public_address(const struct sockaddr *sa) {
+    if (sa->sa_family == AF_INET)
+        return public_ipv4(ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr));
+    if (sa->sa_family == AF_INET6) {
+        const struct in6_addr *a = &((const struct sockaddr_in6 *)sa)->sin6_addr;
+        if (IN6_IS_ADDR_V4MAPPED(a)) {
+            uint32_t v; memcpy(&v, a->s6_addr + 12, 4);
+            return public_ipv4(ntohl(v));
+        }
+        /* Global unicast only; excludes loopback, ULA, link-local and multicast. */
+        return (a->s6_addr[0] & 0xe0) == 0x20;
+    }
+    return false;
+}
+blossom_error_t blossom_url_check(const char *url, bool insecure) {
+    if (!url || !*url) return BLOSSOM_ERR_INVALID_ARG;
+    for (const unsigned char *p = (const unsigned char *)url; *p; p++)
+        if (*p <= 0x20 || *p == 0x7f || *p == '#' || *p == '?') return BLOSSOM_ERR_INVALID_ARG;
+    CURLU *u = curl_url();
+    if (!u) return BLOSSOM_ERR_NOMEM;
+    char *scheme = NULL, *host = NULL, *user = NULL, *password = NULL;
+    bool ok = curl_url_set(u, CURLUPART_URL, url, 0) == CURLUE_OK;
+    ok = ok && curl_url_get(u, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
+               curl_url_get(u, CURLUPART_HOST, &host, 0) == CURLUE_OK;
+    if (ok && strcasecmp(scheme, "https") && !(insecure && !strcasecmp(scheme, "http"))) ok = false;
+    if (curl_url_get(u, CURLUPART_USER, &user, 0) == CURLUE_OK ||
+        curl_url_get(u, CURLUPART_PASSWORD, &password, 0) == CURLUE_OK) ok = false;
+    if (ok && !insecure) {
+        size_t n = strlen(host);
+        if (!strcasecmp(host, "localhost") || !strcasecmp(host, "localhost.") ||
+            (n > 10 && !strcasecmp(host + n - 10, ".localhost"))) ok = false;
+        struct sockaddr_in v4 = { .sin_family = AF_INET };
+        struct sockaddr_in6 v6 = { .sin6_family = AF_INET6 };
+        if (inet_pton(AF_INET, host, &v4.sin_addr) == 1 && !public_address((struct sockaddr *)&v4)) ok = false;
+        if (host[0] == '[' && n > 2) {
+            char literal[INET6_ADDRSTRLEN];
+            if (n - 2 >= sizeof literal) ok = false;
+            else {
+                memcpy(literal, host + 1, n - 2); literal[n - 2] = 0;
+                if (inet_pton(AF_INET6, literal, &v6.sin6_addr) != 1 ||
+                    !public_address((struct sockaddr *)&v6)) ok = false;
+            }
+        }
+    }
+    curl_free(scheme); curl_free(host); curl_free(user); curl_free(password); curl_url_cleanup(u);
+    return ok ? BLOSSOM_OK : BLOSSOM_ERR_INVALID_ARG;
+}
+static curl_socket_t blossom_open_socket(void *data, curlsocktype purpose, struct curl_sockaddr *addr) {
+    const blossom_client_t *c = data;
+    if (purpose != CURLSOCKTYPE_IPCXN || (!c->allow_insecure && !public_address(&addr->addr)))
+        return CURL_SOCKET_BAD;
+    return socket(addr->family, addr->socktype, addr->protocol);
+}
+static size_t discard_body(void *p, size_t size, size_t count, void *ctx) {
+    (void)p; (void)ctx;
+    return size && count > SIZE_MAX / size ? 0 : size * count;
+}
+blossom_error_t blossom_hash_blossom(const uint8_t *data, size_t len, char out[65]) {
+    if ((!data && len) || !out) return BLOSSOM_ERR_INVALID_ARG;
+    unsigned char digest[32];
+    if (!SHA256(data, len, digest)) return BLOSSOM_ERR_NOMEM;
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < 32; i++) { out[2*i] = hex[digest[i] >> 4]; out[2*i+1] = hex[digest[i] & 15]; }
+    out[64] = 0;
+    return BLOSSOM_OK;
+}
 
 /* Dynamic buffer for curl write callbacks */
 typedef struct {
     uint8_t *data;
     size_t len;
     size_t cap;
+    size_t limit;
 } dyn_buf_t;
 
 static void dyn_buf_init(dyn_buf_t *b)
@@ -51,6 +141,7 @@ static void dyn_buf_init(dyn_buf_t *b)
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
+    b->limit = BLOSSOM_DEFAULT_MAX_BLOB_BYTES;
 }
 
 static void dyn_buf_free(dyn_buf_t *b)
@@ -59,18 +150,20 @@ static void dyn_buf_free(dyn_buf_t *b)
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
+    b->limit = BLOSSOM_DEFAULT_MAX_BLOB_BYTES;
 }
 
 static size_t curl_write_cb(void *contents, size_t size, size_t nmemb,
                             void *userp)
 {
-    size_t real_size = size * nmemb;
     dyn_buf_t *b = (dyn_buf_t *)userp;
+    if (size && nmemb > SIZE_MAX / size) return 0;
+    size_t real_size = size * nmemb;
+    if (b->len > b->limit || real_size > b->limit - b->len ||
+        real_size > SIZE_MAX - b->len - 1) return 0;
 
     if (b->len + real_size + 1 > b->cap) {
-        size_t new_cap = (b->cap == 0) ? 4096 : b->cap * 2;
-        while (new_cap < b->len + real_size + 1)
-            new_cap *= 2;
+        size_t new_cap = b->len + real_size + 1;
         uint8_t *new_data = realloc(b->data, new_cap);
         if (!new_data)
             return 0; /* Signal error to curl */
@@ -89,7 +182,7 @@ static size_t curl_write_cb(void *contents, size_t size, size_t nmemb,
  * ========================================================================= */
 
 /* Build URL: endpoint + "/" + path. Caller frees. */
-static char *build_url(const hanami_blossom_client_t *c, const char *path)
+static char *build_url(const blossom_client_t *c, const char *path)
 {
     size_t elen = strlen(c->endpoint);
     size_t plen = strlen(path);
@@ -115,19 +208,19 @@ static void strip_trailing_slash(char *s)
  * Auth helper: create "Authorization: Nostr <base64>" for a signed event
  * ========================================================================= */
 
-static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
+static blossom_error_t make_auth_header(const blossom_client_t *c,
                                        nostr_bud02_action_t action,
                                        const char *sha256_hex,
                                        char **out_header)
 {
     if (!c->has_signer)
-        return HANAMI_ERR_AUTH;
+        return BLOSSOM_ERR_AUTH;
 
     /* Create the BUD-02 auth event */
     NostrEvent *ev = nostr_bud02_create_auth_event(
-        action, sha256_hex, 0, c->endpoint);
+        action, sha256_hex, 0, c->caps.server_tag_ok == BLOSSOM_CAP_YES ? c->endpoint : NULL);
     if (!ev)
-        return HANAMI_ERR_NOSTR;
+        return BLOSSOM_ERR_NOSTR;
 
     /* Set pubkey from signer */
     nostr_event_set_pubkey(ev, c->signer.pubkey);
@@ -136,19 +229,19 @@ static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
     char *unsigned_json = nostr_event_serialize_compact(ev);
     if (!unsigned_json) {
         nostr_event_free(ev);
-        return HANAMI_ERR_NOSTR;
+        return BLOSSOM_ERR_NOSTR;
     }
 
     /* Sign via callback */
     char *signed_json = NULL;
-    hanami_error_t err = c->signer.sign(unsigned_json, &signed_json,
+    blossom_error_t err = c->signer.sign(unsigned_json, &signed_json,
                                          c->signer.user_data);
     free(unsigned_json);
 
-    if (err != HANAMI_OK || !signed_json) {
+    if (err != BLOSSOM_OK || !signed_json) {
         nostr_event_free(ev);
         free(signed_json);
-        return (err != HANAMI_OK) ? err : HANAMI_ERR_AUTH;
+        return (err != BLOSSOM_OK) ? err : BLOSSOM_ERR_AUTH;
     }
 
     /* Deserialize the signed event back */
@@ -156,36 +249,45 @@ static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
     if (!signed_ev) {
         nostr_event_free(ev);
         free(signed_json);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
-    if (nostr_event_deserialize_compact(signed_ev, signed_json, NULL) != 1) {
+    if (nostr_event_deserialize_signed(signed_ev, signed_json, NULL) != NOSTR_EVENT_VALIDATION_OK ||
+        !nostr_event_check_signature(signed_ev) ||
+        !c->signer.pubkey || !nostr_event_get_pubkey(signed_ev) ||
+        strcmp(c->signer.pubkey, nostr_event_get_pubkey(signed_ev)) ||
+        nostr_event_get_kind(signed_ev) != NOSTR_BUD02_KIND) {
         nostr_event_free(ev);
         nostr_event_free(signed_ev);
         free(signed_json);
-        return HANAMI_ERR_NOSTR;
+        return BLOSSOM_ERR_NOSTR;
     }
     free(signed_json);
     nostr_event_free(ev);
 
-    /* Create the auth header */
+    nostr_bud02_validate_options_t validation = {
+        .expected_sha256 = sha256_hex, .expected_pubkey = c->signer.pubkey
+    };
+    if (nostr_bud02_validate_auth_event(signed_ev, action, &validation) != NOSTR_BUD02_OK) {
+        nostr_event_free(signed_ev); return BLOSSOM_ERR_AUTH;
+    }
     char *header_val = nostr_bud02_create_auth_header(signed_ev);
     nostr_event_free(signed_ev);
     if (!header_val)
-        return HANAMI_ERR_AUTH;
+        return BLOSSOM_ERR_AUTH;
 
     /* Format as "Authorization: Nostr <base64>" */
     size_t hlen = 16 + strlen(header_val) + 1; /* "Authorization: " + value + NUL */
     char *full_header = malloc(hlen);
     if (!full_header) {
         free(header_val);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
     snprintf(full_header, hlen, "Authorization: %s", header_val);
     free(header_val);
 
     *out_header = full_header;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* =========================================================================
@@ -232,114 +334,49 @@ static char *json_escape_string(const char *str)
     return escaped;
 }
 
-/* Find a JSON string value for a key. Returns malloc'd string or NULL. */
-static char *json_get_string(const char *json, const char *key)
+static blossom_blob_descriptor_t *parse_blob_descriptor(const char *text)
 {
-    if (!json || !key) return NULL;
-
-    /* Search for "key": - use dynamic allocation to avoid truncation */
-    size_t key_len = strlen(key);
-    char *search = malloc(key_len + 3); /* "key" + NUL */
-    if (!search) return NULL;
-    snprintf(search, key_len + 3, "\"%s\"", key);
-    
-    const char *p = strstr(json, search);
-    free(search);
-    if (!p) return NULL;
-
-    p += key_len + 2; /* skip "key" */
-    /* Skip whitespace and colon */
-    while (*p && (*p == ' ' || *p == '\t' || *p == ':'))
-        p++;
-    if (*p != '"') return NULL;
-    p++; /* skip opening quote */
-
-    const char *end = p;
-    while (*end && *end != '"') {
-        if (*end == '\\') {
-            end++; /* skip backslash */
-            if (*end == 'u') {
-                /* \uXXXX - skip 4 hex digits */
-                for (int i = 0; i < 4 && end[1]; i++)
-                    end++;
-            }
-        }
-        if (*end) end++;
+    json_t *obj = text ? json_loads(text, JSON_REJECT_DUPLICATES, NULL) : NULL;
+    if (!json_is_object(obj)) { json_decref(obj); return NULL; }
+    const char *hash = json_string_value(json_object_get(obj, "sha256"));
+    json_int_t size = json_integer_value(json_object_get(obj, "size"));
+    if (!valid_hex(hash) || !json_is_integer(json_object_get(obj, "size")) || size < 0) {
+        json_decref(obj); return NULL;
     }
-
-    size_t vlen = (size_t)(end - p);
-    char *val = malloc(vlen + 1);
-    if (!val) return NULL;
-    memcpy(val, p, vlen);
-    val[vlen] = '\0';
-    return val;
-}
-
-/* Find a JSON integer value for a key. Returns 0 if not found. */
-static int64_t json_get_int(const char *json, const char *key)
-{
-    if (!json || !key) return 0;
-
-    /* Use dynamic allocation to avoid truncation */
-    size_t key_len = strlen(key);
-    char *search = malloc(key_len + 3); /* "key" + NUL */
-    if (!search) return 0;
-    snprintf(search, key_len + 3, "\"%s\"", key);
-    
-    const char *p = strstr(json, search);
-    free(search);
-    if (!p) return 0;
-
-    p += key_len + 2; /* skip "key" */
-    while (*p && (*p == ' ' || *p == '\t' || *p == ':'))
-        p++;
-
-    return strtoll(p, NULL, 10);
-}
-
-/* Parse a Blossom blob descriptor JSON into a struct. */
-static hanami_blob_descriptor_t *parse_blob_descriptor(const char *json)
-{
-    if (!json) return NULL;
-
-    hanami_blob_descriptor_t *desc = calloc(1, sizeof(*desc));
-    if (!desc) return NULL;
-
-    char *sha = json_get_string(json, "sha256");
-    if (sha) {
-        strncpy(desc->sha256, sha, sizeof(desc->sha256) - 1);
-        free(sha);
+    blossom_blob_descriptor_t *d = calloc(1, sizeof(*d));
+    if (d) {
+        memcpy(d->sha256, hash, 65); d->size = (size_t)size;
+        d->uploaded = json_integer_value(json_object_get(obj, "uploaded"));
+        const char *url = json_string_value(json_object_get(obj, "url"));
+        const char *type = json_string_value(json_object_get(obj, "type"));
+        if (url) d->url = strdup(url);
+        if (type) d->mime_type = strdup(type);
     }
-
-    desc->size = (size_t)json_get_int(json, "size");
-    desc->uploaded = json_get_int(json, "uploaded");
-    desc->url = json_get_string(json, "url");
-    desc->mime_type = json_get_string(json, "type");
-
-    return desc;
+    json_decref(obj); return d;
 }
 
 /* =========================================================================
  * Lifecycle
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_client_new(const hanami_blossom_client_opts_t *opts,
-                                         const hanami_signer_t *signer,
-                                         hanami_blossom_client_t **out)
+blossom_error_t blossom_client_new(const blossom_client_opts_t *opts,
+                                         const blossom_signer_t *signer,
+                                         blossom_client_t **out)
 {
-    if (!opts || !opts->endpoint || !out)
-        return HANAMI_ERR_INVALID_ARG;
-
+    if (!out) return BLOSSOM_ERR_INVALID_ARG;
     *out = NULL;
+    if (!opts || !opts->endpoint) return BLOSSOM_ERR_INVALID_ARG;
+    blossom_error_t url_error = blossom_url_check(opts->endpoint, opts->allow_insecure);
+    if (url_error != BLOSSOM_OK) return url_error;
 
-    hanami_blossom_client_t *c = calloc(1, sizeof(*c));
+    blossom_client_t *c = calloc(1, sizeof(*c));
     if (!c)
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
 
     c->endpoint = strdup(opts->endpoint);
     if (!c->endpoint) {
         free(c);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
     strip_trailing_slash(c->endpoint);
 
@@ -347,75 +384,86 @@ hanami_error_t hanami_blossom_client_new(const hanami_blossom_client_opts_t *opt
     if (!c->user_agent) {
         free(c->endpoint);
         free(c);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     c->timeout = (opts->timeout_seconds > 0) ? opts->timeout_seconds : 30;
+    c->max_blob_bytes = opts->max_blob_bytes ? opts->max_blob_bytes : BLOSSOM_DEFAULT_MAX_BLOB_BYTES;
+    c->allow_insecure = opts->allow_insecure;
 
     if (signer && signer->sign) {
         c->signer = *signer; /* shallow copy — caller must keep pointers valid */
         c->has_signer = true;
     }
 
-    hanami_server_capabilities_init(&c->caps);
+    blossom_server_capabilities_init(&c->caps);
+    (void)blossom_capability_cache_get(c->endpoint, &c->caps);
 
     *out = c;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
-const hanami_server_capabilities_t *
-hanami_blossom_get_capabilities(hanami_blossom_client_t *client)
+const blossom_server_capabilities_t *
+blossom_client_get_capabilities(blossom_client_t *client)
 {
+    if (client && client->upload_content_type[0])
+        memcpy(client->caps.preferred_content_type, client->upload_content_type, BLOSSOM_PREFERRED_CT_MAX);
     return client ? &client->caps : NULL;
 }
 
-hanami_error_t
-hanami_blossom_client_set_upload_content_type(hanami_blossom_client_t *client,
+blossom_error_t
+blossom_client_set_upload_content_type(blossom_client_t *client,
                                               const char *content_type)
 {
-    if (!client) return HANAMI_ERR_INVALID_ARG;
+    if (!client) return BLOSSOM_ERR_INVALID_ARG;
     if (!content_type || !*content_type) {
+        client->upload_content_type[0] = '\0';
         client->caps.preferred_content_type[0] = '\0';
-        return HANAMI_OK;
+        return BLOSSOM_OK;
     }
     size_t n = strlen(content_type);
-    if (n >= HANAMI_PREFERRED_CT_MAX) return HANAMI_ERR_INVALID_ARG;
+    if (n >= BLOSSOM_PREFERRED_CT_MAX) return BLOSSOM_ERR_INVALID_ARG;
     /* Reject CR/LF to prevent header injection. */
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char)content_type[i];
-        if (c == '\r' || c == '\n' || c == '\0') return HANAMI_ERR_INVALID_ARG;
+        if (c == '\r' || c == '\n' || c == '\0') return BLOSSOM_ERR_INVALID_ARG;
     }
+    memcpy(client->upload_content_type, content_type, n + 1);
     memcpy(client->caps.preferred_content_type, content_type, n + 1);
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* Resolve the Content-Type value to send on PUT /upload. Precedence:
  *   1. c->caps.preferred_content_type (per-server override; empty = skip)
- *   2. env HANAMI_BLOSSOM_UPLOAD_CT_ENV (lab / operator override)
- *   3. HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE (compile-time default)
+ *   2. env BLOSSOM_UPLOAD_CT_ENV (lab / operator override)
+ *   3. BLOSSOM_UPLOAD_CONTENT_TYPE (compile-time default)
  * Returns a pointer into a caller-supplied 128-byte buffer. Never NULL.
  * The buffer is used only when the env value is chosen; static strings
  * are returned directly when they fit. Any embedded CR/LF or NUL in the
  * env value is treated as "not set" (defence-in-depth against a malicious
  * env override).
  */
-static const char *resolve_upload_content_type(const hanami_blossom_client_t *c,
-                                               char buf[HANAMI_PREFERRED_CT_MAX])
+static const char *resolve_upload_content_type(const blossom_client_t *c,
+                                               char buf[BLOSSOM_PREFERRED_CT_MAX])
 {
+    if (c && c->upload_content_type[0] != '\0') {
+        memcpy(buf, c->upload_content_type, BLOSSOM_PREFERRED_CT_MAX);
+        return buf;
+    }
     if (c && c->caps.preferred_content_type[0] != '\0') {
         /* Per-server override wins; copy into caller buf for uniformity. */
         size_t n = strnlen(c->caps.preferred_content_type,
-                           HANAMI_PREFERRED_CT_MAX);
-        if (n > 0 && n < HANAMI_PREFERRED_CT_MAX) {
+                           BLOSSOM_PREFERRED_CT_MAX);
+        if (n > 0 && n < BLOSSOM_PREFERRED_CT_MAX) {
             memcpy(buf, c->caps.preferred_content_type, n);
             buf[n] = '\0';
             return buf;
         }
     }
-    const char *env = getenv(HANAMI_BLOSSOM_UPLOAD_CT_ENV);
+    const char *env = getenv(BLOSSOM_UPLOAD_CT_ENV);
     if (env && *env) {
-        size_t n = strnlen(env, HANAMI_PREFERRED_CT_MAX);
-        if (n > 0 && n < HANAMI_PREFERRED_CT_MAX) {
+        size_t n = strnlen(env, BLOSSOM_PREFERRED_CT_MAX);
+        if (n > 0 && n < BLOSSOM_PREFERRED_CT_MAX) {
             int clean = 1;
             for (size_t i = 0; i < n; i++) {
                 unsigned char ch = (unsigned char)env[i];
@@ -428,22 +476,22 @@ static const char *resolve_upload_content_type(const hanami_blossom_client_t *c,
             }
         }
     }
-    return HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE;
+    return BLOSSOM_UPLOAD_CONTENT_TYPE;
 }
 
 /* Format a full "Content-Type: <value>" header string into `out` of size
  * `cap`. Returns 0 on success, -1 if truncated. */
-static int format_content_type_header(const hanami_blossom_client_t *c,
+static int format_content_type_header(const blossom_client_t *c,
                                       char *out, size_t cap)
 {
-    char ctbuf[HANAMI_PREFERRED_CT_MAX];
+    char ctbuf[BLOSSOM_PREFERRED_CT_MAX];
     const char *ct = resolve_upload_content_type(c, ctbuf);
     int n = snprintf(out, cap, "Content-Type: %s", ct);
     if (n < 0 || (size_t)n >= cap) return -1;
     return 0;
 }
 
-void hanami_blossom_client_free(hanami_blossom_client_t *client)
+void blossom_client_free(blossom_client_t *client)
 {
     if (!client) return;
     free(client->endpoint);
@@ -455,7 +503,7 @@ void hanami_blossom_client_free(hanami_blossom_client_t *client)
  * Common curl setup
  * ========================================================================= */
 
-static CURL *setup_curl(const hanami_blossom_client_t *c, const char *url)
+static CURL *setup_curl(const blossom_client_t *c, const char *url)
 {
     CURL *curl = curl_easy_init();
     if (!curl) return NULL;
@@ -463,64 +511,83 @@ static CURL *setup_curl(const hanami_blossom_client_t *c, const char *url)
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, c->timeout);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, c->user_agent);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
+    /* No redirect/proxy may bypass destination checks or leak auth. */
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, c->allow_insecure ? "http,https" : "https");
+    curl_easy_setopt(curl, CURLOPT_PROXY, "");
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, blossom_open_socket);
+    curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, (void *)c);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_body);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)c->max_blob_bytes);
 
     return curl;
 }
 
-static hanami_error_t curl_code_to_error(CURLcode code)
+static blossom_error_t curl_code_to_error(CURLcode code)
 {
     switch (code) {
-    case CURLE_OK:               return HANAMI_OK;
-    case CURLE_OPERATION_TIMEDOUT: return HANAMI_ERR_TIMEOUT;
+    case CURLE_OK:               return BLOSSOM_OK;
+    case CURLE_WRITE_ERROR:
+    case CURLE_FILESIZE_EXCEEDED: return BLOSSOM_ERR_TOO_LARGE;
+    case CURLE_OPERATION_TIMEDOUT: return BLOSSOM_ERR_TIMEOUT;
     case CURLE_COULDNT_RESOLVE_HOST:
-    case CURLE_COULDNT_CONNECT:  return HANAMI_ERR_NETWORK;
-    default:                     return HANAMI_ERR_NETWORK;
+    case CURLE_COULDNT_CONNECT:  return BLOSSOM_ERR_NETWORK;
+    default:                     return BLOSSOM_ERR_NETWORK;
     }
 }
 
-static hanami_error_t http_status_to_error(long status)
+static blossom_error_t http_status_to_error(long status)
 {
-    if (status >= 200 && status < 300) return HANAMI_OK;
-    if (status == 401 || status == 403) return HANAMI_ERR_AUTH;
-    if (status == 404) return HANAMI_ERR_NOT_FOUND;
-    if (status >= 400 && status < 500) return HANAMI_ERR_BLOSSOM;
-    return HANAMI_ERR_NETWORK;
+    if (status >= 200 && status < 300) return BLOSSOM_OK;
+    if (status == 401 || status == 403) return BLOSSOM_ERR_AUTH;
+    if (status == 404) return BLOSSOM_ERR_NOT_FOUND;
+    if (status >= 400 && status < 500) return BLOSSOM_ERR_BLOSSOM;
+    return BLOSSOM_ERR_NETWORK;
 }
 
 /* =========================================================================
  * BUD-01: GET
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_get(hanami_blossom_client_t *client,
+blossom_error_t blossom_client_get(blossom_client_t *client,
                                   const char *sha256_hex,
                                   uint8_t **out_data,
                                   size_t *out_len)
 {
-    if (!client || !sha256_hex || !out_data || !out_len)
-        return HANAMI_ERR_INVALID_ARG;
+    if (!client || !valid_hex(sha256_hex) || !out_data || !out_len)
+        return BLOSSOM_ERR_INVALID_ARG;
 
     *out_data = NULL;
     *out_len = 0;
 
     char *url = build_url(client, sha256_hex);
     if (!url)
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
 
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     dyn_buf_t buf;
     dyn_buf_init(&buf);
+    buf.limit = client->max_blob_bytes;
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
 
+    char *auth = NULL;
+    struct curl_slist *headers = NULL;
+    if (client->has_signer) {
+        blossom_error_t ae = make_auth_header(client, NOSTR_BUD02_ACTION_GET, sha256_hex, &auth);
+        if (ae != BLOSSOM_OK) { free(url); curl_easy_cleanup(curl); return ae; }
+        headers = curl_slist_append(NULL, auth);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
     CURLcode res = curl_easy_perform(curl);
+    curl_slist_free_all(headers); free(auth);
     free(url);
 
     if (res != CURLE_OK) {
@@ -533,43 +600,58 @@ hanami_error_t hanami_blossom_get(hanami_blossom_client_t *client,
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
 
-    hanami_error_t err = http_status_to_error(status);
-    if (err != HANAMI_OK) {
+    blossom_error_t err = http_status_to_error(status);
+    if (err != BLOSSOM_OK) {
         dyn_buf_free(&buf);
         return err;
     }
 
+    char actual[65];
+    if (blossom_hash_blossom(buf.data, buf.len, actual) != BLOSSOM_OK ||
+        strcasecmp(actual, sha256_hex)) {
+        dyn_buf_free(&buf);
+        return BLOSSOM_ERR_HASH_MISMATCH;
+    }
     *out_data = buf.data;
     *out_len = buf.len;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* =========================================================================
  * BUD-01: HEAD
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_head(hanami_blossom_client_t *client,
+blossom_error_t blossom_client_head(blossom_client_t *client,
                                    const char *sha256_hex,
                                    bool *out_exists)
 {
-    if (!client || !sha256_hex || !out_exists)
-        return HANAMI_ERR_INVALID_ARG;
+    if (!client || !valid_hex(sha256_hex) || !out_exists)
+        return BLOSSOM_ERR_INVALID_ARG;
 
     *out_exists = false;
 
     char *url = build_url(client, sha256_hex);
     if (!url)
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
 
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L); /* HEAD request */
 
+    char *auth = NULL;
+    struct curl_slist *headers = NULL;
+    if (client->has_signer) {
+        blossom_error_t ae = make_auth_header(client, NOSTR_BUD02_ACTION_GET, sha256_hex, &auth);
+        if (ae != BLOSSOM_OK) { free(url); curl_easy_cleanup(curl); return ae; }
+        headers = curl_slist_append(NULL, auth);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
     CURLcode res = curl_easy_perform(curl);
+    curl_slist_free_all(headers); free(auth);
     free(url);
 
     if (res != CURLE_OK) {
@@ -582,49 +664,50 @@ hanami_error_t hanami_blossom_head(hanami_blossom_client_t *client,
     curl_easy_cleanup(curl);
 
     *out_exists = (status >= 200 && status < 300);
-    return HANAMI_OK;
+    return status == 404 ? BLOSSOM_OK : http_status_to_error(status);
 }
 
 /* =========================================================================
  * BUD-02: PUT /upload
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
+blossom_error_t blossom_put_wire(blossom_client_t *client,
                                      const uint8_t *data,
                                      size_t len,
                                      const char *sha256_hex,
-                                     hanami_blob_descriptor_t **out_desc)
+                                     blossom_blob_descriptor_t **out_desc)
 {
-    if (!client || !data)
-        return HANAMI_ERR_INVALID_ARG;
+    if (!client || (!data && len)) return BLOSSOM_ERR_INVALID_ARG;
+    if (out_desc) *out_desc = NULL;
+    if (len > client->max_blob_bytes ||
+        (client->caps.max_size && len > client->caps.max_size)) return BLOSSOM_ERR_TOO_LARGE;
     if (!client->has_signer)
-        return HANAMI_ERR_AUTH;
+        return BLOSSOM_ERR_AUTH;
 
-    /* Compute SHA-256 if not provided */
     char hash_buf[65];
-    if (!sha256_hex) {
-        hanami_error_t herr = hanami_hash_blossom(data, len, hash_buf);
-        if (herr != HANAMI_OK) return herr;
-        sha256_hex = hash_buf;
-    }
+    blossom_error_t hash_error = blossom_hash_blossom(data, len, hash_buf);
+    if (hash_error != BLOSSOM_OK) return hash_error;
+    if (sha256_hex && (!valid_hex(sha256_hex) || strcasecmp(sha256_hex, hash_buf)))
+        return BLOSSOM_ERR_HASH_MISMATCH;
+    sha256_hex = hash_buf;
 
     /* Create auth header */
     char *auth_header = NULL;
-    hanami_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_UPLOAD,
+    blossom_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_UPLOAD,
                                           sha256_hex, &auth_header);
-    if (err != HANAMI_OK) return err;
+    if (err != BLOSSOM_OK) return err;
 
     char *url = build_url(client, "upload");
     if (!url) {
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     /* PUT with binary body.
@@ -634,12 +717,12 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
 
-    char cth[HANAMI_PREFERRED_CT_MAX + 16];
+    char cth[BLOSSOM_PREFERRED_CT_MAX + 16];
     if (format_content_type_header(client, cth, sizeof cth) != 0) {
         /* Should be unreachable — resolver-produced values are bounded
-         * by HANAMI_PREFERRED_CT_MAX; fall back to the compile-time default. */
+         * by BLOSSOM_PREFERRED_CT_MAX; fall back to the compile-time default. */
         snprintf(cth, sizeof cth, "Content-Type: %s",
-                 HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE);
+                 BLOSSOM_UPLOAD_CONTENT_TYPE);
     }
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, auth_header);
@@ -648,6 +731,7 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
 
     dyn_buf_t resp;
     dyn_buf_init(&resp);
+    resp.limit = client->max_blob_bytes;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
 
@@ -668,7 +752,7 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
     curl_easy_cleanup(curl);
 
     err = http_status_to_error(status);
-    if (err != HANAMI_OK) {
+    if (err != BLOSSOM_OK) {
         dyn_buf_free(&resp);
         return err;
     }
@@ -676,41 +760,45 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
     /* Parse blob descriptor from response */
     if (out_desc && resp.data) {
         *out_desc = parse_blob_descriptor((const char *)resp.data);
+        if (!*out_desc || strcasecmp((*out_desc)->sha256, sha256_hex) || (*out_desc)->size != len) {
+            blossom_blob_descriptor_free(*out_desc); *out_desc = NULL;
+            dyn_buf_free(&resp); return BLOSSOM_ERR_HASH_MISMATCH;
+        }
     }
 
     dyn_buf_free(&resp);
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* =========================================================================
  * BUD-02: DELETE
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_delete(hanami_blossom_client_t *client,
+blossom_error_t blossom_client_delete(blossom_client_t *client,
                                      const char *sha256_hex)
 {
-    if (!client || !sha256_hex)
-        return HANAMI_ERR_INVALID_ARG;
+    if (!client || !valid_hex(sha256_hex))
+        return BLOSSOM_ERR_INVALID_ARG;
     if (!client->has_signer)
-        return HANAMI_ERR_AUTH;
+        return BLOSSOM_ERR_AUTH;
 
     /* Create auth header */
     char *auth_header = NULL;
-    hanami_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_DELETE,
+    blossom_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_DELETE,
                                           sha256_hex, &auth_header);
-    if (err != HANAMI_OK) return err;
+    if (err != BLOSSOM_OK) return err;
 
     char *url = build_url(client, sha256_hex);
     if (!url) {
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
@@ -741,13 +829,13 @@ hanami_error_t hanami_blossom_delete(hanami_blossom_client_t *client,
  * BUD-01: LIST
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_list(hanami_blossom_client_t *client,
+blossom_error_t blossom_client_list(blossom_client_t *client,
                                    const char *pubkey_hex,
                                    char **out_json,
                                    size_t *out_len)
 {
-    if (!client || !pubkey_hex || !out_json || !out_len)
-        return HANAMI_ERR_INVALID_ARG;
+    if (!client || !valid_hex(pubkey_hex) || !out_json || !out_len)
+        return BLOSSOM_ERR_INVALID_ARG;
 
     *out_json = NULL;
     *out_len = 0;
@@ -758,20 +846,30 @@ hanami_error_t hanami_blossom_list(hanami_blossom_client_t *client,
 
     char *url = build_url(client, path);
     if (!url)
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
 
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     dyn_buf_t buf;
     dyn_buf_init(&buf);
+    buf.limit = client->max_blob_bytes;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
 
+    char *auth = NULL;
+    struct curl_slist *headers = NULL;
+    if (client->has_signer) {
+        blossom_error_t ae = make_auth_header(client, NOSTR_BUD02_ACTION_LIST, NULL, &auth);
+        if (ae != BLOSSOM_OK) { free(url); curl_easy_cleanup(curl); return ae; }
+        headers = curl_slist_append(NULL, auth);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
     CURLcode res = curl_easy_perform(curl);
+    curl_slist_free_all(headers); free(auth);
     free(url);
 
     if (res != CURLE_OK) {
@@ -784,15 +882,15 @@ hanami_error_t hanami_blossom_list(hanami_blossom_client_t *client,
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
 
-    hanami_error_t err = http_status_to_error(status);
-    if (err != HANAMI_OK) {
+    blossom_error_t err = http_status_to_error(status);
+    if (err != BLOSSOM_OK) {
         dyn_buf_free(&buf);
         return err;
     }
 
     *out_json = (char *)buf.data;
     *out_len = buf.len;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* =========================================================================
@@ -801,42 +899,42 @@ hanami_error_t hanami_blossom_list(hanami_blossom_client_t *client,
 
 /* Execute one PUT of `data` (len) to endpoint/upload with the given
  * "Nostr <b64>" header value (NOT the "Authorization:" prefix — this
- * helper adds it). Records HTTP status + hanami_error into out params.
+ * helper adds it). Records HTTP status + blossom_error into out params.
  *
  * The sha256_hex parameter is currently only used for a future
  * per-blob path — Blossom BUD-02 accepts PUTs at /upload (not /<hash>);
  * the server derives the address from sha256(body).
  */
-static void put_one_blob(hanami_blossom_client_t *c,
+static void put_one_blob(blossom_client_t *c,
                          const char *sha256_hex,
                          const uint8_t *data, size_t len,
                          const char *auth_header_value,
                          long *out_status,
-                         hanami_error_t *out_err)
+                         blossom_error_t *out_err)
 {
     (void)sha256_hex;
     *out_status = 0;
-    *out_err = HANAMI_ERR_NETWORK;
+    *out_err = BLOSSOM_ERR_NETWORK;
 
     char *url = build_url(c, "upload");
-    if (!url) { *out_err = HANAMI_ERR_NOMEM; return; }
+    if (!url) { *out_err = BLOSSOM_ERR_NOMEM; return; }
 
     CURL *curl = setup_curl(c, url);
-    if (!curl) { free(url); *out_err = HANAMI_ERR_NOMEM; return; }
+    if (!curl) { free(url); *out_err = BLOSSOM_ERR_NOMEM; return; }
 
     size_t hlen = 15 + 1 + strlen(auth_header_value) + 1; /* "Authorization: " + val + NUL */
     char *full = malloc(hlen);
-    if (!full) { curl_easy_cleanup(curl); free(url); *out_err = HANAMI_ERR_NOMEM; return; }
+    if (!full) { curl_easy_cleanup(curl); free(url); *out_err = BLOSSOM_ERR_NOMEM; return; }
     snprintf(full, hlen, "Authorization: %s", auth_header_value);
 
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
 
-    char cth[HANAMI_PREFERRED_CT_MAX + 16];
+    char cth[BLOSSOM_PREFERRED_CT_MAX + 16];
     if (format_content_type_header(c, cth, sizeof cth) != 0) {
         snprintf(cth, sizeof cth, "Content-Type: %s",
-                 HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE);
+                 BLOSSOM_UPLOAD_CONTENT_TYPE);
     }
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, full);
@@ -844,6 +942,7 @@ static void put_one_blob(hanami_blossom_client_t *c,
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     dyn_buf_t resp; dyn_buf_init(&resp);
+    resp.limit = c->max_blob_bytes;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
 
@@ -868,7 +967,7 @@ static void put_one_blob(hanami_blossom_client_t *c,
 /* Sign an unsigned event with the client's signer. Returns a NEW event
  * (parsed back from the signed JSON) or NULL. The input `ev` is not
  * modified in a durable way — caller still owns it. */
-static NostrEvent *sign_event_via_client(const hanami_blossom_client_t *c,
+static NostrEvent *sign_event_via_client(const blossom_client_t *c,
                                           NostrEvent *ev)
 {
     if (!c->has_signer) return NULL;
@@ -878,17 +977,21 @@ static NostrEvent *sign_event_via_client(const hanami_blossom_client_t *c,
     if (!unsigned_json) return NULL;
 
     char *signed_json = NULL;
-    hanami_error_t err = c->signer.sign(unsigned_json, &signed_json,
+    blossom_error_t err = c->signer.sign(unsigned_json, &signed_json,
                                          c->signer.user_data);
     free(unsigned_json);
-    if (err != HANAMI_OK || !signed_json) {
+    if (err != BLOSSOM_OK || !signed_json) {
         free(signed_json);
         return NULL;
     }
 
     NostrEvent *signed_ev = nostr_event_new();
     if (!signed_ev) { free(signed_json); return NULL; }
-    if (nostr_event_deserialize_compact(signed_ev, signed_json, NULL) != 1) {
+    if (nostr_event_deserialize_signed(signed_ev, signed_json, NULL) != NOSTR_EVENT_VALIDATION_OK ||
+        !nostr_event_check_signature(signed_ev) ||
+        !c->signer.pubkey || !nostr_event_get_pubkey(signed_ev) ||
+        strcmp(c->signer.pubkey, nostr_event_get_pubkey(signed_ev)) ||
+        nostr_event_get_kind(signed_ev) != NOSTR_BUD02_KIND) {
         nostr_event_free(signed_ev);
         free(signed_json);
         return NULL;
@@ -899,7 +1002,7 @@ static NostrEvent *sign_event_via_client(const hanami_blossom_client_t *c,
 
 /* Mint a batch auth header value ("Nostr <b64>") shared across N blobs.
  * server_url_or_null: pass NULL to OMIT the server tag (default). */
-static char *mint_batch_auth_header(hanami_blossom_client_t *c,
+static char *mint_batch_auth_header(blossom_client_t *c,
                                     const char *const *hashes, size_t count,
                                     const char *server_url_or_null)
 {
@@ -909,15 +1012,19 @@ static char *mint_batch_auth_header(hanami_blossom_client_t *c,
     NostrEvent *signed_ev = sign_event_via_client(c, ev);
     nostr_event_free(ev);
     if (!signed_ev) return NULL;
+    nostr_bud02_validate_options_t validation = { .expected_pubkey = c->signer.pubkey };
+    if (nostr_bud02_validate_auth_event(signed_ev, NOSTR_BUD02_ACTION_UPLOAD, &validation) != NOSTR_BUD02_OK) {
+        nostr_event_free(signed_ev); return NULL;
+    }
     char *hv = nostr_bud02_create_auth_header(signed_ev);
     nostr_event_free(signed_ev);
     return hv;
 }
 
 /* Mint a per-blob auth header value. Server tag omitted by default
- * (cross-server-safe posture; the legacy hanami_blossom_upload keeps
+ * (cross-server-safe posture; the legacy blossom_client_put keeps
  * its old behaviour of including the tag for backward compat). */
-static char *mint_single_auth_header(hanami_blossom_client_t *c,
+static char *mint_single_auth_header(blossom_client_t *c,
                                      const char *hash)
 {
     NostrEvent *ev = nostr_bud02_create_auth_event(
@@ -926,76 +1033,83 @@ static char *mint_single_auth_header(hanami_blossom_client_t *c,
     NostrEvent *signed_ev = sign_event_via_client(c, ev);
     nostr_event_free(ev);
     if (!signed_ev) return NULL;
+    nostr_bud02_validate_options_t validation = { .expected_pubkey = c->signer.pubkey };
+    if (nostr_bud02_validate_auth_event(signed_ev, NOSTR_BUD02_ACTION_UPLOAD, &validation) != NOSTR_BUD02_OK) {
+        nostr_event_free(signed_ev); return NULL;
+    }
     char *hv = nostr_bud02_create_auth_header(signed_ev);
     nostr_event_free(signed_ev);
     return hv;
 }
 
-hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
-                                           const hanami_blossom_blob_t *blobs,
+blossom_error_t blossom_put_batch_wire(blossom_client_t *c,
+                                           const blossom_blob_t *blobs,
                                            size_t count,
-                                           hanami_blossom_batch_result_t *out_results)
+                                           blossom_batch_result_t *out_results)
 {
     if (!c || !blobs || count == 0 || !out_results)
-        return HANAMI_ERR_INVALID_ARG;
-    if (!c->has_signer)
-        return HANAMI_ERR_AUTH;
-
-    /* Pre-zero results. */
+        return BLOSSOM_ERR_INVALID_ARG;
+    /* Pre-zero results before any signer failure; pool consumers must never
+     * mistake calloc's zero error code for a successful unattempted PUT. */
     for (size_t i = 0; i < count; i++) {
         out_results[i].http_status = 0;
-        out_results[i].error = HANAMI_ERR_NETWORK;
+        out_results[i].error = BLOSSOM_ERR_NETWORK;
         out_results[i].error_class = NULL;
+    }
+
+    if (!c->has_signer) {
+        for (size_t i = 0; i < count; i++) {
+            out_results[i].error = BLOSSOM_ERR_AUTH;
+            out_results[i].error_class = "auth";
+        }
+        return BLOSSOM_ERR_AUTH;
     }
 
     /* Validate hashes up-front (avoids doing PUTs on a bad batch). */
     for (size_t i = 0; i < count; i++) {
-        if (!blobs[i].sha256_hex || strlen(blobs[i].sha256_hex) != 64)
-            return HANAMI_ERR_INVALID_ARG;
+        if (!valid_hex(blobs[i].sha256_hex)) return BLOSSOM_ERR_INVALID_ARG;
+        if (blobs[i].len > c->max_blob_bytes ||
+            (c->caps.max_size && blobs[i].len > c->caps.max_size)) return BLOSSOM_ERR_TOO_LARGE;
+        char actual[65];
+        if (blossom_hash_blossom(blobs[i].bytes, blobs[i].len, actual) != BLOSSOM_OK ||
+            strcasecmp(actual, blobs[i].sha256_hex)) return BLOSSOM_ERR_HASH_MISMATCH;
         if (!blobs[i].bytes && blobs[i].len > 0)
-            return HANAMI_ERR_INVALID_ARG;
+            return BLOSSOM_ERR_INVALID_ARG;
     }
 
-    /* Optional pre-connect probe (nostrc-ypn2). Skipped if the kill-switch
-     * env var is set, or if we've already probed this session. */
-    if (c->caps.last_probe_ts == 0) {
-        const char *skip = getenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE");
-        if (!skip || strcmp(skip, "1") != 0) {
-            (void)hanami_server_probe_capabilities(c);
-        }
-    }
+    /* Caller prepared bytes under a fresh observation. */
 
-    /* Decide whether to try the batch path first. */
-    bool try_batch = (c->caps.batch_ok != HANAMI_CAP_NO);
+    /* UNKNOWN is not authority to share a batch header. */
+    bool try_batch = (c->caps.batch_ok == BLOSSOM_CAP_YES);
 
     const char **hashes = NULL;
     char *batch_header = NULL;
 
     if (try_batch) {
         hashes = malloc(count * sizeof(*hashes));
-        if (!hashes) return HANAMI_ERR_NOMEM;
+        if (!hashes) return BLOSSOM_ERR_NOMEM;
         for (size_t i = 0; i < count; i++)
             hashes[i] = blobs[i].sha256_hex;
 
-        const char *srv = (c->caps.server_tag_ok == HANAMI_CAP_YES)
+        const char *srv = (c->caps.server_tag_ok == BLOSSOM_CAP_YES)
                               ? c->endpoint : NULL;
         batch_header = mint_batch_auth_header(c, hashes, count, srv);
         if (!batch_header) {
             free(hashes);
             for (size_t i = 0; i < count; i++)
                 out_results[i].error_class = "auth";
-            return HANAMI_ERR_AUTH;
+            return BLOSSOM_ERR_AUTH;
         }
     }
 
     bool any_failed = false;
-    hanami_error_t last_err = HANAMI_OK;
+    blossom_error_t last_err = BLOSSOM_OK;
     bool fell_back_this_call = false;
 
     for (size_t i = 0; i < count; i++) {
-        const hanami_blossom_blob_t *b = &blobs[i];
+        const blossom_blob_t *b = &blobs[i];
         long status = 0;
-        hanami_error_t err = HANAMI_ERR_NETWORK;
+        blossom_error_t err = BLOSSOM_ERR_NETWORK;
         const char *cls = NULL;
 
         if (try_batch) {
@@ -1004,7 +1118,7 @@ hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
             if (status == 401) {
                 /* Definitive rejection of the batch header. Flip cache,
                  * fall back for THIS blob and every subsequent blob. */
-                c->caps.batch_ok = HANAMI_CAP_NO;
+                c->caps.batch_ok = BLOSSOM_CAP_NO;
                 c->caps.last_401_ts = (int64_t)time(NULL);
                 try_batch = false;
                 fell_back_this_call = true;
@@ -1013,7 +1127,7 @@ hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
 
                 char *hdr = mint_single_auth_header(c, b->sha256_hex);
                 if (!hdr) {
-                    err = HANAMI_ERR_AUTH;
+                    err = BLOSSOM_ERR_AUTH;
                     status = 0;
                     cls = "auth";
                 } else {
@@ -1026,7 +1140,7 @@ hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
         } else {
             char *hdr = mint_single_auth_header(c, b->sha256_hex);
             if (!hdr) {
-                err = HANAMI_ERR_AUTH;
+                err = BLOSSOM_ERR_AUTH;
                 status = 0;
                 cls = "auth";
             } else {
@@ -1041,7 +1155,7 @@ hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
         out_results[i].http_status = status;
         out_results[i].error = err;
 
-        if (err == HANAMI_OK) {
+        if (err == BLOSSOM_OK) {
             out_results[i].error_class =
                 (cls && strcmp(cls, "batch-fell-back") == 0) ? cls : NULL;
         } else {
@@ -1063,10 +1177,11 @@ hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
     /* Full batch succeeded end-to-end: latch batch_ok=YES so future calls
      * skip re-probing the batch question. */
     if (!any_failed && !fell_back_this_call &&
-        c->caps.batch_ok == HANAMI_CAP_UNKNOWN)
-        c->caps.batch_ok = HANAMI_CAP_YES;
+        c->caps.batch_ok == BLOSSOM_CAP_UNKNOWN)
+        c->caps.batch_ok = BLOSSOM_CAP_YES;
 
-    return any_failed ? last_err : HANAMI_OK;
+    blossom_capability_cache_set(c->endpoint, &c->caps);
+    return any_failed ? last_err : BLOSSOM_OK;
 }
 
 /* ---- Probe internals (ephemeral key, session-random blobs) ---- */
@@ -1125,7 +1240,7 @@ static char *probe_mint_header(const char *sk_hex,
 }
 
 /* Best-effort DELETE with the given "Nostr <b64>" header. Ignores errors. */
-static void probe_delete_blob(hanami_blossom_client_t *c,
+static void probe_delete_blob(blossom_client_t *c,
                               const char *sha256_hex,
                               const char *auth_header_value)
 {
@@ -1153,20 +1268,47 @@ static void probe_delete_blob(hanami_blossom_client_t *c,
     free(full);
 }
 
-hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
+blossom_error_t blossom_probe_capabilities(blossom_client_t *c)
 {
-    if (!c) return HANAMI_ERR_INVALID_ARG;
+    if (!c) return BLOSSOM_ERR_INVALID_ARG;
+
+    if (blossom_capability_cache_get(c->endpoint, &c->caps)) return BLOSSOM_OK;
+    blossom_server_capabilities_init(&c->caps);
+    c->caps.last_probe_ts = (int64_t)time(NULL);
+    char *info_url = build_url(c, "");
+    CURL *info_curl = info_url ? setup_curl(c, info_url) : NULL;
+    if (info_curl) {
+        dyn_buf_t info; dyn_buf_init(&info); info.limit = 65536;
+        struct curl_slist *headers = curl_slist_append(NULL, "Accept: application/json");
+        curl_easy_setopt(info_curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(info_curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+        curl_easy_setopt(info_curl, CURLOPT_WRITEDATA, &info);
+        curl_easy_setopt(info_curl, CURLOPT_TIMEOUT, 5L);
+        CURLcode rc = curl_easy_perform(info_curl);
+        long st = 0; curl_easy_getinfo(info_curl, CURLINFO_RESPONSE_CODE, &st);
+        if (rc == CURLE_OK && st >= 200 && st < 300 && info.data) {
+            json_t *obj = json_loads((const char *)info.data, JSON_REJECT_DUPLICATES, NULL);
+            json_t *priv = json_object_get(obj, "private");
+            if (json_is_boolean(priv)) c->caps.private_server = json_is_true(priv) ? BLOSSOM_CAP_YES : BLOSSOM_CAP_NO;
+            json_t *max = json_object_get(obj, "max_size");
+            if (!max) max = json_object_get(obj, "maxSize");
+            if (json_is_integer(max) && json_integer_value(max) > 0) c->caps.max_size = (uint64_t)json_integer_value(max);
+            json_decref(obj);
+        }
+        dyn_buf_free(&info); curl_slist_free_all(headers); curl_easy_cleanup(info_curl);
+    }
+    free(info_url);
 
     /* Ephemeral secp256k1 keypair — never leaves this stack frame. */
     char *sk_hex = nostr_key_generate_private();
-    if (!sk_hex) return HANAMI_ERR_NOSTR;
+    if (!sk_hex) return BLOSSOM_ERR_NOSTR;
 
     /* Two 1 KiB session-random blobs. */
     uint8_t blob1[1024], blob2[1024];
     if (probe_random_bytes(blob1, sizeof blob1) != 0 ||
         probe_random_bytes(blob2, sizeof blob2) != 0) {
         free(sk_hex);
-        return HANAMI_ERR_NETWORK;
+        return BLOSSOM_ERR_NETWORK;
     }
     char h1[65], h2[65];
     probe_sha256_hex(blob1, sizeof blob1, h1);
@@ -1187,7 +1329,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
 
             char *url = build_url(c, reach_hash);
             if (url) {
-                CURL *curl = curl_easy_init();
+                CURL *curl = setup_curl(c, url);
                 if (curl) {
                     curl_easy_setopt(curl, CURLOPT_URL, url);
                     curl_easy_setopt(curl, CURLOPT_USERAGENT, c->user_agent);
@@ -1206,6 +1348,14 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         }
     }
 
+    if (c->caps.private_server == BLOSSOM_CAP_YES) {
+        /* An ephemeral identity has no allowlist authority. Do not mislabel
+         * its refusal as a batch/sniffer failure or probe with the real key. */
+        OPENSSL_cleanse(sk_hex, strlen(sk_hex)); free(sk_hex);
+        blossom_capability_cache_set(c->endpoint, &c->caps);
+        return c->caps.reachable ? BLOSSOM_OK : BLOSSOM_ERR_NETWORK;
+    }
+
     /* (b) server-tag tolerance — PUT h1 with single-x event that has
      * a `server` tag. 2xx -> YES; 401/403 -> NO; other 4xx -> UNKNOWN. */
     bool put_b_success = false;
@@ -1214,14 +1364,14 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         char *hv = probe_mint_header(sk_hex, hh, 1, c->endpoint,
                                      false, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
-            long st = 0; hanami_error_t err;
+            long st = 0; blossom_error_t err;
             put_one_blob(c, h1, blob1, sizeof blob1, hv, &st, &err);
             free(hv);
             if (st >= 200 && st < 300) {
-                c->caps.server_tag_ok = HANAMI_CAP_YES;
+                c->caps.server_tag_ok = BLOSSOM_CAP_YES;
                 put_b_success = true;
             } else if (st == 401 || st == 403) {
-                c->caps.server_tag_ok = HANAMI_CAP_NO;
+                c->caps.server_tag_ok = BLOSSOM_CAP_NO;
             }
         }
     }
@@ -1234,7 +1384,7 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         char *hv = probe_mint_header(sk_hex, hh, 2, NULL,
                                      true, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
-            long st1 = 0, st2 = 0; hanami_error_t err;
+            long st1 = 0, st2 = 0; blossom_error_t err;
             put_one_blob(c, h1, blob1, sizeof blob1, hv, &st1, &err);
             put_one_blob(c, h2, blob2, sizeof blob2, hv, &st2, &err);
             free(hv);
@@ -1242,10 +1392,10 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
             bool both_ok = (st1 >= 200 && st1 < 300) &&
                            (st2 >= 200 && st2 < 300);
             if (any_401) {
-                c->caps.batch_ok = HANAMI_CAP_NO;
+                c->caps.batch_ok = BLOSSOM_CAP_NO;
                 c->caps.last_401_ts = (int64_t)time(NULL);
             } else if (both_ok) {
-                c->caps.batch_ok = HANAMI_CAP_YES;
+                c->caps.batch_ok = BLOSSOM_CAP_YES;
                 put_c_success_h1 = true;
                 put_c_success_h2 = true;
             }
@@ -1259,14 +1409,14 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
                                      false, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
-            long st = 0; hanami_error_t err;
+            long st = 0; blossom_error_t err;
             put_one_blob(c, h2, blob2, sizeof blob2, hv, &st, &err);
             free(hv);
             if (st == 401 || st == 403) {
-                c->caps.strict_x_binding = HANAMI_CAP_YES;
+                c->caps.strict_x_binding = BLOSSOM_CAP_YES;
                 c->caps.last_401_ts = (int64_t)time(NULL);
             } else if (st > 0) {
-                c->caps.strict_x_binding = HANAMI_CAP_NO;
+                c->caps.strict_x_binding = BLOSSOM_CAP_NO;
             }
         }
     }
@@ -1279,26 +1429,26 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
      * -> raw_random_ok=NO. 401/403 leaves the flag UNKNOWN — that
      * failure is auth, not content-policy, and shouldn't feed into
      * the shim auto-decide. */
-    uint8_t blob3[1024];
+    uint8_t blob3[1024] = {0};
     char h3[65];
     bool put_e_success = false;
-    if (probe_random_bytes(blob3, sizeof blob3) == 0) {
+    bool random3_ok = probe_random_bytes(blob3, sizeof blob3) == 0;
+    if (random3_ok) {
         probe_sha256_hex(blob3, sizeof blob3, h3);
         const char *hh[1] = { h3 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
                                      false, NOSTR_BUD02_ACTION_UPLOAD);
         if (hv) {
-            long st = 0; hanami_error_t err;
+            long st = 0; blossom_error_t err;
             put_one_blob(c, h3, blob3, sizeof blob3, hv, &st, &err);
             free(hv);
             if (st >= 200 && st < 300) {
-                c->caps.raw_random_ok = HANAMI_CAP_YES;
+                c->caps.raw_random_ok = BLOSSOM_CAP_YES;
                 put_e_success = true;
-            } else if (st == 400 || st == 415 || st == 422 ||
-                       (st >= 500 && st < 600)) {
+            } else if (st == 400 || st == 415 || st == 422) {
                 /* 4xx content-policy or 5xx decoder blowup — either way
                  * this server did not accept the raw random bytes. */
-                c->caps.raw_random_ok = HANAMI_CAP_NO;
+                c->caps.raw_random_ok = BLOSSOM_CAP_NO;
             }
         }
     }
@@ -1313,11 +1463,11 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
     bool put_f_success = false;
     char h_shim[65] = {0};
     {
-        size_t enc_len = hanami_blossom_shim_encoded_len(sizeof blob3);
+        size_t enc_len = blossom_shim_encoded_len(sizeof blob3);
         uint8_t *shim_buf = (uint8_t *)malloc(enc_len);
-        if (shim_buf) {
-            if (hanami_blossom_shim_encode(blob3, sizeof blob3,
-                                           shim_buf, enc_len) == HANAMI_OK) {
+        if (shim_buf && random3_ok) {
+            if (blossom_shim_wrap(blob3, sizeof blob3,
+                                           shim_buf, enc_len) == BLOSSOM_OK) {
                 probe_sha256_hex(shim_buf, enc_len, h_shim);
                 const char *hh[1] = { h_shim };
                 char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
@@ -1327,28 +1477,26 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
                     /* Temporarily flip the client's preferred
                      * Content-Type to image/png so put_one_blob picks
                      * it up; restore afterwards. */
-                    char saved_ct[HANAMI_PREFERRED_CT_MAX];
-                    memcpy(saved_ct, c->caps.preferred_content_type,
+                    char saved_ct[BLOSSOM_PREFERRED_CT_MAX];
+                    memcpy(saved_ct, c->upload_content_type,
                            sizeof saved_ct);
-                    (void)hanami_blossom_client_set_upload_content_type(
-                              c, "image/png");
+                    snprintf(c->upload_content_type, sizeof c->upload_content_type, "image/png");
 
-                    long st = 0; hanami_error_t err;
+                    long st = 0; blossom_error_t err;
                     put_one_blob(c, h_shim, shim_buf, enc_len, hv,
                                  &st, &err);
                     free(hv);
 
                     /* Restore whatever was there before (including
                      * "empty" == client default). */
-                    memcpy(c->caps.preferred_content_type, saved_ct,
+                    memcpy(c->upload_content_type, saved_ct,
                            sizeof saved_ct);
 
                     if (st >= 200 && st < 300) {
-                        c->caps.png_shim_ok = HANAMI_CAP_YES;
+                        c->caps.png_shim_ok = BLOSSOM_CAP_YES;
                         put_f_success = true;
-                    } else if (st == 400 || st == 415 || st == 422 ||
-                               (st >= 500 && st < 600)) {
-                        c->caps.png_shim_ok = HANAMI_CAP_NO;
+                    } else if (st == 400 || st == 415 || st == 422) {
+                        c->caps.png_shim_ok = BLOSSOM_CAP_NO;
                     }
                 }
             }
@@ -1385,40 +1533,175 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         if (hv) { probe_delete_blob(c, h_shim, hv); free(hv); }
     }
 
-    free(sk_hex);
-    return HANAMI_OK;
+    OPENSSL_cleanse(sk_hex, strlen(sk_hex)); free(sk_hex);
+    blossom_capability_cache_set(c->endpoint, &c->caps);
+    return c->caps.reachable ? BLOSSOM_OK : BLOSSOM_ERR_NETWORK;
+}
+
+bool blossom_shim_active(void) { return false; }
+
+bool blossom_shim_active_for_ex(const char *const *urls, size_t n,
+    blossom_shim_reason_t *reason, char *who, size_t cap)
+{
+    if (reason) *reason = BLOSSOM_SHIM_REASON_AUTO_FALLBACK;
+    if (who && cap) *who = 0;
+    if (!urls || !n) return false;
+    bool all_raw = true;
+    for (size_t i = 0; i < n; i++) {
+        blossom_server_capabilities_t caps = {0};
+        if (!blossom_capability_cache_get(urls[i], &caps)) {
+            blossom_client_t *c = NULL;
+            blossom_client_opts_t opts = { .endpoint = urls[i], .timeout_seconds = 5 };
+            if (blossom_client_new(&opts, NULL, &c) == BLOSSOM_OK) {
+                (void)blossom_probe_capabilities(c); caps = c->caps;
+                blossom_client_free(c);
+            }
+        }
+        if (caps.raw_random_ok == BLOSSOM_CAP_NO && caps.png_shim_ok == BLOSSOM_CAP_YES) {
+            if (reason) *reason = BLOSSOM_SHIM_REASON_AUTO_REQUIRED;
+            if (who && cap) snprintf(who, cap, "%s", urls[i]);
+            return true;
+        }
+        if (caps.raw_random_ok != BLOSSOM_CAP_YES) all_raw = false;
+    }
+    if (all_raw && reason) *reason = BLOSSOM_SHIM_REASON_AUTO_RAW_OK;
+    return false;
+}
+bool blossom_shim_active_for(const char *const *urls, size_t n) {
+    return blossom_shim_active_for_ex(urls, n, NULL, NULL, 0);
+}
+
+static blossom_error_t prepare_blob(blossom_client_t *c, const uint8_t *data,
+    size_t len, uint8_t **owned, const uint8_t **wire, size_t *wire_len, char hash[65])
+{
+    *owned = NULL; *wire = data; *wire_len = len;
+    if ((!data && len) || len > c->max_blob_bytes) return BLOSSOM_ERR_TOO_LARGE;
+    if (!blossom_shim_detect(data, len) && c->caps.raw_random_ok == BLOSSOM_CAP_NO && c->caps.png_shim_ok == BLOSSOM_CAP_YES) {
+        size_t n = blossom_shim_encoded_len(len);
+        if (!n || n > c->max_blob_bytes) return BLOSSOM_ERR_TOO_LARGE;
+        *owned = malloc(n);
+        if (!*owned) return BLOSSOM_ERR_NOMEM;
+        blossom_error_t e = blossom_shim_wrap(data, len, *owned, n);
+        if (e != BLOSSOM_OK) { free(*owned); *owned = NULL; return e; }
+        *wire = *owned; *wire_len = n;
+    }
+    if (c->caps.max_size && *wire_len > c->caps.max_size) {
+        free(*owned); *owned = NULL; return BLOSSOM_ERR_TOO_LARGE;
+    }
+    return blossom_hash_blossom(*wire, *wire_len, hash);
+}
+blossom_error_t blossom_client_get_content(blossom_client_t *c, const char *hash, uint8_t **data, size_t *len) {
+    blossom_error_t e = blossom_client_get(c, hash, data, len);
+    if (e == BLOSSOM_OK && blossom_shim_detect(*data, *len)) {
+        const uint8_t *view; size_t n;
+        e = blossom_shim_unwrap(*data, *len, &view, &n);
+        if (e == BLOSSOM_OK) { memmove(*data, view, n); *len = n; }
+    }
+    return e;
+}
+blossom_error_t blossom_client_address(blossom_client_t *c, const uint8_t *data, size_t len, char hash[65]) {
+    if (!c || (!data && len) || !hash) return BLOSSOM_ERR_INVALID_ARG;
+    if (len > c->max_blob_bytes) return BLOSSOM_ERR_TOO_LARGE;
+    (void)blossom_probe_capabilities(c);
+    uint8_t *owned; const uint8_t *wire; size_t n;
+    blossom_error_t e = prepare_blob(c, data, len, &owned, &wire, &n, hash);
+    free(owned); return e;
+}
+blossom_error_t blossom_client_put(blossom_client_t *c, const uint8_t *data,
+    size_t len, const char *expected, blossom_blob_descriptor_t **desc)
+{
+    if (desc) *desc = NULL;
+    if (!c || (!data && len)) return BLOSSOM_ERR_INVALID_ARG;
+    if (len > c->max_blob_bytes) return BLOSSOM_ERR_TOO_LARGE;
+    if (!c->has_signer) return BLOSSOM_ERR_AUTH;
+    (void)blossom_probe_capabilities(c);
+    uint8_t *owned = NULL; const uint8_t *wire; size_t wire_len; char hash[65];
+    blossom_error_t e = prepare_blob(c, data, len, &owned, &wire, &wire_len, hash);
+    if (e == BLOSSOM_OK && expected && (!valid_hex(expected) || strcasecmp(expected, hash)))
+        e = BLOSSOM_ERR_HASH_MISMATCH;
+    char ct[BLOSSOM_PREFERRED_CT_MAX]; memcpy(ct, c->upload_content_type, sizeof ct);
+    if (blossom_shim_detect(wire, wire_len)) snprintf(c->upload_content_type, sizeof c->upload_content_type, "image/png");
+    if (e == BLOSSOM_OK) e = blossom_put_wire(c, wire, wire_len, hash, desc);
+    memcpy(c->upload_content_type, ct, sizeof ct); free(owned);
+    return e;
+}
+blossom_error_t blossom_client_put_batch(blossom_client_t *c,
+    const blossom_blob_t *blobs, size_t n, blossom_batch_result_t *results)
+{
+    if (!c || !blobs || !n || !results || n > SIZE_MAX / 65) return BLOSSOM_ERR_INVALID_ARG;
+    for (size_t i = 0; i < n; i++) {
+        results[i] = (blossom_batch_result_t){ .error = BLOSSOM_ERR_NETWORK };
+        if ((!blobs[i].bytes && blobs[i].len) || (blobs[i].sha256_hex && !valid_hex(blobs[i].sha256_hex)))
+            return BLOSSOM_ERR_INVALID_ARG;
+        if (blobs[i].len > c->max_blob_bytes) return BLOSSOM_ERR_TOO_LARGE;
+    }
+    if (!c->has_signer) return BLOSSOM_ERR_AUTH;
+    (void)blossom_probe_capabilities(c);
+    blossom_blob_t *wire = calloc(n, sizeof(*wire));
+    uint8_t **owned = calloc(n, sizeof(*owned));
+    char (*hashes)[65] = calloc(n, sizeof(*hashes));
+    if (!wire || !owned || !hashes) { free(wire); free(owned); free(hashes); return BLOSSOM_ERR_NOMEM; }
+    blossom_error_t e = BLOSSOM_OK;
+    for (size_t i = 0; i < n; i++) {
+        e = prepare_blob(c, blobs[i].bytes, blobs[i].len, &owned[i], &wire[i].bytes, &wire[i].len, hashes[i]);
+        if (e != BLOSSOM_OK) break;
+        if (blobs[i].sha256_hex && strcasecmp(blobs[i].sha256_hex, hashes[i])) { e = BLOSSOM_ERR_HASH_MISMATCH; break; }
+        wire[i].sha256_hex = hashes[i];
+    }
+    char ct[BLOSSOM_PREFERRED_CT_MAX]; memcpy(ct, c->upload_content_type, sizeof ct);
+    if (blossom_shim_detect(wire[0].bytes, wire[0].len)) snprintf(c->upload_content_type, sizeof c->upload_content_type, "image/png");
+    if (e == BLOSSOM_OK) e = blossom_put_batch_wire(c, wire, n, results);
+    else for (size_t i = 0; i < n; i++) results[i].error = e;
+    memcpy(c->upload_content_type, ct, sizeof ct);
+    for (size_t i = 0; i < n; i++) free(owned[i]);
+    free(wire); free(owned); free(hashes); return e;
 }
 
 /* =========================================================================
  * BUD-04: MIRROR
  * ========================================================================= */
 
-hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
+blossom_error_t blossom_client_mirror(blossom_client_t *client,
                                      const char *source_url,
-                                     hanami_blob_descriptor_t **out_desc)
+                                     blossom_blob_descriptor_t **out_desc)
 {
-    if (!client || !source_url)
-        return HANAMI_ERR_INVALID_ARG;
+    if (!client || !source_url) return BLOSSOM_ERR_INVALID_ARG;
+    if (out_desc) *out_desc = NULL;
+    if (blossom_url_check(source_url, client->allow_insecure) != BLOSSOM_OK)
+        return BLOSSOM_ERR_INVALID_ARG;
     if (!client->has_signer)
-        return HANAMI_ERR_AUTH;
+        return BLOSSOM_ERR_AUTH;
 
-    /* Create auth header (no specific hash for mirror) */
+    /* BUD-04 reuses an UPLOAD token bound to the origin's content hash,
+     * not a separate t=mirror action. The URL may carry a file extension. */
+    CURLU *origin = curl_url();
+    char *path = NULL;
+    if (!origin) return BLOSSOM_ERR_NOMEM;
+    bool parsed = curl_url_set(origin, CURLUPART_URL, source_url, 0) == CURLUE_OK &&
+        curl_url_get(origin, CURLUPART_PATH, &path, 0) == CURLUE_OK;
+    const char *name = parsed ? strrchr(path, '/') : NULL;
+    name = name ? name + 1 : NULL;
+    char expected[65] = {0};
+    if (name && strlen(name) >= 64) memcpy(expected, name, 64);
+    bool hash_ok = valid_hex(expected) && (name[64] == '\0' || name[64] == '.');
+    curl_free(path); curl_url_cleanup(origin);
+    if (!hash_ok) return BLOSSOM_ERR_INVALID_ARG;
     char *auth_header = NULL;
-    hanami_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_MIRROR,
-                                          NULL, &auth_header);
-    if (err != HANAMI_OK) return err;
+    blossom_error_t err = make_auth_header(client, NOSTR_BUD02_ACTION_UPLOAD,
+                                          expected, &auth_header);
+    if (err != BLOSSOM_OK) return err;
 
     char *url = build_url(client, "mirror");
     if (!url) {
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
 
     /* PUT /mirror with JSON body containing the source URL */
@@ -1427,7 +1710,7 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
         curl_easy_cleanup(curl);
         free(url);
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
     
     size_t body_len = 9 + strlen(escaped_url) + 2; /* {"url":""} + NUL */
@@ -1437,7 +1720,7 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
         curl_easy_cleanup(curl);
         free(url);
         free(auth_header);
-        return HANAMI_ERR_NOMEM;
+        return BLOSSOM_ERR_NOMEM;
     }
     snprintf(body, body_len, "{\"url\":\"%s\"}", escaped_url);
     free(escaped_url);
@@ -1452,6 +1735,7 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
 
     dyn_buf_t resp;
     dyn_buf_init(&resp);
+    resp.limit = client->max_blob_bytes;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
 
@@ -1473,14 +1757,19 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
     curl_easy_cleanup(curl);
 
     err = http_status_to_error(status);
-    if (err != HANAMI_OK) {
+    if (err != BLOSSOM_OK) {
         dyn_buf_free(&resp);
         return err;
     }
 
-    if (out_desc && resp.data)
-        *out_desc = parse_blob_descriptor((const char *)resp.data);
+    blossom_blob_descriptor_t *desc = parse_blob_descriptor((const char *)resp.data);
+    if (!desc || strcasecmp(desc->sha256, expected) || desc->size > client->max_blob_bytes) {
+        blossom_blob_descriptor_free(desc); dyn_buf_free(&resp);
+        return BLOSSOM_ERR_HASH_MISMATCH;
+    }
+    if (out_desc) *out_desc = desc;
+    else blossom_blob_descriptor_free(desc);
 
     dyn_buf_free(&resp);
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }

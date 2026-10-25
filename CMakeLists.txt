@@ -393,6 +393,11 @@ if(ENABLE_BUD02)
   add_subdirectory(nips/bud02)
 endif()
 
+option(BUILD_LIBBLOSSOM "Build libblossom HTTP transport" ON)
+if(BUILD_LIBBLOSSOM)
+  add_subdirectory(libblossom)
+endif()
+
 # nostr-homed consumes libnostr and, for experimental roaming only, NIP-19.
 # Register it after those targets exist; its own features are disabled by default.
 if (ENABLE_NOSTR_HOMED)

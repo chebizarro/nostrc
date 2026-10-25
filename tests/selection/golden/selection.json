@@ -425,6 +425,7 @@
       "supported.groundhog.update.handoff",
       "supported.groundhog.voice",
       "supported.groundhog.voice.ui.display",
+      "supported.libblossom",
       "supported.libgo",
       "supported.libhanami",
       "supported.libmarmot",

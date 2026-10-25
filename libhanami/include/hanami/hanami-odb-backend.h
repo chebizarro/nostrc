@@ -25,7 +25,7 @@ extern "C" {
 
 /* Forward declarations for internal types */
 typedef struct hanami_index hanami_index_t;
-typedef struct hanami_blossom_client hanami_blossom_client_t;
+#include "hanami-blossom-client.h"
 
 /**
  * hanami_odb_backend_opts_t:

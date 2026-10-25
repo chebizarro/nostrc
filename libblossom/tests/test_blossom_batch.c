@@ -1,8 +1,8 @@
 /*
- * test_hanami_blossom_batch.c
+ * test_blossom_batch.c
  *
- * Unit tests for hanami_blossom_upload_batch() + the session-scoped
- * capability cache (nostrc-xeby) and hanami_server_probe_capabilities()
+ * Unit tests for blossom_client_put_batch() + the session-scoped
+ * capability cache (nostrc-xeby) and blossom_probe_capabilities()
  * (nostrc-ypn2).
  *
  * Uses a tiny in-process HTTP/1.1 stub bound to 127.0.0.1:<ephemeral>
@@ -13,9 +13,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "hanami/hanami-blossom-client.h"
-#include "hanami/hanami-server-capability.h"
-#include "hanami/hanami-types.h"
+#include "blossom/client.h"
+#include "blossom/capability.h"
+#include <blossom/types.h>
 #include <nostr/bud02/auth.h>
 
 #include <arpa/inet.h>
@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 
 /* ------------------------------------------------------------------ *
  * Tiny programmable HTTP stub                                        *
@@ -233,26 +234,26 @@ static const char *TEST_PRIVATE_KEY =
 
 /* Signer that parses the unsigned JSON into a NostrEvent, calls
  * nostr_event_sign() with the fixed test key, and re-serialises. */
-static hanami_error_t test_sign(const char *event_json,
+static blossom_error_t test_sign(const char *event_json,
                                 char **out_signed_json,
                                 void *user_data)
 {
     (void)user_data;
     NostrEvent *ev = nostr_event_new();
-    if (!ev) return HANAMI_ERR_NOMEM;
+    if (!ev) return BLOSSOM_ERR_NOMEM;
     if (nostr_event_deserialize_compact(ev, event_json, NULL) != 1) {
         nostr_event_free(ev);
-        return HANAMI_ERR_NOSTR;
+        return BLOSSOM_ERR_NOSTR;
     }
     if (nostr_event_sign(ev, TEST_PRIVATE_KEY) != 0) {
         nostr_event_free(ev);
-        return HANAMI_ERR_NOSTR;
+        return BLOSSOM_ERR_NOSTR;
     }
     char *out = nostr_event_serialize_compact(ev);
     nostr_event_free(ev);
-    if (!out) return HANAMI_ERR_NOMEM;
+    if (!out) return BLOSSOM_ERR_NOMEM;
     *out_signed_json = out;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* Derive our test pubkey once so we can pass it in the signer struct. */
@@ -279,23 +280,20 @@ static char *make_endpoint(int port)
     return ep;
 }
 
-/* Bypass the auto-probe — every test wants deterministic PUT counts. */
-static void skip_probe_env(void)
-{
-    setenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE", "1", 1);
+static void seed_caps(const char *endpoint) {
+    blossom_server_capabilities_t caps = { .batch_ok = BLOSSOM_CAP_YES,
+        .raw_random_ok = BLOSSOM_CAP_YES, .last_probe_ts = (int64_t)time(NULL) };
+    blossom_capability_cache_set(endpoint, &caps);
 }
 
 /* Fill `hashes` with N deterministic 64-hex sha256 strings and give
  * back 1 KiB blobs (in caller-supplied storage). */
-static void fill_blobs(hanami_blossom_blob_t *blobs, char (*hashes)[65],
+static void fill_blobs(blossom_blob_t *blobs, char (*hashes)[65],
                        uint8_t (*bodies)[1024], size_t n)
 {
     for (size_t i = 0; i < n; i++) {
         memset(bodies[i], (int)('A' + (int)i), 1024);
-        /* Hash pattern: 64 hex chars — just repeat digit(i) */
-        char c = (char)('0' + ((int)i % 10));
-        memset(hashes[i], c, 64);
-        hashes[i][64] = '\0';
+        assert(blossom_hash_blossom(bodies[i], 1024, hashes[i]) == BLOSSOM_OK);
         blobs[i].sha256_hex = hashes[i];
         blobs[i].bytes = bodies[i];
         blobs[i].len = 1024;
@@ -305,30 +303,31 @@ static void fill_blobs(hanami_blossom_blob_t *blobs, char (*hashes)[65],
 /* --- 1. Batch happy path: all N PUTs succeed with the shared header. */
 static void test_batch_all_succeed(void)
 {
-    skip_probe_env();
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     s.n_codes = 1; s.status_codes[0] = 201;
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
+    seed_caps(endpoint);
     char *pk = nostr_key_get_public(TEST_PRIVATE_KEY);
     assert(pk != NULL);
 
-    hanami_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/1" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, &signer, &cli) == HANAMI_OK);
+    blossom_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/1" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, &signer, &cli) == BLOSSOM_OK);
 
-    hanami_blossom_blob_t blobs[3];
+    blossom_blob_t blobs[3];
     char hashes[3][65];
     uint8_t bodies[3][1024];
     fill_blobs(blobs, hashes, bodies, 3);
 
-    hanami_blossom_batch_result_t results[3] = {{0}};
-    hanami_error_t err = hanami_blossom_upload_batch(cli, blobs, 3, results);
-    assert(err == HANAMI_OK);
+    blossom_batch_result_t results[3] = {{0}};
+    blossom_error_t err = blossom_client_put_batch(cli, blobs, 3, results);
+    assert(err == BLOSSOM_OK);
     for (int i = 0; i < 3; i++) {
-        assert(results[i].error == HANAMI_OK);
+        assert(results[i].error == BLOSSOM_OK);
         assert(results[i].http_status == 201);
         assert(results[i].error_class == NULL);
     }
@@ -338,10 +337,10 @@ static void test_batch_all_succeed(void)
     assert(strcmp(s.put_auth[0], s.put_auth[1]) == 0);
     assert(strcmp(s.put_auth[1], s.put_auth[2]) == 0);
     /* Capability cache flipped to YES on success. */
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->batch_ok == HANAMI_CAP_YES);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->batch_ok == BLOSSOM_CAP_YES);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(pk);
     free(endpoint);
     stub_stop(&s);
@@ -353,7 +352,7 @@ static void test_batch_all_succeed(void)
  *      "batch-fell-back" on blobs 2 and 3. Cache flipped to batch_ok=NO. */
 static void test_batch_fallback_on_401(void)
 {
-    skip_probe_env();
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     /* Sequence:
      *   PUT #0 (batch header)      -> 201
@@ -369,32 +368,33 @@ static void test_batch_fallback_on_401(void)
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
+    seed_caps(endpoint);
     char *pk = nostr_key_get_public(TEST_PRIVATE_KEY);
-    hanami_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/2" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, &signer, &cli) == HANAMI_OK);
+    blossom_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/2" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, &signer, &cli) == BLOSSOM_OK);
 
-    hanami_blossom_blob_t blobs[3];
+    blossom_blob_t blobs[3];
     char hashes[3][65];
     uint8_t bodies[3][1024];
     fill_blobs(blobs, hashes, bodies, 3);
 
-    hanami_blossom_batch_result_t results[3] = {{0}};
-    hanami_error_t err = hanami_blossom_upload_batch(cli, blobs, 3, results);
-    assert(err == HANAMI_OK); /* every blob ultimately succeeded */
+    blossom_batch_result_t results[3] = {{0}};
+    blossom_error_t err = blossom_client_put_batch(cli, blobs, 3, results);
+    assert(err == BLOSSOM_OK); /* every blob ultimately succeeded */
 
     /* Blob 0: succeeded under batch header, no fell-back tag. */
-    assert(results[0].error == HANAMI_OK);
+    assert(results[0].error == BLOSSOM_OK);
     assert(results[0].http_status == 201);
     assert(results[0].error_class == NULL);
     /* Blob 1: 401 on batch, retried with per-blob header — succeeded. */
-    assert(results[1].error == HANAMI_OK);
+    assert(results[1].error == BLOSSOM_OK);
     assert(results[1].http_status == 201);
     assert(results[1].error_class != NULL &&
            strcmp(results[1].error_class, "batch-fell-back") == 0);
     /* Blob 2: went direct to per-blob path after fallback. */
-    assert(results[2].error == HANAMI_OK);
+    assert(results[2].error == BLOSSOM_OK);
     assert(results[2].http_status == 201);
     assert(results[2].error_class != NULL &&
            strcmp(results[2].error_class, "batch-fell-back") == 0);
@@ -409,13 +409,13 @@ static void test_batch_fallback_on_401(void)
     assert(strcmp(s.put_auth[0], s.put_auth[3]) != 0);
 
     /* Capability cache: batch_ok flipped to NO; last_401_ts non-zero. */
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->batch_ok == HANAMI_CAP_NO);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->batch_ok == BLOSSOM_CAP_NO);
     assert(caps->last_401_ts != 0);
 
     /* --- Subsequent batch call MUST bypass the batch header. --- */
-    hanami_blossom_batch_result_t results2[2] = {{0}};
-    hanami_blossom_blob_t blobs2[2];
+    blossom_batch_result_t results2[2] = {{0}};
+    blossom_blob_t blobs2[2];
     char hashes2[2][65];
     uint8_t bodies2[2][1024];
     fill_blobs(blobs2, hashes2, bodies2, 2);
@@ -424,8 +424,8 @@ static void test_batch_fallback_on_401(void)
     stub_free_records(&s);
     s.n_codes = 1; s.status_codes[0] = 201;
 
-    err = hanami_blossom_upload_batch(cli, blobs2, 2, results2);
-    assert(err == HANAMI_OK);
+    err = blossom_client_put_batch(cli, blobs2, 2, results2);
+    assert(err == BLOSSOM_OK);
     assert(atomic_load(&s.put_count) == 2);
     /* Two PUTs, each with a DIFFERENT per-blob header (no batch header). */
     assert(strcmp(s.put_auth[0], s.put_auth[1]) != 0);
@@ -435,7 +435,7 @@ static void test_batch_fallback_on_401(void)
     assert(results2[0].error_class == NULL);
     assert(results2[1].error_class == NULL);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(pk);
     free(endpoint);
     stub_stop(&s);
@@ -444,37 +444,38 @@ static void test_batch_fallback_on_401(void)
 /* --- 3. Env kill-switch skips probe: with a fresh client and env=1,
  *      the FIRST batch call must not trigger any HEAD / PUT prior to
  *      the actual batch PUTs. */
-static void test_probe_kill_switch(void)
+static void test_cached_probe_is_reused(void)
 {
-    setenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE", "1", 1);
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     s.n_codes = 1; s.status_codes[0] = 201;
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
+    seed_caps(endpoint);
     char *pk = nostr_key_get_public(TEST_PRIVATE_KEY);
-    hanami_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/3" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, &signer, &cli) == HANAMI_OK);
+    blossom_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/3" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, &signer, &cli) == BLOSSOM_OK);
 
-    hanami_blossom_blob_t blobs[2];
+    blossom_blob_t blobs[2];
     char hashes[2][65];
     uint8_t bodies[2][1024];
     fill_blobs(blobs, hashes, bodies, 2);
 
-    hanami_blossom_batch_result_t results[2] = {{0}};
-    hanami_error_t err = hanami_blossom_upload_batch(cli, blobs, 2, results);
-    assert(err == HANAMI_OK);
+    blossom_batch_result_t results[2] = {{0}};
+    blossom_error_t err = blossom_client_put_batch(cli, blobs, 2, results);
+    assert(err == BLOSSOM_OK);
 
     /* With kill-switch: exactly 2 PUTs (no probe HEAD, no probe PUTs). */
     assert(atomic_load(&s.head_count) == 0);
     assert(atomic_load(&s.put_count) == 2);
     /* last_probe_ts stays 0 — probe skipped. */
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->last_probe_ts == 0);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->last_probe_ts > 0);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(pk);
     free(endpoint);
     stub_stop(&s);
@@ -492,9 +493,9 @@ static void test_probe_records_capabilities(void)
 {
     /* Kill-switch: keep test focused on the explicit probe call, not
      * the auto-probe path in upload_batch. */
-    setenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE", "1", 1);
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
-    /* PUT sequence for the probe (hanami_server_probe_capabilities):
+    /* PUT sequence for the probe (blossom_probe_capabilities):
      *   [0]=201 (b server-tag), [1]=201 (c batch h1), [2]=201 (c batch h2),
      *   [3]=401 (d x-mismatch), [4]=201 (e raw random, nostrc-prli),
      *   [5]=201 (f PNG shim, nostrc-prli). Scripting all six keeps (e)/(f)
@@ -510,29 +511,29 @@ static void test_probe_records_capabilities(void)
 
     char *endpoint = make_endpoint(s.port);
     char *pk = nostr_key_get_public(TEST_PRIVATE_KEY);
-    hanami_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/4" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, &signer, &cli) == HANAMI_OK);
+    blossom_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/4" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, &signer, &cli) == BLOSSOM_OK);
 
-    hanami_error_t err = hanami_server_probe_capabilities(cli);
-    assert(err == HANAMI_OK);
+    blossom_error_t err = blossom_probe_capabilities(cli);
+    assert(err == BLOSSOM_OK);
 
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
     assert(caps->last_probe_ts != 0);
     assert(caps->reachable == true);
-    assert(caps->server_tag_ok == HANAMI_CAP_YES);
-    assert(caps->batch_ok == HANAMI_CAP_YES);
-    assert(caps->strict_x_binding == HANAMI_CAP_YES);
-    assert(caps->raw_random_ok == HANAMI_CAP_YES);
-    assert(caps->png_shim_ok == HANAMI_CAP_YES);
+    assert(caps->server_tag_ok == BLOSSOM_CAP_YES);
+    assert(caps->batch_ok == BLOSSOM_CAP_YES);
+    assert(caps->strict_x_binding == BLOSSOM_CAP_YES);
+    assert(caps->raw_random_ok == BLOSSOM_CAP_YES);
+    assert(caps->png_shim_ok == BLOSSOM_CAP_YES);
     /* Reachability HEAD (1) + 6 probe PUTs (b, c×2, d, e, f). Cleanup
      * deletes only what was stored: h1, h2, the raw blob and the shim. */
     assert(atomic_load(&s.head_count) == 1);
     assert(atomic_load(&s.put_count) == 6);
     assert(atomic_load(&s.delete_count) == 4);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(pk);
     free(endpoint);
     stub_stop(&s);
@@ -543,7 +544,7 @@ static void test_probe_records_capabilities(void)
  *       batch NO — 401, strict_x NO — 415 permissive). */
 static void test_probe_records_permissive_shape(void)
 {
-    setenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE", "1", 1);
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     /* PUT sequence:
      *   [0]=401 server-tag rejected  (server_tag_ok=NO)
@@ -560,25 +561,25 @@ static void test_probe_records_permissive_shape(void)
 
     char *endpoint = make_endpoint(s.port);
     char *pk = nostr_key_get_public(TEST_PRIVATE_KEY);
-    hanami_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/5" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, &signer, &cli) == HANAMI_OK);
+    blossom_signer_t signer = { .pubkey = pk, .sign = test_sign, .user_data = NULL };
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/5" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, &signer, &cli) == BLOSSOM_OK);
 
-    hanami_error_t err = hanami_server_probe_capabilities(cli);
-    assert(err == HANAMI_OK);
+    blossom_error_t err = blossom_probe_capabilities(cli);
+    assert(err == BLOSSOM_OK);
 
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->server_tag_ok == HANAMI_CAP_NO);
-    assert(caps->batch_ok == HANAMI_CAP_NO);
-    assert(caps->strict_x_binding == HANAMI_CAP_NO);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->server_tag_ok == BLOSSOM_CAP_NO);
+    assert(caps->batch_ok == BLOSSOM_CAP_NO);
+    assert(caps->strict_x_binding == BLOSSOM_CAP_NO);
     /* (e)/(f) reuse the last scripted code (415): body-sniffer rejects. */
-    assert(caps->raw_random_ok == HANAMI_CAP_NO);
-    assert(caps->png_shim_ok == HANAMI_CAP_NO);
+    assert(caps->raw_random_ok == BLOSSOM_CAP_NO);
+    assert(caps->png_shim_ok == BLOSSOM_CAP_NO);
     assert(atomic_load(&s.put_count) == 6);
     assert(atomic_load(&s.delete_count) == 0);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(pk);
     free(endpoint);
     stub_stop(&s);
@@ -587,34 +588,34 @@ static void test_probe_records_permissive_shape(void)
 /* --- 6. Capability init sanity. */
 static void test_capability_init(void)
 {
-    hanami_server_capabilities_t caps;
+    blossom_server_capabilities_t caps;
     memset(&caps, 0xFF, sizeof caps);
-    hanami_server_capabilities_init(&caps);
-    assert(caps.batch_ok == HANAMI_CAP_UNKNOWN);
-    assert(caps.server_tag_ok == HANAMI_CAP_UNKNOWN);
-    assert(caps.strict_x_binding == HANAMI_CAP_UNKNOWN);
+    blossom_server_capabilities_init(&caps);
+    assert(caps.batch_ok == BLOSSOM_CAP_UNKNOWN);
+    assert(caps.server_tag_ok == BLOSSOM_CAP_UNKNOWN);
+    assert(caps.strict_x_binding == BLOSSOM_CAP_UNKNOWN);
     assert(caps.last_probe_ts == 0);
     assert(caps.last_401_ts == 0);
     assert(caps.reachable == false);
-    assert(strcmp(hanami_capability_state_str(HANAMI_CAP_YES), "yes") == 0);
-    assert(strcmp(hanami_capability_state_str(HANAMI_CAP_NO), "no") == 0);
-    assert(strcmp(hanami_capability_state_str(HANAMI_CAP_UNKNOWN), "unknown") == 0);
+    assert(strcmp(blossom_capability_state_str(BLOSSOM_CAP_YES), "yes") == 0);
+    assert(strcmp(blossom_capability_state_str(BLOSSOM_CAP_NO), "no") == 0);
+    assert(strcmp(blossom_capability_state_str(BLOSSOM_CAP_UNKNOWN), "unknown") == 0);
 }
 
 /* --- 7. Invalid args are refused up-front. */
 static void test_upload_batch_arg_validation(void)
 {
-    hanami_blossom_batch_result_t r[1] = {{0}};
-    hanami_blossom_blob_t b = { .sha256_hex = "short", .bytes = (const uint8_t *)"x", .len = 1 };
+    blossom_batch_result_t r[1] = {{0}};
+    blossom_blob_t b = { .sha256_hex = "short", .bytes = (const uint8_t *)"x", .len = 1 };
     /* No client */
-    assert(hanami_blossom_upload_batch(NULL, &b, 1, r) == HANAMI_ERR_INVALID_ARG);
+    assert(blossom_client_put_batch(NULL, &b, 1, r) == BLOSSOM_ERR_INVALID_ARG);
     /* No blobs */
-    hanami_blossom_client_opts_t opts = { .endpoint = "http://127.0.0.1:1" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &cli) == HANAMI_OK);
+    blossom_client_opts_t opts = { .allow_insecure = true, .endpoint = "http://127.0.0.1:1" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, NULL, &cli) == BLOSSOM_OK);
     /* No signer -> AUTH */
-    assert(hanami_blossom_upload_batch(cli, &b, 1, r) == HANAMI_ERR_AUTH);
-    hanami_blossom_client_free(cli);
+    assert(blossom_client_put_batch(cli, &b, 1, r) == BLOSSOM_ERR_INVALID_ARG);
+    blossom_client_free(cli);
 }
 
 int main(void)
@@ -626,7 +627,7 @@ int main(void)
     TEST(upload_batch_arg_validation);
     TEST(batch_all_succeed);
     TEST(batch_fallback_on_401);
-    TEST(probe_kill_switch);
+    TEST(cached_probe_is_reused);
     TEST(probe_records_capabilities);
     TEST(probe_records_permissive_shape);
 

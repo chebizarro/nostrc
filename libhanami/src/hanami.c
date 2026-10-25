@@ -81,14 +81,7 @@ const char *hanami_version(int *major, int *minor, int *patch)
  * Blob descriptor
  * ========================================================================= */
 
-void hanami_blob_descriptor_free(hanami_blob_descriptor_t *desc)
-{
-    if (!desc)
-        return;
-    free(desc->url);
-    free(desc->mime_type);
-    free(desc);
-}
+
 
 /* Transport — implemented in hanami-transport.c */
 
@@ -412,7 +405,7 @@ static int push_upload_object_cb(const git_oid *oid, void *payload)
     size_t size = git_odb_object_size(obj);
 
     char blossom_hash[65];
-    if (hanami_hash_blossom(data, size, blossom_hash) == HANAMI_OK) {
+    if (blossom_client_address(ctx->client, data, size, blossom_hash) == HANAMI_OK) {
         /* Check if already on server */
         bool exists = false;
         hanami_blossom_head(ctx->client, blossom_hash, &exists);

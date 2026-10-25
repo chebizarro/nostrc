@@ -9,8 +9,8 @@
  * empirical trace.
  *
  * The fix wires cmd_push and the syncd pusher to compute
- * `hanami_blossom_shim_sha256(ct, ctl, addr)` when
- * `hanami_blossom_shim_active()` returns true, so the manifest and the
+ * `blossom_shim_sha256(ct, ctl, addr)` when
+ * `blossom_shim_active()` returns true, so the manifest and the
  * uploader use the same 32-byte address. This test locks that
  * invariant in place at the primitive layer — anything that regresses
  * the shim/no-shim decision or the shim-hash computation trips a
@@ -21,13 +21,15 @@
 
 #include "nh_porthome_crypto.h"
 
-#include <hanami/hanami-blossom-shim.h>
-#include <hanami/hanami-types.h>
+#include <blossom/shim.h>
+#include <blossom/types.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+
+static const char *fixture_servers[] = { "https://fixture.example" };
 
 #define FAIL(...)  do { fprintf(stderr, "FAIL: " __VA_ARGS__); fprintf(stderr, "\n"); return 1; } while (0)
 #define ASSERT(cond) do { if (!(cond)) FAIL("%s:%d assertion failed: %s", __FILE__, __LINE__, #cond); } while (0)
@@ -64,17 +66,17 @@ static int encrypt_one_chunk(uint8_t **out_ct, size_t *out_ct_len,
 
 /* Case 1: with shim on, the "authoritative manifest hash" (what
  * cmd_push now writes into chs[ci].sha256) MUST equal both
- *   (a) hanami_blossom_shim_sha256(ct, ctl, ...) — the helper the
+ *   (a) blossom_shim_sha256(ct, ctl, ...) — the helper the
  *       provisioner + syncd pusher call, AND
  *   (b) sha256 of the encoded shim||ct buffer built independently via
- *       hanami_blossom_shim_encode() + nh_porthome_sha256() — i.e. what
+ *       blossom_shim_wrap() + nh_porthome_sha256() — i.e. what
  *       the Blossom upload path actually PUTs and hashes.
  *
  * If either equality breaks, the pull returns 404 for every chunk. */
 static int test_shim_on_manifest_matches_upload(void)
 {
-    if (setenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM", "1", 1) != 0) FAIL("setenv");
-    ASSERT(hanami_blossom_shim_active());
+    blossom_shim_cache_set(fixture_servers[0], BLOSSOM_CAP_NO, BLOSSOM_CAP_YES);
+    ASSERT(blossom_shim_active_for(fixture_servers, 1));
 
     uint8_t home_key[32];
     for (int i = 0; i < 32; i++) home_key[i] = (uint8_t)(0x11 * (i + 1));
@@ -89,15 +91,15 @@ static int test_shim_on_manifest_matches_upload(void)
     /* (a) The helper — what cmd_push + syncd now call to derive the
      * manifest chunk_hash under the shim. */
     uint8_t helper_hash[32];
-    ASSERT_EQ(hanami_blossom_shim_sha256(ct, ctl, helper_hash), HANAMI_OK);
+    ASSERT_EQ(blossom_shim_sha256(ct, ctl, helper_hash), BLOSSOM_OK);
 
     /* (b) The independent reference — build shim||ct as a physical
      * buffer and hash it end-to-end. This mirrors exactly what the
      * Blossom upload path does before it PUTs. */
-    size_t enclen = hanami_blossom_shim_encoded_len(ctl);
+    size_t enclen = blossom_shim_encoded_len(ctl);
     uint8_t *shimmed = (uint8_t *)malloc(enclen);
     ASSERT(shimmed);
-    ASSERT_EQ(hanami_blossom_shim_encode(ct, ctl, shimmed, enclen), HANAMI_OK);
+    ASSERT_EQ(blossom_shim_wrap(ct, ctl, shimmed, enclen), BLOSSOM_OK);
     uint8_t reference_hash[32];
     ASSERT_EQ(nh_porthome_sha256(shimmed, enclen, reference_hash), 0);
     ASSERT_EQ(memcmp(helper_hash, reference_hash, 32), 0);
@@ -126,8 +128,8 @@ static int test_shim_on_manifest_matches_upload(void)
  * regression of the non-shim path. */
 static int test_shim_off_manifest_is_plain_sha(void)
 {
-    if (unsetenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM") != 0) FAIL("unsetenv");
-    ASSERT(!hanami_blossom_shim_active());
+    blossom_shim_cache_set(fixture_servers[0], BLOSSOM_CAP_YES, BLOSSOM_CAP_YES);
+    ASSERT(!blossom_shim_active_for(fixture_servers, 1));
 
     uint8_t home_key[32];
     for (int i = 0; i < 32; i++) home_key[i] = (uint8_t)(0x22 * (i + 3));
@@ -146,35 +148,33 @@ static int test_shim_off_manifest_is_plain_sha(void)
     /* And critically it must differ from what the shim path would
      * produce — proving the two branches are genuinely independent. */
     uint8_t shim_hash[32];
-    ASSERT_EQ(hanami_blossom_shim_sha256(ct, ctl, shim_hash), HANAMI_OK);
+    ASSERT_EQ(blossom_shim_sha256(ct, ctl, shim_hash), BLOSSOM_OK);
     ASSERT(memcmp(plain_hash, shim_hash, 32) != 0);
 
     free(ct);
     return 0;
 }
 
-/* Case 3: guard the value-of "1" contract on the flag. A stray
- * "true" or "0" or empty must NOT enable the shim — otherwise a
- * misconfigured deployment silently switches the hash policy. */
+/* The retired environment flag cannot override probe-selected addresses. */
 static int test_shim_active_flag_is_strict_one(void)
 {
     ASSERT_EQ(setenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM", "true", 1), 0);
-    ASSERT(!hanami_blossom_shim_active());
+    ASSERT(!blossom_shim_active());
 
     ASSERT_EQ(setenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM", "0", 1), 0);
-    ASSERT(!hanami_blossom_shim_active());
+    ASSERT(!blossom_shim_active());
 
     ASSERT_EQ(setenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM", "", 1), 0);
-    ASSERT(!hanami_blossom_shim_active());
+    ASSERT(!blossom_shim_active());
 
     ASSERT_EQ(setenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM", "1", 1), 0);
-    ASSERT(hanami_blossom_shim_active());
+    ASSERT(!blossom_shim_active());
 
     ASSERT_EQ(setenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM", "10", 1), 0);
-    ASSERT(!hanami_blossom_shim_active());
+    ASSERT(!blossom_shim_active());
 
     ASSERT_EQ(unsetenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM"), 0);
-    ASSERT(!hanami_blossom_shim_active());
+    ASSERT(!blossom_shim_active());
     return 0;
 }
 
@@ -192,15 +192,15 @@ static int test_shim_hash_is_deterministic(void)
                                 home_key, 0x1234ULL, 1024), 0);
 
     uint8_t h1[32], h2[32];
-    ASSERT_EQ(hanami_blossom_shim_sha256(ct, ctl, h1), HANAMI_OK);
-    ASSERT_EQ(hanami_blossom_shim_sha256(ct, ctl, h2), HANAMI_OK);
+    ASSERT_EQ(blossom_shim_sha256(ct, ctl, h1), BLOSSOM_OK);
+    ASSERT_EQ(blossom_shim_sha256(ct, ctl, h2), BLOSSOM_OK);
     ASSERT_EQ(memcmp(h1, h2, 32), 0);
 
     /* And a mutation in the ciphertext must move the hash — the
      * helper isn't fabricating a constant. */
     ct[ctl / 2] ^= 0x01;
     uint8_t h3[32];
-    ASSERT_EQ(hanami_blossom_shim_sha256(ct, ctl, h3), HANAMI_OK);
+    ASSERT_EQ(blossom_shim_sha256(ct, ctl, h3), BLOSSOM_OK);
     ASSERT(memcmp(h1, h3, 32) != 0);
 
     free(ct);

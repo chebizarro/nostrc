@@ -70,7 +70,7 @@ function(_nostrc_inventory_component_owner out dir)
     set(_owner "")
     foreach(_entry
         "libgo|libgo" "libnostr|libnostr" "libjson|libjson"
-        "libhanami|libhanami" "libmarmot|libmarmot"
+        "libblossom|libblossom" "libhanami|libhanami" "libmarmot|libmarmot"
         "marmot-gobject|marmot.gobject" "nostr-gobject|nostr.gobject"
         "nostr-gtk|nostr.gtk" "components/nostrdb|nostrdb"
         "tests/testkit|testkit" "tests|shared.tests" "Testing|testing.framework"

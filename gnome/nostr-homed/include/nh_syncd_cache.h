@@ -49,7 +49,7 @@
 /* libhanami's signer type is a typedef of an anonymous struct in
  * hanami-types.h and cannot be forward-declared. Match the pattern
  * used by nh_syncd.h / nh_porthome_blossom.h. */
-#include <hanami/hanami-types.h>
+#include <blossom/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -318,7 +318,7 @@ typedef struct {
     size_t                n_servers;
 
     /* Signer for re-upload PUTs. Required when upload_fn is NULL. */
-    const hanami_signer_t *bud02_signer;
+    const blossom_signer_t *bud02_signer;
 
     /* Timeout for the individual HTTP calls. 0 => default (30 s). */
     long   timeout_seconds;
