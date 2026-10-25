@@ -11,6 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sqlite3.h>
 #include "hanami_test_fs.h"
 
 static int tests_passed = 0;
@@ -309,6 +310,60 @@ static void test_index_sha1_sha256_both_modes(void)
     rm_rf(tmp_dir);
 }
 
+static porthome_index_status count_row(void *ctx, const porthome_index_entry *row)
+{
+    unsigned *count = ctx;
+    assert(row->chunk_key_id == 17 && row->sealed_sha256[0] == 0x42);
+    ++*count;
+    return PORTHOME_INDEX_OK;
+}
+
+static porthome_index_status stop_row(void *ctx, const porthome_index_entry *row)
+{
+    (void)ctx; (void)row;
+    return PORTHOME_INDEX_ERR_STORAGE;
+}
+
+static void test_shared_index_persistence_and_migration(void)
+{
+    setup_tmpdir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/hanami_index.db", tmp_dir);
+    sqlite3 *db = NULL;
+    assert(sqlite3_open(path, &db) == SQLITE_OK);
+    /* The real pre-R3 schema, with an existing raw-object mapping. */
+    assert(sqlite3_exec(db, "CREATE TABLE oid_map (git_oid TEXT PRIMARY KEY NOT NULL, "
+        "blossom_hash TEXT NOT NULL, obj_type INTEGER NOT NULL, "
+        "obj_size INTEGER NOT NULL, timestamp INTEGER NOT NULL); "
+        "INSERT INTO oid_map VALUES ('0123456789012345678901234567890123456789', "
+        "'4200000000000000000000000000000000000000000000000000000000000000', "
+        "3, 123, 456);", NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_close(db);
+    hanami_index_t *idx = NULL;
+    assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
+    porthome_index *shared = hanami_index_porthome(idx);
+    porthome_index_entry row;
+    const char *oid = "0123456789012345678901234567890123456789";
+    assert(porthome_index_lookup(shared, oid, &row) == PORTHOME_INDEX_OK);
+    assert(row.chunk_key_id == 0 && row.sealed_sha256[0] == 0x42);
+    row.chunk_key_id = 17;
+    assert(porthome_index_insert(shared, &row) == PORTHOME_INDEX_OK);
+    hanami_index_entry_t legacy;
+    assert(hanami_index_get_by_oid(idx, oid, &legacy) == HANAMI_OK);
+    assert(legacy.type == GIT_OBJECT_BLOB && legacy.size == 123 && legacy.timestamp == 456);
+    assert(legacy.chunk_key_id == 17);
+    hanami_index_close(idx);
+    assert(hanami_index_open(&idx, tmp_dir, "sqlite") == HANAMI_OK);
+    shared = hanami_index_porthome(idx);
+    assert(porthome_index_lookup(shared, oid, &row) == PORTHOME_INDEX_OK && row.chunk_key_id == 17);
+    unsigned count = 0;
+    assert(porthome_index_iterate(shared, count_row, &count) == PORTHOME_INDEX_OK && count == 1);
+    assert(porthome_index_iterate(shared, stop_row, NULL) == PORTHOME_INDEX_ERR_STORAGE);
+    assert(porthome_index_lookup(shared, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &row) == PORTHOME_INDEX_NOT_FOUND);
+    hanami_index_close(idx);
+    rm_rf(tmp_dir);
+}
+
 /* ---- Main ---- */
 
 int main(void)
@@ -332,6 +387,7 @@ int main(void)
     TEST(index_not_found);
     TEST(index_null_args);
     TEST(index_sha1_sha256_both_modes);
+    TEST(shared_index_persistence_and_migration);
 
     printf("\n%d passed, 0 failed\n", tests_passed);
     return 0;

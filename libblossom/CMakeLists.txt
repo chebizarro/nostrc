@@ -47,7 +47,7 @@ if(IS_ABSOLUTE "${NSYNC_LIB}")
   set(BLOSSOM_NSYNC_SEARCH "-L\"${_blossom_nsync_dir}\"")
 endif()
 configure_file(blossom.pc.in blossom.pc @ONLY)
-configure_package_config_file(nostrcConfig.cmake.in
+configure_package_config_file("${CMAKE_CURRENT_LIST_DIR}/../cmake/nostrcConfig.cmake.in"
   "${CMAKE_CURRENT_BINARY_DIR}/nostrcConfig.cmake"
   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/nostrc")
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/nostrcConfigVersion.cmake"

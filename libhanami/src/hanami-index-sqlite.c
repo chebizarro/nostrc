@@ -5,6 +5,7 @@
  */
 
 #include "hanami/hanami-index.h"
+#include <porthome/crypto.h>
 #include <sqlite3.h>
 #include <openssl/evp.h>
 #include <stdlib.h>
@@ -17,7 +18,10 @@
  * Internal structures
  * ========================================================================= */
 
+static const porthome_index_ops index_ops;
+
 struct hanami_index {
+    porthome_index portable;
     sqlite3 *db;
     /* Prepared statements */
     sqlite3_stmt *stmt_put;
@@ -38,7 +42,8 @@ static const char *SCHEMA_SQL =
     "  blossom_hash TEXT NOT NULL,"
     "  obj_type     INTEGER NOT NULL,"
     "  obj_size     INTEGER NOT NULL,"
-    "  timestamp    INTEGER NOT NULL"
+    "  timestamp    INTEGER NOT NULL,"
+    "  chunk_key_id INTEGER NOT NULL DEFAULT 0"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_blossom_hash ON oid_map(blossom_hash);";
 
@@ -148,16 +153,36 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
         return HANAMI_ERR_INDEX;
     }
 
+    /* Preserve databases created before the storage-independent index type.
+     * Only the added key id is migrated; raw-object rows keep key id zero. */
+    sqlite3_stmt *columns = NULL;
+    int has_key_id = 0;
+    rc = sqlite3_prepare_v2(idx->db, "PRAGMA table_info(oid_map)", -1, &columns, NULL);
+    if (rc == SQLITE_OK) {
+        while ((rc = sqlite3_step(columns)) == SQLITE_ROW) {
+            const char *name = (const char *)sqlite3_column_text(columns, 1);
+            if (name && strcmp(name, "chunk_key_id") == 0) has_key_id = 1;
+        }
+    }
+    sqlite3_finalize(columns);
+    if (rc != SQLITE_DONE || (!has_key_id && sqlite3_exec(idx->db,
+        "ALTER TABLE oid_map ADD COLUMN chunk_key_id INTEGER NOT NULL DEFAULT 0",
+        NULL, NULL, NULL) != SQLITE_OK)) {
+        hanami_index_close(idx);
+        return HANAMI_ERR_INDEX;
+    }
+    idx->portable = (porthome_index){ .ctx = idx, .ops = &index_ops };
+
     /* Prepare statements */
     const char *sql_put =
         "INSERT OR REPLACE INTO oid_map "
-        "(git_oid, blossom_hash, obj_type, obj_size, timestamp) "
-        "VALUES (?, ?, ?, ?, ?);";
+        "(git_oid, blossom_hash, obj_type, obj_size, timestamp, chunk_key_id) "
+        "VALUES (?, ?, ?, ?, ?, ?);";
     const char *sql_get_oid =
-        "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp "
+        "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp, chunk_key_id "
         "FROM oid_map WHERE git_oid = ?;";
     const char *sql_get_blossom =
-        "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp "
+        "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp, chunk_key_id "
         "FROM oid_map WHERE blossom_hash = ? LIMIT 1;";
     const char *sql_exists =
         "SELECT 1 FROM oid_map WHERE git_oid = ?;";
@@ -218,6 +243,7 @@ hanami_error_t hanami_index_put(hanami_index_t *idx,
     sqlite3_bind_int(s, 3, (int)entry->type);
     sqlite3_bind_int64(s, 4, (sqlite3_int64)entry->size);
     sqlite3_bind_int64(s, 5, entry->timestamp);
+    sqlite3_bind_int64(s, 6, entry->chunk_key_id);
 
     int rc = sqlite3_step(s);
     sqlite3_reset(s);
@@ -238,6 +264,9 @@ static hanami_error_t fill_entry_from_row(sqlite3_stmt *s,
     out->type = (git_object_t)sqlite3_column_int(s, 2);
     out->size = (size_t)sqlite3_column_int64(s, 3);
     out->timestamp = sqlite3_column_int64(s, 4);
+    sqlite3_int64 key_id = sqlite3_column_int64(s, 5);
+    if (key_id < 0 || key_id > UINT32_MAX) return HANAMI_ERR_INDEX;
+    out->chunk_key_id = (uint32_t)key_id;
     return HANAMI_OK;
 }
 
@@ -259,7 +288,7 @@ hanami_error_t hanami_index_get_by_oid(hanami_index_t *idx,
         return err;
     }
     sqlite3_reset(s);
-    return HANAMI_ERR_NOT_FOUND;
+    return rc == SQLITE_DONE ? HANAMI_ERR_NOT_FOUND : HANAMI_ERR_INDEX;
 }
 
 hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
@@ -280,7 +309,7 @@ hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
         return err;
     }
     sqlite3_reset(s);
-    return HANAMI_ERR_NOT_FOUND;
+    return rc == SQLITE_DONE ? HANAMI_ERR_NOT_FOUND : HANAMI_ERR_INDEX;
 }
 
 bool hanami_index_exists(hanami_index_t *idx, const char *git_oid_hex)
@@ -330,6 +359,80 @@ size_t hanami_index_count(hanami_index_t *idx)
     return count;
 }
 
+/* Storage adapter for the shared row; Git-only metadata stays in SQLite. */
+static porthome_index_status index_status(hanami_error_t err)
+{
+    if (err == HANAMI_OK) return PORTHOME_INDEX_OK;
+    if (err == HANAMI_ERR_NOT_FOUND) return PORTHOME_INDEX_NOT_FOUND;
+    if (err == HANAMI_ERR_INVALID_ARG) return PORTHOME_INDEX_ERR_ARG;
+    if (err == HANAMI_ERR_NOMEM) return PORTHOME_INDEX_ERR_OOM;
+    return PORTHOME_INDEX_ERR_STORAGE;
+}
+
+static porthome_index_status portable_entry(const hanami_index_entry_t *entry,
+                                           porthome_index_entry *out)
+{
+    porthome_index_entry row = { .chunk_key_id = entry->chunk_key_id };
+    memcpy(row.git_oid, entry->git_oid, sizeof(row.git_oid));
+    if (porthome_from_hex64(entry->blossom_hash, row.sealed_sha256) != PORTHOME_OK)
+        return PORTHOME_INDEX_ERR_STORAGE;
+    *out = row;
+    return PORTHOME_INDEX_OK;
+}
+
+static porthome_index_status index_lookup(void *ctx, const char *oid,
+                                         porthome_index_entry *out)
+{
+    hanami_index_entry_t entry;
+    hanami_error_t err = hanami_index_get_by_oid(ctx, oid, &entry);
+    return err == HANAMI_OK ? portable_entry(&entry, out) : index_status(err);
+}
+
+static porthome_index_status index_insert(void *ctx, const porthome_index_entry *row)
+{
+    hanami_index_entry_t entry = {0};
+    hanami_error_t err = hanami_index_get_by_oid(ctx, row->git_oid, &entry);
+    if (err != HANAMI_OK && err != HANAMI_ERR_NOT_FOUND) return index_status(err);
+    memcpy(entry.git_oid, row->git_oid, sizeof(entry.git_oid));
+    porthome_hex64(row->sealed_sha256, entry.blossom_hash);
+    entry.chunk_key_id = row->chunk_key_id;
+    return index_status(hanami_index_put(ctx, &entry));
+}
+
+static porthome_index_status index_iterate(void *ctx, porthome_index_visit_fn visit,
+                                          void *visit_ctx)
+{
+    hanami_index_t *idx = ctx;
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp, "
+                      "chunk_key_id FROM oid_map ORDER BY git_oid";
+    if (sqlite3_prepare_v2(idx->db, sql, -1, &stmt, NULL) != SQLITE_OK)
+        return PORTHOME_INDEX_ERR_STORAGE;
+    porthome_index_status status = PORTHOME_INDEX_OK;
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        hanami_index_entry_t entry;
+        porthome_index_entry row;
+        status = index_status(fill_entry_from_row(stmt, &entry));
+        if (status == PORTHOME_INDEX_OK) status = portable_entry(&entry, &row);
+        if (status == PORTHOME_INDEX_OK) status = visit(visit_ctx, &row);
+        if (status != PORTHOME_INDEX_OK) break;
+    }
+    if (status == PORTHOME_INDEX_OK && rc != SQLITE_DONE)
+        status = PORTHOME_INDEX_ERR_STORAGE;
+    sqlite3_finalize(stmt);
+    return status;
+}
+
+static const porthome_index_ops index_ops = {
+    .lookup = index_lookup, .insert = index_insert, .iterate = index_iterate
+};
+
+porthome_index *hanami_index_porthome(hanami_index_t *idx)
+{
+    return idx ? &idx->portable : NULL;
+}
+
 /* =========================================================================
  * Hash computation
  * ========================================================================= */
@@ -340,21 +443,10 @@ hanami_error_t hanami_hash_blossom(const void *data, size_t len,
     if (!data || !out_hex)
         return HANAMI_ERR_INVALID_ARG;
 
-    unsigned char digest[32];
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-    if (!ctx)
-        return HANAMI_ERR_NOMEM;
-
-    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-        EVP_DigestUpdate(ctx, data, len) != 1 ||
-        EVP_DigestFinal_ex(ctx, digest, NULL) != 1)
-    {
-        EVP_MD_CTX_free(ctx);
+    uint8_t digest[32];
+    if (porthome_sha256(data, len, digest) != PORTHOME_OK)
         return HANAMI_ERR_IO;
-    }
-    EVP_MD_CTX_free(ctx);
-
-    bytes_to_hex(digest, 32, out_hex);
+    porthome_hex64(digest, out_hex);
     return HANAMI_OK;
 }
 

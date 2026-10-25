@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.3.0 LANGUAGES C)
+project(nostr_homed VERSION 0.4.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -51,12 +51,12 @@ option(NOSTR_HOMED_ENABLE_PROFILE
   "Build the Nostr kind-0 → AccountsService avatar/name bridge (requires auth runtime + gdk-pixbuf + libcurl + gio-2.0)" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 # Phase-1 primitives for the portable-home epic (nostrc-h10m). Ships a
-# STANDALONE library `libnostr_porthome.a` (crypto + manifest + Blossom
-# wrapper) NOT linked into the base nostr-login stack. Requires libblossom
-# and OpenSSL. Every public header is loudly marked EXPERIMENTAL — see
+# homed-only assembly `libnostr_porthome.a` (provisioner + sandbox + Blossom
+# adapter) over nostrc::porthome, NOT linked into the base nostr-login stack.
+# Requires BUILD_LIBPORTHOME=ON and OpenSSL. Every public header is loudly marked EXPERIMENTAL — see
 # docs/designs/porthome-crypto-spec.md.
 option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
-  "Build the experimental portable-home primitives library (requires libblossom)" OFF)
+  "Build the experimental portable-home assembly (requires BUILD_LIBPORTHOME=ON)" OFF)
 # Phase-3 (bead nostrc-p6qp). Ships the user-scoped sync daemon
 # nostr-home-syncd + a small libnostr_syncd_core the unit + integration
 # tests link against. Gated behind its own option ON TOP OF the
@@ -373,6 +373,8 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     src/auth/auth_porthome.c)
   target_include_directories(nostr_auth_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pam)
+  target_include_directories(nostr_auth_runtime PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fetch)
   target_compile_options(nostr_auth_runtime PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_auth_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
@@ -1343,35 +1345,18 @@ endif()
 if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   find_package(OpenSSL REQUIRED)
 
-  # Reuse the in-tree HKDF/HMAC-SHA256 primitives from nip44 rather than
-  # linking a whole libnip44. We compile the single translation unit into
-  # our own static library — the file has no external state and no
-  # non-crypto dependencies.
-  set(_porthome_nip44_hkdf
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip44/src/core/nip44_hkdf_hmac.c")
-  if(NOT EXISTS "${_porthome_nip44_hkdf}")
-    message(FATAL_ERROR
-      "NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL needs "
-      "${_porthome_nip44_hkdf} but the file is missing.")
-  endif()
-
-  if(NOT TARGET nostrc::blossom)
-    message(FATAL_ERROR "Experimental porthome requires BUILD_LIBBLOSSOM=ON.")
+  if(NOT TARGET nostrc::porthome)
+    message(FATAL_ERROR "Experimental porthome requires BUILD_LIBPORTHOME=ON or NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=OFF.")
   endif()
 
   add_library(nostr_porthome STATIC
-    src/porthome/nh_porthome_crypto.c
-    src/porthome/nh_porthome_manifest.c
     src/porthome/nh_porthome_rename.c
     src/porthome/nh_porthome_blossom.c
-    src/porthome/nh_porthome_cbor.c
-    src/porthome/nh_porthome_wrapkey.c
     src/porthome/nh_porthome_provision.c
     # Phase 2.5B: fork+drop-privs sandbox for the fetch helper
     # (bead nostrc-ww50). Header lives under include/. Only linked
     # when NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL is on.
-    src/porthome/nh_porthome_sandbox.c
-    ${_porthome_nip44_hkdf})
+    src/porthome/nh_porthome_sandbox.c)
   target_compile_options(nostr_porthome PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_compile_definitions(nostr_porthome PUBLIC
@@ -1379,10 +1364,9 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   target_include_directories(nostr_porthome PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_include_directories(nostr_porthome PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip44/include)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome)
   target_link_libraries(nostr_porthome
-    PUBLIC OpenSSL::Crypto nostrc::blossom)
+    PUBLIC nostrc::porthome OpenSSL::Crypto nostrc::blossom)
 
   # ────────────────────────────────────────────────────────────────
   # Phase 5 I1 (bead nostrc-h10m.1): unified UX seams.

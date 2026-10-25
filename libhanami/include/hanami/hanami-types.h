@@ -63,6 +63,7 @@ typedef struct {
     git_object_t type;      /**< blob, tree, commit, or tag */
     size_t size;            /**< Object size in bytes */
     int64_t timestamp;      /**< Last access time (Unix epoch seconds) */
+    uint32_t chunk_key_id;   /**< Key id for the shared porthome index row (0 for raw objects) */
 } hanami_index_entry_t;
 
 /* Configuration — see hanami/hanami-config.h for the full API */

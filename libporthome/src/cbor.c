@@ -1,9 +1,9 @@
 /*
- * nh_porthome_cbor.c — Canonical CBOR encoder/decoder for porthome.
+ * porthome_cbor.c — Canonical CBOR encoder/decoder for porthome.
  * SPDX-License-Identifier: MIT
  */
 
-#include "nh_porthome_cbor.h"
+#include <porthome/cbor.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +18,7 @@
 
 /* ────────────── encoder ────────────── */
 
-int nhpc_enc_init(nhpc_enc *e, size_t initial_cap) {
+int porthome_cbor_enc_init(porthome_cbor_enc *e, size_t initial_cap) {
     if (!e) return -1;
     e->buf = NULL; e->len = 0; e->cap = 0; e->err = 0;
     if (initial_cap == 0) initial_cap = 128;
@@ -28,21 +28,21 @@ int nhpc_enc_init(nhpc_enc *e, size_t initial_cap) {
     return 0;
 }
 
-void nhpc_enc_dispose(nhpc_enc *e) {
+void porthome_cbor_enc_dispose(porthome_cbor_enc *e) {
     if (!e) return;
     free(e->buf); e->buf = NULL; e->len = 0; e->cap = 0;
 }
 
-int nhpc_enc_take(nhpc_enc *e, uint8_t **out, size_t *out_len) {
+int porthome_cbor_enc_take(porthome_cbor_enc *e, uint8_t **out, size_t *out_len) {
     if (!e || !out || !out_len) return -1;
-    if (e->err) { nhpc_enc_dispose(e); *out = NULL; *out_len = 0; return e->err; }
+    if (e->err) { porthome_cbor_enc_dispose(e); *out = NULL; *out_len = 0; return e->err; }
     *out = e->buf;
     *out_len = e->len;
     e->buf = NULL; e->len = 0; e->cap = 0;
     return 0;
 }
 
-static int enc_reserve(nhpc_enc *e, size_t need) {
+static int enc_reserve(porthome_cbor_enc *e, size_t need) {
     if (e->err) return e->err;
     if (e->len + need <= e->cap) return 0;
     size_t new_cap = e->cap ? e->cap : 128;
@@ -58,7 +58,7 @@ static int enc_reserve(nhpc_enc *e, size_t need) {
 
 /* Canonical CBOR head: major type + argument in the shortest form
  * (0-23 inline, else 1/2/4/8-byte big-endian). */
-static int enc_head(nhpc_enc *e, uint8_t mt, uint64_t arg) {
+static int enc_head(porthome_cbor_enc *e, uint8_t mt, uint64_t arg) {
     uint8_t ib = (uint8_t)(mt << 5);
     if (arg < 24u) {
         if (enc_reserve(e, 1)) return -1;
@@ -88,11 +88,11 @@ static int enc_head(nhpc_enc *e, uint8_t mt, uint64_t arg) {
     return 0;
 }
 
-int nhpc_write_uint(nhpc_enc *e, uint64_t v) { return enc_head(e, MT_UINT, v); }
-int nhpc_write_array_hdr(nhpc_enc *e, uint64_t n) { return enc_head(e, MT_ARRAY, n); }
-int nhpc_write_map_hdr(nhpc_enc *e, uint64_t n) { return enc_head(e, MT_MAP, n); }
+int porthome_cbor_write_uint(porthome_cbor_enc *e, uint64_t v) { return enc_head(e, MT_UINT, v); }
+int porthome_cbor_write_array_hdr(porthome_cbor_enc *e, uint64_t n) { return enc_head(e, MT_ARRAY, n); }
+int porthome_cbor_write_map_hdr(porthome_cbor_enc *e, uint64_t n) { return enc_head(e, MT_MAP, n); }
 
-int nhpc_write_bstr(nhpc_enc *e, const uint8_t *b, size_t n) {
+int porthome_cbor_write_bstr(porthome_cbor_enc *e, const uint8_t *b, size_t n) {
     if (enc_head(e, MT_BSTR, (uint64_t)n)) return -1;
     if (n) {
         if (enc_reserve(e, n)) return -1;
@@ -102,7 +102,7 @@ int nhpc_write_bstr(nhpc_enc *e, const uint8_t *b, size_t n) {
     return 0;
 }
 
-int nhpc_write_tstr_n(nhpc_enc *e, const char *s, size_t n) {
+int porthome_cbor_write_tstr_n(porthome_cbor_enc *e, const char *s, size_t n) {
     if (enc_head(e, MT_TSTR, (uint64_t)n)) return -1;
     if (n) {
         if (enc_reserve(e, n)) return -1;
@@ -112,21 +112,21 @@ int nhpc_write_tstr_n(nhpc_enc *e, const char *s, size_t n) {
     return 0;
 }
 
-int nhpc_write_tstr(nhpc_enc *e, const char *s) {
-    return nhpc_write_tstr_n(e, s, s ? strlen(s) : 0);
+int porthome_cbor_write_tstr(porthome_cbor_enc *e, const char *s) {
+    return porthome_cbor_write_tstr_n(e, s, s ? strlen(s) : 0);
 }
 
 /* ────────────── decoder ────────────── */
 
-void nhpc_dec_init(nhpc_dec *d, const uint8_t *buf, size_t len) {
+void porthome_cbor_dec_init(porthome_cbor_dec *d, const uint8_t *buf, size_t len) {
     d->buf = buf; d->len = len; d->pos = 0; d->err = 0;
 }
 
-int nhpc_dec_at_end(const nhpc_dec *d) {
+int porthome_cbor_dec_at_end(const porthome_cbor_dec *d) {
     return d->err == 0 && d->pos == d->len;
 }
 
-int nhpc_peek_major(const nhpc_dec *d) {
+int porthome_cbor_peek_major(const porthome_cbor_dec *d) {
     if (d->err) return -1;
     if (d->pos >= d->len) return -1;
     return (int)((d->buf[d->pos] >> 5) & 0x7);
@@ -135,7 +135,7 @@ int nhpc_peek_major(const nhpc_dec *d) {
 /* Read the header at the cursor and return the (major, arg) pair.
  * Advances the cursor past the header. Enforces canonical shortest
  * form: an argument that fits in the previous size class MUST use it. */
-static int dec_head(nhpc_dec *d, uint8_t *out_mt, uint64_t *out_arg) {
+static int dec_head(porthome_cbor_dec *d, uint8_t *out_mt, uint64_t *out_arg) {
     if (d->err) return -1;
     if (d->pos >= d->len) { d->err = -1; return -1; }
     uint8_t ib = d->buf[d->pos++];
@@ -177,7 +177,7 @@ static int dec_head(nhpc_dec *d, uint8_t *out_mt, uint64_t *out_arg) {
     return 0;
 }
 
-int nhpc_read_uint(nhpc_dec *d, uint64_t *out) {
+int porthome_cbor_read_uint(porthome_cbor_dec *d, uint64_t *out) {
     uint8_t mt; uint64_t arg;
     if (dec_head(d, &mt, &arg)) return -1;
     if (mt != MT_UINT) { d->err = -1; return -1; }
@@ -185,7 +185,7 @@ int nhpc_read_uint(nhpc_dec *d, uint64_t *out) {
     return 0;
 }
 
-int nhpc_read_bstr(nhpc_dec *d, const uint8_t **out, size_t *out_len) {
+int porthome_cbor_read_bstr(porthome_cbor_dec *d, const uint8_t **out, size_t *out_len) {
     uint8_t mt; uint64_t arg;
     if (dec_head(d, &mt, &arg)) return -1;
     if (mt != MT_BSTR) { d->err = -1; return -1; }
@@ -196,7 +196,7 @@ int nhpc_read_bstr(nhpc_dec *d, const uint8_t **out, size_t *out_len) {
     return 0;
 }
 
-int nhpc_read_tstr(nhpc_dec *d, const uint8_t **out, size_t *out_len) {
+int porthome_cbor_read_tstr(porthome_cbor_dec *d, const uint8_t **out, size_t *out_len) {
     uint8_t mt; uint64_t arg;
     if (dec_head(d, &mt, &arg)) return -1;
     if (mt != MT_TSTR) { d->err = -1; return -1; }
@@ -207,7 +207,7 @@ int nhpc_read_tstr(nhpc_dec *d, const uint8_t **out, size_t *out_len) {
     return 0;
 }
 
-int nhpc_read_array_hdr(nhpc_dec *d, uint64_t *n_items) {
+int porthome_cbor_read_array_hdr(porthome_cbor_dec *d, uint64_t *n_items) {
     uint8_t mt; uint64_t arg;
     if (dec_head(d, &mt, &arg)) return -1;
     if (mt != MT_ARRAY) { d->err = -1; return -1; }
@@ -215,7 +215,7 @@ int nhpc_read_array_hdr(nhpc_dec *d, uint64_t *n_items) {
     return 0;
 }
 
-int nhpc_read_map_hdr(nhpc_dec *d, uint64_t *n_pairs) {
+int porthome_cbor_read_map_hdr(porthome_cbor_dec *d, uint64_t *n_pairs) {
     uint8_t mt; uint64_t arg;
     if (dec_head(d, &mt, &arg)) return -1;
     if (mt != MT_MAP) { d->err = -1; return -1; }
@@ -223,7 +223,7 @@ int nhpc_read_map_hdr(nhpc_dec *d, uint64_t *n_pairs) {
     return 0;
 }
 
-int nhpc_skip_item(nhpc_dec *d) {
+int porthome_cbor_skip_item(porthome_cbor_dec *d) {
     /* Recursive skip. Only supports the types we emit — a schema type we
      * don't recognise is a parse error. */
     if (d->err) return -1;
@@ -239,12 +239,12 @@ int nhpc_skip_item(nhpc_dec *d) {
             d->pos += (size_t)arg;
             return 0;
         case MT_ARRAY:
-            for (uint64_t i = 0; i < arg; i++) if (nhpc_skip_item(d)) return -1;
+            for (uint64_t i = 0; i < arg; i++) if (porthome_cbor_skip_item(d)) return -1;
             return 0;
         case MT_MAP:
             for (uint64_t i = 0; i < arg; i++) {
-                if (nhpc_skip_item(d)) return -1; /* key */
-                if (nhpc_skip_item(d)) return -1; /* val */
+                if (porthome_cbor_skip_item(d)) return -1; /* key */
+                if (porthome_cbor_skip_item(d)) return -1; /* val */
             }
             return 0;
         default:

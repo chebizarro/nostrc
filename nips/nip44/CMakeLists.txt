@@ -28,8 +28,11 @@ if (GLIB_FOUND)
   target_link_libraries(nostr_nip44_glib PUBLIC nostr nostr_nip44_core PkgConfig::GLIB)
 endif()
 
-# Install only the public headers under include/nostr/nip44
-install(DIRECTORY ${NIP44_INC}/nostr/nip44/ DESTINATION include/nostr/nip44)
+# libporthome's installed static closure needs the public KDF implementation,
+# not a private-source copy. The optional GLib layer is not part of that closure.
+include(GNUInstallDirs)
+install(TARGETS nostr_nip44_core ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY ${NIP44_INC}/nostr/nip44/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip44)
 
 # Tests
 enable_testing()

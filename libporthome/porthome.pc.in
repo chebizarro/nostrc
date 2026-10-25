@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+Name: porthome
+Description: Portable sealed-object crypto, manifest codecs and storage-independent index
+Version: @porthome_VERSION@
+Requires.private: blossom nostr openssl
+Libs: -L${libdir} -lporthome
+Libs.private: -lnostr_nip44_core
+Cflags: -I${includedir}

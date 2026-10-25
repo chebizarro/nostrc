@@ -20417,15 +20417,25 @@
       "runtime_inputs": []
     },
     "package.boundaries.guard": {
-      "nodes": ["package.boundaries"],
-      "profiles": ["selection.operational.linux", "selection.operational.macos"],
+      "nodes": [
+        "package.boundaries"
+      ],
+      "profiles": [
+        "selection.operational.linux",
+        "selection.operational.macos"
+      ],
       "kind": "command",
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
-      "command": ["bash", "{source}/scripts/check-package-boundaries.sh"],
+      "command": [
+        "bash",
+        "{source}/scripts/check-package-boundaries.sh"
+      ],
       "working_directory": "{source}",
-      "environment": {"PYTHONDONTWRITEBYTECODE": "1"},
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
       "runtime_inputs": [
         "{source}/scripts/check-package-boundaries.sh",
         "{source}/scripts/check-package-boundaries.py",
@@ -20434,15 +20444,25 @@
       "build_targets": []
     },
     "package.boundaries.regressions": {
-      "nodes": ["package.boundaries"],
-      "profiles": ["selection.operational.linux", "selection.operational.macos"],
+      "nodes": [
+        "package.boundaries"
+      ],
+      "profiles": [
+        "selection.operational.linux",
+        "selection.operational.macos"
+      ],
       "kind": "command",
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
-      "command": ["python3", "{source}/scripts/test-package-boundaries.py"],
+      "command": [
+        "python3",
+        "{source}/scripts/test-package-boundaries.py"
+      ],
       "working_directory": "{source}",
-      "environment": {"PYTHONDONTWRITEBYTECODE": "1"},
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
       "runtime_inputs": [
         "{source}/scripts/test-package-boundaries.py",
         "{source}/scripts/check-package-boundaries.py"
@@ -20670,6 +20690,78 @@
         "test-blossom-server-capability-probe-shim",
         "test-blossom-shim",
         "test-blossom-shim-auto"
+      ],
+      "runtime_inputs": []
+    },
+    "root.asan.libporthome": {
+      "build_targets": [
+        "test-porthome-api"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test-porthome-api"
+        ],
+        "core.linux.asan": [
+          "test-porthome-api"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "libporthome",
+        "libporthome.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "supported.libporthome": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "libporthome",
+        "libporthome.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "test-porthome-api"
+        ],
+        "grotto.linux": [
+          "test-porthome-api"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test-porthome-api"
+        ],
+        "groundhog.linux": [
+          "test-porthome-api"
+        ],
+        "groundhog.mdk011": [
+          "test-porthome-api"
+        ],
+        "groundhog.mdk08": [
+          "test-porthome-api"
+        ]
+      },
+      "build_targets": [
+        "test-porthome-api"
       ],
       "runtime_inputs": []
     }
@@ -21316,7 +21408,8 @@
     "gnome.nostr_homed": {
       "depends_on": [
         "nostr.gobject",
-        "libblossom"
+        "libblossom",
+        "libporthome"
       ],
       "id": "gnome.nostr_homed",
       "owner_paths": [
@@ -21341,13 +21434,14 @@
         "nip19",
         "nip44",
         "nip49",
-        "gnome.nostr_share"
+        "gnome.nostr_share",
+        "libporthome"
       ],
       "id": "gnome.nostr_seal",
       "owner_paths": [
         "gnome/nostr-seal"
       ],
-      "rationale": "gnome/nostr-seal/CMakeLists.txt: nseal core/CLI, private NIP49 TUs, nh_porthome_crypto.c, optional nostr-share publish and real nostr-signer-daemon integration. Registration/targets pinned by operational regression."
+      "rationale": "gnome/nostr-seal/CMakeLists.txt: nseal core/CLI, private NIP49 TUs, nostrc::porthome, optional nostr-share publish and real nostr-signer-daemon integration. Registration/targets pinned by operational regression."
     },
     "gnome.nostr_search_provider": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
@@ -21731,13 +21825,14 @@
     "libhanami": {
       "depends_on": [
         "libnostr",
-        "libblossom"
+        "libblossom",
+        "libporthome"
       ],
       "id": "libhanami",
       "owner_paths": [
         "libhanami"
       ],
-      "rationale": "hanami links nostr and nostrc::blossom; BUD-02 is owned below libblossom. nip34 test linkage remains check-specific."
+      "rationale": "hanami consumes libblossom and libporthome; SQLite persistence implements the shared index interface. Git metadata/hash helpers remain in hanami."
     },
     "libjson": {
       "depends_on": [],
@@ -23265,10 +23360,11 @@
     "gnome.nostr_seal.streaming": {
       "id": "gnome.nostr_seal.streaming",
       "owner_paths": [
-        "gnome/nostr-seal/src/nseal.c",
-        "gnome/nostr-homed/src/porthome/nh_porthome_crypto.c"
+        "gnome/nostr-seal/src/nseal.c"
       ],
-      "depends_on": [],
+      "depends_on": [
+        "libporthome"
+      ],
       "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
     },
     "desktop.signer_adapters": {
@@ -23336,30 +23432,58 @@
         "libblossom/tests"
       ],
       "rationale": "Transport test inputs select package checks, not production consumers."
+    },
+    "libporthome": {
+      "id": "libporthome",
+      "depends_on": [
+        "libnostr",
+        "nip44",
+        "libblossom"
+      ],
+      "owner_paths": [
+        "libporthome"
+      ],
+      "rationale": "Portable crypto/codecs and storage-independent index. No GNOME, Git or SQLite dependency."
+    },
+    "libporthome.test_inputs": {
+      "id": "libporthome.test_inputs",
+      "depends_on": [],
+      "owner_paths": [
+        "libporthome/tests"
+      ],
+      "rationale": "Public API test inputs select package checks, not production consumers."
     }
   },
   "path_rules": [
     {
       "exact": "scripts/check-package-boundaries.sh",
-      "nodes": ["package.boundaries"],
+      "nodes": [
+        "package.boundaries"
+      ],
       "effect": "impact",
       "reason": "Package boundary guard entrypoint."
     },
     {
       "exact": "scripts/check-package-boundaries.py",
-      "nodes": ["package.boundaries"],
+      "nodes": [
+        "package.boundaries"
+      ],
       "effect": "impact",
       "reason": "Package boundary enforcement and layer ownership."
     },
     {
       "exact": "scripts/test-package-boundaries.py",
-      "nodes": ["package.boundaries"],
+      "nodes": [
+        "package.boundaries"
+      ],
       "effect": "impact",
       "reason": "Package boundary guard regression tests."
     },
     {
       "exact": "scripts/package-boundaries.allowlist",
-      "nodes": ["package.boundaries"],
+      "nodes": [
+        "package.boundaries"
+      ],
       "effect": "impact",
       "reason": "Shrinking package boundary violation baseline."
     },
@@ -27860,15 +27984,6 @@
       "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
     },
     {
-      "exact": "gnome/nostr-homed/src/porthome/nh_porthome_crypto.c",
-      "nodes": [
-        "gnome.nostr_seal",
-        "gnome.nostr_seal.streaming"
-      ],
-      "effect": "impact",
-      "reason": "Audited signer adapter/test input ownership (nostrc-afkw5)."
-    },
-    {
       "exact": "gnome/libnostr-publish/src/nostr-publish-signer-dbus.c",
       "nodes": [
         "desktop.signer_adapters"
@@ -27963,6 +28078,31 @@
       ],
       "prefix": "libblossom/tests",
       "reason": "Extracted Blossom package inputs; reverse impact selects consumers, not prerequisite suites."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libporthome",
+      "nodes": [
+        "libporthome"
+      ],
+      "reason": "Promoted portable package ownership; production edges retain compatibility consumers, test-only inputs remain local."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libporthome/tests",
+      "nodes": [
+        "libporthome.test_inputs"
+      ],
+      "reason": "Promoted portable package ownership; production edges retain compatibility consumers, test-only inputs remain local."
+    },
+    {
+      "exact": "cmake/nostrcConfig.cmake.in",
+      "effect": "impact",
+      "nodes": [
+        "libblossom",
+        "libporthome"
+      ],
+      "reason": "Shared installed package dispatcher is configured by both libraries; select their real consumers without unknown-path broad fallback."
     }
   ],
   "profiles": {
@@ -29561,6 +29701,18 @@
         {
           "path": "signet/src/signetctl_main.c",
           "pattern": "#define SIGNETCTL_VERSION \"([0-9.]+)\""
+        }
+      ]
+    },
+    "libporthome": {
+      "manifest_name": "libporthome",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "libporthome/CMakeLists.txt",
+          "pattern": "declare_component_version\\(porthome\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
         }
       ]
     }
