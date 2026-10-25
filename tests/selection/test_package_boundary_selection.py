@@ -158,6 +158,7 @@ class PackageBoundarySelection(unittest.TestCase):
         name = "supported.nostr.gobject.vault"
         check = self.policy["checks"][name]
         self.assertEqual(check["build_targets"], ["test_nostr_gobject_vault"])
+        self.assertIn("nip59", check["nodes"])
         for profile in check["profiles"]:
             self.assertEqual(check["ctest_tests"][profile], ["test_nostr_gobject_vault"])
         for path in ("nostr-gobject/src/gn-vault.c",

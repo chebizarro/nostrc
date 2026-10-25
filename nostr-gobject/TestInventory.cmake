@@ -8,7 +8,7 @@ if(TEST "test_nostr_gobject_blossom")
 endif()
 
 if(TEST "test_nostr_gobject_vault")
-  nostrc_add_test_owners("test_nostr_gobject_vault" OWNER libvault libporthome libblossom)
+  nostrc_add_test_owners("test_nostr_gobject_vault" OWNER libvault libporthome libblossom nip59)
 endif()
 
 # Exact registration/input relationships retained from the ab5 production audit.

@@ -1957,7 +1957,7 @@
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["nostr.gobject", "libvault", "libporthome", "libblossom"],
+      "nodes": ["nostr.gobject", "libvault", "libporthome", "libblossom", "nip59"],
       "profiles": ["core.macos.asan", "core.linux.asan", "groundhog.linux", "grotto.linux", "core.linux", "grotto.linux.asan_ubsan", "groundhog.mdk08", "groundhog.mdk011"],
       "requirement": "blocking",
       "runtime_inputs": []

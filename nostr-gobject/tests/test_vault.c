@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <nostr-gobject-1.0/gn-vault.h>
+#include <vault/nip59.h>
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <json.h>
@@ -172,6 +173,87 @@ static void test_share_accept(void)
   g_assert_null(accepted);
   g_assert_error(error, GN_VAULT_ERROR, -VAULT_ERR_AUTH);
   await_clear(&a);
+  fixture_clear(&f);
+}
+typedef struct {
+  GThread *main_thread;
+  char *json;
+  guint publishes, receives;
+} Nip59Wire;
+static int publish_gift_wrap(void *ctx, const NostrEvent *event)
+{
+  Nip59Wire *wire = ctx;
+  g_assert_true(g_thread_self() != wire->main_thread);
+  g_assert_null(wire->json);
+  g_assert_cmpint(event->kind, ==, 1059);
+  g_assert_cmpint(nostr_event_validate(event, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  wire->json = nostr_event_serialize_compact(event);
+  g_assert_nonnull(wire->json);
+  g_assert_null(strstr(wire->json, "node_key"));
+  ++wire->publishes;
+  return VAULT_OK; /* In-memory transport acceptance, not a live relay ACK. */
+}
+static int receive_gift_wrap(void *ctx, NostrEvent **event)
+{
+  Nip59Wire *wire = ctx;
+  g_assert_true(g_thread_self() != wire->main_thread);
+  *event = NULL;
+  if (!wire->json) return VAULT_ERR_AGAIN;
+  *event = nostr_event_new();
+  g_assert_nonnull(*event);
+  g_assert_cmpint(nostr_event_deserialize_signed(*event, wire->json, NULL),
+      ==, NOSTR_EVENT_VALIDATION_OK);
+  free(wire->json);
+  wire->json = NULL;
+  ++wire->receives;
+  return VAULT_OK;
+}
+static void test_nip59_share_accept(void)
+{
+  Fixture f; fixture_init(&f);
+  Nip59Wire wire = {.main_thread = g_thread_self()};
+  vault_nip59_transport transport = {&wire, publish_gift_wrap, receive_gift_wrap};
+  vault_nip59_carrier *sender = NULL, *receiver = NULL;
+  g_assert_cmpint(vault_nip59_carrier_new(f.sk[0], &transport, &sender), ==, VAULT_OK);
+  g_assert_cmpint(vault_nip59_carrier_new(f.sk[1], &transport, &receiver), ==, VAULT_OK);
+  vault_grant grant = grant_for(&f);
+  char *relays[] = {"wss://nos.lol"}, *blossom[] = {"https://vault.example"};
+  grant.relays = relays; grant.relays_len = 1;
+  grant.blossom = blossom; grant.blossom_len = 1;
+  g_autoptr(GnVault) vault = gn_vault_new();
+  g_autoptr(GBytes) recipient = g_bytes_new(f.pub[1], 32);
+  g_autoptr(GError) error = NULL;
+  Await a; await_init(&a);
+  gn_vault_share_async(vault, vault_nip59_carrier_interface(sender),
+      recipient, &grant, NULL, ready, &a);
+  g_assert_true(gn_vault_share_finish(vault, await_result(&a), &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(wire.publishes, ==, 1);
+  g_assert_nonnull(wire.json);
+  await_next(&a);
+  gn_vault_accept_async(vault, vault_nip59_carrier_interface(receiver), NULL, ready, &a);
+  g_autoptr(GnVaultGrant) accepted = gn_vault_accept_finish(vault, await_result(&a), &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(accepted);
+  const vault_grant *native = gn_vault_grant_peek(accepted);
+  g_assert_cmpmem(native->owner, 32, grant.owner, 32);
+  g_assert_cmpmem(native->vault_id, 32, grant.vault_id, 32);
+  g_assert_cmpmem(native->node_id, 32, grant.node_id, 32);
+  g_assert_cmpmem(native->root_manifest, 32, grant.root_manifest, 32);
+  g_assert_cmpuint(native->ring.count, ==, grant.ring.count);
+  g_assert_cmpuint(native->ring.entries[0].epoch, ==, grant.ring.entries[0].epoch);
+  g_assert_cmpmem(native->ring.entries[0].node_key, 32, f.key, 32);
+  g_assert_cmpint(native->cap, ==, grant.cap);
+  g_assert_cmpuint(native->issued_at, ==, grant.issued_at);
+  g_assert_cmpuint(native->relays_len, ==, 1);
+  g_assert_cmpstr(native->relays[0], ==, relays[0]);
+  g_assert_cmpuint(native->blossom_len, ==, 1);
+  g_assert_cmpstr(native->blossom[0], ==, blossom[0]);
+  g_assert_cmpuint(wire.receives, ==, 1);
+  g_assert_null(wire.json);
+  await_clear(&a);
+  vault_nip59_carrier_free(sender);
+  vault_nip59_carrier_free(receiver);
   fixture_clear(&f);
 }
 static void test_cancellation(void)
@@ -470,6 +552,7 @@ int main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   nostr_json_init();
   g_test_add_func("/gn-vault/share-accept", test_share_accept);
+  g_test_add_func("/gn-vault/nip59-share-accept", test_nip59_share_accept);
   g_test_add_func("/gn-vault/cancellation", test_cancellation);
   g_test_add_func("/gn-vault/fold", test_fold);
   g_test_add_func("/gn-vault/revoke-reseal", test_revoke_reseal);
