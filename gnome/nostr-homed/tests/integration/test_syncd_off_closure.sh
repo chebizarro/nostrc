@@ -26,7 +26,7 @@ fi
 # archive members.
 if nm -a "${BIN}" 2>/dev/null \
    | awk '{print $NF}' \
-   | grep -E '(nh_syncd_cache_|nostr_home_syncd|nh_syncd_sweep_|nh_syncd_pin_ring_|nh_fuse_)' \
+   | grep -E '(nh_syncd_cache_|nostr_home_syncd|nh_syncd_sweep_|nh_syncd_pin_ring_|nh_syncd_vault_|nh_fuse_|^vault_|^blossom_)' \
    >/tmp/off-closure-$$; then
     echo "FAIL: nostr-authd contains SYNCD or FUSE symbols:" >&2
     cat /tmp/off-closure-$$ >&2
@@ -39,9 +39,9 @@ fi
 # NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL gate must keep
 # libfuse3 out of pam_nostr / nostr-authd even when it is ON.
 if command -v ldd >/dev/null 2>&1; then
-    if ldd "${BIN}" 2>/dev/null | grep -qi 'libfuse'; then
-        echo "FAIL: nostr-authd links libfuse:" >&2
-        ldd "${BIN}" | grep -i libfuse >&2
+    if ldd "${BIN}" 2>/dev/null | grep -Eqi 'lib(fuse|vault|blossom|glib-2\.0|gobject-2\.0|gio-2\.0)' ; then
+        echo "FAIL: login runtime links a session-only library:" >&2
+        ldd "${BIN}" | grep -Ei 'lib(fuse|vault|blossom|glib-2\.0|gobject-2\.0|gio-2\.0)' >&2
         exit 1
     fi
 fi

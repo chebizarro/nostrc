@@ -77,6 +77,13 @@ jobs:
     with:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
+  vault_syncd:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'vault_syncd')
+    uses: ./.github/workflows/vault-syncd-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      selection_artifact: ${{ needs.select.outputs.selection_artifact }}
   libgo:
     needs: select
     if: contains(fromJSON(needs.select.outputs.families), 'libgo')
@@ -203,7 +210,7 @@ jobs:
   gate:
     name: Dependency gate
     if: always()
-    needs: [select, cheap, core, libgo, hanami, rust, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
+    needs: [select, cheap, core, libgo, hanami, rust, gi, groundhog, grotto, nip55l, homed, vault_syncd, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
     runs-on: ubuntu-24.04
     steps:
       - name: Selection and cheap guards must succeed

@@ -79,6 +79,13 @@ VAULT_API int vault_tree_reseal(vault_tree *, int eager, uint64_t budget, const 
                                 vault_tree_reseal_result **);
 VAULT_API void vault_tree_reseal_result_free(vault_tree_reseal_result *);
 
+/* Read one authenticated descriptor through addressed I/O. Gates the exact epoch
+ * before I/O, verifies hash/sealed length and canonical true-length encoding,
+ * then dispatches explicitly by envelope version (v1 migration or v2). No key
+ * trials. Returns malloc'd plaintext; wipe before free. Outputs reset on error. */
+VAULT_API int vault_chunk_read(const porthome_node_chunk *, const porthome_ring_t *,
+                               const vault_blob_io *, uint8_t **, size_t *);
+
 typedef struct {
     size_t nodes, chunks;
     uint64_t size_plain, size_sealed;

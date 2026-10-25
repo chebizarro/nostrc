@@ -243,6 +243,41 @@ class PackageBoundarySelection(unittest.TestCase):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
             self.assertNotIn("supported.vaultctl", plan["selected_checks"])
 
+    def test_vault_syncd_inputs_select_a_real_bounded_runner(self):
+        import sys
+        sys.path.insert(0, str(ROOT / ".github/workflows"))
+        import ci_selection as ci
+        check_name = "homed.vault.filesystem"
+        for path in ("gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c",
+                     "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c",
+                     "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh",
+                     ".github/workflows/vault-syncd-ci.yml"):
+            with self.subTest(path=path):
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertEqual(plan["effective_mode"], "affected")
+                self.assertEqual(set(plan["selected_checks"]), {check_name})
+                self.assertEqual(ci.project(plan)["families"], ["vault_syncd"])
+        plan = s.make_plan(self.policy, [change("libvault/src/fold.c")],
+                           head="a" * 40, context="ci")
+        self.assertIn(check_name, plan["selected_checks"])
+        for path in ("libvault/tests/test_fold_frontier.c", "tools/vaultctl/tests/fixtures.py",
+                     "gnome/groundhog/src/ui/gh-about-dialog.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, context="ci")
+            self.assertNotIn(check_name, plan["selected_checks"])
+        check = self.policy["checks"][check_name]
+        self.assertEqual(set(check["ctest_tests"]["homed.vault.linux"]), {
+            "homed_syncd_vault_fs", "homed_syncd_off_closure",
+            "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure"})
+        workflow = (ROOT / ".github/workflows/vault-syncd-ci.yml").read_text()
+        self.assertIn("python3 scripts/test-plan.py run", workflow)
+        self.assertIn("--profile homed.vault.linux", workflow)
+        self.assertIn("test \"$(git rev-parse HEAD)\" = \"$REQUESTED_SHA\"", workflow)
+        aggregate = (ROOT / ".github/workflows/ci-selective.yml").read_text()
+        self.assertIn("uses: ./.github/workflows/vault-syncd-ci.yml", aggregate)
+        self.assertIn("homed, vault_syncd, signet", aggregate)
+
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
                            head="a" * 40, base="b" * 40, context="ci")

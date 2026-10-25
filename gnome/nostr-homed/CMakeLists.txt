@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.4.0 LANGUAGES C)
+project(nostr_homed VERSION 0.5.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -65,6 +65,11 @@ option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
 # built here installs — packaging + systemd unit are I3.
 option(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL
   "Build the experimental user-scoped nostr-home-syncd daemon (requires porthome experimental + libnostr)" OFF)
+option(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL
+  "Build shared-vault syncd/FUSE assembly (requires SYNCD_EXPERIMENTAL and libvault)" OFF)
+if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL AND NOT NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
+  message(FATAL_ERROR "NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL requires SYNCD_EXPERIMENTAL")
+endif()
 # Phase 4 P4-I (bead nostrc-1u55). Ships the read-only FUSE 3 overlay
 # nostr-home-fuse. Gated on top of SYNCD_EXPERIMENTAL (which is gated
 # on top of PORTHOME_EXPERIMENTAL) and requires FUSE3. Nothing is
@@ -1898,6 +1903,17 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     target_link_libraries(nostr_syncd_core PUBLIC PkgConfig::NOSTR_FOR_SYNCD)
   endif()
 
+  if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+    if(NOT TARGET nostrc::vault)
+      message(FATAL_ERROR "Shared-vault syncd requires BUILD_LIBVAULT=ON")
+    endif()
+    target_sources(nostr_syncd_core PRIVATE
+      src/porthome-syncd/nh_syncd_vault_fs.c
+      src/porthome-syncd/nh_syncd_vault_apply.c)
+    target_link_libraries(nostr_syncd_core PUBLIC nostrc::vault)
+    target_compile_definitions(nostr_syncd_core PUBLIC NH_SYNCD_VAULT_EXPERIMENTAL=1)
+  endif()
+
   # Daemon binary. Only additional source is the inotify watcher +
   # the poll-loop main. Not installed in I1.
   add_executable(nostr-home-syncd
@@ -1911,6 +1927,24 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
   target_link_libraries(nostr-home-syncd PRIVATE nostr_syncd_core)
 
   if(NOSTR_HOMED_BUILD_TESTS)
+    if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+      add_executable(test_syncd_vault_fs tests/unit/test_syncd_vault_fs.c)
+      target_include_directories(test_syncd_vault_fs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+      target_compile_options(test_syncd_vault_fs PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      target_link_libraries(test_syncd_vault_fs PRIVATE nostr_syncd_core)
+      add_test(NAME homed_syncd_vault_fs COMMAND test_syncd_vault_fs)
+      set_tests_properties(homed_syncd_vault_fs PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
+      foreach(login_target pam_nostr nss_nostr)
+        if(TARGET ${login_target})
+          add_test(NAME homed_vault_${login_target}_closure
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_off_closure.sh
+                    $<TARGET_FILE:${login_target}>)
+          set_tests_properties(homed_vault_${login_target}_closure PROPERTIES
+            LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 15)
+        endif()
+      endforeach()
+    endif()
     add_executable(test_syncd_ignore  tests/unit/test_syncd_ignore.c)
     target_link_libraries(test_syncd_ignore  PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_ignore COMMAND test_syncd_ignore)
