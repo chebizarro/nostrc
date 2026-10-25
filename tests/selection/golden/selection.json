@@ -495,7 +495,8 @@
       "supported.tests.shared.tests.expensive",
       "supported.tests.shared.tests.libjson",
       "supported.tests.shared.tests.libjson.nip04",
-      "supported.tests.shared.tests.libjson.nip86"
+        "supported.tests.shared.tests.libjson.nip86",
+        "supported.vaultctl"
     ],
     "excluded_prefixes": [
       "mdk"

@@ -14,13 +14,19 @@ typedef struct {
     char *path;
     uint8_t digest[32];
 } vault_path;
+typedef struct { porthome_dir_node *node; uint8_t address[32]; } vault_record_manifest;
 struct vault_record {
     uint8_t writer[32], head_hash[32];
     porthome_head *head;
-    porthome_dir_node *root;
+    porthome_dir_node *root; /* alias of manifests[0].node */
+    vault_record_manifest *manifests;
+    size_t manifests_len;
     vault_path *paths;
     size_t paths_len, paths_cap;
 };
+typedef struct { porthome_dir_node *node; vault_ring ring; } vault_owned_tree_node;
+struct vault_tree { vault_owned_tree_node *nodes; size_t count; };
+int vault_tree_validate(const struct vault_tree *);
 /* Private strict JSON cursor; schema strings are unescaped ASCII. */
 typedef struct {
     const char *p, *end;

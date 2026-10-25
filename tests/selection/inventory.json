@@ -20829,12 +20829,44 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
-    "root.asan.libvault": {
-      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+    "root.asan.vaultctl": {
+      "build_targets": ["vaultctl", "vaultctl_fixture_helper"],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
-        "core.linux.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"]
+        "core.macos.asan": ["test_vaultctl_fixtures"],
+        "core.linux.asan": ["test_vaultctl_fixtures"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.core", "vaultctl", "vaultctl.test_inputs"],
+      "profiles": ["core.macos.asan", "core.linux.asan"],
+      "requirement": "blocking",
+      "runtime_inputs": ["tools/vaultctl/tests/fixtures.py"]
+    },
+    "supported.vaultctl": {
+      "build_targets": ["vaultctl", "vaultctl_fixture_helper"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.linux": ["test_vaultctl_fixtures"],
+        "grotto.linux": ["test_vaultctl_fixtures"],
+        "grotto.linux.asan_ubsan": ["test_vaultctl_fixtures"],
+        "groundhog.linux": ["test_vaultctl_fixtures"],
+        "groundhog.mdk011": ["test_vaultctl_fixtures"],
+        "groundhog.mdk08": ["test_vaultctl_fixtures"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.core", "execution.grotto", "execution.groundhog", "vaultctl", "vaultctl.test_inputs"],
+      "profiles": ["core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk011", "groundhog.mdk08"],
+      "requirement": "blocking",
+      "runtime_inputs": ["tools/vaultctl/tests/fixtures.py"]
+    },
+    "root.asan.libvault": {
+      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+        "core.linux.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
@@ -20844,15 +20876,15 @@
       "runtime_inputs": []
     },
     "supported.libvault": {
-      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
-        "grotto.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
-        "grotto.linux.asan_ubsan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
-        "groundhog.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
-        "groundhog.mdk011": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
-        "groundhog.mdk08": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"]
+        "core.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+        "grotto.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+        "grotto.linux.asan_ubsan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+        "groundhog.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+        "groundhog.mdk011": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+        "groundhog.mdk08": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
@@ -23688,6 +23720,18 @@
       "depends_on": [],
       "owner_paths": ["libvault-marmot/tests"],
       "rationale": "Adapter test inputs select only adapter checks, not prerequisite suites."
+    },
+    "vaultctl": {
+      "id": "vaultctl",
+      "depends_on": ["libvault", "libporthome", "libblossom", "libnostr", "libgo", "nip42", "nip11"],
+      "owner_paths": ["tools/vaultctl"],
+      "rationale": "Layer-7 CLI assembly; actual pool and Blossom fixture tests exercise the five commands."
+    },
+    "vaultctl.test_inputs": {
+      "id": "vaultctl.test_inputs",
+      "depends_on": [],
+      "owner_paths": ["tools/vaultctl/tests"],
+      "rationale": "Vault CLI fixtures select CLI checks, not production consumers."
     },
     "libvault": {
       "id": "libvault",
@@ -28391,8 +28435,20 @@
     },
     {
       "effect": "impact",
-      "prefix": "libvault",
-      "nodes": ["libvault"],
+          "prefix": "tools/vaultctl",
+        "nodes": ["vaultctl"],
+        "reason": "Shared-vault CLI ownership."
+      },
+      {
+        "effect": "impact",
+        "prefix": "tools/vaultctl/tests",
+        "nodes": ["vaultctl.test_inputs"],
+        "reason": "CLI fixture inputs remain local."
+      },
+      {
+        "effect": "impact",
+        "prefix": "libvault",
+        "nodes": ["libvault"],
       "reason": "Vault package ownership; reverse impact selects consumers, not prerequisite suites."
     },
     {
@@ -30050,6 +30106,12 @@
       "package_jobs": [],
       "publisher": "none",
       "version_sources": [{"join": ".", "path": "libvault-marmot/CMakeLists.txt", "pattern": "declare_component_version\\(vault_marmot\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
+    },
+    "vaultctl": {
+      "manifest_name": "vaultctl",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [{"join": ".", "path": "tools/vaultctl/CMakeLists.txt", "pattern": "declare_component_version\\(vaultctl\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
     },
     "libvault": {
       "manifest_name": "libvault",
