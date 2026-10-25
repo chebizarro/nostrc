@@ -77,7 +77,7 @@ static hanami_error_t nsec_sign(const char *event_json,
     NostrEvent *e = nostr_event_new();
     if (!e) return HANAMI_ERR_NOMEM;
     /* deserialize_unsigned accepts events without id/sig — exactly what
-     * hanami-bud02-auth hands us. */
+     * nostr_bud02_create_auth_event hands us through the hanami client. */
     NostrEventValidationStatus vs = nostr_event_deserialize_unsigned(e, event_json, NULL);
     if (vs != NOSTR_EVENT_VALIDATION_OK) {
         nostr_event_free(e);

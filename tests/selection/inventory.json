@@ -509,6 +509,33 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "root.asan.bud02": {
+      "build_targets": [
+        "test-bud02-auth"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test-bud02-auth"
+        ],
+        "core.linux.asan": [
+          "test-bud02-auth"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "bud02",
+        "bud02.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.libhanami": {
       "build_targets": [],
       "cost": "ordinary",
@@ -519,7 +546,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -537,7 +563,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -12936,6 +12961,51 @@
       ],
       "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
+    "supported.nips.bud02": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "bud02",
+        "bud02.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "test-bud02-auth"
+        ],
+        "grotto.linux": [
+          "test-bud02-auth"
+        ],
+        "core.linux": [
+          "test-bud02-auth"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test-bud02-auth"
+        ],
+        "groundhog.mdk08": [
+          "test-bud02-auth"
+        ],
+        "groundhog.mdk011": [
+          "test-bud02-auth"
+        ]
+      },
+      "build_targets": [
+        "test-bud02-auth"
+      ],
+      "runtime_inputs": []
+    },
     "supported.libhanami": {
       "nodes": [
         "execution.core",
@@ -12963,7 +13033,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -12981,7 +13050,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -12999,7 +13067,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13017,7 +13084,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13035,7 +13101,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13053,7 +13118,6 @@
           "test-hanami-blossom-content-type",
           "test-hanami-blossom-shim",
           "test-hanami-blossom-shim-auto",
-          "test-hanami-bud02-auth",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13072,7 +13136,6 @@
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -20671,12 +20734,12 @@
         "profile_fetch_stress",
         "signer/permissions",
         "signer/trust-tiers",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -21543,13 +21606,14 @@
     },
     "libhanami": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "bud02"
       ],
       "id": "libhanami",
       "owner_paths": [
         "libhanami"
       ],
-      "rationale": "hanami PUBLIC-links nostr (libhanami/CMakeLists.txt); nip34 test linkage remains check-specific."
+      "rationale": "hanami links nostr and nostrc::bud02 (libhanami/CMakeLists.txt); nip34 test linkage remains check-specific."
     },
     "libjson": {
       "depends_on": [],
@@ -23101,6 +23165,24 @@
       ],
       "depends_on": [],
       "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
+    },
+    "bud02": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "bud02",
+      "owner_paths": [
+        "nips/bud02"
+      ],
+      "rationale": "BUD-02 codec PUBLIC-links libnostr; libhanami links nostrc::bud02 through its public header."
+    },
+    "bud02.test_inputs": {
+      "depends_on": [],
+      "id": "bud02.test_inputs",
+      "owner_paths": [
+        "nips/bud02/tests"
+      ],
+      "rationale": "Codec test-only inputs select the bud02 family, not production consumer tests."
     }
   },
   "path_rules": [
@@ -27672,6 +27754,22 @@
       ],
       "effect": "impact",
       "reason": "Signer affected-selection regression paths and expected sets; runs the operational suite."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "bud02"
+      ],
+      "prefix": "nips/bud02",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "bud02.test_inputs"
+      ],
+      "prefix": "nips/bud02/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
     }
   ],
   "profiles": {
@@ -30267,12 +30365,12 @@
         "profile_fetch_stress",
         "signer/permissions",
         "signer/trust-tiers",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -30729,12 +30827,12 @@
         "relayd_session_relay_ws",
         "signer/permissions",
         "signer/trust-tiers",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -31154,12 +31252,12 @@
         "relayd_session_relay_ws",
         "signer/permissions",
         "signer/trust-tiers",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -31580,12 +31678,12 @@
         "relayd_session_relay_ws",
         "signer/permissions",
         "signer/trust-tiers",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -32229,12 +32327,12 @@
         "signer/ui-accessibility",
         "signer/ui-layout",
         "test-bc-blob-store",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -32693,12 +32791,12 @@
         "signer/ui-accessibility",
         "signer/ui-layout",
         "test-bc-blob-store",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -33158,12 +33256,12 @@
         "signer/ui-accessibility",
         "signer/ui-layout",
         "test-bc-blob-store",
+        "test-bud02-auth",
         "test-hanami-blossom-batch",
         "test-hanami-blossom-client",
         "test-hanami-blossom-content-type",
         "test-hanami-blossom-shim",
         "test-hanami-blossom-shim-auto",
-        "test-hanami-bud02-auth",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
