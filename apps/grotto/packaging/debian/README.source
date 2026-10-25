@@ -5,6 +5,7 @@ Build from a complete nostrc monorepo checkout with initialized submodules.
 Use a clean source copy: the repository's root debian/ is a different,
 headless package recipe. Replace it only in that disposable copy:
 
+    mv debian ../headless-debian-reference
     cp -a apps/grotto/packaging/debian debian
     dpkg-buildpackage -us -uc -b
 
@@ -13,6 +14,14 @@ Supported floor is Ubuntu 24.04: GTK >=4.14, libadwaita >=1.5, GLib >=2.80.
 Do not claim Ubuntu 22.04/Debian 12 support. Debian stable and Fedora target
 acceptance is a separate owner decision. Build one deb per distro ABI; do not
 assume a 24.04 binary installs on 26.04.
+
+blueprint-compiler is deliberately not a Build-Depends. The .blp sources are
+authoritative and generated .ui files are committed. CMake uses those committed
+files when the compiler is absent or is not exactly 0.22.2 (including Ubuntu
+24.04's distro 0.12.0); no compiler compilation or drift test runs in that mode.
+UI changes must be regenerated with 0.22.2. CI installs that pin and requires
+signer/blueprint-drift, which still recompiles and compares every template.
+The optional Shell extension ships GJS/schema data and has no Blueprint dependency.
 
 The single grotto_0.1.0-1_<arch>.deb includes GUI, daemon, both activation
 services, Control1 XML, private JSON runtime library, icons,

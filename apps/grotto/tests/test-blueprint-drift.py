@@ -10,7 +10,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 app = pathlib.Path(sys.argv[1])
-compiler = shutil.which('blueprint-compiler')
+compiler = sys.argv[2] if len(sys.argv) > 2 else shutil.which('blueprint-compiler')
 if not compiler:
     sys.exit('blueprint-compiler 0.22.2 is required for signer/blueprint-drift')
 version = subprocess.check_output([compiler, '--version'], text=True).strip()

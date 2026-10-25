@@ -647,8 +647,10 @@ if(TARGET grotto_app_test_core AND NOT APPLE)
   set(_g08_desktop_worker $<TARGET_FILE:test-desktop-activation>)
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-add_test(NAME signer/blueprint-drift COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test-blueprint-drift.py ${CMAKE_CURRENT_SOURCE_DIR}/..)
-set_tests_properties(signer/blueprint-drift PROPERTIES TIMEOUT 90 LABELS "signer;ui;blueprint")
+if(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER)
+  add_test(NAME signer/blueprint-drift COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test-blueprint-drift.py ${CMAKE_CURRENT_SOURCE_DIR}/.. ${BLUEPRINT_COMPILER})
+  set_tests_properties(signer/blueprint-drift PROPERTIES TIMEOUT 90 LABELS "signer;ui;blueprint")
+endif()
 add_test(NAME signer/desktop-contract COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test-desktop-contract.py ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${_g08_desktop_worker})
 set_tests_properties(signer/desktop-contract PROPERTIES TIMEOUT 90 LABELS "signer;desktop;unit"

@@ -51,6 +51,28 @@ cmake --build build
 sudo cmake --install build
 ```
 
+### Blueprint and the Ubuntu 24.04 floor
+
+The native CMake/deb build supports stock Ubuntu 24.04 packages. See
+[`packaging/debian/control`](packaging/debian/control) for the complete Debian
+build dependencies and [`README.source`](packaging/debian/README.source) for the
+clean-copy package command.
+
+`.blp` files remain authoritative; generated `.ui` files stay committed. CMake
+regenerates them only with **blueprint-compiler 0.22.2**. With Ubuntu 24.04's
+0.12.0, another version, or no compiler, it uses the committed `.ui` files and
+explicitly omits `signer/blueprint-drift`. No newer compiler or vendored Python
+module is needed to build the native deb. In fallback mode, resources are read
+only from the source tree, not stale build-tree UI.
+
+UI contributors must regenerate and check drift with 0.22.2 before committing.
+CI's Docker image and Grotto job install that exact pin; CI still requires
+`signer/blueprint-drift` to be registered and passing. A distro package build
+using committed UI is not drift-check evidence.
+
+The optional Shell extension is GJS/schema data, not Blueprint; its package
+does not need blueprint-compiler.
+
 ### Building
 
 From the repository root:

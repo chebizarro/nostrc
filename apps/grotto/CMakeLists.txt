@@ -115,16 +115,22 @@ else()
   message(STATUS "GStreamer not found - Camera QR scanning disabled (clipboard/file scanning still available)")
 endif()
 
-# Find blueprint-compiler for compiling .blp files to .ui files
+# .blp is authoritative; distro builds may use the committed .ui files.
+# Only the exact CI pin may regenerate them or run the drift check.
 find_program(BLUEPRINT_COMPILER blueprint-compiler)
+set(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER OFF)
 if(BLUEPRINT_COMPILER)
-  execute_process(COMMAND ${BLUEPRINT_COMPILER} --version OUTPUT_VARIABLE _blueprint_version OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(NOT _blueprint_version STREQUAL "0.22.2")
-    message(FATAL_ERROR "Grotto Blueprint compiler is pinned to 0.22.2; found ${_blueprint_version}")
+  execute_process(COMMAND ${BLUEPRINT_COMPILER} --version
+    OUTPUT_VARIABLE _blueprint_version OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _blueprint_result)
+  if(_blueprint_result EQUAL 0 AND _blueprint_version STREQUAL "0.22.2")
+    set(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER ON)
+    message(STATUS "Found pinned blueprint-compiler: ${BLUEPRINT_COMPILER}")
+  else()
+    message(STATUS "blueprint-compiler '${_blueprint_version}' is not the 0.22.2 pin - using committed .ui files; signer/blueprint-drift not registered")
   endif()
-  message(STATUS "Found pinned blueprint-compiler: ${BLUEPRINT_COMPILER}")
 else()
-  message(WARNING "blueprint-compiler not found - using pre-compiled .ui files")
+  message(STATUS "blueprint-compiler not found - using committed .ui files; signer/blueprint-drift not registered")
 endif()
 
 # Exact production inventory, mirrored by Meson and resources.gresource.xml.
@@ -137,9 +143,9 @@ set(BLUEPRINT_SOURCES
   data/ui/sheets/sheet-qr-scanner.blp data/ui/widgets/gn-secure-entry.blp)
 list(TRANSFORM BLUEPRINT_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
-# Compile Blueprint files to UI files if blueprint-compiler is available
+# Compile only with the pinned compiler; otherwise resources use source-tree UI.
 set(SIGNER_COMPILED_UI_FILES)
-if(BLUEPRINT_COMPILER AND BLUEPRINT_SOURCES)
+if(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER AND BLUEPRINT_SOURCES)
   foreach(BLP_FILE ${BLUEPRINT_SOURCES})
     # Get relative path and convert .blp to .ui
     file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
@@ -183,10 +189,14 @@ set(APP_UI_FILES ${BLUEPRINT_SOURCES})
 list(TRANSFORM APP_UI_FILES REPLACE "\\.blp$" ".ui")
 list(APPEND APP_UI_FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/css/app.css
   ${CMAKE_CURRENT_SOURCE_DIR}/data/css/high-contrast.css)
+set(_signer_resource_dirs --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data)
+if(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER)
+  list(PREPEND _signer_resource_dirs --sourcedir=${CMAKE_CURRENT_BINARY_DIR}/data)
+endif()
 add_custom_command(
   OUTPUT ${APP_GRESOURCE_C}
   COMMAND glib-compile-resources --target=${APP_GRESOURCE_C} --generate-source
-      --sourcedir=${CMAKE_CURRENT_BINARY_DIR}/data --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data ${APP_GRESOURCE_XML}
+      ${_signer_resource_dirs} ${APP_GRESOURCE_XML}
   DEPENDS ${APP_GRESOURCE_XML} ${APP_UI_FILES} ${SIGNER_COMPILED_UI_FILES}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)

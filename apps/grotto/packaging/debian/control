@@ -2,6 +2,8 @@ Source: grotto
 Section: utils
 Priority: optional
 Maintainer: Biz <chebizarro@protonmail.com>
+# No blueprint-compiler dependency: stock Ubuntu 24.04 builds use committed .ui.
+# Only CI/UI regeneration requires the exact 0.22.2 pin (see README.source).
 Build-Depends: debhelper-compat (= 13),
                cmake (>= 3.22),
                ninja-build,
