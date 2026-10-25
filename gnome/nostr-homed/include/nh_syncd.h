@@ -454,7 +454,7 @@ void nh_syncd_lock_release(nh_syncd_lock *l);
 
 /* libhanami's signer type is a typedef of an anonymous struct in
  * hanami-types.h, which cannot be forward-declared. Include the
- * header directly. This is the same tradeoff nh_porthome_blossom.h
+ * header directly. This is the same tradeoff blossom/pool.h
  * makes — every caller of this API already has libhanami on the
  * include path. */
 #include <blossom/types.h>
@@ -509,7 +509,7 @@ typedef struct {
 } nh_syncd_upload_result;
 
 /* Per-server upload test seam. When set, the pusher calls this INSTEAD
- * of opening a per-server nh_porthome_blossom_t. Returns 0 on accept,
+ * of opening a per-server blossom_pool_t. Returns 0 on accept,
  * < 0 on refuse. Fills `*out_http_status` and `*out_ms` best-effort so
  * callers can propagate them into nh_syncd_upload_result. */
 typedef int (*nh_syncd_upload_to_server_fn)(void *ud,

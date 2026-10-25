@@ -51,8 +51,8 @@ option(NOSTR_HOMED_ENABLE_PROFILE
   "Build the Nostr kind-0 → AccountsService avatar/name bridge (requires auth runtime + gdk-pixbuf + libcurl + gio-2.0)" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 # Phase-1 primitives for the portable-home epic (nostrc-h10m). Ships a
-# homed-only assembly `libnostr_porthome.a` (provisioner + sandbox + Blossom
-# adapter) over nostrc::porthome, NOT linked into the base nostr-login stack.
+# homed-only assembly `libnostr_porthome.a` (provisioner + sandbox)
+# over nostrc::porthome, NOT linked into the base nostr-login stack.
 # Requires BUILD_LIBPORTHOME=ON and OpenSSL. Every public header is loudly marked EXPERIMENTAL — see
 # docs/designs/porthome-crypto-spec.md.
 option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
@@ -1356,7 +1356,6 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
 
   add_library(nostr_porthome STATIC
     src/porthome/nh_porthome_rename.c
-    src/porthome/nh_porthome_blossom.c
     src/porthome/nh_porthome_provision.c
     # Phase 2.5B: fork+drop-privs sandbox for the fetch helper
     # (bead nostrc-ww50). Header lives under include/. Only linked
@@ -1666,7 +1665,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
 
     add_executable(test_porthome_blossom_guards
       tests/unit/test_porthome_blossom_guards.c)
-    target_link_libraries(test_porthome_blossom_guards PRIVATE nostr_porthome)
+    target_link_libraries(test_porthome_blossom_guards PRIVATE nostrc::blossom)
     target_compile_options(test_porthome_blossom_guards PRIVATE
       -Wall -Wextra -Werror -Wno-misleading-indentation)
     add_test(NAME homed_porthome_blossom_guards
@@ -1814,7 +1813,6 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
         COMMAND test_porthome_provisioner_status)
       set_tests_properties(homed_porthome_provisioner_status PROPERTIES
         LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 30)
-    endif()
 
       # Bead nostrc-ck6i — wrap-key hand-off orchestrator (unwrap /
       # enroll / denied fallback). Uses the auth-runtime because
@@ -1831,6 +1829,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
         COMMAND test_porthome_wrapkey_nip46)
       set_tests_properties(homed_porthome_wrapkey_nip46 PROPERTIES
         LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 30)
+    endif()
   endif()
 endif()
 

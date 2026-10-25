@@ -24,7 +24,7 @@
  *   3. Decode the event.content bytes as an nh_porthome sealed CBOR
  *      manifest under home_key. On AEAD failure → DECRYPT_FAIL.
  *      On CBOR schema failure → DECODE_FAIL.
- *   4. Build a fetcher-context around nh_porthome_blossom_t seeded with
+ *   4. Build a fetcher-context around blossom_pool_t seeded with
  *      the blossom server list. Then materialise into the passed
  *      staging fd via nh_porthome_materialize_into_fd. Progress lines
  *      go out on stdout.
@@ -43,7 +43,7 @@
 
 #include "porthome_fetch_ctl.h"
 
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_provision.h"
@@ -271,7 +271,7 @@ static int relay_fetch_manifest(const nh_porthome_fetch_ctl *c,
 /* ─────────────────── Blossom-backed chunk fetcher ────────────── */
 
 typedef struct {
-    nh_porthome_blossom_t *bl;
+    blossom_pool_t *bl;
     uint64_t total_cap_bytes;
     uint64_t running_bytes;
 } fetch_ctx_t;
@@ -284,8 +284,8 @@ static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
 
     uint8_t *buf = NULL;
     size_t   len = 0;
-    int rc = nh_porthome_blossom_fetch(fc->bl, sha256_hex, &buf, &len);
-    if (rc != NH_PORTHOME_BLOSSOM_OK) return -1;
+    int rc = blossom_pool_fetch(fc->bl, sha256_hex, &buf, &len);
+    if (rc != BLOSSOM_POOL_OK) return -1;
 
     /* Bandwidth accounting. */
     fc->running_bytes += (uint64_t)len;
@@ -323,7 +323,7 @@ static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
 
 /* ─────────────────── SSRF pre-resolution gate ──────────────────
  *
- * nh_porthome_blossom_url_ok already enforces the URL-string half of
+ * blossom_pool_url_ok already enforces the URL-string half of
  * the SSRF gate (https-only, no user-info, no obvious loopback literal).
  * libhanami's blossom client wraps libcurl but does not expose a
  * CURLOPT_OPENSOCKETFUNCTION seam, so we DNS-pre-resolve here and
@@ -651,7 +651,7 @@ int main(int argc, char **argv) {
     /* SSRF pre-resolution gate — refuse before any bytes cross the
      * network if a Blossom server host resolves to a private address.
      * The URL-syntax half was enforced by the broker via
-     * nh_porthome_blossom_url_ok when it accepted the payload; this
+     * blossom_pool_url_ok when it accepted the payload; this
      * belt-and-braces gate defends against a DNS entry that maps a
      * public-looking name to a LAN target. */
     if (ssrf_precheck_servers(&ctl) != 0) {
@@ -681,7 +681,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < ctl.blossom_servers_count; i++)
         servers[i] = ctl.blossom_servers[i];
 
-    nh_porthome_blossom_opts_t bopts = {
+    blossom_pool_opts_t bopts = {
         .servers = servers,
         .n_servers = ctl.blossom_servers_count,
         .timeout_seconds = ctl.per_file_timeout_sec ?
@@ -689,12 +689,14 @@ int main(int argc, char **argv) {
         .max_retries = 3,
         .max_blob_bytes = ctl.bandwidth_cap_bytes ?
                           (size_t)ctl.bandwidth_cap_bytes :
-                          NH_PORTHOME_BLOSSOM_DEFAULT_MAX_BLOB_BYTES,
+                          BLOSSOM_POOL_DEFAULT_MAX_BLOB_BYTES,
     };
-    nh_porthome_blossom_t *bl = NULL;
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
     /* Signer is NULL: BUD-01 reads (GET/HEAD) are unauthenticated per
      * spec — the helper never uploads. */
-    if (nh_porthome_blossom_new(&bopts, NULL, &bl) != NH_PORTHOME_BLOSSOM_OK) {
+    if (blossom_pool_new(&bopts, NULL, &bl) != BLOSSOM_POOL_OK) {
         fprintf(stderr, "nostr-home-fetch: Blossom client init failed\n");
         free(sealed_manifest);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -743,7 +745,7 @@ int main(int argc, char **argv) {
             staging_fd, m_decoded, home_key,
             fetch_chunk_cb, &fc, &pv, NULL);
     }
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
 
     int rc = NH_PORTHOME_FETCH_EXIT_OK;
     switch (pr) {

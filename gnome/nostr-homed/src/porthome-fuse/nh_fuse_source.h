@@ -14,7 +14,7 @@
  *   Tier 0 — $HOME/<rel> pread  (if state == ready and stat matches snapshot)
  *   Tier 1 — plaintext chunk LRU (in-memory only, MADV_DONTDUMP)
  *   Tier 2 — nh_syncd_cache_get_path — decrypt into tier 1
- *   Tier 3 — nh_porthome_blossom_fetch (content-sha verified),
+ *   Tier 3 — blossom_pool_fetch (content-sha verified),
  *              nh_syncd_cache_put, decrypt into tier 1
  *
  * All plaintext handled here is transient — the mount is the one
@@ -25,7 +25,7 @@
 #ifndef NH_FUSE_SOURCE_H
 #define NH_FUSE_SOURCE_H
 
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include "nh_porthome_crypto.h"
 #include "nh_syncd_cache.h"
 
@@ -46,7 +46,7 @@ typedef struct {
     const char           *home_dir;         /* $HOME, for tier 0 pread */
     bool                  tier0_enabled;    /* false unless state == ready */
     nh_syncd_cache       *cache;            /* borrowed, tier 2 */
-    nh_porthome_blossom_t *blossom;         /* borrowed, tier 3 */
+    blossom_pool_t *blossom;         /* borrowed, tier 3 */
     /* home_key already derived from the seed on the caller's mlock'd
      * page. The source copies the 32 bytes into its own mlock'd page
      * and cleanses on close. */
@@ -57,9 +57,9 @@ typedef struct {
      * miss is chunk-only. `errcode` is a positive errno (EIO, ENOENT). */
     void (*on_miss)(void *ud, const char *rel_path, int errcode);
     void                 *on_miss_ud;
-    /* Test seam. When non-NULL, called instead of nh_porthome_blossom_fetch
+    /* Test seam. When non-NULL, called instead of blossom_pool_fetch
      * for tier 3. Return-value contract mirrors the wrapper: 0 on success
-     * (with *out_data malloc'd, caller free()s), NH_PORTHOME_BLOSSOM_ERR_NOT_FOUND
+     * (with *out_data malloc'd, caller free()s), BLOSSOM_POOL_ERR_NOT_FOUND
      * for a definitive 404, any other negative on failure. Bytes returned
      * are trusted the same way the wrapper's own content-sha check would
      * have trusted them — the seam is responsible for that guarantee. */

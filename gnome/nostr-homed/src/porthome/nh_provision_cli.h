@@ -176,7 +176,7 @@ void nh_prov_free_walk(nh_prov_walk_entry *entries, size_t n);
 /* min_replication gate.
  *
  * Given `per_server[si].chunks_uploaded` values from a completed
- * nh_porthome_blossom_upload_batch call, count servers that hold a
+ * blossom_pool_upload_batch call, count servers that hold a
  * full replica of every one of `n_chunks` blobs in the batch (i.e.
  * chunks_uploaded[si] == n_chunks AND chunks_failed[si] == 0). Return
  * that count.  Callers refuse to advance the generation when the

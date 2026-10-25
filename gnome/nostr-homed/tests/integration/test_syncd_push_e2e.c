@@ -27,7 +27,7 @@
  * blocks the next push; deleting snapshot.json blocks the next push.
  *
  * When n_blossom_servers == 0 the pusher's `upload_chunk` path is
- * reached but nh_porthome_blossom_new is skipped. In that branch
+ * reached but blossom_pool_new is skipped. In that branch
  * we still compute (encrypt) each chunk, and the address string in
  * snapshot.json.chunk_addrs_hex ends up as the sealed SHA-256 —
  * exactly what a real Blossom-backed round-trip would record.

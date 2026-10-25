@@ -52,7 +52,7 @@ struct nh_fuse_source {
     char                   *home_dir;
     bool                    tier0_enabled;
     nh_syncd_cache         *cache;
-    nh_porthome_blossom_t  *blossom;
+    blossom_pool_t  *blossom;
 
     /* mlock'd 32 bytes. */
     uint8_t                *home_key_locked;
@@ -338,10 +338,10 @@ int nh_fuse_source_chunk(nh_fuse_source *s,
     uint8_t *ct = NULL; size_t ct_len = 0;
     int rc = have_seam
         ? s->blossom_fetch_fn(s->blossom_fetch_ud, sha256_hex, &ct, &ct_len)
-        : nh_porthome_blossom_fetch(s->blossom, sha256_hex, &ct, &ct_len);
+        : blossom_pool_fetch(s->blossom, sha256_hex, &ct, &ct_len);
     if (rc != 0 || !ct) {
         note_miss(s, NULL, EIO);
-        return (rc == NH_PORTHOME_BLOSSOM_ERR_NOT_FOUND) ? -ENOENT : -EIO;
+        return (rc == BLOSSOM_POOL_ERR_NOT_FOUND) ? -ENOENT : -EIO;
     }
     /* Populate tier 2 (best-effort; ignore quota errors). */
     if (s->cache) (void)nh_syncd_cache_put(s->cache, sha256_hex, ct, ct_len);

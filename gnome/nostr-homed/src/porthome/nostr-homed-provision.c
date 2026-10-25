@@ -33,7 +33,7 @@
 
 #include "nh_provision_cli.h"
 
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_status.h"
@@ -839,7 +839,7 @@ static int cmd_pull(int argc, char **argv) {
  *      construction defined in docs/designs/porthome-crypto-spec.md).
  *      The sealed blob address is SHA256(ciphertext) — that is the
  *      Blossom id we hand hanami.
- *   4. Batch upload with nh_porthome_blossom_upload_batch across the
+ *   4. Batch upload with blossom_pool_upload_batch across the
  *      account's Blossom server list. Enforce --min-replication (default
  *      2): refuse to advance the generation if fewer than N servers hold
  *      every chunk.
@@ -1162,14 +1162,16 @@ static int cmd_push(int argc, char **argv) {
     for (size_t i = 0; i < a.n_blossom_servers; i++)
         server_urls[i] = a.blossom_servers[i];
 
-    nh_porthome_blossom_opts_t bopts;
+    blossom_pool_opts_t bopts;
     memset(&bopts, 0, sizeof bopts);
     bopts.servers        = server_urls;
     bopts.n_servers      = a.n_blossom_servers;
     bopts.max_blob_bytes = 32u * 1024u * 1024u;
-    nh_porthome_blossom_t *bl = NULL;
-    if (nh_porthome_blossom_new(&bopts, &signer, &bl) != 0) {
-        fprintf(stderr, "push: nh_porthome_blossom_new failed\n");
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
+    if (blossom_pool_new(&bopts, &signer, &bl) != 0) {
+        fprintf(stderr, "push: blossom_pool_new failed\n");
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1230,7 +1232,7 @@ static int cmd_push(int argc, char **argv) {
      * plaintext names so the fetch materialiser can rename path_enc →
      * plaintext basename after materialise (nostrc-bms6). */
     if (nh_porthome_manifest_init_v2(&m, root_id) != 0) {
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1246,7 +1248,7 @@ static int cmd_push(int argc, char **argv) {
         if (entries[i].kind == NH_PROV_WALK_KIND_FILE && entries[i].size > 0)
             max_blobs += (size_t)((entries[i].size + o.chunk_size - 1) / o.chunk_size);
 
-    nh_porthome_blossom_batch_blob_t *batch = NULL;
+    blossom_pool_batch_blob_t *batch = NULL;
     uint8_t **blob_bufs   = NULL; /* to free after upload */
     char   **blob_hex_strs = NULL; /* to free after upload */
     if (max_blobs > 0) {
@@ -1256,7 +1258,7 @@ static int cmd_push(int argc, char **argv) {
         if (!batch || !blob_bufs || !blob_hex_strs) {
             free(batch); free(blob_bufs); free(blob_hex_strs);
             nh_porthome_manifest_dispose(&m);
-            nh_porthome_blossom_free(bl);
+            blossom_pool_free(bl);
             free(server_urls); free(signer_pk);
             OPENSSL_cleanse(seed, sizeof seed);
             OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1340,7 +1342,7 @@ static int cmd_push(int argc, char **argv) {
                     per_file_rc = NH_PROV_CLI_EXIT_CRYPTO; break;
                 }
                 /* PNG-shim consistency (nostrc-wmb5). When the shim is
-                 * active, nh_porthome_blossom_upload_batch will hash
+                 * active, blossom_pool_upload_batch will hash
                  * sha256(shim||ct) and PUT that address to Blossom. The
                  * manifest chunk row we build here therefore MUST use
                  * the same shim-inclusive hash — otherwise the pull
@@ -1410,7 +1412,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) { free(blob_bufs[k]); free(blob_hex_strs[k]); }
         free(batch); free(blob_bufs); free(blob_hex_strs);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1422,13 +1424,13 @@ static int cmd_push(int argc, char **argv) {
             n_blobs, n_blobs);
 
     /* ── Batch upload. ── */
-    nh_porthome_blossom_batch_per_server_t *per_server =
+    blossom_pool_batch_per_server_t *per_server =
         calloc(a.n_blossom_servers, sizeof *per_server);
-    int upload_rc = NH_PORTHOME_BLOSSOM_OK;
+    int upload_rc = BLOSSOM_POOL_OK;
     if (n_blobs > 0) {
         if (!per_server) { upload_rc = -1; }
         else {
-            upload_rc = nh_porthome_blossom_upload_batch(bl, batch, n_blobs, per_server);
+            upload_rc = blossom_pool_upload_batch(bl, batch, n_blobs, per_server);
         }
     }
     /* Report per-server accounting even on failure. */
@@ -1449,12 +1451,12 @@ static int cmd_push(int argc, char **argv) {
     free(blob_bufs);
     free(batch);
 
-    if (upload_rc != NH_PORTHOME_BLOSSOM_OK && n_blobs > 0) {
+    if (upload_rc != BLOSSOM_POOL_OK && n_blobs > 0) {
         fprintf(stderr, "push: batch upload failed rc=%d\n", upload_rc);
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1486,7 +1488,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1502,7 +1504,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1519,7 +1521,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1540,7 +1542,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1568,7 +1570,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1585,7 +1587,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1613,7 +1615,7 @@ static int cmd_push(int argc, char **argv) {
         for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
         free(blob_hex_strs); free(per_server);
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
         OPENSSL_cleanse(home_key, sizeof home_key);
@@ -1688,7 +1690,7 @@ static int cmd_push(int argc, char **argv) {
     for (size_t k = 0; k < n_blobs; k++) free(blob_hex_strs[k]);
     free(blob_hex_strs); free(per_server);
     nh_porthome_manifest_dispose(&m);
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
     free(server_urls); free(signer_pk);
     OPENSSL_cleanse(seed, sizeof seed);
     OPENSSL_cleanse(home_key, sizeof home_key);

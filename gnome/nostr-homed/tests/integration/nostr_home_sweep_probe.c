@@ -26,7 +26,7 @@
 #define _GNU_SOURCE
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include "nh_syncd_cache.h"
 #include <blossom/client.h>
 #include <blossom/types.h>
@@ -128,7 +128,7 @@ static int parse_args(int argc, char **argv, args_t *a) {
 typedef struct {
     const char *root;
     const uint8_t *home_key;
-    nh_porthome_blossom_t *bl;
+    blossom_pool_t *bl;
     /* Collected: per-file rel + list of chunk sha256_hex (uploaded to
      * Blossom) to write into snapshot.json. */
     json_t *files;   /* object: rel -> { chunk_addrs_hex: [...] } */
@@ -158,9 +158,9 @@ static int upload_and_record(up_ctx *uc, const char *rel,
             free(buf); close(fd); json_decref(addrs); return -1;
         }
         char hex[65];
-        int rc = nh_porthome_blossom_upload(uc->bl, ct, ctl, NULL, hex);
+        int rc = blossom_pool_upload(uc->bl, ct, ctl, NULL, hex);
         free(ct);
-        if (rc != NH_PORTHOME_BLOSSOM_OK) {
+        if (rc != BLOSSOM_POOL_OK) {
             fprintf(stderr, "sweep_probe: blossom_upload rc=%d\n", rc);
             free(buf); close(fd); json_decref(addrs); return -1;
         }
@@ -297,22 +297,24 @@ int main(int argc, char **argv) {
     if (nh_porthome_key_derive(seed, home_key) != 0) return 65;
     if (install_signer(a.nsec_hex) != 0) return 65;
 
-    nh_porthome_blossom_opts_t bopts = {0};
+    blossom_pool_opts_t bopts = {0};
     bopts.servers = a.blossom;
     bopts.n_servers = a.blossom_n;
     bopts.max_blob_bytes = 32u * 1024u * 1024u;
-    nh_porthome_blossom_t *bl = NULL;
-    if (nh_porthome_blossom_new(&bopts, &g_signer, &bl) != 0) return 65;
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
+    if (blossom_pool_new(&bopts, &g_signer, &bl) != 0) return 65;
 
     /* 1) publish (unless --skip-publish) */
     if (!a.skip_publish) {
         json_t *files = json_object();
         up_ctx uc = { a.fixture_dir, home_key, bl, files };
         if (walk_and_upload(a.fixture_dir, "", &uc) != 0) {
-            json_decref(files); nh_porthome_blossom_free(bl); return 66;
+            json_decref(files); blossom_pool_free(bl); return 66;
         }
         if (write_snapshot(a.state_dir, files, 1ull) != 0) {
-            json_decref(files); nh_porthome_blossom_free(bl); return 66;
+            json_decref(files); blossom_pool_free(bl); return 66;
         }
         json_decref(files);
         fprintf(stderr, "sweep_probe: publish OK, snapshot at %s/snapshot.json\n",
@@ -323,19 +325,19 @@ int main(int argc, char **argv) {
     char drop[8][65]; size_t drop_n = 0;
     if (a.drop_n > 8) a.drop_n = 8;
     if (pick_hashes(a.state_dir, a.drop_n, drop, &drop_n) != 0) {
-        nh_porthome_blossom_free(bl); return 66;
+        blossom_pool_free(bl); return 66;
     }
     if (drop_n < a.drop_n) {
         fprintf(stderr, "sweep_probe: only %zu hashes available (wanted %zu)\n",
                 drop_n, a.drop_n);
-        nh_porthome_blossom_free(bl); return 66;
+        blossom_pool_free(bl); return 66;
     }
     for (size_t i = 0; i < drop_n; i++) {
         int rc = delete_blob(a.blossom[0], drop[i]);
         fprintf(stderr, "sweep_probe: DELETE %s from %s -> %s\n",
                 drop[i], a.blossom[0], rc == 0 ? "OK" : "FAIL");
         printf("DROPPED_SHA256=%s\n", drop[i]);
-        if (rc != 0) { nh_porthome_blossom_free(bl); return 67; }
+        if (rc != 0) { blossom_pool_free(bl); return 67; }
     }
 
     /* 3) run sweep_run_once and assert notify(N,N). */
@@ -377,8 +379,8 @@ int main(int argc, char **argv) {
             if (nh_porthome_encrypt_chunk(home_key, sentinel, sizeof sentinel,
                                           &ct, &ctl, sha) == 0) {
                 char hex[65];
-                int urc = nh_porthome_blossom_upload(bl, ct, ctl, NULL, hex);
-                if (urc == NH_PORTHOME_BLOSSOM_OK) {
+                int urc = blossom_pool_upload(bl, ct, ctl, NULL, hex);
+                if (urc == BLOSSOM_POOL_OK) {
                     reup_manual++;
                     printf("REUPLOAD_SENTINEL_SHA256=%s\n", hex);
                 }
@@ -409,7 +411,7 @@ int main(int argc, char **argv) {
     /* wipe secrets */
     memset(home_key, 0, sizeof home_key);
     memset(seed, 0, sizeof seed);
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
     printf("EXIT=%d\n", exit_rc);
     return exit_rc;
 }

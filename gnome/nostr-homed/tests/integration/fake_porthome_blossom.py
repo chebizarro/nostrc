@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 fake_porthome_blossom.py — Content-addressed Blossom BUD-01/BUD-02 fake
-sufficient to exercise nh_porthome_blossom against libhanami.
+sufficient to exercise the libblossom pool.
 
 Extends the existing tests/integration/fake_blossom.py with:
   - Store PUT bodies under sha256(body)  (real BUD-01 addressing)
