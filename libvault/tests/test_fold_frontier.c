@@ -262,6 +262,32 @@ int main(void)
            capped.parents == unchanged && capped.parents_len == PORTHOME_HEAD_MAX_PARENTS);
     porthome_head_dispose(&capped);
     porthome_head_dispose(&successor);
+    /* Checkpoint frontier is exactly current-head sequence dominance, not the
+     * strict history DAG validator. A covered writer component cannot veto an
+     * uncovered owner checkpoint. */
+    porthome_vault_info saved_policy = w.vault;
+    uint8_t three_writers[3][32];
+    memcpy(three_writers[0], w.pub[0], 32);
+    memcpy(three_writers[1], w.pub[1], 32);
+    memcpy(three_writers[2], w.pub[3], 32);
+    w.vault.writers = three_writers;
+    w.vault.writers_len = 3;
+    vault_record *component_a = record_make(&w, 1, 20, 8, "component a", NULL, 0, 0);
+    vault_record *component_b = record_make(&w, 3, 20, 8, "component b", NULL, 0, 0);
+    porthome_head_parent comp_a = parent_of(component_a, w.pub[1]);
+    porthome_head_parent comp_b = parent_of(component_b, w.pub[3]);
+    vault_record *covered_a = record_make(&w, 1, 20, 8, "component a", &comp_b, 1, 0);
+    vault_record *covered_b = record_make(&w, 3, 20, 8, "component b", &comp_a, 1, 0);
+    vault_record *checkpoint_owner = record_make(&w, 0, 20, 8, "owner checkpoint", NULL, 0, 0);
+    const vault_record *component[] = {checkpoint_owner, covered_a, covered_b};
+    assert(vault_fold(&w.vault, component, 3, &r) == VAULT_ERR_CONFLICT && r->view == SIZE_MAX);
+    vault_fold_result_free(r);
+    assert(vault_fold_checkpoint(received, component, 3, 0, &r) == 0 && r->view == 0 &&
+           r->frontier_len == 1 && r->conflicts_len == 0);
+    vault_fold_result_free(r);
+    w.vault = saved_policy;
+    vault_record_free(component_a); vault_record_free(component_b);
+    vault_record_free(covered_a); vault_record_free(covered_b); vault_record_free(checkpoint_owner);
     vault_grant_free(received);
     vault_record_free(covered);
     vault_record_free(stale_cover);

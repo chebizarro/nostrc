@@ -98,22 +98,6 @@ static int visit(graph *g, size_t index)
     g->state[index] = 2;
     return 0;
 }
-static int visit_edges(size_t i, size_t count, const uint8_t *edges, uint8_t *state)
-{
-    if (state[i] == 1)
-        return VAULT_ERR_CONFLICT;
-    if (state[i] == 2)
-        return 0;
-    state[i] = 1;
-    for (size_t j = 0; j < count; ++j)
-        if (edges[i * count + j]) {
-            int rc = visit_edges(j, count, edges, state);
-            if (rc)
-                return rc;
-        }
-    state[i] = 2;
-    return 0;
-}
 static int add_conflict(vault_fold_result *r, size_t *capacity, const char *path, size_t other,
                         int owner, int theirs, const vault_record *record)
 {
@@ -257,18 +241,6 @@ static int fold(const porthome_vault_info *anchor, const vault_record *const *re
                         records[j]->head->seq <= h->parents[p].seq)
                         edges[i * count + j] = 1;
             }
-            /* A writer cannot incorporate itself from its own future. */
-            for (size_t p = 0; p < h->parents_len; ++p)
-                if (!memcmp(h->parents[p].writer, records[i]->writer, 32) &&
-                    h->parents[p].seq >= h->seq) {
-                    rc = VAULT_ERR_CONFLICT;
-                    goto finish;
-                }
-        }
-        for (size_t i = 0; i < count; ++i) {
-            rc = visit_edges(i, count, edges, state);
-            if (rc)
-                goto finish;
         }
     } else {
         graph g = {records, count, state, edges};
