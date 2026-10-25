@@ -175,3 +175,25 @@ recovery. See `man nostr-homed-provision(1)` for the full operator
 reference, `man nostr-home-syncd(8)` for the daemon, and
 `docs/porthome-operator-guide.md` for the end-to-end story
 (broker → syncd → mount → provisioner).
+
+### Experimental shared-vault configuration
+
+With `NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL=ON`, set
+`NOSTR_HOMED_SYNCD_CONFIG` to a JSON file containing a `vaults` array:
+
+```json
+{"vaults":[{"path":"Portable/Team","vault_id":"<64 hexadecimal characters>","is_owner":true}]}
+```
+
+Each path is a HOME-relative directory, not an absolute path. Entries must have
+unique IDs and disjoint paths; unknown fields, duplicate keys and malformed
+entries refuse startup before consuming the broker credential. An explicitly
+configured missing file is also an error. `nostr-home-syncd --check` validates
+this configuration without network access. Builds without the vault option
+refuse a configured file rather than silently falling back to v1 behavior.
+
+Configured vault subtrees are excluded from both legacy v1 capture and full
+v1 manifest reconstruction. `Portable/.conflicts` remains excluded even when
+`vaults` is empty, so retained shared versions cannot leak into a personal home
+manifest. This option is still preparatory: configuration and filesystem
+primitives do not yet provide the complete network reconciler or FUSE fallback.

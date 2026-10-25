@@ -250,6 +250,9 @@ class PackageBoundarySelection(unittest.TestCase):
         check_name = "homed.vault.filesystem"
         for path in ("gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c",
                      "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h",
+                     "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py",
                      "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c",
                      "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh",
                      ".github/workflows/vault-syncd-ci.yml"):
@@ -270,7 +273,8 @@ class PackageBoundarySelection(unittest.TestCase):
         self.assertEqual(set(check["ctest_tests"]["homed.vault.linux"]), {
             "homed_syncd_vault_fs", "homed_syncd_off_closure",
             "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure",
-            "json_glib_off_closure"})
+            "json_glib_off_closure", "homed_syncd_vault_config", "homed_syncd_push_e2e",
+            "homed_syncd_pusher_multi_server"})
         workflow = (ROOT / ".github/workflows/vault-syncd-ci.yml").read_text()
         self.assertIn("python3 scripts/test-plan.py run", workflow)
         self.assertIn("--profile homed.vault.linux", workflow)

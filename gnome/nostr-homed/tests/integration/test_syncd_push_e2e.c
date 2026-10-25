@@ -37,6 +37,9 @@
  */
 
 #include "nh_syncd.h"
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+#include "../../src/porthome-syncd/nh_syncd_vault_config.h"
+#endif
 
 #include <assert.h>
 #include <errno.h>
@@ -123,10 +126,10 @@ static void teardown(void) {
 
 static uint64_t vnow(void *ud) { (void)ud; static uint64_t t = 0; t += 10ull * 1000000000ull; return t; }
 
-static void push_once(nh_syncd_state *state,
+static void push_once_filtered(nh_syncd_state *state,
                       nh_syncd_ignore *ig,
                       const char *const *rels, size_t n_rels,
-                      mock_pub_ctx *mp)
+                      mock_pub_ctx *mp, bool (*exclude)(void *, const char *), void *exclude_ud)
 {
     nh_syncd_batcher *b = NULL;
     assert(nh_syncd_batcher_new(vnow, NULL, 1, 1, &b) == 0);
@@ -146,6 +149,8 @@ static void push_once(nh_syncd_state *state,
     pc.event_publish_ud      = mp;
     pc.account_pubkey_hex_override = FIXTURE_PK;
     pc.d_tag = "nostr-homed.home.v1:personal";
+    pc.exclude_path = exclude;
+    pc.exclude_path_ud = exclude_ud;
 
     nh_syncd_interlocks ilk = { g_home, NULL };
     char *emsg = NULL;
@@ -158,6 +163,95 @@ static void push_once(nh_syncd_state *state,
     nh_syncd_batch_free(bat);
     nh_syncd_batcher_free(b);
 }
+
+static void push_once(nh_syncd_state *state, nh_syncd_ignore *ig,
+                      const char *const *rels, size_t n, mock_pub_ctx *mp)
+{
+    push_once_filtered(state, ig, rels, n, mp, NULL, NULL);
+}
+
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+static void t_vault_source_isolation(void)
+{
+    uint8_t root_id[32] = {0}, seed[32], hk[32];
+    nh_syncd_state *state = NULL;
+    nh_syncd_ignore *ig = NULL;
+    mock_pub_ctx mp = {0};
+    assert(nh_syncd_state_new(g_home, "nostr-homed.home.v1:personal",
+                              FIXTURE_PK, root_id, &state) == 0);
+    assert(nh_syncd_ignore_new(g_home, &ig) == 0);
+    const char *initial[] = {"hello.txt", "docs", "docs/notes.md", "bin", "bin/run.sh"};
+    push_once(state, ig, initial, 5, &mp);
+    assert(nh_syncd_state_file_count(state) == 5);
+    nh_syncd_vault_config_entry entries[] = {{.path = "docs"}, {.path = "bin"}};
+    nh_syncd_vault_config cfg = {.vaults = entries, .len = 2};
+    assert(nh_syncd_vault_config_excludes(&cfg, "docs"));
+    assert(nh_syncd_vault_config_excludes(&cfg, "docs/new.txt"));
+    assert(!nh_syncd_vault_config_excludes(&cfg, "docs-neighbour.txt"));
+    assert(nh_syncd_vault_config_excludes(&cfg, "Portable/.conflicts/path@writer"));
+    assert(!nh_syncd_vault_config_excludes(&cfg, "Portable/.conflicts-neighbour"));
+    write_file("docs/new.txt", "shared secret, not a v1 home chunk");
+    write_file("docs-neighbour.txt", "personal");
+    char removed[600];
+    snprintf(removed, sizeof removed, "%s/bin/run.sh", g_home);
+    assert(unlink(removed) == 0);
+    const char *changed[] = {"hello.txt", "docs/new.txt", "bin/run.sh", "docs-neighbour.txt"};
+    push_once_filtered(state, ig, changed, 4, &mp, nh_syncd_vault_config_excludes, &cfg);
+    /* No capture/deletion of shared rows; no shared rows in the FULL v1 manifest. */
+    assert(nh_syncd_state_file_count(state) == 6);
+    assert(nh_syncd_state_find(state, "bin/run.sh") != NULL);
+    assert(nh_syncd_state_find(state, "docs/new.txt") == NULL);
+    for (int i = 0; i < 32; ++i) seed[i] = (uint8_t)i;
+    assert(nh_porthome_key_derive(seed, hk) == 0);
+    uint8_t *plain = NULL;
+    size_t len = 0;
+    nh_porthome_manifest *manifest = NULL;
+    assert(nh_porthome_decrypt_manifest(hk, mp.sealed, mp.sealed_len, &plain, &len) == 0);
+    assert(nh_porthome_manifest_decode(plain, len, &manifest) == 0);
+    assert(manifest->entries_len == 2);
+    nh_porthome_manifest_dispose(manifest);
+    free(manifest);
+    free(plain);
+
+    /* Removing the last vault must not publish retained conflict versions into
+     * the personal home. Seed a saved conflict row through the legacy seam,
+     * then use an actually decoded empty vaults[] configuration. */
+    write_file("Portable/.conflicts/held@writer", "retained shared version");
+    const char *old_conflict[] = {"Portable", "Portable/.conflicts", "Portable/.conflicts/held@writer"};
+    push_once(state, ig, old_conflict, 3, &mp);
+    assert(nh_syncd_state_file_count(state) == 9);
+    char config_path[600];
+    snprintf(config_path, sizeof config_path, "%s/vaults.json", g_state);
+    FILE *file = fopen(config_path, "w");
+    assert(file);
+    assert(fputs("{\"vaults\":[]}", file) >= 0);
+    assert(fclose(file) == 0);
+    nh_syncd_vault_config empty = {0};
+    assert(nh_syncd_vault_config_load(config_path, &empty) == 0);
+    assert(empty.len == 0);
+    write_file("Portable/.conflicts/new@writer", "not a personal chunk");
+    const char *new_conflict[] = {"Portable/.conflicts/held@writer", "Portable/.conflicts/new@writer"};
+    push_once_filtered(state, ig, new_conflict, 2, &mp, nh_syncd_vault_config_excludes, &empty);
+    assert(nh_syncd_state_file_count(state) == 9);
+    assert(nh_syncd_state_find(state, "Portable/.conflicts/held@writer") != NULL);
+    assert(nh_syncd_state_find(state, "Portable/.conflicts/new@writer") == NULL);
+    plain = NULL;
+    manifest = NULL;
+    assert(nh_porthome_decrypt_manifest(hk, mp.sealed, mp.sealed_len, &plain, &len) == 0);
+    assert(nh_porthome_manifest_decode(plain, len, &manifest) == 0);
+    assert(manifest->entries_len == 7);
+    nh_porthome_manifest_dispose(manifest);
+    free(manifest);
+    free(plain);
+    nh_syncd_vault_config_clear(&empty);
+    free(mp.sealed);
+    nh_syncd_ignore_free(ig);
+    nh_syncd_state_free(state);
+    /* Restore the common fixture for the remaining legacy cases. */
+    write_file("bin/run.sh", "#!/bin/sh\necho hi\n");
+    printf("t_vault_source_isolation OK\n");
+}
+#endif
 
 static void t_happy_path(void) {
     /* Fresh state initialised with real root/d_tag (not the empty
@@ -324,6 +418,9 @@ static void t_lock_reentrant(void) {
 int main(void) {
     setup();
     t_happy_path();
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    t_vault_source_isolation();
+#endif
     t_interlock_limited_mode();
     t_interlock_snapshot_unknown();
     t_lock_reentrant();

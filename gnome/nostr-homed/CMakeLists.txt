@@ -1908,6 +1908,7 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
       message(FATAL_ERROR "Shared-vault syncd requires BUILD_LIBVAULT=ON")
     endif()
     target_sources(nostr_syncd_core PRIVATE
+      src/porthome-syncd/nh_syncd_vault_config.c
       src/porthome-syncd/nh_syncd_vault_fs.c
       src/porthome-syncd/nh_syncd_vault_apply.c)
     target_link_libraries(nostr_syncd_core PUBLIC nostrc::vault)
@@ -1933,6 +1934,14 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
       target_compile_options(test_syncd_vault_fs PRIVATE -Wall -Wextra -Werror -UNDEBUG)
       target_link_libraries(test_syncd_vault_fs PRIVATE nostr_syncd_core)
       add_test(NAME homed_syncd_vault_fs COMMAND test_syncd_vault_fs)
+      if(NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR "Shared-vault config tests require Python 3")
+      endif()
+      add_test(NAME homed_syncd_vault_config
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_vault_config.py
+          $<TARGET_FILE:nostr-home-syncd>)
+      set_tests_properties(homed_syncd_vault_config PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
       set_tests_properties(homed_syncd_vault_fs PROPERTIES
         LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
       foreach(login_target pam_nostr nss_nostr)

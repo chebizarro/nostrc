@@ -51,6 +51,14 @@ files already declare a version.
   consumers retain the existing link path. Other components have no shipped
   changes in this fix. No release tags.
 
+- nostrc-hl30i.10 source configuration: nostr-homed's existing unreleased
+  0.5.0 MINOR decision also covers the strict vaults[] configuration and
+  additive legacy-pusher source-exclusion callback. The 0.x push-config struct
+  grows, so binary consumers must rebuild. Both capture and full saved-state
+  manifest reconstruction honor it. No additional component bump;
+  libvault/libporthome APIs and formats are unchanged in this step. This does
+  not claim completed network reconciliation or two-account acceptance.
+
 - nostrc-hl30i.10 filesystem assembly: nostr-homed MINOR 0.4.0 -> 0.5.0
   adds the opt-in CMake vault assembly boundary and SDK-backed filesystem helpers.
   CMake/Meson version metadata agree; Meson still does not build syncd/FUSE.

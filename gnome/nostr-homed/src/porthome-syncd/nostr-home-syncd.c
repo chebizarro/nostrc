@@ -57,6 +57,12 @@
  *   NOSTR_HOMED_SYNCD_SEED_POLL_SEC — backstop poll for that wait
  *                                  (default 30; 0 = inotify only).
  *
+ *   NOSTR_HOMED_SYNCD_CONFIG — optional strict JSON file (VAULT_EXPERIMENTAL):
+ *       {"vaults":[{"path":"Portable/Team","vault_id":"<64 hex>","is_owner":true}]}
+ *       Paths are HOME-relative, disjoint subtrees; IDs cannot repeat.
+ *       Explicit missing/invalid config refuses startup before seed handoff.
+ *       Configured subtrees and Portable/.conflicts stay out of v1 pushes.
+ *
  *   NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES — ceiling for snapshot.json
  *                                  (nostrc-5y2t). Default 1 GiB.
  *
@@ -87,6 +93,9 @@
 #include "nh_porthome_notify.h"
 #include "nh_porthome_status.h"
 #include "nh_syncd_watcher.h"
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+#include "nh_syncd_vault_config.h"
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -338,6 +347,9 @@ typedef struct {
     bool     test_mode;               /* xnxd part 3 */
     bool     seed_from_broker;        /* xnxd part 3: audit-friendly flag */
     uint32_t seed_poll_sec;           /* nostrc-p8y6 */
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_syncd_vault_config vaults;
+#endif
 } cfg_t;
 
 /* Take the broker's seed drop into cfg (mlocked heap copy). Returns
@@ -360,6 +372,18 @@ static bool cfg_take_broker_seed(cfg_t *c) {
 
 static int load_cfg(cfg_t *c) {
     memset(c, 0, sizeof *c);
+    const char *config = getenv("NOSTR_HOMED_SYNCD_CONFIG");
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    if (nh_syncd_vault_config_load(config, &c->vaults)) {
+        fprintf(stderr, "syncd: invalid vault config\n");
+        return -1;
+    }
+#else
+    if (config) {
+        fprintf(stderr, "syncd: vault config requires VAULT_EXPERIMENTAL\n");
+        return -1;
+    }
+#endif
     c->home = default_home();
     if (!c->home) { fprintf(stderr, "syncd: cannot determine $HOME\n"); return -1; }
     c->state_dir = default_state_dir(c->home);
@@ -403,6 +427,9 @@ static void free_cfg(cfg_t *c) {
     free(c->home); free(c->state_dir); free(c->nsec_hex); free(c->d_tag);
     if (c->seed_hex) { memset(c->seed_hex, 0, strlen(c->seed_hex)); free(c->seed_hex); }
     free_csv(c->blossom); free_csv(c->relays);
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_syncd_vault_config_clear(&c->vaults);
+#endif
 }
 
 /* xnxd part 1: cfg->on_upload_summary hook — copies the pusher's
@@ -542,7 +569,7 @@ int main(int argc, char **argv) {
     setlinebuf(stdout);
 
     cfg_t cfg;
-    if (load_cfg(&cfg) < 0) return 2;
+    if (load_cfg(&cfg) < 0) { free_cfg(&cfg); return 2; }
 
     /* Missing signer or transport is fatal at start — no polling
      * substitutes. The one exception: allow --check (dry-run) to
@@ -706,6 +733,9 @@ int main(int argc, char **argv) {
     install_signals(-1);
 
     if (dry_run) {
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        fprintf(stderr, "syncd: vault config entries=%zu\n", cfg.vaults.len);
+#endif
         fprintf(stderr, "syncd: --check OK (lock=held, interlocks=pass, state=%s)\n",
                 snap_unknown ? "unknown" : "loaded");
         if (state) nh_syncd_state_free(state);
@@ -815,6 +845,10 @@ int main(int argc, char **argv) {
                 pc.d_tag             = cfg.d_tag;
                 pc.on_upload_summary = syncd_on_upload_summary;
                 pc.on_upload_summary_ud = NULL;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+                pc.exclude_path = nh_syncd_vault_config_excludes;
+                pc.exclude_path_ud = &cfg.vaults;
+#endif
                 /* home_key/root_id derivation from the broker seed
                  * belongs to I3's credential handoff; for now the
                  * daemon refuses to push without a seed. */

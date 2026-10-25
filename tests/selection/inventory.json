@@ -57,9 +57,9 @@
       "expected_outcome": "pass",
       "nodes": ["execution.vault_syncd", "gnome.nostr_homed.vault", "gnome.nostr_homed.vault.test_inputs"],
       "profiles": ["homed.vault.linux"],
-      "ctest_tests": {"homed.vault.linux": ["homed_syncd_vault_fs", "homed_syncd_off_closure", "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure", "json_glib_off_closure"]},
-      "build_targets": ["test_syncd_vault_fs", "nostr-authd", "pam_nostr", "nss_nostr"],
-      "runtime_inputs": ["gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "libjson/tests/check_glib_off_closure.sh"]
+      "ctest_tests": {"homed.vault.linux": ["homed_syncd_vault_fs", "homed_syncd_vault_config", "homed_syncd_push_e2e", "homed_syncd_pusher_multi_server", "homed_syncd_off_closure", "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure", "json_glib_off_closure"]},
+      "build_targets": ["test_syncd_vault_fs", "nostr-home-syncd", "test_syncd_push_e2e", "test_syncd_pusher_multi_server", "nostr-authd", "pam_nostr", "nss_nostr"],
+      "runtime_inputs": ["gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "libjson/tests/check_glib_off_closure.sh", "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"]
     },
     "homed.units": {
       "kind": "ctest",
@@ -21685,13 +21685,13 @@
     "gnome.nostr_homed.vault": {
       "id": "gnome.nostr_homed.vault",
       "depends_on": ["gnome.nostr_homed", "libvault", "libporthome", "libblossom", "libnostr"],
-      "owner_paths": ["gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h"],
+      "owner_paths": ["gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h"],
       "rationale": "Vault assembly uses SDK tree/fetch/fold and sealed chunk primitives; base auth targets do not link it."
     },
     "gnome.nostr_homed.vault.test_inputs": {
       "id": "gnome.nostr_homed.vault.test_inputs",
       "depends_on": [],
-      "owner_paths": ["gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c", "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh"],
+      "owner_paths": ["gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c", "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"],
       "rationale": "Vault filesystem fixtures select their own check, not unrelated authentication or SDK prerequisite suites."
     },
     "gnome.nostr_homed": {
@@ -23795,7 +23795,10 @@
       "rationale": "Public API test inputs select package checks, not production consumers."
     }
   },
-  "path_rules": [
+    "path_rules": [
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault config selects the separate generation source and legacy exclusion."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault config contract affects daemon and source filtering."},
+      {"exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Real offline daemon config regression, not unrelated auth tests."},
     {"exact": ".github/workflows/vault-syncd-ci.yml", "effect": "impact", "nodes": ["execution.vault_syncd"], "reason": "Vault selected-profile runner changes exercise the owned checks."},
     {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault filesystem assembly."},
     {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault folded-view materialisation."},
