@@ -20719,7 +20719,9 @@
         "test_porthome_seal_v2",
         "test_porthome_ring_derivation",
         "test_porthome_pad_buckets",
-        "test_porthome_chunker"
+        "test_porthome_chunker",
+        "test_porthome_dir_node",
+        "test_porthome_head"
       ],
       "cost": "ordinary",
       "ctest_tests": {
@@ -20728,14 +20730,18 @@
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ],
         "core.linux.asan": [
           "test-porthome-api",
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ]
       },
       "expected_outcome": "pass",
@@ -20778,42 +20784,54 @@
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ],
         "grotto.linux": [
           "test-porthome-api",
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ],
         "grotto.linux.asan_ubsan": [
           "test-porthome-api",
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ],
         "groundhog.linux": [
           "test-porthome-api",
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ],
         "groundhog.mdk011": [
           "test-porthome-api",
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ],
         "groundhog.mdk08": [
           "test-porthome-api",
           "test_porthome_seal_v2",
           "test_porthome_ring_derivation",
           "test_porthome_pad_buckets",
-          "test_porthome_chunker"
+          "test_porthome_chunker",
+          "test_porthome_dir_node",
+          "test_porthome_head"
         ]
       },
       "build_targets": [
@@ -20821,7 +20839,9 @@
         "test_porthome_seal_v2",
         "test_porthome_ring_derivation",
         "test_porthome_pad_buckets",
-        "test_porthome_chunker"
+        "test_porthome_chunker",
+        "test_porthome_dir_node",
+        "test_porthome_head"
       ],
       "runtime_inputs": []
     }

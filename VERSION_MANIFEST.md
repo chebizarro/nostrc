@@ -27,7 +27,7 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.3.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.2.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.3.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -36,6 +36,13 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-hl30i.2 (SV-2): libporthome MINOR 0.2.1 -> 0.3.0 for additive
+  shared-vault dir_node canonical-CBOR and NIP-44 head/body/event codec APIs.
+  Legacy flat manifest schemas 1/2 and v1 pointer paths are unchanged; the
+  shared-vault dir_node uses a distinct API and PCS v2 sealing. Existing
+  dependencies suffice; libhanami 0.3.1, libblossom 0.2.0 and all other
+  components retain their versions. No fold, grants or writer policy added.
 
 - nostrc-kehos: libporthome PATCH 0.2.0 -> 0.2.1 for bounded hex64 input
   validation before paired-nibble access, fixing out-of-bounds reads on short
