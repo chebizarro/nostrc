@@ -1,5 +1,5 @@
 /*
- * test_hanami_blossom_shim.c
+ * test_blossom_shim.c
  *
  * Unit tests for the PNG-shim wrapper (nostrc-bpum).
  *
@@ -12,8 +12,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "hanami/hanami-blossom-shim.h"
-#include "hanami/hanami-types.h"
+#include "blossom/shim.h"
+#include <blossom/types.h>
 
 #include <assert.h>
 #include <stdint.h>
@@ -113,10 +113,10 @@ static const uint8_t PNG_SIG[8] = {0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A};
 
 static void test_encoded_len(void)
 {
-    EXPECT(hanami_blossom_shim_encoded_len(0)    == 41,   "len(0) = 41");
-    EXPECT(hanami_blossom_shim_encoded_len(1024) == 1065, "len(1024) = 1065");
-    EXPECT(hanami_blossom_shim_encoded_len(4*1024*1024)
-            == (size_t)HANAMI_BLOSSOM_PNG_SHIM_LEN + 4*1024*1024,
+    EXPECT(blossom_shim_encoded_len(0)    == 41,   "len(0) = 41");
+    EXPECT(blossom_shim_encoded_len(1024) == 1065, "len(1024) = 1065");
+    EXPECT(blossom_shim_encoded_len(4*1024*1024)
+            == (size_t)BLOSSOM_PNG_SHIM_LEN + 4*1024*1024,
            "len(4MiB) = 41+4MiB");
 }
 
@@ -124,17 +124,17 @@ static void test_encode_rejects_bad_args(void)
 {
     uint8_t out[128];
     /* NULL out. */
-    EXPECT(hanami_blossom_shim_encode(NULL, 0, NULL, 128) == HANAMI_ERR_INVALID_ARG,
+    EXPECT(blossom_shim_wrap(NULL, 0, NULL, 128) == BLOSSOM_ERR_INVALID_ARG,
            "NULL out rejected");
     /* NULL ct with ct_len > 0. */
-    EXPECT(hanami_blossom_shim_encode(NULL, 8, out, sizeof(out)) == HANAMI_ERR_INVALID_ARG,
+    EXPECT(blossom_shim_wrap(NULL, 8, out, sizeof(out)) == BLOSSOM_ERR_INVALID_ARG,
            "NULL ct + ct_len>0 rejected");
     /* out_cap too small. */
     uint8_t ct[16] = {0};
-    EXPECT(hanami_blossom_shim_encode(ct, sizeof(ct), out, 40) == HANAMI_ERR_INVALID_ARG,
+    EXPECT(blossom_shim_wrap(ct, sizeof(ct), out, 40) == BLOSSOM_ERR_INVALID_ARG,
            "small out_cap rejected");
     /* Legal empty encode. */
-    EXPECT(hanami_blossom_shim_encode(NULL, 0, out, sizeof(out)) == HANAMI_OK,
+    EXPECT(blossom_shim_wrap(NULL, 0, out, sizeof(out)) == BLOSSOM_OK,
            "NULL ct + ct_len=0 accepted");
 }
 
@@ -143,8 +143,8 @@ static void test_encode_prefix_shape(void)
     uint8_t ct[123];
     for (size_t i = 0; i < sizeof(ct); i++) ct[i] = (uint8_t)(i * 31u + 7u);
     uint8_t out[512];
-    hanami_error_t rc = hanami_blossom_shim_encode(ct, sizeof(ct), out, sizeof(out));
-    EXPECT(rc == HANAMI_OK, "encode ok");
+    blossom_error_t rc = blossom_shim_wrap(ct, sizeof(ct), out, sizeof(out));
+    EXPECT(rc == BLOSSOM_OK, "encode ok");
 
     /* PNG signature. */
     EXPECT(memcmp(out, PNG_SIG, 8) == 0, "PNG signature at [0..8)");
@@ -187,9 +187,9 @@ static void test_encode_deterministic(void)
     uint8_t ct[512];
     for (size_t i = 0; i < sizeof(ct); i++) ct[i] = (uint8_t)(i ^ 0x5A);
     uint8_t a[512 + 64], b[512 + 64];
-    EXPECT(hanami_blossom_shim_encode(ct, sizeof(ct), a, sizeof(a)) == HANAMI_OK, "encode a");
-    EXPECT(hanami_blossom_shim_encode(ct, sizeof(ct), b, sizeof(b)) == HANAMI_OK, "encode b");
-    size_t enclen = hanami_blossom_shim_encoded_len(sizeof(ct));
+    EXPECT(blossom_shim_wrap(ct, sizeof(ct), a, sizeof(a)) == BLOSSOM_OK, "encode a");
+    EXPECT(blossom_shim_wrap(ct, sizeof(ct), b, sizeof(b)) == BLOSSOM_OK, "encode b");
+    size_t enclen = blossom_shim_encoded_len(sizeof(ct));
     EXPECT(memcmp(a, b, enclen) == 0, "byte-identical shimmed output");
 
     uint8_t ha[32], hb[32];
@@ -209,16 +209,16 @@ static void test_detect_and_strip_round_trip(void)
     /* Encode → detect → strip → recover original bytes exactly. */
     uint8_t ct[1024];
     for (size_t i = 0; i < sizeof(ct); i++) ct[i] = (uint8_t)((i * 13u + 3u) & 0xFF);
-    uint8_t shimmed[sizeof(ct) + HANAMI_BLOSSOM_PNG_SHIM_LEN];
-    EXPECT(hanami_blossom_shim_encode(ct, sizeof(ct), shimmed, sizeof(shimmed)) == HANAMI_OK,
+    uint8_t shimmed[sizeof(ct) + BLOSSOM_PNG_SHIM_LEN];
+    EXPECT(blossom_shim_wrap(ct, sizeof(ct), shimmed, sizeof(shimmed)) == BLOSSOM_OK,
            "encode ok");
 
-    EXPECT(hanami_blossom_shim_detect(shimmed, sizeof(shimmed)) == true,
+    EXPECT(blossom_shim_detect(shimmed, sizeof(shimmed)) == true,
            "detect finds shim");
 
     const uint8_t *tail = NULL;
     size_t tail_len = 0;
-    EXPECT(hanami_blossom_shim_strip(shimmed, sizeof(shimmed), &tail, &tail_len) == HANAMI_OK,
+    EXPECT(blossom_shim_unwrap(shimmed, sizeof(shimmed), &tail, &tail_len) == BLOSSOM_OK,
            "strip ok");
     EXPECT(tail_len == sizeof(ct), "strip tail len matches");
     EXPECT(memcmp(tail, ct, sizeof(ct)) == 0, "strip tail bytes match");
@@ -232,26 +232,26 @@ static void test_detect_rejects_non_shim(void)
     d4[0] = 0x01;
     for (size_t i = 1; i < sizeof(d4); i++) d4[i] = (uint8_t)i;
 
-    EXPECT(hanami_blossom_shim_detect(d4, sizeof(d4)) == false,
+    EXPECT(blossom_shim_detect(d4, sizeof(d4)) == false,
            "D4 wire (starts 0x01) NOT a shim");
 
     const uint8_t *tail = NULL;
     size_t tail_len = 0;
-    EXPECT(hanami_blossom_shim_strip(d4, sizeof(d4), &tail, &tail_len) == HANAMI_ERR_INVALID_ARG,
+    EXPECT(blossom_shim_unwrap(d4, sizeof(d4), &tail, &tail_len) == BLOSSOM_ERR_INVALID_ARG,
            "strip refuses non-shim");
     EXPECT(tail == NULL && tail_len == 0, "outs untouched on strip refuse");
 
     /* Too-short buffer. */
-    EXPECT(hanami_blossom_shim_detect(d4, 8) == false, "8-byte buf too short");
+    EXPECT(blossom_shim_detect(d4, 8) == false, "8-byte buf too short");
     /* NULL. */
-    EXPECT(hanami_blossom_shim_detect(NULL, 0) == false, "NULL buf rejected");
+    EXPECT(blossom_shim_detect(NULL, 0) == false, "NULL buf rejected");
 
     /* Right-length buffer that starts with PNG signature but wrong
      * IHDR — must not match. Craft a bad IHDR (colour type nonsense). */
-    uint8_t fake[HANAMI_BLOSSOM_PNG_SHIM_LEN + 4];
+    uint8_t fake[BLOSSOM_PNG_SHIM_LEN + 4];
     memcpy(fake, PNG_SIG, 8);
     memset(fake + 8, 0xAA, sizeof(fake) - 8);
-    EXPECT(hanami_blossom_shim_detect(fake, sizeof(fake)) == false,
+    EXPECT(blossom_shim_detect(fake, sizeof(fake)) == false,
            "PNG sig but bad IHDR NOT a shim");
 }
 
@@ -263,13 +263,13 @@ static void test_detect_wrong_idat_length(void)
      * in a truncated/extended shim to trigger a mis-strip. */
     uint8_t ct[64];
     for (size_t i = 0; i < sizeof(ct); i++) ct[i] = (uint8_t)i;
-    uint8_t shimmed[sizeof(ct) + HANAMI_BLOSSOM_PNG_SHIM_LEN];
-    EXPECT(hanami_blossom_shim_encode(ct, sizeof(ct), shimmed, sizeof(shimmed)) == HANAMI_OK,
+    uint8_t shimmed[sizeof(ct) + BLOSSOM_PNG_SHIM_LEN];
+    EXPECT(blossom_shim_wrap(ct, sizeof(ct), shimmed, sizeof(shimmed)) == BLOSSOM_OK,
            "encode ok");
     /* Corrupt the IDAT length field to claim 999 bytes when the tail
      * is only 64. */
     shimmed[33] = 0; shimmed[34] = 0; shimmed[35] = 0x03; shimmed[36] = 0xE7;
-    EXPECT(hanami_blossom_shim_detect(shimmed, sizeof(shimmed)) == false,
+    EXPECT(blossom_shim_detect(shimmed, sizeof(shimmed)) == false,
            "IDAT length mismatch → detect refuses");
 }
 

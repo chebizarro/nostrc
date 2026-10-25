@@ -32,8 +32,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <hanami/hanami-blossom-client.h>
-#include <hanami/hanami-types.h>
+#include <blossom/client.h>
+#include <blossom/types.h>
 
 /* Forward from nh_syncd_pin_ring.c — internal linkage helper. */
 extern int nh_syncd__snapshot_hashes(const char *state_dir,
@@ -50,25 +50,31 @@ static void log_msg(const char *fmt, ...) {
     va_end(ap);
 }
 
-/* Default per-server HEAD via libhanami. Returns 1/0 or -1 on error. */
+static bool local_test_transport(void) {
+    const char *e = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    return e && !strcmp(e, "1");
+}
+
+/* Default per-server HEAD via libblossom. Returns 1/0 or -1 on error. */
 static int default_head(void *ud, const char *server, const char *sha256_hex) {
-    (void)ud;
-    hanami_blossom_client_opts_t opts = {
+    const blossom_signer_t *signer = ud;
+    blossom_client_opts_t opts = {
         .endpoint = server,
         .timeout_seconds = 15,
         .user_agent = "nostr-home-syncd-sweep/0.1",
+        .allow_insecure = local_test_transport(),
     };
-    hanami_blossom_client_t *c = NULL;
-    if (hanami_blossom_client_new(&opts, NULL, &c) != HANAMI_OK) return -1;
+    blossom_client_t *c = NULL;
+    if (blossom_client_new(&opts, signer, &c) != BLOSSOM_OK) return -1;
     bool exists = false;
-    hanami_error_t rc = hanami_blossom_head(c, sha256_hex, &exists);
-    hanami_blossom_client_free(c);
-    if (rc != HANAMI_OK) return -1;
+    blossom_error_t rc = blossom_client_head(c, sha256_hex, &exists);
+    blossom_client_free(c);
+    if (rc != BLOSSOM_OK) return -1;
     return exists ? 1 : 0;
 }
 
 typedef struct {
-    const hanami_signer_t *signer;
+    const blossom_signer_t *signer;
     long                   timeout;
     const char *const     *servers;
     size_t                 n_servers;
@@ -81,16 +87,17 @@ static int default_upload_all(default_upload_ctx *dc,
                               const uint8_t *data, size_t len) {
     int last = -1;
     for (size_t si = 0; si < dc->n_servers; ++si) {
-        hanami_blossom_client_opts_t opts = {
+        blossom_client_opts_t opts = {
             .endpoint = dc->servers[si],
             .timeout_seconds = dc->timeout ? dc->timeout : 30,
             .user_agent = "nostr-home-syncd-sweep/0.1",
+            .allow_insecure = local_test_transport(),
         };
-        hanami_blossom_client_t *c = NULL;
-        if (hanami_blossom_client_new(&opts, dc->signer, &c) != HANAMI_OK) continue;
-        hanami_error_t rc = hanami_blossom_upload(c, data, len, sha256_hex, NULL);
-        hanami_blossom_client_free(c);
-        if (rc == HANAMI_OK) return 0;
+        blossom_client_t *c = NULL;
+        if (blossom_client_new(&opts, dc->signer, &c) != BLOSSOM_OK) continue;
+        blossom_error_t rc = blossom_client_put(c, data, len, sha256_hex, NULL);
+        blossom_client_free(c);
+        if (rc == BLOSSOM_OK) return 0;
         last = -1;
     }
     return last;
@@ -125,7 +132,7 @@ int nh_syncd_sweep_run_once(const nh_syncd_sweep_cfg *cfg,
     }
 
     nh_syncd_head_fn head_fn = cfg->head_fn ? cfg->head_fn : default_head;
-    void *head_ud = cfg->head_fn ? cfg->head_ud : NULL;
+    void *head_ud = cfg->head_fn ? cfg->head_ud : (void *)cfg->bud02_signer;
 
     default_upload_ctx duc = {
         .signer    = cfg->bud02_signer,

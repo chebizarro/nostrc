@@ -6,7 +6,7 @@
 #include "ns-event.h"
 #include "ns-kind.h"
 
-#include <hanami/hanami-blossom-client.h>
+#include <blossom/client.h>
 #include <hanami/hanami-types.h>
 
 #include "nostr-event.h"
@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static hanami_error_t
+static blossom_error_t
 sign_via_signer(const char *event_json, char **out_signed_json, void *user_data)
 {
   NostrPublishSigner *signer = user_data;
@@ -27,16 +27,16 @@ sign_via_signer(const char *event_json, char **out_signed_json, void *user_data)
     g_warning("nostr-share: Blossom auth signing failed: %s",
               err ? err->message : "unknown");
     g_clear_error(&err);
-    return HANAMI_ERR_AUTH;
+    return BLOSSOM_ERR_AUTH;
   }
-  /* hanami frees with free(). */
+  /* libblossom frees with free(). */
   *out_signed_json = strdup(signed_json);
   g_free(signed_json);
-  return *out_signed_json ? HANAMI_OK : HANAMI_ERR_NOMEM;
+  return *out_signed_json ? BLOSSOM_OK : BLOSSOM_ERR_NOMEM;
 }
 
 /* The throwaway key signs in-process: it is nobody's identity. */
-static hanami_error_t
+static blossom_error_t
 sign_with_throwaway(const char *event_json, char **out_signed_json, void *user_data)
 {
   const gchar *sk = user_data;
@@ -44,11 +44,11 @@ sign_with_throwaway(const char *event_json, char **out_signed_json, void *user_d
   if (nostr_event_deserialize_compact(ev, event_json, NULL) != 1 ||
       nostr_event_sign(ev, sk) != 0) {
     nostr_event_free(ev);
-    return HANAMI_ERR_AUTH;
+    return BLOSSOM_ERR_AUTH;
   }
-  *out_signed_json = nostr_event_serialize_compact(ev);   /* malloc: hanami frees */
+  *out_signed_json = nostr_event_serialize_compact(ev);   /* malloc: libblossom frees */
   nostr_event_free(ev);
-  return *out_signed_json ? HANAMI_OK : HANAMI_ERR_NOMEM;
+  return *out_signed_json ? BLOSSOM_OK : BLOSSOM_ERR_NOMEM;
 }
 
 gboolean
@@ -82,7 +82,7 @@ ns_blossom_upload(const gchar *const *servers, NostrPublishSigner *signer,
   }
 
   gchar *throwaway_sk = NULL, *throwaway_pk = NULL;
-  hanami_signer_t hs = {
+  blossom_signer_t hs = {
     .pubkey    = pubkey_hex,
     .sign      = sign_via_signer,
     .user_data = signer,
@@ -119,28 +119,29 @@ ns_blossom_upload(const gchar *const *servers, NostrPublishSigner *signer,
     while (n > 8 && endpoint[n - 1] == '/')
       endpoint[--n] = '\0';
 
-    hanami_blossom_client_opts_t opts = {
+    blossom_client_opts_t opts = {
       .endpoint        = endpoint,
       .timeout_seconds = 120,
       .user_agent      = "nostr-share/" NS_VERSION,
+      .allow_insecure  = allow_loopback_http && g_str_has_prefix(endpoint, "http://"),
     };
-    hanami_blossom_client_t *client = NULL;
-    hanami_error_t rc = hanami_blossom_client_new(&opts, &hs, &client);
-    if (rc != HANAMI_OK) {
+    blossom_client_t *client = NULL;
+    blossom_error_t rc = blossom_client_new(&opts, &hs, &client);
+    if (rc != BLOSSOM_OK) {
       g_string_append_printf(failures, "\n  %s: %s", server, hanami_strerror(rc));
       continue;
     }
-    hanami_blossom_client_set_upload_content_type(client, mime);
+    blossom_client_set_upload_content_type(client, mime);
 
-    hanami_blob_descriptor_t *desc = NULL;
+    blossom_blob_descriptor_t *desc = NULL;
     tried++;
-    rc = hanami_blossom_upload(client, bytes, len, sha256_hex, &desc);
-    hanami_blossom_client_free(client);
-    if (rc != HANAMI_OK) {
-      if (rc == HANAMI_ERR_AUTH)
+    rc = blossom_client_put(client, bytes, len, sha256_hex, &desc);
+    blossom_client_free(client);
+    if (rc != BLOSSOM_OK) {
+      if (rc == BLOSSOM_ERR_AUTH)
         auth_refusals++;
       g_string_append_printf(failures, "\n  %s: %s", server, hanami_strerror(rc));
-      hanami_blob_descriptor_free(desc);
+      blossom_blob_descriptor_free(desc);
       continue;
     }
 
@@ -149,7 +150,7 @@ ns_blossom_upload(const gchar *const *servers, NostrPublishSigner *signer,
     if (desc != NULL && desc->sha256[0] != '\0' &&
         g_ascii_strcasecmp(desc->sha256, sha256_hex) != 0) {
       g_string_append_printf(failures, "\n  %s: descriptor hash mismatch", server);
-      hanami_blob_descriptor_free(desc);
+      blossom_blob_descriptor_free(desc);
       continue;
     }
 
@@ -158,7 +159,7 @@ ns_blossom_upload(const gchar *const *servers, NostrPublishSigner *signer,
       url = g_strdup(desc->url);
     else
       url = ns_blossom_blob_url(endpoint, sha256_hex, mime);
-    hanami_blob_descriptor_free(desc);
+    blossom_blob_descriptor_free(desc);
 
     *out_url = url;
     if (out_server) *out_server = g_strdup(endpoint);

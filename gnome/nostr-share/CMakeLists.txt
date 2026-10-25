@@ -4,7 +4,7 @@
 # Open With via org.nostr.Share.desktop (bead nostrc-1xak).
 #
 # Requires: glib/gio >= 2.70, json-glib, libsoup-3, libnostr-publish,
-#           libhanami (Blossom), nip34, nip19, libnostr.
+#           libblossom (uploads), libhanami (Git), nip34, nip19, libnostr.
 # Optional: gtk4 + libadwaita-1 >= 1.4 for the dialog (NOSTR_SHARE_UI).
 #
 # SPDX-License-Identifier: MIT
@@ -15,7 +15,7 @@ find_package(PkgConfig REQUIRED)
 
 set(NOSTR_SHARE_VERSION 0.1.0)
 
-foreach(_ns_dep nostr-publish hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core)
+foreach(_ns_dep nostr-publish blossom hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core)
   if (NOT TARGET ${_ns_dep})
     message(FATAL_ERROR
       "nostr-share needs the '${_ns_dep}' target (enable BUILD_LIBHANAMI and "
@@ -59,7 +59,7 @@ target_include_directories(nostr-share-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_compile_definitions(nostr-share-core PUBLIC NS_VERSION="${NOSTR_SHARE_VERSION}")
 target_compile_options(nostr-share-core PRIVATE ${NS_WARNING_FLAGS})
 target_link_libraries(nostr-share-core PUBLIC
-  nostr-publish hanami nip34 nip19 nostr nostr_nip59_core
+  nostr-publish nostrc::blossom hanami nip34 nip19 nostr nostr_nip59_core
   OpenSSL::Crypto
   PkgConfig::NS_GLIB PkgConfig::NS_JSONGLIB PkgConfig::NS_SOUP)
 

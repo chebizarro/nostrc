@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <git2/types.h>
+#include <blossom/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,23 +23,22 @@ extern "C" {
  * Error codes
  * ========================================================================= */
 
-typedef enum {
-    HANAMI_OK = 0,
-    HANAMI_ERR_NOMEM = -1,
-    HANAMI_ERR_INVALID_ARG = -2,
-    HANAMI_ERR_NOT_FOUND = -3,
-    HANAMI_ERR_NETWORK = -4,
-    HANAMI_ERR_AUTH = -5,
-    HANAMI_ERR_HASH_MISMATCH = -6,
-    HANAMI_ERR_INDEX = -7,
-    HANAMI_ERR_LIBGIT2 = -8,
-    HANAMI_ERR_NOSTR = -9,
-    HANAMI_ERR_CONFIG = -10,
-    HANAMI_ERR_IO = -11,
-    HANAMI_ERR_BLOSSOM = -12,
-    HANAMI_ERR_UPLOAD = -13,
-    HANAMI_ERR_TIMEOUT = -14,
-} hanami_error_t;
+typedef blossom_error_t hanami_error_t;
+#define HANAMI_OK BLOSSOM_OK
+#define HANAMI_ERR_NOMEM BLOSSOM_ERR_NOMEM
+#define HANAMI_ERR_INVALID_ARG BLOSSOM_ERR_INVALID_ARG
+#define HANAMI_ERR_NOT_FOUND BLOSSOM_ERR_NOT_FOUND
+#define HANAMI_ERR_NETWORK BLOSSOM_ERR_NETWORK
+#define HANAMI_ERR_AUTH BLOSSOM_ERR_AUTH
+#define HANAMI_ERR_HASH_MISMATCH BLOSSOM_ERR_HASH_MISMATCH
+#define HANAMI_ERR_INDEX ((hanami_error_t)-7)
+#define HANAMI_ERR_LIBGIT2 ((hanami_error_t)-8)
+#define HANAMI_ERR_NOSTR BLOSSOM_ERR_NOSTR
+#define HANAMI_ERR_CONFIG ((hanami_error_t)-10)
+#define HANAMI_ERR_IO BLOSSOM_ERR_IO
+#define HANAMI_ERR_BLOSSOM BLOSSOM_ERR_BLOSSOM
+#define HANAMI_ERR_UPLOAD BLOSSOM_ERR_UPLOAD
+#define HANAMI_ERR_TIMEOUT BLOSSOM_ERR_TIMEOUT
 
 /**
  * hanami_strerror:
@@ -83,29 +83,6 @@ typedef struct {
 } hanami_ref_entry_t;
 
 /* =========================================================================
- * Blossom blob descriptor (returned from PUT /upload)
- * ========================================================================= */
-
-/**
- * hanami_blob_descriptor_t:
- *
- * Descriptor returned by a Blossom server after upload.
- */
-typedef struct {
-    char sha256[65];    /**< SHA-256 hex of the blob */
-    size_t size;        /**< Blob size in bytes */
-    char *url;          /**< Full URL to retrieve the blob (owned, may be NULL) */
-    char *mime_type;    /**< MIME type (owned, may be NULL) */
-    int64_t uploaded;   /**< Upload timestamp (Unix epoch) */
-} hanami_blob_descriptor_t;
-
-/**
- * hanami_blob_descriptor_free:
- * @desc: descriptor to free (nullable)
- */
-void hanami_blob_descriptor_free(hanami_blob_descriptor_t *desc);
-
-/* =========================================================================
  * Signer callback
  * ========================================================================= */
 
@@ -120,20 +97,8 @@ void hanami_blob_descriptor_free(hanami_blob_descriptor_t *desc);
  *
  * Returns: HANAMI_OK on success, error code on failure
  */
-typedef hanami_error_t (*hanami_sign_event_fn)(const char *event_json,
-                                               char **out_signed_json,
-                                               void *user_data);
-
-/**
- * hanami_signer_t:
- *
- * Signer context providing identity and signing capabilities.
- */
-typedef struct {
-    const char *pubkey;             /**< Hex public key (64 chars) */
-    hanami_sign_event_fn sign;      /**< Signing callback */
-    void *user_data;                /**< Opaque context for the signer */
-} hanami_signer_t;
+typedef blossom_sign_event_fn hanami_sign_event_fn;
+typedef blossom_signer_t hanami_signer_t;
 
 #ifdef __cplusplus
 }

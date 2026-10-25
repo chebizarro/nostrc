@@ -1,5 +1,5 @@
 /*
- * test_hanami_server_capability_probe_shim.c
+ * test_blossom_server_capability_probe_shim.c
  *
  * Unit tests for the raw-vs-shim body-sniffer probe extension
  * (nostrc-prli). The existing probe (nostrc-ypn2) covers
@@ -28,10 +28,10 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "hanami/hanami-blossom-client.h"
-#include "hanami/hanami-blossom-shim.h"
-#include "hanami/hanami-server-capability.h"
-#include "hanami/hanami-types.h"
+#include "blossom/client.h"
+#include "blossom/shim.h"
+#include "blossom/capability.h"
+#include <blossom/types.h>
 #include <nostr/bud02/auth.h>
 
 #include <arpa/inet.h>
@@ -272,7 +272,7 @@ static char *make_endpoint(int port)
 /* Case A: 201 raw + 201 shim. Every existing probe step also 201s. */
 static void test_probe_scenario_A_both_ok(void)
 {
-    hanami_blossom_shim_cache_reset();
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     s.n_codes = 6;
     s.status_codes[0] = 201; /* server-tag */
@@ -284,16 +284,16 @@ static void test_probe_scenario_A_both_ok(void)
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/A" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &cli) == HANAMI_OK);
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/A" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, NULL, &cli) == BLOSSOM_OK);
 
-    hanami_error_t err = hanami_server_probe_capabilities(cli);
-    assert(err == HANAMI_OK);
+    blossom_error_t err = blossom_probe_capabilities(cli);
+    assert(err == BLOSSOM_OK);
 
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->raw_random_ok == HANAMI_CAP_YES);
-    assert(caps->png_shim_ok   == HANAMI_CAP_YES);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->raw_random_ok == BLOSSOM_CAP_YES);
+    assert(caps->png_shim_ok   == BLOSSOM_CAP_YES);
 
     /* Reachability HEAD (1) + existing 4 PUTs + 2 new PUTs = 6 PUTs. */
     assert(atomic_load(&s.head_count) == 1);
@@ -304,7 +304,7 @@ static void test_probe_scenario_A_both_ok(void)
     assert(s.put_content_type[STEP_F_INDEX] != NULL);
     assert(strcmp(s.put_content_type[STEP_F_INDEX], "image/png") == 0);
     /* Byte 0 == PNG signature start (0x89). */
-    assert(s.put_body_prefix_len[STEP_F_INDEX] >= (size_t)HANAMI_BLOSSOM_PNG_SHIM_LEN);
+    assert(s.put_body_prefix_len[STEP_F_INDEX] >= (size_t)BLOSSOM_PNG_SHIM_LEN);
     assert(s.put_body_prefix[STEP_F_INDEX][0] == 0x89);
     assert(s.put_body_prefix[STEP_F_INDEX][1] == 'P');
     assert(s.put_body_prefix[STEP_F_INDEX][2] == 'N');
@@ -318,7 +318,7 @@ static void test_probe_scenario_A_both_ok(void)
     assert(!(s.put_body_prefix[STEP_E_INDEX][0] == 0x89 &&
              s.put_body_prefix[STEP_E_INDEX][1] == 'P'));
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(endpoint);
     stub_stop(&s);
 }
@@ -326,7 +326,7 @@ static void test_probe_scenario_A_both_ok(void)
 /* Case B: 415 raw + 201 shim — the primal.net shape from hy3e §2. */
 static void test_probe_scenario_B_primal_like(void)
 {
-    hanami_blossom_shim_cache_reset();
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     s.n_codes = 6;
     s.status_codes[0] = 201;
@@ -338,25 +338,25 @@ static void test_probe_scenario_B_primal_like(void)
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/B" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &cli) == HANAMI_OK);
-    assert(hanami_server_probe_capabilities(cli) == HANAMI_OK);
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/B" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, NULL, &cli) == BLOSSOM_OK);
+    assert(blossom_probe_capabilities(cli) == BLOSSOM_OK);
 
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->raw_random_ok == HANAMI_CAP_NO);
-    assert(caps->png_shim_ok   == HANAMI_CAP_YES);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->raw_random_ok == BLOSSOM_CAP_NO);
+    assert(caps->png_shim_ok   == BLOSSOM_CAP_YES);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(endpoint);
     stub_stop(&s);
 }
 
 /* Case C: 201 raw + 500 shim — the blossom.band shape (full PNG decoder
- * blows up on the truncated IDAT). raw_ok=YES, png_shim_ok=NO. */
+ * blows up on the truncated IDAT). raw_ok=YES, png_shim_ok=UNKNOWN (5xx is not policy evidence). */
 static void test_probe_scenario_C_band_like(void)
 {
-    hanami_blossom_shim_cache_reset();
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     s.n_codes = 6;
     s.status_codes[0] = 201;
@@ -368,16 +368,16 @@ static void test_probe_scenario_C_band_like(void)
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/C" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &cli) == HANAMI_OK);
-    assert(hanami_server_probe_capabilities(cli) == HANAMI_OK);
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/C" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, NULL, &cli) == BLOSSOM_OK);
+    assert(blossom_probe_capabilities(cli) == BLOSSOM_OK);
 
-    const hanami_server_capabilities_t *caps = hanami_blossom_get_capabilities(cli);
-    assert(caps->raw_random_ok == HANAMI_CAP_YES);
-    assert(caps->png_shim_ok   == HANAMI_CAP_NO);
+    const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(cli);
+    assert(caps->raw_random_ok == BLOSSOM_CAP_YES);
+    assert(caps->png_shim_ok   == BLOSSOM_CAP_UNKNOWN);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(endpoint);
     stub_stop(&s);
 }
@@ -386,7 +386,7 @@ static void test_probe_scenario_C_band_like(void)
  * server (nostrc-prli constraint). */
 static void test_probe_extension_budget(void)
 {
-    hanami_blossom_shim_cache_reset();
+    blossom_shim_cache_reset();
     stub_t s; stub_init(&s);
     s.n_codes = 6;
     for (int i = 0; i < 6; i++) s.status_codes[i] = 201;
@@ -394,15 +394,15 @@ static void test_probe_extension_budget(void)
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
-    hanami_blossom_client_opts_t opts = { .endpoint = endpoint, .timeout_seconds = 5, .user_agent = "test/budget" };
-    hanami_blossom_client_t *cli = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &cli) == HANAMI_OK);
-    assert(hanami_server_probe_capabilities(cli) == HANAMI_OK);
+    blossom_client_opts_t opts = { .endpoint = endpoint, .allow_insecure = true, .timeout_seconds = 5, .user_agent = "test/budget" };
+    blossom_client_t *cli = NULL;
+    assert(blossom_client_new(&opts, NULL, &cli) == BLOSSOM_OK);
+    assert(blossom_probe_capabilities(cli) == BLOSSOM_OK);
 
     /* Exactly 6 total PUTs: 4 existing + 2 new. Never 7 or more. */
     assert(atomic_load(&s.put_count) == 6);
 
-    hanami_blossom_client_free(cli);
+    blossom_client_free(cli);
     free(endpoint);
     stub_stop(&s);
 }

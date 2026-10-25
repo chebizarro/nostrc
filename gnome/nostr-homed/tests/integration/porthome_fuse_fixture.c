@@ -41,7 +41,7 @@
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_blossom.h"
 #include "nh_syncd.h"
-#include <hanami/hanami-types.h>
+#include <blossom/types.h>
 
 #include "nostr-event.h"
 #include "nostr-relay.h"
@@ -72,29 +72,29 @@
 
 typedef struct { const char *nsec_hex; } nsec_ctx;
 
-static hanami_error_t nsec_sign(const char *evt_json, char **out, void *ud) {
-    if (!evt_json || !out || !ud) return HANAMI_ERR_INVALID_ARG;
+static blossom_error_t nsec_sign(const char *evt_json, char **out, void *ud) {
+    if (!evt_json || !out || !ud) return BLOSSOM_ERR_INVALID_ARG;
     nsec_ctx *c = (nsec_ctx *)ud;
     NostrEvent *e = nostr_event_new();
-    if (!e) return HANAMI_ERR_NOMEM;
+    if (!e) return BLOSSOM_ERR_NOMEM;
     NostrEventValidationStatus vs =
         nostr_event_deserialize_unsigned(e, evt_json, NULL);
     if (vs != NOSTR_EVENT_VALIDATION_OK) {
-        nostr_event_free(e); return HANAMI_ERR_INVALID_ARG;
+        nostr_event_free(e); return BLOSSOM_ERR_INVALID_ARG;
     }
     if (nostr_event_sign(e, c->nsec_hex) != 0) {
-        nostr_event_free(e); return HANAMI_ERR_INVALID_ARG;
+        nostr_event_free(e); return BLOSSOM_ERR_INVALID_ARG;
     }
     char *s = nostr_event_serialize_compact(e);
     nostr_event_free(e);
-    if (!s) return HANAMI_ERR_NOMEM;
+    if (!s) return BLOSSOM_ERR_NOMEM;
     *out = s;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 static char g_pk_hex[65];
 static nsec_ctx g_sctx;
-static hanami_signer_t g_signer;
+static blossom_signer_t g_signer;
 
 static int install_signer(const char *nsec_hex) {
     char *pk = nostr_key_get_public(nsec_hex);

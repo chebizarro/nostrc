@@ -39,8 +39,8 @@
 #include "nh_porthome_status.h"
 #include "nh_porthome_wrapkey.h"
 
-#include <hanami/hanami-blossom-shim.h>
-#include <hanami/hanami-types.h>
+#include <blossom/shim.h>
+#include <blossom/types.h>
 
 #include "nostr-event.h"
 #include "nostr-relay.h"
@@ -865,29 +865,29 @@ typedef struct {
     const char *nsec_hex;
 } push_signer_ctx;
 
-static hanami_error_t push_bud02_sign(const char *event_json,
+static blossom_error_t push_bud02_sign(const char *event_json,
                                       char **out_signed_json,
                                       void *user_data) {
-    if (!event_json || !out_signed_json || !user_data) return HANAMI_ERR_INVALID_ARG;
+    if (!event_json || !out_signed_json || !user_data) return BLOSSOM_ERR_INVALID_ARG;
     *out_signed_json = NULL;
     push_signer_ctx *ctx = (push_signer_ctx *)user_data;
     NostrEvent *e = nostr_event_new();
-    if (!e) return HANAMI_ERR_NOMEM;
+    if (!e) return BLOSSOM_ERR_NOMEM;
     NostrEventValidationStatus vs =
         nostr_event_deserialize_unsigned(e, event_json, NULL);
     if (vs != NOSTR_EVENT_VALIDATION_OK) {
         nostr_event_free(e);
-        return HANAMI_ERR_INVALID_ARG;
+        return BLOSSOM_ERR_INVALID_ARG;
     }
     if (nostr_event_sign(e, ctx->nsec_hex) != 0) {
         nostr_event_free(e);
-        return HANAMI_ERR_INVALID_ARG;
+        return BLOSSOM_ERR_INVALID_ARG;
     }
     char *out = nostr_event_serialize_compact(e);
     nostr_event_free(e);
-    if (!out) return HANAMI_ERR_NOMEM;
+    if (!out) return BLOSSOM_ERR_NOMEM;
     *out_signed_json = out;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 /* Read a file into a heap buffer for chunk encryption. Bounded per
@@ -1143,7 +1143,7 @@ static int cmd_push(int argc, char **argv) {
         free(o.extra_relays); free(o.extra_blossom);
         return NH_PROV_CLI_EXIT_CRYPTO;
     }
-    hanami_signer_t signer;
+    blossom_signer_t signer;
     memset(&signer, 0, sizeof signer);
     signer.pubkey    = signer_pk;
     signer.sign      = push_bud02_sign;
@@ -1188,31 +1188,31 @@ static int cmd_push(int argc, char **argv) {
      * Log the reason so the field operator sees WHY the shim flipped —
      * this is the single most common thing to misread from a `push` log
      * when a manifest mismatches Blossom addressing (nostrc-wmb5). */
-    hanami_blossom_shim_reason_t shim_reason = HANAMI_SHIM_REASON_UNKNOWN;
+    blossom_shim_reason_t shim_reason = BLOSSOM_SHIM_REASON_UNKNOWN;
     char shim_reason_url[256] = {0};
-    bool push_shim_on = hanami_blossom_shim_active_for_ex(
+    bool push_shim_on = blossom_shim_active_for_ex(
         server_urls, a.n_blossom_servers,
         &shim_reason, shim_reason_url, sizeof shim_reason_url);
     switch (shim_reason) {
-    case HANAMI_SHIM_REASON_ENV_FORCE_ON:
+    case BLOSSOM_SHIM_REASON_ENV_FORCE_ON:
         fprintf(stderr,
                 "push: shim=on (forced by NOSTR_HOMED_BLOSSOM_PNG_SHIM=1)\n");
         break;
-    case HANAMI_SHIM_REASON_ENV_FORCE_OFF:
+    case BLOSSOM_SHIM_REASON_ENV_FORCE_OFF:
         fprintf(stderr,
                 "push: shim=off (forced by NOSTR_HOMED_BLOSSOM_PNG_SHIM=0)\n");
         break;
-    case HANAMI_SHIM_REASON_AUTO_REQUIRED:
+    case BLOSSOM_SHIM_REASON_AUTO_REQUIRED:
         fprintf(stderr,
                 "push: shim=on (auto: %s requires it — raw_random_ok=no, png_shim_ok=yes)\n",
                 shim_reason_url[0] ? shim_reason_url : "(server)");
         break;
-    case HANAMI_SHIM_REASON_AUTO_RAW_OK:
+    case BLOSSOM_SHIM_REASON_AUTO_RAW_OK:
         fprintf(stderr,
                 "push: shim=off (auto: all %zu servers accept raw bytes)\n",
                 a.n_blossom_servers);
         break;
-    case HANAMI_SHIM_REASON_AUTO_FALLBACK:
+    case BLOSSOM_SHIM_REASON_AUTO_FALLBACK:
     default:
         fprintf(stderr, "push: shim=%s (auto: fallback — capabilities unknown)\n",
                 push_shim_on ? "on" : "off");
@@ -1359,7 +1359,7 @@ static int cmd_push(int argc, char **argv) {
                      * whatever address the uploader ultimately PUTs on
                      * Blossom. */
                     uint8_t shim_addr[32];
-                    if (hanami_blossom_shim_sha256(ct, ctl, shim_addr) != HANAMI_OK) {
+                    if (blossom_shim_sha256(ct, ctl, shim_addr) != BLOSSOM_OK) {
                         free(ct); per_file_rc = NH_PROV_CLI_EXIT_INTERNAL; break;
                     }
                     memcpy(addr, shim_addr, 32);

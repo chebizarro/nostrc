@@ -27,7 +27,7 @@ extern "C" {
 
 /* Forward declarations */
 typedef struct hanami_nostr_ctx hanami_nostr_ctx_t;
-typedef struct hanami_blossom_client hanami_blossom_client_t;
+#include <blossom/client.h>
 
 /**
  * hanami_transport_opts_t:
@@ -36,7 +36,7 @@ typedef struct hanami_blossom_client hanami_blossom_client_t;
  */
 typedef struct {
     hanami_nostr_ctx_t *nostr_ctx;           /**< Nostr context (borrowed) */
-    hanami_blossom_client_t *blossom_client;  /**< Blossom client (borrowed) */
+    blossom_client_t *blossom_client;  /**< Blossom client (borrowed) */
 } hanami_transport_opts_t;
 
 /**

@@ -48,7 +48,7 @@
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_provision.h"
 
-#include <hanami/hanami-blossom-shim.h>
+#include <blossom/shim.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -298,16 +298,16 @@ static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
 
     /* PNG-shim detection (nostrc-bpum): if the pusher shimmed this blob
      * to bypass a body-sniffing Blossom server, the downloaded bytes
-     * begin with the deterministic PNG shim (hanami-blossom-shim.h).
-     * Strip HANAMI_BLOSSOM_PNG_SHIM_LEN bytes off the front and shift
+     * begin with the deterministic PNG shim (blossom/shim.h).
+     * Strip BLOSSOM_PNG_SHIM_LEN bytes off the front and shift
      * the ciphertext down. Detection is unambiguous because porthome
      * D4 ciphertext always begins with 0x01; a shimmed blob begins
      * with 0x89 (PNG signature). The downstream AEAD tag check is the
      * belt-and-braces guard against a false-positive detect. */
-    if (hanami_blossom_shim_detect(buf, len)) {
+    if (blossom_shim_detect(buf, len)) {
         const uint8_t *tail = NULL;
         size_t         tail_len = 0;
-        if (hanami_blossom_shim_strip(buf, len, &tail, &tail_len) != HANAMI_OK) {
+        if (blossom_shim_unwrap(buf, len, &tail, &tail_len) != BLOSSOM_OK) {
             free(buf);
             return -1;
         }
@@ -439,7 +439,7 @@ static int host_all_addrs_public(const char *host) {
 /* Pre-resolve every Blossom server host from the control payload;
  * refuse the whole run if ANY host resolves to a private / link-local
  * / loopback address. This is a syntactic + name-resolution SSRF gate
- * BEFORE libhanami-blossom opens its libcurl handle. Returns 0 iff
+ * BEFORE libblossom opens its libcurl handle. Returns 0 iff
  * all hosts passed. */
 static int ssrf_precheck_servers(const nh_porthome_fetch_ctl *c) {
     for (size_t i = 0; i < c->blossom_servers_count; i++) {

@@ -5,6 +5,6 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: hanami
 Description: Blossom filesystem extension and tools for libgit2
 Version: @HANAMI_PKG_VERSION@
-Requires: libgit2 bud02
+Requires: blossom libgit2
 Libs: -L${libdir} -lhanami
 Cflags: -I${includedir}

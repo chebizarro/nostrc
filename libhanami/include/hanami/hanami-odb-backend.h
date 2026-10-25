@@ -25,7 +25,7 @@ extern "C" {
 
 /* Forward declarations for internal types */
 typedef struct hanami_index hanami_index_t;
-typedef struct hanami_blossom_client hanami_blossom_client_t;
+#include <blossom/client.h>
 
 /**
  * hanami_odb_backend_opts_t:
@@ -36,7 +36,7 @@ typedef struct {
     hanami_index_t *index;
 
     /** Blossom HTTP client (required, borrowed — caller owns lifetime) */
-    hanami_blossom_client_t *client;
+    blossom_client_t *client;
 
     /** Verify content hash on read (default: true) */
     bool verify_on_read;

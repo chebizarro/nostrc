@@ -19,13 +19,14 @@ files already declare a version.
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
-| nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
+| nostr-homed | `gnome/nostr-homed/` | 0.3.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | Grotto (Preview) | `apps/grotto/` | 0.1.0 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.2.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libblossom | `libblossom/` | 0.1.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
@@ -33,6 +34,28 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-er4fz.3 (R2): new libblossom starts at 0.1.0. libhanami's
+  MINOR-class 0.x ABI/build extraction folds into its still-unreleased 0.2.0
+  from R1 (no second increment). The old Blossom client/shim/capability
+  headers and hanami_* aliases are removed outright; callers use
+  <blossom/*.h> and blossom_* directly. Exported Blossom symbols now
+  belong to libblossom. Rebuild consumers and
+  link `nostrc::blossom` / `blossom.pc`. nostr-homed takes MINOR 0.3.0,
+  superseding its unreleased 0.2.2 patch: the obsolete `nostr_blossom.h`
+  file API and kind-27235 upload path are removed; the porthome adapter uses
+  neutral Blossom types without a transitive libgit2 include. BUD-02 only,
+  probe-selected shimming (retired shim environment override), HTTPS/SSRF
+  and bounded/hash-verified bodies now apply to every migrated consumer.
+  nostr-share: no additional bump for the mechanical direct-libblossom
+  source/build migration; its Git path still uses libhanami. R4 owns the
+  later GnBlossomClient migration. No release tags or latest-release
+  columns change.
+
+- nostrc-2age4: bud02's pkg-config dependency name is corrected from
+  libnostr to the installed nostr.pc name. Packaging correction folded
+  into the still-unreleased initial 0.1.0; no public codec change or
+  additional version increment.
 
 - nostrc-er4fz.2 (R1): libhanami 0.1.0 -> 0.2.0 (MINOR for a breaking
   0.x public API/build change). BUD-02 auth moves to `nips/bud02`, with

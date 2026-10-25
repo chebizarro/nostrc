@@ -6,6 +6,7 @@
 
 #include "nh_porthome_blossom.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define FAIL(...) do { fprintf(stderr, "FAIL: " __VA_ARGS__); fprintf(stderr, "\n"); return 1; } while (0)

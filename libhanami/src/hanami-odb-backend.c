@@ -6,7 +6,7 @@
 
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-index.h"
-#include "hanami/hanami-blossom-client.h"
+#include <blossom/client.h>
 
 #include <git2/odb.h>
 #include <git2/oid.h>
@@ -24,7 +24,7 @@
 typedef struct {
     git_odb_backend parent;     /* Must be first — libgit2 casts to this */
     hanami_index_t *index;      /* Borrowed */
-    hanami_blossom_client_t *client; /* Borrowed */
+    blossom_client_t *client; /* Borrowed */
     bool verify_on_read;
 } hanami_odb_blossom_t;
 
@@ -59,21 +59,12 @@ static int blossom_odb_read(void **data_p, size_t *len_p, git_object_t *type_p,
     /* Fetch from Blossom */
     uint8_t *raw_data = NULL;
     size_t raw_len = 0;
-    err = hanami_blossom_get(be->client, entry.blossom_hash, &raw_data, &raw_len);
+    err = blossom_client_get_content(be->client, entry.blossom_hash, &raw_data, &raw_len);
     if (err != HANAMI_OK) {
         return (err == HANAMI_ERR_NOT_FOUND) ? GIT_ENOTFOUND : -1;
     }
 
-    /* Optional: verify content hash */
-    if (be->verify_on_read) {
-        char verify_hash[65];
-        if (hanami_hash_blossom(raw_data, raw_len, verify_hash) == HANAMI_OK) {
-            if (strcmp(verify_hash, entry.blossom_hash) != 0) {
-                free(raw_data);
-                return -1; /* Hash mismatch — data corruption */
-            }
-        }
-    }
+    /* libblossom verifies the wire address before returning content. */
 
     /* Allocate libgit2-managed buffer and copy data */
     void *odb_buf = git_odb_backend_data_alloc(_backend, raw_len);
@@ -124,12 +115,12 @@ static int blossom_odb_write(git_odb_backend *_backend, const git_oid *oid,
 
     /* Compute Blossom hash (SHA-256 of raw content) */
     char blossom_hash[65];
-    hanami_error_t err = hanami_hash_blossom(data, len, blossom_hash);
+    hanami_error_t err = blossom_client_address(be->client, data, len, blossom_hash);
     if (err != HANAMI_OK)
         return -1;
 
     /* Upload to Blossom */
-    err = hanami_blossom_upload(be->client, (const uint8_t *)data, len,
+    err = blossom_client_put(be->client, (const uint8_t *)data, len,
                                 blossom_hash, NULL);
     if (err != HANAMI_OK)
         return -1;

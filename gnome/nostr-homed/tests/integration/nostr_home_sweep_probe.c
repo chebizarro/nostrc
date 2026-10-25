@@ -28,8 +28,8 @@
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_blossom.h"
 #include "nh_syncd_cache.h"
-#include <hanami/hanami-blossom-client.h>
-#include <hanami/hanami-types.h>
+#include <blossom/client.h>
+#include <blossom/types.h>
 
 #include "nostr-event.h"
 #include "nostr-keys.h"
@@ -46,26 +46,26 @@
 
 /* ---- BUD-02 signer (same shape as nostr_home_publisher.c) ---- */
 typedef struct { const char *nsec_hex; } nsec_ctx;
-static hanami_error_t nsec_sign(const char *evt_json, char **out, void *ud) {
-    if (!evt_json || !out || !ud) return HANAMI_ERR_INVALID_ARG;
+static blossom_error_t nsec_sign(const char *evt_json, char **out, void *ud) {
+    if (!evt_json || !out || !ud) return BLOSSOM_ERR_INVALID_ARG;
     nsec_ctx *c = (nsec_ctx *)ud;
     NostrEvent *e = nostr_event_new();
-    if (!e) return HANAMI_ERR_NOMEM;
+    if (!e) return BLOSSOM_ERR_NOMEM;
     NostrEventValidationStatus vs =
         nostr_event_deserialize_unsigned(e, evt_json, NULL);
     if (vs != NOSTR_EVENT_VALIDATION_OK) {
-        nostr_event_free(e); return HANAMI_ERR_INVALID_ARG;
+        nostr_event_free(e); return BLOSSOM_ERR_INVALID_ARG;
     }
     if (nostr_event_sign(e, c->nsec_hex) != 0) {
-        nostr_event_free(e); return HANAMI_ERR_INVALID_ARG;
+        nostr_event_free(e); return BLOSSOM_ERR_INVALID_ARG;
     }
     char *s = nostr_event_serialize_compact(e);
     nostr_event_free(e);
-    if (!s) return HANAMI_ERR_NOMEM;
+    if (!s) return BLOSSOM_ERR_NOMEM;
     *out = s;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
-static char g_pk_hex[65]; static nsec_ctx g_sctx; static hanami_signer_t g_signer;
+static char g_pk_hex[65]; static nsec_ctx g_sctx; static blossom_signer_t g_signer;
 static int install_signer(const char *nsec_hex) {
     char *pk = nostr_key_get_public(nsec_hex);
     if (!pk) return -1;
@@ -236,16 +236,18 @@ static void notify_cb(void *ud, size_t dropped, size_t reup, const char *summary
 
 /* ---- BUD-02 delete against a real blossom via libhanami ---- */
 static int delete_blob(const char *server, const char *sha256_hex) {
-    hanami_blossom_client_opts_t opts = {
+    const char *local = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    blossom_client_opts_t opts = {
+        .allow_insecure = local && !strcmp(local, "1"),
         .endpoint = server,
         .timeout_seconds = 30,
         .user_agent = "nostr-home-sweep-probe/0.1",
     };
-    hanami_blossom_client_t *c = NULL;
-    if (hanami_blossom_client_new(&opts, &g_signer, &c) != HANAMI_OK) return -1;
-    hanami_error_t rc = hanami_blossom_delete(c, sha256_hex);
-    hanami_blossom_client_free(c);
-    return (rc == HANAMI_OK) ? 0 : -1;
+    blossom_client_t *c = NULL;
+    if (blossom_client_new(&opts, &g_signer, &c) != BLOSSOM_OK) return -1;
+    blossom_error_t rc = blossom_client_delete(c, sha256_hex);
+    blossom_client_free(c);
+    return (rc == BLOSSOM_OK) ? 0 : -1;
 }
 
 /* ---- collect a couple of hashes from the just-written snapshot ---- */

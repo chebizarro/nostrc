@@ -14,7 +14,7 @@
 #include "hanami/hanami.h"
 #include "hanami/hanami-config.h"
 #include "hanami/hanami-index.h"
-#include "hanami/hanami-blossom-client.h"
+#include <blossom/client.h>
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-refdb-backend.h"
 #include "hanami/hanami-nostr.h"
@@ -93,13 +93,13 @@ static void test_index_odb_interop(void)
     assert(hanami_index_open(&index, ":memory:", NULL) == HANAMI_OK);
 
     /* Create a Blossom client (won't make real requests) */
-    hanami_blossom_client_opts_t blossom_opts = {
+    blossom_client_opts_t blossom_opts = {
         .endpoint = "https://blossom.example.com",
         .timeout_seconds = 1,
         .user_agent = "test"
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&blossom_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&blossom_opts, NULL, &client) == HANAMI_OK);
 
     /* Create ODB backend */
     hanami_odb_backend_opts_t odb_opts = {
@@ -142,7 +142,7 @@ static void test_index_odb_interop(void)
     assert(odb_be->exists(odb_be, &missing) == 0);
 
     odb_be->free(odb_be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(index);
 }
 
@@ -295,13 +295,13 @@ static void test_config_to_components(void)
     assert(hanami_config_get_verify_on_read(config) == false);
 
     /* Create Blossom client using config endpoint */
-    hanami_blossom_client_opts_t blossom_opts = {
+    blossom_client_opts_t blossom_opts = {
         .endpoint = hanami_config_get_endpoint(config),
         .timeout_seconds = 5,
         .user_agent = "test"
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&blossom_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&blossom_opts, NULL, &client) == HANAMI_OK);
 
     /* Create Nostr context using config relays */
     const char *const *cfg_relays = hanami_config_get_relays(config);
@@ -309,7 +309,7 @@ static void test_config_to_components(void)
     assert(hanami_nostr_ctx_new(cfg_relays, &test_signer, &nostr_ctx) == HANAMI_OK);
 
     hanami_nostr_ctx_free(nostr_ctx);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_config_free(config);
 }
 
@@ -332,12 +332,12 @@ static void test_transport_url_to_repo(void)
     assert(strcmp(repo_id, "my-cool-repo") == 0);
 
     /* Use parsed values to create components */
-    hanami_blossom_client_opts_t opts = {
+    blossom_client_opts_t opts = {
         .endpoint = endpoint,
         .timeout_seconds = 5
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&opts, &test_signer, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&opts, &test_signer, &client) == HANAMI_OK);
 
     const char *relays[] = { "wss://nos.lol", NULL };
     hanami_nostr_ctx_t *ctx = NULL;
@@ -353,7 +353,7 @@ static void test_transport_url_to_repo(void)
 
     refdb_be->free(refdb_be);
     hanami_nostr_ctx_free(ctx);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     free(endpoint);
     free(owner);
     free(repo_id);

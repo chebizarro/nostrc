@@ -122,7 +122,7 @@ static void test_config_null(void)
 static void test_blob_descriptor_free_null(void)
 {
     /* Should not crash */
-    hanami_blob_descriptor_free(NULL);
+    blossom_blob_descriptor_free(NULL);
 }
 
 static void test_odb_backend_null_out(void)

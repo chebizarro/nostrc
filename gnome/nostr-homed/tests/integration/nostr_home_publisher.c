@@ -40,7 +40,7 @@
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_blossom.h"
-#include <hanami/hanami-types.h>
+#include <blossom/types.h>
 
 #include "nostr-event.h"
 #include "nostr-relay.h"
@@ -68,35 +68,35 @@ typedef struct nsec_signer_ctx {
     const char *nsec_hex;
 } nsec_signer_ctx;
 
-static hanami_error_t nsec_sign(const char *event_json,
+static blossom_error_t nsec_sign(const char *event_json,
                                 char **out_signed_json,
                                 void *user_data) {
-    if (!event_json || !out_signed_json || !user_data) return HANAMI_ERR_INVALID_ARG;
+    if (!event_json || !out_signed_json || !user_data) return BLOSSOM_ERR_INVALID_ARG;
     *out_signed_json = NULL;
     nsec_signer_ctx *ctx = (nsec_signer_ctx *)user_data;
     NostrEvent *e = nostr_event_new();
-    if (!e) return HANAMI_ERR_NOMEM;
+    if (!e) return BLOSSOM_ERR_NOMEM;
     /* deserialize_unsigned accepts events without id/sig — exactly what
      * nostr_bud02_create_auth_event hands us through the hanami client. */
     NostrEventValidationStatus vs = nostr_event_deserialize_unsigned(e, event_json, NULL);
     if (vs != NOSTR_EVENT_VALIDATION_OK) {
         nostr_event_free(e);
-        return HANAMI_ERR_INVALID_ARG;
+        return BLOSSOM_ERR_INVALID_ARG;
     }
     if (nostr_event_sign(e, ctx->nsec_hex) != 0) {
         nostr_event_free(e);
-        return HANAMI_ERR_INVALID_ARG;
+        return BLOSSOM_ERR_INVALID_ARG;
     }
     char *out = nostr_event_serialize_compact(e);
     nostr_event_free(e);
-    if (!out) return HANAMI_ERR_NOMEM;
+    if (!out) return BLOSSOM_ERR_NOMEM;
     *out_signed_json = out;
-    return HANAMI_OK;
+    return BLOSSOM_OK;
 }
 
 static char g_signer_pubkey_hex[65];
 static nsec_signer_ctx g_signer_ctx;
-static hanami_signer_t g_test_signer;
+static blossom_signer_t g_test_signer;
 
 static void install_signer(const char *nsec_hex) {
     char *pk = nostr_key_get_public(nsec_hex);

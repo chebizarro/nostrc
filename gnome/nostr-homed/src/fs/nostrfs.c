@@ -8,7 +8,7 @@
 #include <sys/stat.h>
 #include "nostr_manifest.h"
 #include "nostr_cache.h"
-#include "nostr_blossom.h"
+#include "nostrfs-blossom.h"
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -76,6 +76,7 @@ static void persist_manifest_ns(nostrfs_ctx *ctx, const char *dump){
   ctx->pub_gen++;
 }
 
+static int blossom_upload_file(const char *, const char *, char **);
 static void *upload_worker(void *arg){
   nostrfs_ctx *ctx = (nostrfs_ctx*)arg;
   if (!ctx || !ctx->upload_q) return NULL;
@@ -89,7 +90,7 @@ static void *upload_worker(void *arg){
       free(ur->base_url); free(ur); continue;
     }
     char *cid = NULL;
-    int rc = nh_blossom_upload(ur->base_url ? ur->base_url : "https://blossom.example.org", ur->tmp_path, &cid);
+    int rc = blossom_upload_file(ur->base_url ? ur->base_url : "https://blossom.example.org", ur->tmp_path, &cid);
     res->rc = rc; res->cid = cid;
     if (ur->reply){ (void)go_channel_send(ur->reply, res); }
     else { if (cid) free(cid); free(res); }
@@ -248,6 +249,26 @@ static int dbus_sign_event(NostrEvent *tmpl, NostrEvent **out_signed){
   if (rc != 0){ if (signed_ev) nostr_event_free(signed_ev); return -1; }
   *out_signed = signed_ev;
   return 0;
+}
+
+static blossom_error_t blossom_sign_json(const char *json, char **out, void *unused) {
+  (void)unused; *out = NULL;
+  NostrEvent *tmpl = nostr_event_new(), *signed_ev = NULL;
+  if (!tmpl) return BLOSSOM_ERR_NOMEM;
+  int ok = nostr_event_deserialize_compact(tmpl, json, NULL) == 1 &&
+      dbus_sign_event(tmpl, &signed_ev) == 0;
+  if (ok) *out = nostr_event_serialize_compact(signed_ev);
+  nostr_event_free(tmpl); nostr_event_free(signed_ev);
+  return *out ? BLOSSOM_OK : BLOSSOM_ERR_AUTH;
+}
+static int blossom_upload_file(const char *base, const char *path, char **cid) {
+  char *npub = NULL; char pubkey[65];
+  if (dbus_get_npub(&npub) != 0) return -1;
+  int rc = decode_npub_hex(npub, pubkey);
+  free(npub);
+  if (rc != 0) return -1;
+  blossom_signer_t signer = { .pubkey = pubkey, .sign = blossom_sign_json };
+  return nostrfs_blossom_upload(base, path, &signer, cid);
 }
 
 static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
@@ -827,15 +848,12 @@ static int nfs_read(const char *path, char *buf, size_t size, off_t off, struct 
           /* On-demand fetch from Blossom into CAS, then retry */
           const char *base = getenv("BLOSSOM_BASE_URL");
           if (!base || !*base) base = "https://blossom.example.org";
-          if (nh_blossom_head(base, e->cid) == 0){
+          if (nostrfs_blossom_client_head(base, e->cid) == 0){
             /* Inline CAS fetch (download_worker removed in nostrc-vp09) */
-            int frc = nh_blossom_fetch(base, e->cid, caspath);
+            int frc = nostrfs_blossom_fetch(base, e->cid, caspath);
             if (frc == 0){
-              /* Verify CAS integrity matches CID */
-              char hex[65];
-              if (sha256_file_hex_local(caspath, hex) != 0 || strcmp(hex, e->cid) != 0){
-                unlink(caspath);
-              } else {
+              /* Transport verified the wire CID before decoding into CAS. */
+              {
               int fd2 = open(caspath, O_RDONLY);
               if (fd2 >= 0){
                 if (lseek(fd2, off, SEEK_SET) == (off_t)-1){ close(fd2); return -EIO; }

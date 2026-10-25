@@ -10,7 +10,7 @@
 
 #include "hanami/hanami-transport.h"
 #include "hanami/hanami-nostr.h"
-#include "hanami/hanami-blossom-client.h"
+#include <blossom/client.h>
 
 #include <git2.h>
 #include <git2/sys/transport.h>
@@ -123,7 +123,7 @@ typedef struct {
 
     /* Dependencies (borrowed from global opts) */
     hanami_nostr_ctx_t *nostr_ctx;
-    hanami_blossom_client_t *blossom_client;
+    blossom_client_t *blossom_client;
 
     /* Connection state */
     bool connected;

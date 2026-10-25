@@ -541,11 +541,6 @@
       "cost": "ordinary",
       "ctest_tests": {
         "core.macos.asan": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -553,16 +548,10 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ],
         "core.linux.asan": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -570,7 +559,6 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ]
@@ -13028,11 +13016,6 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "groundhog.linux": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13040,16 +13023,10 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ],
         "grotto.linux": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13057,16 +13034,10 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ],
         "core.linux": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13074,16 +13045,10 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ],
         "grotto.linux.asan_ubsan": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13091,16 +13056,10 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ],
         "groundhog.mdk08": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13108,16 +13067,10 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ],
         "groundhog.mdk011": [
-          "test-hanami-blossom-batch",
-          "test-hanami-blossom-client",
-          "test-hanami-blossom-content-type",
-          "test-hanami-blossom-shim",
-          "test-hanami-blossom-shim-auto",
           "test-hanami-config",
           "test-hanami-grasp",
           "test-hanami-index",
@@ -13125,17 +13078,11 @@
           "test-hanami-nostr",
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
-          "test-hanami-server-capability-probe-shim",
           "test-hanami-transport",
           "test-hanami-types"
         ]
       },
       "build_targets": [
-        "test-hanami-blossom-batch",
-        "test-hanami-blossom-client",
-        "test-hanami-blossom-content-type",
-        "test-hanami-blossom-shim",
-        "test-hanami-blossom-shim-auto",
         "test-hanami-config",
         "test-hanami-grasp",
         "test-hanami-index",
@@ -13143,7 +13090,6 @@
         "test-hanami-nostr",
         "test-hanami-odb-backend",
         "test-hanami-refdb-backend",
-        "test-hanami-server-capability-probe-shim",
         "test-hanami-transport",
         "test-hanami-types"
       ],
@@ -20584,6 +20530,148 @@
       ],
       "requirement": "blocking",
       "runtime_inputs": []
+    },
+    "root.asan.libblossom": {
+      "build_targets": [
+        "blossom-transport-driver",
+        "test-blossom-batch",
+        "test-blossom-client",
+        "test-blossom-content-type",
+        "test-blossom-guards",
+        "test-blossom-server-capability-probe-shim",
+        "test-blossom-shim",
+        "test-blossom-shim-auto"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ],
+        "core.linux.asan": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "libblossom",
+        "libblossom.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "supported.libblossom": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "libblossom",
+        "libblossom.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ],
+        "grotto.linux": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ],
+        "core.linux": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ],
+        "groundhog.mdk08": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ],
+        "groundhog.mdk011": [
+          "test-blossom-batch",
+          "test-blossom-client",
+          "test-blossom-content-type",
+          "test-blossom-guards",
+          "test-blossom-server-capability-probe-shim",
+          "test-blossom-shim",
+          "test-blossom-shim-auto",
+          "test-blossom-transport"
+        ]
+      },
+      "build_targets": [
+        "blossom-transport-driver",
+        "test-blossom-batch",
+        "test-blossom-client",
+        "test-blossom-content-type",
+        "test-blossom-guards",
+        "test-blossom-server-capability-probe-shim",
+        "test-blossom-shim",
+        "test-blossom-shim-auto"
+      ],
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -21227,7 +21315,8 @@
     },
     "gnome.nostr_homed": {
       "depends_on": [
-        "nostr.gobject"
+        "nostr.gobject",
+        "libblossom"
       ],
       "id": "gnome.nostr_homed",
       "owner_paths": [
@@ -21285,7 +21374,9 @@
     "gnome.nostr_share": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
       "depends_on": [
-        "nostr.gobject"
+        "nostr.gobject",
+        "libblossom",
+        "libhanami"
       ],
       "id": "gnome.nostr_share",
       "owner_paths": [
@@ -21640,13 +21731,13 @@
     "libhanami": {
       "depends_on": [
         "libnostr",
-        "bud02"
+        "libblossom"
       ],
       "id": "libhanami",
       "owner_paths": [
         "libhanami"
       ],
-      "rationale": "hanami links nostr and nostrc::bud02 (libhanami/CMakeLists.txt); nip34 test linkage remains check-specific."
+      "rationale": "hanami links nostr and nostrc::blossom; BUD-02 is owned below libblossom. nip34 test linkage remains check-specific."
     },
     "libjson": {
       "depends_on": [],
@@ -23218,7 +23309,7 @@
       "owner_paths": [
         "nips/bud02"
       ],
-      "rationale": "BUD-02 codec PUBLIC-links libnostr; libhanami links nostrc::bud02 through its public header."
+      "rationale": "BUD-02 codec PUBLIC-links libnostr; libblossom and hanami consume its public API."
     },
     "bud02.test_inputs": {
       "depends_on": [],
@@ -23227,6 +23318,24 @@
         "nips/bud02/tests"
       ],
       "rationale": "Codec test-only inputs select the bud02 family, not production consumer tests."
+    },
+    "libblossom": {
+      "id": "libblossom",
+      "depends_on": [
+        "bud02"
+      ],
+      "owner_paths": [
+        "libblossom"
+      ],
+      "rationale": "One no-GLib Blossom client; production consumers depend on its public API."
+    },
+    "libblossom.test_inputs": {
+      "id": "libblossom.test_inputs",
+      "depends_on": [],
+      "owner_paths": [
+        "libblossom/tests"
+      ],
+      "rationale": "Transport test inputs select package checks, not production consumers."
     }
   },
   "path_rules": [
@@ -27838,6 +27947,22 @@
       ],
       "prefix": "nips/bud02/tests",
       "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "libblossom"
+      ],
+      "prefix": "libblossom",
+      "reason": "Extracted Blossom package inputs; reverse impact selects consumers, not prerequisite suites."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "libblossom.test_inputs"
+      ],
+      "prefix": "libblossom/tests",
+      "reason": "Extracted Blossom package inputs; reverse impact selects consumers, not prerequisite suites."
     }
   ],
   "profiles": {

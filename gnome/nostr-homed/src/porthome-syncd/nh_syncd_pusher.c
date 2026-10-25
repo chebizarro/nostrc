@@ -32,8 +32,8 @@
 #include "nh_syncd.h"
 #include "nh_porthome_blossom.h"
 
-#include <hanami/hanami-blossom-shim.h>
-#include <hanami/hanami-types.h>
+#include <blossom/shim.h>
+#include <blossom/types.h>
 
 #include <jansson.h>
 
@@ -227,11 +227,11 @@ static int upload_chunk(const nh_syncd_push_cfg *cfg,
      * same cfg->blossom_servers[] list, so libhanami's URL-keyed cache
      * makes them agree (a probe run on any URL is memoised for the
      * process). The env-var override still wins when set. */
-    bool shim_on = hanami_blossom_shim_active_for(
+    bool shim_on = blossom_shim_active_for(
         cfg->blossom_servers, cfg->n_blossom_servers);
     if (shim_on) {
         uint8_t shim_sha[32];
-        if (hanami_blossom_shim_sha256(ct, ct_len, shim_sha) != HANAMI_OK) {
+        if (blossom_shim_sha256(ct, ct_len, shim_sha) != BLOSSOM_OK) {
             free(ct);
             set_err(err, "shim_sha256 failed");
             return NH_SYNCD_ERR_CRYPTO;

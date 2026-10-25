@@ -9,7 +9,7 @@
  */
 
 #include "hanami/hanami-odb-backend.h"
-#include "hanami/hanami-blossom-client.h"
+#include <blossom/client.h>
 #include "hanami/hanami-index.h"
 
 #include <git2.h>
@@ -68,12 +68,12 @@ static void test_backend_new_success(void)
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
     /* Create a client (won't actually connect) */
-    hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
 
     /* Create backend */
     hanami_odb_backend_opts_t opts = {
@@ -97,7 +97,7 @@ static void test_backend_new_success(void)
 
     /* Free the backend */
     be->free(be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(idx);
     rm_rf(tmp_dir);
 }
@@ -111,12 +111,12 @@ static void test_backend_exists_with_index(void)
     hanami_index_t *idx = NULL;
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
-    hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
 
     hanami_odb_backend_opts_t opts = {
         .index = idx,
@@ -145,7 +145,7 @@ static void test_backend_exists_with_index(void)
     assert(be->exists(be, &oid) == 1);
 
     be->free(be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(idx);
     rm_rf(tmp_dir);
 }
@@ -159,12 +159,12 @@ static void test_backend_read_header_from_index(void)
     hanami_index_t *idx = NULL;
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
-    hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
 
     hanami_odb_backend_opts_t opts = {
         .index = idx,
@@ -200,7 +200,7 @@ static void test_backend_read_header_from_index(void)
     assert(rc == GIT_ENOTFOUND);
 
     be->free(be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(idx);
     rm_rf(tmp_dir);
 }
@@ -214,12 +214,12 @@ static void test_backend_read_not_found(void)
     hanami_index_t *idx = NULL;
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
-    hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
 
     hanami_odb_backend_opts_t opts = {
         .index = idx,
@@ -240,7 +240,7 @@ static void test_backend_read_not_found(void)
     assert(data == NULL);
 
     be->free(be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(idx);
     rm_rf(tmp_dir);
 }
@@ -254,12 +254,12 @@ static void test_backend_exists_prefix_not_supported(void)
     hanami_index_t *idx = NULL;
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
-    hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
 
     hanami_odb_backend_opts_t opts = {
         .index = idx,
@@ -274,7 +274,7 @@ static void test_backend_exists_prefix_not_supported(void)
     assert(be->exists_prefix(&out, be, &prefix, 8) == GIT_ENOTFOUND);
 
     be->free(be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(idx);
     rm_rf(tmp_dir);
 }
@@ -289,12 +289,12 @@ static void test_backend_read_indexed_oid_network_error(void)
     assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
 
     /* Point client to nonexistent endpoint — will fail with network error */
-    hanami_blossom_client_opts_t client_opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1", .allow_insecure = true,
         .timeout_seconds = 1
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
 
     hanami_odb_backend_opts_t opts = {
         .index = idx,
@@ -333,7 +333,7 @@ static void test_backend_read_indexed_oid_network_error(void)
     assert(data == NULL);
 
     be->free(be);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
     hanami_index_close(idx);
     rm_rf(tmp_dir);
 }

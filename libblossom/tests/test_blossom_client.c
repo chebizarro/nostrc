@@ -1,5 +1,5 @@
 /*
- * test_hanami_blossom_client.c - Tests for Blossom HTTP client
+ * test_blossom_client.c - Tests for Blossom HTTP client
  *
  * SPDX-License-Identifier: MIT
  *
@@ -7,8 +7,8 @@
  * and JSON parsing without requiring a live Blossom server.
  */
 
-#include "hanami/hanami-blossom-client.h"
-#include "hanami/hanami-types.h"
+#include "blossom/client.h"
+#include <blossom/types.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,66 +27,66 @@ static int tests_passed = 0;
 
 /* ---- Dummy signer for tests ---- */
 
-static hanami_error_t dummy_sign(const char *event_json,
+static blossom_error_t dummy_sign(const char *event_json,
                                   char **out_signed_json,
                                   void *user_data)
 {
     (void)user_data;
     /* Just return the event JSON unchanged (won't have valid sig) */
     *out_signed_json = strdup(event_json);
-    return *out_signed_json ? HANAMI_OK : HANAMI_ERR_NOMEM;
+    return *out_signed_json ? BLOSSOM_OK : BLOSSOM_ERR_NOMEM;
 }
 
 /* ---- Client lifecycle ---- */
 
 static void test_client_new_basic(void)
 {
-    hanami_blossom_client_opts_t opts = {
+    blossom_client_opts_t opts = {
         .endpoint = "https://blossom.example.com",
         .timeout_seconds = 0,
         .user_agent = NULL
     };
-    hanami_blossom_client_t *client = NULL;
-    hanami_error_t err = hanami_blossom_client_new(&opts, NULL, &client);
-    assert(err == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    blossom_error_t err = blossom_client_new(&opts, NULL, &client);
+    assert(err == BLOSSOM_OK);
     assert(client != NULL);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
 }
 
 static void test_client_new_with_signer(void)
 {
-    hanami_blossom_client_opts_t opts = {
+    blossom_client_opts_t opts = {
         .endpoint = "https://blossom.example.com/",
         .timeout_seconds = 60,
         .user_agent = "test/1.0"
     };
-    hanami_signer_t signer = {
+    blossom_signer_t signer = {
         .pubkey = "aabbccdd",
         .sign = dummy_sign,
         .user_data = NULL
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&opts, &signer, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&opts, &signer, &client) == BLOSSOM_OK);
     assert(client != NULL);
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
 }
 
 static void test_client_new_null_params(void)
 {
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(NULL, NULL, &client) == HANAMI_ERR_INVALID_ARG);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(NULL, NULL, &client) == BLOSSOM_ERR_INVALID_ARG);
 
-    hanami_blossom_client_opts_t opts = { .endpoint = NULL };
-    assert(hanami_blossom_client_new(&opts, NULL, &client) == HANAMI_ERR_INVALID_ARG);
+    blossom_client_opts_t opts = { .endpoint = NULL };
+    assert(blossom_client_new(&opts, NULL, &client) == BLOSSOM_ERR_INVALID_ARG);
 
     opts.endpoint = "https://example.com";
-    assert(hanami_blossom_client_new(&opts, NULL, NULL) == HANAMI_ERR_INVALID_ARG);
+    assert(blossom_client_new(&opts, NULL, NULL) == BLOSSOM_ERR_INVALID_ARG);
 }
 
 static void test_client_free_null(void)
 {
     /* Should not crash */
-    hanami_blossom_client_free(NULL);
+    blossom_client_free(NULL);
 }
 
 /* ---- API null guards ---- */
@@ -97,89 +97,89 @@ static void test_get_null_args(void)
     size_t len = 0;
     bool exists = false;
 
-    assert(hanami_blossom_get(NULL, "abc", &data, &len) == HANAMI_ERR_INVALID_ARG);
-    assert(hanami_blossom_head(NULL, "abc", &exists) == HANAMI_ERR_INVALID_ARG);
+    assert(blossom_client_get(NULL, "abc", &data, &len) == BLOSSOM_ERR_INVALID_ARG);
+    assert(blossom_client_head(NULL, "abc", &exists) == BLOSSOM_ERR_INVALID_ARG);
 }
 
 static void test_upload_requires_signer(void)
 {
-    hanami_blossom_client_opts_t opts = {
+    blossom_client_opts_t opts = {
         .endpoint = "https://blossom.example.com"
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&opts, NULL, &client) == BLOSSOM_OK);
 
     /* Upload without signer should fail with auth error */
     uint8_t data[] = "hello";
-    assert(hanami_blossom_upload(client, data, 5, NULL, NULL) == HANAMI_ERR_AUTH);
+    assert(blossom_client_put(client, data, 5, NULL, NULL) == BLOSSOM_ERR_AUTH);
 
     /* Delete without signer should fail */
-    assert(hanami_blossom_delete(client, "aaaa") == HANAMI_ERR_AUTH);
+    assert(blossom_client_delete(client, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == BLOSSOM_ERR_AUTH);
 
     /* Mirror without signer should fail */
-    assert(hanami_blossom_mirror(client, "https://other.com/blob", NULL) == HANAMI_ERR_AUTH);
+    assert(blossom_client_mirror(client, "https://other.com/blob", NULL) == BLOSSOM_ERR_AUTH);
 
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
 }
 
 static void test_list_null_args(void)
 {
     char *json = NULL;
     size_t len = 0;
-    assert(hanami_blossom_list(NULL, "pk", &json, &len) == HANAMI_ERR_INVALID_ARG);
+    assert(blossom_client_list(NULL, "pk", &json, &len) == BLOSSOM_ERR_INVALID_ARG);
 }
 
 /* ---- Network error handling (connect to localhost with invalid port) ---- */
 
 static void test_get_connection_error(void)
 {
-    hanami_blossom_client_opts_t opts = {
-        .endpoint = "http://127.0.0.1:1",  /* port 1 — should fail to connect */
+    blossom_client_opts_t opts = {
+        .allow_insecure = true, .endpoint = "http://127.0.0.1:1",  /* port 1 — should fail to connect */
         .timeout_seconds = 2
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&opts, NULL, &client) == BLOSSOM_OK);
 
     uint8_t *data = NULL;
     size_t len = 0;
-    hanami_error_t err = hanami_blossom_get(client, "deadbeef", &data, &len);
-    assert(err == HANAMI_ERR_NETWORK || err == HANAMI_ERR_TIMEOUT);
+    blossom_error_t err = blossom_client_get(client, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", &data, &len);
+    assert(err == BLOSSOM_ERR_NETWORK || err == BLOSSOM_ERR_TIMEOUT);
     assert(data == NULL);
 
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
 }
 
 static void test_head_connection_error(void)
 {
-    hanami_blossom_client_opts_t opts = {
-        .endpoint = "http://127.0.0.1:1",
+    blossom_client_opts_t opts = {
+        .allow_insecure = true, .endpoint = "http://127.0.0.1:1",
         .timeout_seconds = 2
     };
-    hanami_blossom_client_t *client = NULL;
-    assert(hanami_blossom_client_new(&opts, NULL, &client) == HANAMI_OK);
+    blossom_client_t *client = NULL;
+    assert(blossom_client_new(&opts, NULL, &client) == BLOSSOM_OK);
 
     bool exists = true;
-    hanami_error_t err = hanami_blossom_head(client, "deadbeef", &exists);
-    assert(err == HANAMI_ERR_NETWORK || err == HANAMI_ERR_TIMEOUT);
+    blossom_error_t err = blossom_client_head(client, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", &exists);
+    assert(err == BLOSSOM_ERR_NETWORK || err == BLOSSOM_ERR_TIMEOUT);
 
-    hanami_blossom_client_free(client);
+    blossom_client_free(client);
 }
 
 /* ---- Blob descriptor ---- */
 
 static void test_blob_descriptor_free_null(void)
 {
-    hanami_blob_descriptor_free(NULL); /* must not crash */
+    blossom_blob_descriptor_free(NULL); /* must not crash */
 }
 
 static void test_blob_descriptor_free(void)
 {
-    hanami_blob_descriptor_t *desc = calloc(1, sizeof(*desc));
+    blossom_blob_descriptor_t *desc = calloc(1, sizeof(*desc));
     assert(desc != NULL);
     strcpy(desc->sha256, "aaaa");
     desc->url = strdup("https://example.com/blob");
     desc->mime_type = strdup("application/octet-stream");
-    hanami_blob_descriptor_free(desc);
+    blossom_blob_descriptor_free(desc);
 }
 
 /* ---- Main ---- */
