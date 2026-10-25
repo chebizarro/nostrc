@@ -90,8 +90,13 @@ class PackageBoundarySelection(unittest.TestCase):
                      "libvault/include/vault/nip59.h", "libvault/tests/test_grant_nip59.c"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
                                base="b" * 40, context="ci")
-            wanted = expected | ({"bindings.rust.consumer"} if "/tests/" not in path else set())
-            self.assertEqual(set(plan["selected_checks"]), wanted)
+            selected = set(plan["selected_checks"])
+            if "/tests/" in path:
+                self.assertEqual(selected, expected)
+            else:
+                self.assertTrue(expected | {"supported.nostr.gobject.vault",
+                                            "bindings.rust.consumer"} <= selected)
+                self.assertFalse({"supported.libporthome", "supported.libblossom"} & selected)
         for name in expected:
             check = self.policy["checks"][name]
             targets = {"test_vault_ring_derivation", "test_vault_revoke_lazy",
@@ -148,6 +153,27 @@ class PackageBoundarySelection(unittest.TestCase):
         self.assertIn("libclang-dev", runner)
         self.assertIn("ref: ${{ inputs.sha || github.sha }}", runner)
         self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', runner)
+
+    def test_gn_vault_wrapper_selection(self):
+        name = "supported.nostr.gobject.vault"
+        check = self.policy["checks"][name]
+        self.assertEqual(check["build_targets"], ["test_nostr_gobject_vault"])
+        self.assertIn("nip59", check["nodes"])
+        for profile in check["profiles"]:
+            self.assertEqual(check["ctest_tests"][profile], ["test_nostr_gobject_vault"])
+        for path in ("nostr-gobject/src/gn-vault.c",
+                     "nostr-gobject/include/nostr-gobject-1.0/gn-vault.h",
+                     "nostr-gobject/tests/test_vault.c", "libvault/src/codec.c"):
+            with self.subTest(path=path):
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertEqual(plan["effective_mode"], "affected")
+                self.assertIn(name, plan["selected_checks"])
+                self.assertNotIn("supported.libporthome", plan["selected_checks"])
+        for path in ("libvault/tests/test_codecs.c", "libhanami/src/hanami.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                               base="b" * 40, context="ci")
+            self.assertNotIn(name, plan["selected_checks"])
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],

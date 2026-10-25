@@ -18,6 +18,7 @@
 #include "nostr-enums.h"
 
 #include "gn-blossom-client.h"
+#include "gn-vault.h"
 
 /* Core GObject wrappers (G-prefixed, no core header conflicts) */
 #include "nostr_event.h"

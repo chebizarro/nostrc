@@ -1,5 +1,5 @@
 project('nostr-gobject', 'c',
-  version: '2.3.0',
+  version: '2.4.0',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [
@@ -167,6 +167,7 @@ signer_proxy = gnome.gdbus_codegen('signer_proxy',
 # ── Source files ─────────────────────────────────────────────────────
 nostr_gobject_sources = files(
   'src/gn-blossom-client.c',
+  'src/gn-vault.c',
   'src/nostr-error.c',
   'src/nostr-enums.c',
   'src/nostr_event.c',
@@ -212,6 +213,7 @@ nostr_gobject_sources = files(
 # Header files (public API)
 nostr_gobject_headers = files(
   'include/nostr-gobject-1.0/gn-blossom-client.h',
+  'include/nostr-gobject-1.0/gn-vault.h',
   'include/nostr-gobject-1.0/nostr-gobject.h',
   'include/nostr-gobject-1.0/nostr-error.h',
   'include/nostr-gobject-1.0/nostr-types.h',
@@ -270,8 +272,10 @@ nostr_gobject_ndb_inc = include_directories(
 
 # Collect all dependencies
 blossom_dep = dependency('blossom', version: '>= 0.2.0')
+vault_dep = dependency('vault', version: '>= 0.1.0')
 nostr_gobject_deps = [
   blossom_dep,
+  vault_dep,
   glib_dep,
   gobject_dep,
   gio_dep,
@@ -314,7 +318,7 @@ nostr_gobject_lib = library('nostr-gobject-1.0',
 nostr_gobject_dep = declare_dependency(
   link_with: nostr_gobject_lib,
   include_directories: nostr_gobject_pub_inc,
-  dependencies: [glib_dep, gobject_dep, gio_dep])
+  dependencies: [glib_dep, gobject_dep, gio_dep, vault_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────
 if get_option('introspection')
@@ -341,7 +345,7 @@ pkg = import('pkgconfig')
 pkg.generate(nostr_gobject_lib,
   name: 'nostr-gobject-1.0',
   description: 'GObject wrapper for libnostr — Nostr protocol library',
-  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'blossom >= 0.2.0'],
+  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'blossom >= 0.2.0', 'vault >= 0.1.0'],
   requires_private: ['openssl', 'libsecp256k1'])
 
 # ── Header installation ──────────────────────────────────────────────
@@ -368,6 +372,10 @@ if get_option('tests')
     include_directories: nostr_gobject_pub_inc)
 
   test('nip19', test_nip19, env: test_env)
+
+  test_vault = executable('test_vault', 'tests/test_vault.c',
+    dependencies: [nostr_gobject_dep, libnostr_dep, libnostr_json_dep])
+  test('nostr-gobject:vault', test_vault, env: test_env, timeout: 30)
 
   test_blossom = executable('test_blossom_client', 'tests/test_blossom_client.c',
     dependencies: [nostr_gobject_dep, libnostr_dep, dependency('bud02'), dependency('libsoup-3.0')])

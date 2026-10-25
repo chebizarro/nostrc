@@ -7,6 +7,10 @@ if(TEST "test_nostr_gobject_blossom")
   nostrc_add_test_owners("test_nostr_gobject_blossom" OWNER libblossom bud02)
 endif()
 
+if(TEST "test_nostr_gobject_vault")
+  nostrc_add_test_owners("test_nostr_gobject_vault" OWNER libvault libporthome libblossom nip59)
+endif()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "test_nostr_gobject_event")
   nostrc_add_test_owners("test_nostr_gobject_event" OWNER nip06 nip11 nip46 nip49 nip55l relayd)

@@ -1942,6 +1942,26 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "supported.nostr.gobject.vault": {
+      "build_targets": ["test_nostr_gobject_vault"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": ["test_nostr_gobject_vault"],
+        "core.linux.asan": ["test_nostr_gobject_vault"],
+        "groundhog.linux": ["test_nostr_gobject_vault"],
+        "grotto.linux": ["test_nostr_gobject_vault"],
+        "core.linux": ["test_nostr_gobject_vault"],
+        "grotto.linux.asan_ubsan": ["test_nostr_gobject_vault"],
+        "groundhog.mdk08": ["test_nostr_gobject_vault"],
+        "groundhog.mdk011": ["test_nostr_gobject_vault"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["nostr.gobject", "libvault", "libporthome", "libblossom", "nip59"],
+      "profiles": ["core.macos.asan", "core.linux.asan", "groundhog.linux", "grotto.linux", "core.linux", "grotto.linux.asan_ubsan", "groundhog.mdk08", "groundhog.mdk011"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.nostr.gobject": {
       "build_targets": [],
       "cost": "ordinary",
@@ -23008,6 +23028,7 @@
     },
     "nostr.gobject": {
       "depends_on": [
+        "libvault",
         "libblossom",
         "libnostr",
         "libjson",
@@ -23025,7 +23046,7 @@
       "owner_paths": [
         "nostr-gobject"
       ],
-      "rationale": "NIP archive family in nostr-gobject/CMakeLists.txt's guarded target loop; root nostrc_link_archives forwards shared-runtime archives to executable consumers. Optional absent targets may overselect; test inputs remain check-local."
+      "rationale": "Required libvault/GnVault and libblossom/GnBlossomClient adapters plus NIP archive family in nostr-gobject/CMakeLists.txt's guarded target loop; root nostrc_link_archives forwards shared-runtime archives to executable consumers. Optional absent targets may overselect; test inputs remain check-local."
     },
     "nostr.gtk.portable": {
       "depends_on": [
