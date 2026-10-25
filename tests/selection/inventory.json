@@ -20714,11 +20714,11 @@
       "runtime_inputs": []
     },
     "root.asan.libvault": {
-      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
-        "core.linux.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"]
+        "core.macos.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+        "core.linux.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
@@ -20728,15 +20728,15 @@
       "runtime_inputs": []
     },
     "supported.libvault": {
-      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
-        "grotto.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
-        "grotto.linux.asan_ubsan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
-        "groundhog.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
-        "groundhog.mdk011": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
-        "groundhog.mdk08": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"]
+        "core.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+        "grotto.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+        "grotto.linux.asan_ubsan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+        "groundhog.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+        "groundhog.mdk011": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
+        "groundhog.mdk08": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
@@ -23549,7 +23549,7 @@
     },
     "libvault": {
       "id": "libvault",
-      "depends_on": ["libporthome", "libblossom", "libnostr", "nip44"],
+      "depends_on": ["libporthome", "libblossom", "libnostr", "nip44", "nip59"],
       "owner_paths": ["libvault"],
       "rationale": "Layer-5 shared-vault policy/codecs; no GLib, Git or MLS dependency."
     },
@@ -29842,6 +29842,12 @@
           "pattern": "#define SIGNETCTL_VERSION \"([0-9.]+)\""
         }
       ]
+    },
+    "nip59": {
+      "manifest_name": "nip59 (NIP-59 gift-wrap core)",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [{"join": ".", "path": "nips/nip59/CMakeLists.txt", "pattern": "project\\(nip59\\s+VERSION\\s+(\\d+)\\.(\\d+)\\.(\\d+)\\s+LANGUAGES\\s+C\\)"}]
     },
     "libvault": {
       "manifest_name": "libvault",

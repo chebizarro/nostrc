@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+Name: nip59
+Description: Nostr NIP-59 gift-wrap core
+Version: @nip59_VERSION@
+Requires.private: nostr openssl
+Libs: -L${libdir} -lnostr_nip59_core
+Libs.private: -lnostr_nip44_core
+Cflags: -I${includedir}

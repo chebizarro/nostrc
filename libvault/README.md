@@ -1,12 +1,13 @@
-# libvault (experimental, 0.1.0)
+# libvault (experimental, 0.2.0)
 
 Layer-5 shared-vault policy over libporthome. Public API: `<vault/vault.h>`;
 in-tree target: `nostrc::vault`. Installed consumers use
 `find_package(nostrc REQUIRED COMPONENTS vault)` or
 `pkg-config --static --cflags --libs vault`. Dependencies are libporthome,
-libblossom, libnostr/NIP-44 and OpenSSL, with no GLib or libmarmot requirement.
+libblossom, libnostr/NIP-44/NIP-59 and OpenSSL, with no GLib or libmarmot requirement.
 For a GLib-free closure configure libnostr with `NOSTR_WITH_GLIB=OFF`.
-Enable `BUILD_LIBVAULT`, `BUILD_LIBPORTHOME`, `BUILD_LIBBLOSSOM`, `ENABLE_NIP44`.
+Enable `BUILD_LIBVAULT`, `BUILD_LIBPORTHOME`, `BUILD_LIBBLOSSOM`, `ENABLE_NIP44`
+and `ENABLE_NIP59`.
 Standalone configuration uses the installed dependency prefix through
 `CMAKE_PREFIX_PATH` and `PKG_CONFIG_PATH`.
 
@@ -102,9 +103,9 @@ bare. Raw encoded bodies contain keys: wipe before freeing. Use
 `vault_grant_carrier` is only a send/receive callback interface. Receive must
 supply an authenticated carrier sender, which is checked against the grant owner;
 a JSON author echo is not authentication. Callback errors propagate without
-retry. SV-4 implements the NIP-59 carrier; the separate Marmot adapter implements
-MLS exporter/group delivery. Neither carrier, preference discovery nor relay I/O
-is implemented here.
+retry. The NIP-59 adapter is described below; a separate Marmot adapter supplies
+MLS exporter/group delivery. Carrier preference discovery and relay I/O remain
+caller responsibilities.
 
 The kind-10319 service-list plaintext is
 `{"vault-relay":[...],"vault-blossom":[...]}`. It is NIP-44 self-encrypted under
@@ -121,6 +122,43 @@ capability; the probe wrapper invokes the actual libblossom probe/cache.
 Advertisements classify a service; they do not prove enforcement, existence
 hiding or allowlist behavior. Missing/ambiguous data never promotes to private.
 
+## NIP-59 fallback carrier
+
+`<vault/nip59.h>` adds an opaque adapter without changing `vault.h`. Explicitly
+construct it with an identity secret key and borrowed transport callbacks; the
+adapter copies and wipes its own key. Access its `vault_grant_carrier` through
+`vault_nip59_carrier_interface`, then call the existing grant send/receive APIs.
+Only configured directions can be used. No background I/O, carrier selection or
+implicit enablement occurs during setup. Per D11 the caller must prefer Marmot
+when the recipient has a kind-443 key package on the vault relays; discovery and
+that choice are not performed by this explicitly selected fallback.
+
+Send requires that identity to be the grant owner, NIP-44-encrypts the unsigned
+rumor to the recipient in a signed kind-13 seal with empty tags, then uses the
+actual nips/nip59 implementation to create a one-time-key signed kind-1059 wrap.
+Both outer timestamps are independently randomized into the past. Only that
+outer wrap reaches the transport. Receive checks the unique recipient p tag,
+outer signature/id, signed kind-13 seal and empty tags, then decrypts and strictly
+parses an unsigned rumor. The authenticated sender is the **seal author**, never
+the ephemeral outer author or an echoed JSON owner. Owner/rumor author/seal author
+must agree. Bare wrapped rumors, signed rumors, invalid signatures, mismatched
+recipients, duplicate p tags and malformed plaintext are refused with no output.
+
+Transport `publish` success must mean relay OK acceptance, not just a websocket
+send. `receive` returns an owned event, including when returning an error; the
+adapter disposes it. AGAIN denotes no available event. Transport errors propagate
+without automatic retries, including uncertain publishes. The caller owns normal
+AUTH/OK/CLOSED/EOSE handling, subscriptions, persistence and event-id deduplication.
+The adapter does not publish anything except through that explicit callback.
+Each nested NIP-44 plaintext must fit 65535 bytes; the outer seal serialization
+makes the fallback's maximum grant smaller than the raw grant codec limit.
+This fallback has no forward secrecy against identity-key compromise.
+
+The installed nip59 static archive/pc reuses its existing OBJECT implementation,
+which remains available to existing in-tree consumers. This provides an installed
+private dependency for libvault without source/build-tree path references.
+Protocol: [NIP-59](https://github.com/nostr-protocol/nips/blob/master/59.md).
+
 ## Focused tests
 
 `test_vault_ring_derivation`, `test_vault_revoke_lazy`, and
@@ -128,4 +166,8 @@ hiding or allowlist behavior. Missing/ambiguous data never promotes to private.
 `test_vault_codecs` covers strict codecs, self-encrypted 10319 events, the carrier
 contract, NIP-11 classification and a bounded local HTTP server exercising the
 actual libblossom private-capability probe. That fixture is not live VSP-01 or
-NIP-59/Marmot acceptance. The implementation remains experimental.
+Marmot acceptance. `test_vault_grant_nip59` uses the actual NIP-59/NIP-44 and
+signing/parsing APIs through recording transport callbacks: both read/write
+multi-epoch bodies round-trip exactly, hostile envelopes fail closed, and callback
+errors are not retried. It is not live relay or delivery acceptance. The
+implementation remains experimental.

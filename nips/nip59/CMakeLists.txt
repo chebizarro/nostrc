@@ -1,4 +1,4 @@
-project(nip59)
+project(nip59 VERSION 0.1.0 LANGUAGES C)
 
 # Gift-wrap timestamps come from OpenSSL's CSPRNG (RAND_bytes).
 find_package(OpenSSL REQUIRED)
@@ -23,6 +23,23 @@ target_link_libraries(nostr_nip59_core
         nostr_nip44_core
         OpenSSL::Crypto
 )
+
+# Preserve the OBJECT target for existing in-tree callers; installed consumers
+# need a real archive rather than build-tree object paths.
+include(GNUInstallDirs)
+set_target_properties(nostr_nip59_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(nip59 STATIC $<TARGET_OBJECTS:nostr_nip59_core>)
+set_target_properties(nip59 PROPERTIES OUTPUT_NAME nostr_nip59_core)
+target_include_directories(nip59 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(nip59 PUBLIC nostr nostr_nip44_core OpenSSL::Crypto)
+declare_component_version(nip59 ${PROJECT_VERSION_MAJOR} ${PROJECT_VERSION_MINOR} ${PROJECT_VERSION_PATCH})
+set_target_properties(nip59 PROPERTIES COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip59")
+apply_versioning(nip59)
+configure_file(nip59.pc.in nip59.pc @ONLY)
+install(TARGETS nip59 ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nip59.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # Install headers
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr/nip59/

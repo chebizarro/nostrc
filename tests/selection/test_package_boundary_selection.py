@@ -84,14 +84,15 @@ class PackageBoundarySelection(unittest.TestCase):
     def test_vault_inputs_and_downstream_membership(self):
         expected = {"root.asan.libvault", "supported.libvault"}
         for path in ("libvault/src/fold.c", "libvault/include/vault/vault.h",
-                     "libvault/tests/test_revoke_lazy.c"):
+                     "libvault/tests/test_revoke_lazy.c", "libvault/src/nip59.c",
+                     "libvault/include/vault/nip59.h", "libvault/tests/test_grant_nip59.c"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
                                base="b" * 40, context="ci")
             self.assertEqual(set(plan["selected_checks"]), expected)
         for name in expected:
             check = self.policy["checks"][name]
             targets = {"test_vault_ring_derivation", "test_vault_revoke_lazy",
-                       "test_vault_fold_frontier", "test_vault_codecs"}
+                       "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"}
             self.assertEqual(set(check["build_targets"]), targets)
             for profile in check["profiles"]:
                 self.assertEqual(set(check["ctest_tests"][profile]), targets)
@@ -99,6 +100,12 @@ class PackageBoundarySelection(unittest.TestCase):
                            head="a" * 40, base="b" * 40, context="ci")
         self.assertTrue(expected <= set(plan["selected_checks"]))
         self.assertNotIn("supported.libblossom", plan["selected_checks"])
+        for path in ("nips/nip59/src/nip59.c", "nips/nip59/nip59.pc.in"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                               base="b" * 40, context="ci")
+            self.assertEqual(plan["effective_mode"], "affected")
+            self.assertTrue(expected <= set(plan["selected_checks"]))
+            self.assertNotIn("supported.libblossom", plan["selected_checks"])
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
