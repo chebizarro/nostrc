@@ -13,7 +13,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR_JSON 1 0 0)
+declare_component_version(NOSTR_JSON 1 0 1)
 
 # Specify the C standard
 set(CMAKE_C_STANDARD 11)
@@ -26,7 +26,9 @@ pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 # Find libwebsockets via pkg-config to satisfy static libnostr deps
 pkg_check_modules(LWS REQUIRED libwebsockets)
 include_directories(${LWS_INCLUDE_DIRS})
-pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
+if(NOSTR_WITH_GLIB)
+  pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
+endif()
 
 # nsync is resolved centrally by cmake/FindOrVendorNsync.cmake (system or
 # vendored via the third_party/nsync submodule).  Guard so this file works
@@ -86,7 +88,7 @@ target_include_directories(nostr_json PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/inclu
 
 # Link with Jansson, libnostr (types/util), and nsync.
 target_link_directories(nostr_json PRIVATE ${LWS_LIBRARY_DIRS})
-if (GLIB_FOUND)
+if (NOSTR_WITH_GLIB AND GLIB_FOUND)
   target_link_libraries(nostr_json PRIVATE PkgConfig::GLIB)
 endif()
 target_link_libraries(nostr_json PUBLIC PkgConfig::JANSSON)
@@ -121,6 +123,12 @@ function(nostrc_link_json_core)
     target_link_libraries(nostr_json PRIVATE libnostr)
   endif()
 endfunction()
+
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT NOSTR_WITH_GLIB)
+  add_test(NAME json_glib_off_closure
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_glib_off_closure.sh
+      $<TARGET_FILE:nostr_json>)
+endif()
 
 # Install rules for libjson (nostr_json -> libnostr-json)
 include(GNUInstallDirs)

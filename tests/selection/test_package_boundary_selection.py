@@ -269,7 +269,8 @@ class PackageBoundarySelection(unittest.TestCase):
         check = self.policy["checks"][check_name]
         self.assertEqual(set(check["ctest_tests"]["homed.vault.linux"]), {
             "homed_syncd_vault_fs", "homed_syncd_off_closure",
-            "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure"})
+            "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure",
+            "json_glib_off_closure"})
         workflow = (ROOT / ".github/workflows/vault-syncd-ci.yml").read_text()
         self.assertIn("python3 scripts/test-plan.py run", workflow)
         self.assertIn("--profile homed.vault.linux", workflow)

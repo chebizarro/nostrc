@@ -12,6 +12,7 @@ files already declare a version.
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libjson (libnostr-json) | `libjson/` | 1.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.4.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
@@ -43,6 +44,12 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-cu5e7: libjson PATCH 1.0.0 -> 1.0.1 fixes the optional GLib
+  probe/link contract: NOSTR_WITH_GLIB=OFF no longer inherits GLib/GObject
+  from libnostr-json. Sources and public C API are unchanged; GLib-enabled
+  consumers retain the existing link path. Other components have no shipped
+  changes in this fix. No release tags.
 
 - nostrc-hl30i.10 filesystem assembly: nostr-homed MINOR 0.4.0 -> 0.5.0
   adds the opt-in CMake vault assembly boundary and SDK-backed filesystem helpers.

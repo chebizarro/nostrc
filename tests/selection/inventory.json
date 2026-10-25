@@ -57,9 +57,9 @@
       "expected_outcome": "pass",
       "nodes": ["execution.vault_syncd", "gnome.nostr_homed.vault", "gnome.nostr_homed.vault.test_inputs"],
       "profiles": ["homed.vault.linux"],
-      "ctest_tests": {"homed.vault.linux": ["homed_syncd_vault_fs", "homed_syncd_off_closure", "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure"]},
+      "ctest_tests": {"homed.vault.linux": ["homed_syncd_vault_fs", "homed_syncd_off_closure", "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure", "json_glib_off_closure"]},
       "build_targets": ["test_syncd_vault_fs", "nostr-authd", "pam_nostr", "nss_nostr"],
-      "runtime_inputs": ["gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh"]
+      "runtime_inputs": ["gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "libjson/tests/check_glib_off_closure.sh"]
     },
     "homed.units": {
       "kind": "ctest",
