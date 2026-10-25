@@ -579,7 +579,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ],
         "core.linux.asan": [
           "test-hanami-config",
@@ -590,7 +592,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ]
       },
       "expected_outcome": "pass",
@@ -599,6 +603,7 @@
         "execution.core",
         "libgo",
         "libhanami",
+        "libhanami.test_inputs",
         "libnostr",
         "nip34",
         "vendor.nostrdb"
@@ -608,7 +613,10 @@
         "core.linux.asan"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [
+        "{source}/libhanami/tests/sealed_fixture.py",
+        "{source}/libhanami/tests/relay_fixture.py"
+      ]
     },
     "root.asan.libmarmot": {
       "build_targets": [],
@@ -13072,6 +13080,7 @@
         "execution.grotto",
         "execution.groundhog",
         "libhanami",
+        "libhanami.test_inputs",
         "nip34"
       ],
       "profiles": [
@@ -13096,7 +13105,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ],
         "grotto.linux": [
           "test-hanami-config",
@@ -13107,7 +13118,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ],
         "core.linux": [
           "test-hanami-config",
@@ -13118,7 +13131,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ],
         "grotto.linux.asan_ubsan": [
           "test-hanami-config",
@@ -13129,7 +13144,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ],
         "groundhog.mdk08": [
           "test-hanami-config",
@@ -13140,7 +13157,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ],
         "groundhog.mdk011": [
           "test-hanami-config",
@@ -13151,7 +13170,9 @@
           "test-hanami-odb-backend",
           "test-hanami-refdb-backend",
           "test-hanami-transport",
-          "test-hanami-types"
+          "test-hanami-types",
+          "test-hanami-nostr-protocol",
+          "test_hanami_sealed_roundtrip"
         ]
       },
       "build_targets": [
@@ -13163,9 +13184,14 @@
         "test-hanami-odb-backend",
         "test-hanami-refdb-backend",
         "test-hanami-transport",
-        "test-hanami-types"
+        "test-hanami-types",
+        "test-hanami-nostr-protocol",
+        "test_hanami_sealed_roundtrip"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [
+        "{source}/libhanami/tests/sealed_fixture.py",
+        "{source}/libhanami/tests/relay_fixture.py"
+      ]
     },
     "supported.libmarmot": {
       "nodes": [
@@ -22025,11 +22051,18 @@
       ],
       "rationale": "libgo links nsync and directly includes libnostr/include/nostr/metrics.h. The header is an independent input node so this dependency does not introduce a libgo/libnostr production cycle."
     },
+    "libhanami.test_inputs": {
+      "id": "libhanami.test_inputs",
+      "depends_on": [],
+      "owner_paths": ["libhanami/tests"],
+      "rationale": "Hanami test and wire-fixture inputs select package checks, not production consumers."
+    },
     "libhanami": {
       "depends_on": [
         "libnostr",
         "libblossom",
-        "libporthome"
+        "libporthome",
+        "libvault"
       ],
       "id": "libhanami",
       "owner_paths": [
@@ -24767,6 +24800,12 @@
       ],
       "prefix": "libhanami",
       "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libhanami/tests",
+      "nodes": ["libhanami.test_inputs"],
+      "reason": "Hanami test and fixture changes do not affect production consumers."
     },
     {
       "effect": "impact",

@@ -174,10 +174,69 @@ Persists Git OID mappings in SQLite. `hanami_index_porthome()` exposes a
 borrowed `porthome_index` view implementing libporthome's storage-independent
 interface. The legacy `hanami_index_entry_t` is a Git-specific row adapter;
 the shared OID/sealed-address/key-id type and vtable live in libporthome.
-Raw-mode rows use key id zero. Sealed ODB and private ref-state composition
-are separate work; this implementation does not itself seal objects.
+Raw-mode rows use key id zero. In sealed mode the ODB seals each object's
+content with PCS v2 under the latest root-ring key and verifies its Git OID
+again after decryption. Private snapshots carry the shared index row plus
+Git-only `type` and exact plaintext `size`, required to decode padded chunks.
 
 **Source**: `hanami-index-sqlite.c`, `hanami-index.h`
+
+### 4.4a Sealed Git assembly (SV-8, libhanami 0.4.0)
+
+`hanami_repo_open(..., config, vault)` selects private mode when `vault` is
+non-NULL. The ring is copied; `repo_id` is the **random vault_id rendered as
+64 lowercase hex characters**, not a name or key-derived ID. Only an owner
+signer can initialize an EOSE-confirmed empty vault. Initialization creates an
+empty sealed dir_node with owner writer policy; existing vaults use their
+owner-signed root policy. No libvault filesystem fold is applied to Git.
+
+Each object is a PCS v2 chunk. The refdb uploads a v2 manifest-domain sealed
+JSON ref-state node containing `refs`, `index`, `prev`, and a durable `public`
+lift marker. Ref entries use `refname`/`target_oid` (symbolic targets retain
+`ref: `). Index rows use the shared `git_oid`/`sealed_sha256`/`chunk_key_id`
+fields plus `type`/`size`. `prev` is the previous sealed ref-state address or
+null. This experimental codec rejects duplicate/unknown fields and malformed
+rows, and bounds snapshot bytes and row counts. Addresses are the probe-selected
+wire hashes, including a PNG prefix if libblossom selects shimming; reads verify
+the wire address before unwrapping/decrypting. Epochs above UINT32_MAX are
+refused because the shared index key ID is uint32_t. Classic SHA-1 Git OIDs are
+supported by this libgit2 build; SHA-256 OIDs are not silently truncated.
+
+The snapshot address is in a signed, NIP-44-sealed kind-30078 head's `ref_state`.
+Public 30618 is neither queried nor published for private state. Snapshot reads
+require EOSE; invalid signatures, wrong epochs, corrupt/missing objects and
+relay refusals fail visibly. A ref mutation becomes committed only after blob
+upload and relay `OK true`; failures restore the last committed ref cache.
+The writer slot and owner's root policy are checked before publish. This detects
+an already-moved base, **not atomic compare-and-swap**: simultaneous writes by
+the same identity can still race under Nostr addressable-event semantics.
+
+`hanami_clone_sealed` invokes libgit2 clone with per-operation transport/ring
+state and a sealed remote ODB attached to the destination. Checkout files and
+local Git refs are plaintext, as expected for a working copy. `hanami_repo_sync`
+uploads local objects through the sealed backend before checkpointing local
+refs. `hanami_repo_fetch_writer` validates the writer against the owner's signed
+root and imports branch tips under `refs/remotes/<writer>/<branch>`, without
+advancing local branches. Applications use libgit2 merge APIs and explicitly
+sync the result. There is no hidden LWW merge or vault filesystem conflict fold.
+
+Public Blossom/GRASP pushes are refused for private repositories, including a
+local repository reopened without its ring (the nonsecret `hanami.vault-id`
+marker survives). Only `hanami_repo_lift_privacy` by the owner mirrors all objects
+as plaintext, ACKs a public 30618 projection, and checkpoints the irreversible
+lift marker in private state; sealed state remains authoritative. Failed lifts
+can already have disclosed objects and never authorize public pushes. Privacy
+cannot be restored by this API. Pushing with raw libgit2 HTTP APIs is outside
+Hanami's guard; callers must use the Hanami entrypoints for this policy.
+
+The ordinary Blossom transport guards stay enabled. Local fixtures explicitly
+opt in with `hanami_config_set_allow_insecure(config, true)`; no URL automatically
+weakens them. Signer callback data must outlive returned repositories. Repository
+handles/backends are externally serialized, like the borrowed index interface.
+
+**Compatibility:** 0.4.0 changes `hanami_repo_open`'s source/ABI signature: existing
+callers append NULL and rebuild to retain raw mode. The low-level raw backend
+options remain unchanged. No libporthome or libvault ABI changes are required.
 
 ### 4.5 GRASP Client (`hanami_grasp`)
 
@@ -234,9 +293,10 @@ int hanami_init(void);
 void hanami_shutdown(void);
 
 // Create a Blossom-backed repository
-int hanami_repo_open(git_repository **out, const char *blossom_endpoint,
-                     const char **relay_urls, size_t relay_count,
-                     const hanami_config *config);
+hanami_error_t hanami_repo_open(git_repository **out, const char *blossom_endpoint,
+                     const char **relay_urls, const char *repo_id,
+                     const char *owner_pubkey, const hanami_signer_t *signer,
+                     const hanami_config_t *config, const porthome_ring_t *vault);
 
 // Register blossom:// transport globally
 int hanami_transport_register(void);
@@ -326,6 +386,7 @@ CMake, integrated into nostrc's existing build:
 # nostrc/libhanami/CMakeLists.txt
 add_library(hanami
     src/hanami.c
+    src/hanami-sealed.c
     src/hanami-odb-backend.c
     src/hanami-refdb-backend.c
     src/hanami-transport.c
@@ -337,7 +398,8 @@ add_library(hanami
 
 target_link_libraries(hanami
     PUBLIC  PkgConfig::LIBGIT2 nostrc::blossom nostrc::porthome
-    PRIVATE nostr nip34 PkgConfig::SQLITE3 OpenSSL::Crypto pthread
+    PRIVATE nostrc::vault nostr nip34 PkgConfig::SQLITE3
+            PkgConfig::HANAMI_JANSSON OpenSSL::Crypto pthread
 )
 ```
 
@@ -385,7 +447,7 @@ hanami_init();
 // Open repo with Blossom ODB + Nostr RefDB
 git_repository *repo;
 hanami_repo_open(&repo, "https://blossom.example.com",
-                 relay_urls, 2, &config);
+                 relay_urls, "repo-name", owner_pubkey, signer, config, NULL);
 
 // Standard libgit2 operations work transparently
 git_reference *head;

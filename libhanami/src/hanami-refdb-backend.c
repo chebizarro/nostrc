@@ -10,10 +10,12 @@
 
 #include "hanami/hanami-refdb-backend.h"
 #include "hanami/hanami-nostr.h"
+#include "hanami-sealed.h"
 
 #include <git2/refs.h>
 #include <git2/oid.h>
 #include <git2/errors.h>
+#include <git2/sys/errors.h>
 #include <git2/sys/refdb_backend.h>
 #include <git2/sys/refs.h>
 
@@ -42,6 +44,7 @@ typedef struct {
     git_refdb_backend parent;   /* Must be first */
 
     hanami_nostr_ctx_t *nostr_ctx;  /* Borrowed */
+    hanami_sealed *sealed;
     char *repo_id;                  /* Owned copy */
     char *owner_pubkey;             /* Owned copy */
 
@@ -111,13 +114,13 @@ static int cache_set(hanami_refdb_nostr_t *be, const char *refname,
 {
     hanami_cached_ref_t *existing = cache_find(be, refname);
 
+    char *symbolic = is_symbolic && sym_target ? strdup(sym_target) : NULL;
+    if (is_symbolic && !symbolic) return -1;
     if (existing) {
-        /* Update in-place */
+        /* Allocate before replacing the committed cache value. */
         free(existing->sym_target);
-        existing->sym_target = NULL;
+        existing->sym_target = symbolic;
         existing->is_symbolic = is_symbolic;
-        if (is_symbolic && sym_target)
-            existing->sym_target = strdup(sym_target);
         if (oid)
             git_oid_cpy(&existing->oid, oid);
         else
@@ -126,18 +129,21 @@ static int cache_set(hanami_refdb_nostr_t *be, const char *refname,
     }
 
     /* Add new entry */
-    if (cache_ensure_capacity(be) < 0)
+    if (cache_ensure_capacity(be) < 0) {
+        free(symbolic);
         return -1;
+    }
 
     hanami_cached_ref_t *r = &be->refs[be->ref_count];
     memset(r, 0, sizeof(*r));
     r->refname = strdup(refname);
-    if (!r->refname)
+    if (!r->refname) {
+        free(symbolic);
         return -1;
+    }
 
     r->is_symbolic = is_symbolic;
-    if (is_symbolic && sym_target)
-        r->sym_target = strdup(sym_target);
+    r->sym_target = symbolic;
     if (oid)
         git_oid_cpy(&r->oid, oid);
 
@@ -168,16 +174,19 @@ static int cache_remove(hanami_refdb_nostr_t *be, const char *refname)
 static int load_state_from_nostr(hanami_refdb_nostr_t *be)
 {
     nip34_repo_state_t *state = NULL;
-    hanami_error_t err = hanami_nostr_fetch_state(be->nostr_ctx,
-                                                   be->repo_id,
-                                                   be->owner_pubkey,
-                                                   &state);
+    hanami_error_t err = HANAMI_OK;
+    if (be->sealed)
+        state = be->sealed->state;
+    else
+        err = hanami_nostr_fetch_state(be->nostr_ctx, be->repo_id,
+                                       be->owner_pubkey, &state);
     if (err == HANAMI_ERR_NOT_FOUND)
         return 0; /* No state yet — empty repo, not an error */
     if (err != HANAMI_OK || !state)
         return 0; /* Network error — keep whatever cache we have */
 
     cache_clear(be);
+    int rc = 0;
 
     /* Import refs from state */
     for (size_t i = 0; i < state->ref_count; i++) {
@@ -187,33 +196,39 @@ static int load_state_from_nostr(hanami_refdb_nostr_t *be)
 
         /* Check if target is symbolic: starts with "ref: " */
         if (strncmp(ref->target, "ref: ", 5) == 0) {
-            cache_set(be, ref->refname, true, ref->target + 5, NULL);
+            if (cache_set(be, ref->refname, true, ref->target + 5, NULL) < 0) rc = -1;
         } else {
             /* Direct ref — parse hex OID */
             git_oid oid;
             if (git_oid_fromstr(&oid, ref->target) == 0)
-                cache_set(be, ref->refname, false, NULL, &oid);
+                if (cache_set(be, ref->refname, false, NULL, &oid) < 0) rc = -1;
         }
     }
 
     /* HEAD */
     if (state->head) {
         if (strncmp(state->head, "ref: ", 5) == 0) {
-            cache_set(be, "HEAD", true, state->head + 5, NULL);
+            if (cache_set(be, "HEAD", true, state->head + 5, NULL) < 0) rc = -1;
         } else {
             git_oid oid;
             if (git_oid_fromstr(&oid, state->head) == 0)
-                cache_set(be, "HEAD", false, NULL, &oid);
+                if (cache_set(be, "HEAD", false, NULL, &oid) < 0) rc = -1;
         }
     }
 
-    nip34_repo_state_free(state);
-    return 0;
+    if (!be->sealed) nip34_repo_state_free(state);
+    return rc;
 }
 
 /* =========================================================================
  * Publish state: create and send kind 30618
  * ========================================================================= */
+
+static int restore_private(hanami_refdb_nostr_t *be)
+{
+    if (be->sealed) { cache_clear(be); load_state_from_nostr(be); }
+    return -1;
+}
 
 static int publish_state(hanami_refdb_nostr_t *be)
 {
@@ -221,8 +236,9 @@ static int publish_state(hanami_refdb_nostr_t *be)
     size_t max_refs = be->ref_count;
     nip34_ref_t *refs = calloc(max_refs, sizeof(nip34_ref_t));
     if (!refs && max_refs > 0)
-        return -1;
+        return restore_private(be);
 
+    char *head_str = NULL;
     size_t ref_count = 0;
     const char *head_value = NULL;
     bool head_is_symbolic = false;
@@ -251,14 +267,12 @@ static int publish_state(hanami_refdb_nostr_t *be)
             /* Encode as "ref: <target>" */
             size_t len = 5 + strlen(cr->sym_target) + 1;
             char *buf = malloc(len);
-            if (!buf)
-                continue;  /* skip ref on alloc failure rather than sending NULL */
+            if (!buf) goto build_failed;
             snprintf(buf, len, "ref: %s", cr->sym_target);
             r->target = buf;
         } else {
             char *hex = malloc(65);
-            if (!hex)
-                continue;  /* skip ref on alloc failure rather than sending NULL */
+            if (!hex) goto build_failed;
             git_oid_tostr(hex, 65, &cr->oid);
             r->target = hex;
         }
@@ -266,7 +280,6 @@ static int publish_state(hanami_refdb_nostr_t *be)
     }
 
     /* Build head string */
-    char *head_str = NULL;
     if (head_value) {
         if (head_is_symbolic) {
             /* Symbolic HEAD: "ref: refs/heads/main" */
@@ -285,16 +298,28 @@ static int publish_state(hanami_refdb_nostr_t *be)
         }
     }
 
-    hanami_error_t err = hanami_nostr_publish_state(be->nostr_ctx,
-                                                     be->repo_id,
-                                                     refs, ref_count,
-                                                     head_str);
+    if (head_value && !head_str) goto build_failed;
+    hanami_error_t err = be->sealed
+        ? hanami_sealed_publish(be->sealed, refs, ref_count, head_str)
+        : hanami_nostr_publish_state(be->nostr_ctx, be->repo_id,
+                                     refs, ref_count, head_str);
 
     /* Cleanup allocated target strings */
     for (size_t i = 0; i < ref_count; i++)
         free(refs[i].target);
     free(refs);
     free(head_str);
+
+    if (be->sealed) {
+        if (err != HANAMI_OK) {
+            /* Private refs are committed only with a durable snapshot + ACK. */
+            cache_clear(be);
+            load_state_from_nostr(be);
+            git_error_set(GIT_ERROR_REFERENCE, "private snapshot publish failed (%d)", err);
+            return -1;
+        }
+        return 0;
+    }
 
     /* Relay publish is best-effort — the cache (source of truth) is already
      * updated before publish_state is called.  A failed relay publish means
@@ -305,6 +330,10 @@ static int publish_state(hanami_refdb_nostr_t *be)
                 (int)err);
     }
     return 0;
+build_failed:
+    for (size_t i = 0; i < ref_count; i++) free(refs[i].target);
+    free(refs); free(head_str);
+    return restore_private(be);
 }
 
 /* =========================================================================
@@ -507,13 +536,15 @@ static int nostr_refdb_write(git_refdb_backend *_backend,
 
     /* Update cache */
     git_reference_t type = git_reference_type(ref);
+    int rc;
     if (type == GIT_REFERENCE_SYMBOLIC) {
         const char *target = git_reference_symbolic_target(ref);
-        cache_set(be, name, true, target, NULL);
+        rc = cache_set(be, name, true, target, NULL);
     } else {
         const git_oid *oid = git_reference_target(ref);
-        cache_set(be, name, false, NULL, oid);
+        rc = cache_set(be, name, false, NULL, oid);
     }
+    if (rc < 0) return -1;
 
     /* Publish updated state to relays */
     return publish_state(be);
@@ -536,6 +567,8 @@ static int nostr_refdb_rename(git_reference **out, git_refdb_backend *_backend,
     if (!old_ref)
         return GIT_ENOTFOUND;
 
+    if (!strcmp(old_name, new_name))
+        return nostr_refdb_lookup(out, _backend, old_name);
     if (!force && cache_find(be, new_name))
         return GIT_EEXISTS;
 
@@ -545,9 +578,11 @@ static int nostr_refdb_rename(git_reference **out, git_refdb_backend *_backend,
     git_oid oid;
     git_oid_cpy(&oid, &old_ref->oid);
 
-    cache_set(be, new_name, is_sym, sym_target, &oid);
-    cache_remove(be, old_name);
+    if (is_sym && !sym_target) return -1;
+    int rc = cache_set(be, new_name, is_sym, sym_target, &oid);
     free(sym_target);
+    if (rc < 0) return rc;
+    cache_remove(be, old_name);
 
     /* Create output reference */
     hanami_cached_ref_t *new_ref = cache_find(be, new_name);
@@ -561,9 +596,11 @@ static int nostr_refdb_rename(git_reference **out, git_refdb_backend *_backend,
     }
 
     if (!*out)
-        return -1;
+        return restore_private(be);
 
-    return publish_state(be);
+    rc = publish_state(be);
+    if (rc != 0) { git_reference_free(*out); *out = NULL; }
+    return rc;
 }
 
 /* =========================================================================
@@ -580,12 +617,11 @@ static int nostr_refdb_del(git_refdb_backend *_backend, const char *ref_name,
         return GIT_ENOTFOUND;
 
     /* Verify old value if provided */
-    if (old_id && (!existing->is_symbolic &&
+    if (old_id && (existing->is_symbolic ||
                    git_oid_cmp(&existing->oid, old_id) != 0))
         return GIT_EMODIFIED;
-    if (old_target && existing->is_symbolic &&
-        existing->sym_target &&
-        strcmp(existing->sym_target, old_target) != 0)
+    if (old_target && (!existing->is_symbolic || !existing->sym_target ||
+                      strcmp(existing->sym_target, old_target) != 0))
         return GIT_EMODIFIED;
 
     cache_remove(be, ref_name);
@@ -658,6 +694,7 @@ static void nostr_refdb_free(git_refdb_backend *_backend)
     free(be->refs);
     free(be->repo_id);
     free(be->owner_pubkey);
+    hanami_sealed_release(be->sealed);
     free(be);
 }
 
@@ -665,8 +702,8 @@ static void nostr_refdb_free(git_refdb_backend *_backend)
  * Constructor
  * ========================================================================= */
 
-hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
-                                        const hanami_refdb_backend_opts_t *opts)
+static hanami_error_t refdb_new(git_refdb_backend **out,
+    const hanami_refdb_backend_opts_t *opts, hanami_sealed *sealed)
 {
     if (!out || !opts)
         return HANAMI_ERR_INVALID_ARG;
@@ -684,12 +721,15 @@ hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
         return HANAMI_ERR_LIBGIT2;
     }
 
+    be->sealed = sealed;
+    hanami_sealed_retain(sealed);
     be->nostr_ctx = opts->nostr_ctx;
     be->repo_id = strdup(opts->repo_id);
     be->owner_pubkey = strdup(opts->owner_pubkey);
     if (!be->repo_id || !be->owner_pubkey) {
         free(be->repo_id);
         free(be->owner_pubkey);
+        hanami_sealed_release(sealed);
         free(be);
         return HANAMI_ERR_NOMEM;
     }
@@ -710,8 +750,26 @@ hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
     be->parent.reflog_delete = nostr_refdb_reflog_delete;
 
     /* Try to load initial state from relays (best-effort) */
-    load_state_from_nostr(be);
+    if (load_state_from_nostr(be) < 0) {
+        nostr_refdb_free(&be->parent);
+        return HANAMI_ERR_NOMEM;
+    }
 
     *out = &be->parent;
     return HANAMI_OK;
+}
+
+hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
+    const hanami_refdb_backend_opts_t *opts)
+{
+    return refdb_new(out, opts, NULL);
+}
+
+hanami_error_t hanami_sealed_refdb_new(git_refdb_backend **out, hanami_sealed *sealed)
+{
+    hanami_refdb_backend_opts_t opts = {
+        .nostr_ctx = sealed->nostr, .repo_id = sealed->repo_id,
+        .owner_pubkey = sealed->owner
+    };
+    return refdb_new(out, &opts, sealed);
 }

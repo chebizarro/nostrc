@@ -15,6 +15,7 @@
 
 #include "hanami-types.h"
 #include <git2.h>
+#include <porthome/crypto.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +82,14 @@ const char *hanami_version(int *major, int *minor, int *patch);
  * @owner_pubkey: repository owner's hex public key
  * @signer: (nullable): signer for write operations
  * @config: (nullable): configuration (uses defaults if NULL)
+ * @vault: (nullable): root ring; copied, latest epoch used for writes
+ *
+ * With a ring, repo_id MUST be the 64-hex random vault_id. Opens the owner's
+ * signed head (or this authorized writer's head when present), sealed ODB and
+ * private refdb. Missing/unreadable history fails closed; only the owner may
+ * initialize an empty vault. No public 30618 is fetched or published.
+ * Repositories returned here are temporary bare repositories; the caller owns
+ * removal of git_repository_path() after freeing the repository.
  *
  * Open or create a repository backed by Blossom ODB + Nostr RefDB.
  *
@@ -92,7 +101,35 @@ hanami_error_t hanami_repo_open(git_repository **out,
                                 const char *repo_id,
                                 const char *owner_pubkey,
                                 const hanami_signer_t *signer,
-                                const hanami_config_t *config);
+                                const hanami_config_t *config,
+                                const porthome_ring_t *vault);
+
+/* Clone a private vault using libgit2's clone machinery and a per-operation
+ * transport, with a sealed remote ODB attached to the destination. No global
+ * transport credentials, public discovery or 30618. Local working files/refs
+ * are plaintext, as for any Git checkout. Use repo_sync to publish local refs.
+ * repo_id is the random 64-hex vault_id, not a key-derived label. */
+hanami_error_t hanami_clone_sealed(git_repository **out, const char *local_path,
+    const char *endpoint, const char **relay_urls, const char *repo_id,
+    const char *owner_pubkey, const hanami_signer_t *signer,
+    const porthome_ring_t *vault, const hanami_config_t *config);
+
+/* Seal/upload every local object before publishing the private snapshot.
+ * Refdb writes on repo_open repositories already do this per ref mutation. */
+hanami_error_t hanami_repo_sync(git_repository *repo);
+
+/* Import an authorized writer's snapshot as refs/remotes/<writer>/<branch>.
+ * Does not advance local branches or fold conflicts. Use libgit2 merge APIs,
+ * then sync the chosen/merged refs. Policy comes from the owner's signed root,
+ * never from the writer's own asserted membership. */
+hanami_error_t hanami_repo_fetch_writer(git_repository *repo, const char *writer_pubkey);
+
+/* Explicit irreversible disclosure: mirror plaintext objects and ACK a public
+ * 30618 projection, then mark this writer's private snapshot lifted. Future
+ * public Blossom/GRASP pushes are allowed; sealing remains the source of truth.
+ * A failed lift may already have disclosed objects; failure never authorizes
+ * public pushes. No API restores privacy. */
+hanami_error_t hanami_repo_lift_privacy(git_repository *repo);
 
 /**
  * hanami_clone:

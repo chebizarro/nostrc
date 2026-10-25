@@ -36,6 +36,7 @@ struct hanami_config {
     size_t upload_threshold;
     int prefetch_concurrency;
     bool verify_on_read;
+    bool allow_insecure;
 };
 
 /* =========================================================================
@@ -403,4 +404,14 @@ void hanami_config_set_verify_on_read(hanami_config_t *config, bool verify)
 {
     if (config)
         config->verify_on_read = verify;
+}
+
+bool hanami_config_get_allow_insecure(const hanami_config_t *config)
+{
+    return config && config->allow_insecure;
+}
+
+void hanami_config_set_allow_insecure(hanami_config_t *config, bool allow)
+{
+    if (config) config->allow_insecure = allow;
 }

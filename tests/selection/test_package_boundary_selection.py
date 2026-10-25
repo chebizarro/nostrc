@@ -85,6 +85,11 @@ class PackageBoundarySelection(unittest.TestCase):
 
     def test_vault_inputs_and_downstream_membership(self):
         expected = {"root.asan.libvault", "supported.libvault"}
+        # Hanami now consumes vault rings. Product edits propagate through that
+        # real edge; package test inputs still do not select those consumers.
+        consumers = {"root.asan.libhanami", "supported.libhanami",
+                     "core.default_build", "grotto.default_build", "groundhog.default_build",
+                     "nostr_seal.publish", "nostr_seal.signer", "nostr_seal.unit"}
         for path in ("libvault/src/fold.c", "libvault/include/vault/vault.h",
                      "libvault/tests/test_revoke_lazy.c", "libvault/src/nip59.c",
                      "libvault/include/vault/nip59.h", "libvault/tests/test_grant_nip59.c"):
@@ -94,10 +99,10 @@ class PackageBoundarySelection(unittest.TestCase):
             if "/tests/" in path:
                 self.assertEqual(selected, expected)
             else:
-                self.assertTrue(expected | {"supported.nostr.gobject.vault",
-                                            "bindings.rust.consumer",
-                                            "root.asan.libvault.marmot",
-                                            "supported.libvault.marmot"} <= selected)
+                self.assertTrue(expected | consumers | {"supported.nostr.gobject.vault",
+                                                        "bindings.rust.consumer",
+                                                        "root.asan.libvault.marmot",
+                                                        "supported.libvault.marmot"} <= selected)
                 self.assertFalse({"supported.libporthome", "supported.libblossom"} & selected)
         for name in expected:
             check = self.policy["checks"][name]
@@ -204,6 +209,26 @@ class PackageBoundarySelection(unittest.TestCase):
         plan = s.make_plan(self.policy, [change("libhanami/src/hanami.c")],
                            head="a" * 40, base="b" * 40, context="ci")
         self.assertFalse(expected & set(plan["selected_checks"]))
+
+    def test_hanami_sealed_registration_and_focused_test_inputs(self):
+        families = {"root.asan.libhanami", "supported.libhanami"}
+        self.assertIn("libvault", self.policy["nodes"]["libhanami"]["depends_on"])
+        for family in families:
+            check = self.policy["checks"][family]
+            for tests in check["ctest_tests"].values():
+                self.assertIn("test_hanami_sealed_roundtrip", tests)
+                self.assertIn("test-hanami-nostr-protocol", tests)
+            self.assertIn("{source}/libhanami/tests/sealed_fixture.py", check["runtime_inputs"])
+        for source in ("test_hanami_sealed_roundtrip.c", "sealed_fixture.py"):
+            plan = s.make_plan(self.policy, [change("libhanami/tests/" + source)],
+                               head="a" * 40, base="b" * 40, context="ci")
+            self.assertEqual(set(plan["selected_checks"]), families)
+            self.assertEqual(plan["broadening_reasons"], [])
+        plan = s.make_plan(self.policy, [change("libhanami/src/hanami-sealed.c")],
+                           head="a" * 40, base="b" * 40, context="ci")
+        self.assertTrue(families <= set(plan["selected_checks"]))
+        self.assertNotIn("supported.libvault", plan["selected_checks"])
+        self.assertNotIn("supported.libblossom", plan["selected_checks"])
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
