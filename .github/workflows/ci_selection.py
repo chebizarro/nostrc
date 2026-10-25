@@ -18,6 +18,7 @@ FAMILY_NODES = {
              'testing.framework', 'testkit', 'schema', 'execution.core'},
     'libgo': {'libgo', 'execution.libgo'},
     'hanami': {'libhanami'},
+    'rust': {'bindings.rust'},
     'gi': {'libnostr', 'nostr.gobject'},
     'groundhog': {'execution.groundhog', 'packaging.groundhog'},
     'grotto': {'execution.grotto', 'packaging.grotto', 'gnome.seahorse'},

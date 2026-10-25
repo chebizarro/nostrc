@@ -78,8 +78,10 @@ class PackageBoundarySelection(unittest.TestCase):
                        "test_dir_node.c", "test_head.c"):
             plan = s.make_plan(self.policy, [change("libporthome/tests/" + source)],
                                head="a" * 40, base="b" * 40, context="ci")
-            self.assertEqual(set(plan["selected_checks"]),
-                             {"supported.libporthome", "root.asan.libporthome"})
+            expected = {"supported.libporthome", "root.asan.libporthome"}
+            if source in ("test_seal_v2.c", "test_helpers.h"):
+                expected.add("bindings.rust.consumer")
+            self.assertEqual(set(plan["selected_checks"]), expected)
 
     def test_vault_inputs_and_downstream_membership(self):
         expected = {"root.asan.libvault", "supported.libvault"}
@@ -88,7 +90,8 @@ class PackageBoundarySelection(unittest.TestCase):
                      "libvault/include/vault/nip59.h", "libvault/tests/test_grant_nip59.c"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
                                base="b" * 40, context="ci")
-            self.assertEqual(set(plan["selected_checks"]), expected)
+            wanted = expected | ({"bindings.rust.consumer"} if "/tests/" not in path else set())
+            self.assertEqual(set(plan["selected_checks"]), wanted)
         for name in expected:
             check = self.policy["checks"][name]
             targets = {"test_vault_ring_derivation", "test_vault_revoke_lazy",
@@ -106,6 +109,45 @@ class PackageBoundarySelection(unittest.TestCase):
             self.assertEqual(plan["effective_mode"], "affected")
             self.assertTrue(expected <= set(plan["selected_checks"]))
             self.assertNotIn("supported.libblossom", plan["selected_checks"])
+
+    def test_rust_inputs_select_only_installed_consumer_and_dispatch(self):
+        import sys
+        sys.path.insert(0, str(ROOT / ".github/workflows"))
+        import ci_selection as ci
+        for path in ("bindings/rust/porthome-sys/build.rs",
+                     "bindings/rust/vault-sys/wrapper.h",
+                     "bindings/rust/examples/vault-cli/src/main.rs",
+                     "bindings/rust/Cargo.lock", "bindings/rust/test-installed.sh",
+                     ".github/workflows/rust-bindings-ci.yml"):
+            for context in ("ci", "local"):
+                with self.subTest(path=path, context=context):
+                    plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                       base="b" * 40, context=context)
+                    self.assertEqual(plan["effective_mode"], "affected")
+                    self.assertEqual(plan["selected_checks"], ["bindings.rust.consumer"])
+                    dispatch = ci.project(plan)
+                    self.assertFalse(dispatch["broad"])
+                    self.assertEqual(dispatch["families"], ["rust"])
+        for path in ("libporthome/include/porthome/crypto.h",
+                     "libvault/include/vault/nip59.h", "libblossom/src/client.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, context="ci")
+            self.assertIn("bindings.rust.consumer", plan["selected_checks"])
+            self.assertIn("rust", ci.project(plan)["families"])
+        # Unrelated app edits do not exercise the installed-library consumer.
+        plan = s.make_plan(self.policy, [change("gnome/groundhog/src/ui/gh-about-dialog.c")],
+                           head="a" * 40, context="ci")
+        self.assertNotIn("bindings.rust.consumer", plan["selected_checks"])
+        self.assertNotIn("rust", ci.project(plan)["families"])
+
+    def test_rust_job_runs_prefix_check_and_is_in_the_aggregate_gate(self):
+        workflow = (ROOT / ".github/workflows/ci-selective.yml").read_text()
+        self.assertIn("uses: ./.github/workflows/rust-bindings-ci.yml", workflow)
+        self.assertIn("hanami, rust, gi", workflow)
+        runner = (ROOT / ".github/workflows/rust-bindings-ci.yml").read_text()
+        self.assertIn("bash bindings/rust/test-installed.sh", runner)
+        self.assertIn("libclang-dev", runner)
+        self.assertIn("ref: ${{ inputs.sha || github.sha }}", runner)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', runner)
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],

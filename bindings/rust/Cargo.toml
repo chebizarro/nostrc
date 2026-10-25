@@ -1,0 +1,7 @@
+[workspace]
+members = ["porthome-sys", "vault-sys", "examples/vault-cli"]
+resolver = "2"
+
+[workspace.dependencies]
+bindgen = "0.73"
+pkg-config = "0.3"

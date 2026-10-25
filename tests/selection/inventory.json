@@ -20,6 +20,36 @@
     ]
   },
   "checks": {
+    "bindings.rust.consumer": {
+      "nodes": ["bindings.rust"],
+      "profiles": ["selection.operational.linux", "selection.operational.macos"],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": ["bash", "{source}/bindings/rust/test-installed.sh"],
+      "working_directory": "{source}",
+      "environment": {},
+      "runtime_inputs": [
+        "{source}/bindings/rust/test-installed.sh",
+        "{source}/bindings/rust/Cargo.toml",
+        "{source}/bindings/rust/Cargo.lock",
+        "{source}/bindings/rust/porthome-sys/Cargo.toml",
+        "{source}/bindings/rust/porthome-sys/build.rs",
+        "{source}/bindings/rust/porthome-sys/wrapper.h",
+        "{source}/bindings/rust/porthome-sys/src/lib.rs",
+        "{source}/bindings/rust/vault-sys/Cargo.toml",
+        "{source}/bindings/rust/vault-sys/build.rs",
+        "{source}/bindings/rust/vault-sys/wrapper.h",
+        "{source}/bindings/rust/vault-sys/src/lib.rs",
+        "{source}/bindings/rust/examples/vault-cli/Cargo.toml",
+        "{source}/bindings/rust/examples/vault-cli/src/main.rs",
+        "{source}/bindings/rust/examples/vault-cli/tests/vectors.rs",
+        "{source}/libporthome/tests/test_seal_v2.c",
+        "{source}/libporthome/tests/test_helpers.h"
+      ],
+      "build_targets": []
+    },
     "homed.units": {
       "kind": "ctest",
       "cost": "ordinary",
@@ -23547,6 +23577,12 @@
       ],
       "rationale": "Transport test inputs select package checks, not production consumers."
     },
+    "bindings.rust": {
+      "id": "bindings.rust",
+      "depends_on": ["libporthome", "libvault"],
+      "owner_paths": ["bindings/rust", ".github/workflows/rust-bindings-ci.yml"],
+      "rationale": "Installed-header Rust consumer; C runtime/API changes select compatibility without selecting prerequisite suites for Rust-only edits."
+    },
     "libvault": {
       "id": "libvault",
       "depends_on": ["libporthome", "libblossom", "libnostr", "nip44", "nip59"],
@@ -23581,6 +23617,30 @@
     }
   },
   "path_rules": [
+    {
+      "prefix": "bindings/rust",
+      "effect": "impact",
+      "nodes": ["bindings.rust"],
+      "reason": "Rust crates, consumer, lockfile and installed-prefix runner share a bounded compatibility check."
+    },
+    {
+      "exact": ".github/workflows/rust-bindings-ci.yml",
+      "effect": "impact",
+      "nodes": ["bindings.rust"],
+      "reason": "Rust consumer workflow edits exercise the installed C/Rust boundary."
+    },
+    {
+      "exact": "libporthome/tests/test_helpers.h",
+      "effect": "impact",
+      "nodes": ["libporthome.test_inputs", "bindings.rust"],
+      "reason": "The installed C reference runner uses this fixture helper."
+    },
+    {
+      "exact": "libporthome/tests/test_seal_v2.c",
+      "effect": "impact",
+      "nodes": ["libporthome.test_inputs", "bindings.rust"],
+      "reason": "Rust CLI vectors are explicitly checked against this C reference fixture."
+    },
     {
       "exact": "scripts/check-package-boundaries.sh",
       "nodes": [
@@ -29553,6 +29613,18 @@
     }
   },
   "release_components": {
+    "porthome-sys": {
+      "manifest_name": "porthome-sys",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [{"path": "bindings/rust/porthome-sys/Cargo.toml", "pattern": "(?m)^version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\""}]
+    },
+    "vault-sys": {
+      "manifest_name": "vault-sys",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [{"path": "bindings/rust/vault-sys/Cargo.toml", "pattern": "(?m)^version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\""}]
+    },
     "gnostr": {
       "manifest_name": "gnostr",
       "package_jobs": [

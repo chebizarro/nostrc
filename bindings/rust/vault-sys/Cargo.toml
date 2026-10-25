@@ -1,0 +1,14 @@
+[package]
+name = "vault-sys"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Raw bindings to the installed experimental libvault C library"
+links = "vault"
+
+[dependencies]
+porthome-sys = { path = "../porthome-sys", version = "0.1.0" }
+
+[build-dependencies]
+bindgen.workspace = true
+pkg-config.workspace = true
