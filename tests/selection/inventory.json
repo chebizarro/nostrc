@@ -20713,6 +20713,38 @@
       ],
       "runtime_inputs": []
     },
+    "root.asan.libvault": {
+      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+        "core.linux.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.core", "libvault", "libvault.test_inputs"],
+      "profiles": ["core.macos.asan", "core.linux.asan"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "supported.libvault": {
+      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+        "grotto.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+        "grotto.linux.asan_ubsan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+        "groundhog.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+        "groundhog.mdk011": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"],
+        "groundhog.mdk08": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.core", "execution.grotto", "execution.groundhog", "libvault", "libvault.test_inputs"],
+      "profiles": ["core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk011", "groundhog.mdk08"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.libporthome": {
       "build_targets": [
         "test-porthome-api",
@@ -23514,6 +23546,18 @@
         "libblossom/tests"
       ],
       "rationale": "Transport test inputs select package checks, not production consumers."
+    },
+    "libvault": {
+      "id": "libvault",
+      "depends_on": ["libporthome", "libblossom", "libnostr", "nip44"],
+      "owner_paths": ["libvault"],
+      "rationale": "Layer-5 shared-vault policy/codecs; no GLib, Git or MLS dependency."
+    },
+    "libvault.test_inputs": {
+      "id": "libvault.test_inputs",
+      "depends_on": [],
+      "owner_paths": ["libvault/tests"],
+      "rationale": "Vault test inputs select their own package checks, not prerequisites."
     },
     "libporthome": {
       "id": "libporthome",
@@ -28163,6 +28207,18 @@
     },
     {
       "effect": "impact",
+      "prefix": "libvault",
+      "nodes": ["libvault"],
+      "reason": "Vault package ownership; reverse impact selects consumers, not prerequisite suites."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libvault/tests",
+      "nodes": ["libvault.test_inputs"],
+      "reason": "Vault test inputs remain local to the package checks."
+    },
+    {
+      "effect": "impact",
       "prefix": "libporthome",
       "nodes": [
         "libporthome"
@@ -28182,9 +28238,10 @@
       "effect": "impact",
       "nodes": [
         "libblossom",
-        "libporthome"
+        "libporthome",
+        "libvault"
       ],
-      "reason": "Shared installed package dispatcher is configured by both libraries; select their real consumers without unknown-path broad fallback."
+      "reason": "Shared installed package dispatcher is configured by all three libraries; select their real consumers without unknown-path broad fallback."
     }
   ],
   "profiles": {
@@ -29785,6 +29842,12 @@
           "pattern": "#define SIGNETCTL_VERSION \"([0-9.]+)\""
         }
       ]
+    },
+    "libvault": {
+      "manifest_name": "libvault",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [{"join": ".", "path": "libvault/CMakeLists.txt", "pattern": "declare_component_version\\(vault\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
     },
     "libporthome": {
       "manifest_name": "libporthome",

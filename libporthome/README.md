@@ -57,6 +57,12 @@ Shared-vault codecs (SV-2):
   escaped strings, invalid numbers and trailing bytes are refused. Resource caps
   are documented in the header. NIP-44 content uses exactly
   `nostr_nip44_convkey(head_key, BIP340_xonly_pub(head_key))`.
+  SV-3 adds optional `key_override` for root revocation. It must equal the
+  selected epoch's node key, and sealing/opening enforce that equality. Thus it
+  is only carried inside a head encrypted with the **new** key, never exposed
+  to old-key holders; grants/exporters deliver the new key separately. Old
+  bodies without this field remain decodable. This extends the public struct
+  ABI (libporthome 0.4.0); downstream binaries must be recompiled.
 - `porthome_head_event_new` constructs an **unsigned** kind-30078 event with
   `d=porthome/v2/<hex vault_id>`; the caller's identity signer signs it. Open checks
   the signature, kind, unique d tag and decrypted vault/epoch. Additional tags are

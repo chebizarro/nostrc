@@ -14,6 +14,7 @@
 static int head_valid(const porthome_head *h) {
     if (!h || !h->epoch || h->written_at > INT64_MAX ||
         h->has_ref_state < 0 || h->has_ref_state > 1 ||
+        h->has_key_override < 0 || h->has_key_override > 1 ||
         (h->parents_len && !h->parents)) return PORTHOME_ERR_ARG;
     if (h->parents_len > PORTHOME_HEAD_MAX_PARENTS) return PORTHOME_ERR_TOO_LARGE;
     return PORTHOME_OK;
@@ -41,6 +42,12 @@ int porthome_head_encode(const porthome_head *h, uint8_t **out, size_t *out_len)
         porthome_hex64(h->ref_state,ref);
         if (append(s,cap,&used,",\"ref_state\":\"%s\"",ref)) goto fail;
     }
+    if (h->has_key_override) {
+        char override[65]; porthome_hex64(h->key_override,override);
+        int failed = append(s,cap,&used,",\"key_override\":\"%s\"",override);
+        OPENSSL_cleanse(override,sizeof(override));
+        if (failed) goto fail;
+    }
     if (append(s,cap,&used,",\"seq\":%" PRIu64 ",\"parents\":[",h->seq)) goto fail;
     for (size_t i = 0; i < h->parents_len; ++i) {
         const porthome_head_parent *p = &h->parents[i];
@@ -51,7 +58,7 @@ int porthome_head_encode(const porthome_head *h, uint8_t **out, size_t *out_len)
     if (used > PORTHOME_HEAD_MAX_JSON) goto fail;
     *out = (uint8_t *)s; *out_len = used; return PORTHOME_OK;
 fail:
-    free(s); return PORTHOME_ERR_TOO_LARGE;
+    OPENSSL_cleanse(s,cap); free(s); return PORTHOME_ERR_TOO_LARGE;
 }
 
 /* Bounded, schema-specific JSON reader. The only strings in this schema are
@@ -96,13 +103,14 @@ static int hex_read(reader *r, uint8_t out[32]) {
     char hex[65];
     for (size_t i = 0; i < 64; ++i) {
         uint8_t c = r->p[i];
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return -1;
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { OPENSSL_cleanse(hex,sizeof(hex)); return -1; }
         hex[i] = (char)c;
     }
     hex[64] = 0;
     r->p += 64;
-    if (*r->p++ != '"') return -1;
-    return porthome_from_hex64(hex,out);
+    int rc = *r->p++ == '"' ? porthome_from_hex64(hex,out) : -1;
+    OPENSSL_cleanse(hex,sizeof(hex));
+    return rc;
 }
 static int parent_read(reader *r, porthome_head_parent *p) {
     static const char *const names[] = {"writer","seq","root_manifest"};
@@ -135,7 +143,7 @@ static int parents_read(reader *r, porthome_head *h) {
 }
 void porthome_head_dispose(porthome_head *h) {
     if (!h) return;
-    free(h->parents); memset(h,0,sizeof(*h));
+    free(h->parents); OPENSSL_cleanse(h,sizeof(*h));
 }
 int porthome_head_decode(const uint8_t *json, size_t len, porthome_head **out) {
     if (out) *out = NULL;
@@ -146,11 +154,11 @@ int porthome_head_decode(const uint8_t *json, size_t len, porthome_head **out) {
     if (take(&r,'{')) return PORTHOME_ERR_ARG;
     porthome_head *h = calloc(1,sizeof(*h));
     if (!h) return PORTHOME_ERR_OOM;
-    static const char *const names[] = {"vault_id","epoch","root_manifest","ref_state","seq","parents","grants_rev","written_at"};
+    static const char *const names[] = {"vault_id","epoch","root_manifest","ref_state","seq","parents","grants_rev","written_at","key_override"};
     unsigned seen = 0;
     int rc = PORTHOME_ERR_ARG;
     for (;;) {
-        int f = field(&r,names,8);
+        int f = field(&r,names,9);
         if (f < 0 || (seen & (1u << f))) goto fail;
         seen |= 1u << f;
         int bad = 0;
@@ -163,6 +171,7 @@ int porthome_head_decode(const uint8_t *json, size_t len, porthome_head **out) {
         case 5: bad = parents_read(&r,h); break;
         case 6: bad = uint_read(&r,&h->grants_rev); break;
         case 7: bad = uint_read(&r,&h->written_at); break;
+        case 8: h->has_key_override = 1; bad = hex_read(&r,h->key_override); break;
         }
         if (bad) { if (bad == PORTHOME_ERR_OOM) rc = PORTHOME_ERR_OOM; goto fail; }
         ws(&r);
@@ -199,6 +208,7 @@ int porthome_head_seal(const porthome_head *h, const uint8_t node_key[32], char 
     if (!node_key || !out) return PORTHOME_ERR_ARG;
     uint8_t *json = NULL, key[32]; size_t len = 0;
     int rc = porthome_head_encode(h,&json,&len);
+    if (!rc && h->has_key_override && CRYPTO_memcmp(h->key_override,node_key,32)) rc = PORTHOME_ERR_ARG;
     if (!rc) rc = convkey(node_key,key);
     if (!rc && nostr_nip44_encrypt_v2_with_convkey(key,json,len,out)) rc = PORTHOME_ERR_CRYPTO;
     OPENSSL_cleanse(key,sizeof(key));
@@ -216,7 +226,7 @@ int porthome_head_open(const porthome_ring_t *ring, uint64_t epoch, const char *
     rc = convkey(node_key,key);
     if (!rc && nostr_nip44_decrypt_v2_with_convkey(key,payload,&json,&len)) rc = PORTHOME_ERR_CRYPTO;
     if (!rc) rc = porthome_head_decode(json,len,out);
-    if (!rc && (*out)->epoch != epoch) { porthome_head_dispose(*out); free(*out); *out = NULL; rc = PORTHOME_ERR_EPOCH; }
+    if (!rc && ((*out)->epoch != epoch || ((*out)->has_key_override && CRYPTO_memcmp((*out)->key_override,node_key,32)))) { porthome_head_dispose(*out); free(*out); *out = NULL; rc = PORTHOME_ERR_EPOCH; }
     OPENSSL_cleanse(key,sizeof(key));
     if (json) OPENSSL_cleanse(json,len);
     free(json); return rc;
