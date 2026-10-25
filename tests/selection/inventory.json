@@ -20470,6 +20470,39 @@
       "environment": {},
       "runtime_inputs": []
     },
+    "package.boundaries.guard": {
+      "nodes": ["package.boundaries"],
+      "profiles": ["selection.operational.linux", "selection.operational.macos"],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": ["bash", "{source}/scripts/check-package-boundaries.sh"],
+      "working_directory": "{source}",
+      "environment": {"PYTHONDONTWRITEBYTECODE": "1"},
+      "runtime_inputs": [
+        "{source}/scripts/check-package-boundaries.sh",
+        "{source}/scripts/check-package-boundaries.py",
+        "{source}/scripts/package-boundaries.allowlist"
+      ],
+      "build_targets": []
+    },
+    "package.boundaries.regressions": {
+      "nodes": ["package.boundaries"],
+      "profiles": ["selection.operational.linux", "selection.operational.macos"],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": ["python3", "{source}/scripts/test-package-boundaries.py"],
+      "working_directory": "{source}",
+      "environment": {"PYTHONDONTWRITEBYTECODE": "1"},
+      "runtime_inputs": [
+        "{source}/scripts/test-package-boundaries.py",
+        "{source}/scripts/check-package-boundaries.py"
+      ],
+      "build_targets": []
+    },
     "selection.operational.linux": {
       "nodes": [
         "selection.operational"
@@ -23157,6 +23190,17 @@
       ],
       "rationale": "Audited signer consumer boundary; build prerequisites do not imply unrelated runtime suites."
     },
+    "package.boundaries": {
+      "id": "package.boundaries",
+      "owner_paths": [
+        "scripts/check-package-boundaries.sh",
+        "scripts/check-package-boundaries.py",
+        "scripts/test-package-boundaries.py",
+        "scripts/package-boundaries.allowlist"
+      ],
+      "depends_on": [],
+      "rationale": "Boundary tool edits select the static guard and its regressions, without unrelated build or CTest suites."
+    },
     "selection.operational": {
       "id": "selection.operational",
       "owner_paths": [
@@ -23186,6 +23230,30 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "scripts/check-package-boundaries.sh",
+      "nodes": ["package.boundaries"],
+      "effect": "impact",
+      "reason": "Package boundary guard entrypoint."
+    },
+    {
+      "exact": "scripts/check-package-boundaries.py",
+      "nodes": ["package.boundaries"],
+      "effect": "impact",
+      "reason": "Package boundary enforcement and layer ownership."
+    },
+    {
+      "exact": "scripts/test-package-boundaries.py",
+      "nodes": ["package.boundaries"],
+      "effect": "impact",
+      "reason": "Package boundary guard regression tests."
+    },
+    {
+      "exact": "scripts/package-boundaries.allowlist",
+      "nodes": ["package.boundaries"],
+      "effect": "impact",
+      "reason": "Shrinking package boundary violation baseline."
+    },
     {
       "exact": "docs/reviews/dependency-aware-testing-w12-draft-2026-10-23-rollback.patch",
       "effect": "global",

@@ -45,6 +45,14 @@ files already declare a version.
   (its integration publisher uses the hanami client, not the auth codec).
   Test moves require no separate version. No release tags are published.
 
+- nostrc-er4fz.1 (package boundaries R0): NIP-44 adds public HKDF/HMAC
+  wrappers and an installed `<nostr/nip44/kdf.h>` while retaining existing
+  symbols. This is additive public functionality (MINOR-class), but nip44
+  has no independently declared version in this manifest or its CMake project;
+  no version source is invented here. nostr-homed only switches private calls
+  to that header, with unchanged API and wire/storage formats: no bump from
+  unreleased 0.2.2. Boundary tooling, CI and tests need no component bump.
+
 - nostrc-0cfsg.36.31: the account UI no longer passes an announcement to
   GTK's fallback test accessibility context (used when no AT-SPI bus is
   reachable), whose missing announce() made `groundhog --smoke` crash.

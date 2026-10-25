@@ -17,20 +17,7 @@
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
-/* Reuse the in-tree HKDF/HMAC-SHA256 implementation
- * (nips/nip44/src/core/nip44_hkdf_hmac.c). We link it into the target
- * from the CMake side; declaring the prototypes here keeps the header
- * out of the porthome/ include path. */
-extern int nip44_hkdf_extract(const uint8_t *salt, size_t salt_len,
-                              const uint8_t *ikm, size_t ikm_len,
-                              uint8_t prk_out[32]);
-extern int nip44_hkdf_expand(const uint8_t prk[32],
-                             const uint8_t *info, size_t info_len,
-                             uint8_t okm_out[], size_t okm_len);
-extern int nip44_hmac_sha256(const uint8_t *key, size_t key_len,
-                             const uint8_t *data1, size_t len1,
-                             const uint8_t *data2, size_t len2,
-                             uint8_t mac_out[32]);
+#include <nostr/nip44/kdf.h>
 
 /* Purpose-specific HKDF salt strings. Any change here bumps the on-wire
  * NH_PORTHOME_WIRE_VERSION byte in lockstep — see spec §2. */
@@ -94,10 +81,10 @@ static int hkdf_sha256(const char *salt, size_t salt_len,
                        const uint8_t *info, size_t info_len,
                        uint8_t *okm_out, size_t okm_len) {
     uint8_t prk[32];
-    if (nip44_hkdf_extract((const uint8_t *)salt, salt_len,
+    if (nostr_nip44_hkdf_extract((const uint8_t *)salt, salt_len,
                            ikm, ikm_len, prk) != 0)
         return NH_PORTHOME_ERR_CRYPTO;
-    int rc = nip44_hkdf_expand(prk, info, info_len, okm_out, okm_len);
+    int rc = nostr_nip44_hkdf_expand(prk, info, info_len, okm_out, okm_len);
     OPENSSL_cleanse(prk, sizeof(prk));
     return rc == 0 ? NH_PORTHOME_OK : NH_PORTHOME_ERR_CRYPTO;
 }
@@ -348,7 +335,7 @@ int nh_porthome_encrypt_name(const uint8_t home_key[32],
     }
 
     uint8_t mac[32];
-    rc = nip44_hmac_sha256(name_key, sizeof(name_key),
+    rc = nostr_nip44_hmac_sha256(name_key, sizeof(name_key),
                            (const uint8_t *)component, strlen(component),
                            NULL, 0, mac);
     OPENSSL_cleanse(name_key, sizeof(name_key));

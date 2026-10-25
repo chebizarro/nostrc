@@ -33,6 +33,11 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Package boundary guard regressions
+        run: python3 scripts/test-package-boundaries.py
+      - name: Package boundaries (shrinking baseline)
+        run: scripts/check-package-boundaries.sh
+
       - name: Operational selection and workflow regressions
         run: python3 scripts/test-selection-operational.py
 
