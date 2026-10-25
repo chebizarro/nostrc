@@ -20715,15 +20715,27 @@
     },
     "root.asan.libporthome": {
       "build_targets": [
-        "test-porthome-api"
+        "test-porthome-api",
+        "test_porthome_seal_v2",
+        "test_porthome_ring_derivation",
+        "test_porthome_pad_buckets",
+        "test_porthome_chunker"
       ],
       "cost": "ordinary",
       "ctest_tests": {
         "core.macos.asan": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ],
         "core.linux.asan": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ]
       },
       "expected_outcome": "pass",
@@ -20762,26 +20774,54 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ],
         "grotto.linux": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ],
         "grotto.linux.asan_ubsan": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ],
         "groundhog.linux": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ],
         "groundhog.mdk011": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ],
         "groundhog.mdk08": [
-          "test-porthome-api"
+          "test-porthome-api",
+          "test_porthome_seal_v2",
+          "test_porthome_ring_derivation",
+          "test_porthome_pad_buckets",
+          "test_porthome_chunker"
         ]
       },
       "build_targets": [
-        "test-porthome-api"
+        "test-porthome-api",
+        "test_porthome_seal_v2",
+        "test_porthome_ring_derivation",
+        "test_porthome_pad_buckets",
+        "test_porthome_chunker"
       ],
       "runtime_inputs": []
     }

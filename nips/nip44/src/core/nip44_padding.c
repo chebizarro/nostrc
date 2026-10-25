@@ -1,3 +1,4 @@
+#include <nostr/nip44/padding.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
