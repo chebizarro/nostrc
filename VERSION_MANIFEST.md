@@ -58,6 +58,13 @@ files already declare a version.
   its existing static/shared policy and shipped ABI: no version change.
   Selection/test-only changes need no version. Release columns do not change.
 
+- nostrc-er4fz.6 (R4 Groundhog): no additional bump to unreleased 0.12.0.
+  The internal media transport now uses GnBlossomClient; signing consent,
+  keyed/ephemeral auth, media addressing and UI errors stay app-owned.
+  Network mode, desktop proxy/Tor routing, local-network revocation and caller
+  cancellation are preserved. Build dependency migration is PATCH-class,
+  folded into this unreleased base; no new user-facing feature or wire format.
+
 - nostrc-er4fz.6 (R4 library API): nostr-gobject MINOR 2.3.0 adds
   GnBlossomClient's GTask upload/download API and annotated GIR surface.
   libblossom MINOR 0.2.0 adds explicit route/cancellation policy, verified

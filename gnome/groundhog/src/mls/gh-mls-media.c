@@ -628,6 +628,11 @@ on_fetched(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   g_clear_pointer(&body, g_bytes_unref);
+  if (g_error_matches(error, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED)) {
+    g_clear_error(&error);
+    error = g_error_new_literal(GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_DAMAGED,
+                                "The server sent other bytes than the file");
+  }
   g_clear_error(&f->last);
   f->last = error ? error
                   : g_error_new_literal(GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_DAMAGED,

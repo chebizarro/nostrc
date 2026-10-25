@@ -362,15 +362,18 @@ test_no_server(void)
   fixture_down(&f);
 }
 
-static void
-test_authorization_base64url(void)
+/* Only for handcrafted invalid requests below. Production encoding is
+ * exercised through GnBlossomClient by strict-encrypted-upload. */
+static gchar *
+fixture_authorization(const gchar *json)
 {
-  g_autofree gchar *unpadded = gh_blossom_client_authorization("{}");
-  g_assert_cmpstr(unpadded, ==, "Nostr e30");
-  g_autofree gchar *url_safe = gh_blossom_client_authorization("{\"x\":\"💬\"}");
-  g_assert_cmpstr(url_safe, ==, "Nostr eyJ4Ijoi8J-SrCJ9");
-  g_autofree gchar *slash = gh_blossom_client_authorization("{\"x\":\"࠿\"}");
-  g_assert_cmpstr(slash, ==, "Nostr eyJ4Ijoi4KC_In0");
+  g_autofree gchar *encoded = g_base64_encode((const guchar *)json, strlen(json));
+  for (gchar *p = encoded; *p; p++) {
+    if (*p == '+') *p = '-';
+    else if (*p == '/') *p = '_';
+    else if (*p == '=') { *p = 0; break; }
+  }
+  return g_strconcat("Nostr ", encoded, NULL);
 }
 
 /* A strict BUD-02/BUD-11 server accepts the ciphertext, hash header and
@@ -445,7 +448,7 @@ raw_fixture_put(BlossomFixture *fixture, GBytes *body, const gchar *mime)
     "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
   char *json = nostr_event_serialize_compact(event);
   g_assert_nonnull(json);
-  g_autofree gchar *auth = gh_blossom_client_authorization(json);
+  g_autofree gchar *auth = fixture_authorization(json);
   free(json);
   nostr_event_free(event);
 
@@ -823,6 +826,47 @@ test_at8_cancel(void)
   result_clear(&r);
   assert_no_transient_files("AT-8");
   fixture_down(&f);
+}
+
+static void
+test_mode_change_in_flight(void)
+{
+  Fixture f; fixture_up(&f, "none");
+  g_autoptr(GBytes) jpeg = make_jpeg(1024);
+  Result r = { 0 };
+  blossom_fixture_set_hold(f.blossom, TRUE);
+  gh_attachment_upload_async(f.client, jpeg, NULL, NULL, on_upload, &r);
+  HeldWait wait = { f.blossom, 1 };
+  spin_until(held, &wait);
+  g_settings_set_string(f.settings, "network-mode", "tor");
+  spin_until(result_done, &r);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_null(r.file);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  blossom_fixture_release_held(f.blossom);
+  result_clear(&r); fixture_down(&f);
+}
+
+static void
+test_local_policy_revoked_in_flight(void)
+{
+  Fixture f; fixture_up(&f, "none");
+  g_settings_set_boolean(f.settings, "allow-local-network", TRUE);
+  g_autoptr(GBytes) jpeg = make_jpeg(1024);
+  Result r = { 0 };
+  upload(&f, jpeg, &r, NULL); g_assert_no_error(r.error);
+  g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
+  result_clear(&r);
+  blossom_fixture_set_hold(f.blossom, TRUE);
+  gh_attachment_download_async(f.client, NULL, file, NULL, on_download, &r);
+  HeldWait wait = { f.blossom, 1 };
+  spin_until(held, &wait);
+  g_settings_set_boolean(f.settings, "allow-local-network", FALSE);
+  spin_until(result_done, &r);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_null(r.bytes);
+  blossom_fixture_release_held(f.blossom);
+  result_clear(&r); fixture_down(&f);
 }
 
 /* AT-9: in Tor mode the upload and the download go through the SOCKS5 proxy
@@ -1253,7 +1297,6 @@ main(int argc, char **argv)
   g_autofree gchar *uuid = g_uuid_string_random();
   file_canary = g_strdup_printf("G21-FILE-PLAINTEXT-CANARY-%s", uuid);
   g_test_add_func("/groundhog/blossom/no-server", test_no_server);
-  g_test_add_func("/groundhog/blossom/authorization-base64url", test_authorization_base64url);
   g_test_add_func("/groundhog/blossom/strict-encrypted-upload", test_strict_encrypted_upload);
   g_test_add_func("/groundhog/blossom/media-only-sniffs-body", test_media_only_sniffs_body);
   g_test_add_func("/groundhog/blossom/at1-round-trip", test_at1_round_trip);
@@ -1262,6 +1305,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/at6-upload-auth-key", test_at6_upload_auth_key);
   g_test_add_func("/groundhog/blossom/at8-cancel", test_at8_cancel);
   g_test_add_func("/groundhog/blossom/at9-tor", test_at9_tor);
+  g_test_add_func("/groundhog/blossom/mode-change-in-flight", test_mode_change_in_flight);
+  g_test_add_func("/groundhog/blossom/local-policy-revoked-in-flight", test_local_policy_revoked_in_flight);
   g_test_add_func("/groundhog/blossom/download-address-policy", test_download_address_policy);
   g_test_add_func("/groundhog/blossom/download-rebinding", test_download_rebinding);
   g_test_add_func("/groundhog/blossom/keyed-upload-rebinding", test_keyed_upload_rebinding);

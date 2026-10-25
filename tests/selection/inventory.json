@@ -21679,6 +21679,7 @@
     },
     "groundhog.media": {
       "depends_on": [
+        "nostr.gobject",
         "groundhog.net",
         "groundhog.store",
         "groundhog.conversations"

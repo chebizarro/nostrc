@@ -128,9 +128,6 @@ void gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean a
 void gh_blossom_client_set_max_file_size(GhBlossomClient *self, gsize max_file_size);
 gsize gh_blossom_client_get_max_file_size(GhBlossomClient *self);
 
-/* Encode a signed event for BUD-11's Nostr Authorization header. */
-gchar *gh_blossom_client_authorization(const gchar *event_json);
-
 /* Uploads ciphertext, whose SHA-256 is sha256_hex, to the first server that
  * takes it. Finishes with the file URL (<server>/<sha256>) and, in
  * out_server (nullable), the server used (normalized). Errors:

@@ -7,6 +7,10 @@ if(NOT COMMAND nostrc_describe_test)
   return()
 endif()
 
+if(TEST "groundhog-blossom")
+  nostrc_add_test_owners("groundhog-blossom" OWNER groundhog.media nostr.gobject libblossom bud02)
+endif()
+
 function(_gh_describe name target owner)
   if(TEST "${name}")
     cmake_parse_arguments(PARSE_ARGV 3 ARG "" "EXPECTED" "INPUTS;REQUIRES;TARGETS")

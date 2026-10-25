@@ -1,14 +1,14 @@
 #include "gh-blossom-client.h"
+#include "gh-attachment.h"
 
-#include <json-glib/json-glib.h>
+#include <nostr-gobject-1.0/gn-blossom-client.h>
+#include "gh-net-session.h"
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr-tag.h>
 #include <secure_buf.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define DESCRIPTOR_MAX_BYTES (64 * 1024)
 
 G_DEFINE_QUARK(gh-blossom-error-quark, gh_blossom_error)
 
@@ -361,28 +361,6 @@ upload_failed(GTask *task, GError *error)
   upload_next(task);
 }
 
-/* The server's descriptor must describe what was sent (charter §6 step 5). */
-static gboolean
-descriptor_matches(GBytes *body, const gchar *sha256, gsize size)
-{
-  gsize length = 0;
-  const gchar *text = body ? g_bytes_get_data(body, &length) : NULL;
-  if (!text || length == 0)
-    return FALSE;
-  g_autoptr(JsonParser) parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, text, (gssize)length, NULL))
-    return FALSE;
-  JsonNode *root = json_parser_get_root(parser);
-  JsonObject *object = root && JSON_NODE_HOLDS_OBJECT(root) ? json_node_get_object(root) : NULL;
-  JsonNode *hash = object ? json_object_get_member(object, "sha256") : NULL;
-  JsonNode *bytes = object ? json_object_get_member(object, "size") : NULL;
-  if (!hash || !bytes || json_node_get_value_type(hash) != G_TYPE_STRING ||
-      json_node_get_value_type(bytes) != G_TYPE_INT64)
-    return FALSE;
-  return g_ascii_strcasecmp(json_node_get_string(hash), sha256) == 0 &&
-         json_node_get_int(bytes) == (gint64)size;
-}
-
 /* A file extension as BUD-01 allows it after /<sha256>: 1 to 16 ASCII
  * letters and digits. */
 static gboolean
@@ -402,19 +380,8 @@ extension_ok(const gchar *extension)
  * otherwise (no url, another place, a query, or no extension). Only the
  * extension is taken from the server: the address is still built here. */
 static gchar *
-descriptor_extension(GBytes *body, const gchar *server, const gchar *sha256)
+descriptor_extension(const gchar *url, const gchar *server, const gchar *sha256)
 {
-  gsize length = 0;
-  const gchar *text = body ? g_bytes_get_data(body, &length) : NULL;
-  g_autoptr(JsonParser) parser = json_parser_new();
-  if (!text || !json_parser_load_from_data(parser, text, (gssize)length, NULL))
-    return NULL;
-  JsonNode *root = json_parser_get_root(parser);
-  JsonObject *object = root && JSON_NODE_HOLDS_OBJECT(root) ? json_node_get_object(root) : NULL;
-  JsonNode *node = object ? json_object_get_member(object, "url") : NULL;
-  if (!node || json_node_get_value_type(node) != G_TYPE_STRING)
-    return NULL;
-  const gchar *url = json_node_get_string(node);
   const gchar *slash = url ? strrchr(url, '/') : NULL;
   if (!slash)
     return NULL;
@@ -428,21 +395,130 @@ descriptor_extension(GBytes *body, const gchar *server, const gchar *sha256)
   return g_ascii_strdown(name + 65, -1);
 }
 
+/* Route policy only: libblossom owns HTTP, redirects and reception guards. */
+typedef struct {
+  GSettings *settings;
+  GCancellable *caller, *cancel;
+  gulong caller_id, settings_id;
+  GhNetMode mode;
+  gchar *tor_address;
+  gboolean public_only, allowed_local, revoked;
+} Transfer;
+
+static gchar *
+policy_string(GSettings *settings, const gchar *key, const gchar *fallback)
+{
+  g_autoptr(GSettingsSchema) schema = NULL;
+  if (settings) g_object_get(settings, "settings-schema", &schema, NULL);
+  return schema && g_settings_schema_has_key(schema, key)
+    ? g_settings_get_string(settings, key) : g_strdup(fallback);
+}
+
+static gboolean
+policy_local(GSettings *settings)
+{
+  g_autoptr(GSettingsSchema) schema = NULL;
+  if (settings) g_object_get(settings, "settings-schema", &schema, NULL);
+  return schema && g_settings_schema_has_key(schema, "allow-local-network") &&
+    g_settings_get_boolean(settings, "allow-local-network");
+}
+
+static void
+transfer_policy_changed(GSettings *settings, const gchar *key, gpointer data)
+{
+  (void)key;
+  Transfer *t = data;
+  g_autofree gchar *mode = policy_string(settings, "network-mode", "system");
+  g_autofree gchar *address = policy_string(settings, "tor-socks-address", NULL);
+  if (gh_net_mode_from_string(mode) != t->mode ||
+      (t->mode == GH_NET_MODE_TOR && g_strcmp0(address, t->tor_address)) ||
+      (t->public_only && t->allowed_local && !policy_local(settings))) {
+    t->revoked = TRUE;
+    g_cancellable_cancel(t->cancel);
+  }
+}
+
+static void
+transfer_free(gpointer data)
+{
+  Transfer *t = data;
+  if (t->settings_id) g_signal_handler_disconnect(t->settings, t->settings_id);
+  if (t->caller_id) g_cancellable_disconnect(t->caller, t->caller_id);
+  g_clear_object(&t->settings); g_clear_object(&t->caller); g_clear_object(&t->cancel);
+  g_free(t->tor_address); g_free(t);
+}
+
+static void
+transfer_caller_cancelled(GCancellable *caller, gpointer data)
+{
+  (void)caller;
+  g_cancellable_cancel(G_CANCELLABLE(data));
+}
+
+static GnBlossomClient *
+transfer_new(GhBlossomClient *self, const gchar *endpoint, gsize limit, gboolean public_only,
+             GCancellable *caller, GError **error)
+{
+  Transfer *t = g_new0(Transfer, 1);
+  t->settings = gh_net_http_dup_settings(self->http);
+  t->cancel = g_cancellable_new();
+  t->caller = caller ? g_object_ref(caller) : NULL;
+  if (caller) t->caller_id = g_cancellable_connect(caller, G_CALLBACK(transfer_caller_cancelled),
+      g_object_ref(t->cancel), g_object_unref);
+  g_autofree gchar *mode = policy_string(t->settings, "network-mode", "system");
+  t->mode = gh_net_mode_from_string(mode);
+  t->tor_address = policy_string(t->settings, "tor-socks-address", NULL);
+  t->public_only = public_only;
+  t->allowed_local = gh_net_http_allows_local_network(self->http);
+  g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(t->mode, t->tor_address, NULL, error);
+  if (!resolver) { transfer_free(t); return NULL; }
+  GnBlossomNetworkFlags flags = GN_BLOSSOM_NETWORK_PRIVATE_TLS;
+  if (t->mode == GH_NET_MODE_TOR) flags |= GN_BLOSSOM_NETWORK_TOR;
+  else if (!public_only || t->allowed_local) flags |= GN_BLOSSOM_NETWORK_ALLOW_LOCAL;
+  g_autoptr(GUri) uri = g_uri_parse(endpoint, G_URI_FLAGS_ENCODED, NULL);
+  const gchar *host = uri ? g_uri_get_host(uri) : NULL;
+  if (self->allow_private_hosts || (host && gh_net_host_is_loopback(host)))
+    flags |= GN_BLOSSOM_NETWORK_LOCAL_TEST;
+  GnBlossomClient *client = gn_blossom_client_new(endpoint);
+  gn_blossom_client_set_network(client, resolver, flags);
+  gn_blossom_client_set_limits(client, limit, GH_NET_HTTP_TIMEOUT_S, "");
+  if (t->settings)
+    t->settings_id = g_signal_connect(t->settings, "changed", G_CALLBACK(transfer_policy_changed), t);
+  g_object_set_data_full(G_OBJECT(client), "groundhog-route", t, transfer_free);
+  return client;
+}
+
+static gboolean
+transfer_revoked(GnBlossomClient *client, GError **error)
+{
+  Transfer *t = g_object_get_data(G_OBJECT(client), "groundhog-route");
+  if (t->mode == GH_NET_MODE_TOR && !t->revoked) {
+    g_autoptr(GhNetSession) session = gh_net_session_dup_default();
+    if (session) gh_net_session_report(session, !*error);
+  }
+  if (!t->revoked || (t->caller && g_cancellable_is_cancelled(t->caller))) return FALSE;
+  g_clear_error(error);
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED,
+                      "The network setting changed before the server answered");
+  return TRUE;
+}
+
 static void
 on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 {
   GTask *task = data;
   Upload *upload = g_task_get_task_data(task);
   GError *error = NULL;
-  g_autoptr(GBytes) body = gh_net_http_send_finish(GH_NET_HTTP(source), result, &error);
+  g_autofree gchar *body = gn_blossom_client_upload_finish(GN_BLOSSOM_CLIENT(source), result, &error);
+  if (transfer_revoked(GN_BLOSSOM_CLIENT(source), &error))
+    g_clear_pointer(&body, g_free);
   if (!body) {
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_task_return_error(task, error);
       g_object_unref(task);
       return;
     }
-    if (error->domain == GH_NET_HTTP_ERROR &&
-        (error->code == 401 || error->code == 403)) {
+    if (g_error_matches(error, GN_BLOSSOM_ERROR, GN_BLOSSOM_ERROR_AUTH)) {
       /* Stop here: the user decides whether this server may see the
        * account, and the file goes nowhere else meanwhile (§6 step 4). */
       g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED,
@@ -454,10 +530,11 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
       g_object_unref(task);
       return;
     }
-    if (error->domain == GH_NET_HTTP_ERROR) {
+    if (error->domain == GN_BLOSSOM_ERROR) {
       GError *refused = g_error_new(GH_BLOSSOM_ERROR,
-                                    error->code == 413 ? GH_BLOSSOM_ERROR_TOO_LARGE
-                                                       : GH_BLOSSOM_ERROR_REFUSED,
+                                    error->code == GN_BLOSSOM_ERROR_TOO_LARGE ? GH_BLOSSOM_ERROR_TOO_LARGE
+                                    : error->code == GN_BLOSSOM_ERROR_BAD_RESPONSE ? GH_BLOSSOM_ERROR_BAD_ANSWER
+                                    : GH_BLOSSOM_ERROR_REFUSED,
                                     "%s: %s", upload->host, error->message);
       g_error_free(error);
       error = refused;
@@ -465,11 +542,6 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
     /* Unreachable, refused in this network mode, or refused by the server:
      * the next server may do. */
     upload_failed(task, error);
-    return;
-  }
-  if (!descriptor_matches(body, upload->sha256, g_bytes_get_size(upload->ciphertext))) {
-    upload_failed(task, g_error_new(GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_BAD_ANSWER,
-                                    "%s answered with a different file", upload->host));
     return;
   }
   /* A public file is addressed with an extension (BUD-01 /<sha256>.<ext>)
@@ -486,40 +558,19 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
   g_object_unref(task);
 }
 
-gchar *
-gh_blossom_client_authorization(const gchar *event_json)
-{
-  g_return_val_if_fail(event_json != NULL, NULL);
-  /* BUD-11 requires unpadded Base64url, not standard Base64. */
-  g_autofree gchar *encoded = g_base64_encode((const guchar *)event_json,
-                                              strlen(event_json));
-  for (gchar *p = encoded; *p; p++) {
-    if (*p == '+') *p = '-';
-    else if (*p == '/') *p = '_';
-    else if (*p == '=') { *p = '\0'; break; }
-  }
-  return g_strconcat("Nostr ", encoded, NULL);
-}
-
 static void
 upload_put(GTask *task, const gchar *auth_json)
 {
   GhBlossomClient *self = g_task_get_source_object(task);
   Upload *upload = g_task_get_task_data(task);
-  g_autofree gchar *authorization = gh_blossom_client_authorization(auth_json);
-  g_autofree gchar *uri = g_strconcat(upload->server, "/upload", NULL);
-  GhNetHttpRequest request = {
-    .method = "PUT",
-    .uri = uri,
-    .accept = "application/json",
-    .authorization = authorization,
-    .content_type = upload->content_type ? upload->content_type : "application/octet-stream",
-    .x_sha256 = upload->sha256,
-    .body = upload->ciphertext,
-    .max_bytes = DESCRIPTOR_MAX_BYTES,
-    .public_only = upload->public_only,
-  };
-  gh_net_http_send_async(self->http, &request, g_task_get_cancellable(task), on_uploaded, task);
+  GError *error = NULL;
+  g_autoptr(GnBlossomClient) client = transfer_new(self, upload->server, max_ciphertext(self),
+      upload->public_only, g_task_get_cancellable(task), &error);
+  if (!client) { upload_failed(task, error); return; }
+  Transfer *transfer = g_object_get_data(G_OBJECT(client), "groundhog-route");
+  gn_blossom_client_upload_async(client, upload->ciphertext, upload->sha256,
+      upload->content_type ? upload->content_type : "application/octet-stream", auth_json,
+      transfer->cancel, on_uploaded, task);
 }
 
 static void
@@ -553,6 +604,7 @@ upload_next(GTask *task)
 {
   GhBlossomClient *self = g_task_get_source_object(task);
   Upload *upload = g_task_get_task_data(task);
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
   g_clear_pointer(&upload->server, g_free);
   g_clear_pointer(&upload->host, g_free);
   while (upload->servers[upload->next] && !upload->server)
@@ -852,11 +904,21 @@ on_downloaded(GObject *source, GAsyncResult *result, gpointer data)
 {
   GTask *task = data;
   GError *error = NULL;
-  GBytes *body = gh_net_http_get_finish(GH_NET_HTTP(source), result, &error);
+  GBytes *body = gn_blossom_client_download_finish(GN_BLOSSOM_CLIENT(source), result, &error);
+  if (transfer_revoked(GN_BLOSSOM_CLIENT(source), &error))
+    g_clear_pointer(&body, g_bytes_unref);
   if (body)
     g_task_return_pointer(task, body, (GDestroyNotify)g_bytes_unref);
-  else
+  else {
+    if (error->domain == GN_BLOSSOM_ERROR) {
+      GQuark domain = error->code == GN_BLOSSOM_ERROR_BAD_RESPONSE ? GH_ATTACHMENT_ERROR : G_IO_ERROR;
+      gint code = error->code == GN_BLOSSOM_ERROR_BAD_RESPONSE ? GH_ATTACHMENT_ERROR_DAMAGED :
+        error->code == GN_BLOSSOM_ERROR_TOO_LARGE ? G_IO_ERROR_MESSAGE_TOO_LARGE : G_IO_ERROR_FAILED;
+      GError *mapped = g_error_new_literal(domain, code, error->message);
+      g_error_free(error); error = mapped;
+    }
     g_task_return_error(task, error);
+  }
   g_object_unref(task);
 }
 
@@ -885,14 +947,11 @@ gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url,
     return;
   }
   const gsize limit = (size ? (gsize)size : cap) + GH_BLOSSOM_DOWNLOAD_SLACK;
-  /* The sender chose the URL: connect only to a public address, checked
-   * where the connection is made (DNS rebinding; nostrc-qi5e). */
-  if (self->allow_private_hosts)
-    gh_net_http_get_accept_async(self->http, url, "application/octet-stream", limit,
-                                 cancellable, on_downloaded, task);
-  else
-    gh_net_http_get_public_async(self->http, url, "application/octet-stream", limit,
-                                 cancellable, on_downloaded, task);
+  g_autofree gchar *base = g_strndup(url, (gsize)(strrchr(url, '/') - url));
+  g_autoptr(GnBlossomClient) client = transfer_new(self, base, limit, TRUE, cancellable, &refused);
+  if (!client) { g_task_return_error(task, refused); g_object_unref(task); return; }
+  Transfer *transfer = g_object_get_data(G_OBJECT(client), "groundhog-route");
+  gn_blossom_client_download_async(client, url, sha256_hex, transfer->cancel, on_downloaded, task);
 }
 
 GBytes *
