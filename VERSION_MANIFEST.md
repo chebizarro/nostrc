@@ -72,6 +72,12 @@ files already declare a version.
   Network mode, desktop proxy/Tor routing, local-network revocation and caller
   cancellation are preserved. Build dependency migration is PATCH-class,
   folded into this unreleased base; no new user-facing feature or wire format.
+  Review follow-up: BUD-02 constructs and validates auth; the server tag now
+  contains the normalized server URL rather than a bare host (protocol bug fix).
+  Exact signer-response binding and public-only server/consent policy remain
+  app-owned. This PATCH-class correction is folded into the same unreleased
+  Groundhog base. nips/bud02 stays 0.1.0 (no bump): its existing public API
+  already supports the needed expiration and server tag; no library change.
 
 - nostrc-er4fz.6 (R4 library API): nostr-gobject MINOR 2.3.0 adds
   GnBlossomClient's GTask upload/download API and annotated GIR surface.

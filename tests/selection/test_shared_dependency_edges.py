@@ -380,6 +380,7 @@ class OrdinaryMediaOwnership(Project):
         (gh / "CMakeLists.txt").write_text("\n".join([
             "add_library(groundhog-net INTERFACE)", "add_library(groundhog-store INTERFACE)",
             "add_library(nostr_gobject INTERFACE)",
+            "add_library(nostrc::bud02 INTERFACE IMPORTED)",
             "add_library(OpenSSL::Crypto INTERFACE IMPORTED)", *statements,
             "include(TestInventory.cmake)",
         ]) + "\n")

@@ -5,7 +5,7 @@
 #include "gh-net-session.h"
 #include <nostr-event.h>
 #include <nostr-keys.h>
-#include <nostr-tag.h>
+#include <nostr/bud02/auth.h>
 #include <secure_buf.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,8 +52,8 @@ lower_hex64(const gchar *s)
 }
 
 /* scheme://host[:port][/path] without a trailing slash, query, fragment or
- * user info; NULL for anything but an http(s) URL with a host. Whether it may
- * be contacted in the current mode is GhNetHttp's decision. */
+ * user info; NULL for anything but an http(s) URL with a host. This defines
+ * server/consent identity, not transport admission (GnBlossomClient's policy). */
 static gchar *
 normalize_server(const gchar *server, gchar **out_host)
 {
@@ -190,30 +190,7 @@ max_ciphertext(GhBlossomClient *self)
   return self->max_file_size + 16;
 }
 
-/* ---- kind 24242 ------------------------------------------------------------------ */
-
-static NostrTags *
-auth_tags(const gchar *sha256, const gchar *host, gint64 expiration)
-{
-  gchar expires[24];
-  g_snprintf(expires, sizeof expires, "%" G_GINT64_FORMAT, expiration);
-  return nostr_tags_new(4, nostr_tag_new("t", "upload", NULL), nostr_tag_new("x", sha256, NULL),
-                        nostr_tag_new("expiration", expires, NULL),
-                        nostr_tag_new("server", host, NULL));
-}
-
-static NostrEvent *
-auth_event_new(const gchar *pubkey, const gchar *sha256, const gchar *host, gint64 now)
-{
-  NostrEvent *event = nostr_event_new();
-  nostr_event_set_kind(event, GH_BLOSSOM_AUTH_KIND);
-  nostr_event_set_created_at(event, now);
-  nostr_event_set_content(event, "Upload file");
-  if (pubkey)
-    nostr_event_set_pubkey(event, pubkey);
-  nostr_event_set_tags(event, auth_tags(sha256, host, now + GH_BLOSSOM_AUTH_LIFETIME_S));
-  return event;
-}
+/* ---- signer plumbing ------------------------------------------------------------- */
 
 static gboolean
 secret_from_hex(const gchar *hex, nostr_secure_buf *out)
@@ -240,8 +217,7 @@ secret_from_hex(const gchar *hex, nostr_secure_buf *out)
  * is wiped before this returns (never the account's, never reused); or, with
  * upload_key, by that key (a group picture's 0x8002 upload key, W25). */
 static gchar *
-auth_sign_ephemeral(const gchar *sha256, const gchar *host, gint64 now,
-                    const guint8 *upload_key)
+auth_sign_ephemeral(NostrEvent *event, const guint8 *upload_key)
 {
   gchar *signed_json = NULL;
   nostr_secure_buf secret = { 0 };
@@ -260,59 +236,17 @@ auth_sign_ephemeral(const gchar *sha256, const gchar *host, gint64 now,
     free(secret_hex);
   }
   if (pubkey && have_secret) {
-    NostrEvent *event = auth_event_new(pubkey, sha256, host, now);
+    nostr_event_set_pubkey(event, pubkey);
     if (nostr_event_sign_secure(event, &secret) == 0) {
       char *raw = nostr_event_serialize_compact(event);
       signed_json = raw ? g_strdup(raw) : NULL;
       free(raw);
     }
-    nostr_event_free(event);
   }
   if (have_secret)
     secure_free(&secret);
   free(pubkey);
   return signed_json;
-}
-
-static gboolean
-tag_is(NostrTags *tags, const gchar *key, const gchar *value)
-{
-  guint seen = 0;
-  for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
-    NostrTag *tag = nostr_tags_get(tags, i);
-    if (g_strcmp0(nostr_tag_get_key(tag), key) != 0)
-      continue;
-    if (nostr_tag_size(tag) < 2 || g_strcmp0(nostr_tag_get_value(tag), value) != 0)
-      return FALSE;
-    seen++;
-  }
-  return seen == 1;
-}
-
-/* The account signer's answer is used only if it is exactly what was asked
- * for: valid id and signature, kind 24242, the account's pubkey, the same
- * tags, content and time. */
-static gboolean
-auth_verify(const gchar *signed_json, const gchar *pubkey, const gchar *sha256, const gchar *host,
-            gint64 now)
-{
-  NostrEvent *event = nostr_event_new();
-  gchar expires[24];
-  g_snprintf(expires, sizeof expires, "%" G_GINT64_FORMAT, now + GH_BLOSSOM_AUTH_LIFETIME_S);
-  gboolean ok = signed_json &&
-                nostr_event_deserialize_signed(event, signed_json, NULL) ==
-                  NOSTR_EVENT_VALIDATION_OK &&
-                nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK &&
-                nostr_event_get_kind(event) == GH_BLOSSOM_AUTH_KIND &&
-                g_strcmp0(nostr_event_get_pubkey(event), pubkey) == 0 &&
-                nostr_event_get_created_at(event) == now &&
-                g_strcmp0(nostr_event_get_content(event), "Upload file") == 0;
-  NostrTags *tags = ok ? nostr_event_get_tags(event) : NULL;
-  ok = ok && nostr_tags_size(tags) == 4 && tag_is(tags, "t", "upload") &&
-       tag_is(tags, "x", sha256) && tag_is(tags, "expiration", expires) &&
-       tag_is(tags, "server", host);
-  nostr_event_free(event);
-  return ok;
 }
 
 /* ---- upload ---------------------------------------------------------------------- */
@@ -323,9 +257,9 @@ typedef struct {
   GStrv servers;
   guint next;
   gchar *server;      /* the one being tried (normalized) */
-  gchar *host;
+  gchar *host;        /* display name in upload errors */
   gboolean as_account;
-  gint64 now;
+  gchar auth_id[65]; /* bind the account signer's answer to its request */
   GError *last_error; /* the latest server's failure */
   nostr_secure_buf upload_key; /* keyed upload: its 32 secret bytes (locked, wiped), else empty */
   gboolean public_only; /* servers someone else named: public addresses only */
@@ -587,8 +521,17 @@ on_account_signed(GObject *source, GAsyncResult *result, gpointer data)
     g_object_unref(task);
     return;
   }
-  if (!signed_json || !self->account_pubkey ||
-      !auth_verify(signed_json, self->account_pubkey, upload->sha256, upload->host, upload->now)) {
+  NostrEvent *event = nostr_event_new();
+  nostr_bud02_validate_options_t options = {
+    .expected_sha256 = upload->sha256,
+    .expected_pubkey = self->account_pubkey,
+  };
+  gboolean valid = signed_json && self->account_pubkey && event &&
+    nostr_event_deserialize_signed(event, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+    g_strcmp0(nostr_event_get_id(event), upload->auth_id) == 0 &&
+    nostr_bud02_validate_auth_event(event, NOSTR_BUD02_ACTION_UPLOAD, &options) == NOSTR_BUD02_OK;
+  nostr_event_free(event);
+  if (!valid) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
                             "Your signer did not sign the upload%s%s", error ? ": " : "",
                             error ? error->message : "");
@@ -618,23 +561,36 @@ upload_next(GTask *task)
     g_object_unref(task);
     return;
   }
-  upload->now = g_get_real_time() / G_USEC_PER_SEC;
+  NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD,
+      upload->sha256, 0, upload->server);
+  if (!event) {
+    g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
+                            "Could not prepare upload authorization");
+    g_object_unref(task);
+    return;
+  }
   /* A keyed upload is never the account's: the key is the blob's owner. */
   upload->as_account = !upload->upload_key.ptr && self->sign_async &&
                        g_hash_table_contains(self->consent, upload->server);
   if (upload->as_account) {
-    NostrEvent *event = auth_event_new(self->account_pubkey, upload->sha256, upload->host,
-                                       upload->now);
-    char *raw = nostr_event_serialize_compact(event);
+    nostr_event_set_pubkey(event, self->account_pubkey);
+    gboolean valid = nostr_event_compute_id(event, upload->auth_id) == NOSTR_EVENT_VALIDATION_OK;
+    char *raw = valid ? nostr_event_serialize_compact(event) : NULL;
     nostr_event_free(event);
     g_autofree gchar *unsigned_json = raw ? g_strdup(raw) : NULL;
     free(raw);
+    if (!unsigned_json) {
+      g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
+                              "Could not prepare upload authorization");
+      g_object_unref(task);
+      return;
+    }
     self->sign_async(self->sign_data, unsigned_json, g_task_get_cancellable(task),
                      on_account_signed, task);
     return;
   }
-  g_autofree gchar *auth = auth_sign_ephemeral(upload->sha256, upload->host, upload->now,
-                                               upload->upload_key.ptr);
+  g_autofree gchar *auth = auth_sign_ephemeral(event, upload->upload_key.ptr);
+  nostr_event_free(event);
   if (!auth) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
                             "Could not sign the upload");
@@ -799,10 +755,10 @@ gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean allow)
   self->allow_private_hosts = allow;
 }
 
-/* A host a sender may point Download at: a public name or address, or a
- * .onion (reachable only in Tor mode, which GhNetHttp enforces). What a
- * public-looking name resolves to is checked when connecting
- * (gh_net_http_get_public_async(), nostrc-qi5e). */
+/* App policy for sender-supplied downloads and public-only server lists:
+ * reject local/search-domain names even through a proxy. Transport guards
+ * enforce resolved addresses and Tor routing; they cannot classify a name
+ * resolved remotely by a proxy. */
 static gboolean
 host_public(const gchar *host)
 {
@@ -875,14 +831,16 @@ path_names_blob(const gchar *path, const gchar *sha256)
   return TRUE;
 }
 
+/* Only media addressing and public-host policy here. Generic URL syntax,
+ * scheme, credentials, query/fragment and connected-address guards belong to
+ * GnBlossomClient/libblossom and also apply on redirects. */
 static gboolean
 download_url_allowed(GhBlossomClient *self, const gchar *url, const gchar *sha256,
                      GError **error)
 {
   g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_ENCODED, NULL);
   const gchar *host = uri ? g_uri_get_host(uri) : NULL;
-  if (!uri || !host || g_uri_get_userinfo(uri) || g_uri_get_query(uri) ||
-      g_uri_get_fragment(uri) || !hex64_any_case(sha256) ||
+  if (!uri || !host || !hex64_any_case(sha256) ||
       !path_names_blob(g_uri_get_path(uri), sha256)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
                         "This file's address is not a Blossom address for it, so it isn't "

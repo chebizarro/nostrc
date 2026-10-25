@@ -19,6 +19,7 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr-tag.h>
+#include <nostr/bud02/auth.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -135,7 +136,7 @@ typedef struct {
   gchar *secret;
   gchar *pubkey;
   guint calls;
-  gboolean lie; /* signs something else than asked */
+  guint lie; /* signs something else than asked */
 } FakeSigner;
 
 static void
@@ -148,8 +149,13 @@ fake_sign_async(gpointer data, const gchar *unsigned_json, GCancellable *cancell
   NostrEvent *event = nostr_event_new();
   g_assert_cmpint(nostr_event_deserialize_compact(event, unsigned_json, NULL), ==, 1);
   g_assert_cmpint(nostr_event_get_kind(event), ==, 24242);
-  if (signer->lie)
+  if (signer->lie == 1)
     nostr_event_set_content(event, "Delete everything");
+  else if (signer->lie == 2)
+    nostr_event_set_created_at(event, nostr_event_get_created_at(event) + 1);
+  else if (signer->lie == 3)
+    nostr_tags_append(nostr_event_get_tags(event),
+                     nostr_tag_new("server", "https://other.example", NULL));
   g_assert_cmpint(nostr_event_sign(event, signer->secret), ==, 0);
   char *json = nostr_event_serialize_compact(event);
   nostr_event_free(event);
@@ -517,7 +523,7 @@ test_at1_round_trip(void)
   BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(f.blossom), 0);
   g_assert_true(put->auth_valid);
   g_assert_cmpstr(put->auth_x, ==, sent->x);
-  g_assert_cmpstr(put->auth_server, ==, "127.0.0.1");
+  g_assert_cmpstr(put->auth_server, ==, blossom_fixture_url(f.blossom));
   g_assert_cmpstr(put->auth_pubkey, !=, alice);
   /* The server holds ciphertext only, and it is exactly x. */
   GBytes *blob = blossom_fixture_get_blob(f.blossom, sent->x);
@@ -710,7 +716,7 @@ test_at6_upload_auth_key(void)
   g_assert_cmpstr(one->auth_pubkey, !=, two->auth_pubkey);
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   g_assert_cmpint(one->auth_expiration, >, now);
-  g_assert_cmpint(one->auth_expiration, <=, now + GH_BLOSSOM_AUTH_LIFETIME_S + 5);
+  g_assert_cmpint(one->auth_expiration, <=, now + NOSTR_BUD02_DEFAULT_EXPIRATION + 5);
 
   /* The server wants the account: the upload stops there, unsigned by it. */
   blossom_fixture_require_pubkey(f.blossom, signer.pubkey);
@@ -735,14 +741,16 @@ test_at6_upload_auth_key(void)
   BlossomRequest *last = g_ptr_array_index(requests, requests->len - 1);
   g_assert_cmpstr(last->auth_pubkey, ==, signer.pubkey);
   g_assert_true(last->auth_valid);
+  g_assert_cmpstr(last->auth_server, ==, blossom_fixture_url(f.blossom));
 
   /* A signer that signs something else is caught before any request. */
   guint puts = blossom_fixture_count(f.blossom, "PUT");
-  signer.lie = TRUE;
-  upload(&f, jpeg, &r, NULL);
-  g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER);
-  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, puts);
-  signer.lie = FALSE;
+  for (signer.lie = 1; signer.lie <= 3; signer.lie++) {
+    upload(&f, jpeg, &r, NULL);
+    g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER);
+    g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, puts);
+  }
+  signer.lie = 0;
 
   /* A new account signer (a new generation) forgets every consent. */
   gh_blossom_client_set_account_signer(f.client, signer.pubkey, fake_sign_async,
@@ -892,7 +900,7 @@ test_at9_tor(void)
   g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
   g_assert_true(g_str_has_prefix(file->url, onion));
   BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(f.blossom), 0);
-  g_assert_cmpstr(put->auth_server, ==, ONION);
+  g_assert_cmpstr(put->auth_server, ==, onion);
   download(&f, NULL, file, &r, NULL);
   g_assert_no_error(r.error);
   GPtrArray *requests = socks5_fixture_requests(socks);

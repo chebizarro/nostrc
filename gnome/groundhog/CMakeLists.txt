@@ -3164,7 +3164,7 @@ if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-convers
   target_include_directories(groundhog-media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media
     ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(groundhog-media PUBLIC groundhog-net groundhog-store
-      groundhog-conversations nostr_gobject OpenSSL::Crypto)
+      groundhog-conversations nostr_gobject nostrc::bud02 OpenSSL::Crypto)
   target_compile_options(groundhog-media PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING AND TARGET groundhog-test-schemas)
     # Offline: metadata stripping (AT-1's APP1, PNG chunks, damaged files),
