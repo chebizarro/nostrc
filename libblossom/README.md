@@ -1,4 +1,4 @@
-# libblossom 0.1.0
+# libblossom 0.2.0
 
 Layer-3 synchronous Blossom transport. Uses libcurl, OpenSSL, Jansson and
 `nips/bud02`; no GLib, libgit2, homed, encryption or chunking code.
@@ -40,12 +40,24 @@ bound, never permission to exceed the caller's local cap.
 ## Transport boundaries
 
 HTTPS by default, no credentials/query/fragment in endpoint URLs, no redirects
-or proxy bypass, and resolved socket addresses must be public unicast. HTTP and
-private/loopback sockets require the explicit `allow_insecure` **local-test**
-option. TLS verification remains enabled. Uploads are bounded before sending;
+or environment proxy bypass, and resolved socket addresses must be public unicast.
+The optional `blossom_transport_t` policy separates HTTP permission from local
+address permission, resolves an authoritative proxy before connection, can pin
+numeric DNS results to the actual connection and can cancel active transfers.
+A selected proxy is trusted with destination DNS/address policy; no direct
+fallback or `NO_PROXY` bypass is used. `disable_tls_sessions` requires an
+OpenSSL-backed curl and refuses HTTPS otherwise. The legacy `allow_insecure`
+option still permits HTTP/private sockets for explicit **local tests**. TLS verification remains enabled. Uploads are bounded before sending;
 GET and metadata buffers are bounded during reception, including chunked bodies.
 Default blob cap: 16 MiB. GET/HEAD/LIST use BUD-02 auth when a signer is supplied;
 401/403 remain errors. Upload without a signer never falls back to anonymous.
+
+Media callers can instead supply an already signed kind-24242 event to
+`blossom_client_put_signed`: signature, action, expiration, wire hash and response
+are verified without probes or shimming. `blossom_client_get_url` is a public,
+unauthenticated hash-verified download; it explicitly allows up to three redirects,
+reapplying transport policy to every hop. The GLib/GTask adapter lives in
+nostr-gobject as `GnBlossomClient`.
 
 BUD-04 mirror URLs must contain the origin's 64-hex content hash (an optional
 file extension is accepted). Mirroring reuses `t=upload` auth bound to that hash.

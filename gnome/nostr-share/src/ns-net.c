@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ns-net.h"
-#include "ns-blossom.h"
 #include "ns-kind.h"
 #include "ns-private.h"
 
@@ -14,6 +13,19 @@
 #include <json-glib/json-glib.h>
 #include <string.h>
 #include <sys/stat.h>
+
+/* HTTPS in production; loopback HTTP is an explicit test-only opt-in. */
+gboolean
+ns_net_blossom_server_ok(const gchar *server, gboolean allow_loopback_http)
+{
+  if (!server) return FALSE;
+  if (g_str_has_prefix(server, "https://")) return TRUE;
+  if (!allow_loopback_http || !g_str_has_prefix(server, "http://")) return FALSE;
+  g_autoptr(GUri) uri = g_uri_parse(server, G_URI_FLAGS_NONE, NULL);
+  g_autoptr(GInetAddress) address = uri && g_uri_get_host(uri)
+    ? g_inet_address_new_from_string(g_uri_get_host(uri)) : NULL;
+  return address && g_inet_address_get_is_loopback(address);
+}
 
 /* ---- Session relay ---- */
 
@@ -688,7 +700,7 @@ ns_resolve_blossom_servers(const NsConfig *cfg, NsNet *net, const gchar *pubkey_
   g_autoptr(GStrvBuilder) b = g_strv_builder_new();
   guint n = 0;
   for (guint i = 0; cfg->blossom_servers && cfg->blossom_servers[i]; i++)
-    if (ns_blossom_server_ok(cfg->blossom_servers[i], cfg->allow_loopback_relays)) {
+    if (ns_net_blossom_server_ok(cfg->blossom_servers[i], cfg->allow_loopback_relays)) {
       g_autofree gchar *norm = g_strdup(cfg->blossom_servers[i]);
       gsize len = strlen(norm);
       while (len > 8 && norm[len - 1] == '/')

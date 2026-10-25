@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <glib/gstdio.h>
 #include <nostr-event.h>
+#include <nostr/bud02/auth.h>
 #include <nostr-keys.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,7 +103,7 @@ fake_sign_async(gpointer data, const gchar *unsigned_json, GCancellable *cancell
   GTask *task = g_task_new(NULL, cancellable, callback, callback_data);
   NostrEvent *event = nostr_event_new();
   g_assert_cmpint(nostr_event_deserialize_compact(event, unsigned_json, NULL), ==, 1);
-  g_assert_cmpint(nostr_event_get_kind(event), ==, GH_BLOSSOM_AUTH_KIND);
+  g_assert_cmpint(nostr_event_get_kind(event), ==, NOSTR_BUD02_KIND);
   g_assert_cmpint(nostr_event_sign(event, signer->secret), ==, 0);
   char *json = nostr_event_serialize_compact(event);
   nostr_event_free(event);

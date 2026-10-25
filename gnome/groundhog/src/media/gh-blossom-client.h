@@ -8,11 +8,11 @@ G_BEGIN_DECLS
 /*
  * GhBlossomClient: encrypted-attachment transfers with Blossom servers
  * (BUD-01 GET /<sha256>, BUD-02 PUT /upload; privacy charter §6, D6, G21).
- * Every request goes through GhNetHttp (gh-net-http.h), so the network mode,
+ * Requests use GnBlossomClient with GhNetHttp's routing settings, so network mode,
  * Tor (a fresh circuit per request: charter §4.3 "Media ... random per
  * fetch"), the https-only rule (http only to .onion in Tor mode, or to a
- * loopback test server), no redirects, cookies, cache or TLS resumption all
- * hold. Only ciphertext passes through here, except a file the user chose
+ * loopback test server), bounded policy-checked redirects, no cookies, cache
+ * or TLS resumption all hold. Only ciphertext passes through here, except a file the user chose
  * to publish with a public issue (gh_blossom_client_upload_public_async()).
  *
  * Servers (D6). The blossom-servers setting, empty by default: with no
@@ -33,8 +33,8 @@ G_BEGIN_DECLS
  * pubkeys) is the account asked to sign, through the account signer; without
  * consent the account signer is never called. The event carries
  * ["t", "upload"], ["x", <sha256>], ["expiration", now + 5 min] and
- * ["server", <host>] (BUD-11), so it is good for this file on this server
- * only, briefly.
+ * ["server", <server URL>] (BUD-11), constructed and validated by nips/bud02,
+ * so it is good for this file on this server only, briefly.
  *
  * Public-address restrictions below are the default. The live
  * allow-local-network preference on the client's GhNetHttp permits private
@@ -60,8 +60,6 @@ G_BEGIN_DECLS
  */
 
 #define GH_BLOSSOM_MAX_FILE_SIZE (25 * 1024 * 1024) /* D6: of the file itself */
-#define GH_BLOSSOM_AUTH_KIND 24242
-#define GH_BLOSSOM_AUTH_LIFETIME_S 300
 #define GH_BLOSSOM_DOWNLOAD_SLACK 1024
 
 typedef enum {
@@ -127,9 +125,6 @@ void gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean a
  * Lowering it is for tests (AT-3 without 25 MiB transfers). */
 void gh_blossom_client_set_max_file_size(GhBlossomClient *self, gsize max_file_size);
 gsize gh_blossom_client_get_max_file_size(GhBlossomClient *self);
-
-/* Encode a signed event for BUD-11's Nostr Authorization header. */
-gchar *gh_blossom_client_authorization(const gchar *event_json);
 
 /* Uploads ciphertext, whose SHA-256 is sha256_hex, to the first server that
  * takes it. Finishes with the file URL (<server>/<sha256>) and, in

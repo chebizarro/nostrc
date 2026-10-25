@@ -57,6 +57,8 @@ GhNetHttp *gh_net_http_new(GSettings *settings);
  * allow-local-network preference (default FALSE). Does not change ordinary
  * GETs (NIP-05), relay policy, HTTPS or .onion handling. */
 gboolean gh_net_http_allows_local_network(GhNetHttp *self);
+/* The same live policy settings for non-Soup transports (nullable, full ref). */
+GSettings *gh_net_http_dup_settings(GhNetHttp *self);
 
 void gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
                            GCancellable *cancellable, GAsyncReadyCallback callback,

@@ -14,8 +14,8 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 2)
-set(NOSTR_GOBJECT_MINOR_VERSION 2)
-set(NOSTR_GOBJECT_MICRO_VERSION 2)
+set(NOSTR_GOBJECT_MINOR_VERSION 3)
+set(NOSTR_GOBJECT_MICRO_VERSION 0)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}
@@ -74,6 +74,7 @@ add_custom_command(
 
 # ── Source files ─────────────────────────────────────────────────────
 set(NOSTR_GOBJECT_SOURCES
+  src/gn-blossom-client.c
   src/nostr-error.c
   src/nostr-enums.c
   src/nostr_event.c
@@ -119,6 +120,7 @@ set(NOSTR_GOBJECT_SOURCES
 )
 
 set(NOSTR_GOBJECT_HEADERS
+  include/nostr-gobject-1.0/gn-blossom-client.h
   include/nostr-gobject-1.0/nostr-gobject.h
   include/nostr-gobject-1.0/nostr-error.h
   include/nostr-gobject-1.0/nostr-types.h
@@ -208,6 +210,18 @@ target_include_directories(nostr_gobject
 # Preserve that compile interface when Groundhog selects the shared runtime;
 # the shared DSO still owns the only copy of its GObject type symbols.
 set(_LINK_VIS PUBLIC)
+
+if(NOT TARGET nostrc::blossom)
+  if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # nostrcConfig is an aggregate dispatcher: versions belong to components,
+    # not to whichever component installed the shared config last.
+    find_package(nostrc REQUIRED CONFIG COMPONENTS blossom)
+    pkg_check_modules(NOSTR_GOBJECT_BLOSSOM REQUIRED blossom>=0.2.0)
+  else()
+    message(FATAL_ERROR "nostr-gobject requires libblossom; set BUILD_LIBBLOSSOM=ON")
+  endif()
+endif()
+nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrc::blossom)
 
 # Core GLib/GObject/GIO always PUBLIC (consumers need these headers)
 target_link_libraries(nostr_gobject
@@ -300,7 +314,7 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
       set(_gir_lib_name nostr_gobject_shared)
       set(_gir_lib_dep  nostr_gobject_shared)
     else()
-      set(_gir_lib_name nostr_gobject)
+      set(_gir_lib_name nostr-gobject-1.0)
       set(_gir_lib_dep  nostr_gobject)
     endif()
 
@@ -381,7 +395,7 @@ includedir=\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}
 Name: nostr-gobject-1.0
 Description: GObject wrapper for libnostr — Nostr protocol library
 Version: ${NOSTR_GOBJECT_VERSION}
-Requires: glib-2.0 gobject-2.0 gio-2.0
+Requires: glib-2.0 gobject-2.0 gio-2.0 blossom >= 0.2.0
 Requires.private: openssl libsecp256k1
 Libs: -L\${libdir} -lnostr-gobject-1.0
 Cflags: -I\${includedir}/nostr-gobject-1.0
@@ -404,6 +418,14 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0)
 
 # ── Tests ────────────────────────────────────────────────────────────
+if(BUILD_TESTING)
+  pkg_check_modules(BLOSSOM_TEST_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
+  add_executable(test_nostr_gobject_blossom tests/test_blossom_client.c)
+  target_link_libraries(test_nostr_gobject_blossom PRIVATE nostr_gobject nostrc::bud02 PkgConfig::BLOSSOM_TEST_SOUP)
+  apply_sanitizers(test_nostr_gobject_blossom)
+  add_test(NAME test_nostr_gobject_blossom COMMAND test_nostr_gobject_blossom)
+  set_tests_properties(test_nostr_gobject_blossom PROPERTIES TIMEOUT 30 LABELS "nostr-gobject;integration")
+endif()
 if(BUILD_TESTING)
   include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
 

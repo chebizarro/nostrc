@@ -1892,6 +1892,26 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "supported.nostr.gobject.blossom": {
+      "build_targets": ["test_nostr_gobject_blossom"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": ["test_nostr_gobject_blossom"],
+        "core.linux.asan": ["test_nostr_gobject_blossom"],
+        "groundhog.linux": ["test_nostr_gobject_blossom"],
+        "grotto.linux": ["test_nostr_gobject_blossom"],
+        "core.linux": ["test_nostr_gobject_blossom"],
+        "grotto.linux.asan_ubsan": ["test_nostr_gobject_blossom"],
+        "groundhog.mdk08": ["test_nostr_gobject_blossom"],
+        "groundhog.mdk011": ["test_nostr_gobject_blossom"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["nostr.gobject", "libblossom", "bud02"],
+      "profiles": ["core.macos.asan", "core.linux.asan", "groundhog.linux", "grotto.linux", "core.linux", "grotto.linux.asan_ubsan", "groundhog.mdk08", "groundhog.mdk011"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.nostr.gobject": {
       "build_targets": [],
       "cost": "ordinary",
@@ -21659,6 +21679,7 @@
     },
     "groundhog.media": {
       "depends_on": [
+        "nostr.gobject",
         "groundhog.net",
         "groundhog.store",
         "groundhog.conversations"
@@ -22865,6 +22886,7 @@
     },
     "nostr.gobject": {
       "depends_on": [
+        "libblossom",
         "libnostr",
         "libjson",
         "libgo",

@@ -51,6 +51,19 @@ class PackageBoundarySelection(unittest.TestCase):
         self.assertEqual(set(plan["selected_checks"]),
                          {"supported.libporthome", "root.asan.libporthome"})
 
+    def test_blossom_runtime_selects_glib_consumers_not_upstream_suites(self):
+        plan = s.make_plan(self.policy, [change("libblossom/src/client.c")],
+                           head="a" * 40, base="b" * 40, context="ci")
+        selected = set(plan["selected_checks"])
+        self.assertEqual(plan["effective_mode"], "affected")
+        self.assertTrue({"supported.nostr.gobject.blossom", "groundhog.blossom",
+                         "groundhog.media"} <= selected)
+        self.assertFalse({"root.asan.libgo", "root.asan.nip17"} & selected)
+        self.assertIn("nostr.gobject", self.policy["nodes"]["gnome.nostr_share"]["depends_on"])
+        test_plan = s.make_plan(self.policy, [change("libblossom/tests/test_blossom_guards.c")],
+                                head="a" * 40, base="b" * 40, context="ci")
+        self.assertNotIn("supported.nostr.gobject.blossom", test_plan["selected_checks"])
+
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
                            head="a" * 40, base="b" * 40, context="ci")

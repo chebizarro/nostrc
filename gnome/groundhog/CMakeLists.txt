@@ -3155,13 +3155,16 @@ if (NOT TARGET OpenSSL::Crypto)
 endif()
 if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-conversations AND
     TARGET OpenSSL::Crypto)
-  message(STATUS "Groundhog encrypted attachments core: enabled")
+    message(STATUS "Groundhog encrypted attachments core: enabled")
+    if(NOT TARGET nostr_gobject)
+      message(FATAL_ERROR "Groundhog media requires GnBlossomClient; set BUILD_NOSTR_GOBJECT=ON")
+    endif()
   add_library(groundhog-media STATIC src/media/gh-attachment.c src/media/gh-blossom-client.c
     src/media/gh-metadata-strip.c src/store/gh-store-media.c)
   target_include_directories(groundhog-media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media
     ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(groundhog-media PUBLIC groundhog-net groundhog-store
-    groundhog-conversations OpenSSL::Crypto)
+      groundhog-conversations nostr_gobject nostrc::bud02 OpenSSL::Crypto)
   target_compile_options(groundhog-media PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING AND TARGET groundhog-test-schemas)
     # Offline: metadata stripping (AT-1's APP1, PNG chunks, damaged files),

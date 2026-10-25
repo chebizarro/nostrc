@@ -88,6 +88,13 @@ request_error(Request *request, GError *error)
   return error;
 }
 
+GSettings *
+gh_net_http_dup_settings(GhNetHttp *self)
+{
+  g_return_val_if_fail(GH_IS_NET_HTTP(self), NULL);
+  return self->settings ? g_object_ref(self->settings) : NULL;
+}
+
 static gchar *
 setting(GhNetHttp *self, const gchar *key, const gchar *fallback)
 {

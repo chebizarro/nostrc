@@ -19,6 +19,7 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr-tag.h>
+#include <nostr/bud02/auth.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -135,7 +136,7 @@ typedef struct {
   gchar *secret;
   gchar *pubkey;
   guint calls;
-  gboolean lie; /* signs something else than asked */
+  guint lie; /* signs something else than asked */
 } FakeSigner;
 
 static void
@@ -148,8 +149,13 @@ fake_sign_async(gpointer data, const gchar *unsigned_json, GCancellable *cancell
   NostrEvent *event = nostr_event_new();
   g_assert_cmpint(nostr_event_deserialize_compact(event, unsigned_json, NULL), ==, 1);
   g_assert_cmpint(nostr_event_get_kind(event), ==, 24242);
-  if (signer->lie)
+  if (signer->lie == 1)
     nostr_event_set_content(event, "Delete everything");
+  else if (signer->lie == 2)
+    nostr_event_set_created_at(event, nostr_event_get_created_at(event) + 1);
+  else if (signer->lie == 3)
+    nostr_tags_append(nostr_event_get_tags(event),
+                     nostr_tag_new("server", "https://other.example", NULL));
   g_assert_cmpint(nostr_event_sign(event, signer->secret), ==, 0);
   char *json = nostr_event_serialize_compact(event);
   nostr_event_free(event);
@@ -362,15 +368,18 @@ test_no_server(void)
   fixture_down(&f);
 }
 
-static void
-test_authorization_base64url(void)
+/* Only for handcrafted invalid requests below. Production encoding is
+ * exercised through GnBlossomClient by strict-encrypted-upload. */
+static gchar *
+fixture_authorization(const gchar *json)
 {
-  g_autofree gchar *unpadded = gh_blossom_client_authorization("{}");
-  g_assert_cmpstr(unpadded, ==, "Nostr e30");
-  g_autofree gchar *url_safe = gh_blossom_client_authorization("{\"x\":\"💬\"}");
-  g_assert_cmpstr(url_safe, ==, "Nostr eyJ4Ijoi8J-SrCJ9");
-  g_autofree gchar *slash = gh_blossom_client_authorization("{\"x\":\"࠿\"}");
-  g_assert_cmpstr(slash, ==, "Nostr eyJ4Ijoi4KC_In0");
+  g_autofree gchar *encoded = g_base64_encode((const guchar *)json, strlen(json));
+  for (gchar *p = encoded; *p; p++) {
+    if (*p == '+') *p = '-';
+    else if (*p == '/') *p = '_';
+    else if (*p == '=') { *p = 0; break; }
+  }
+  return g_strconcat("Nostr ", encoded, NULL);
 }
 
 /* A strict BUD-02/BUD-11 server accepts the ciphertext, hash header and
@@ -445,7 +454,7 @@ raw_fixture_put(BlossomFixture *fixture, GBytes *body, const gchar *mime)
     "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
   char *json = nostr_event_serialize_compact(event);
   g_assert_nonnull(json);
-  g_autofree gchar *auth = gh_blossom_client_authorization(json);
+  g_autofree gchar *auth = fixture_authorization(json);
   free(json);
   nostr_event_free(event);
 
@@ -514,7 +523,7 @@ test_at1_round_trip(void)
   BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(f.blossom), 0);
   g_assert_true(put->auth_valid);
   g_assert_cmpstr(put->auth_x, ==, sent->x);
-  g_assert_cmpstr(put->auth_server, ==, "127.0.0.1");
+  g_assert_cmpstr(put->auth_server, ==, blossom_fixture_url(f.blossom));
   g_assert_cmpstr(put->auth_pubkey, !=, alice);
   /* The server holds ciphertext only, and it is exactly x. */
   GBytes *blob = blossom_fixture_get_blob(f.blossom, sent->x);
@@ -707,7 +716,7 @@ test_at6_upload_auth_key(void)
   g_assert_cmpstr(one->auth_pubkey, !=, two->auth_pubkey);
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   g_assert_cmpint(one->auth_expiration, >, now);
-  g_assert_cmpint(one->auth_expiration, <=, now + GH_BLOSSOM_AUTH_LIFETIME_S + 5);
+  g_assert_cmpint(one->auth_expiration, <=, now + NOSTR_BUD02_DEFAULT_EXPIRATION + 5);
 
   /* The server wants the account: the upload stops there, unsigned by it. */
   blossom_fixture_require_pubkey(f.blossom, signer.pubkey);
@@ -732,14 +741,16 @@ test_at6_upload_auth_key(void)
   BlossomRequest *last = g_ptr_array_index(requests, requests->len - 1);
   g_assert_cmpstr(last->auth_pubkey, ==, signer.pubkey);
   g_assert_true(last->auth_valid);
+  g_assert_cmpstr(last->auth_server, ==, blossom_fixture_url(f.blossom));
 
   /* A signer that signs something else is caught before any request. */
   guint puts = blossom_fixture_count(f.blossom, "PUT");
-  signer.lie = TRUE;
-  upload(&f, jpeg, &r, NULL);
-  g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER);
-  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, puts);
-  signer.lie = FALSE;
+  for (signer.lie = 1; signer.lie <= 3; signer.lie++) {
+    upload(&f, jpeg, &r, NULL);
+    g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER);
+    g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, puts);
+  }
+  signer.lie = 0;
 
   /* A new account signer (a new generation) forgets every consent. */
   gh_blossom_client_set_account_signer(f.client, signer.pubkey, fake_sign_async,
@@ -825,6 +836,47 @@ test_at8_cancel(void)
   fixture_down(&f);
 }
 
+static void
+test_mode_change_in_flight(void)
+{
+  Fixture f; fixture_up(&f, "none");
+  g_autoptr(GBytes) jpeg = make_jpeg(1024);
+  Result r = { 0 };
+  blossom_fixture_set_hold(f.blossom, TRUE);
+  gh_attachment_upload_async(f.client, jpeg, NULL, NULL, on_upload, &r);
+  HeldWait wait = { f.blossom, 1 };
+  spin_until(held, &wait);
+  g_settings_set_string(f.settings, "network-mode", "tor");
+  spin_until(result_done, &r);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_null(r.file);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  blossom_fixture_release_held(f.blossom);
+  result_clear(&r); fixture_down(&f);
+}
+
+static void
+test_local_policy_revoked_in_flight(void)
+{
+  Fixture f; fixture_up(&f, "none");
+  g_settings_set_boolean(f.settings, "allow-local-network", TRUE);
+  g_autoptr(GBytes) jpeg = make_jpeg(1024);
+  Result r = { 0 };
+  upload(&f, jpeg, &r, NULL); g_assert_no_error(r.error);
+  g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
+  result_clear(&r);
+  blossom_fixture_set_hold(f.blossom, TRUE);
+  gh_attachment_download_async(f.client, NULL, file, NULL, on_download, &r);
+  HeldWait wait = { f.blossom, 1 };
+  spin_until(held, &wait);
+  g_settings_set_boolean(f.settings, "allow-local-network", FALSE);
+  spin_until(result_done, &r);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_null(r.bytes);
+  blossom_fixture_release_held(f.blossom);
+  result_clear(&r); fixture_down(&f);
+}
+
 /* AT-9: in Tor mode the upload and the download go through the SOCKS5 proxy
  * (H3) with the host name (remote DNS), each on its own circuit; and a .onion
  * server is refused outside Tor mode without being contacted. */
@@ -848,7 +900,7 @@ test_at9_tor(void)
   g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
   g_assert_true(g_str_has_prefix(file->url, onion));
   BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(f.blossom), 0);
-  g_assert_cmpstr(put->auth_server, ==, ONION);
+  g_assert_cmpstr(put->auth_server, ==, onion);
   download(&f, NULL, file, &r, NULL);
   g_assert_no_error(r.error);
   GPtrArray *requests = socks5_fixture_requests(socks);
@@ -1253,7 +1305,6 @@ main(int argc, char **argv)
   g_autofree gchar *uuid = g_uuid_string_random();
   file_canary = g_strdup_printf("G21-FILE-PLAINTEXT-CANARY-%s", uuid);
   g_test_add_func("/groundhog/blossom/no-server", test_no_server);
-  g_test_add_func("/groundhog/blossom/authorization-base64url", test_authorization_base64url);
   g_test_add_func("/groundhog/blossom/strict-encrypted-upload", test_strict_encrypted_upload);
   g_test_add_func("/groundhog/blossom/media-only-sniffs-body", test_media_only_sniffs_body);
   g_test_add_func("/groundhog/blossom/at1-round-trip", test_at1_round_trip);
@@ -1262,6 +1313,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/at6-upload-auth-key", test_at6_upload_auth_key);
   g_test_add_func("/groundhog/blossom/at8-cancel", test_at8_cancel);
   g_test_add_func("/groundhog/blossom/at9-tor", test_at9_tor);
+  g_test_add_func("/groundhog/blossom/mode-change-in-flight", test_mode_change_in_flight);
+  g_test_add_func("/groundhog/blossom/local-policy-revoked-in-flight", test_local_policy_revoked_in_flight);
   g_test_add_func("/groundhog/blossom/download-address-policy", test_download_address_policy);
   g_test_add_func("/groundhog/blossom/download-rebinding", test_download_rebinding);
   g_test_add_func("/groundhog/blossom/keyed-upload-rebinding", test_keyed_upload_rebinding);
