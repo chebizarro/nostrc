@@ -32,7 +32,7 @@
 #include "hanami/hanami-blossom-shim.h"
 #include "hanami/hanami-server-capability.h"
 #include "hanami/hanami-types.h"
-#include "hanami/hanami-bud02-auth.h"
+#include <nostr/bud02/auth.h>
 
 #include <arpa/inet.h>
 #include <assert.h>

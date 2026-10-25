@@ -16,7 +16,7 @@
 #include "hanami/hanami-blossom-client.h"
 #include "hanami/hanami-server-capability.h"
 #include "hanami/hanami-types.h"
-#include "hanami/hanami-bud02-auth.h"
+#include <nostr/bud02/auth.h>
 
 #include <arpa/inet.h>
 #include <assert.h>
@@ -219,7 +219,7 @@ static void stub_stop(stub_t *s)
  * Test signer — mints a syntactically-valid "signature" by leaving
  * the event's fields intact and adding the id + sig we compute here.
  * The stub does not verify signatures, so a trivial passthrough sign
- * is enough. We reuse hanami_bud02_create_auth_header on the returned
+ * is enough. We reuse nostr_bud02_create_auth_header on the returned
  * event, so the JSON MUST be a legal event with id + sig fields.     *
  * ------------------------------------------------------------------ */
 

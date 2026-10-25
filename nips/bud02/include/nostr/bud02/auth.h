@@ -1,5 +1,5 @@
 /*
- * hanami-bud02-auth.h - BUD-02 Blossom authorization (kind 24242)
+ * auth.h - BUD-02 Blossom authorization (kind 24242)
  *
  * SPDX-License-Identifier: MIT
  *
@@ -10,10 +10,10 @@
  * @see https://github.com/hzrd149/blossom/blob/master/buds/02.md
  */
 
-#ifndef HANAMI_BUD02_AUTH_H
-#define HANAMI_BUD02_AUTH_H
+#ifndef NOSTR_BUD02_AUTH_H
+#define NOSTR_BUD02_AUTH_H
 
-#include "hanami-types.h"
+#include <nostr/bud02/export.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -31,60 +31,60 @@ typedef struct _NostrEvent NostrEvent;
  * ========================================================================= */
 
 /** BUD-02 event kind */
-#define HANAMI_BUD02_KIND 24242
+#define NOSTR_BUD02_KIND 24242
 
 /** Default expiration window in seconds (5 minutes) */
-#define HANAMI_BUD02_DEFAULT_EXPIRATION 300
+#define NOSTR_BUD02_DEFAULT_EXPIRATION 300
 
 /** Default batch-auth expiration window in seconds (2 minutes).
  *  Kept short because the batch header may be reused across N PUTs; a
  *  smaller window bounds the damage of a leaked header. */
-#define HANAMI_BUD02_BATCH_DEFAULT_EXPIRATION 120
+#define NOSTR_BUD02_BATCH_DEFAULT_EXPIRATION 120
 
 /** Hard cap on batch expiration window (15 minutes). Prevents callers
  *  from minting long-lived tokens by accident. */
-#define HANAMI_BUD02_BATCH_MAX_EXPIRATION 900
+#define NOSTR_BUD02_BATCH_MAX_EXPIRATION 900
 
 /* =========================================================================
  * Types
  * ========================================================================= */
 
 /**
- * hanami_bud02_action_t:
+ * nostr_bud02_action_t:
  * BUD-02 action types corresponding to the "t" tag value.
  */
 typedef enum {
-    HANAMI_BUD02_ACTION_UPLOAD = 0,
-    HANAMI_BUD02_ACTION_DELETE,
-    HANAMI_BUD02_ACTION_GET,
-    HANAMI_BUD02_ACTION_LIST,
-    HANAMI_BUD02_ACTION_MIRROR,
-} hanami_bud02_action_t;
+    NOSTR_BUD02_ACTION_UPLOAD = 0,
+    NOSTR_BUD02_ACTION_DELETE,
+    NOSTR_BUD02_ACTION_GET,
+    NOSTR_BUD02_ACTION_LIST,
+    NOSTR_BUD02_ACTION_MIRROR,
+} nostr_bud02_action_t;
 
 /**
- * hanami_bud02_result_t:
+ * nostr_bud02_result_t:
  * Result codes for BUD-02 operations.
  */
 typedef enum {
-    HANAMI_BUD02_OK = 0,
-    HANAMI_BUD02_ERR_NULL_PARAM      = -1,
-    HANAMI_BUD02_ERR_ALLOC           = -2,
-    HANAMI_BUD02_ERR_INVALID_KIND    = -3,
-    HANAMI_BUD02_ERR_EXPIRED         = -4,
-    HANAMI_BUD02_ERR_ACTION_MISMATCH = -5,
-    HANAMI_BUD02_ERR_HASH_MISMATCH   = -6,
-    HANAMI_BUD02_ERR_SIGNATURE       = -7,
-    HANAMI_BUD02_ERR_MISSING_TAG     = -8,
-    HANAMI_BUD02_ERR_ENCODE          = -9,
-    HANAMI_BUD02_ERR_DECODE          = -10,
-    HANAMI_BUD02_ERR_INVALID_HEADER  = -11,
-    HANAMI_BUD02_ERR_INVALID_ACTION  = -12,
-    HANAMI_BUD02_ERR_PUBKEY_MISMATCH = -13,
-    HANAMI_BUD02_ERR_MISSING_EXPIRATION = -14,
-} hanami_bud02_result_t;
+    NOSTR_BUD02_OK = 0,
+    NOSTR_BUD02_ERR_NULL_PARAM      = -1,
+    NOSTR_BUD02_ERR_ALLOC           = -2,
+    NOSTR_BUD02_ERR_INVALID_KIND    = -3,
+    NOSTR_BUD02_ERR_EXPIRED         = -4,
+    NOSTR_BUD02_ERR_ACTION_MISMATCH = -5,
+    NOSTR_BUD02_ERR_HASH_MISMATCH   = -6,
+    NOSTR_BUD02_ERR_SIGNATURE       = -7,
+    NOSTR_BUD02_ERR_MISSING_TAG     = -8,
+    NOSTR_BUD02_ERR_ENCODE          = -9,
+    NOSTR_BUD02_ERR_DECODE          = -10,
+    NOSTR_BUD02_ERR_INVALID_HEADER  = -11,
+    NOSTR_BUD02_ERR_INVALID_ACTION  = -12,
+    NOSTR_BUD02_ERR_PUBKEY_MISMATCH = -13,
+    NOSTR_BUD02_ERR_MISSING_EXPIRATION = -14,
+} nostr_bud02_result_t;
 
 /**
- * hanami_bud02_validate_options_t:
+ * nostr_bud02_validate_options_t:
  * Optional validation parameters.
  */
 typedef struct {
@@ -94,14 +94,14 @@ typedef struct {
     const char *expected_pubkey;
     /** If nonzero, override "now" for expiration check (for testing) */
     int64_t     now_override;
-} hanami_bud02_validate_options_t;
+} nostr_bud02_validate_options_t;
 
 /* =========================================================================
  * Event creation
  * ========================================================================= */
 
 /**
- * hanami_bud02_create_auth_event:
+ * nostr_bud02_create_auth_event:
  * @action: the BUD-02 action (upload, delete, get, list, mirror)
  * @sha256_hex: (nullable): SHA-256 hash of the blob (64-char hex), required
  *              for upload/delete, optional for get/list
@@ -114,13 +114,13 @@ typedef struct {
  * Returns: newly allocated NostrEvent, or NULL on error.
  *          Caller must free with nostr_event_free().
  */
-NostrEvent *hanami_bud02_create_auth_event(hanami_bud02_action_t action,
+NOSTR_BUD02_API NostrEvent *nostr_bud02_create_auth_event(nostr_bud02_action_t action,
                                            const char *sha256_hex,
                                            int64_t expiration,
                                            const char *server_url);
 
 /**
- * hanami_bud02_create_batch_auth_event:
+ * nostr_bud02_create_batch_auth_event:
  * @action: the BUD-02 action (typically upload)
  * @sha256_hex_array: array of SHA-256 hashes (each 64-char hex), one per blob
  * @count: number of hashes in @sha256_hex_array; MUST be > 0
@@ -143,7 +143,7 @@ NostrEvent *hanami_bud02_create_auth_event(hanami_bud02_action_t action,
  * and blossom.primal.net; docs/reviews/porthome-blossom-batch-auth-2026-09-24.md)
  * accept this shape. Callers MUST be prepared for a per-server fallback
  * to one-x-per-event on a 401 (session-scoped negative cache lives in
- * hanami-server-capability).
+ * the client's capability cache).
  *
  * Caller must sign with nostr_event_sign() before use (or pass the
  * event to the higher-level batch upload API which handles signing).
@@ -152,7 +152,7 @@ NostrEvent *hanami_bud02_create_auth_event(hanami_bud02_action_t action,
  *          NULL/empty array, allocation failure). Caller must free with
  *          nostr_event_free().
  */
-NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
+NOSTR_BUD02_API NostrEvent *nostr_bud02_create_batch_auth_event(nostr_bud02_action_t action,
                                                  const char *const *sha256_hex_array,
                                                  size_t count,
                                                  int64_t expiration,
@@ -163,23 +163,23 @@ NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
  * ========================================================================= */
 
 /**
- * hanami_bud02_create_auth_header:
+ * nostr_bud02_create_auth_header:
  * @event: signed kind 24242 event
  *
  * Serialize the event to JSON, base64-encode, and return "Nostr <base64>".
  *
  * Returns: newly allocated header string, or NULL on error. Caller frees.
  */
-char *hanami_bud02_create_auth_header(const NostrEvent *event);
+NOSTR_BUD02_API char *nostr_bud02_create_auth_header(const NostrEvent *event);
 
 /**
- * hanami_bud02_parse_auth_header:
+ * nostr_bud02_parse_auth_header:
  * @header: "Nostr <base64>" header value
  * @out_event: (out): parsed event on success
  *
- * Returns: HANAMI_BUD02_OK on success
+ * Returns: NOSTR_BUD02_OK on success
  */
-hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
+NOSTR_BUD02_API nostr_bud02_result_t nostr_bud02_parse_auth_header(const char *header,
                                                      NostrEvent **out_event);
 
 /* =========================================================================
@@ -187,7 +187,7 @@ hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
  * ========================================================================= */
 
 /**
- * hanami_bud02_validate_auth_event:
+ * nostr_bud02_validate_auth_event:
  * @event: kind 24242 event to validate
  * @expected_action: the action the server expects
  * @options: (nullable): optional validation parameters
@@ -200,61 +200,61 @@ hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
  * 5. Signature is valid
  * 6. Optional: pubkey matches expected pubkey
  *
- * Returns: HANAMI_BUD02_OK on success, specific error code otherwise
+ * Returns: NOSTR_BUD02_OK on success, specific error code otherwise
  */
-hanami_bud02_result_t hanami_bud02_validate_auth_event(
+NOSTR_BUD02_API nostr_bud02_result_t nostr_bud02_validate_auth_event(
     const NostrEvent *event,
-    hanami_bud02_action_t expected_action,
-    const hanami_bud02_validate_options_t *options);
+    nostr_bud02_action_t expected_action,
+    const nostr_bud02_validate_options_t *options);
 
 /* =========================================================================
  * Accessors
  * ========================================================================= */
 
 /** Get the "t" (action) tag value, or NULL if missing */
-const char *hanami_bud02_get_action(const NostrEvent *event);
+NOSTR_BUD02_API const char *nostr_bud02_get_action(const NostrEvent *event);
 
 /** Get the "x" (SHA-256 hash) tag value, or NULL if missing */
-const char *hanami_bud02_get_hash(const NostrEvent *event);
+NOSTR_BUD02_API const char *nostr_bud02_get_hash(const NostrEvent *event);
 
 /** Get the "expiration" tag value as int64, or 0 if missing */
-int64_t hanami_bud02_get_expiration(const NostrEvent *event);
+NOSTR_BUD02_API int64_t nostr_bud02_get_expiration(const NostrEvent *event);
 
 /** Get the "server" tag value, or NULL if missing */
-const char *hanami_bud02_get_server(const NostrEvent *event);
+NOSTR_BUD02_API const char *nostr_bud02_get_server(const NostrEvent *event);
 
 /* =========================================================================
  * Helpers
  * ========================================================================= */
 
 /**
- * hanami_bud02_action_str:
+ * nostr_bud02_action_str:
  * @action: action enum value
  *
  * Returns: string name ("upload", "delete", etc.) or NULL for invalid
  */
-const char *hanami_bud02_action_str(hanami_bud02_action_t action);
+NOSTR_BUD02_API const char *nostr_bud02_action_str(nostr_bud02_action_t action);
 
 /**
- * hanami_bud02_action_from_str:
+ * nostr_bud02_action_from_str:
  * @str: action string
  * @out: (out): action enum on success
  *
- * Returns: HANAMI_BUD02_OK on success, HANAMI_BUD02_ERR_INVALID_ACTION otherwise
+ * Returns: NOSTR_BUD02_OK on success, NOSTR_BUD02_ERR_INVALID_ACTION otherwise
  */
-hanami_bud02_result_t hanami_bud02_action_from_str(const char *str,
-                                                    hanami_bud02_action_t *out);
+NOSTR_BUD02_API nostr_bud02_result_t nostr_bud02_action_from_str(const char *str,
+                                                    nostr_bud02_action_t *out);
 
 /**
- * hanami_bud02_strerror:
+ * nostr_bud02_strerror:
  * @result: result code
  *
  * Returns: human-readable error string (static, do not free)
  */
-const char *hanami_bud02_strerror(hanami_bud02_result_t result);
+NOSTR_BUD02_API const char *nostr_bud02_strerror(nostr_bud02_result_t result);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* HANAMI_BUD02_AUTH_H */
+#endif /* NOSTR_BUD02_AUTH_H */

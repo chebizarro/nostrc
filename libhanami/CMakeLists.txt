@@ -17,7 +17,7 @@ if(NOT COMMAND declare_component_version)
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
-set(HANAMI_VERSION_MINOR 1)
+set(HANAMI_VERSION_MINOR 2)
 set(HANAMI_VERSION_MICRO 0)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
@@ -66,7 +66,6 @@ set(HANAMI_SOURCES
   src/hanami.c
   # Future sources will be added here as components are implemented:
   src/hanami-index.c
-  src/hanami-bud02-auth.c
   src/hanami-server-capability.c
   src/hanami-blossom-shim.c
   src/hanami-blossom-client.c
@@ -109,6 +108,7 @@ target_include_directories(hanami
 target_link_libraries(hanami
   PUBLIC
     PkgConfig::LIBGIT2
+    nostrc::bud02      # public BUD-02 codec dependency
   PRIVATE
     nostr              # libnostr for Nostr event/relay operations
     CURL::libcurl
@@ -116,6 +116,10 @@ target_link_libraries(hanami
     OpenSSL::Crypto
     pthread            # POSIX threads for relay connection mutex
 )
+
+if(NOT TARGET nostrc::bud02)
+  message(FATAL_ERROR "libhanami requires bud02. Set ENABLE_BUD02=ON or BUILD_LIBHANAMI=OFF.")
+endif()
 
 # NIP-34 (required — Git collaboration protocol)
 if(NOT TARGET nip34)
@@ -208,19 +212,6 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-index)
-  endif()
-
-  add_executable(test-hanami-bud02-auth tests/test_hanami_bud02_auth.c)
-  target_compile_features(test-hanami-bud02-auth PRIVATE c_std_11)
-  target_link_libraries(test-hanami-bud02-auth PRIVATE hanami nostr)
-  add_test(NAME test-hanami-bud02-auth COMMAND test-hanami-bud02-auth)
-  set_tests_properties(test-hanami-bud02-auth PROPERTIES
-    TIMEOUT 30
-    LABELS "libhanami;bud02;unit"
-  )
-
-  if(COMMAND apply_sanitizers)
-    apply_sanitizers(test-hanami-bud02-auth)
   endif()
 
   add_executable(test-hanami-blossom-client tests/test_hanami_blossom_client.c)

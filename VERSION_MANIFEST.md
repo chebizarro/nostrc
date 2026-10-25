@@ -25,12 +25,25 @@ files already declare a version.
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
+| libhanami | `libhanami/` | 0.2.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-er4fz.2 (R1): libhanami 0.1.0 -> 0.2.0 (MINOR for a breaking
+  0.x public API/build change). BUD-02 auth moves to `nips/bud02`, with
+  `<nostr/bud02/auth.h>`, `nostr_bud02_*` symbols and `NOSTR_BUD02_*`
+  constants replacing the removed `<hanami/hanami-bud02-auth.h>` and
+  `hanami_bud02_*`/`HANAMI_BUD02_*` API. Consumers must include/link bud02;
+  hanami's CMake and pkg-config dependencies propagate it. No compatibility
+  shim is retained. bud02 starts at 0.1.0; codec behavior and wire format
+  are unchanged. nostr-homed needs no bump: no shipped source/API change
+  (its integration publisher uses the hanami client, not the auth codec).
+  Test moves require no separate version. No release tags are published.
 
 - nostrc-0cfsg.36.31: the account UI no longer passes an announcement to
   GTK's fallback test accessibility context (used when no AT-SPI bus is
