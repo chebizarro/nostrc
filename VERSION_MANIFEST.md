@@ -28,10 +28,12 @@ files already declare a version.
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
-| libvault | `libvault/` | 0.2.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
+
+| vaultctl | `tools/vaultctl/` | 0.1.0 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
+| libvault | `libvault/` | 0.3.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -58,6 +60,16 @@ files already declare a version.
   and all other components need no bump: no owned shipped changes to them.
   Aggregate CMake/boundary/selection registration is build/test wiring for the
   new component, not a release or a change to libvault's dependency closure.
+
+- nostrc-hl30i.5 (SV-5/R5): new Layer-7 vaultctl starts at 0.1.0 with
+  share/grant/revoke/fold/fsck, private explicit state, ACK-aware pool/NIP-42
+  relay I/O and addressed libblossom transfers. libvault MINOR 0.2.0 -> 0.3.0
+  adds `<vault/tree.h>` for verified manifest enumeration/fetch, recursive
+  rekey, member addition, budgeted reseal and exact-epoch reachable checking.
+  Existing `vault.h` and NIP-59 carrier APIs remain unchanged. libporthome
+  stays 0.4.0, libblossom 0.2.0 and libnostr/nips unchanged: consumers only,
+  no changed shipped artifacts in those components. Selection changes are
+  test-only, with no separate version bump. No release tag is published.
 
 - nostrc-hl30i.4 (SV-4): libvault MINOR 0.1.0 -> 0.2.0 adds the NIP-59
   grant carrier through a separate `<vault/nip59.h>`; existing `vault.h`,

@@ -102,12 +102,13 @@ class PackageBoundarySelection(unittest.TestCase):
                 self.assertTrue(expected | consumers | {"supported.nostr.gobject.vault",
                                                         "bindings.rust.consumer",
                                                         "root.asan.libvault.marmot",
-                                                        "supported.libvault.marmot"} <= selected)
+                                                        "supported.libvault.marmot",
+                                                        "root.asan.vaultctl", "supported.vaultctl"} <= selected)
                 self.assertFalse({"supported.libporthome", "supported.libblossom"} & selected)
         for name in expected:
             check = self.policy["checks"][name]
             targets = {"test_vault_ring_derivation", "test_vault_revoke_lazy",
-                       "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"}
+                       "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"}
             self.assertEqual(set(check["build_targets"]), targets)
             for profile in check["profiles"]:
                 self.assertEqual(set(check["ctest_tests"][profile]), targets)
@@ -229,6 +230,18 @@ class PackageBoundarySelection(unittest.TestCase):
         self.assertTrue(families <= set(plan["selected_checks"]))
         self.assertNotIn("supported.libvault", plan["selected_checks"])
         self.assertNotIn("supported.libblossom", plan["selected_checks"])
+
+    def test_vaultctl_scoped_and_transitive_selection(self):
+        for path in ("tools/vaultctl/main.c", "tools/vaultctl/tests/fixtures.py", "tools/vaultctl/tests/fixture_helper.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
+            self.assertEqual(plan["effective_mode"], "affected")
+            self.assertEqual(set(plan["selected_checks"]), {"root.asan.vaultctl", "supported.vaultctl"})
+        for path in ("libvault/include/vault/tree.h", "libblossom/src/client.c", "libnostr/src/simplepool.c", "nips/nip42/src/nip42.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
+            self.assertTrue({"root.asan.vaultctl", "supported.vaultctl"} <= set(plan["selected_checks"]))
+        for path in ("libvault/tests/test_tree_ops.c", "libhanami/tests/test_integration.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
+            self.assertNotIn("supported.vaultctl", plan["selected_checks"])
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],

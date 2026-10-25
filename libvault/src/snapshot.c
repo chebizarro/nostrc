@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "internal.h"
+#include <vault/tree.h>
 #include <nostr-event.h>
 typedef struct {
     const vault_manifest_object *objects;
@@ -74,9 +75,13 @@ static int walk(inventory *s, const uint8_t hash[32], const uint8_t *node_id, ui
     if (rc)
         return rc;
     if (node_id && memcmp(n->node_id, node_id, 32)) {
-        rc = VAULT_ERR_ARG;
-        goto done;
+        porthome_dir_node_dispose(n);
+        free(n);
+        return VAULT_ERR_ARG;
     }
+    vault_record_manifest *kept = &s->record->manifests[s->record->manifests_len++];
+    kept->node = n;
+    memcpy(kept->address, hash, 32);
     if (!depth)
         s->record->root = n;
     for (size_t i = 0; i < n->entries_len; ++i) {
@@ -98,10 +103,6 @@ static int walk(inventory *s, const uint8_t hash[32], const uint8_t *node_id, ui
         }
     }
 done:
-    if (depth) {
-        porthome_dir_node_dispose(n);
-        free(n);
-    }
     s->seen[index] = 2;
     return rc;
 }
@@ -113,15 +114,24 @@ void vault_record_free(vault_record *r)
         porthome_head_dispose(r->head);
         free(r->head);
     }
-    if (r->root) {
-        porthome_dir_node_dispose(r->root);
-        free(r->root);
+    for (size_t i = 0; i < r->manifests_len; ++i) {
+        porthome_dir_node_dispose(r->manifests[i].node);
+        free(r->manifests[i].node);
     }
+    free(r->manifests);
     for (size_t i = 0; i < r->paths_len; ++i)
         free(r->paths[i].path);
     free(r->paths);
     OPENSSL_cleanse(r, sizeof(*r));
     free(r);
+}
+size_t vault_record_manifest_count(const vault_record *r) { return r ? r->manifests_len : 0; }
+const porthome_dir_node *vault_record_manifest_at(const vault_record *r, size_t i, const uint8_t **address)
+{
+    if (address) *address = NULL;
+    if (!r || i >= r->manifests_len) return NULL;
+    if (address) *address = r->manifests[i].address;
+    return r->manifests[i].node;
 }
 const porthome_head *vault_record_head(const vault_record *r) { return r ? r->head : NULL; }
 const porthome_dir_node *vault_record_root(const vault_record *r) { return r ? r->root : NULL; }
@@ -184,6 +194,10 @@ int vault_record_open(const NostrEvent *event, const uint8_t vault_id[32],
             }
         if (rc)
             break;
+    }
+    if (!rc) {
+        r->manifests = calloc(count, sizeof(*r->manifests));
+        if (!r->manifests) rc = VAULT_ERR_OOM;
     }
     if (!rc)
         rc = walk(&s, r->head->root_manifest, NULL, epoch, ring, "", 0);

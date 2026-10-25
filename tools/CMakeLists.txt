@@ -1,4 +1,8 @@
 # Nostr testing and debugging tools
+option(BUILD_VAULTCTL "Build the shared-vault CLI" ${BUILD_LIBVAULT})
+if(BUILD_VAULTCTL)
+    add_subdirectory(vaultctl)
+endif()
 
 add_executable(test_relay_eose test_relay_eose.c)
 target_link_libraries(test_relay_eose PRIVATE nostr libgo)
