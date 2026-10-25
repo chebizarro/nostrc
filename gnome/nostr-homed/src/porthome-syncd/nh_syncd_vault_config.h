@@ -20,5 +20,6 @@ int nh_syncd_vault_config_load(const char *, nh_syncd_vault_config *);
 void nh_syncd_vault_config_clear(nh_syncd_vault_config *);
 /* Matches the complete subtree, not lexical prefix neighbours. Also keeps the
  * shared conflict directory out of the legacy personal-home generation. */
+bool nh_syncd_vault_conflict_path(const char *);
 bool nh_syncd_vault_config_excludes(void *, const char *);
 #endif

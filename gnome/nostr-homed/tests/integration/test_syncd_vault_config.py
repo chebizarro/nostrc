@@ -61,7 +61,21 @@ with tempfile.TemporaryDirectory(prefix="syncd-vault-config-") as tmp:
     seed_drop.write_text("03" * 32)
     check({"vaults": [dict(entry, is_owner="yes")]})
     assert seed_drop.read_text() == "03" * 32, "invalid config consumed broker credential"
+    config.write_text(json.dumps({"vaults": []}))
+    result = subprocess.run([binary, "--vault-sync"], env=env, capture_output=True, timeout=10)
+    assert result.returncode == 2 and seed_drop.read_text() == "03" * 32, "empty vault one-shot consumed broker credential"
+    config.write_text(json.dumps({"vaults": [entry]}))
+    for budget in ("", "-1", "+1", " 1", "1x", str(2**63)):
+        env["NOSTR_HOMED_SYNCD_RETENTION_BYTES"] = budget
+        result = subprocess.run([binary, "--check"], env=env, capture_output=True, timeout=10)
+        assert result.returncode == 2 and b"retention byte budget" in result.stderr, result.stderr
+        assert seed_drop.read_text() == "03" * 32, "invalid budget consumed broker credential"
+    env.pop("NOSTR_HOMED_SYNCD_RETENTION_BYTES")
     seed_drop.unlink()
+    for budget in ("0", "134217728"):
+        env["NOSTR_HOMED_SYNCD_RETENTION_BYTES"] = budget
+        check({"vaults": [entry]}, valid=True, count=1)
+    env.pop("NOSTR_HOMED_SYNCD_RETENTION_BYTES")
     config.unlink()
     result = subprocess.run([binary, "--check"], env=env, capture_output=True, timeout=10)
     assert result.returncode == 2, result.stderr

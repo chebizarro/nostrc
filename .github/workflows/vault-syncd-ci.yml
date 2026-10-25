@@ -36,7 +36,7 @@ jobs:
             build-essential cmake ninja-build pkg-config python3 \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libnsync-dev \
             libsodium-dev libssl-dev libcurl4-openssl-dev libsqlite3-dev \
-            libsecret-1-dev libpam0g-dev
+            libsecret-1-dev libpam0g-dev libfuse3-dev
       - name: Require the selected vault check
         run: |
           python3 - <<'PY'

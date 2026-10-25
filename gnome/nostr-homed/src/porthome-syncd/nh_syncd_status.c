@@ -38,8 +38,11 @@ typedef struct {
     uint32_t            count;
 } recent_slot;
 
+#include <jansson.h>
+
 struct nh_syncd_status_writer {
     pthread_mutex_t     mu;
+    json_t             *vault_conflicts;
     /* Snapshot of the current field set. Copied under the lock. */
     nh_syncd_state_slug state;
     uint64_t            last_push_gen;
@@ -101,6 +104,7 @@ nh_syncd_status_writer *nh_syncd_status_writer_new(void) {
 
 void nh_syncd_status_writer_free(nh_syncd_status_writer *w) {
     if (!w) return;
+    json_decref(w->vault_conflicts);
     pthread_mutex_destroy(&w->mu);
     free(w);
 }
@@ -248,6 +252,18 @@ static int appendf(char *buf, size_t cap, size_t *off,
     return 0;
 }
 
+int nh_syncd_status_set_vault_conflicts(nh_syncd_status_writer *w, const char *wire) {
+    if (!w || !wire) return -1;
+    json_t *array = json_loads(wire, JSON_REJECT_DUPLICATES, NULL);
+    if (!json_is_array(array)) { json_decref(array); return -1; }
+    pthread_mutex_lock(&w->mu);
+    json_t *old = w->vault_conflicts;
+    w->vault_conflicts = array;
+    pthread_mutex_unlock(&w->mu);
+    json_decref(old);
+    return 0;
+}
+
 int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
     if (!w) return -1;
 
@@ -272,6 +288,7 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
     unsigned head   = w->recent_head;
     recent_slot recent[NH_SYNCD_STATUS_RECENT_CAP];
     memcpy(recent, w->recent, sizeof recent);
+    json_t *vault_conflicts = json_incref(w->vault_conflicts);
     pthread_mutex_unlock(&w->mu);
 
     char err_esc[128]  = {0};
@@ -300,7 +317,7 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                 nh_syncd_status_state_slug(state),
                 lpg, lpg2, err_esc, pinned, cb, cq, qs_esc, evr,
                 upok, uptot, upcls_esc) != 0)
-        return -1;
+        { json_decref(vault_conflicts); return -1; }
 
     /* Emit recent[] most-recent-first. Walk backward from `head`. */
     for (unsigned i = 0; i < rc; ++i) {
@@ -324,7 +341,7 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                         sum_esc,
                         s->delivered ? "true" : "false",
                         (unsigned)s->count) != 0)
-                return -1;
+                { json_decref(vault_conflicts); return -1; }
         } else {
             if (appendf(body, sizeof body, &off,
                         "%s{\"ts\":%" PRId64
@@ -338,12 +355,21 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                         (unsigned)s->key_hash8,
                         sum_esc,
                         s->delivered ? "true" : "false") != 0)
-                return -1;
+                { json_decref(vault_conflicts); return -1; }
         }
     }
-    if (appendf(body, sizeof body, &off, "]}") != 0) return -1;
+    if (appendf(body, sizeof body, &off, "]}") != 0) { json_decref(vault_conflicts); return -1; }
 
-    if (path)
-        return nh_porthome_status_write_key(path, "syncd", body);
-    return nh_porthome_status_write_key_default("syncd", body);
+    char *extended = NULL;
+    if (vault_conflicts) {
+        json_t *j = json_loads(body, JSON_REJECT_DUPLICATES, NULL);
+        if (j && json_object_set(j, "vault_conflicts", vault_conflicts) == 0)
+            extended = json_dumps(j, JSON_COMPACT);
+        json_decref(j); json_decref(vault_conflicts);
+        if (!extended) return -1;
+    }
+    int result = path ? nh_porthome_status_write_key(path, "syncd", extended ? extended : body)
+                      : nh_porthome_status_write_key_default("syncd", extended ? extended : body);
+    free(extended);
+    return result;
 }

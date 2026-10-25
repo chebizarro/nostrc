@@ -34,4 +34,17 @@ int nh_syncd_vault_read(const vault_tree *, const char *, uint64_t offset, uint8
  * this same reader and an explicit .conflicts target supplied by the reconciler. */
 int nh_syncd_vault_materialize(int home_fd, const char *prefix, const vault_tree *,
                                nh_syncd_state *, const vault_blob_io *);
+/* Project a captured, acknowledged tree into existing snapshot rows without
+ * writing HOME. Used before fold so new local files are tracked and their
+ * losing versions can be moved out of the authoritative namespace safely. */
+int nh_syncd_vault_inventory(const char *prefix, const vault_tree *, nh_syncd_state *, const vault_blob_io *);
+/* Resolve authenticated encrypted components to a malloc'd plaintext path. */
+int nh_syncd_vault_path_plain(const vault_tree *, const char *path_enc, char **);
+/* Copy one present version (including a directory subtree) to an explicit safe
+ * local destination. This does not change the source manifest or its names. */
+/* Rebuild an already fsynced conflict's namespace after a pre-publication crash,
+ * without rewriting HOME or trusting locally edited conflict bytes. */
+int nh_syncd_vault_inventory_one(const char *, const vault_tree *, const char *, nh_syncd_state *, const vault_blob_io *);
+int nh_syncd_vault_materialize_one(int home_fd, const char *destination, const vault_tree *,
+                                   const char *source_path_enc, nh_syncd_state *, const vault_blob_io *);
 #endif

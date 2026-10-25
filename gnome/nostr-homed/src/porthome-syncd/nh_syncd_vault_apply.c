@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
 #include "nh_syncd_vault_fs.h"
+#include "nh_syncd_vault_config.h"
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -393,8 +394,19 @@ static int reverse_path(const void *a, const void *b)
 {
     return -strcmp(*(const char *const *)a, *(const char *const *)b);
 }
-static int remove_absent(int fd, const char *prefix, const vault_tree *tree, nh_syncd_state *state,
-                         permissions *guard)
+static int mapped_lookup(const vault_tree *tree, const char *source_prefix, const char *relative,
+                         const porthome_node_entry **entry, porthome_ring_t *ring)
+{
+    if (!tree) return VAULT_ERR_INCOMPLETE;
+    char path[PORTHOME_MAX_PATH_LEN];
+    if (source_prefix) {
+        int rc = join(source_prefix, relative, path); if (rc) return rc;
+        relative = path;
+    }
+    return nh_syncd_vault_lookup(tree, relative, 0, entry, ring);
+}
+static int remove_absent(int fd, const char *prefix, const vault_tree *tree, const char *source_prefix,
+                         nh_syncd_state *state, permissions *guard)
 {
     size_t n = 0;
     char **paths = NULL;
@@ -407,6 +419,7 @@ static int remove_absent(int fd, const char *prefix, const vault_tree *tree, nh_
             rc = VAULT_ERR_ARG;
             break;
         }
+        if (!nh_syncd_vault_conflict_path(prefix) && nh_syncd_vault_conflict_path(path)) continue;
         const char *relative = path;
         if (prefix_len) {
             if (strncmp(path, prefix, prefix_len) || path[prefix_len] != '/')
@@ -416,7 +429,7 @@ static int remove_absent(int fd, const char *prefix, const vault_tree *tree, nh_
         nh_syncd_kind old_kind = nh_syncd_entry_kind(old);
         const porthome_node_entry *entry;
         porthome_ring_t ring;
-        int found = nh_syncd_vault_lookup(tree, relative, 0, &entry, &ring);
+        int found = mapped_lookup(tree, source_prefix, relative, &entry, &ring);
         if (!found && (int)entry->kind == (int)old_kind)
             continue;
         if (found && found != VAULT_ERR_INCOMPLETE && found != VAULT_ERR_ARG) {
@@ -474,11 +487,217 @@ static int remove_absent(int fd, const char *prefix, const vault_tree *tree, nh_
     free(paths);
     return rc;
 }
+static int inventory_node(const char *prefix, const vault_tree *tree, const porthome_dir_node *node,
+                           const porthome_ring_t *ring, nh_syncd_state *state, const vault_blob_io *io, size_t depth)
+{
+    if (depth >= 128) return PORTHOME_ERR_TOO_LARGE;
+    for (size_t i = 0; i < node->entries_len; ++i) {
+        const porthome_node_entry *entry = &node->entries[i];
+        char path[PORTHOME_MAX_PATH_LEN];
+        int rc = join(prefix, entry->name_plain, path);
+        if (rc) return rc;
+        if (entry->kind == PORTHOME_KIND_DIR) {
+            rc = nh_syncd_state_upsert_dir_(state, path, S_IFDIR | (entry->mode & 0777), getuid(), getgid(), entry->mtime_ns);
+            porthome_ring_t child_ring;
+            const porthome_dir_node *child = find_node(tree, entry->node_id, &child_ring);
+            if (!rc) rc = child ? inventory_node(path, tree, child, &child_ring, state, io, depth + 1) : VAULT_ERR_INCOMPLETE;
+        } else if (entry->kind == PORTHOME_KIND_SYMLINK) {
+            rc = nh_syncd_state_upsert_symlink_(state, path, S_IFLNK | (entry->mode & 0777), getuid(), getgid(),
+                entry->mtime_ns, entry->symlink_target);
+        } else {
+            char **chunks = calloc(entry->chunks_len ? entry->chunks_len : 1, sizeof *chunks);
+            if (!chunks) return VAULT_ERR_OOM;
+            const nh_syncd_entry *old = nh_syncd_state_find(state, path);
+            const char *known = old ? nh_syncd_entry_content_hash_hex(old) : NULL;
+            int same = known && strlen(known) == 64 && nh_syncd_entry_size(old) == entry->size_plain &&
+                       nh_syncd_entry_chunk_count(old) == entry->chunks_len;
+            char hash[65] = {0};
+            if (same) memcpy(hash, known, 65);
+            for (size_t k = 0; !rc && k < entry->chunks_len; ++k) {
+                chunks[k] = malloc(65);
+                if (!chunks[k]) { rc = VAULT_ERR_OOM; break; }
+                porthome_hex64(entry->chunks[k].sha256, chunks[k]);
+                const char *before = same ? nh_syncd_entry_chunk_at(old, k) : NULL;
+                if (!before || strcmp(before, chunks[k])) same = 0;
+            }
+            if (!rc && !same) {
+                EVP_MD_CTX *digest = EVP_MD_CTX_new(); uint8_t bytes[32]; unsigned n = 0;
+                if (!digest) rc = VAULT_ERR_OOM;
+                else if (EVP_DigestInit_ex(digest, EVP_sha256(), NULL) != 1) rc = PORTHOME_ERR_CRYPTO;
+                for (size_t k = 0; !rc && k < entry->chunks_len; ++k) {
+                    uint8_t *plain = NULL; size_t len = 0;
+                    rc = vault_chunk_read(&entry->chunks[k], ring, io, &plain, &len);
+                    if (!rc && EVP_DigestUpdate(digest, plain, len) != 1) rc = PORTHOME_ERR_CRYPTO;
+                    if (plain) { OPENSSL_cleanse(plain, len); free(plain); }
+                }
+                if (!rc && (EVP_DigestFinal_ex(digest, bytes, &n) != 1 || n != 32)) rc = PORTHOME_ERR_CRYPTO;
+                if (!rc) porthome_hex64(bytes, hash);
+                EVP_MD_CTX_free(digest);
+            }
+            if (!rc) rc = nh_syncd_state_upsert_file_(state, path, S_IFREG | (entry->mode & 0777), getuid(), getgid(),
+                entry->mtime_ns, entry->size_plain, hash, (const char *const *)chunks, entry->chunks_len);
+            for (size_t k = 0; k < entry->chunks_len; ++k) free(chunks[k]);
+            free(chunks);
+        }
+        if (rc) return rc;
+    }
+    return 0;
+}
+static int prune_inventory(const char *prefix, const vault_tree *tree, const char *source_prefix, nh_syncd_state *state)
+{
+    size_t prefix_len = strlen(prefix);
+    for (size_t i = 0; i < nh_syncd_state_file_count(state);) {
+        const char *path = NULL;
+        const nh_syncd_entry *old = nh_syncd_state_at(state, i, &path);
+        if (!old || !path) return VAULT_ERR_ARG;
+        if (!nh_syncd_vault_conflict_path(prefix) && nh_syncd_vault_conflict_path(path)) { ++i; continue; }
+        if (!strncmp(path, prefix, prefix_len) && path[prefix_len] == '/') {
+            const porthome_node_entry *entry = NULL; porthome_ring_t ring;
+            int found = mapped_lookup(tree, source_prefix, path + prefix_len + 1, &entry, &ring);
+            if (found == VAULT_ERR_INCOMPLETE || found == VAULT_ERR_ARG) {
+                char *copy = strdup(path);
+                if (!copy) return VAULT_ERR_OOM;
+                int rc = nh_syncd_state_delete_(state, copy); free(copy);
+                if (rc) return rc;
+                continue;
+            }
+            if (found) return found;
+        }
+        ++i;
+    }
+    return 0;
+}
+int nh_syncd_vault_inventory(const char *prefix, const vault_tree *tree, nh_syncd_state *state, const vault_blob_io *io)
+{
+    if (!prefix || !*prefix || !tree || !state || !io) return VAULT_ERR_ARG;
+    int result = prune_inventory(prefix, tree, NULL, state);
+    if (result) return result;
+    if (!nh_syncd_state_find(state, prefix)) {
+        int rc = nh_syncd_state_upsert_dir_(state, prefix, S_IFDIR | 0700, getuid(), getgid(), 0);
+        if (rc) return rc;
+    }
+    porthome_ring_t ring;
+    const porthome_dir_node *root = vault_tree_node_at(tree, 0, &ring);
+    return root ? inventory_node(prefix, tree, root, &ring, state, io, 0) : VAULT_ERR_ARG;
+}
+int nh_syncd_vault_path_plain(const vault_tree *tree, const char *encoded, char **out)
+{
+    *out = NULL;
+    if (!tree || !encoded || !*encoded || strlen(encoded) >= PORTHOME_MAX_PATH_LEN)
+        return VAULT_ERR_ARG;
+    char *prefix = strdup(encoded);
+    if (!prefix) return VAULT_ERR_OOM;
+    char result[PORTHOME_MAX_PATH_LEN] = {0};
+    size_t used = 0;
+    int rc = 0;
+    for (char *p = prefix;; ++p) {
+        if (*p && *p != '/') continue;
+        char saved = *p;
+        *p = 0;
+        const porthome_node_entry *entry = NULL;
+        porthome_ring_t ring;
+        rc = nh_syncd_vault_lookup(tree, prefix, 1, &entry, &ring);
+        *p = saved;
+        if (rc) break;
+        size_t n = strlen(entry->name_plain);
+        if (used + !!used + n >= sizeof result) { rc = PORTHOME_ERR_TOO_LARGE; break; }
+        if (used) result[used++] = '/';
+        memcpy(result + used, entry->name_plain, n + 1);
+        used += n;
+        if (!saved) break;
+    }
+    free(prefix);
+    if (!rc) { *out = strdup(result); if (!*out) rc = VAULT_ERR_OOM; }
+    return rc;
+}
+int nh_syncd_vault_inventory_one(const char *destination, const vault_tree *tree, const char *encoded,
+                                 nh_syncd_state *state, const vault_blob_io *io)
+{
+    if (!destination || strlen(destination) >= PORTHOME_MAX_PATH_LEN || !tree || !state || !io) return VAULT_ERR_ARG;
+    const porthome_node_entry *source = NULL; porthome_ring_t ring;
+    int rc = nh_syncd_vault_lookup(tree, encoded, 1, &source, &ring);
+    char parent[PORTHOME_MAX_PATH_LEN];
+    memcpy(parent, destination, strlen(destination) + 1);
+    char *leaf = strrchr(parent, '/');
+    if (!leaf || !leaf[1] || strlen(leaf + 1) > 255) return VAULT_ERR_ARG;
+    *leaf++ = 0;
+    char *source_path = NULL;
+    if (!rc) rc = nh_syncd_vault_path_plain(tree, encoded, &source_path);
+    if (!rc) rc = prune_inventory(destination, source->kind == PORTHOME_KIND_DIR ? tree : NULL, source_path, state);
+    free(source_path);
+    if (rc) return rc;
+    porthome_node_entry copy = *source;
+    memcpy(copy.name_plain, leaf, strlen(leaf) + 1);
+    porthome_dir_node wrapper = {.entries = &copy, .entries_len = 1};
+    return inventory_node(parent, tree, &wrapper, &ring, state, io, 0);
+}
+int nh_syncd_vault_materialize_one(int home_fd, const char *destination, const vault_tree *tree,
+                                   const char *encoded, nh_syncd_state *state, const vault_blob_io *io)
+{
+    if (!destination || strlen(destination) >= PORTHOME_MAX_PATH_LEN || !tree || !state || !io)
+        return VAULT_ERR_ARG;
+    const porthome_node_entry *source = NULL;
+    porthome_ring_t ring;
+    int rc = nh_syncd_vault_lookup(tree, encoded, 1, &source, &ring);
+    if (rc) return rc;
+    char parent[PORTHOME_MAX_PATH_LEN];
+    memcpy(parent, destination, strlen(destination) + 1);
+    char *leaf = strrchr(parent, '/');
+    if (!leaf || !leaf[1] || strlen(leaf + 1) > 255) return VAULT_ERR_ARG;
+    *leaf++ = 0;
+    permissions guard = {0};
+    int fd = directory(home_fd, parent, 1, "", state, &guard);
+    if (fd < 0) { restore_permissions(&guard, 0); return VAULT_ERR_IO; }
+    const nh_syncd_entry *old = nh_syncd_state_find(state, destination);
+    if (old && (int)nh_syncd_entry_kind(old) != (int)source->kind) {
+        rc = remove_absent(home_fd, destination, NULL, NULL, state, &guard);
+        struct stat st;
+        if (!rc && fstatat(fd, leaf, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            if (unlinkat(fd, leaf, S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0) || fsync(fd)) rc = VAULT_ERR_IO;
+        } else if (!rc && errno != ENOENT) rc = VAULT_ERR_IO;
+        if (!rc) rc = nh_syncd_state_delete_(state, destination);
+    }
+    if (!rc && source->kind == PORTHOME_KIND_DIR) {
+        char *source_path = NULL;
+        rc = nh_syncd_vault_path_plain(tree, encoded, &source_path);
+        if (!rc) rc = remove_absent(home_fd, destination, tree, source_path, state, &guard);
+        free(source_path);
+    }
+    porthome_node_entry copy = *source;
+    memcpy(copy.name_plain, leaf, strlen(leaf) + 1);
+    porthome_dir_node wrapper = {.entries = &copy, .entries_len = 1};
+    if (!rc) rc = apply_node(fd, parent, tree, &wrapper, &ring, state, io, &guard, 0);
+    close(fd);
+    int restored = restore_permissions(&guard, rc == 0);
+    return rc ? rc : restored;
+}
+static int reserved_entries(const char *prefix, const vault_tree *tree, const porthome_dir_node *node, unsigned depth)
+{
+    if (depth >= 128) return PORTHOME_ERR_TOO_LARGE;
+    for (size_t i = 0; i < node->entries_len; ++i) {
+        char path[PORTHOME_MAX_PATH_LEN];
+        int rc = join(prefix, node->entries[i].name_plain, path);
+        if (rc) return rc;
+        if (nh_syncd_vault_conflict_path(path)) return VAULT_ERR_CONFLICT;
+        if (node->entries[i].kind == PORTHOME_KIND_DIR) {
+            porthome_ring_t ring;
+            const porthome_dir_node *child = find_node(tree, node->entries[i].node_id, &ring);
+            rc = child ? reserved_entries(path, tree, child, depth + 1) : VAULT_ERR_INCOMPLETE;
+            if (rc) return rc;
+        }
+    }
+    return 0;
+}
 int nh_syncd_vault_materialize(int home_fd, const char *prefix, const vault_tree *tree,
                                nh_syncd_state *state, const vault_blob_io *io)
 {
     if (home_fd < 0 || !prefix || !tree || !state || !io || !io->read)
         return VAULT_ERR_ARG;
+    if (!nh_syncd_vault_conflict_path(prefix)) {
+        const porthome_dir_node *root_node = vault_tree_node_at(tree, 0, NULL);
+        int rc = root_node ? reserved_entries(prefix, tree, root_node, 0) : VAULT_ERR_ARG;
+        if (rc) return rc;
+    }
     permissions guard = {0};
     int root = directory(home_fd, prefix, 1, "", state, &guard);
     if (root < 0) {
@@ -487,7 +706,7 @@ int nh_syncd_vault_materialize(int home_fd, const char *prefix, const vault_tree
     }
     porthome_ring_t ring;
     const porthome_dir_node *node = vault_tree_node_at(tree, 0, &ring);
-    int rc = node ? remove_absent(home_fd, prefix, tree, state, &guard) : VAULT_ERR_ARG;
+    int rc = node ? remove_absent(home_fd, prefix, tree, NULL, state, &guard) : VAULT_ERR_ARG;
     if (!rc)
         rc = apply_node(root, prefix, tree, node, &ring, state, io, &guard, 0);
     close(root);

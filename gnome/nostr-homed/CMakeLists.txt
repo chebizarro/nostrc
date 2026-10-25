@@ -1909,9 +1909,19 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     endif()
     target_sources(nostr_syncd_core PRIVATE
       src/porthome-syncd/nh_syncd_vault_config.c
+      src/porthome-syncd/nh_syncd_vault_session.c
+      src/porthome-syncd/nh_syncd_vault_engine.c
+      src/porthome-syncd/nh_syncd_vault_manager.c
+      src/porthome-syncd/nh_syncd_vault_reader.c
+      src/porthome-syncd/nh_syncd_vault_net.c
       src/porthome-syncd/nh_syncd_vault_fs.c
       src/porthome-syncd/nh_syncd_vault_apply.c)
-    target_link_libraries(nostr_syncd_core PUBLIC nostrc::vault)
+    if(NOT TARGET nip42 OR NOT TARGET nip11 OR NOT TARGET nostrc::bud02)
+      message(FATAL_ERROR "Shared-vault syncd requires NIP-42, NIP-11 and BUD-02")
+    endif()
+    target_link_libraries(nostr_syncd_core PUBLIC nostrc::vault nip42 nip11 nostrc::bud02)
+    target_include_directories(nostr_syncd_core PRIVATE
+      $<TARGET_PROPERTY:nip42,SOURCE_DIR>/include $<TARGET_PROPERTY:nip11,SOURCE_DIR>/include)
     target_compile_definitions(nostr_syncd_core PUBLIC NH_SYNCD_VAULT_EXPERIMENTAL=1)
   endif()
 
@@ -1934,9 +1944,20 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
       target_compile_options(test_syncd_vault_fs PRIVATE -Wall -Wextra -Werror -UNDEBUG)
       target_link_libraries(test_syncd_vault_fs PRIVATE nostr_syncd_core)
       add_test(NAME homed_syncd_vault_fs COMMAND test_syncd_vault_fs)
+      add_executable(test_syncd_vault_runtime tests/unit/test_syncd_vault_runtime.c)
+      target_include_directories(test_syncd_vault_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+      target_compile_options(test_syncd_vault_runtime PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      target_link_libraries(test_syncd_vault_runtime PRIVATE nostr_syncd_core)
+      add_test(NAME homed_syncd_vault_runtime COMMAND test_syncd_vault_runtime)
+      set_tests_properties(homed_syncd_vault_runtime PROPERTIES LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
       if(NOT Python3_Interpreter_FOUND)
         message(FATAL_ERROR "Shared-vault config tests require Python 3")
       endif()
+      add_test(NAME homed_syncd_vault_protocol
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_vault_protocol.py
+          $<TARGET_FILE:test_syncd_vault_runtime>)
+      set_tests_properties(homed_syncd_vault_protocol PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
       add_test(NAME homed_syncd_vault_config
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_vault_config.py
           $<TARGET_FILE:nostr-home-syncd>)
@@ -2219,11 +2240,18 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
   target_include_directories(nostr-home-fuse PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd
     ${FUSE3_INCLUDE_DIRS})
   find_package(Threads REQUIRED)
   target_link_libraries(nostr-home-fuse PRIVATE
     nostr_syncd_core nostr_porthome nostr_porthome_common ${FUSE3_LIBRARIES}
     Threads::Threads)
+  if(NOSTR_HOMED_BUILD_TESTS AND NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+    add_test(NAME homed_syncd_vault_fuse
+      COMMAND test_syncd_vault_runtime --fuse $<TARGET_FILE:nostr-home-fuse>)
+    set_tests_properties(homed_syncd_vault_fuse PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable-fuse;portable" TIMEOUT 60)
+  endif()
   # sd_notify is optional — link when the systemd library is present.
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)

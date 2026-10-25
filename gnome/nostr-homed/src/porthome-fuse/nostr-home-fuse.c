@@ -112,6 +112,18 @@ static nh_fuse_status_writer   *g_status_writer = NULL;
 
 /* nostrc-plo4: inotify-driven snapshot reload. */
 static nh_fuse_reload_t        *g_reload        = NULL;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+#include "nh_syncd_vault_reader.h"
+#include <openssl/evp.h>
+#include <openssl/crypto.h>
+static nh_syncd_vault_config g_vaults;
+static uint8_t g_vault_home_key[32];
+static int public_blob_read(void *ctx, const uint8_t hash[32], uint8_t **out, size_t *n)
+{
+    (void)ctx; char hex[65]; porthome_hex64(hash, hex);
+    return g_blossom && !nh_porthome_blossom_fetch(g_blossom, hex, out, n) ? 0 : VAULT_ERR_IO;
+}
+#endif
 
 typedef struct {
     /* Immutable for the life of the fh: entry snapshot at open() time. */
@@ -124,10 +136,16 @@ typedef struct {
     size_t           n_chunks;
     /* Set if this fh is stale (removed since open — read returns EIO). */
     bool             stale;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_vault_reader *vault;
+#endif
 } nh_fuse_fh;
 
 static void fh_free(nh_fuse_fh *fh) {
     if (!fh) return;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_vault_reader_close(fh->vault);
+#endif
     if (fh->chunks_hex) {
         for (size_t i = 0; i < fh->n_chunks; i++) free(fh->chunks_hex[i]);
         free(fh->chunks_hex);
@@ -434,6 +452,15 @@ static int nhf_open(const char *path, struct fuse_file_info *fi) {
         fh->n_chunks = e->n_chunks;
     }
     table_unlock();
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    vault_blob_io public_io = {.read = public_blob_read};
+    int vr = nh_vault_reader_open(&g_vaults, g_state_dir, g_vault_home_key, g_cache,
+        &public_io, fh->rel, fh->generation, fh->size,
+        (const char *const *)fh->chunks_hex, fh->n_chunks, &fh->vault);
+    if (vr < 0) {
+        on_source_miss(NULL, fh->rel, -EIO); write_status_json(); fh_free(fh); return -EIO;
+    }
+#endif
     fi->fh = (uint64_t)(uintptr_t)fh;
     /* Content immutable within a generation — kernel_cache=1 in init.
      * Note the fh carries its own copy of chunks_hex + declared_size so
@@ -462,6 +489,14 @@ static int nhf_read(const char *path, char *buf, size_t len, off_t off,
         }
     }
     table_unlock();
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    if (fh->vault) {
+        size_t got = 0;
+        int rc = off < 0 ? VAULT_ERR_ARG : nh_vault_reader_read(fh->vault, (uint64_t)off, (uint8_t *)buf, len, &got);
+        if (rc) { on_source_miss(NULL, fh->rel, -EIO); write_status_json(); return -EIO; }
+        return (int)got;
+    }
+#endif
     /* Chunk size: defaults to design's 4 MiB. Overridable via
      * NH_FUSE_CHUNK_SIZE for live-acceptance rigs whose Blossom
      * server enforces a smaller PUT ceiling than the design chunk
@@ -724,6 +759,11 @@ int main(int argc, char **argv) {
         return 3;
     }
 
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    if (nh_syncd_vault_config_load(getenv("NOSTR_HOMED_SYNCD_CONFIG"), &g_vaults)) {
+        fprintf(stderr, "fuse: invalid vault config\n"); return 2;
+    }
+#endif
     /* Load seed → home_key. */
     uint8_t home_key[NH_PORTHOME_KEY_LEN];
     if (nh_fuse_key_load(home_key) != 0) {
@@ -804,6 +844,10 @@ int main(int argc, char **argv) {
     };
     memcpy(scfg.home_key, home_key, NH_PORTHOME_KEY_LEN);
     int sr = nh_fuse_source_open(&scfg, &g_source);
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    memcpy(g_vault_home_key, home_key, 32);
+    (void)mlock(g_vault_home_key, sizeof g_vault_home_key);
+#endif
     /* Wipe local copy immediately. */
     memset(home_key, 0, sizeof home_key);
     memset(scfg.home_key, 0, sizeof scfg.home_key);
@@ -821,6 +865,30 @@ int main(int argc, char **argv) {
                 nh_fuse_table_generation(g_table),
                 nh_fuse_table_entry_count(g_table),
                 g_mountpoint);
+        int read_result = 0;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        const char *test_path = getenv("NH_FUSE_TEST_READ");
+        if (test_path) {
+            struct fuse_file_info fi = {.flags = O_RDONLY};
+            read_result = nhf_open(test_path, &fi);
+            EVP_MD_CTX *digest = EVP_MD_CTX_new();
+            if (!digest || EVP_DigestInit_ex(digest, EVP_sha256(), NULL) != 1) read_result = -ENOMEM;
+            uint64_t total = 0; char buffer[65536];
+            while (!read_result) {
+                int n = nhf_read(test_path, buffer, sizeof buffer, (off_t)total, &fi);
+                if (n < 0) { read_result = n; break; }
+                if (!n) break;
+                if (EVP_DigestUpdate(digest, buffer, (size_t)n) != 1) { read_result = -EIO; break; }
+                total += (uint64_t)n;
+            }
+            if (fi.fh) nhf_release(test_path, &fi);
+            uint8_t hash[32] = {0}; char hex[65]; unsigned hash_len = 0;
+            if (digest && (EVP_DigestFinal_ex(digest, hash, &hash_len) != 1 || hash_len != 32)) read_result = -EIO;
+            EVP_MD_CTX_free(digest);
+            porthome_hex64(hash, hex);
+            fprintf(stdout, "READ rc=%d bytes=%" PRIu64 " sha256=%s\n", read_result, total, hex);
+        }
+#endif
         write_status_json();
         /* Even in harness mode, land a `fuse` key so operators
          * can eyeball porthome-status.json without a real mount. */
@@ -835,7 +903,10 @@ int main(int argc, char **argv) {
         if (g_cache) nh_syncd_cache_close(g_cache);
         free(home); free(g_state_dir); free(g_mountpoint); free(g_status_path);
         if (g_fuse_lock_fd >= 0) close(g_fuse_lock_fd);
-        return 0;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        nh_syncd_vault_config_clear(&g_vaults); OPENSSL_cleanse(g_vault_home_key, 32); munlock(g_vault_home_key, 32);
+#endif
+        return read_result ? 6 : 0;
     }
 
     /* Real FUSE mount. Assemble argv for fuse_main(). */
@@ -889,5 +960,8 @@ int main(int argc, char **argv) {
     if (g_cache) nh_syncd_cache_close(g_cache);
     free(home); free(g_state_dir); free(g_mountpoint); free(g_status_path);
     if (g_fuse_lock_fd >= 0) close(g_fuse_lock_fd);
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_syncd_vault_config_clear(&g_vaults); OPENSSL_cleanse(g_vault_home_key, 32); munlock(g_vault_home_key, 32);
+#endif
     return rrc == 0 ? 0 : 6;
 }

@@ -1,9 +1,9 @@
-.TH NOSTR-HOME-SYNCD 8 "2026-09-25" "nostr-homed 0.3" "System Manager's Manual"
+.TH NOSTR-HOME-SYNCD 8 "2026-09-25" "nostr-homed 0.5.0" "System Manager's Manual"
 .SH NAME
 nostr-home-syncd \- user-scoped portable-home sync daemon
 .SH SYNOPSIS
 .B nostr-home-syncd
-[\fB\-\-check\fR]
+[\fB\-\-check\fR | \fB\-\-vault-sync\fR | \fB\-\-vault-retention\fR]
 .SH DESCRIPTION
 .B nostr-home-syncd
 is the user-scoped background daemon that watches
@@ -17,9 +17,10 @@ via
 .IR nostr-home-sync.service ;
 running as root is a bug.
 .PP
-The daemon takes no command-line configuration beyond the
+The daemon takes configuration through environment variables. The
 .B \-\-check
-dry-run switch. Everything else is provided through environment variables
+switch validates it offline; experimental vault one-shot switches run the same
+reconciler or retention path as the background daemon. Configuration is supplied
 in the user unit file. Secret material is delivered to the daemon via a
 per-session broker seed drop, described in
 .B FILES
@@ -30,6 +31,15 @@ below.
 Exercise the lock, interlock, and ignore-list stacks; report status; exit.
 No network traffic, no snapshot, no publish. Safe to run alongside a live
 daemon (subject to the lock).
+.TP
+.B \-\-vault-sync
+Experimental vault build only: capture, seal, acknowledge this writer's head,
+checkpoint-fold and materialise configured vaults once. Requires the home seed.
+An incomplete grant, owner update or cache does not count as success.
+.TP
+.B \-\-vault-retention
+As above, then service the same budgeted lazy re-seal task used by the daemon's
+retention maintenance timer. Pending old chunks and held epochs are preserved.
 .SH ENVIRONMENT
 Required (unless
 .B NOSTR_HOMED_SYNCD_TEST_MODE
@@ -45,6 +55,21 @@ Comma-separated list of https:// Blossom server URLs.
 Comma-separated list of wss:// relay URLs.
 .PP
 Optional:
+.TP
+.B NOSTR_HOMED_SYNCD_CONFIG
+Strict JSON file containing vaults with path (HOME-relative), vault_id (64 hex)
+and is_owner (boolean). IDs and disjoint paths must be unique. Requires the
+experimental vault build; invalid or missing explicit files refuse startup
+before consuming the broker credential. Configured subtrees and
+Portable/.conflicts stay out of personal v1 generations.
+.TP
+.B NOSTR_HOMED_SYNCD_RETENTION_BYTES
+Nonnegative decimal sealed-payload budget per weekly retention class; default
+134217728. Shared by vault chunk prefetch and lazy re-seal. Reservations persist
+across restart; control/metadata traffic is outside this accounting. Private
+vault FUSE reads are cache-only: syncd must cache the selected and retained
+conflict closures before publishing the namespace. Private-service lazy loading
+is unsupported; FUSE receives no signer or authenticated-GET handoff.
 .TP
 .B NOSTR_HOMED_SYNCD_D_TAG
 Pointer d-tag override. Default:
@@ -173,6 +198,12 @@ porthome-status.json records the class in
 With
 .BR \-\-check ,
 also returned for a corrupt snapshot (the dry run does not quarantine).
+.TP 4
+.B 8
+Vault startup, transport, epoch, policy or materialisation failure. The last
+committed namespace and encrypted pending journal are retained. Check the
+existing porthome status/error fields before retrying; a missing readback does
+not prove an uncertain PUT was rejected.
 .RE
 .SH SIGNALS
 .TP

@@ -95,6 +95,8 @@
 #include "nh_syncd_watcher.h"
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
 #include "nh_syncd_vault_config.h"
+#include "nh_syncd_vault_manager.h"
+#include <openssl/crypto.h>
 #endif
 
 #include <errno.h>
@@ -349,6 +351,7 @@ typedef struct {
     uint32_t seed_poll_sec;           /* nostrc-p8y6 */
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
     nh_syncd_vault_config vaults;
+    uint64_t retention_budget;
 #endif
 } cfg_t;
 
@@ -370,11 +373,11 @@ static bool cfg_take_broker_seed(cfg_t *c) {
     return ok;
 }
 
-static int load_cfg(cfg_t *c) {
+static int load_cfg(cfg_t *c, bool require_vault) {
     memset(c, 0, sizeof *c);
     const char *config = getenv("NOSTR_HOMED_SYNCD_CONFIG");
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
-    if (nh_syncd_vault_config_load(config, &c->vaults)) {
+    if (nh_syncd_vault_config_load(config, &c->vaults) || (require_vault && !c->vaults.len)) {
         fprintf(stderr, "syncd: invalid vault config\n");
         return -1;
     }
@@ -382,6 +385,18 @@ static int load_cfg(cfg_t *c) {
     if (config) {
         fprintf(stderr, "syncd: vault config requires VAULT_EXPERIMENTAL\n");
         return -1;
+    }
+#endif
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    c->retention_budget = 128u * 1024u * 1024u;
+    const char *budget = getenv("NOSTR_HOMED_SYNCD_RETENTION_BYTES");
+    if (budget) {
+        char *end = NULL; errno = 0;
+        unsigned long long value = strtoull(budget, &end, 10);
+        if (errno || !*budget || strspn(budget, "0123456789") != strlen(budget) || *end || value > INT64_MAX) {
+            fprintf(stderr, "syncd: invalid retention byte budget\n"); return -1;
+        }
+        c->retention_budget = value;
     }
 #endif
     c->home = default_home();
@@ -564,18 +579,49 @@ static int start_managed(const cfg_t *cfg, nh_syncd_state *state,
     return 0;
 }
 
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+static int start_vaults(const cfg_t *cfg, nh_syncd_state *state, const nh_syncd_ignore *ignore,
+                        int legacy_known, int once, nh_vault_manager **out)
+{
+    if (!cfg->vaults.len) return 0;
+    uint8_t seed[32] = {0};
+    nh_vault_manager_options options = {.config = &cfg->vaults, .home = cfg->home,
+        .state_dir = cfg->state_dir, .identity = cfg->nsec_hex,
+        .relays = (const char *const *)cfg->relays, .relays_len = cfg->n_relays,
+        .blossom = (const char *const *)cfg->blossom, .blossom_len = cfg->n_blossom,
+        .replication = cfg->min_repl, .test_mode = cfg->test_mode, .legacy_known = legacy_known,
+        .state = state, .ignore = ignore, .cache = g_cache, .status = g_status,
+        .notifier = g_notifier, .retention_budget = cfg->retention_budget};
+    int rc = !cfg->seed_hex ? VAULT_ERR_ARG : porthome_from_hex64(cfg->seed_hex, seed);
+    if (!rc) rc = porthome_key_derive(seed, options.home_key);
+    if (!rc) rc = porthome_root_node_key(seed, options.root_key);
+    if (!rc) rc = nh_vault_manager_open(&options, out);
+    OPENSSL_cleanse(seed, sizeof seed); OPENSSL_cleanse(options.home_key, 32); OPENSSL_cleanse(options.root_key, 32);
+    if (!rc) rc = nh_vault_manager_bootstrap(*out, once);
+    if (rc) fprintf(stderr, "syncd: vault bootstrap refused rc=%d\n", rc);
+    return rc;
+}
+#endif
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     setlinebuf(stdout);
 
+    int vault_once = argc > 1 && (!strcmp(argv[1], "--vault-sync") || !strcmp(argv[1], "--vault-retention"));
+#ifndef NH_SYNCD_VAULT_EXPERIMENTAL
+    if (vault_once) { fprintf(stderr, "syncd: vault one-shot requires VAULT_EXPERIMENTAL\n"); return 2; }
+#endif
     cfg_t cfg;
-    if (load_cfg(&cfg) < 0) { free_cfg(&cfg); return 2; }
+    if (load_cfg(&cfg, vault_once) < 0) { free_cfg(&cfg); return 2; }
 
     /* Missing signer or transport is fatal at start — no polling
      * substitutes. The one exception: allow --check (dry-run) to
      * exercise the lock + ignore + interlock stack without any
      * network. */
     int dry_run = (argc > 1 && !strcmp(argv[1], "--check"));
+    int exit_code = 0;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_vault_manager *vaults = NULL;
+#endif
 
     /* Interlocks. */
     nh_syncd_interlocks ilk = { cfg.home, getenv("NOSTR_HOME_STATE") };
@@ -749,9 +795,20 @@ int main(int argc, char **argv) {
     /* Watcher (managed) or seed waiter (not yet managed). */
     nh_syncd_watcher *wa = NULL;
     seed_waiter sw = { .ifd = -1, .wd = -1 };
+    if (vault_once && !managed) { fprintf(stderr, "syncd: vault one-shot requires the broker home seed\n"); exit_code = 8; goto cleanup; }
     if (managed) {
-        if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0)
+        if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0) {
+            exit_code = 8; goto cleanup;
+        }
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        if (start_vaults(&cfg, state, ig, !snap_unknown && (!ilk.nostr_home_state || strcmp(ilk.nostr_home_state, "partial")), vault_once, &vaults)) {
+            exit_code = 8; goto cleanup;
+        }
+        if (vault_once) {
+            if (!strcmp(argv[1], "--vault-retention") && nh_vault_manager_retention(vaults)) exit_code = 8;
             goto cleanup;
+        }
+#endif
     } else {
         seed_waiter_init(&sw);
         char pollbuf[32] = "off";
@@ -775,9 +832,14 @@ int main(int argc, char **argv) {
 
     /* Poll loop. pfd[0]: $HOME watcher; pfd[1]: seed-drop waiter
      * (negative fds are ignored by poll). */
-    struct pollfd pfd[2] = {
+    struct pollfd pfd[3] = {
         { nh_syncd_watcher_fd(wa), POLLIN, 0 },
         { sw.ifd,                  POLLIN, 0 },
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        { nh_vault_manager_fd(vaults), POLLIN, 0 },
+#else
+        { -1, POLLIN, 0 },
+#endif
     };
     /* First pass re-checks the drop: closes the gap between load_cfg's
      * read and arming the watch. */
@@ -790,8 +852,11 @@ int main(int argc, char **argv) {
                 pfd[1].fd = -1;
                 fprintf(stderr, "syncd: home seed appeared — this home is now "
                         "porthome-managed\n");
-                if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0)
-                    break;
+                if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0) { exit_code = 8; break; }
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+                if (start_vaults(&cfg, state, ig, !snap_unknown && (!ilk.nostr_home_state || strcmp(ilk.nostr_home_state, "partial")), 0, &vaults)) { exit_code = 8; break; }
+                pfd[2].fd = nh_vault_manager_fd(vaults);
+#endif
                 managed = true;
                 pfd[0].fd = nh_syncd_watcher_fd(wa);
                 clock_gettime(CLOCK_MONOTONIC, &last_rescan);
@@ -827,13 +892,40 @@ int main(int argc, char **argv) {
             seed_check = true;
             t = 0;
         }
-        int pr = poll(pfd, 2, t);
+        int pr = poll(pfd, 3, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
         if (wa && (pfd[0].revents & POLLIN)) nh_syncd_watcher_drain(wa);
         if (pfd[1].fd >= 0 && (pfd[1].revents & POLLIN)) seed_check = true;
-        if (nh_syncd_batcher_poll(ba) == NH_SYNCD_BATCHER_READY) {
-            nh_syncd_batch *batch = nh_syncd_batcher_take(ba, false);
+        bool vault_ready = pfd[2].revents & POLLIN;
+        if (nh_syncd_batcher_poll(ba) == NH_SYNCD_BATCHER_READY || vault_ready) {
+            nh_syncd_batch *batch = nh_syncd_batcher_take(ba, vault_ready);
             if (batch) {
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+                int vault_result = vaults ? nh_vault_manager_capture(vaults, batch) : 0;
+                if (vault_result == VAULT_ERR_AGAIN) {
+                    /* A local edit raced the remote apply preflight. Preserve
+                     * the batch and rescan HOME; never overwrite dirty bytes or
+                     * re-query relays on a timer to repair this local race. */
+                    for (size_t i = 0; i < nh_syncd_batch_len(batch); ++i) {
+                        const char *path = NULL; nh_syncd_change_kind kind;
+                        if (!nh_syncd_batch_at(batch, i, &path, &kind))
+                            (void)nh_syncd_batcher_push(ba, path, kind);
+                    }
+                    if (wa) (void)nh_syncd_watcher_force_rescan(wa);
+                    nh_syncd_batch_free(batch); continue;
+                }
+                if (vault_result) {
+                    fprintf(stderr, "syncd: vault capture failed; preserving pending state\n");
+                    nh_syncd_batch_free(batch); exit_code = 8; break;
+                }
+                bool personal = false;
+                for (size_t i = 0; i < nh_syncd_batch_len(batch); ++i) {
+                    const char *path = NULL; nh_syncd_change_kind kind;
+                    if (!nh_syncd_batch_at(batch, i, &path, &kind) &&
+                        !nh_syncd_vault_config_excludes(&cfg.vaults, path)) personal = true;
+                }
+                if (!personal) { nh_syncd_batch_free(batch); goto vault_service; }
+#endif
                 /* Build push config. */
                 nh_syncd_push_cfg pc = {0};
                 pc.blossom_servers   = (const char *const *)cfg.blossom;
@@ -924,14 +1016,28 @@ int main(int argc, char **argv) {
                 nh_syncd_batch_free(batch);
             }
         }
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+vault_service:
+        if (vaults && vault_ready) {
+            int result = nh_vault_manager_service(vaults);
+            if (result == VAULT_ERR_AGAIN) { if (wa) (void)nh_syncd_watcher_force_rescan(wa); continue; }
+            if (result) {
+                fprintf(stderr, "syncd: vault reconciliation failed; last committed snapshot retained\n");
+                exit_code = 8; break;
+            }
+        }
+#endif
     }
 
     /* Final flush on shutdown. */
     nh_syncd_batch *tail = nh_syncd_batcher_take(ba, true);
     if (tail) nh_syncd_batch_free(tail);
 
-    nh_syncd_watcher_free(wa);
 cleanup:
+    nh_syncd_watcher_free(wa);
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    nh_vault_manager_close(vaults);
+#endif
     seed_waiter_close(&sw);
     if (state) nh_syncd_state_free(state);
     nh_syncd_batcher_free(ba);
@@ -943,5 +1049,5 @@ cleanup:
     if (g_cache)    { nh_syncd_cache_close(g_cache);           g_cache = NULL; }
     nh_syncd_lock_release(lk);
     free_cfg(&cfg);
-    return 0;
+    return exit_code;
 }

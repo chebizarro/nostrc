@@ -328,7 +328,8 @@ static int fold(const porthome_vault_info *anchor, const vault_record *const *re
             }
         }
     }
-    qsort(r->conflicts, r->conflicts_len, sizeof(*r->conflicts), conflict_compare);
+    if (r->conflicts_len > 1)
+        qsort(r->conflicts, r->conflicts_len, sizeof(*r->conflicts), conflict_compare);
     rc = 0;
 finish:
     free(policies);

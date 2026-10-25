@@ -118,6 +118,10 @@ done:
     return rc;
 }
 
+bool nh_syncd_vault_conflict_path(const char *path)
+{
+    return path && beneath(path, "Portable/.conflicts");
+}
 bool nh_syncd_vault_config_excludes(void *ud, const char *path)
 {
     const nh_syncd_vault_config *cfg = ud;

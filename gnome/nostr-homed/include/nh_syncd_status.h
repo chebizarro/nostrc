@@ -91,6 +91,10 @@ void nh_syncd_status_set_last_upload_servers(nh_syncd_status_writer *w,
 void nh_syncd_status_set_last_upload_error_class(nh_syncd_status_writer *w,
                                                  const char *class_slug);
 
+/* Optional shared-vault conflict metadata (JSON array). Invalid input preserves
+ * the previous value. Includes deletion-only cases; no marker-file convention. */
+int nh_syncd_status_set_vault_conflicts(nh_syncd_status_writer *, const char *json_array);
+
 /* Emit — build the syncd key body and merge it into porthome-status.
  * `path` may be NULL to use nh_porthome_status_default_path(). Returns
  * 0 on success (whatever nh_porthome_status_write_key returned). */

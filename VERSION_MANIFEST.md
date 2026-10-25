@@ -51,6 +51,19 @@ files already declare a version.
   consumers retain the existing link path. Other components have no shipped
   changes in this fix. No release tags.
 
+- nostrc-hl30i.10 runtime assembly: nostr-homed's unreleased 0.5.0 MINOR
+  also covers the actual vault reconciler, encrypted local session/generation
+  journal, retention-budget configuration, conflict status extension and
+  generation-bound FUSE byte reader. The existing namespace snapshot format
+  is unchanged. Private-service FUSE lazy loading is explicitly unsupported;
+  no signing custody or authd/PAM/NSS dependency is added. Meson remains
+  metadata-only for syncd/FUSE. Empty-path/conflict sorting corrections needed
+  by empty-vault assembly are included in libvault's same unreleased 0.5.0
+  checkpoint functionality; no new API/wire
+  change or extra bump. No other independently shipped component changes;
+  tests/selection, CI and lab harness edits have no independent version bump.
+  Authoritative CMake/Meson/manifest versions remain aligned; no release tags.
+
 - nostrc-hl30i.10 source configuration: nostr-homed's existing unreleased
   0.5.0 MINOR decision also covers the strict vaults[] configuration and
   additive legacy-pusher source-exclusion callback. The 0.x push-config struct

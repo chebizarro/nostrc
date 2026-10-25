@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
 #include "nh_syncd_vault_fs.h"
+#include "nh_syncd_vault_config.h"
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -328,7 +329,7 @@ static int capture_dir(nv_build *b, int fd, const porthome_dir_node *previous,
             rc = PORTHOME_ERR_TOO_LARGE;
             break;
         }
-        if (b->scan && b->scan->ignore) {
+        if (b->scan) {
             const char *home_prefix = b->scan->home_prefix ? b->scan->home_prefix : "";
             count = snprintf(home_relative, sizeof(home_relative), "%s%s%s", home_prefix,
                              *home_prefix ? "/" : "", relative);
@@ -336,8 +337,9 @@ static int capture_dir(nv_build *b, int fd, const porthome_dir_node *previous,
                 rc = PORTHOME_ERR_TOO_LARGE;
                 break;
             }
-            if (nh_syncd_ignore_check(b->scan->ignore, home_relative, st.st_dev, st.st_mode) !=
-                NH_SYNCD_IGNORE_PASS) {
+            if (nh_syncd_vault_conflict_path(home_relative) ||
+                (b->scan->ignore && nh_syncd_ignore_check(b->scan->ignore, home_relative, st.st_dev, st.st_mode) !=
+                NH_SYNCD_IGNORE_PASS)) {
                 errno = 0;
                 continue;
             }
@@ -553,6 +555,7 @@ int nh_syncd_vault_migrate(const nh_syncd_state *state, const char *prefix,
             rc = VAULT_ERR_ARG;
             break;
         }
+        if (nh_syncd_vault_conflict_path(rel)) continue;
         if (prefix_len) {
             if (strncmp(rel, prefix, prefix_len) || rel[prefix_len] != '/')
                 continue;

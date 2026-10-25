@@ -195,5 +195,80 @@ refuse a configured file rather than silently falling back to v1 behavior.
 Configured vault subtrees are excluded from both legacy v1 capture and full
 v1 manifest reconstruction. `Portable/.conflicts` remains excluded even when
 `vaults` is empty, so retained shared versions cannot leak into a personal home
-manifest. This option is still preparatory: configuration and filesystem
-primitives do not yet provide the complete network reconciler or FUSE fallback.
+manifest. Each configured subtree is an independent generation source: local
+capture and current-epoch object sealing precede an acknowledged writer head;
+current signed heads are checkpoint-folded and the selected view is materialised
+into the ordinary snapshot. A single-frontier writer advances the tree; divergent
+frontiers use the owner's view. Owner checkpoints cover every incorporated head,
+including inherited coverage, not merely the previous owner head. An unseen
+signed owner update that cannot be opened is incomplete, never successful
+catch-up of the old policy. Historical per-node rings remain available from the
+encrypted retained snapshots even when that directory is no longer in the view;
+conflicting keys for one node/epoch are refused.
+
+Bootstrap is EOSE-bounded and anchors the owner in the authenticated NIP-59 grant.
+Live REQs remain open; AUTH/OK/CLOSED failures are visible, not successful sends.
+Publication keeps servicing AUTH while waiting for the matching OK; an explicit
+auth-required rejection retries only that same signed event after authentication.
+An owner with no grant first checks its existing remote slot. It never replaces
+an existing vault with a randomly generated root. A new owner with a complete v1
+snapshot migrates its configured subtree with root ring `[(1, home_key)]` and an
+explicit home-key override at **every existing directory**. Existing v1 chunks
+are neither downloaded nor uploaded by migration; only v2 manifests and the head
+are published. Subsequent reads remain compatible with those v1 chunk descriptors.
+A fresh home without a v1 baseline captures a new v2 subtree instead, deriving
+its independent node key from the home root key and the fresh subtree node ID.
+Separate new vaults never reuse the home root key as their shared capability;
+the explicit home-key reuse exception is only the approved v1 migration.
+
+`nostr-home-syncd --vault-sync` runs the same catch-up/capture/fold/commit path once.
+`--vault-retention` also services the same lazy re-seal job used by the daemon's
+maintenance timer. `NOSTR_HOMED_SYNCD_RETENTION_BYTES` is a strict nonnegative
+integer, default 134217728 sealed payload bytes per weekly retention class. The
+encrypted reservation ledger is shared by chunk prefetch and lazy re-seal;
+reservations precede I/O and survive restart. Metadata/control traffic is outside
+this chunk-payload accounting. Exhaustion preserves pending work and old keys;
+it does not drop epochs or claim completed migration. Endpoint/quorum-bound PUT
+receipts and exact signed pending heads prevent minting replacements after an
+uncertain write. Unresolved PUT intents require exact-byte readback on the
+configured endpoint/identity/quorum scope before another upload can be accepted;
+a missing readback does not prove rejection and never authorizes a retry. Errors
+retain the last committed namespace and private journal.
+Dirty-HOME preflight deferrals rescan local files; they do not poll relays.
+
+Present foreign conflicts, including complete directory subtrees, are copied to
+`Portable/.conflicts/<HOME-relative-path>@<full-writer-hex>`. Overlong local names
+use `Portable/.conflicts/.overflow/<sha256(UTF8(path) || raw_writer32)>` instead.
+Deletion-only conflicts have no marker file. Their signed snapshots and durable
+metadata are retained, and details/mappings appear in the existing
+`syncd.vault_conflicts` status field and conflict notification seam. Reusing a
+physical suffix marks the older copy superseded; its signed objects and
+historical-generation references remain available. Reused directory copies
+remove absent tracked children while preserving untracked local files. Failed
+copies resume from that exact retained snapshot, even after a newer current
+writer head arrives. Copy completion and namespace publication are separate:
+completed copies rebuild their namespace from the authenticated retained tree
+after restart, without trusting or rewriting locally edited conflict bytes.
+
+FUSE consumes the existing folded namespace snapshot unchanged. Open file
+handles bind to immutable verified trees, their exact per-node epoch rings and
+CDC lengths. No home-key/tier-0 fallback is permitted for configured vault paths.
+For services advertising private Blossom or auth-required NIP-11, syncd prefetches
+**every** sealed object reachable from the selected view and retained conflict
+snapshots into the existing blob cache before committing the namespace, subject
+to its quota, retention pins and bandwidth reservation. FUSE is cache-only there:
+a miss is an I/O error plus existing FUSE status, never an authenticated GET.
+**Private-vault lazy loading is unsupported in v1.** No identity secret, new
+socket or signing handoff is introduced in FUSE. Public services retain the
+existing unsigned lazy fetch path.
+
+Focused offline checks are `homed_syncd_vault_runtime` and
+`homed_syncd_vault_fuse` (the latter invokes the real headless open/read/release
+callbacks, not a kernel mount). The optional two-Linux-UID extension of the jmx0
+scenario is `tests/integration/porthome_jmx0_two_npub.py --help`; it requires actual
+VSP-01 relay/Blossom services and never substitutes fixture responses for them.
+Services and accounts must be disposable. The lab relay currently ends REQs at
+EOSE (`nostrc-vqu69`), so that scenario uses explicit owner catch-up/fold and does
+not claim post-EOSE live relay acceptance. The default runner keeps LeakSanitizer
+on; its explicit diagnostic switch records the pre-existing libblossom signed-GET
+leak (`nostrc-k1zq6`) and is **not** leak-check acceptance.
