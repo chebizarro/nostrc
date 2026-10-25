@@ -18,7 +18,7 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
 set(HANAMI_VERSION_MINOR 3)
-set(HANAMI_VERSION_MICRO 0)
+set(HANAMI_VERSION_MICRO 1)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
   ${HANAMI_VERSION_MINOR}
@@ -37,9 +37,6 @@ endif()
 # libgit2 (required)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
-
-# libcurl (required — Blossom HTTP client)
-find_package(CURL REQUIRED)
 
 # SQLite3 (required — default index backend)
 pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
@@ -71,7 +68,6 @@ endif()
 
 set(HANAMI_SOURCES
   src/hanami.c
-  # Future sources will be added here as components are implemented:
   src/hanami-index-sqlite.c
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
@@ -117,10 +113,9 @@ target_link_libraries(hanami
     nostrc::porthome
   PRIVATE
     nostr              # libnostr for Nostr event/relay operations
-    CURL::libcurl
     PkgConfig::SQLITE3
     OpenSSL::Crypto
-    pthread            # POSIX threads for relay connection mutex
+    pthread            # Serialize synchronous NIP-34 operations
 )
 
 # NIP-34 (required — Git collaboration protocol)
@@ -129,12 +124,6 @@ if(NOT TARGET nip34)
 endif()
 target_link_libraries(hanami PRIVATE nip34)
 target_compile_definitions(hanami PRIVATE HANAMI_HAVE_NIP34=1)
-
-# NIP-98 (optional — HTTP auth, useful but not required)
-if(TARGET nip98)
-  target_link_libraries(hanami PRIVATE nip98)
-  target_compile_definitions(hanami PRIVATE HANAMI_HAVE_NIP98=1)
-endif()
 
 # Optional LMDB backend
 if(HANAMI_HAVE_LMDB)
@@ -230,6 +219,18 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-nostr)
+  endif()
+
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(test-hanami-nostr-protocol tests/test_hanami_nostr_protocol.c)
+  target_link_libraries(test-hanami-nostr-protocol PRIVATE hanami nostr nip34)
+  add_test(NAME test-hanami-nostr-protocol
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+            $<TARGET_FILE:test-hanami-nostr-protocol>)
+  set_tests_properties(test-hanami-nostr-protocol PROPERTIES
+    TIMEOUT 45 LABELS "libhanami;nostr;integration")
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-nostr-protocol)
   endif()
 
   add_executable(test-hanami-refdb-backend tests/test_hanami_refdb_backend.c)
