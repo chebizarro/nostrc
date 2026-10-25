@@ -10,7 +10,7 @@ target_compile_definitions(vaultctl PRIVATE _POSIX_C_SOURCE=200809L _DARWIN_C_SO
 target_compile_options(vaultctl PRIVATE -Wall -Wextra -Werror)
 target_include_directories(vaultctl PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip42/include ${CMAKE_SOURCE_DIR}/nips/nip11/include)
 target_link_libraries(vaultctl PRIVATE nostrc::vault nostrc::porthome nostrc::blossom nostr libgo nip42 nip11 OpenSSL::Crypto CURL::libcurl Threads::Threads)
-declare_component_version(vaultctl 0 3 0)
+declare_component_version(vaultctl 0 3 1)
 if(COMMAND apply_sanitizers)
   apply_sanitizers(vaultctl)
 endif()

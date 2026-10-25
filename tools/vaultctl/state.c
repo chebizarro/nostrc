@@ -253,17 +253,22 @@ int vc_ack_put(vc_app *a, const uint8_t hash[32], uint64_t v)
 int vc_head_add(vc_app *a, const NostrEvent *e, uint64_t epoch, size_t *index)
 {
     vc_state *s = &a->state;
-    const char *id = nostr_event_get_id((NostrEvent *)e);
-    if (!id || !nostr_event_check_signature((NostrEvent *)e))
+    char id[65];
+    if (nostr_event_compute_id(e, id) != NOSTR_EVENT_VALIDATION_OK ||
+        !nostr_event_check_signature((NostrEvent *)e))
         return VAULT_ERR_AUTH;
-    for (size_t i = 0; i < s->heads_len; i++)
-        if (!strcmp(nostr_event_get_id(s->heads[i].event), id)) {
+    for (size_t i = 0; i < s->heads_len; i++) {
+        char known_id[65];
+        if (nostr_event_compute_id(s->heads[i].event, known_id) != NOSTR_EVENT_VALIDATION_OK)
+            return VAULT_ERR_AUTH;
+        if (!strcmp(known_id, id)) {
             if (s->heads[i].epoch != epoch)
                 return VAULT_ERR_CONFLICT;
             if (index)
                 *index = i;
             return 0;
         }
+    }
     if (s->heads_len == VAULT_MAX_HEADS)
         return VAULT_ERR_INCOMPLETE;
     char *json = nostr_event_serialize(e);

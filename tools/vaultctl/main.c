@@ -14,7 +14,7 @@
 static void usage(FILE *out)
 {
     fputs(
-        "vaultctl 0.3.0\nUsage: vaultctl COMMAND --state DIR --key-file FILE [options] [SUBTREE]\n"
+        "vaultctl 0.3.1\nUsage: vaultctl COMMAND --state DIR --key-file FILE [options] [SUBTREE]\n"
         "Commands: share, grant, revoke, fold, fsck\n"
         "  --relay wss://URL --blossom https://URL (repeatable on share; retained)\n"
         "  --recipient HEX [--write] [--history] (grant)\n"
@@ -75,7 +75,7 @@ static int options(int argc, char **argv, vc_options *o)
         return 1;
     }
     if (!strcmp(argv[1], "--version")) {
-        puts("vaultctl 0.3.0");
+        puts("vaultctl 0.3.1");
         return 1;
     }
     o->command = argv[1];

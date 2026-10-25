@@ -183,6 +183,7 @@ def main():
             shared=run('share','--relay',lab.ws,'--blossom',lab.url,source);assert shared['head'] in lab.events
             checked=run('fsck');assert checked['healthy'] and checked['nodes']==2 and checked['chunks']>=3
             folded=run('fold');assert folded['owner_view']==shared['head'] and folded['conflicts']==[]
+            assert run('fold')==folded  # Replayed known heads preserve canonical IDs/output.
             recipient=pub(2);run('grant','--recipient',recipient,'--write')
             wrap=[e for e in lab.events.values() if e['kind']==1059][-1];event=base/'wrap.json';event.write_text(json.dumps(wrap));event.chmod(0o600)
             got=subprocess.run([helper,'grant',str(state),f'{2:064x}',str(event)],capture_output=True,text=True,timeout=10);assert got.returncode==0,(got.stdout,got.stderr)
@@ -197,6 +198,7 @@ def main():
                 for obj in (state/'objects').iterdir():lab.blobs[obj.name]=obj.read_bytes()
             conflict=run('fold');assert len(conflict['frontier'])==2 and conflict['conflicts']
             assert conflict['owner_view']==json.loads((base/'fork-1.json').read_text())['id']
+            assert run('fold')==conflict
             # Lazy publishes the fresh epoch before any old chunks are migrated.
             run('revoke','--member',recipient,'--budget','0',expect=4)
             continuation=[e for e in lab.events.values() if e['kind']==1059][-1]

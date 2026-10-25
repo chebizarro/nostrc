@@ -79,7 +79,8 @@ static int finish_outgoing(vc_app *a)
             s->delivery_cursor = 0;
         }
     } else if (kind == 1059) {
-        memcpy(s->last_grant, nostr_event_get_id(s->outgoing), 65);
+        if (nostr_event_compute_id(s->outgoing, s->last_grant) != NOSTR_EVENT_VALIDATION_OK)
+            return VAULT_ERR_AUTH;
         if (s->phase == VC_PHASE_GRANT)
             s->phase = VC_PHASE_NONE;
         else if (s->distribution)
@@ -252,10 +253,11 @@ int vc_command_share(vc_app *a)
     else
         rc = seal_publish(a);
     if (!rc) {
-        char v[65];
+        char v[65], id[65];
+        if (nostr_event_compute_id(s->heads[s->current].event, id) != NOSTR_EVENT_VALIDATION_OK)
+            return VAULT_ERR_AUTH;
         porthome_hex64(vault_tree_node_at(s->tree, 0, NULL)->vault->vault_id, v);
-        printf("{\"vault_id\":\"%s\",\"head\":\"%s\"}\n", v,
-               nostr_event_get_id(s->heads[s->current].event));
+        printf("{\"vault_id\":\"%s\",\"head\":\"%s\"}\n", v, id);
     }
     return rc;
 }
@@ -432,11 +434,23 @@ int vc_command_fold(vc_app *a)
     printf("{\"owner_view\":");
     if (f->view == SIZE_MAX)
         printf("null");
-    else
-        printf("\"%s\"", nostr_event_get_id(a->state.heads[f->view].event));
+    else {
+        char id[65];
+        if (nostr_event_compute_id(a->state.heads[f->view].event, id) != NOSTR_EVENT_VALIDATION_OK) {
+            rc = VAULT_ERR_AUTH;
+            goto done;
+        }
+        printf("\"%s\"", id);
+    }
     printf(",\"frontier\":[");
-    for (size_t i = 0; i < f->frontier_len; i++)
-        printf("%s\"%s\"", i ? "," : "", nostr_event_get_id(a->state.heads[f->frontier[i]].event));
+    for (size_t i = 0; i < f->frontier_len; i++) {
+        char id[65];
+        if (nostr_event_compute_id(a->state.heads[f->frontier[i]].event, id) != NOSTR_EVENT_VALIDATION_OK) {
+            rc = VAULT_ERR_AUTH;
+            goto done;
+        }
+        printf("%s\"%s\"", i ? "," : "", id);
+    }
     printf("],\"conflicts\":[");
     for (size_t i = 0; i < f->conflicts_len; i++) {
         char writer[65];
