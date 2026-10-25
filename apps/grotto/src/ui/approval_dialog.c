@@ -474,12 +474,14 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   self->ready = remaining > 0 && !strcmp(field(info, "state"), "PENDING");
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_deny), self->ready);
+  gboolean routine_trust = FALSE;
+  g_variant_lookup(info, "routine_trust_available", "b", &routine_trust);
   gtk_widget_set_sensitive(GTK_WIDGET(self->chk_remember), rememberable);
   gtk_widget_set_visible(GTK_WIDGET(self->chk_remember), strcmp(op, "self_test") != 0);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_change_trust), strcmp(op, "self_test") != 0);
   gtk_widget_set_visible(GTK_WIDGET(self->chk_24h), FALSE);
   gtk_check_button_set_active(self->chk_24h, FALSE);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && self->ready);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust && self->ready);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_block_operation), rememberable);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_block_app), rememberable);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_operation), self->ready);
@@ -500,6 +502,8 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gboolean flow = rememberable && self->ready && size > 0 && size <= 1024 &&
       *field(info, "flow_id") && !strcmp(field(info, "purpose"), "nip17-room-send") &&
       (!strcmp(op, "nip44_encrypt") || (!strcmp(op, "sign_event") && flow_kind == NOSTR_KIND_SEAL));
+  guint flow_left = 0; g_variant_lookup(info, "flow_remaining_seconds", "u", &flow_left);
+  flow = flow && flow_left > 0;
   gtk_widget_set_visible(GTK_WIDGET(self->flow_box), flow);
   gtk_check_button_set_active(self->chk_flow_encrypt, FALSE);
   gtk_check_button_set_active(self->chk_flow_seals, FALSE);
@@ -547,12 +551,11 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   }
   if (!strcmp(op, "connect")) gtk_button_set_label(self->btn_approve, "Pair application");
   gtk_widget_set_visible(GTK_WIDGET(self->chk_remember), rememberable);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_change_trust), rememberable);
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust);
   gtk_label_set_text(self->label_trust_explanation, drift
       ? "A saved permission belongs to a different identity. This request uses the identity shown above; permissions do not follow a change of default identity."
       : review ? "A saved permission is inactive under the previous access policy. Activate it explicitly for this identity and, for AUTH, this relay."
       : "Saved permissions take precedence over access presets. Routine access does not grant custom kinds. Ask-by-default kinds need a scoped first grant.");
-  guint flow_left = 0; g_variant_lookup(info, "flow_remaining_seconds", "u", &flow_left);
   g_autofree gchar *flow_remaining = g_strdup_printf("This flow only: up to %u encrypted messages (including your copy). At review, at most %u seconds remain from first arrival. The app supplies the count; this is not proof of content or recipients. No permission is saved to disk.", size, flow_left);
   if (flow) gtk_label_set_text(self->label_flow, flow_remaining);
   g_autofree gchar *preview = NULL;
@@ -659,7 +662,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
                       verified ? "Verified caller" : "Unverified app", field(info, "principal"),
                       field(info, "transport"), field(info, "claimed_app_id"));
   gtk_label_set_text(self->label_details, details);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && self->ready);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust && self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_activate_saved), rememberable && self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_operation), rememberable && self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_app), rememberable && self->ready);

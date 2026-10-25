@@ -470,6 +470,28 @@ static void test_room_consent_atomic_failure_and_nonrequired(void) {
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
       "room-flow", 2, 0, "3", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
 }
+static void test_defaults_after_flow(void) {
+  g_autoptr(SignerPermissions) p = start();
+  /* No allow row may mask first-party/default precedence. */
+  g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_DELETION, TRUE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate(p, NULL, IDENTITY, "event", NOSTR_KIND_DELETION, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "connect", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_true(signer_permissions_remember(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_DELETION, FALSE, 0, NULL));
+  g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_DELETION, TRUE, NULL), ==, SIGNER_PERMISSION_DENY);
+  Client client = {SIGNER_TRUST_LOW, TRUE}; signer_permissions_set_trust_lookup(p, trust, &client);
+  for (guint route = 0; route < 2; route++) {
+    const gchar *flow = route ? "tier-accounting" : "default-accounting";
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
+        flow, 1, 0, "observed", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+    g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0, flow, 1, TRUE, FALSE, 600, NULL));
+    client.tier = route ? SIGNER_TRUST_FULL : SIGNER_TRUST_LOW; signer_permissions_policy_changed(p);
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
+        flow, 1, 0, "one", !route, NULL), ==, SIGNER_PERMISSION_ALLOW);
+    client.tier = SIGNER_TRUST_LOW; signer_permissions_policy_changed(p);
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
+        flow, 1, 0, "two", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  }
+}
 #ifdef NIP55L_TEST_TRUST_ENV
 static gint64 fixture_flow_clock(gpointer data) { return *(gint64 *)data; }
 static void test_flow_expiry(void) {
@@ -633,5 +655,6 @@ int main(int argc, char **argv) {
   g_test_add_func("/permissions/corrupt-record-isolation", test_bad_record_and_corrupt_legacy_isolation);
   g_test_add_func("/permissions/actual-write-failure-shared-directory", test_actual_write_failure_and_shared_directory);
   g_test_add_func("/trust-tiers/live-policy", test_tiers);
+  g_test_add_func("/permissions/defaults-after-flow", test_defaults_after_flow);
   gint result = g_test_run(); remove_files(); g_rmdir(dir); g_rmdir(config); return result;
 }

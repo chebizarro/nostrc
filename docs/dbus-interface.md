@@ -31,6 +31,17 @@ UIs require it, otherwise remain read-only. `DecideRequest` accepts `allow-once`
 `trust-routine`, `activate-saved`, `discard-saved`. Trust-and-approve is a single
 approver-only server decision, never SetClientTrust followed by ApproveRequest.
 Discard keeps the request pending; activation preserves the saved absolute expiry.
+`trust-routine` is offered/accepted only for a request covered by the routine
+preset; custom kinds use their exact scoped permission instead. A successfully
+saved preset is not rolled back if backend execution fails. That partial outcome
+returns `org.nostr.Grotto.Control1.Error.AccessPresetSavedRequestFailed`, not an
+undifferentiated false result: routine access was saved, the failed request is no
+longer pending, and the operator should review permissions before sending a new
+request. Pending snapshots report `routine_trust_available` from daemon policy.
+`flow_remaining_seconds` uses the enforced shared first-arrival deadline,
+including an earlier shortened consent window; zero means no flow consent is offered.
+Ask-by-default constrains tier fallback only, not executable-attested first-party
+defaults. Bounded flow accounting precedes both defaults and tier fallback.
 Initial pairing offers only Pair application/once-only denial, not reusable connect.
 Named UID-only claims are explicitly unverifiable; empty `claimed:` principals
 cannot receive reusable grants, flow consent or client trust.

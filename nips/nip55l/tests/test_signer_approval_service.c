@@ -69,6 +69,35 @@ static SignerGateHandle *submit(SignerApprovalService *s, SignerCaller *who, con
       .no_identity=op==SIGNER_GATE_PING || op==SIGNER_GATE_CONNECT};
   return signer_approval_service_submit(s, who, connection, op, a, b, "", &context, reply, r);
 }
+#ifdef NIP55L_TEST_TRUST_ENV
+static gint64 flow_snapshot_clock(gpointer data) { return *(gint64 *)data; }
+static void test_flow_snapshot_anchor(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  SignerPermissions *p = signer_approval_service_permissions(s);
+  gint64 now = g_get_monotonic_time(); signer_permissions_set_flow_clock_for_test(p, flow_snapshot_clock, &now);
+  SignerGateContext context = {.transport=SIGNER_TRANSPORT_DBUS, .flow_id="staggered", .flow_size=4, .purpose="nip17-room-send"};
+  Reply first = {0}, later = {0};
+  g_autoptr(SignerGateHandle) a = signer_approval_service_submit(s, &who, "flow-first", SIGNER_GATE_NIP44_ENCRYPT,
+      "first", PEER, "", &context, reply, &first);
+  wait_prompts(&w, 1);
+  const gchar *identity = NULL; g_variant_lookup(w.pending->pdata[0], "identity", "&s", &identity);
+  now += 540 * G_USEC_PER_SEC;
+  g_autoptr(GVariant) before = signer_approval_service_info(s, request_id(&w, 0)); guint remaining = 0;
+  g_assert_true(g_variant_lookup(before, "flow_remaining_seconds", "u", &remaining)); g_assert_cmpuint(remaining, ==, 60);
+  /* A prior consent can shorten, never reset, the shared first-arrival window. */
+  g_assert_true(signer_permissions_consent_room(p, who.principal, identity, SIGNER_TRANSPORT_DBUS,
+      "staggered", 4, FALSE, TRUE, 570, NULL));
+  g_autoptr(SignerGateHandle) b = signer_approval_service_submit(s, &who, "flow-later", SIGNER_GATE_NIP44_ENCRYPT,
+      "later", PEER, "", &context, reply, &later);
+  wait_prompts(&w, 2);
+  g_autoptr(GVariant) after = signer_approval_service_info(s, request_id(&w, w.pending->len - 1));
+  g_assert_true(g_variant_lookup(after, "flow_remaining_seconds", "u", &remaining)); g_assert_cmpuint(remaining, ==, 30);
+  now += 30 * G_USEC_PER_SEC;
+  g_clear_pointer(&after, g_variant_unref); after = signer_approval_service_info(s, request_id(&w, w.pending->len - 1));
+  g_assert_true(g_variant_lookup(after, "flow_remaining_seconds", "u", &remaining)); g_assert_cmpuint(remaining, ==, 0);
+  stop(s, &w); reply_clear(&first); reply_clear(&later);
+}
+#endif
 static void test_nip46_caller(void) {
   g_autofree gchar *upper = g_ascii_strup(PEER, -1);
   g_autoptr(SignerCaller) who = signer_caller_for_nip46(upper);
@@ -804,6 +833,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/two-queued-remembers", test_two_queued_remembers);
   g_test_add_func("/approval/revoke-queued-scope", test_revoke_queued_scope);
   g_test_add_func("/approval/flow-invalidation", test_flow_invalidation);
+  g_test_add_func("/approval/flow-snapshot-anchor", test_flow_snapshot_anchor);
   g_test_add_func("/approval/unrelated-revision-auto-work", test_unrelated_revision_rechecks_auto_work);
   g_test_add_func("/approval/tier-lowered-queued-revision", test_tier_lowered_queued_revision);
   g_test_add_func("/approval/expiry-before-queue", test_expiry_before_queue);

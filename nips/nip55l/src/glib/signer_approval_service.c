@@ -87,7 +87,7 @@ struct _Request {
  SignerOp op;
  SignerTransport transport;
  SignerRequestState state;
- gboolean resolved, no_identity, no_approval_ui, existing_pairing, announced, decision, remember;
+ gboolean resolved, no_identity, no_approval_ui, existing_pairing, announced, decision, remember, preset_saved;
  gboolean finished, caller_disconnected;
  gint cancelled; /* atomic: worker checks before touching the backend */
  guint64 generation, ttl, permission_revision;
@@ -364,7 +364,12 @@ static GVariant *snapshot(Request *r) {
   PUT("purpose", r->purpose);
   g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(r->flow_size));
   g_variant_builder_add(&b, "{sv}", "flow_remaining_seconds", g_variant_new_uint32(
-      MAX((gint64)0, r->received_at + 600 * G_USEC_PER_SEC - g_get_monotonic_time()) / G_USEC_PER_SEC));
+      signer_permissions_flow_remaining(r->service->permissions, r->who->principal,
+          r->npub, r->transport, r->flow_id, r->flow_size)));
+  g_variant_builder_add(&b, "{sv}", "routine_trust_available", g_variant_new_boolean(
+      signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
+          r->has_kind ? (gint)r->event_kind : -1) &&
+      signer_permissions_is_routine(op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1)));
   gboolean policy_review = FALSE, identity_drift = FALSE;
   g_autoptr(GVariant) saved = signer_permissions_list(r->service->permissions, r->who->principal, NULL);
   for (gsize i = 0; saved && i < g_variant_n_children(saved); i++) {
@@ -437,7 +442,10 @@ static void finish(Request *r, SignerRequestState state, const gchar *error, con
   notify_request(r);
   if (r->decision_fn) {
     SignerApprovalDecisionFn fn = r->decision_fn; r->decision_fn = NULL;
-    fn(r->decision_data, state == SIGNER_REQUEST_SUCCEEDED || (state == SIGNER_REQUEST_DENIED && !r->decision), NULL, NULL);
+    if (r->preset_saved && state != SIGNER_REQUEST_SUCCEEDED)
+      fn(r->decision_data, FALSE, "org.nostr.Grotto.Control1.Error.AccessPresetSavedRequestFailed",
+          "Routine access was saved, but this request failed. It is no longer pending. Review this app's permissions before sending a new request.");
+    else fn(r->decision_data, state == SIGNER_REQUEST_SUCCEEDED || (state == SIGNER_REQUEST_DENIED && !r->decision), NULL, NULL);
   }
   request_unref(r);
 }
@@ -1257,6 +1265,9 @@ void signer_approval_service_decide_mode(SignerApprovalService *s, const gchar *
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "This request cannot receive reusable consent"); return;
   }
   if (!strcmp(mode, "trust-routine") || !strcmp(mode, "block-app")) {
+    if (!strcmp(mode, "trust-routine") && !signer_permissions_is_routine(op_info[r->op].kind, kind)) {
+      fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "Routine access does not cover this request; use its exact scoped permission instead"); return;
+    }
     if (!s->trust_and_approve || policy_denies(r)) {
       fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_APPROVAL, "Client policy decision is unavailable or denied"); return;
     }
@@ -1267,6 +1278,7 @@ void signer_approval_service_decide_mode(SignerApprovalService *s, const gchar *
     else {
       /* One approver-only server decision, not SetClientTrust followed by an
        * approval RPC. All validation precedes the durable preset mutation. */
+      r->preset_saved = strcmp(mode, "block-app") != 0;
       signer_permissions_policy_changed(s->permissions);
       gboolean first_grant = strcmp(mode, "block-app") && r->has_kind &&
           signer_permissions_is_routine(op_info[r->op].kind, kind) &&

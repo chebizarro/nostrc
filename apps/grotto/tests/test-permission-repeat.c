@@ -145,13 +145,10 @@ static void atomic_and_pending(GDBusConnection *connection, GrottoApprovalContro
     g_autoptr(GrottoApprovalRequest) pending = g_list_model_get_item(items, 0);
     if (i == 0) {
       management(connection, "DecideRequest", g_variant_new("(ss)", grotto_approval_request_get_id(pending), "trust-routine"), &decision);
-      WAIT(decision.done); g_assert_no_error(decision.error); clear(&decision);
-      verify(&note, ask[i]); clear(&note);
-      WAIT(g_list_model_get_n_items(items) == 0);
-      /* Trusting routine operations on a custom request allows this request
-       * once. It must not smuggle a durable custom-kind permission. */
-      sign_kind(ask[i], NULL, &note); WAIT(ready(controller) || note.done); g_assert_false(note.done);
-      g_clear_object(&pending); pending = g_list_model_get_item(items, 0);
+      WAIT(decision.done); g_assert_nonnull(decision.error);
+      g_autofree gchar *remote = g_dbus_error_get_remote_error(decision.error);
+      g_assert_cmpstr(remote, ==, "org.nostr.Signer.Error.InvalidInput"); clear(&decision);
+      g_assert_false(note.done); /* No preset mutation or one-time approval is disguised as reusable consent. */
     }
     grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(pending), FALSE, FALSE, 0, NULL, decided, &decision);
     WAIT(note.done && decision.done); g_assert_nonnull(note.error); g_assert_no_error(decision.error); clear(&note); clear(&decision);

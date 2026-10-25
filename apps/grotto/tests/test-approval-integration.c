@@ -515,6 +515,17 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
       GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "chk_remember"));
   gtk_check_button_set_active(check, remember);
   gtk_check_button_set_active(GTK_CHECK_BUTTON(dialog_child(dialog, "chk_24h")), temporary);
+  GListModel *pending = grotto_approval_controller_get_pending(controller);
+  for (guint i = 0; i < g_list_model_get_n_items(pending); i++) {
+    g_autoptr(GrottoApprovalRequest) request = g_list_model_get_item(pending, i);
+    if (strcmp(grotto_approval_request_get_id(request), id)) continue;
+    guint kind = 0; g_variant_lookup(grotto_approval_request_get_info(request), "event_kind", "u", &kind);
+    if (kind == 65534) {
+      g_assert_false(gtk_widget_get_visible(dialog_child(dialog, "btn_change_trust")));
+      g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_change_trust")));
+      g_assert_true(gtk_widget_get_visible(GTK_WIDGET(check)));
+    }
+  }
   /* Deny always means once, regardless of reusable-allow selection. */
   if (!allow) g_assert_cmpstr(gtk_widget_get_tooltip_text(dialog_child(dialog, "btn_deny")), ==,
       "Deny once (Ctrl+D, Escape)");
@@ -524,6 +535,65 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
   g_signal_emit_by_name(button, "clicked");
 }
 #endif
+static void capture_feedback(GrottoApprovalController *controller, const gchar *text, gpointer data) {
+  (void)controller; gchar **feedback = data; g_free(*feedback); *feedback = g_strdup(text);
+}
+static void trust_failure(GrottoApprovalController *controller, GDBusConnection *connection,
+    GDBusConnection *consumer, GApplication *app, gboolean gui) {
+  (void)app; (void)gui; (void)consumer;
+  /* A backend failure must not throttle the unrelated ordinary-review fixture. */
+  g_autoptr(GDBusConnection) failed_caller = g_dbus_connection_new_for_address_sync(g_getenv("DBUS_SESSION_BUS_ADDRESS"),
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, NULL);
+  g_assert_nonnull(failed_caller);
+  Reply result = {0}, decision = {0}; gchar *feedback = NULL;
+  gulong listener = g_signal_connect(controller, "message", G_CALLBACK(capture_feedback), &feedback);
+  g_dbus_connection_call(failed_caller, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer", "NIP44DecryptForApp",
+      g_variant_new("(ssss)", "INVALID-CIPHERTEXT", "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", "", "spoofed-name"),
+      G_VARIANT_TYPE("(s)"), 0, 30000, NULL, bus_done, &result);
+  WAIT(ready(controller) || result.done); g_assert_false(result.done);
+  GListModel *items = grotto_approval_controller_get_pending(controller);
+  g_autoptr(GrottoApprovalRequest) pending = g_list_model_get_item(items, 0);
+  const gchar *who; g_assert_true(g_variant_lookup(grotto_approval_request_get_info(pending), "principal", "&s", &who));
+  g_autofree gchar *principal = g_strdup(who);
+#ifndef __APPLE__
+  if (gui) {
+    g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(grotto_approval_request_get_id(pending)));
+    AdwDialog *dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+    GtkWidget *trust = dialog_child(dialog, "btn_change_trust");
+    g_assert_true(gtk_widget_get_visible(trust)); g_assert_true(gtk_widget_get_sensitive(trust));
+    g_signal_emit_by_name(trust, "clicked");
+    WAIT(result.done && feedback);
+    g_assert_cmpstr(feedback, ==, "Routine access was saved, but this request failed. It is no longer pending. Review this app's permissions before sending a new request.");
+  } else
+#endif
+  {
+    g_dbus_connection_call(connection, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "DecideRequest",
+        g_variant_new("(ss)", grotto_approval_request_get_id(pending), "trust-routine"), G_VARIANT_TYPE("(b)"), 0, 30000, NULL, bus_done, &decision);
+    WAIT(result.done && decision.done); g_assert_nonnull(decision.error);
+    g_autofree gchar *remote = g_dbus_error_get_remote_error(decision.error);
+    g_assert_cmpstr(remote, ==, "org.nostr.Grotto.Control1.Error.AccessPresetSavedRequestFailed");
+    g_assert_nonnull(strstr(decision.error->message, "Routine access was saved"));
+  }
+  g_assert_nonnull(result.error); clear_reply(&result); clear_reply(&decision);
+  WAIT(g_list_model_get_n_items(items) == 0);
+  g_dbus_connection_call(connection, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ListClients",
+      NULL, G_VARIANT_TYPE("(aa{sv})"), 0, 30000, NULL, bus_done, &result);
+  WAIT(result.done); g_assert_no_error(result.error);
+  g_autoptr(GVariant) clients = g_variant_get_child_value(result.reply, 0); gboolean saved = FALSE;
+  for (gsize i = 0; i < g_variant_n_children(clients); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(clients, i); const gchar *p = NULL, *tier = NULL; guint version = 0;
+    g_variant_lookup(row, "principal", "&s", &p); if (g_strcmp0(p, principal)) continue;
+    g_variant_lookup(row, "trust-tier", "&s", &tier); g_variant_lookup(row, "preset-version", "u", &version);
+    g_assert_cmpstr(tier, ==, "full"); g_assert_cmpuint(version, ==, 1); saved = TRUE;
+  }
+  g_assert_true(saved); clear_reply(&result);
+  /* Keep the ordinary review matrix independent of this intentionally saved preset. */
+  g_dbus_connection_call(connection, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "SetClientTrust",
+      g_variant_new("(ss)", principal, "low"), NULL, 0, 30000, NULL, bus_done, &result);
+  WAIT(result.done); g_assert_no_error(result.error); clear_reply(&result);
+  g_signal_handler_disconnect(controller, listener); g_free(feedback);
+  g_dbus_connection_close_sync(failed_caller, NULL, NULL);
+}
 static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GApplication *app,
                      gboolean gui) {
   GrottoApprovalController *installed =
@@ -531,6 +601,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   g_autoptr(GrottoApprovalController) controller =
       installed ? g_object_ref(installed) : grotto_approval_controller_new(app, connection);
   g_signal_connect(controller, "message", G_CALLBACK(controller_message), NULL);
+  trust_failure(controller, connection, consumer, app, gui);
   g_print("daemon name acquired; waiting for first request\n");
   Reply result = {0}, decision = {0};
   sign(consumer, NOSTR_KIND_TEXT_NOTE, "first", &result);
@@ -580,6 +651,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
                {NOSTR_KIND_REPOST, target_tags, "", peer, "target_event_id", peer},
                {NOSTR_KIND_GENERIC_REPOST, target_tags, "", peer, "target_event_id", peer},
                {NOSTR_KIND_REACTION, target_tags, "♥", "Reaction: ♥", "reaction_value", "♥"},
+               {65534, target_tags, "", NULL, NULL, NULL},
                {NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE, private_tags, "PRIVATE-CIPHERTEXT",
                 "Encrypted message", "recipient_peer", peer},
                {NOSTR_KIND_GIFT_WRAP, private_tags, "PRIVATE-CIPHERTEXT", "Encrypted message",
@@ -604,7 +676,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
       const gchar *value = NULL;
       g_assert_true(g_variant_lookup(summary, cases[i].key, "&s", &value));
       g_assert_cmpstr(value, ==, cases[i].value);
-    } else {
+    } else if (cases[i].kind == NOSTR_KIND_DELETION) {
       guint count = 0;
       g_assert_true(g_variant_lookup(summary, "delete_target_count", "u", &count));
       g_assert_cmpuint(count, ==, 1);

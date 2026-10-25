@@ -123,6 +123,7 @@ static GVariant *info(guint32 kind, const char *operation, guint remaining) {
   g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32(remaining));
   g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(TRUE));
   g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&b, "{sv}", "routine_trust_available", g_variant_new_boolean(TRUE));
   g_variant_builder_add(&summary, "{sv}", "preview",
                         g_variant_new_string("ciphertext must not be displayed"));
   g_variant_builder_add(&summary, "{sv}", "target_event_id",
@@ -347,7 +348,7 @@ static void batch_selection(Fixture *f, gconstpointer data) {
   g_assert_null(f->selected_ids[1]);
   g_assert_cmpuint(f->calls, ==, 0);
 }
-static void set_room_flow(Fixture *f) {
+static void set_room_flow_remaining(Fixture *f, guint remaining) {
   GVariantBuilder b, summary;
   g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
@@ -358,16 +359,38 @@ static void set_room_flow(Fixture *f) {
   g_variant_builder_add(&b, "{sv}", "purpose", g_variant_new_string("nip17-room-send"));
   g_variant_builder_add(&b, "{sv}", "flow_id", g_variant_new_string("room-send"));
   g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(4));
+  g_variant_builder_add(&b, "{sv}", "flow_remaining_seconds", g_variant_new_uint32(remaining));
   g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string("PENDING"));
   g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32(120));
   g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&b, "{sv}", "routine_trust_available", g_variant_new_boolean(TRUE));
   g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
   g_autoptr(GVariant) info = g_variant_ref_sink(g_variant_builder_end(&b));
   gnostr_approval_dialog_set_info(f->dialog, info, "Room client");
-  g_assert_true(gtk_widget_get_visible(child(f, "flow_box")));
-  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_flow"))), "4 encrypted messages"));
+  g_assert_cmpint(gtk_widget_get_visible(child(f, "flow_box")), ==, remaining > 0);
+  if (remaining) {
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_flow"))), "4 encrypted messages"));
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_flow"))), "30 seconds remain"));
+    g_assert_null(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_flow"))), "600 seconds"));
+  }
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_encrypt"))));
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_seals"))));
+}
+static void set_room_flow(Fixture *f) { set_room_flow_remaining(f, 30); }
+static void flow_expired(Fixture *f, gconstpointer data) {
+  (void)data; set_room_flow_remaining(f, 0); click(f, "btn_approve"); wait_closed(f);
+  g_assert_cmpuint(f->flow_calls, ==, 0); g_assert_cmpuint(f->calls, ==, 1);
+}
+static void custom_trust_unavailable(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) original = info(65534, "sign_event", 120);
+  GVariantDict d; g_variant_dict_init(&d, original);
+  g_variant_dict_insert(&d, "routine_trust_available", "b", FALSE);
+  g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&d));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Custom client");
+  g_assert_false(gtk_widget_get_visible(child(f, "btn_change_trust")));
+  g_assert_false(gtk_widget_get_sensitive(child(f, "btn_change_trust")));
+  g_assert_true(gtk_widget_get_visible(child(f, "chk_remember")));
 }
 static void flow_unchecked(Fixture *f, gconstpointer data) {
   (void)data; set_room_flow(f); click(f, "btn_approve"); wait_closed(f);
@@ -469,6 +492,8 @@ int main(int argc, char **argv) {
   ADD("previews", previews);
   ADD("stepper-focus", stepper_focus);
   ADD("batch-selection", batch_selection);
+  ADD("flow-expired", flow_expired);
+  ADD("custom-trust-unavailable", custom_trust_unavailable);
   ADD("flow-unchecked", flow_unchecked);
   ADD("flow-encrypt-only", flow_encrypt_only);
   ADD("flow-seals-only", flow_seals_only);

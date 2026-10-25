@@ -131,7 +131,11 @@ on its Permissions page. Initial remote connection offers **Pair application**, 
 a remembered connect grant. Paired reconnect uses separate pairing admission.
 
 **Trust this app for routine operations** is one approver-only Control1 decision
-that saves the versioned Full preset and completes this request. Routine access
+that saves the versioned Full preset and executes this covered request. It is not
+offered for custom kinds; use their exact **Always allow** permission. If execution
+fails after the preset was saved, the feedback explicitly reports both outcomes:
+the request is no longer pending, and routine access remains saved. Review the
+app's permissions before sending a new request; do not blindly retry. Routine access
 includes reads, publishing and messaging; ask-by-default kinds (AUTH, DM/seal/wrap,
 profile/contacts/relay-list, deletion and zap requests) need their first scoped grant.
 Unknown/custom kinds need an explicit grant. Old Full clients show **Previous access

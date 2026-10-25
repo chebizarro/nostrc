@@ -52,6 +52,10 @@ void signer_permissions_set_flow_clock_for_test(SignerPermissions *permissions,
 gboolean signer_permissions_kind_asks_by_default(SignerPermissions *permissions, gint kind);
 /* Install only in-memory encrypt/seal scopes. One monotonic deadline,
  * measured from first request arrival; no durable permission rows. */
+/* Remaining consent window, from the same first-arrival/shortened deadline. */
+guint signer_permissions_flow_remaining(SignerPermissions *permissions,
+    const gchar *principal, const gchar *identity, guint transport,
+    const gchar *flow_id, guint flow_size);
 gboolean signer_permissions_consent_room(SignerPermissions *permissions,
     const gchar *principal, const gchar *identity, guint transport,
     const gchar *flow_id, guint flow_size, gboolean encrypt, gboolean seals,

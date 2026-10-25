@@ -460,8 +460,25 @@ SignerPermissionResult signer_permissions_evaluate_scoped(SignerPermissions *p,
   if (!signer_permissions_reload(p, error)) return SIGNER_PERMISSION_ERROR;
   return evaluate_loaded(p, principal, identity, op, kind, relay, first_party_default);
 }
-static SignerPermissionResult evaluate_loaded(SignerPermissions *p, const gchar *principal,
-    const gchar *identity, const gchar *op, gint kind, const gchar *relay, gboolean first_party_default) {
+static SignerPermissionResult evaluate_presets(SignerPermissions *p, const gchar *principal,
+    const gchar *op, gint kind, gboolean first_party_default) {
+  /* Executable-attested defaults are independent authority, not a tier. */
+  if (first_party_default) return SIGNER_PERMISSION_ALLOW;
+  if (!strcmp(op, "event") && signer_permissions_kind_asks_by_default(p, kind)) return SIGNER_PERMISSION_ASK;
+  gboolean consented = FALSE;
+  SignerTrustTier tier = p->trust ? p->trust(principal, &consented, p->trust_data) : SIGNER_TRUST_LOW;
+  if (tier == SIGNER_TRUST_PREVIOUS_FULL) return SIGNER_PERMISSION_ALLOW;
+  if (tier == SIGNER_TRUST_FULL && signer_permissions_is_routine(op, kind)) return SIGNER_PERMISSION_ALLOW;
+  if (tier == SIGNER_TRUST_MEDIUM && (!strcmp(op, "get_public_key") || !strcmp(op, "get_relays") ||
+      !strcmp(op, "ping") || (!strcmp(op, "event") && contains_kind(signer_public_publishing_kinds,
+        G_N_ELEMENTS(signer_public_publishing_kinds), kind)))) return SIGNER_PERMISSION_ALLOW;
+  if (tier == SIGNER_TRUST_LOW && consented && !strcmp(op, "get_public_key")) return SIGNER_PERMISSION_ALLOW;
+  return SIGNER_PERMISSION_ASK;
+}
+typedef struct { gboolean admitted, review; } Fallback;
+static SignerPermissionResult evaluate_explicit(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op, gint kind, const gchar *relay, Fallback *fallback) {
+  *fallback = (Fallback){0};
   g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
   if (relay && !canonical) return SIGNER_PERMISSION_DENY;
   relay = canonical;
@@ -493,18 +510,15 @@ static SignerPermissionResult evaluate_loaded(SignerPermissions *p, const gchar 
   if (!principal || !*principal || !strcmp(principal, "claimed:") || !strcmp(op, "connect"))
     return SIGNER_PERMISSION_ASK;
   if (allow) return SIGNER_PERMISSION_ALLOW;
-  if (review) return SIGNER_PERMISSION_ASK;
-  /* Ask-by-default is a preset default, never an override of a user's grant. */
-  if (!strcmp(op, "event") && signer_permissions_kind_asks_by_default(p, kind)) return SIGNER_PERMISSION_ASK;
-  if (first_party_default) return SIGNER_PERMISSION_ALLOW;
-  if (tier == SIGNER_TRUST_PREVIOUS_FULL) return SIGNER_PERMISSION_ALLOW;
-  if (tier == SIGNER_TRUST_FULL && signer_permissions_is_routine(op, kind))
-    return SIGNER_PERMISSION_ALLOW;
-  if (tier == SIGNER_TRUST_MEDIUM && (!strcmp(op, "get_public_key") || !strcmp(op, "get_relays") ||
-      !strcmp(op, "ping") || (!strcmp(op, "event") && contains_kind(signer_public_publishing_kinds,
-        G_N_ELEMENTS(signer_public_publishing_kinds), kind)))) return SIGNER_PERMISSION_ALLOW;
-  if (tier == SIGNER_TRUST_LOW && consented && !strcmp(op, "get_public_key")) return SIGNER_PERMISSION_ALLOW;
+  fallback->admitted = TRUE; fallback->review = review;
   return SIGNER_PERMISSION_ASK;
+}
+static SignerPermissionResult evaluate_loaded(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op, gint kind, const gchar *relay, gboolean first_party_default) {
+  Fallback fallback;
+  SignerPermissionResult result = evaluate_explicit(p, principal, identity, op, kind, relay, &fallback);
+  return result == SIGNER_PERMISSION_ASK && fallback.admitted && !fallback.review
+      ? evaluate_presets(p, principal, op, kind, first_party_default) : result;
 }
 static gchar *flow_key(const gchar *principal, const gchar *identity, guint transport,
     const gchar *op, gint kind, const gchar *flow_id) {
@@ -594,24 +608,33 @@ SignerPermissionResult signer_permissions_evaluate_flow(SignerPermissions *p,
   FlowWindow *w = NULL;
   if (request_id && *request_id && valid_flow(principal, identity, transport, op, kind, flow_id, size))
     w = observe_flow(p, principal, identity, transport, flow_id, size, received_at);
-  SignerPermissionResult policy = signer_permissions_evaluate(p, principal, identity, op, kind,
-                                                              first_party_default, error);
-  if (policy != SIGNER_PERMISSION_ASK || !request_id || !*request_id ||
-      !valid_flow(principal, identity, transport, op, kind, flow_id, size)) return policy;
-  g_autofree gchar *key = flow_key(principal, identity, transport, op, kind, flow_id);
-  Flow *f = g_hash_table_lookup(p->flows, key);
-  if (!f || !w || f->size != size || w->size != size) return SIGNER_PERMISSION_ASK;
-  if (f->deadline <= flow_now(p)) {
-    g_hash_table_remove(p->flows, key); update_flow_expiry_fence(p); changed(p);
-    return SIGNER_PERMISSION_ASK;
+  if (!signer_permissions_reload(p, error)) return SIGNER_PERMISSION_ERROR;
+  Fallback fallback;
+  SignerPermissionResult policy = evaluate_explicit(p, principal, identity, op, kind, NULL, &fallback);
+  if (policy != SIGNER_PERMISSION_ASK || !fallback.admitted) return policy;
+  if (w && request_id && *request_id && valid_flow(principal, identity, transport, op, kind, flow_id, size)) {
+    g_autofree gchar *key = flow_key(principal, identity, transport, op, kind, flow_id);
+    Flow *f = g_hash_table_lookup(p->flows, key);
+    if (f && f->size == size && w->size == size && f->deadline > flow_now(p)) {
+      if (g_hash_table_contains(f->requests, request_id)) return SIGNER_PERMISSION_ALLOW;
+      /* Spend bounded consent before independently applicable defaults/presets.
+       * A closed sibling scope cannot steal this scope's remaining slots. */
+      if (g_hash_table_size(f->requests) < f->size) {
+        g_hash_table_add(f->requests, g_strdup(request_id));
+        if (g_hash_table_size(f->requests) == f->size) close_window(w, flow_now(p));
+        return SIGNER_PERMISSION_ALLOW;
+      }
+    }
   }
-  if (g_hash_table_contains(f->requests, request_id)) return SIGNER_PERMISSION_ALLOW;
-  /* Closing one scope prevents re-minting consent, not spending the other
-   * already-approved scope's remaining budget before the shared deadline. */
-  if (g_hash_table_size(f->requests) >= f->size) return SIGNER_PERMISSION_ASK;
-  g_hash_table_add(f->requests, g_strdup(request_id));
-  if (g_hash_table_size(f->requests) == f->size) close_window(w, flow_now(p));
-  return SIGNER_PERMISSION_ALLOW;
+  return fallback.review ? SIGNER_PERMISSION_ASK : evaluate_presets(p, principal, op, kind, first_party_default);
+}
+guint signer_permissions_flow_remaining(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, guint transport, const gchar *flow_id, guint size) {
+  if (!principal || !identity || !flow_id || !*flow_id || !size) return 0;
+  g_autofree gchar *key = flow_window_key(principal, identity, transport, flow_id);
+  FlowWindow *w = g_hash_table_lookup(p->flow_windows, key);
+  if (!w || w->closed || w->size != size) return 0;
+  return MAX((gint64)0, w->deadline - flow_now(p)) / G_USEC_PER_SEC;
 }
 gboolean signer_permissions_invalidate_flows(SignerPermissions *p, const gchar *principal,
     const gchar *identity, const gchar *op) {

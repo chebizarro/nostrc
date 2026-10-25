@@ -843,10 +843,12 @@ static void review_decided(GObject *source, GAsyncResult *result, gpointer data)
   GrottoApprovalController *s = GROTTO_APPROVAL_CONTROLLER(source);
   g_autoptr(GError) error = NULL;
   if (!grotto_approval_controller_decide_finish(s, result, &error)) {
-    if (!s->stopped)
-      message(
-          s,
-          "The signer could not complete this decision. Review the pending inbox before retrying.");
+    if (!s->stopped) {
+      g_autofree gchar *remote = error ? g_dbus_error_get_remote_error(error) : NULL;
+      message(s, !g_strcmp0(remote, "org.nostr.Grotto.Control1.Error.AccessPresetSavedRequestFailed")
+          ? "Routine access was saved, but this request failed. It is no longer pending. Review this app's permissions before sending a new request."
+          : "The signer could not complete this decision. Review the pending inbox before retrying.");
+    }
   } else {
     g_autofree gchar *id = next_group_id(s, info);
     if (id)

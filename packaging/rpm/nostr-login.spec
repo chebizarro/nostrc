@@ -728,7 +728,7 @@ Requires:       shared-mime-info
 wrapping a random per-file key) or for a passphrase (NIP-49), with the body
 in the chunked, content-addressed porthome AEAD container. Opening a file
 sealed for an npub goes through org.nostr.Signer
-(`NIP44DeriveConversationKey`, approval-gated), so the nsec never leaves
+(`NIP44DecryptB64ForApp`, scoped NIP-44 decryption), so the nsec never leaves
 the signer. Ships the CLI, the `nostr-seal-gtk` double-click handler and
 the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
 
