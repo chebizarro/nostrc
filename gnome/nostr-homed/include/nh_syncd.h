@@ -559,6 +559,11 @@ typedef struct {
     void                        *upload_to_server_ud;
     nh_syncd_on_upload_summary_fn on_upload_summary;
     void                         *on_upload_summary_ud;
+
+    /* Optional second-generation source exclusion (e.g. shared vaults).
+     * Applied before capture/deletion AND when rebuilding from saved rows. */
+    bool (*exclude_path)(void *, const char *relative_path);
+    void *exclude_path_ud;
 } nh_syncd_push_cfg;
 
 /* Execute the push pipeline once for `batch`. On success the state's

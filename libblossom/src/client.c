@@ -1164,17 +1164,19 @@ static NostrEvent *sign_event_via_client(const blossom_client_t *c,
 
     NostrEvent *signed_ev = nostr_event_new();
     if (!signed_ev) { free(signed_json); return NULL; }
-    if (nostr_event_deserialize_signed(signed_ev, signed_json, NULL) != NOSTR_EVENT_VALIDATION_OK ||
-        !nostr_event_check_signature(signed_ev) ||
-        !c->signer.pubkey || !nostr_event_get_pubkey(signed_ev) ||
-        strcmp(c->signer.pubkey, nostr_event_get_pubkey(signed_ev)) ||
-        nostr_event_get_kind(signed_ev) != NOSTR_BUD02_KIND ||
-        !nostr_event_get_id(signed_ev) || strcmp(requested_id, nostr_event_get_id(signed_ev))) {
+    bool valid = nostr_event_deserialize_signed(signed_ev, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        nostr_event_check_signature(signed_ev) &&
+        c->signer.pubkey && nostr_event_get_pubkey(signed_ev) &&
+        !strcmp(c->signer.pubkey, nostr_event_get_pubkey(signed_ev)) &&
+        nostr_event_get_kind(signed_ev) == NOSTR_BUD02_KIND;
+    char *signed_id = valid ? nostr_event_get_id(signed_ev) : NULL;
+    valid = signed_id && !strcmp(requested_id, signed_id);
+    free(signed_id);
+    free(signed_json);
+    if (!valid) {
         nostr_event_free(signed_ev);
-        free(signed_json);
         return NULL;
     }
-    free(signed_json);
     return signed_ev;
 }
 

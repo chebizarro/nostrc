@@ -136,7 +136,7 @@ static int subdir(int fd, const char *name)
 int vc_state_open(vc_app *a, int create)
 {
     vc_state *s = &a->state;
-    s->dirfd = s->lockfd = s->objectsfd = s->namesfd = s->lengthsfd = s->acksfd = s->ringsfd = -1;
+    s->dirfd = s->lockfd = s->objectsfd = s->acksfd = s->ringsfd = -1;
     s->current = SIZE_MAX;
     if (create && mkdir(a->options.state_path, 0700) && errno != EEXIST)
         return VAULT_ERR_IO;
@@ -151,13 +151,9 @@ int vc_state_open(vc_app *a, int create)
         return VAULT_ERR_IO;
     }
     s->objectsfd = subdir(s->dirfd, "objects");
-    s->namesfd = subdir(s->dirfd, "names");
-    s->lengthsfd = subdir(s->dirfd, "lengths");
     s->acksfd = subdir(s->dirfd, "acks");
     s->ringsfd = subdir(s->dirfd, "rings");
-    return s->objectsfd < 0 || s->namesfd < 0 || s->lengthsfd < 0 || s->acksfd < 0 || s->ringsfd < 0
-               ? VAULT_ERR_IO
-               : 0;
+    return s->objectsfd < 0 || s->acksfd < 0 || s->ringsfd < 0 ? VAULT_ERR_IO : 0;
 }
 int vc_identity_load(vc_app *a)
 {
@@ -214,40 +210,6 @@ int vc_cache_get(vc_app *a, const uint8_t hash[32], uint8_t **b, size_t *n)
     }
     return rc;
 }
-static void name_key(char out[116], const uint8_t id[32], const char tag[49])
-{
-    porthome_hex64(id, out);
-    out[64] = '-';
-    memcpy(out + 65, tag, 49);
-}
-int vc_name_put(vc_app *a, const uint8_t id[32], const char tag[49], const char *name)
-{
-    char k[116];
-    name_key(k, id, tag);
-    size_t n = strlen(name);
-    if (!n || n > 255 || strchr(name, '/'))
-        return VAULT_ERR_ARG;
-    return immutable(a->state.namesfd, k, (const uint8_t *)name, n);
-}
-int vc_name_get(void *ctx, const uint8_t id[32], const char tag[49], const char **name)
-{
-    vc_app *a = ctx;
-    char k[116];
-    name_key(k, id, tag);
-    uint8_t *b = NULL;
-    size_t n = 0;
-    int rc = vc_private_read(a->state.namesfd, k, 255, &b, &n);
-    if (rc)
-        return VAULT_ERR_INCOMPLETE;
-    if (!n || memchr(b, 0, n) || memchr(b, '/', n))
-        rc = VAULT_ERR_ARG;
-    else {
-        memcpy(a->name_buffer, b, n + 1);
-        *name = a->name_buffer;
-    }
-    free(b);
-    return rc;
-}
 static void be64(uint8_t *b, uint64_t v)
 {
     for (int i = 7; i >= 0; i--) {
@@ -261,39 +223,6 @@ static uint64_t un64(const uint8_t *b)
     for (int i = 0; i < 8; i++)
         v = (v << 8) | b[i];
     return v;
-}
-static void length_key(char out[83], const uint8_t hash[32], uint64_t epoch)
-{
-    char h[65];
-    porthome_hex64(hash, h);
-    snprintf(out, 83, "%s-%016llx", h, (unsigned long long)epoch);
-}
-int vc_length_put(vc_app *a, const uint8_t hash[32], uint64_t epoch, size_t n)
-{
-    char k[83];
-    length_key(k, hash, epoch);
-    uint8_t b[8];
-    be64(b, n);
-    return immutable(a->state.lengthsfd, k, b, 8);
-}
-int vc_length_get(void *ctx, const uint8_t hash[32], uint64_t epoch, size_t *n)
-{
-    vc_app *a = ctx;
-    char k[83];
-    length_key(k, hash, epoch);
-    uint8_t *b = NULL;
-    size_t z = 0;
-    int rc = vc_private_read(a->state.lengthsfd, k, 8, &b, &z);
-    if (rc) {
-        vc_error(a, "missing chunk length inventory: %s", k);
-        return VAULT_ERR_INCOMPLETE;
-    }
-    if (z != 8 || un64(b) > SIZE_MAX)
-        rc = VAULT_ERR_ARG;
-    else
-        *n = (size_t)un64(b);
-    free(b);
-    return rc;
 }
 int vc_ack_get(vc_app *a, const uint8_t hash[32], uint64_t *v)
 {
@@ -324,17 +253,22 @@ int vc_ack_put(vc_app *a, const uint8_t hash[32], uint64_t v)
 int vc_head_add(vc_app *a, const NostrEvent *e, uint64_t epoch, size_t *index)
 {
     vc_state *s = &a->state;
-    const char *id = nostr_event_get_id((NostrEvent *)e);
-    if (!id || !nostr_event_check_signature((NostrEvent *)e))
+    char id[65];
+    if (nostr_event_compute_id(e, id) != NOSTR_EVENT_VALIDATION_OK ||
+        !nostr_event_check_signature((NostrEvent *)e))
         return VAULT_ERR_AUTH;
-    for (size_t i = 0; i < s->heads_len; i++)
-        if (!strcmp(nostr_event_get_id(s->heads[i].event), id)) {
+    for (size_t i = 0; i < s->heads_len; i++) {
+        char known_id[65];
+        if (nostr_event_compute_id(s->heads[i].event, known_id) != NOSTR_EVENT_VALIDATION_OK)
+            return VAULT_ERR_AUTH;
+        if (!strcmp(known_id, id)) {
             if (s->heads[i].epoch != epoch)
                 return VAULT_ERR_CONFLICT;
             if (index)
                 *index = i;
             return 0;
         }
+    }
     if (s->heads_len == VAULT_MAX_HEADS)
         return VAULT_ERR_INCOMPLETE;
     char *json = nostr_event_serialize(e);
@@ -780,8 +714,7 @@ void vc_state_free(vc_state *s)
         free(s->relays[i]);
     for (size_t i = 0; i < s->blossom_len; i++)
         free(s->blossom[i]);
-    int fds[] = {s->ringsfd,   s->acksfd, s->lengthsfd, s->namesfd,
-                 s->objectsfd, s->lockfd, s->dirfd};
+    int fds[] = {s->ringsfd, s->acksfd, s->objectsfd, s->lockfd, s->dirfd};
     for (size_t i = 0; i < sizeof fds / sizeof fds[0]; i++)
         if (fds[i] >= 0)
             close(fds[i]);

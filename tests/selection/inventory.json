@@ -50,6 +50,17 @@
       ],
       "build_targets": []
     },
+    "homed.vault.filesystem": {
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "nodes": ["execution.vault_syncd", "gnome.nostr_homed.vault", "gnome.nostr_homed.vault.test_inputs"],
+      "profiles": ["homed.vault.linux"],
+      "ctest_tests": {"homed.vault.linux": ["homed_syncd_vault_protocol", "homed_syncd_vault_runtime", "homed_syncd_vault_fuse", "homed_syncd_vault_fs", "homed_syncd_vault_config", "homed_syncd_push_e2e", "homed_syncd_pusher_multi_server", "homed_syncd_off_closure", "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure", "json_glib_off_closure"]},
+      "build_targets": ["test_syncd_vault_runtime", "nostr-home-fuse", "test_syncd_vault_fs", "nostr-home-syncd", "test_syncd_push_e2e", "test_syncd_pusher_multi_server", "nostr-authd", "pam_nostr", "nss_nostr"],
+      "runtime_inputs": ["gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py", "tools/vaultctl/tests/fixtures.py", "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "libjson/tests/check_glib_off_closure.sh", "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"]
+    },
     "homed.units": {
       "kind": "ctest",
       "cost": "ordinary",
@@ -21665,6 +21676,24 @@
       ],
       "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
     },
+    "execution.vault_syncd": {
+      "id": "execution.vault_syncd",
+      "depends_on": [],
+      "owner_paths": [".github/workflows/vault-syncd-ci.yml"],
+      "rationale": "Dedicated ordinary runner for the exact selected vault assembly profile."
+    },
+    "gnome.nostr_homed.vault": {
+      "id": "gnome.nostr_homed.vault",
+      "depends_on": ["gnome.nostr_homed", "libvault", "libporthome", "libblossom", "libnostr"],
+      "owner_paths": ["gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h"],
+      "rationale": "Vault assembly uses SDK tree/fetch/fold and sealed chunk primitives; base auth targets do not link it."
+    },
+    "gnome.nostr_homed.vault.test_inputs": {
+      "id": "gnome.nostr_homed.vault.test_inputs",
+      "depends_on": [],
+      "owner_paths": ["gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py", "tools/vaultctl/tests/fixtures.py", "gnome/nostr-homed/tests/integration/vault_lab_http_receipts.py", "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py", "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c", "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c", "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"],
+      "rationale": "Vault filesystem fixtures select their own check, not unrelated authentication or SDK prerequisite suites."
+    },
     "gnome.nostr_homed": {
       "depends_on": [
         "nostr.gobject",
@@ -23766,7 +23795,31 @@
       "rationale": "Public API test inputs select package checks, not production consumers."
     }
   },
-  "path_rules": [
+      "path_rules": [
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault reconciler."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault reconciler contract."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault scheduling and namespace commit."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault manager contract."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Pool and Blossom vault transport."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault transport contract."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Encrypted vault session persistence."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private session contract."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Generation-bound FUSE reader."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private FUSE reader contract."},
+      {"exact": "tools/vaultctl/tests/fixtures.py", "effect": "impact", "nodes": ["vaultctl.test_inputs", "gnome.nostr_homed.vault.test_inputs"], "reason": "Shared signed WebSocket/HTTP fixture also verifies syncd reauthentication during publication."},
+      {"exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Actual pool publication/AUTH regression."},
+      {"exact": "gnome/nostr-homed/tests/integration/vault_lab_http_receipts.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Transparent payload receipt fixture for the manual VSP migration check."},
+      {"exact": "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Manual two-UID VSP scenario uses the runtime fixture helper; ordinary selection stays hermetic."},
+      {"exact": "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Vault runtime and actual headless FUSE callback regressions."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault config selects the separate generation source and legacy exclusion."},
+      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault config contract affects daemon and source filtering."},
+      {"exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Real offline daemon config regression, not unrelated auth tests."},
+    {"exact": ".github/workflows/vault-syncd-ci.yml", "effect": "impact", "nodes": ["execution.vault_syncd"], "reason": "Vault selected-profile runner changes exercise the owned checks."},
+    {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault filesystem assembly."},
+    {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault folded-view materialisation."},
+    {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private syncd/FUSE vault assembly seam."},
+    {"exact": "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Session-only SDK linkage must remain outside authd/PAM/NSS."},
+    {"exact": "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Vault filesystem check source."},
     {
       "prefix": "bindings/rust",
       "effect": "impact",
@@ -28485,6 +28538,21 @@
     }
   ],
   "profiles": {
+    "homed.vault.linux": {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "compiler": "gcc",
+      "build_type": "Debug",
+      "instrumentation": "asan_ubsan",
+      "source_dir": ".",
+      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug", "-DBUILD_TESTING=ON", "-DGNOSTR_ENABLE_ASAN=ON", "-DGNOSTR_ENABLE_UBSAN=ON", "-DWITH_NOSTRDB=OFF", "-DLIBNOSTR_WITH_NOSTRDB=OFF", "-DBUILD_NOSTR_GOBJECT=OFF", "-DBUILD_LIBHANAMI=OFF", "-DBUILD_LIBMARMOT=OFF", "-DBUILD_LIBVAULT_MARMOT=OFF", "-DBUILD_APPS=OFF", "-DBUILD_RELAYD=OFF", "-DNOSTR_WITH_GLIB=OFF", "-DENABLE_NIP44=ON", "-DENABLE_NIP59=ON", "-DENABLE_NIP42=ON", "-DENABLE_NIP11=ON", "-DENABLE_NOSTR_HOMED=ON", "-DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_AUTH_CORE=ON", "-DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON", "-DNOSTR_HOMED_ENABLE_AUTH_RUNTIME=ON", "-DNOSTR_HOMED_ENABLE_PAM=ON", "-DNOSTR_HOMED_ENABLE_NSS=ON", "-DNIP55L_SECRET_BACKEND=libsecret"],
+      "environment": {"ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1", "UBSAN_OPTIONS": "halt_on_error=1"},
+      "capabilities": [],
+      "setup": "docs/TESTING.md#dependency-aware-commands",
+      "local_availability": "host_or_container",
+      "parallelism": 1,
+      "timeout_seconds": 3600
+    },
     "homed.linux.units": {
       "platform": "linux",
       "architecture": "x86_64",

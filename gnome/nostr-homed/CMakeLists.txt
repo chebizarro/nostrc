@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.4.0 LANGUAGES C)
+project(nostr_homed VERSION 0.5.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -65,6 +65,11 @@ option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
 # built here installs — packaging + systemd unit are I3.
 option(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL
   "Build the experimental user-scoped nostr-home-syncd daemon (requires porthome experimental + libnostr)" OFF)
+option(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL
+  "Build shared-vault syncd/FUSE assembly (requires SYNCD_EXPERIMENTAL and libvault)" OFF)
+if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL AND NOT NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
+  message(FATAL_ERROR "NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL requires SYNCD_EXPERIMENTAL")
+endif()
 # Phase 4 P4-I (bead nostrc-1u55). Ships the read-only FUSE 3 overlay
 # nostr-home-fuse. Gated on top of SYNCD_EXPERIMENTAL (which is gated
 # on top of PORTHOME_EXPERIMENTAL) and requires FUSE3. Nothing is
@@ -1898,6 +1903,28 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     target_link_libraries(nostr_syncd_core PUBLIC PkgConfig::NOSTR_FOR_SYNCD)
   endif()
 
+  if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+    if(NOT TARGET nostrc::vault)
+      message(FATAL_ERROR "Shared-vault syncd requires BUILD_LIBVAULT=ON")
+    endif()
+    target_sources(nostr_syncd_core PRIVATE
+      src/porthome-syncd/nh_syncd_vault_config.c
+      src/porthome-syncd/nh_syncd_vault_session.c
+      src/porthome-syncd/nh_syncd_vault_engine.c
+      src/porthome-syncd/nh_syncd_vault_manager.c
+      src/porthome-syncd/nh_syncd_vault_reader.c
+      src/porthome-syncd/nh_syncd_vault_net.c
+      src/porthome-syncd/nh_syncd_vault_fs.c
+      src/porthome-syncd/nh_syncd_vault_apply.c)
+    if(NOT TARGET nip42 OR NOT TARGET nip11 OR NOT TARGET nostrc::bud02)
+      message(FATAL_ERROR "Shared-vault syncd requires NIP-42, NIP-11 and BUD-02")
+    endif()
+    target_link_libraries(nostr_syncd_core PUBLIC nostrc::vault nip42 nip11 nostrc::bud02)
+    target_include_directories(nostr_syncd_core PRIVATE
+      $<TARGET_PROPERTY:nip42,SOURCE_DIR>/include $<TARGET_PROPERTY:nip11,SOURCE_DIR>/include)
+    target_compile_definitions(nostr_syncd_core PUBLIC NH_SYNCD_VAULT_EXPERIMENTAL=1)
+  endif()
+
   # Daemon binary. Only additional source is the inotify watcher +
   # the poll-loop main. Not installed in I1.
   add_executable(nostr-home-syncd
@@ -1911,6 +1938,43 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
   target_link_libraries(nostr-home-syncd PRIVATE nostr_syncd_core)
 
   if(NOSTR_HOMED_BUILD_TESTS)
+    if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+      add_executable(test_syncd_vault_fs tests/unit/test_syncd_vault_fs.c)
+      target_include_directories(test_syncd_vault_fs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+      target_compile_options(test_syncd_vault_fs PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      target_link_libraries(test_syncd_vault_fs PRIVATE nostr_syncd_core)
+      add_test(NAME homed_syncd_vault_fs COMMAND test_syncd_vault_fs)
+      add_executable(test_syncd_vault_runtime tests/unit/test_syncd_vault_runtime.c)
+      target_include_directories(test_syncd_vault_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+      target_compile_options(test_syncd_vault_runtime PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      target_link_libraries(test_syncd_vault_runtime PRIVATE nostr_syncd_core)
+      add_test(NAME homed_syncd_vault_runtime COMMAND test_syncd_vault_runtime)
+      set_tests_properties(homed_syncd_vault_runtime PROPERTIES LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
+      if(NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR "Shared-vault config tests require Python 3")
+      endif()
+      add_test(NAME homed_syncd_vault_protocol
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_vault_protocol.py
+          $<TARGET_FILE:test_syncd_vault_runtime>)
+      set_tests_properties(homed_syncd_vault_protocol PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
+      add_test(NAME homed_syncd_vault_config
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_vault_config.py
+          $<TARGET_FILE:nostr-home-syncd>)
+      set_tests_properties(homed_syncd_vault_config PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
+      set_tests_properties(homed_syncd_vault_fs PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 60)
+      foreach(login_target pam_nostr nss_nostr)
+        if(TARGET ${login_target})
+          add_test(NAME homed_vault_${login_target}_closure
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_off_closure.sh
+                    $<TARGET_FILE:${login_target}>)
+          set_tests_properties(homed_vault_${login_target}_closure PROPERTIES
+            LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 15)
+        endif()
+      endforeach()
+    endif()
     add_executable(test_syncd_ignore  tests/unit/test_syncd_ignore.c)
     target_link_libraries(test_syncd_ignore  PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_ignore COMMAND test_syncd_ignore)
@@ -2176,11 +2240,18 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
   target_include_directories(nostr-home-fuse PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd
     ${FUSE3_INCLUDE_DIRS})
   find_package(Threads REQUIRED)
   target_link_libraries(nostr-home-fuse PRIVATE
     nostr_syncd_core nostr_porthome nostr_porthome_common ${FUSE3_LIBRARIES}
     Threads::Threads)
+  if(NOSTR_HOMED_BUILD_TESTS AND NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+    add_test(NAME homed_syncd_vault_fuse
+      COMMAND test_syncd_vault_runtime --fuse $<TARGET_FILE:nostr-home-fuse>)
+    set_tests_properties(homed_syncd_vault_fuse PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable-fuse;portable" TIMEOUT 60)
+  endif()
   # sd_notify is optional — link when the systemd library is present.
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)

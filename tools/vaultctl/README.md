@@ -1,4 +1,4 @@
-# vaultctl (experimental 0.1.0)
+# vaultctl (experimental 0.2.0)
 
 Layer-7 assembly over libvault, libporthome, libblossom and libnostr's pool.
 Build with `BUILD_LIBVAULT=ON`, `BUILD_VAULTCTL=ON`, `ENABLE_NIP42=ON` and
@@ -10,7 +10,7 @@ to the normal binary directory. No GLib, Marmot, daemon or keychain backend.
 Use an explicitly selected, owner-only identity key file: raw 32 bytes or 64 hex
 characters with an optional newline. Do not put a secret key on the command line.
 The state directory must be owned by the current user, mode 0700, and outside the
-imported subtree. State files are mode 0600 and contain **keys and local basenames**;
+imported subtree. State files are mode 0600 and contain **keys and decoded manifests**;
 back them up as secrets. One state directory holds one vault and is exclusively
 locked while a command runs. There is no implicit home-directory discovery.
 
@@ -38,8 +38,8 @@ vaultctl fsck --state /private/vault --key-file /private/identity
   history. Historical independently overridden descendant keys are not a new
   wire extension and are **not** exported by that option. Latest-only recipients
   may not read old chunks pending migration.
-- **revoke** rotates the root and every descendant directory, rehashes locally
-  known names, removes membership, increments grants_rev, migrates chunks within
+- **revoke** rotates the root and every descendant directory, rehashes the names
+  carried inside each manifest, removes membership, increments grants_rev, migrates chunks within
   the byte budget, seals bottom-up, publishes the new-key-only owner head, and
   sends latest-only continuation grants to remaining members. Lazy is default;
   exit 4 means old chunks remain. `--resume` continues without rotating again.
@@ -61,9 +61,9 @@ vaultctl fsck --state /private/vault --key-file /private/identity
 - **fsck** fetches and verifies all supported reachable objects of every retained
   signed snapshot, including conflict/history roots, using exact held epochs.
   A command's local cache does not hide missing/corrupt remote objects. Chunk
-  lengths are persisted explicitly during import/migration, validated by canonical
-  re-sealing, and never inferred from padding or a file total. Missing lengths or
-  keys are incomplete. This is a check, not a repair or remote materializer.
+  lengths come from each authenticated manifest descriptor, are validated by
+  canonical re-sealing, and are never inferred from padding or a file total.
+  No basename or length sidecars are created or needed; missing keys are incomplete. This is a check, not a repair or remote materializer.
 
 Recursive mutation across nested share boundaries is refused. Reachable
 `ref_state` is incomplete until that codec is available. Limits are inherited
@@ -103,7 +103,7 @@ by the SDK. Published policy is not rolled back if later grant delivery fails.
 `test_vaultctl_fixtures` starts temporary loopback HTTP/WebSocket fixtures and
 executes the installed-shape CLI with the real pool and Blossom client. Fixture
 services verify BIP340 signatures and AUTH tags, serve bounded REQ/EOSE results,
-and test ACK rejection, missing EOSE/CLOSED, corruption, missing inventory,
+and test ACK rejection, missing EOSE/CLOSED, corruption, sidecar-free operation,
 concurrent signed heads, lazy/eager revocation and explicit reconciliation.
 Checks also cover interrupted post-migration manifest publication, missing owner
 ancestry, removed-directory key history and unexpected AUTH/CLOSED recovery.
@@ -111,4 +111,11 @@ ancestry, removed-directory key history and unexpected AUTH/CLOSED recovery.
 Temporary services/state are torn down even on failure. This is local fixture
 execution, not acceptance against a deployed relay, lab service or release.
 `test_vault_tree_ops` covers the reusable recursive/epoch/checking API with
-ASan/UBSan in sanitizer-enabled builds.
+ASan/UBSan in sanitizer-enabled builds, including cold fetch using only the root
+ring and addressed objects, manifest-carried UTF-8 names and true chunk lengths.
+
+The unreleased dir_node v2 encoding was completed in place: entry key 6 is the
+required plaintext basename (inside the AEAD-sealed body); chunk key 3 is required
+`size_plain`. Incomplete old v2 maps are rejected, not guessed or upgraded from a
+private inventory. Existing PCS v1/flat-manifest codecs remain unchanged. The SDK
+no longer exposes tree name/length callbacks or a separate reseal-item length.

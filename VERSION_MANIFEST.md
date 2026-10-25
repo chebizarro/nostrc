@@ -12,6 +12,7 @@ files already declare a version.
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libjson (libnostr-json) | `libjson/` | 1.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.4.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
@@ -20,21 +21,21 @@ files already declare a version.
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
-| nostr-homed | `gnome/nostr-homed/` | 0.4.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
+| nostr-homed | `gnome/nostr-homed/` | 0.5.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | Grotto (Preview) | `apps/grotto/` | 0.1.0 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.5.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
-| vaultctl | `tools/vaultctl/` | 0.1.0 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.3.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
-| libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
+| libvault | `libvault/` | 0.5.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| libblossom | `libblossom/` | 0.2.1 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -43,6 +44,85 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-cu5e7: libjson PATCH 1.0.0 -> 1.0.1 fixes the optional GLib
+  probe/link contract: NOSTR_WITH_GLIB=OFF no longer inherits GLib/GObject
+  from libnostr-json. Sources and public C API are unchanged; GLib-enabled
+  consumers retain the existing link path. Other components have no shipped
+  changes in this fix. No release tags.
+
+- nostrc-njhir: vaultctl PATCH 0.3.0 -> 0.3.1 removes transfer-full event-ID
+  leaks in state insertion/deduplication, AUTH/publish/exact-ID recovery and
+  share/fold output by using the existing caller-buffer canonical-ID API.
+  Query filters use new/free for final disposal rather than clear/reinitialize.
+  Canonical IDs, wire/state formats and CLI output structure are unchanged.
+  All 15 getter call sites in vaultctl were checked; libvault has none and
+  has no shipped changes (no bump). Existing real CLI fixture coverage gains
+  repeated-fold replay assertions; no release tags or other component bumps.
+
+- nostrc-5xg38: libporthome PATCH 0.5.0 -> 0.5.1 includes the current
+  partially decoded manifest entry in error cleanup. All strict CBOR/schema
+  rejection rules and wire/API contracts remain unchanged. Existing homed
+  manifest tests add v1/v2 truncation cleanup coverage; nostr-homed has test-only
+  changes (no bump). No release tags or other component bumps.
+
+- nostrc-k1zq6: libblossom PATCH 0.2.0 -> 0.2.1 fixes ownership of canonical
+  event IDs returned by the signer validation path, including authenticated GET
+  and PUT. No public API or wire change. The existing transport CTest gains an
+  isolated authenticated GET child with Linux LSan enabled. The two-npub harness
+  removes the diagnostic leak-check bypass; nostr-homed remains 0.5.0 (test-only
+  change). No release tags or other component bumps.
+
+- nostrc-hl30i.10 runtime assembly: nostr-homed's unreleased 0.5.0 MINOR
+  also covers the actual vault reconciler, encrypted local session/generation
+  journal, retention-budget configuration, conflict status extension and
+  generation-bound FUSE byte reader. The existing namespace snapshot format
+  is unchanged. Private-service FUSE lazy loading is explicitly unsupported;
+  no signing custody or authd/PAM/NSS dependency is added. Meson remains
+  metadata-only for syncd/FUSE. Empty-path/conflict sorting corrections needed
+  by empty-vault assembly are included in libvault's same unreleased 0.5.0
+  checkpoint functionality; no new API/wire
+  change or extra bump. No other independently shipped component changes;
+  tests/selection, CI and lab harness edits have no independent version bump.
+  Authoritative CMake/Meson/manifest versions remain aligned; no release tags.
+
+- nostrc-hl30i.10 source configuration: nostr-homed's existing unreleased
+  0.5.0 MINOR decision also covers the strict vaults[] configuration and
+  additive legacy-pusher source-exclusion callback. The 0.x push-config struct
+  grows, so binary consumers must rebuild. Both capture and full saved-state
+  manifest reconstruction honor it. No additional component bump;
+  libvault/libporthome APIs and formats are unchanged in this step. This does
+  not claim completed network reconciliation or two-account acceptance.
+
+- nostrc-hl30i.10 filesystem assembly: nostr-homed MINOR 0.4.0 -> 0.5.0
+  adds the opt-in CMake vault assembly boundary and SDK-backed filesystem helpers.
+  CMake/Meson version metadata agree; Meson still does not build syncd/FUSE.
+  libvault's new addressed chunk reader is covered by SV-10's existing 0.5.0
+  MINOR decision. Other components have no additional shipped changes here.
+  This is preparatory filesystem work, not a claim of completed daemon wiring
+  or two-account service acceptance. No release tags.
+
+- nostrc-hl30i.10 checkpoint fold: libvault MINOR 0.4.0 -> 0.5.0 adds the
+  explicitly owner-anchored current-head fold and transitive parent coverage.
+  Strict signed-history fold stays unchanged; no new wire event or trust source.
+  vaultctl MINOR 0.2.0 -> 0.3.0 consumes checkpoint discovery and inherits coverage
+  in administrative successors. libporthome stays 0.5.0; no codec/ABI change here.
+  Other components have no owned shipped changes. No release tags.
+
+- nostrc-hl30i.10 (SV-10 prerequisite): libporthome MINOR 0.4.0 -> 0.5.0
+  completes the unreleased dir_node v2 encoding in place with required safe
+  plaintext basenames inside sealed entries and true plaintext lengths in each
+  chunk descriptor. Strict decode rejects the incomplete earlier v2 maps; PCS
+  v1/flat-manifest decoding remains unchanged. Public entry/chunk layouts change.
+  libvault MINOR 0.3.0 -> 0.4.0 removes the redundant tree name/length callbacks
+  and reseal-item length; rekey/check/reseal read authenticated manifest fields.
+  This is an intentional 0.x source/ABI and unreleased-v2 format change approved
+  by the maintainer; there are no published v2 clients/data to preserve.
+  vaultctl MINOR 0.1.0 -> 0.2.0 consumes the completed format and removes basename
+  and chunk-length sidecars from import/revoke/checking. Private state embedding
+  the old incomplete dir_nodes is not compatible. No bumps for libblossom,
+  libnostr/nips, libhanami, libvault-marmot or Rust bindings (no owned shipped
+  artifact changes), nor nostr-gobject (fixture-only changes). No release tags.
 
 - nostrc-er4fz.7 (R6): porthome-sys and vault-sys start at 0.1.0 for new,
   experimental raw Rust APIs generated from installed C headers by bindgen.

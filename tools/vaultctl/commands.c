@@ -79,7 +79,8 @@ static int finish_outgoing(vc_app *a)
             s->delivery_cursor = 0;
         }
     } else if (kind == 1059) {
-        memcpy(s->last_grant, nostr_event_get_id(s->outgoing), 65);
+        if (nostr_event_compute_id(s->outgoing, s->last_grant) != NOSTR_EVENT_VALIDATION_OK)
+            return VAULT_ERR_AUTH;
         if (s->phase == VC_PHASE_GRANT)
             s->phase = VC_PHASE_NONE;
         else if (s->distribution)
@@ -157,71 +158,23 @@ static int latest_owner(vc_app *a)
     }
     if (best == SIZE_MAX)
         return VAULT_ERR_INCOMPLETE;
-    /* Only the selected owner's signed ancestor closure can authorize an
-     * administrative successor. Unrelated writer forks cannot veto revoke. */
-    porthome_head *decoded[VAULT_MAX_HEADS] = {0};
-    uint8_t authors[VAULT_MAX_HEADS][32];
-    size_t queue[VAULT_MAX_HEADS], count = 1;
-    unsigned char seen[VAULT_MAX_HEADS] = {0};
-    vault_record *records[VAULT_MAX_HEADS] = {0};
+    /* Administrative successors use the verified current owner checkpoint;
+     * replaceable relays need not retain its old signed ancestors. */
+    vault_record *record = NULL;
     vault_tree *chosen = NULL;
     vault_fold_result *fold = NULL;
-    for (size_t i = 0; i < s->heads_len; i++) {
-        if (porthome_from_hex64(nostr_event_get_pubkey(s->heads[i].event), authors[i])) {
-            rc = VAULT_ERR_AUTH;
-            goto closure_done;
-        }
-        int parsed = porthome_head_event_open(s->heads[i].event, root->vault->vault_id, &ring,
-                                              s->heads[i].epoch, &decoded[i]);
-        if (parsed && i == best) {
-            rc = parsed;
-            goto closure_done;
-        }
+    vault_grant anchor = {0};
+    memcpy(anchor.owner, root->vault->owner, 32);
+    memcpy(anchor.vault_id, root->vault->vault_id, 32);
+    memcpy(anchor.node_id, root->node_id, 32);
+    rc = vc_record_load(a, s->heads[best].event, s->heads[best].epoch, &record, &chosen);
+    if (!rc) {
+        const vault_record *records[] = {record};
+        rc = vault_fold_checkpoint(&anchor, records, 1, 0, &fold);
     }
-    queue[0] = best;
-    seen[best] = 1;
-    for (size_t at = 0; at < count; at++) {
-        const porthome_head *h = decoded[queue[at]];
-        for (size_t p = 0; p < h->parents_len; p++) {
-            int found = 0;
-            for (size_t i = 0; i < s->heads_len; i++)
-                if (decoded[i] && decoded[i]->seq == h->parents[p].seq &&
-                    !memcmp(authors[i], h->parents[p].writer, 32) &&
-                    !memcmp(decoded[i]->root_manifest, h->parents[p].root_manifest, 32)) {
-                    found = 1;
-                    if (!seen[i]) {
-                        seen[i] = 1;
-                        queue[count++] = i;
-                    }
-                }
-            if (!found) {
-                vc_error(a, "owner predecessor has missing signed parent history");
-                rc = VAULT_ERR_INCOMPLETE;
-                goto closure_done;
-            }
-        }
-    }
-    for (size_t at = 0; at < count; at++) {
-        vault_tree *t = NULL;
-        rc = vc_record_load(a, s->heads[queue[at]].event, s->heads[queue[at]].epoch, &records[at],
-                            &t);
-        if (at == 0)
-            chosen = t;
-        else
-            vault_tree_free(t);
-        if (rc)
-            goto closure_done;
-    }
-    rc = vault_fold(root->vault, (const vault_record *const *)records, count, &fold);
-    if (!rc && fold->view != 0)
-        rc = VAULT_ERR_CONFLICT;
     if (!rc && vault_tree_node_at(chosen, 0, NULL)->epoch < root->epoch)
         rc = VAULT_ERR_EPOCH;
-closure_done:
-    for (size_t i = 0; i < s->heads_len; i++)
-        head_free(decoded[i]);
-    for (size_t i = 0; i < count; i++)
-        vault_record_free(records[i]);
+    vault_record_free(record);
     vault_fold_result_free(fold);
     if (rc) {
         vault_tree_free(chosen);
@@ -300,10 +253,11 @@ int vc_command_share(vc_app *a)
     else
         rc = seal_publish(a);
     if (!rc) {
-        char v[65];
+        char v[65], id[65];
+        if (nostr_event_compute_id(s->heads[s->current].event, id) != NOSTR_EVENT_VALIDATION_OK)
+            return VAULT_ERR_AUTH;
         porthome_hex64(vault_tree_node_at(s->tree, 0, NULL)->vault->vault_id, v);
-        printf("{\"vault_id\":\"%s\",\"head\":\"%s\"}\n", v,
-               nostr_event_get_id(s->heads[s->current].event));
+        printf("{\"vault_id\":\"%s\",\"head\":\"%s\"}\n", v, id);
     }
     return rc;
 }
@@ -359,24 +313,6 @@ done:
                s->history ? "true" : "false");
     return rc;
 }
-static int retain_names(vc_app *a, const vault_tree *old, const vault_tree *next)
-{
-    for (size_t i = 0; i < vault_tree_count(old); i++) {
-        const porthome_dir_node *n = vault_tree_node_at(old, i, NULL),
-                                *m = vault_tree_node_at(next, i, NULL);
-        if (n->entries_len != m->entries_len)
-            return VAULT_ERR_ARG;
-        for (size_t j = 0; j < n->entries_len; j++) {
-            const char *name = NULL;
-            int rc = vc_name_get(a, n->node_id, n->entries[j].name_enc, &name);
-            if (!rc)
-                rc = vc_name_put(a, m->node_id, m->entries[j].name_enc, name);
-            if (rc)
-                return rc;
-        }
-    }
-    return 0;
-}
 static int distribute(vc_app *a)
 {
     vc_state *s = &a->state;
@@ -431,15 +367,10 @@ int vc_command_revoke(vc_app *a)
         if (rc)
             return rc;
         vault_tree *next = NULL;
-        rc = vault_tree_revoke(s->tree, p, a->pub, s->member, next_time(p), vc_name_get, a, &next);
+        rc = vault_tree_revoke(s->tree, p, a->pub, s->member, next_time(p), &next);
         head_free(p);
         if (rc)
             return rc;
-        rc = retain_names(a, s->tree, next);
-        if (rc) {
-            vault_tree_free(next);
-            return rc;
-        }
         vault_tree_free(s->tree);
         s->tree = next;
         s->phase = VC_PHASE_REVOKE;
@@ -461,7 +392,7 @@ int vc_command_revoke(vc_app *a)
     vault_tree_reseal_result *result = NULL;
     vault_blob_io io = {a, vc_blob_read, vc_blob_put};
     a->chunk_io = 1;
-    rc = vault_tree_reseal(s->tree, vc_length_get, a, s->eager, a->options.budget, &io, &result);
+    rc = vault_tree_reseal(s->tree, s->eager, a->options.budget, &io, &result);
     a->chunk_io = 0;
     if (result)
         s->migrating = result->remaining != 0;
@@ -498,16 +429,28 @@ int vc_command_fold(vc_app *a)
     size_t n = 0;
     vault_fold_result *f = NULL;
     int rc = vc_collect_records(a, &r, &n, &f);
-    if (rc && rc != VAULT_ERR_CONFLICT)
+    if (rc && (rc != VAULT_ERR_CONFLICT || !f))
         goto done;
     printf("{\"owner_view\":");
     if (f->view == SIZE_MAX)
         printf("null");
-    else
-        printf("\"%s\"", nostr_event_get_id(a->state.heads[f->view].event));
+    else {
+        char id[65];
+        if (nostr_event_compute_id(a->state.heads[f->view].event, id) != NOSTR_EVENT_VALIDATION_OK) {
+            rc = VAULT_ERR_AUTH;
+            goto done;
+        }
+        printf("\"%s\"", id);
+    }
     printf(",\"frontier\":[");
-    for (size_t i = 0; i < f->frontier_len; i++)
-        printf("%s\"%s\"", i ? "," : "", nostr_event_get_id(a->state.heads[f->frontier[i]].event));
+    for (size_t i = 0; i < f->frontier_len; i++) {
+        char id[65];
+        if (nostr_event_compute_id(a->state.heads[f->frontier[i]].event, id) != NOSTR_EVENT_VALIDATION_OK) {
+            rc = VAULT_ERR_AUTH;
+            goto done;
+        }
+        printf("%s\"%s\"", i ? "," : "", id);
+    }
     printf("],\"conflicts\":[");
     for (size_t i = 0; i < f->conflicts_len; i++) {
         char writer[65];
@@ -527,7 +470,7 @@ int vc_command_fsck(vc_app *a)
     size_t n = 0;
     vault_fold_result *f = NULL;
     int rc = vc_collect_records(a, &r, &n, &f);
-    if (rc && rc != VAULT_ERR_CONFLICT)
+    if (rc && (rc != VAULT_ERR_CONFLICT || !f))
         goto done;
     rc = 0;
     size_t nodes = 0, chunks = 0;
@@ -539,7 +482,7 @@ int vc_command_fsck(vc_app *a)
             break;
         vault_blob_io io = {a, vc_blob_read, vc_blob_put};
         vault_tree_check_result stats;
-        rc = vault_tree_check(tree, vc_length_get, a, &io, &stats);
+        rc = vault_tree_check(tree, &io, &stats);
         vault_record_free(again);
         vault_tree_free(tree);
         if (rc)

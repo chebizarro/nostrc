@@ -235,13 +235,69 @@ class PackageBoundarySelection(unittest.TestCase):
         for path in ("tools/vaultctl/main.c", "tools/vaultctl/tests/fixtures.py", "tools/vaultctl/tests/fixture_helper.c"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
             self.assertEqual(plan["effective_mode"], "affected")
-            self.assertEqual(set(plan["selected_checks"]), {"root.asan.vaultctl", "supported.vaultctl"})
+            expected = {"root.asan.vaultctl", "supported.vaultctl"}
+            if path == "tools/vaultctl/tests/fixtures.py":
+                expected.add("homed.vault.filesystem")  # Shared signed protocol fixture.
+            self.assertEqual(set(plan["selected_checks"]), expected)
         for path in ("libvault/include/vault/tree.h", "libblossom/src/client.c", "libnostr/src/simplepool.c", "nips/nip42/src/nip42.c"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
             self.assertTrue({"root.asan.vaultctl", "supported.vaultctl"} <= set(plan["selected_checks"]))
         for path in ("libvault/tests/test_tree_ops.c", "libhanami/tests/test_integration.c"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
             self.assertNotIn("supported.vaultctl", plan["selected_checks"])
+
+    def test_vault_syncd_inputs_select_a_real_bounded_runner(self):
+        import sys
+        sys.path.insert(0, str(ROOT / ".github/workflows"))
+        import ci_selection as ci
+        check_name = "homed.vault.filesystem"
+        for path in ("gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c",
+                     "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c",
+                     "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py",
+                     "gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py",
+                     "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py",
+                     "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c",
+                     "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh",
+                     ".github/workflows/vault-syncd-ci.yml"):
+            with self.subTest(path=path):
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertEqual(plan["effective_mode"], "affected")
+                self.assertEqual(set(plan["selected_checks"]), {check_name})
+                self.assertEqual(ci.project(plan)["families"], ["vault_syncd"])
+        plan = s.make_plan(self.policy, [change("libvault/src/fold.c")],
+                           head="a" * 40, context="ci")
+        self.assertIn(check_name, plan["selected_checks"])
+        for path in ("libvault/tests/test_fold_frontier.c", "tools/vaultctl/tests/fixture_helper.c",
+                     "gnome/groundhog/src/ui/gh-about-dialog.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40, context="ci")
+            self.assertNotIn(check_name, plan["selected_checks"])
+        shared = s.make_plan(self.policy, [change("tools/vaultctl/tests/fixtures.py")],
+                             head="a" * 40, context="ci")
+        self.assertIn(check_name, shared["selected_checks"])  # Signed protocol fixture is a real downstream input.
+        check = self.policy["checks"][check_name]
+        self.assertEqual(set(check["ctest_tests"]["homed.vault.linux"]), {
+            "homed_syncd_vault_protocol",
+            "homed_syncd_vault_runtime", "homed_syncd_vault_fuse",
+            "homed_syncd_vault_fs", "homed_syncd_off_closure",
+            "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure",
+            "json_glib_off_closure", "homed_syncd_vault_config", "homed_syncd_push_e2e",
+            "homed_syncd_pusher_multi_server"})
+        workflow = (ROOT / ".github/workflows/vault-syncd-ci.yml").read_text()
+        self.assertIn("python3 scripts/test-plan.py run", workflow)
+        self.assertIn("--profile homed.vault.linux", workflow)
+        self.assertIn("test \"$(git rev-parse HEAD)\" = \"$REQUESTED_SHA\"", workflow)
+        aggregate = (ROOT / ".github/workflows/ci-selective.yml").read_text()
+        self.assertIn("uses: ./.github/workflows/vault-syncd-ci.yml", aggregate)
+        self.assertIn("homed, vault_syncd, signet", aggregate)
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],

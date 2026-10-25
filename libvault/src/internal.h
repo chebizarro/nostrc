@@ -10,6 +10,7 @@ int vault_ring_valid(const porthome_ring_t *);
 const porthome_ring_entry_t *vault_ring_latest(const vault_ring *);
 int vault_node_clone(const porthome_dir_node *, porthome_dir_node **);
 int vault_head_clone(const porthome_head *, porthome_head **);
+int vault_head_include(porthome_head *, const porthome_head *, const uint8_t writer[32]);
 typedef struct {
     char *path;
     uint8_t digest[32];

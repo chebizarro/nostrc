@@ -4,6 +4,7 @@ import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -108,6 +109,18 @@ def main():
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
     try:
+        # Seed directly so this child isolates authenticated GET signing from PUT.
+        body = b"authenticated GET ownership regression"
+        hash_value = hashlib.sha256(body).hexdigest()
+        stored["private", hash_value] = body
+        env = os.environ.copy()
+        if sys.platform.startswith("linux"):
+            env["ASAN_OPTIONS"] = env.get("ASAN_OPTIONS", "") + ":detect_leaks=1:abort_on_error=1"
+        subprocess.run([sys.argv[1], "auth-get", base + "/private", hash_value],
+                       env=env, check=True, timeout=90)
+        assert sum(s == "private" and method == "GET" and path == hash_value
+                   for s, method, path in requests) == 3
+        stored.pop(("private", hash_value))
         for mode, suffix in (("roundtrip", "raw"), ("roundtrip", "png"), ("private", "private"), ("guards", "guard"), ("bad-signer", "raw")):
             subprocess.run([sys.argv[1], mode, base + "/" + suffix], check=True, timeout=90)
         subprocess.run([sys.argv[1], "pool", base + "/raw", base + "/png"], check=True, timeout=90)

@@ -108,17 +108,24 @@ static void event_cb(NostrIncomingEvent *incoming, void *ctx)
 {
     session *s = ctx;
     NostrEvent *e = incoming->event;
+    char id[65];
     pthread_mutex_lock(&s->mu);
     if (!e || !nostr_event_check_signature(e) || !s->filter ||
-        !nostr_filters_match((NostrFilters *)s->filter, e)) {
+        !nostr_filters_match((NostrFilters *)s->filter, e) ||
+        nostr_event_compute_id(e, id) != NOSTR_EVENT_VALIDATION_OK) {
         s->failed = 1;
     } else {
-        const char *id = nostr_event_get_id(e);
         size_t i;
-        for (i = 0; i < s->count; i++)
-            if (!strcmp(id, nostr_event_get_id(s->events[i])))
+        for (i = 0; i < s->count; i++) {
+            char known_id[65];
+            if (nostr_event_compute_id(s->events[i], known_id) != NOSTR_EVENT_VALIDATION_OK) {
+                s->failed = 1;
                 break;
-        if (i == s->count) {
+            }
+            if (!strcmp(id, known_id))
+                break;
+        }
+        if (!s->failed && i == s->count) {
             if (s->count == VAULT_MAX_HEADS)
                 s->failed = 1;
             else {
@@ -249,7 +256,11 @@ static int send_auth(vc_app *a, session *s, const char *url, char *challenge)
         nostr_envelope_free(env);
         goto done;
     }
-    const char *id = nostr_event_get_id(((NostrAuthEnvelope *)env)->event);
+    char id[65];
+    if (nostr_event_compute_id(((NostrAuthEnvelope *)env)->event, id) != NOSTR_EVENT_VALIDATION_OK) {
+        nostr_envelope_free(env);
+        goto done;
+    }
     pthread_mutex_lock(&s->mu);
     memcpy(s->auth_id, id, 65);
     pthread_mutex_unlock(&s->mu);
@@ -375,6 +386,9 @@ static int open_session(vc_app *a, const char *url, session **out)
 static int query(vc_app *a, NostrFilter *filter, int exact, const NostrEvent *target,
                  uint64_t *found)
 {
+    char target_id[65];
+    if (exact && nostr_event_compute_id(target, target_id) != NOSTR_EVENT_VALIDATION_OK)
+        return VAULT_ERR_AUTH;
     NostrFilters *filters = nostr_filters_new();
     if (!filters || !nostr_filters_add(filters, filter)) {
         nostr_filters_free(filters);
@@ -400,18 +414,29 @@ static int query(vc_app *a, NostrFilter *filter, int exact, const NostrEvent *ta
             rc = VAULT_ERR_AUTH;
         if (!rc)
             for (size_t i = 0; i < s->count; i++) {
+                char id[65];
+                if (nostr_event_compute_id(s->events[i], id) != NOSTR_EVENT_VALIDATION_OK) {
+                    rc = VAULT_ERR_AUTH;
+                    break;
+                }
                 if (exact) {
-                    if (!strcmp(nostr_event_get_id((NostrEvent *)target),
-                                nostr_event_get_id(s->events[i])))
+                    if (!strcmp(target_id, id))
                         *found |= UINT64_C(1) << k;
                 } else {
                     int known = 0;
-                    for (size_t j = 0; j < a->state.heads_len; j++)
-                        if (!strcmp(nostr_event_get_id(a->state.heads[j].event),
-                                    nostr_event_get_id(s->events[i]))) {
+                    for (size_t j = 0; j < a->state.heads_len; j++) {
+                        char known_id[65];
+                        if (nostr_event_compute_id(a->state.heads[j].event, known_id) != NOSTR_EVENT_VALIDATION_OK) {
+                            rc = VAULT_ERR_AUTH;
+                            break;
+                        }
+                        if (!strcmp(known_id, id)) {
                             known = 1;
                             break;
                         }
+                    }
+                    if (rc)
+                        break;
                     if (known)
                         continue;
                     porthome_ring_t ring;
@@ -442,12 +467,17 @@ static int query(vc_app *a, NostrFilter *filter, int exact, const NostrEvent *ta
 int vc_query_id(vc_app *a, const NostrEvent *event, uint64_t *found)
 {
     *found = 0;
-    NostrFilter f = {0};
-    const char *id = nostr_event_get_id((NostrEvent *)event);
-    nostr_filter_set_ids(&f, &id, 1);
-    nostr_filter_set_limit(&f, 1);
-    int rc = query(a, &f, 1, event, found);
-    nostr_filter_clear(&f);
+    char id[65];
+    if (nostr_event_compute_id(event, id) != NOSTR_EVENT_VALIDATION_OK)
+        return VAULT_ERR_AUTH;
+    NostrFilter *f = nostr_filter_new();
+    if (!f)
+        return VAULT_ERR_OOM;
+    const char *ids[] = {id};
+    nostr_filter_set_ids(f, ids, 1);
+    nostr_filter_set_limit(f, 1);
+    int rc = query(a, f, 1, event, found);
+    nostr_filter_free(f);
     return rc;
 }
 int vc_query_heads(vc_app *a, const porthome_vault_info *v)
@@ -462,16 +492,18 @@ int vc_query_heads(vc_app *a, const porthome_vault_info *v)
         porthome_hex64(v->writers[i], authors[i + 1]);
         p[i + 1] = authors[i + 1];
     }
-    NostrFilter f = {0};
-    nostr_filter_set_authors(&f, p, v->writers_len + 1);
+    NostrFilter *f = nostr_filter_new();
+    if (!f)
+        return VAULT_ERR_OOM;
+    nostr_filter_set_authors(f, p, v->writers_len + 1);
     int kind = PORTHOME_HEAD_KIND;
-    nostr_filter_set_kinds(&f, &kind, 1);
+    nostr_filter_set_kinds(f, &kind, 1);
     char d[PORTHOME_HEAD_D_LEN];
     porthome_head_d_tag(v->vault_id, d);
-    nostr_filter_set_tags(&f, nostr_tags_new(1, nostr_tag_new("d", d, NULL)));
-    nostr_filter_set_limit(&f, VAULT_MAX_HEADS);
-    int rc = query(a, &f, 0, NULL, NULL);
-    nostr_filter_clear(&f);
+    nostr_filter_set_tags(f, nostr_tags_new(1, nostr_tag_new("d", d, NULL)));
+    nostr_filter_set_limit(f, VAULT_MAX_HEADS);
+    int rc = query(a, f, 0, NULL, NULL);
+    nostr_filter_free(f);
     return rc;
 }
 int vc_publish(vc_app *a)
@@ -479,6 +511,9 @@ int vc_publish(vc_app *a)
     vc_state *st = &a->state;
     if (!st->outgoing)
         return VAULT_ERR_ARG;
+    char publish_id[65];
+    if (nostr_event_compute_id(st->outgoing, publish_id) != NOSTR_EVENT_VALIDATION_OK)
+        return VAULT_ERR_AUTH;
     int rc = 0;
     uint64_t all = (UINT64_C(1) << st->relays_len) - 1;
     if (st->intent) {
@@ -504,7 +539,7 @@ int vc_publish(vc_app *a)
         if (rc)
             return rc;
         pthread_mutex_lock(&s->mu);
-        memcpy(s->publish_id, nostr_event_get_id(st->outgoing), 65);
+        memcpy(s->publish_id, publish_id, 65);
         pthread_mutex_unlock(&s->mu);
         st->intent |= bit;
         st->rejected &= ~bit;

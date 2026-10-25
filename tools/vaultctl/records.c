@@ -64,10 +64,23 @@ int vc_collect_records(vc_app *a, vault_record ***out, size_t *count, vault_fold
             return rc;
         }
     }
-    rc = vault_fold(root->vault, (const vault_record *const *)records, n, fold);
+    size_t owner_index = SIZE_MAX;
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t author[32];
+        if (!porthome_from_hex64(nostr_event_get_pubkey(s->heads[i].event), author) &&
+            !memcmp(author, root->vault->owner, 32) &&
+            (owner_index == SIZE_MAX || vault_record_head(records[i])->seq >
+                                          vault_record_head(records[owner_index])->seq))
+            owner_index = i;
+    }
+    vault_grant anchor = {0};
+    memcpy(anchor.owner, root->vault->owner, 32);
+    memcpy(anchor.vault_id, root->vault->vault_id, 32);
+    memcpy(anchor.node_id, root->node_id, 32);
+    rc = owner_index == SIZE_MAX ? VAULT_ERR_INCOMPLETE :
+         vault_fold_checkpoint(&anchor, (const vault_record *const *)records, n, owner_index, fold);
     if (rc && rc != VAULT_ERR_CONFLICT) {
-        vc_error(a, "fold requires a complete signed parent closure (%zu heads held; error %d)", n,
-                 rc);
+        vc_error(a, "current owner checkpoint unavailable (%zu heads held; error %d)", n, rc);
         vc_records_free(records, n);
         return rc;
     }

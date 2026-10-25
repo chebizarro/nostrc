@@ -327,11 +327,13 @@ static int sha256_hex(const uint8_t *buf, size_t len, char out[65]) {
 typedef struct {
     const uint8_t *home_key;
     nh_porthome_manifest *m;
+    const nh_syncd_push_cfg *cfg;
     int rc;
 } rebuild_ctx;
 
 static int rebuild_cb(void *ud, const char *rel, json_t *row) {
     rebuild_ctx *rc = (rebuild_ctx *)ud;
+    if (rc->cfg->exclude_path && rc->cfg->exclude_path(rc->cfg->exclude_path_ud, rel)) return 0;
     const char *kind = json_string_value(json_object_get(row, "kind"));
     uint32_t mode    = (uint32_t)json_integer_value(json_object_get(row, "mode"));
     uint32_t uid     = (uint32_t)json_integer_value(json_object_get(row, "uid"));
@@ -534,6 +536,7 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
         nh_syncd_change_kind kind = 0;
         (void)nh_syncd_batch_at(batch, i, &rel, &kind);
         if (!rel || !*rel) continue;
+        if (cfg->exclude_path && cfg->exclude_path(cfg->exclude_path_ud, rel)) continue;
 
         /* Ignore gate (path-only + stat). */
         char abs[PATH_MAX];
@@ -643,7 +646,7 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
     if (nh_porthome_manifest_init(&m, cfg->root_id) != 0) {
         rc = NH_SYNCD_ERR_MANIFEST; goto fail;
     }
-    rebuild_ctx rctx = { cfg->home_key, &m, NH_SYNCD_OK };
+    rebuild_ctx rctx = { cfg->home_key, &m, cfg, NH_SYNCD_OK };
     (void)nh_syncd_state_iter_(state, rebuild_cb, &rctx);
     if (rctx.rc != NH_SYNCD_OK) {
         nh_porthome_manifest_dispose(&m);

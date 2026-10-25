@@ -31,7 +31,7 @@ if(NOT BUILD_SHARED_LIBS)
   target_compile_definitions(blossom PUBLIC BLOSSOM_STATIC_DEFINE)
 endif()
 set_target_properties(blossom PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(blossom 0 2 0)
+declare_component_version(blossom 0 2 1)
 set_target_properties(blossom PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/blossom")
 apply_versioning(blossom)

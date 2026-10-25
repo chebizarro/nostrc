@@ -653,8 +653,10 @@ int porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
                 if (!m->entries) goto bad;
             }
             for (uint64_t j = 0; j < ec; j++) {
-                if (decode_entry(&d, &m->entries[j])) goto bad;
+                /* Include the current entry in cleanup even if decoding fails
+                 * after allocating only some of its fields. */
                 m->entries_len = (size_t)(j + 1);
+                if (decode_entry(&d, &m->entries[j])) goto bad;
             }
             break;
         }

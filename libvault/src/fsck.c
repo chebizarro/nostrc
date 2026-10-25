@@ -3,16 +3,28 @@
 #include <vault/tree.h>
 #include <limits.h>
 
-static const uint8_t *key_at(const vault_ring *r, uint64_t epoch)
+static const uint8_t *key_at(const porthome_ring_t *r, uint64_t epoch)
 {
     for (size_t i = 0; i < r->count; ++i)
         if (r->entries[i].epoch == epoch)
             return r->entries[i].node_key;
     return NULL;
 }
-static int check_chunk(const porthome_node_chunk *chunk, const vault_ring *ring, size_t length,
-                       const vault_blob_io *io)
+int vault_chunk_read(const porthome_node_chunk *chunk, const porthome_ring_t *ring,
+                     const vault_blob_io *io, uint8_t **out, size_t *out_len)
 {
+    if (out)
+        *out = NULL;
+    if (out_len)
+        *out_len = 0;
+    if (!chunk || !io || !io->read || !out || !out_len)
+        return VAULT_ERR_ARG;
+    int valid = vault_ring_valid(ring);
+    if (valid)
+        return valid;
+    if (chunk->size_plain > SIZE_MAX)
+        return PORTHOME_ERR_TOO_LARGE;
+    size_t length = (size_t)chunk->size_plain;
     const uint8_t *key = key_at(ring, chunk->chunk_key_id);
     if (!key)
         return VAULT_ERR_EPOCH;
@@ -37,8 +49,7 @@ static int check_chunk(const porthome_node_chunk *chunk, const vault_ring *ring,
         goto done;
     }
     if (blob[0] == PORTHOME_WIRE_VERSION_V2) {
-        porthome_ring_t view = vault_ring_view(ring);
-        rc = porthome_decrypt_chunk_v2(&view, chunk->chunk_key_id, blob, len, length, &plain,
+        rc = porthome_decrypt_chunk_v2(ring, chunk->chunk_key_id, blob, len, length, &plain,
                                        &plain_len);
         if (!rc)
             rc = porthome_encrypt_chunk_v2(key, plain, plain_len, &canonical, &canonical_len, NULL);
@@ -51,6 +62,11 @@ static int check_chunk(const porthome_node_chunk *chunk, const vault_ring *ring,
     }
     if (!rc && (canonical_len != len || CRYPTO_memcmp(canonical, blob, len)))
         rc = VAULT_ERR_ARG;
+    if (!rc) {
+        *out = plain;
+        *out_len = plain_len;
+        plain = NULL;
+    }
 done:
     if (plain)
         OPENSSL_cleanse(plain, plain_len);
@@ -59,12 +75,11 @@ done:
     free(canonical);
     return rc;
 }
-int vault_tree_check(const vault_tree *t, vault_tree_length_fn lengths, void *ctx,
-                     const vault_blob_io *io, vault_tree_check_result *out)
+int vault_tree_check(const vault_tree *t, const vault_blob_io *io, vault_tree_check_result *out)
 {
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!out || !lengths || !io || !io->read)
+    if (!out || !io || !io->read)
         return VAULT_ERR_ARG;
     int rc = vault_tree_validate(t);
     if (rc)
@@ -78,13 +93,18 @@ int vault_tree_check(const vault_tree *t, vault_tree_length_fn lengths, void *ct
                 continue;
             uint64_t total = 0;
             for (size_t k = 0; k < e->chunks_len; ++k) {
-                size_t length = 0;
-                rc = lengths(ctx, e->chunks[k].sha256, e->chunks[k].chunk_key_id, &length);
+                if (e->chunks[k].size_plain > SIZE_MAX)
+                    return PORTHOME_ERR_TOO_LARGE;
+                size_t length = (size_t)e->chunks[k].size_plain;
+                porthome_ring_t ring = vault_ring_view(&t->nodes[i].ring);
+                uint8_t *plain = NULL;
+                size_t plain_len = 0;
+                rc = vault_chunk_read(&e->chunks[k], &ring, io, &plain, &plain_len);
                 if (rc)
                     return rc;
-                rc = check_chunk(&e->chunks[k], &t->nodes[i].ring, length, io);
-                if (rc)
-                    return rc;
+                if (plain)
+                    OPENSSL_cleanse(plain, plain_len);
+                free(plain);
                 if (UINT64_MAX - total < length || UINT64_MAX - out->size_plain < length ||
                     UINT64_MAX - out->size_sealed < e->chunks[k].size_sealed)
                     return PORTHOME_ERR_TOO_LARGE;

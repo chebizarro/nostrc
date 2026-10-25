@@ -67,9 +67,9 @@ VAULT_API int vault_revoke(const uint8_t actor[32], const uint8_t member[32],
                            uint64_t written_at, vault_revoke_result **);
 VAULT_API void vault_revoke_result_free(vault_revoke_result *);
 
-/* Explicit authenticated per-chunk lengths are required: bucket sizes/file
- * totals cannot recover CDC chunk lengths or distinguish real trailing zeros.
- * Borrowed mutable node/ring must remain unchanged except by this task.
+/* Authenticated per-chunk lengths come from the manifest's size_plain, not
+ * padding buckets or file totals. Borrowed mutable node/ring must remain
+ * unchanged except by this task.
  * put() success means durable, hash-verified acceptance. read() returns malloc
  * bytes. No implicit retries: any I/O failure makes the task terminal; reconcile
  * pending_address externally before constructing another task. Never deletes
@@ -82,7 +82,6 @@ typedef struct {
     porthome_dir_node *node;
     const vault_ring *ring;
     size_t entry, chunk;
-    size_t size_plain;
 } vault_reseal_item;
 typedef struct {
     void *ctx;
@@ -177,6 +176,24 @@ typedef struct {
 VAULT_API int vault_grant_encode(const vault_grant *, char **);
 VAULT_API int vault_grant_decode(const char *, vault_grant **);
 VAULT_API void vault_grant_free(vault_grant *);
+/* Current-head fold for addressable kind-30078 discovery. owner_index selects
+ * the current OWNER-signed verified record; its author, vault and node must
+ * match the authenticated grant. Its manifest alone supplies writer policy.
+ * Records must come from record_open/fetch (signature, AEAD and graph verified).
+ * Each accepted parent (W,s,root) dominates every supplied head of W at seq<=s;
+ * missing historical ancestors are not errors. Stale/nonwriter/policy heads do
+ * not dominate anything. Owner wins concurrent frontiers, as in strict fold.
+ * No clock or extra trust source. Indices refer to the supplied records.
+ * The strict signed-history vault_fold entry point is unchanged. */
+VAULT_API int vault_fold_checkpoint(const vault_grant *, const vault_record *const *, size_t,
+                                    size_t owner_index, vault_fold_result **);
+/* Carry forward transitive incorporation coverage when publishing a successor.
+ * Merges its existing OWNED parents, every incorporated record itself, and
+ * those records' coverage, keeping the highest seq per writer. Equal-seq root
+ * forks fail. On error head is unchanged. Parents are sorted by writer; the
+ * codec's 64-writer parent cap is enforced, never silently truncated. Only pass
+ * accepted heads actually incorporated by the publisher, not ignored heads. */
+VAULT_API int vault_head_cover(porthome_head *, const vault_record *const *, size_t);
 VAULT_API int vault_grant_rumor_new(const vault_grant *, struct _NostrEvent **);
 VAULT_API int vault_grant_rumor_open(const struct _NostrEvent *, vault_grant **);
 /* Rumors contain key material: use this instead of bare nostr_event_free(). */

@@ -1,0 +1,65 @@
+name: Shared-vault syncd
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      selection_artifact:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  selected:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      REQUESTED_SHA: ${{ inputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify requested source
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.selection_artifact }}
+          path: ${{ runner.temp }}/vault-plan
+      - name: Install bounded build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config python3 \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libnsync-dev \
+            libsodium-dev libssl-dev libcurl4-openssl-dev libsqlite3-dev \
+            libsecret-1-dev libpam0g-dev libfuse3-dev
+      - name: Require the selected vault check
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'scripts')
+          import test_selection as s
+          p = s.read_json(os.environ['RUNNER_TEMP'] + '/vault-plan/plan.json')
+          s.validate_plan(p, s.load_inventory('tests/selection/inventory.json'))
+          s.require(p['tested_sha'] == os.environ['REQUESTED_SHA'], 'source identity mismatch')
+          s.require('homed.vault.filesystem' in p['selected_checks'], 'vault check was not selected')
+          s.require('homed.vault.linux' in p['expected_lane_ids'], 'vault profile was not selected')
+          PY
+      - name: Execute the selected profile
+        run: |
+          python3 scripts/test-plan.py run \
+            --plan "$RUNNER_TEMP/vault-plan/plan.json" --profile homed.vault.linux \
+            --build-dir "$RUNNER_TEMP/vault-build" --configure --phase all \
+            --evidence-dir "$RUNNER_TEMP/vault-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vault-syncd-${{ inputs.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/vault-evidence
+            ${{ runner.temp }}/vault-build/Testing
+          if-no-files-found: warn

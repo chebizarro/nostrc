@@ -210,7 +210,8 @@ int vault_record_open(const NostrEvent *event, const uint8_t vault_id[32],
         rc = VAULT_ERR_ARG;
         goto done;
     }
-    qsort(r->paths, r->paths_len, sizeof(*r->paths), path_compare);
+    if (r->paths_len > 1)
+        qsort(r->paths, r->paths_len, sizeof(*r->paths), path_compare);
     *out = r;
     return 0;
 done:

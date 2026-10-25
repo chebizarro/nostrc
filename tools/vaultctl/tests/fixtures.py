@@ -90,9 +90,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             e=json.loads(base64.b64decode(auth[6:]));verify(e);assert e['kind']==24242
             assert ['t','upload'] in e['tags'] and ['x',h] in e['tags']
             with self.server.lock:self.server.blobs[h]=b;self.server.puts.append(h)
-            if self.server.fail_manifest and not list((self.server.state/'lengths').glob(h+'-*')):
-                self.server.fail_manifest=False
-                return self.response(500,b'accepted bytes but manifest reply failed')
+            # This fixed input's CDC chunks after the root's tiny file are
+            # all >10 KiB. Fail its following small directory-manifest PUT;
+            # zero-budget resume below also proves all chunk jobs completed.
+            if self.server.fail_manifest:
+                if len(b)>10000:self.server.saw_large=True
+                elif self.server.saw_large:
+                    self.server.fail_manifest=False
+                    return self.response(500,b'accepted bytes but manifest reply failed')
             self.response(200,{'sha256':h,'size':len(b),'url':self.server.url+'/'+h,'type':'application/octet-stream','uploaded':e['created_at']})
         except Exception as e:self.server.failures.append(repr(e));raise
     def exact(self,n):
@@ -166,7 +171,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix='vaultctl-fixture-') as directory:
             base=Path(directory);os.chmod(base,0o700);source=base/'source';source.mkdir();(source/'nested').mkdir();(source/'empty').write_bytes(b'');(source/'trailing-zero').write_bytes(b'secret\x00\x00');(source/'nested'/'large').write_bytes(hashlib.shake_256(b'CDC fixture').digest(350000));os.symlink('trailing-zero',source/'link')
-            key=base/'identity';key.write_text(f'{1:064x}');key.chmod(0o600);state=base/'state';lab.state=state
+            key=base/'identity';key.write_text(f'{1:064x}');key.chmod(0o600);state=base/'state'
             common=['--state',str(state),'--key-file',str(key),'--allow-local','--deadline-ms','2500']
             def run(command,*args,expect=0):
                 result=subprocess.run([binary,command,*common,*map(str,args)],capture_output=True,text=True,timeout=30)
@@ -178,6 +183,7 @@ def main():
             shared=run('share','--relay',lab.ws,'--blossom',lab.url,source);assert shared['head'] in lab.events
             checked=run('fsck');assert checked['healthy'] and checked['nodes']==2 and checked['chunks']>=3
             folded=run('fold');assert folded['owner_view']==shared['head'] and folded['conflicts']==[]
+            assert run('fold')==folded  # Replayed known heads preserve canonical IDs/output.
             recipient=pub(2);run('grant','--recipient',recipient,'--write')
             wrap=[e for e in lab.events.values() if e['kind']==1059][-1];event=base/'wrap.json';event.write_text(json.dumps(wrap));event.chmod(0o600)
             got=subprocess.run([helper,'grant',str(state),f'{2:064x}',str(event)],capture_output=True,text=True,timeout=10);assert got.returncode==0,(got.stdout,got.stderr)
@@ -192,6 +198,7 @@ def main():
                 for obj in (state/'objects').iterdir():lab.blobs[obj.name]=obj.read_bytes()
             conflict=run('fold');assert len(conflict['frontier'])==2 and conflict['conflicts']
             assert conflict['owner_view']==json.loads((base/'fork-1.json').read_text())['id']
+            assert run('fold')==conflict
             # Lazy publishes the fresh epoch before any old chunks are migrated.
             run('revoke','--member',recipient,'--budget','0',expect=4)
             continuation=[e for e in lab.events.values() if e['kind']==1059][-1]
@@ -208,8 +215,8 @@ def main():
             run('revoke','--resume','--reconcile','--budget','0')
             assert run('fold')['owner_view']!=before_migration
             run('fsck')
-            # A newer owner head without its signed parent closure cannot be
-            # the basis of another administrative mutation.
+            # A current signed owner checkpoint remains authoritative when
+            # replaceable relays no longer have its signed parent closure.
             def inject(mode):
                 path=base/f'{mode}.json'
                 generated=subprocess.run([helper,mode,str(state),f'{1:064x}',str(path)],capture_output=True,text=True,timeout=10)
@@ -218,7 +225,7 @@ def main():
                 for obj in (state/'objects').iterdir():lab.blobs[obj.name]=obj.read_bytes()
                 return e
             broken=inject('missing');attempts=len(lab.attempts)
-            run('grant','--recipient',pub(6),expect=2);assert len(lab.attempts)==attempts
+            run('grant','--recipient',pub(8));assert len(lab.attempts)>=attempts+2
             del lab.events[broken['id']]
             # Removing a directory from the latest snapshot must not discard its
             # epoch history needed by retained snapshots. Metadata-only grant
@@ -230,8 +237,10 @@ def main():
             run('fsck')
             # Strict remote corruption: local ciphertext cache must not hide it.
             lab.bad_blob=True;run('fsck',expect=1);lab.bad_blob=False
-            # Missing true lengths is incomplete, not a successful fsck.
-            length=next((state/'lengths').iterdir());saved=length.read_bytes();length.unlink();run('fsck',expect=2);length.write_bytes(saved);length.chmod(0o600)
+            # Names and true lengths come exclusively from authenticated
+            # manifest bodies, not private out-of-band sidecar directories.
+            assert not (state/'lengths').exists() and not (state/'names').exists()
+            run('fsck')
             # CLOSED and absent EOSE must be visible failures; no timed success.
             lab.closed=True;run('fold',expect=1);lab.closed=False
             lab.omit_eose=True;run('fold',expect=1);lab.omit_eose=False

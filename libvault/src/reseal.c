@@ -74,14 +74,14 @@ int vault_reseal_task_new(const vault_reseal_item *items, size_t count, int eage
             rc = VAULT_ERR_EPOCH;
             goto fail;
         }
-        if (v->size_plain > INT_MAX || old.size_sealed > INT_MAX + (uint64_t)29 ||
+        if (old.size_plain > INT_MAX || old.size_sealed > INT_MAX + (uint64_t)29 ||
             old.size_sealed < 29) {
             rc = PORTHOME_ERR_TOO_LARGE;
             goto fail;
         }
         if (old.chunk_key_id == latest->epoch)
             continue;
-        size_t padded = nip44_calc_padded_len(v->size_plain);
+        size_t padded = nip44_calc_padded_len(old.size_plain);
         if (padded > INT_MAX) {
             rc = PORTHOME_ERR_TOO_LARGE;
             goto fail;
@@ -148,14 +148,14 @@ static int run_job(vault_reseal_task *t, job *j, const vault_blob_io *io)
         goto done;
     }
     if (blob[0] == PORTHOME_WIRE_VERSION_V2) {
-        rc = porthome_decrypt_chunk_v2(&view, j->old.chunk_key_id, blob, len, j->item.size_plain,
+        rc = porthome_decrypt_chunk_v2(&view, j->old.chunk_key_id, blob, len, j->old.size_plain,
                                        &plain, &plain_len);
         if (!rc)
             rc = porthome_encrypt_chunk_v2(old->node_key, plain, plain_len, &check, &check_len,
                                            hash);
     } else {
         rc = porthome_decrypt_chunk(old->node_key, blob, len, &plain, &plain_len);
-        if (!rc && plain_len != j->item.size_plain)
+        if (!rc && plain_len != j->old.size_plain)
             rc = VAULT_ERR_ARG;
         if (!rc)
             rc = porthome_encrypt_chunk(old->node_key, plain, plain_len, &check, &check_len, hash);

@@ -2,8 +2,8 @@
 #include "helpers.h"
 static void items(vault_revoke_result *r, vault_reseal_item out[2])
 {
-    out[0] = (vault_reseal_item){r->node, &r->ring, 0, 0, 7};
-    out[1] = (vault_reseal_item){r->node, &r->ring, 1, 0, 5};
+    out[0] = (vault_reseal_item){r->node, &r->ring, 0, 0};
+    out[1] = (vault_reseal_item){r->node, &r->ring, 1, 0};
 }
 int main(void)
 {
@@ -11,7 +11,7 @@ int main(void)
     world_init(&w);
     uint8_t old_hash[32];
     seal_node(&w, &w.node, old_hash);
-    porthome_node_entry parent = {.kind = PORTHOME_KIND_DIR, .child_epoch = 1};
+    porthome_node_entry parent = {.kind = PORTHOME_KIND_DIR, .name_plain="subtree", .child_epoch = 1};
     memset(parent.name_enc, 'f', 48);
     memcpy(parent.node_id, w.node.node_id, 32);
     memcpy(parent.manifest_sha256, old_hash, 32);
@@ -112,7 +112,8 @@ int main(void)
     /* Do not infer a chunk's true length by stripping real trailing zeros. */
     assert(vault_revoke(w.pub[0], w.pub[1], &w.node, &w.ring, &parent, NULL, 2, &r) == 0);
     items(r, jobs);
-    jobs[0].size_plain = 6;
+    r->node->entries[0].chunks[0].size_plain = 6;
+    r->node->entries[0].size_plain = 6;
     w.reads = w.puts = 0;
     assert(vault_reseal_task_new(jobs, 1, 0, &task) == 0 &&
            vault_reseal_task_run(task, UINT64_MAX, &io) == VAULT_ERR_ARG && w.puts == 0 &&

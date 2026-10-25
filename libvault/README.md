@@ -1,4 +1,4 @@
-# libvault (experimental, 0.2.0)
+# libvault (experimental, 0.5.0)
 
 Layer-5 shared-vault policy over libporthome. Public API: `<vault/vault.h>`;
 in-tree target: `nostrc::vault`. Installed consumers use
@@ -41,10 +41,10 @@ this proposal API.
 
 A `vault_reseal_task` takes explicit per-chunk jobs over borrowed mutable nodes
 and their rings. Nodes/rings must remain alive and unchanged outside the task.
-The caller supplies true plaintext chunk lengths; CDC lengths cannot be inferred
-from padded sizes or file totals, and trimming trailing zeros corrupts real data.
-The task verifies each proposed length by canonical old-key re-sealing before
-uploading anything. This preserves the existing manifest wire schema.
+True plaintext chunk lengths come from each authenticated manifest descriptor;
+CDC lengths cannot be inferred from padded sizes or file totals, and trimming
+trailing zeros corrupts real data. The task verifies each descriptor's length by
+canonical old-key re-sealing before uploading anything.
 
 Lazy mode executes an affordable prefix; eager mode requires the entire remaining
 budget before any I/O. Costs reserve download plus upload payload bytes, not HTTP
@@ -90,6 +90,26 @@ On INCOMPLETE/CONFLICT the caller still owns and must free the result; view is
 Bounds: 256 records, 4096 manifest objects per record, depth 128, and PCS's path,
 CBOR, entry, parent and member caps. Larger histories must be checkpointed by the
 caller rather than silently truncated.
+
+### Current-head checkpoints
+
+`vault_fold_checkpoint(grant, records, count, owner_index, &result)` supports
+fresh members querying addressable relays, which need not retain older heads.
+The selected verified owner's author, vault ID and root node ID must match the
+authenticated grant. Its current manifest supplies the writer policy. Each parent
+reference `(W, s, root)` in an accepted current head dominates supplied heads of
+W with `seq <= s`. Missing older ancestors are not an error. Ignored stale,
+nonwriter or policy-forging heads cannot dominate anything. Concurrent writer
+forks remain per-path conflicts against the owner view; ambiguous owner state
+fails closed. Strict `vault_fold` retains its original closure requirement.
+
+Before publishing a folded successor, call `vault_head_cover` with every accepted
+record actually incorporated. It merges those records and their existing coverage
+into owned parents, retaining the highest sequence per writer. Root forks at the
+same sequence fail independent of input order; the parent cap fails explicitly
+rather than truncating coverage. `vault_tree_head_new` also inherits the previous
+owner head's coverage, so administrative grant/revoke successors preserve it.
+No new event, trust source or clock rule is introduced.
 
 ## Grants, discovery and carrier seam
 

@@ -26,6 +26,8 @@ FAMILY_NODES = {
                'gnome.nostr_seal', 'gnome.nostr_seal.streaming', 'desktop.signer_adapters',
                'gnostr.signer_adapter'},
     'homed': {'execution.homed', 'gnome.nostr_homed', 'gnome.nostr_homed.test_inputs'},
+    'vault_syncd': {'execution.vault_syncd', 'gnome.nostr_homed.vault',
+                    'gnome.nostr_homed.vault.test_inputs'},
     'signet': {'signet'},
     'static': {'static.policy', 'selection.contract', 'selection.operational', 'testing.framework'},
     'appimage': {'gnostr', 'packaging.gnostr', 'gnostr.schema_inputs'},
@@ -62,6 +64,8 @@ def project(plan):
             families.add('core')
         elif profile.startswith('libgo.'):
             families.add('libgo')
+        elif profile == 'homed.vault.linux':
+            families.add('vault_syncd')
         elif profile.startswith('homed.'):
             families.add('homed')
         else:
