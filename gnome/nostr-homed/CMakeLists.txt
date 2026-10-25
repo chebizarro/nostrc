@@ -1390,7 +1390,8 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   target_include_directories(nostr_porthome PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_include_directories(nostr_porthome PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip44/include)
   target_link_libraries(nostr_porthome
     PUBLIC OpenSSL::Crypto ${_porthome_hanami})
 

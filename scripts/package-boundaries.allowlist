@@ -1,0 +1,466 @@
+# Existing first-party violations at R0 (nostrc-er4fz.1).
+# One rule|path|detail line per occurrence. Entries may only be removed.
+# Git submodules are not traversed; see check-package-boundaries.py.
+extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_get_default -> nostr-gobject
+extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_is_running -> nostr-gobject
+extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_start -> nostr-gobject
+extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_stop -> nostr-gobject
+extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_sync_now -> nostr-gobject
+extern|apps/gnostr/src/ui/gnostr-main-window-startup.c|nostr_gtk_media_image_cache_size -> nostr-gtk
+extern|apps/gnostr/src/ui/gnostr-main-window.c|nostr_gtk_media_image_cache_size -> nostr-gtk
+extern|apps/grotto/daemon/grotto_control.c|nostr_nip06_private_key_from_seed -> nips/nip06
+extern|apps/grotto/daemon/main_daemon.c|signer_export -> nips/nip55l
+extern|apps/grotto/daemon/main_daemon.c|signer_pending_count -> nips/nip55l
+extern|apps/grotto/daemon/main_daemon.c|signer_unexport -> nips/nip55l
+extern|apps/grotto/src/backup-recovery.c|nostr_nip06_private_key_from_seed_account -> nips/nip06
+extern|apps/grotto/tests/test-identity-management.c|nostr_nip06_private_key_from_seed -> nips/nip06
+extern|gnome/nostr-seal/src/nseal.c|nip44_hkdf_expand -> nips/nip44
+extern|gnome/nostr-seal/src/nseal.c|nip44_hkdf_extract -> nips/nip44
+extern|libjson/src/json.c|nostr_set_json_interface -> libnostr
+extern|nips/nip06/tests/test_nip06_roundtrip.c|nostr_bip39_generate -> libnostr
+extern|nips/nip44/examples/nip44_demo_encrypt.c|nostr_key_get_public -> libnostr
+extern|nips/nip44/examples/nip44_vector_demo.c|nostr_key_get_public -> libnostr
+extern|nips/nip44/tests/test_nip44_vectors.c|nostr_key_get_public -> libnostr
+extern|nips/nip46/src/core/nip46_session.c|nip44_base64_decode -> nips/nip44
+extern|nips/nip46/src/core/nip46_session.c|nip44_base64_encode -> nips/nip44
+extern|nips/nip55l/src/core/signer_ops.c|nip44_base64_decode -> nips/nip44
+extern|nips/nip55l/src/core/signer_ops.c|nip44_base64_encode -> nips/nip44
+extern|nips/nip55l/src/core/signer_ops.c|nostr_nip06_private_key_from_seed -> nips/nip06
+extern|nips/nip55l/tests/fuzz/fuzz_nip44_b64.c|nip44_base64_encode -> nips/nip44
+extern|nips/nip55l/tests/test_nip55l_nip44_b64.c|nip44_base64_encode -> nips/nip44
+extern|nostr-gobject/src/gnostr-app-bridge.c|nostr_event_free -> libnostr
+extern|nostr-gobject/src/storage_ndb.c|ln_ndb_force_close_txn_cache -> libnostr
+extern|nostr-gobject/src/storage_ndb.c|ln_ndb_invalidate_txn_cache_ext -> libnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_mute_thread -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_mute_user -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_request_quote -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_request_reply -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_request_repost -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_show_toast -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_view_thread_with_json -> apps/gnostr
+extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_view_thread_with_json -> apps/gnostr
+extern|nostr-gtk/src/gnostr-thread-view.c|gnostr_main_window_request_report_note -> apps/gnostr
+extern|tests/test_relay_ingress_policy.c|nostr_key_get_public -> libnostr
+extern|tests/testkit/gnostr-testkit.c|storage_ndb_ingest_event_json -> nostr-gobject
+extern|tests/testkit/gnostr-testkit.c|storage_ndb_init -> nostr-gobject
+extern|tests/testkit/gnostr-testkit.c|storage_ndb_shutdown -> nostr-gobject
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-communities-panel.c|../model/gn-communikeys-community-item.h
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-communities-panel.h|../gn-communikeys-community-service.h
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-community-row.h|../model/gn-communikeys-community-item.h
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-community-view.c|../model/gn-communikeys-message-item.h
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-community-view.c|../model/gn-communikeys-section-item.h
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-community-view.c|../model/gn-communikeys-targeted-item.h
+include|apps/gnostr/plugins/communikeys-communities/ui/gn-communikeys-community-view.h|../gn-communikeys-community-service.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-communities-panel.c|../model/gn-concord-community-item.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-communities-panel.h|../gn-concord-community-service.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-community-row.h|../model/gn-concord-community-item.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-community-view.c|../model/gn-concord-channel-item.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-community-view.c|../model/gn-concord-message-item.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-community-view.h|../gn-concord-community-service.h
+include|apps/gnostr/plugins/concord-communities/ui/gn-concord-invite-dialog.h|../gn-concord-community-service.h
+include|apps/gnostr/plugins/mls-groups/model/gn-group-list-model.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/model/gn-group-message-model.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-create-group-dialog.c|../gn-key-package-discovery.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-create-group-dialog.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-create-group-dialog.h|../gn-mls-event-router.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-chat-view.c|../model/gn-group-message-model.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-chat-view.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-chat-view.h|../gn-mls-event-router.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-list-view.c|../model/gn-group-list-model.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-list-view.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-list-view.h|../gn-mls-event-router.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-settings-view.c|../gn-key-package-discovery.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-settings-view.c|../gn-mls-group-error.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-settings-view.c|../gn-mls-pending-commits.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-settings-view.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-group-settings-view.h|../gn-mls-event-router.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-mls-dm-list-view.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-mls-dm-list-view.h|../gn-mls-dm-manager.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-mls-dm-list-view.h|../gn-mls-event-router.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-welcome-list-view.h|../gn-marmot-service.h
+include|apps/gnostr/plugins/mls-groups/ui/gn-welcome-list-view.h|../gn-mls-event-router.h
+include|apps/gnostr/plugins/nip29-groups/model/gn-nip29-group-list-model.h|../gn-nip29-group-service.h
+include|apps/gnostr/plugins/nip29-groups/model/gn-nip29-message-list-model.h|../gn-nip29-group-service.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-add-group-dialog.h|../gn-nip29-group-service.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-group-chat-view.c|../model/gn-nip29-message-item.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-group-chat-view.c|../model/gn-nip29-message-list-model.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-group-chat-view.h|../gn-nip29-group-service.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-group-chat-view.h|../model/gn-nip29-group-item.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-group-list-row.h|../model/gn-nip29-group-item.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-groups-panel.c|../model/gn-nip29-group-item.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-groups-panel.c|../model/gn-nip29-group-list-model.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-groups-panel.h|../gn-nip29-group-service.h
+include|apps/gnostr/plugins/nip29-groups/ui/gn-nip29-message-row.h|../model/gn-nip29-message-item.h
+include|apps/gnostr/plugins/nip64-chess/nip64-chess-plugin.c|../../src/ui/gnostr-chess-game-view.h
+include|apps/gnostr/plugins/nip64-chess/nip64-chess-plugin.c|../../src/ui/gnostr-chess-new-game-dialog.h
+include|apps/gnostr/plugins/nip64-chess/nip64-chess-plugin.c|../../src/ui/gnostr-chess-publish-dialog.h
+include|apps/gnostr/plugins/nip64-chess/nip64-chess-plugin.c|../../src/util/nip64_chess.h
+include|apps/gnostr/plugins/nip99-marketplace/nip99-marketplace-plugin.c|../../src/ui/gnostr-classifieds-view.h
+include|apps/gnostr/plugins/nip99-marketplace/nip99-marketplace-plugin.c|../../src/util/nip99_classifieds.h
+include|apps/gnostr/src/ipc/gnostr-signer-availability.c|../util/keystore.h
+include|apps/gnostr/src/ipc/gnostr-signer-bridge-install.c|../sync/neg-client.h
+include|apps/gnostr/src/ipc/gnostr-signer-bridge-install.c|../util/keystore.h
+include|apps/gnostr/src/ipc/gnostr-signer-bridge-install.c|../util/relay_info.h
+include|apps/gnostr/src/ipc/gnostr-signer-bridge-install.c|../util/utils.h
+include|apps/gnostr/src/model/gn-follow-list-model.c|../util/follow_list.h
+include|apps/gnostr/src/model/gn-nostr-event-model.c|../util/mute_filter.h
+include|apps/gnostr/src/model/gnostr-channel-item.h|../util/nip28_chat.h
+include|apps/gnostr/src/model/gnostr-chat-message-item.h|../util/nip28_chat.h
+include|apps/gnostr/src/model/gnostr-chess-game-item.h|../util/nip64_chess.h
+include|apps/gnostr/src/model/gnostr-community-item.h|../util/nip72_communities.h
+include|apps/gnostr/src/model/gnostr-filter-set-sync.c|../util/gnostr-app-data-manager.h
+include|apps/gnostr/src/model/gnostr-timeline-source.c|../util/mute_filter.h
+include|apps/gnostr/src/notifications/badge_manager.c|../ui/gnostr-notifications-view.h
+include|apps/gnostr/src/notifications/badge_manager.c|../util/mute_filter.h
+include|apps/gnostr/src/notifications/badge_manager.c|../util/zap.h
+include|apps/gnostr/src/services/gnostr-media-source.c|../ui/gnostr-main-window.h
+include|apps/gnostr/src/services/gnostr-media-source.c|../util/utils.h
+include|apps/gnostr/src/sync/gnostr-sync-bridge.c|../util/follow_list.h
+include|apps/gnostr/src/sync/gnostr-sync-bridge.c|../util/pin_list.h
+include|apps/gnostr/src/ui/gnostr-app-handler-dialog.c|../util/nip89_handlers.h
+include|apps/gnostr/src/ui/gnostr-apps-page.c|../util/debounce.h
+include|apps/gnostr/src/ui/gnostr-apps-page.c|../util/nip89_handlers.h
+include|apps/gnostr/src/ui/gnostr-article-card.c|../util/nip84_highlights.h
+include|apps/gnostr/src/ui/gnostr-article-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-article-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-article-reader.c|../util/nip23.h
+include|apps/gnostr/src/ui/gnostr-article-reader.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-articles-view.c|../util/debounce.h
+include|apps/gnostr/src/ui/gnostr-articles-view.c|../util/nip23.h
+include|apps/gnostr/src/ui/gnostr-articles-view.c|../util/nip54_wiki.h
+include|apps/gnostr/src/ui/gnostr-articles-view.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-avatar-cache.c|../services/gnostr-media-service.h
+include|apps/gnostr/src/ui/gnostr-calendar-event-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-calendar-event-card.h|../util/nip52_calendar.h
+include|apps/gnostr/src/ui/gnostr-calendar-events-view.c|../model/gn-nostr-event-item.h
+include|apps/gnostr/src/ui/gnostr-calendar-events-view.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-calendar-events-view.c|../util/nip52_calendar.h
+include|apps/gnostr/src/ui/gnostr-channel-create-dialog.h|../util/nip28_chat.h
+include|apps/gnostr/src/ui/gnostr-channel-list-view.c|../model/gnostr-channel-item.h
+include|apps/gnostr/src/ui/gnostr-channel-list-view.h|../util/nip28_chat.h
+include|apps/gnostr/src/ui/gnostr-channel-row.h|../util/nip28_chat.h
+include|apps/gnostr/src/ui/gnostr-chat-message-row.h|../util/nip28_chat.h
+include|apps/gnostr/src/ui/gnostr-chat-room-view.c|../model/gnostr-chat-message-item.h
+include|apps/gnostr/src/ui/gnostr-chat-room-view.h|../util/nip28_chat.h
+include|apps/gnostr/src/ui/gnostr-chess-board.c|../util/chess_engine.h
+include|apps/gnostr/src/ui/gnostr-chess-board.c|../util/nip64_chess.h
+include|apps/gnostr/src/ui/gnostr-chess-board.h|../util/nip64_chess.h
+include|apps/gnostr/src/ui/gnostr-chess-card.c|../util/nip64_chess.h
+include|apps/gnostr/src/ui/gnostr-chess-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-chess-game-view.c|../util/nip64_chess.h
+include|apps/gnostr/src/ui/gnostr-chess-games-browser.c|../model/gnostr-chess-game-item.h
+include|apps/gnostr/src/ui/gnostr-chess-games-browser.h|../util/nip64_chess.h
+include|apps/gnostr/src/ui/gnostr-chess-publish-dialog.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-chess-publish-dialog.c|../util/nip64_chess.h
+include|apps/gnostr/src/ui/gnostr-chess-publish-dialog.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-chess-session.h|../util/chess_engine.h
+include|apps/gnostr/src/ui/gnostr-classified-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-classified-card.h|../util/nip99_classifieds.h
+include|apps/gnostr/src/ui/gnostr-classifieds-view.h|../util/nip99_classifieds.h
+include|apps/gnostr/src/ui/gnostr-community-card.h|../util/nip72_communities.h
+include|apps/gnostr/src/ui/gnostr-community-list-view.c|../model/gnostr-community-item.h
+include|apps/gnostr/src/ui/gnostr-community-list-view.h|../util/nip72_communities.h
+include|apps/gnostr/src/ui/gnostr-community-view.h|../util/nip72_communities.h
+include|apps/gnostr/src/ui/gnostr-dm-conversation-view.c|../util/dm_files.h
+include|apps/gnostr/src/ui/gnostr-dm-service-send.c|../util/dm_files.h
+include|apps/gnostr/src/ui/gnostr-dm-service-send.c|../util/nip59_giftwrap.h
+include|apps/gnostr/src/ui/gnostr-dm-service.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-dm-service.c|../util/dm_files.h
+include|apps/gnostr/src/ui/gnostr-dm-service.c|../util/dm_gift_wrap_validation.h
+include|apps/gnostr/src/ui/gnostr-dm-service.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-emoji-content.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-emoji-content.h|../util/custom_emoji.h
+include|apps/gnostr/src/ui/gnostr-filter-set-dialog.c|../model/gnostr-filter-set-manager.h
+include|apps/gnostr/src/ui/gnostr-filter-set-dialog.c|../model/gnostr-nip51-loader.h
+include|apps/gnostr/src/ui/gnostr-filter-set-dialog.c|../util/follow_list.h
+include|apps/gnostr/src/ui/gnostr-filter-set-dialog.c|../util/trending-hashtags.h
+include|apps/gnostr/src/ui/gnostr-filter-set-dialog.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-filter-set-dialog.h|../model/gnostr-filter-set.h
+include|apps/gnostr/src/ui/gnostr-filter-switcher.c|../model/gnostr-filter-set-manager.h
+include|apps/gnostr/src/ui/gnostr-filter-switcher.c|../model/gnostr-filter-set.h
+include|apps/gnostr/src/ui/gnostr-highlight-card.c|../util/nip84_highlights.h
+include|apps/gnostr/src/ui/gnostr-highlight-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-issue-adapters.c|../../../../nips/nip34/include/nip34.h
+include|apps/gnostr/src/ui/gnostr-issue-adapters.c|../util/blossom.h
+include|apps/gnostr/src/ui/gnostr-issue-adapters.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-live-card.h|../util/nip53_live.h
+include|apps/gnostr/src/ui/gnostr-login.c|../ipc/gnostr-signer-availability.h
+include|apps/gnostr/src/ui/gnostr-login.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-login.c|../ipc/nip46-relay-defaults.h
+include|apps/gnostr/src/ui/gnostr-login.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../model/gnostr-filter-set-sync.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../notifications/badge_manager.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../notifications/desktop_notify.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../services/gnostr-media-service.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../sync/gnostr-sync-bridge.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../util/blossom_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../util/nip51_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window-auth.c|../util/profile_event_validation.h
+include|apps/gnostr/src/ui/gnostr-main-window-compose.c|../util/gnostr-drafts.h
+include|apps/gnostr/src/ui/gnostr-main-window-compose.c|../util/media_upload.h
+include|apps/gnostr/src/ui/gnostr-main-window-gobject.c|../util/gnostr-thread-prefetch.h
+include|apps/gnostr/src/ui/gnostr-main-window-links.c|../util/gnostr-nostr-target.h
+include|apps/gnostr/src/ui/gnostr-main-window-links.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-main-window-navigation.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-main-window-pool.c|../util/follow_list.h
+include|apps/gnostr/src/ui/gnostr-main-window-pool.c|../util/gnostr-thread-prefetch.h
+include|apps/gnostr/src/ui/gnostr-main-window-preload.c|../util/profile_event_validation.h
+include|apps/gnostr/src/ui/gnostr-main-window-profile-fetch.c|../util/profile_event_validation.h
+include|apps/gnostr/src/ui/gnostr-main-window-profile-pane.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-main-window-profile-pane.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-main-window-profile-pane.c|../util/nip02_contacts.h
+include|apps/gnostr/src/ui/gnostr-main-window-profile-update.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-main-window-profile-update.c|../model/gnostr-timeline-batch.h
+include|apps/gnostr/src/ui/gnostr-main-window-publish.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-main-window-publish.c|../util/relay_info.h
+include|apps/gnostr/src/ui/gnostr-main-window-relay-manager.c|../util/nip66_relay_discovery.h
+include|apps/gnostr/src/ui/gnostr-main-window-relay-manager.c|../util/relay_info.h
+include|apps/gnostr/src/ui/gnostr-main-window-repo-browser.c|../util/gnostr-plugin-manager.h
+include|apps/gnostr/src/ui/gnostr-main-window-settings.c|../util/blossom_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window-settings.c|../util/nip51_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window-settings.c|../util/nwc.h
+include|apps/gnostr/src/ui/gnostr-main-window-signer-banner.c|../ipc/gnostr-signer-availability.h
+include|apps/gnostr/src/ui/gnostr-main-window-signer-banner.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-main-window-signer-banner.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../notifications/badge_manager.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../sync/gnostr-sync-bridge.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../util/blossom_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../util/follow_list.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../util/gnostr-thread-prefetch.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../util/nip42_auth.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../util/nip51_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window-startup.c|../util/nwc.h
+include|apps/gnostr/src/ui/gnostr-main-window-timeline.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-main-window-timeline.c|../model/gnostr-filter-set-manager.h
+include|apps/gnostr/src/ui/gnostr-main-window-timeline.c|../model/gnostr-filter-set-query.h
+include|apps/gnostr/src/ui/gnostr-main-window-timeline.c|../model/gnostr-filter-set.h
+include|apps/gnostr/src/ui/gnostr-main-window-utilities.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../model/gn-nostr-event-item.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../model/gn-nostr-event-model.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../sync/gnostr-sync-bridge.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/blossom.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/blossom_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/follow_list.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/gnostr-drafts.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/gnostr-plugin-manager.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/media_upload.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/nip02_contacts.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/nip32_labels.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/nip42_auth.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/nip51_settings.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/nip72_communities.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/nwc.h
+include|apps/gnostr/src/ui/gnostr-main-window.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-mute-list.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/ui/gnostr-nip51-list-picker-dialog.c|../model/gnostr-nip51-loader.h
+include|apps/gnostr/src/ui/gnostr-nip7d-thread-view.c|../util/nip7d_threads.h
+include|apps/gnostr/src/ui/gnostr-nip7d-thread-view.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-nip7d-thread-view.h|../util/nip7d_threads.h
+include|apps/gnostr/src/ui/gnostr-notification-bell.c|../notifications/badge_manager.h
+include|apps/gnostr/src/ui/gnostr-notifications-view.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-notifications-view.h|../notifications/badge_manager.h
+include|apps/gnostr/src/ui/gnostr-nwc-connect.c|../util/nwc.h
+include|apps/gnostr/src/ui/gnostr-og-activate.c|../services/gnostr-og-provider.h
+include|apps/gnostr/src/ui/gnostr-og-activate.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-og-activate.c|../util/youtube_url.h
+include|apps/gnostr/src/ui/gnostr-picture-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-picture-card.h|../util/nip68_picture.h
+include|apps/gnostr/src/ui/gnostr-picture-grid.c|../services/gnostr-media-source.h
+include|apps/gnostr/src/ui/gnostr-picture-grid.h|../util/nip68_picture.h
+include|apps/gnostr/src/ui/gnostr-plugin-manager-panel.c|../gnostr-plugin-api.h
+include|apps/gnostr/src/ui/gnostr-plugin-manager-panel.c|../util/debounce.h
+include|apps/gnostr/src/ui/gnostr-plugin-manager-panel.c|../util/gnostr-plugin-manager.h
+include|apps/gnostr/src/ui/gnostr-poll-card.c|../util/nip88_polls.h
+include|apps/gnostr/src/ui/gnostr-poll-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-profile-edit.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-profile-edit.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/ui/gnostr-profile-edit.c|../util/nip39_identity.h
+include|apps/gnostr/src/ui/gnostr-profile-edit.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-report-dialog.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-report-dialog.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/ui/gnostr-report-dialog.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-session-view.c|../gnostr-plugin-api.h
+include|apps/gnostr/src/ui/gnostr-session-view.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-status-dialog.c|../util/user_status.h
+include|apps/gnostr/src/ui/gnostr-thread-card.c|../util/nip7d_threads.h
+include|apps/gnostr/src/ui/gnostr-thread-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-timeline-action-relay.c|../util/bookmarks.h
+include|apps/gnostr/src/ui/gnostr-timeline-action-relay.c|../util/pin_list.h
+include|apps/gnostr/src/ui/gnostr-timeline-feed-controller.c|../model/gnostr-timeline-geometry.h
+include|apps/gnostr/src/ui/gnostr-timeline-feed-controller.c|../model/gnostr-timeline-hydrator.h
+include|apps/gnostr/src/ui/gnostr-timeline-feed-controller.h|../model/gnostr-timeline-batch.h
+include|apps/gnostr/src/ui/gnostr-timeline-feed-controller.h|../model/gnostr-timeline-snapshot-model.h
+include|apps/gnostr/src/ui/gnostr-timeline-feed-controller.h|../model/gnostr-timeline-source.h
+include|apps/gnostr/src/ui/gnostr-timeline-metadata-controller.c|../model/gn-nostr-event-item.h
+include|apps/gnostr/src/ui/gnostr-timeline-metadata-controller.c|../model/gnostr-timeline-batch.h
+include|apps/gnostr/src/ui/gnostr-timeline-metadata-controller.h|../model/gn-nostr-event-item.h
+include|apps/gnostr/src/ui/gnostr-timeline-metadata-controller.h|../model/gnostr-timeline-snapshot.h
+include|apps/gnostr/src/ui/gnostr-timeline-repost.h|../model/gnostr-timeline-item-view-model.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../model/gn-nostr-event-item.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../model/gnostr-timeline-snapshot-model.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../model/gnostr-timeline-snapshot.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../services/gnostr-media-service.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../util/bookmarks.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../util/nip23.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../util/nip34.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../util/nip71.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../util/pin_list.h
+include|apps/gnostr/src/ui/gnostr-timeline-view-app-factory.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-torrent-card.c|../util/nip35_torrents.h
+include|apps/gnostr/src/ui/gnostr-torrent-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-wiki-card.c|../util/nip54_wiki.h
+include|apps/gnostr/src/ui/gnostr-wiki-card.c|../util/utils.h
+include|apps/gnostr/src/ui/gnostr-youtube-embed.c|../util/youtube_url.h
+include|apps/gnostr/src/ui/gnostr-zap-dialog.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/ui/gnostr-zap-dialog.c|../util/nwc.h
+include|apps/gnostr/src/ui/gnostr-zap-dialog.c|../util/zap.h
+include|apps/gnostr/src/ui/gnostr-zap-goal-card.c|../util/nip75_zap_goals.h
+include|apps/gnostr/src/ui/gnostr-zap-goal-widget.c|../util/nip75_goals.h
+include|apps/gnostr/src/ui/note-card-factory.c|../../../../nostr-gtk/src/note-card-binding-ctx.h
+include|apps/gnostr/src/ui/note-card-factory.c|../model/gn-nostr-event-item.h
+include|apps/gnostr/src/ui/page-discover-live.c|../util/nip53_live.h
+include|apps/gnostr/src/ui/page-discover-people.c|../model/gn-profile-list-model.h
+include|apps/gnostr/src/ui/page-discover-people.c|../util/debounce.h
+include|apps/gnostr/src/ui/page-discover-people.c|../util/discover-search.h
+include|apps/gnostr/src/ui/page-discover.c|../model/gn-profile-list-model.h
+include|apps/gnostr/src/ui/page-discover.c|../util/trending-hashtags.h
+include|apps/gnostr/src/util/blossom.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/blossom_settings.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/bookmarks.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/gnostr-plugin-manager.c|../gnostr-plugin-api.h
+include|apps/gnostr/src/util/gnostr-plugin-manager.c|../ui/gnostr-main-window.h
+include|apps/gnostr/src/util/gnostr-plugin-manager.c|../ui/gnostr-session-view.h
+include|apps/gnostr/src/util/nip02_contacts.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/nip42_auth.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/nip51_settings.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/nip58_badges.c|../ui/gnostr-avatar-cache.h
+include|apps/gnostr/src/util/nip59_giftwrap.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/nip78_app_data.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/nip96.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/nip99_classifieds.c|../ui/gnostr-avatar-cache.h
+include|apps/gnostr/src/util/pin_list.c|../ipc/gnostr-signer-service.h
+include|apps/gnostr/src/util/pin_list.c|../ipc/signer_ipc.h
+include|apps/gnostr/src/util/user_status.c|../ipc/gnostr-signer-service.h
+include|apps/grotto/daemon/grotto_clients.c|../../../libnostr/include/nostrc-profile-guard.h
+include|apps/grotto/daemon/grotto_control.c|../src/secret-variant.h
+include|apps/grotto/native-host/tests/test_nm_e2e.c|../../../../libnostr/include/nostr-kinds.h
+include|apps/grotto/src/event_history.c|../../../libnostr/include/nostrc-profile-guard.h
+include|apps/grotto/src/ui/approval_dialog.c|../i18n.h
+include|apps/grotto/src/ui/approval_dialog.h|../accounts_store.h
+include|apps/grotto/src/ui/lock-screen.c|../i18n.h
+include|apps/grotto/src/ui/lock-screen.c|../keyboard-nav.h
+include|apps/grotto/src/ui/lock-screen.c|../rate-limiter.h
+include|apps/grotto/src/ui/lock-screen.c|../session-manager.h
+include|apps/grotto/src/ui/lock-screen.h|../session-manager.h
+include|apps/grotto/src/ui/onboarding-assistant.c|../accounts_store.h
+include|apps/grotto/src/ui/onboarding-assistant.c|../backup-recovery.h
+include|apps/grotto/src/ui/onboarding-assistant.c|../secret-clipboard.h
+include|apps/grotto/src/ui/onboarding-assistant.c|../secret-variant.h
+include|apps/grotto/src/ui/onboarding-assistant.c|../secret_store.h
+include|apps/grotto/src/ui/onboarding-assistant.c|../secure-mem.h
+include|apps/grotto/src/ui/page-client-detail.c|../accounts_store.h
+include|apps/grotto/src/ui/page-client-detail.c|../i18n.h
+include|apps/grotto/src/ui/page-client-detail.h|../home-model.h
+include|apps/grotto/src/ui/page-connect.c|../i18n.h
+include|apps/grotto/src/ui/page-connect.h|../home-model.h
+include|apps/grotto/src/ui/page-history.c|../i18n.h
+include|apps/grotto/src/ui/page-history.h|../home-model.h
+include|apps/grotto/src/ui/page-home.c|../accounts_store.h
+include|apps/grotto/src/ui/page-home.c|../i18n.h
+include|apps/grotto/src/ui/page-home.h|../home-model.h
+include|apps/grotto/src/ui/page-identity-detail.c|../accounts_store.h
+include|apps/grotto/src/ui/page-identity-detail.c|../secret-clipboard.h
+include|apps/grotto/src/ui/page-identity-detail.c|../secret-variant.h
+include|apps/grotto/src/ui/page-identity-detail.c|../secure-mem.h
+include|apps/grotto/src/ui/page-settings.c|../i18n.h
+include|apps/grotto/src/ui/page-settings.c|../session-manager.h
+include|apps/grotto/src/ui/page-settings.c|../settings_manager.h
+include|apps/grotto/src/ui/page-settings.h|../home-model.h
+include|apps/grotto/src/ui/pairing-flow.c|../pairing_uri.h
+include|apps/grotto/src/ui/sheets/sheet-create-bunker.c|../../pairing_uri.h
+include|apps/grotto/src/ui/sheets/sheet-create-bunker.c|../app-resources.h
+include|apps/grotto/src/ui/sheets/sheet-qr-display.c|../../qr-code.h
+include|apps/grotto/src/ui/sheets/sheet-qr-display.c|../app-resources.h
+include|apps/grotto/src/ui/sheets/sheet-qr-display.h|../../qr-code.h
+include|apps/grotto/src/ui/sheets/sheet-qr-scanner.c|../../pairing_uri.h
+include|apps/grotto/src/ui/sheets/sheet-qr-scanner.c|../../qr-code.h
+include|apps/grotto/src/ui/sheets/sheet-qr-scanner.c|../../qr-scanner.h
+include|apps/grotto/src/ui/sheets/sheet-qr-scanner.c|../app-resources.h
+include|apps/grotto/src/ui/sheets/sheet-qr-scanner.h|../../qr-code.h
+include|apps/grotto/src/ui/signer-window.c|../i18n.h
+include|apps/grotto/src/ui/signer-window.c|../keyboard-nav.h
+include|apps/grotto/src/ui/signer-window.c|../secret_store.h
+include|apps/grotto/src/ui/signer-window.c|../session-manager.h
+include|apps/grotto/src/ui/signer-window.c|../startup-timing.h
+include|apps/grotto/src/ui/widgets/gn-secure-entry.c|../../secure-memory.h
+include|apps/grotto/src/ui/widgets/gn-secure-entry.c|../app-resources.h
+include|benchmark/relay_perf_baseline.c|../libnostr/include/nostr-event.h
+include|benchmark/relay_perf_baseline.c|../libnostr/include/nostr-filter.h
+include|benchmark/relay_perf_baseline.c|../libnostr/include/nostr-relay.h
+include|gnome/groundhog/src/identity/gh-nip46-credentials-keychain.c|../store/gh-profile-guard.h
+include|gnome/groundhog/src/mls/gh-mls-invitee.c|../app/gh-test-async-control.h
+include|gnome/groundhog/src/ui/gh-composer.c|../app/gh-test-async-control.h
+include|gnome/groundhog/src/ui/gh-conversation-menu.c|../app/gh-test-async-control.h
+include|gnome/groundhog/src/ui/gh-mls-group-info-dialog.c|../app/gh-test-async-control.h
+include|gnome/groundhog/src/ui/gh-mls-new-group-page.c|../app/gh-test-async-control.h
+include|gnome/groundhog/tests/store/test_nip46_credentials_keychain.c|../../../../tests/common/nostrc-test-keychain-guard.h
+include|gnome/groundhog/tests/store/test_store_key_keychain.c|../../../../tests/common/nostrc-test-keychain-guard.h
+include|gnome/groundhog/tests/ui/test_nip46_pair_nak.c|../../../../tests/common/nostrc-test-keychain-guard.h
+include|gnome/nostr-homed/src/auth/auth_porthome_fetch.c|../porthome-fetch/porthome_fetch_ctl.h
+include|gnome/nostr-homed/src/pam/pam_qr_render.c|../../third_party/qrcodegen/qrcodegen.h
+include|libgo/fiber/bench/bench_pingpong.c|../include/libgo/fiber.h
+include|libgo/fiber/bench/bench_pingpong.c|../include/libgo/fiber_chan.h
+include|libgo/fiber/bench/bench_poll_partition.c|../include/libgo/fiber.h
+include|libgo/fiber/bench/bench_sleep.c|../include/libgo/fiber.h
+include|libgo/fiber/bench/bench_yield.c|../include/libgo/fiber.h
+include|libgo/fiber/chan/chan.c|../include/libgo/fiber_chan.h
+include|libgo/fiber/chan/chan.c|../sched/sched.h
+include|libgo/fiber/debug/debug.h|../include/libgo/fiber.h
+include|libgo/fiber/debug/debug.h|../sched/sched.h
+include|libgo/fiber/debug/introspect.c|../sched/sched.h
+include|libgo/fiber/io/io.c|../include/libgo/fiber.h
+include|libgo/fiber/io/io.c|../sched/sched.h
+include|libgo/fiber/sched/api.c|../../include/go.h
+include|libgo/fiber/sched/api.c|../include/libgo/fiber.h
+include|libgo/fiber/sched/api.c|../timers/timer_bridge.h
+include|libgo/fiber/sched/fiber_hooks_impl.c|../../include/fiber_hooks.h
+include|libgo/fiber/sched/sched.c|../debug/debug.h
+include|libgo/fiber/sched/sched.c|../io/netpoll.h
+include|libgo/fiber/sched/sched.h|../context/context.h
+include|libgo/fiber/sched/sched.h|../include/libgo/fiber.h
+include|libgo/fiber/sched/sched.h|../stack/stack.h
+include|libgo/fiber/timers/timer_bridge.c|../sched/sched.h
+include|libnostr/src/connection-private.h|../include/rate_limiter.h
+include|libnostr/src/connection.c|../include/nostr_log.h
+include|libnostr/src/connection.c|../include/rate_limiter.h
+include|libnostr/src/connection.c|../include/security_limits_runtime.h
+include|libnostr/src/keys.c|../include/secure_buf.h
+include|libnostr/src/rate_limiter.c|../include/rate_limiter.h
+include|libnostr/src/secure_buf.c|../include/secure_buf.h
+include|nips/nip53/src/nip53.c|../include/nip53.h
+include|nips/nip55l/tests/test_keychain_migration.c|../../../tests/common/nostrc-test-keychain-guard.h
+include|nips/nip77/backends/nostrdb/nostr-negentropy-ndb.h|../../include/nostr/nip77/negentropy.h
+include|nips/nip77/src/neg_session.h|../include/nostr/nip77/negentropy.h
+include|nips/nip77/src/negentropy-glib.c|../include/nostr/nip77/negentropy-glib.h
+include|nips/nip77/tools/gnostr-neg.c|../include/nostr/nip77/negentropy.h
+include|nostr-gtk/src/gnostr-note-embed.c|../util/utils.h
+include|tests/test_connection_shutdown_order.c|../libnostr/src/relay-private.h
+include|tests/test_ndb_ingestion_simple.c|../libnostr/include/libnostr_store.h
+include|tests/test_relay_unsubscribe.c|../libnostr/src/subscription-private.h
+include|tests/test_secure_buf.c|../libnostr/include/secure_buf.h
+include|tests/test_subscription_backpressure.c|../libnostr/src/subscription-private.h
+include|tests/test_subscription_backpressure_long.c|../libnostr/src/relay-private.h
+include|tests/test_subscription_backpressure_long.c|../libnostr/src/subscription-private.h
+include|tests/test_subscription_blocking_depth.c|../libnostr/src/relay-private.h
+include|tests/test_subscription_blocking_depth.c|../libnostr/src/subscription-private.h
+include|tests/test_subscription_lifecycle.c|../libnostr/src/subscription-private.h
+link|libjson/CMakeLists.txt|nostr_json (libjson:0) -> libnostr (libnostr:1)
+link|libjson/CMakeLists.txt|nostr_json (libjson:0) -> libnostr (libnostr:1)
+link|nips/nip55l/CMakeLists.txt|nostr_nip55l_core (nips/nip55l:2) -> gnostr-secret (gnome/seahorse:7)
+link|nips/nip55l/CMakeLists.txt|test_nip55l_dbus_contract (nips/nip55l:2) -> gnostr-secret (gnome/seahorse:7)
+link|nips/nip55l/CMakeLists.txt|test_nip55l_keyring_schema (nips/nip55l:2) -> gnostr-secret (gnome/seahorse:7)

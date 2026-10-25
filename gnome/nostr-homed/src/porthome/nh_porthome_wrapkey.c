@@ -14,13 +14,7 @@
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 
-/* Reuse the in-tree HKDF from nip44 (same TU the crypto module uses). */
-extern int nip44_hkdf_extract(const uint8_t *salt, size_t salt_len,
-                              const uint8_t *ikm, size_t ikm_len,
-                              uint8_t prk_out[32]);
-extern int nip44_hkdf_expand(const uint8_t prk[32],
-                             const uint8_t *info, size_t info_len,
-                             uint8_t okm_out[], size_t okm_len);
+#include <nostr/nip44/kdf.h>
 
 static int hex_nibble(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -47,14 +41,14 @@ int nh_porthome_wrap_seed_from_ikm(const uint8_t *ikm, size_t ikm_len,
     if (ikm_len > 4096) return NH_PORTHOME_ERR_ARG;
 
     uint8_t prk[32];
-    if (nip44_hkdf_extract((const uint8_t *)NH_PORTHOME_WRAPKEY_SALT_LOCAL,
+    if (nostr_nip44_hkdf_extract((const uint8_t *)NH_PORTHOME_WRAPKEY_SALT_LOCAL,
                            sizeof(NH_PORTHOME_WRAPKEY_SALT_LOCAL) - 1,
                            ikm, ikm_len, prk) != 0) {
         OPENSSL_cleanse(out_seed, NH_PORTHOME_KEY_LEN);
         return NH_PORTHOME_ERR_CRYPTO;
     }
     /* info="" — the salt supplies the domain separation. */
-    int rc = nip44_hkdf_expand(prk, NULL, 0, out_seed, NH_PORTHOME_KEY_LEN);
+    int rc = nostr_nip44_hkdf_expand(prk, NULL, 0, out_seed, NH_PORTHOME_KEY_LEN);
     OPENSSL_cleanse(prk, sizeof(prk));
     if (rc != 0) {
         OPENSSL_cleanse(out_seed, NH_PORTHOME_KEY_LEN);

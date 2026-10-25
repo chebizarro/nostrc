@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <nostr/nip44/kdf.h>
 #include <string.h>
 #include <openssl/evp.h>
 #include <openssl/core_names.h>
@@ -88,4 +88,23 @@ int nip44_hmac_sha256(const uint8_t *key, size_t key_len,
                       uint8_t mac_out[32]) {
   return evp_hmac_sha256(key, key_len, data1, len1,
                          data2, len2, NULL, 0, mac_out);
+}
+
+int nostr_nip44_hkdf_extract(const uint8_t *salt, size_t salt_len,
+                            const uint8_t *ikm, size_t ikm_len,
+                            uint8_t prk_out[32]) {
+  return nip44_hkdf_extract(salt, salt_len, ikm, ikm_len, prk_out);
+}
+
+int nostr_nip44_hkdf_expand(const uint8_t prk[32],
+                           const uint8_t *info, size_t info_len,
+                           uint8_t okm_out[], size_t okm_len) {
+  return nip44_hkdf_expand(prk, info, info_len, okm_out, okm_len);
+}
+
+int nostr_nip44_hmac_sha256(const uint8_t *key, size_t key_len,
+                           const uint8_t *data1, size_t len1,
+                           const uint8_t *data2, size_t len2,
+                           uint8_t mac_out[32]) {
+  return nip44_hmac_sha256(key, key_len, data1, len1, data2, len2, mac_out);
 }
