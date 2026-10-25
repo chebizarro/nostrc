@@ -52,6 +52,19 @@ class Boundaries(unittest.TestCase):
         self.assertTrue(any("-> vault (libvault:5)" in key for key in findings))
         self.assertTrue(any("-> nostrc::porthome (libporthome:4)" in key for key in findings))
 
+    def test_bud02_is_layer_two_and_cannot_link_hanami(self):
+        self.assertEqual(b.LAYERS["nips/bud02"], 2)
+        self.assertEqual(b.layer("nips/bud02"), 2)
+        files = {
+            "nips/bud02/CMakeLists.txt": "add_library(bud02 src/auth.c)\nadd_library(nostrc::bud02 ALIAS bud02)",
+            "libhanami/CMakeLists.txt": "add_library(hanami src/hanami.c)\ntarget_link_libraries(hanami PUBLIC nostrc::bud02)",
+        }
+        self.assertFalse(b.link_findings(files))
+        files["nips/bud02/CMakeLists.txt"] += "\ntarget_link_libraries(bud02 PRIVATE hanami)"
+        self.assertEqual(list(b.link_findings(files)), [
+            "link|nips/bud02/CMakeLists.txt|bud02 (nips/bud02:2) -> hanami (libhanami:5)"
+        ])
+
     def test_cli_injection_and_allowlist_ratchet(self):
         with tempfile.TemporaryDirectory(prefix="r0-boundary-test-") as directory:
             root = Path(directory)

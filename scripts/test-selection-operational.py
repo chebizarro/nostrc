@@ -17,6 +17,7 @@ MODULES = (
     "test_selector_cli",
     "test_selector_checkout_binding",
     "test_shared_dependency_edges",
+    "test_package_boundary_selection",
     "test_service_impact",
     "test_cmake_inventory_compat",
     "test_local_selective_delivery",
