@@ -33,7 +33,7 @@ if(DEFINED CACHE{MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER})
 endif()
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 12)
+set(MARMOT_VERSION_MINOR 13)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
@@ -79,6 +79,7 @@ pkg_check_modules(LMDB IMPORTED_TARGET lmdb)
 # ─── Source files ─────────────────────────────────────────────────────────
 set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/exporter.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot_error.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot_types.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/marmot_storage.c
@@ -317,6 +318,13 @@ if(BUILD_TESTING)
   target_link_libraries(test_mls_welcome PRIVATE marmot)
   target_include_directories(test_mls_welcome PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_mls_welcome COMMAND test_mls_welcome)
+
+  add_executable(test_exporter ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_exporter.c)
+  target_link_libraries(test_exporter PRIVATE marmot)
+  target_include_directories(test_exporter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_options(test_exporter PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+  add_test(NAME marmot_test_exporter COMMAND test_exporter)
+  set_tests_properties(marmot_test_exporter PROPERTIES TIMEOUT 30 LABELS "libmarmot;unit")
 
   # Test: Protocol layer (MIP-00 through MIP-03)
   add_executable(test_protocol ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol.c)

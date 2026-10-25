@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.12.0',
+  version: '0.13.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -88,6 +88,7 @@ endif
 # Sources
 marmot_sources = files(
   'src/marmot.c',
+  'src/exporter.c',
   'src/marmot_error.c',
   'src/marmot_types.c',
   'src/marmot_storage.c',
@@ -206,6 +207,7 @@ if get_option('tests')
     'test_mls_group',
     'test_app_data_update',
     'test_mls_welcome',
+    'test_exporter',
     'test_protocol',
     'test_commits',
     'test_ratchet_persist',

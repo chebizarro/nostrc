@@ -95,7 +95,9 @@ class PackageBoundarySelection(unittest.TestCase):
                 self.assertEqual(selected, expected)
             else:
                 self.assertTrue(expected | {"supported.nostr.gobject.vault",
-                                            "bindings.rust.consumer"} <= selected)
+                                            "bindings.rust.consumer",
+                                            "root.asan.libvault.marmot",
+                                            "supported.libvault.marmot"} <= selected)
                 self.assertFalse({"supported.libporthome", "supported.libblossom"} & selected)
         for name in expected:
             check = self.policy["checks"][name]
@@ -174,6 +176,34 @@ class PackageBoundarySelection(unittest.TestCase):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
                                base="b" * 40, context="ci")
             self.assertNotIn(name, plan["selected_checks"])
+
+    def test_marmot_adapter_selection_and_dependency_direction(self):
+        expected = {"root.asan.libvault.marmot", "supported.libvault.marmot"}
+        for path in ("libvault-marmot/src/carrier.c", "libvault-marmot/src/seed.c",
+                     "libvault-marmot/include/vault-marmot/vault-marmot.h",
+                     "libvault-marmot/tests/test_grant_marmot.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                               base="b" * 40, context="ci")
+            self.assertEqual(plan["effective_mode"], "affected")
+            self.assertEqual(set(plan["selected_checks"]), expected)
+        for path in ("libmarmot/src/exporter.c", "libvault/src/nip59.c",
+                     "libporthome/src/crypto.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                               base="b" * 40, context="ci")
+            self.assertTrue(expected <= set(plan["selected_checks"]))
+        self.assertNotIn("libmarmot", self.policy["nodes"]["libvault"]["depends_on"])
+        for name in expected:
+            check = self.policy["checks"][name]
+            self.assertEqual(check["build_targets"], ["test_vault_grant_marmot"])
+            for profile in check["profiles"]:
+                self.assertEqual(check["ctest_tests"][profile], ["test_vault_grant_marmot"])
+        for name in ("root.asan.libmarmot", "supported.libmarmot"):
+            check = self.policy["checks"][name]
+            for profile in check["profiles"]:
+                self.assertIn("marmot_test_exporter", check["ctest_tests"][profile])
+        plan = s.make_plan(self.policy, [change("libhanami/src/hanami.c")],
+                           head="a" * 40, base="b" * 40, context="ci")
+        self.assertFalse(expected & set(plan["selected_checks"]))
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],

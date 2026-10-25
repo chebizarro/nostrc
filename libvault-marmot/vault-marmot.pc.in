@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+Name: vault-marmot
+Description: MLS exporter seed and Marmot grant carrier for libvault
+Version: @vault_marmot_VERSION@
+Requires: vault marmot >= 0.13.0
+Requires.private: @VAULT_MARMOT_PC_PRIVATE_REQUIRES@
+Libs: -L${libdir} -lvault-marmot
+Libs.private: -lnostr_nip44_core
+Cflags: -I${includedir}

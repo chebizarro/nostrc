@@ -619,6 +619,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -647,6 +648,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -13191,6 +13193,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -13219,6 +13222,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -13247,6 +13251,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_kp_lifecycle",
           "marmot_test_kp_profile",
@@ -13272,6 +13277,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -13300,6 +13306,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -13328,6 +13335,7 @@
           "marmot_test_adopted_commits",
           "marmot_test_app_data_update",
           "marmot_test_commits",
+          "marmot_test_exporter",
           "marmot_test_extension",
           "marmot_test_interop",
           "marmot_test_kp_lifecycle",
@@ -20763,6 +20771,38 @@
       ],
       "runtime_inputs": []
     },
+    "root.asan.libvault.marmot": {
+      "build_targets": ["test_vault_grant_marmot"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": ["test_vault_grant_marmot"],
+        "core.linux.asan": ["test_vault_grant_marmot"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.core", "libvault.marmot", "libvault.marmot.test_inputs"],
+      "profiles": ["core.macos.asan", "core.linux.asan"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "supported.libvault.marmot": {
+      "build_targets": ["test_vault_grant_marmot"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.linux": ["test_vault_grant_marmot"],
+        "grotto.linux": ["test_vault_grant_marmot"],
+        "grotto.linux.asan_ubsan": ["test_vault_grant_marmot"],
+        "groundhog.linux": ["test_vault_grant_marmot"],
+        "groundhog.mdk011": ["test_vault_grant_marmot"],
+        "groundhog.mdk08": ["test_vault_grant_marmot"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["execution.core", "execution.grotto", "execution.groundhog", "libvault.marmot", "libvault.marmot.test_inputs"],
+      "profiles": ["core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk011", "groundhog.mdk08"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.libvault": {
       "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59"],
       "cost": "ordinary",
@@ -23603,6 +23643,18 @@
       "depends_on": ["libporthome", "libvault"],
       "owner_paths": ["bindings/rust", ".github/workflows/rust-bindings-ci.yml"],
       "rationale": "Installed-header Rust consumer; C runtime/API changes select compatibility without selecting prerequisite suites for Rust-only edits."
+    },
+    "libvault.marmot": {
+      "id": "libvault.marmot",
+      "depends_on": ["libvault", "libmarmot"],
+      "owner_paths": ["libvault-marmot"],
+      "rationale": "Layer-5 optional MLS grant adapter; vault itself has no MLS dependency."
+    },
+    "libvault.marmot.test_inputs": {
+      "id": "libvault.marmot.test_inputs",
+      "depends_on": [],
+      "owner_paths": ["libvault-marmot/tests"],
+      "rationale": "Adapter test inputs select only adapter checks, not prerequisite suites."
     },
     "libvault": {
       "id": "libvault",
@@ -28288,6 +28340,18 @@
     },
     {
       "effect": "impact",
+      "prefix": "libvault-marmot",
+      "nodes": ["libvault.marmot"],
+      "reason": "Optional MLS adapter production ownership."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libvault-marmot/tests",
+      "nodes": ["libvault.marmot.test_inputs"],
+      "reason": "Adapter test inputs stay local to the adapter checks."
+    },
+    {
+      "effect": "impact",
       "prefix": "libvault",
       "nodes": ["libvault"],
       "reason": "Vault package ownership; reverse impact selects consumers, not prerequisite suites."
@@ -29941,6 +30005,12 @@
       "package_jobs": [],
       "publisher": "none",
       "version_sources": [{"join": ".", "path": "nips/nip59/CMakeLists.txt", "pattern": "project\\(nip59\\s+VERSION\\s+(\\d+)\\.(\\d+)\\.(\\d+)\\s+LANGUAGES\\s+C\\)"}]
+    },
+    "libvault-marmot": {
+      "manifest_name": "libvault-marmot",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [{"join": ".", "path": "libvault-marmot/CMakeLists.txt", "pattern": "declare_component_version\\(vault_marmot\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
     },
     "libvault": {
       "manifest_name": "libvault",
