@@ -47,6 +47,11 @@ files already declare a version.
   and bounded/hash-verified bodies now apply to every migrated consumer.
   No release tags or latest-release columns change.
 
+- nostrc-2age4: bud02's pkg-config dependency name is corrected from
+  libnostr to the installed nostr.pc name. Packaging correction folded
+  into the still-unreleased initial 0.1.0; no public codec change or
+  additional version increment.
+
 - nostrc-er4fz.2 (R1): libhanami 0.1.0 -> 0.2.0 (MINOR for a breaking
   0.x public API/build change). BUD-02 auth moves to `nips/bud02`, with
   `<nostr/bud02/auth.h>`, `nostr_bud02_*` symbols and `NOSTR_BUD02_*`
