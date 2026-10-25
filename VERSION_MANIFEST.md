@@ -27,7 +27,7 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.3.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.2.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.2.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -36,6 +36,11 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-kehos: libporthome PATCH 0.2.0 -> 0.2.1 for bounded hex64 input
+  validation before paired-nibble access, fixing out-of-bounds reads on short
+  strings. Valid decoding and the public API/wire formats are unchanged.
+  Regression tests are test-only; no other component changes or version bumps.
 
 - nostrc-hl30i.1 (SV-1): libporthome MINOR 0.1.0 -> 0.2.0 for additive
   PCS v2 cryptree/epoch sealing, head/name keys, bucket padding and pure

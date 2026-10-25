@@ -44,8 +44,51 @@ static porthome_index_status stop(void *ctx, const porthome_index_entry *row)
     (void)ctx; (void)row;
     return PORTHOME_INDEX_ERR_STORAGE;
 }
+static void test_hex64(void)
+{
+    uint8_t expected[32], decoded[32];
+    char hex[65];
+    for (size_t i = 0; i < sizeof(expected); ++i) expected[i] = (uint8_t)(0xa0 + i);
+    porthome_hex64(expected, hex);
+    CHECK(porthome_from_hex64(hex, decoded) == PORTHOME_OK);
+    CHECK(!memcmp(expected, decoded, sizeof(expected)));
+    for (size_t i = 0; i < 64; ++i) {
+        if (hex[i] >= 'a' && hex[i] <= 'f') hex[i] -= 'a' - 'A';
+    }
+    CHECK(porthome_from_hex64(hex, decoded) == PORTHOME_OK);
+    CHECK(!memcmp(expected, decoded, sizeof(expected)));
+
+    /* Exact allocations make every short length a sanitizer regression case,
+     * including an even-length prefix whose NUL used to be read as a nibble. */
+    for (size_t len = 0; len < 64; ++len) {
+        char *short_hex = malloc(len + 1);
+        CHECK(short_hex);
+        memset(short_hex, 'a', len);
+        short_hex[len] = '\0';
+        CHECK(porthome_from_hex64(short_hex, decoded) == PORTHOME_ERR_ARG);
+        free(short_hex);
+    }
+    for (size_t i = 0; i < 64; ++i) {
+        char bad[65];
+        memcpy(bad, hex, sizeof(bad));
+        bad[i] = 'g';
+        CHECK(porthome_from_hex64(bad, decoded) == PORTHOME_ERR_ARG);
+    }
+    char long_hex[66];
+    memset(long_hex, 'a', sizeof(long_hex) - 1);
+    long_hex[65] = '\0';
+    CHECK(porthome_from_hex64(long_hex, decoded) == PORTHOME_ERR_ARG);
+    /* The bounded check must also stop without needing a NUL beyond byte 64. */
+    char unterminated[65];
+    memset(unterminated, 'a', sizeof(unterminated));
+    CHECK(porthome_from_hex64(unterminated, decoded) == PORTHOME_ERR_ARG);
+    CHECK(porthome_from_hex64(NULL, decoded) == PORTHOME_ERR_ARG);
+    CHECK(porthome_from_hex64(hex, NULL) == PORTHOME_ERR_ARG);
+}
+
 int main(void)
 {
+    test_hex64();
     uint8_t seed[32] = {1}, key[32], compat_key[32], digest[32];
     CHECK(porthome_key_derive(seed, key) == PORTHOME_OK);
     CHECK(nh_porthome_key_derive(seed, compat_key) == NH_PORTHOME_OK);

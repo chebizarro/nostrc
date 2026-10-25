@@ -68,13 +68,13 @@ static int hex_nibble(char c) {
 
 int porthome_from_hex64(const char *in_hex, uint8_t out[32]) {
     if (!in_hex || !out) return PORTHOME_ERR_ARG;
+    if (strnlen(in_hex, 65) != 64) return PORTHOME_ERR_ARG;
     for (int i = 0; i < 32; i++) {
         int hi = hex_nibble(in_hex[2*i]);
         int lo = hex_nibble(in_hex[2*i+1]);
         if (hi < 0 || lo < 0) return PORTHOME_ERR_ARG;
         out[i] = (uint8_t)((hi << 4) | lo);
     }
-    if (in_hex[64] != '\0') return PORTHOME_ERR_ARG;
     return PORTHOME_OK;
 }
 
