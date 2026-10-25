@@ -49,10 +49,8 @@ make -j$(nproc)
 
 ### Running Tests
 
-```bash
-cd build
-ctest --output-on-failure
-```
+From the repository root, use the affected commands in [Testing](#testing).
+Do not run whole-repository CTest for an ordinary Grotto change.
 
 ## Code Organization
 
@@ -100,10 +98,52 @@ G_MESSAGES_DEBUG=all ./grotto
 
 ### Running Tests
 
-```bash
-cd build
-ctest -V
+Run from the repository root against the commits being reviewed:
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
 ```
+
+For uncommitted work, use `scripts/test-gate.sh --explain` then
+`scripts/test-gate.sh`; committed `--head` execution never tests dirty files.
+Inspect inclusions, downstream compatibility, unrelated omissions and any broad
+fallback before executing. The native Linux profile is `grotto.linux`; explicit
+ASan/UBSan verification uses `--profile grotto.linux.asan_ubsan` on Linux x86_64
+(append the same option to both committed commands). A profile restricts coverage;
+it does not replace the other selected consumer families.
+
+Coverage labels `nip55l`, `core.macos` and `grotto.tests.*` refer to signer,
+macOS and Grotto test coverage, not three literal `--profile` IDs. The current
+macOS profile is `core.macos.asan`; NIP-55L and Grotto checks span the profiles
+printed by `--explain`. Do not pass globs as profile IDs or run a Linux profile
+on macOS. Missing required capabilities fail visibly; use the matching CI/native
+runner rather than dropping selected checks. See
+[dependency-aware commands](../../docs/TESTING.md#dependency-aware-commands).
+
+Use `scripts/test-gate.sh --broad` only for selector-code changes,
+master/release/manual validation, or a recorded named reason. Broad fallback for
+unknown inputs must be explained, not disguised as bounded selection.
+`--broad --profile <id>` is broad only within that profile, not whole-repo proof.
+The push hook remains static-only; `scripts/linux-gate.sh` is a legacy adapter,
+not an ordinary Grotto prerequisite.
+
+### Agent brief template
+
+“Implement the scoped Grotto/nip55l change. From the repository root run
+`BASE=$(git merge-base origin/master HEAD)` and `HEAD_SHA=$(git rev-parse HEAD)`,
+then `scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain` and
+`scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"`. Inspect `grotto.linux`,
+`grotto.linux.asan_ubsan` and the `nip55l`, `core.macos`, `grotto.tests.*` coverage
+above; record selected consumers/compatibility, unrelated omissions and actual
+results. For explicit Linux sanitizer verification append
+`--profile grotto.linux.asan_ubsan` to both commands. For CI/selector/runner changes
+also run `python3 scripts/test-selection-operational.py`. Use `--broad` only for
+selector-code changes, master/release/manual runs or a stated named reason.
+Do not substitute full CTest or linux-gate, or claim skipped/unavailable checks
+as passing.”
 
 ### Writing Tests
 

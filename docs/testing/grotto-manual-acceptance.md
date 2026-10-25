@@ -6,6 +6,28 @@ fixture camera images and fake Control1 are not substitutes. Grotto stays Previe
 0.1.0; the owner decides promotion only after this evidence and the other final
 gates pass. Delivery of G12 does not close the acceptance beads below.
 
+## Automated prerequisites
+
+From the repository root, inspect the affected plan and then execute that range:
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+```
+
+For working changes use `scripts/test-gate.sh --explain` then
+`scripts/test-gate.sh`. See [Development testing](../../apps/grotto/DEVELOPMENT.md#testing)
+for `grotto.linux`, `grotto.linux.asan_ubsan` and the `nip55l`, `core.macos`,
+`grotto.tests.*` coverage labels/current profile IDs. Include relevant downstream
+compatibility; a profile restriction is not unrestricted coverage. Missing
+required capabilities fail visibly. Use `--broad` only for selector-code changes,
+master/release/manual validation or a stated named reason, not as the ordinary
+Grotto prerequisite. Whole-repository CTest and the legacy Linux gate are not
+required for ordinary changes. These automated results do not satisfy any manual
+matrix cell below; the installed matrix is unchanged.
+
 ## Clean-session matrix and evidence record
 
 Run **every** applicable step below in each column, on unpatched distro GTK:

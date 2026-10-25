@@ -547,11 +547,29 @@ Replace `MockBunkerService`; mocks only at external I/O/key-backend boundaries; 
 
 Fixtures: repository private-bus helper (never the owner's session bus); existing profile isolation/backend guards; temp HOME/XDG; memory GSettings where appropriate; disposable test key backend; loopback relays on dynamic ports; signal/frame-driven sync (no sleeps; timeouts only as failure bounds). Tests needing independent daemon processes use the private-bus helper even under `dbus-run-session`.
 
-Commands:
-- Full: `dbus-run-session -- xvfb-run -a ctest --test-dir <build> -R '^signer/' --output-on-failure`
-- UI: `xvfb-run -a ctest --test-dir <build> -R '^signer/(approval-dialog|ui-layout|onboarding)$' --output-on-failure`
-- Protocol: `ctest --test-dir <build> -R '^signer/(bunker|bunker-e2e|permissions)$' --output-on-failure`
-- ASAN/UBSAN over callback ownership, migrations and NIP-46; TSAN for core relay-to-daemon dispatch. Add a CI workflow because none runs `signer/*` today.
+Commands (repository root; ordinary Grotto/nip55l changes use affected selection):
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+# Explicit Linux x86_64 sanitizer projection; not all consumer profiles:
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --profile grotto.linux.asan_ubsan --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --profile grotto.linux.asan_ubsan
+```
+
+For dirty work use `scripts/test-gate.sh --explain` then `scripts/test-gate.sh`.
+Inspect `grotto.linux`, `grotto.linux.asan_ubsan` and the `nip55l`, `core.macos`,
+`grotto.tests.*` coverage labels (actual IDs and host limits in
+[Development testing](../../apps/grotto/DEVELOPMENT.md#testing)), including downstream
+compatibility and unrelated omissions. Missing required capabilities fail visibly.
+Use `--broad` only for selector-code changes, master/release/manual validation or a
+stated named reason; profile-restricted broad coverage is not whole-repository
+proof. Do not require whole-repository CTest or the legacy Linux gate for ordinary
+changes. `.github/workflows/grotto-ci.yml` owns the Linux floor/current native and
+ASan/UBSan routes; pinned-runtime TSan remains explicitly advisory, not a promotion
+gate. Preserve named quarantines with their bead IDs and original failures.
 
 Manual release matrix on clean Ubuntu **24.04 stock GNOME**, **24.04 Ubuntu session**, **26.04**: first local request starts daemon + GUI without opening management unnecessarily; notifications reveal nothing sensitive on lock screen/history; DND and notification denial preserve inbox access; window close, Ctrl+Q, logout, daemon upgrade behave as specified; AppIndicator absence/presence changes no essential behaviour; Background portal status and autostart match actual process state; keyring-unlock cancellation preserves pending/state honestly; two local consumers use different identities without affecting each other; two remote clients interleave without attribution leakage; pairing, revoke, relay outage, reconnect, pause, resume without daemon restart; native unit + bunker drop-in network policy exercised; Orca, keyboard-only, RTL, 200 % text and 360 px width usable; capture light/dark screenshots of onboarding, compact approval, client permissions, identities and degraded bunker state.
 

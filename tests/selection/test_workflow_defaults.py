@@ -4,6 +4,9 @@ import json
 import os
 import re
 import sys
+import tempfile
+import textwrap
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -40,12 +43,54 @@ class RepresentativeSelectionTests(unittest.TestCase):
         self.assertFalse(result['broad'])
         self.assertEqual(result['families'], ['grotto', 'windows'])
         self.assertFalse(result['run_reference'])
-        # The broad Grotto path remains; affected checks use the shared handoff.
+        # Broad/advisory paths remain; ordinary PR execution uses test-gate.
         text = workflow('grotto-ci')
         self.assertIn('ctest --test-dir build -j1 -R "$regex" --no-tests=error', text)
         self.assertIn("regex='^(signer/|nip55l_|nostr_signer_webext_host_)'", text)
-        self.assertIn('ci-selected-execution.py run', text)
+        self.assertIn('ci-selected-execution.py run', text)  # advisory TSan
+        self.assertIn('scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --profile "$profile"', text)
         self.assertNotIn('ctest --test-dir build --output-on-failure\n', text)
+
+    def test_grotto_rejects_vacuous_plan_at_the_production_workflow_boundary(self):
+        text = workflow('grotto-ci')
+        block = text.split('      - name: Reject vacuous Grotto plans\n', 1)[1].split('      - name:', 1)[0]
+        script = textwrap.dedent(block.split('        run: |\n', 1)[1])
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        fixture = s.read_json(ROOT / 'tests/selection/fixtures/nip55l_affected.json')
+        for path in ('apps/grotto/src/main_app.c', fixture['signer_path'],
+                     'nostr-gobject/src/nostr_relay.c', 'apps/grotto/README.md'):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                plan_path = Path(tmp) / 'grotto-plan/run/0/plan.json'
+                plan_path.parent.mkdir(parents=True)
+                plan = s.make_plan(policy, [change(path)], head='a' * 40)
+                if path == fixture['signer_path']:
+                    self.assertEqual(plan['selected_checks'], fixture['expected_signer_checks'])
+                plan_path.write_text(json.dumps(plan))
+                with patch.dict(os.environ, RUNNER_TEMP=tmp):
+                    exec(compile(script, 'grotto-ci.yml:Reject vacuous Grotto plans', 'exec'), {})
+                    # Deletion/rename source paths count too; zero checks must fail.
+                    for side in ('old_path', 'new_path'):
+                        plan['changes'] = [{side: path}]
+                        plan['selected_checks'] = []
+                        plan_path.write_text(json.dumps(plan))
+                        with self.assertRaisesRegex(SystemExit, 'zero checks'):
+                            exec(compile(script, 'grotto-ci.yml:Reject vacuous Grotto plans', 'exec'), {})
+
+    def test_grotto_plan_is_uploaded_before_affected_execution_and_guards_remain(self):
+        text = workflow('grotto-ci')
+        self.assertLess(text.index('Upload plan before execution'), text.index('Execute affected Grotto profile'))
+        self.assertIn('fetch-depth: 0', text)
+        self.assertIn('base=$(git merge-base "${PR_BASE:-$QUEUE_BASE}" "$head")', text)
+        self.assertIn('pull_request|merge_group)', text)
+        self.assertIn('push|release|workflow_dispatch|workflow_call)', text)
+        self.assertIn('args+=(--broad --profile "$profile")', text)
+        self.assertIn('refs/heads/main|refs/heads/master|refs/tags/*)', text)
+        self.assertIn('grotto.linux.asan_ubsan', text)
+        self.assertIn('ADVISORY, non-gating', text)
+        self.assertIn('nostrc-u6v55.14.4', text)
+        self.assertIn('scripts/grotto-ci-quarantine.tsv', text)
+        self.assertIn('SANITIZER_REPORTS: block', text)
+        self.assertIn('detect_leaks=1:halt_on_error=1', text)
 
     def test_mdk09_probe_selects_the_existing_mdk011_probe_runner_not_mdk08(self):
         path = 'tests/interop/mdk/driver-0.9-probe/src/main.rs'

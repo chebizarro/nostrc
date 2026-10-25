@@ -7,7 +7,7 @@ on:
         type: string
         required: true
       selection_artifact:
-        description: Same-run shared selection plan artifact; empty keeps broad execution
+        description: Same-run shared selection plan artifact (required for affected PR execution)
         type: string
         default: ''
       artifact_prefix:
@@ -48,6 +48,7 @@ jobs:
         with:
           submodules: recursive
           ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify requested checkout
         if: inputs.sha != ''
@@ -55,6 +56,68 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Explain dependency-aware Grotto verification
+        id: gate
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          SELECTION_ARTIFACT: ${{ inputs.selection_artifact }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          args=(--head "$head")
+          case "$EVENT" in
+            pull_request|merge_group)
+              test -n "$SELECTION_ARTIFACT"
+              base=$(git merge-base "${PR_BASE:-$QUEUE_BASE}" "$head")
+              args+=(--base "$base")
+              echo "base=$base" >> "$GITHUB_OUTPUT"
+              echo 'affected=true' >> "$GITHUB_OUTPUT" ;;
+            push|release|workflow_dispatch|workflow_call)
+              if [[ "$EVENT" == push || "$EVENT" == workflow_call ]]; then
+                case "$GITHUB_REF" in
+                  refs/heads/main|refs/heads/master|refs/tags/*) ;;
+                  *) echo 'Broad Grotto CI requires master/release/manual dispatch' >&2; exit 1 ;;
+                esac
+              fi
+              # Broad only within this family's profile, not whole-repository proof.
+              # TSan retains the explicitly advisory subset of the native plan.
+              profile=grotto.linux
+              if [[ "$MODE" == asan-ubsan ]]; then profile=grotto.linux.asan_ubsan; fi
+              args+=(--broad --profile "$profile")
+              echo 'affected=false' >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unsupported Grotto CI event: $EVENT" >&2; exit 1 ;;
+          esac
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          scripts/test-gate.sh "${args[@]}" --explain \
+            --evidence-dir "$RUNNER_TEMP/grotto-plan" | tee grotto-plan-explain.txt
+      - name: Reject vacuous Grotto plans
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          plans = list((Path(os.environ['RUNNER_TEMP']) / 'grotto-plan').glob('*/0/plan.json'))
+          assert len(plans) == 1, f'Expected one source-bound plan, got {plans}'
+          plan = json.loads(plans[0].read_text())
+          protected = ('apps/grotto/', 'nips/nip55l/', 'nostr-gobject/')
+          touched = any((change.get(side) or '').startswith(protected)
+                        for change in plan['changes'] for side in ('old_path', 'new_path'))
+          if touched and not plan['selected_checks']:
+              raise SystemExit('Grotto/nip55l/GObject change selected zero checks; refusing vacuous success')
+      - name: Upload plan before execution (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}grotto-plan-${{ matrix.runner }}-${{ matrix.mode }}
+          path: |
+            grotto-plan-explain.txt
+            ${{ runner.temp }}/grotto-plan/**/plan.json
+            ${{ runner.temp }}/grotto-plan/**/adapter-receipt.json
+          if-no-files-found: error
       - uses: actions/download-artifact@v4
         if: inputs.selection_artifact != ''
         with:
@@ -140,7 +203,8 @@ jobs:
         run: |
           bash scripts/grotto-tsan-runtime.sh "$RUNNER_TEMP/grotto-tsan" | tee tsan-runtime.log
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/grotto-tsan/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
-      - name: Configure
+      - name: Configure legacy broad / advisory / supplemental build
+        if: steps.gate.outputs.affected != 'true' || (matrix.mode == 'tsan' && steps.selection.outputs.has_checks == 'true') || steps.selection.outputs.grotto_frontend == 'true' || steps.selection.outputs.grotto_package == 'true'
         env:
           MODE: ${{ matrix.mode }}
         run: |
@@ -158,29 +222,44 @@ jobs:
             -DBUILD_TESTING=ON -DBUILD_SIGNER_TESTS=ON -DBUILD_NATIVE_HOST=ON \
             -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service \
             -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF -DENABLE_TCP_IPC=ON -DNIP55L_TEST_TRUST_ENV=ON "${flags[@]}"
-      - name: Build
+      - name: Build legacy broad / advisory / supplemental targets
+        if: steps.gate.outputs.affected != 'true' || (matrix.mode == 'tsan' && steps.selection.outputs.has_checks == 'true') || steps.selection.outputs.grotto_frontend == 'true' || steps.selection.outputs.grotto_package == 'true'
         run: cmake --build build --parallel 2
       - name: Prove GUI LSan exceptions do not hide application fixture leaks
-        if: matrix.mode == 'asan-ubsan' && steps.selection.outputs.affected != 'true'
+        if: matrix.mode == 'asan-ubsan' && steps.gate.outputs.affected != 'true'
         run: python3 scripts/test-grotto-lsan-suppressions.py build/lsan-counterfactuals
       - name: Go toolchain for selected interop checks
-        if: steps.selection.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
+        if: steps.gate.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: false
       - name: Build pinned nak for selected interop checks
-        if: steps.selection.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
+        if: steps.gate.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
         run: |
           go install github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
-      - name: Run signer and nip55l suites (no quarantines)
+      - name: Execute affected Grotto profile
+        if: steps.gate.outputs.affected == 'true' && matrix.mode != 'tsan'
+        env:
+          BASE: ${{ steps.gate.outputs.base }}
+          HEAD_SHA: ${{ steps.gate.outputs.head }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          profile=grotto.linux
+          if [[ "$MODE" == asan-ubsan ]]; then profile=grotto.linux.asan_ubsan; fi
+          # This family owns the Grotto projection; other CI families own consumers.
+          scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --profile "$profile" \
+            --evidence-dir "$RUNNER_TEMP/grotto-execution"
+      - name: Run legacy broad signer suites / selected advisory TSan
+        if: steps.gate.outputs.affected != 'true' || (matrix.mode == 'tsan' && steps.selection.outputs.has_checks == 'true')
         env:
           MODE: ${{ matrix.mode }}
         run: |
           set -euo pipefail
-          if [[ '${{ steps.selection.outputs.affected }}' != true ]]; then
+          if [[ '${{ steps.gate.outputs.affected }}' != true ]]; then
             python3 scripts/check-linux-ci-packages.py --self-test
             python3 scripts/test-grotto-quarantine.py
           fi
@@ -207,7 +286,9 @@ jobs:
           assert units and all('-fsanitize=thread' in u['command'] for u in units), 'nsync must be instrumented too'
           PY
           fi
-          if [[ '${{ steps.selection.outputs.affected }}' == true ]]; then
+          # No authored TSan profile exists: retain G12's advisory partition and
+          # pinned GLib/nsync safeguards, never relabel it as ASan/native proof.
+          if [[ '${{ steps.gate.outputs.affected }}' == true && '${{ steps.selection.outputs.affected }}' == true ]]; then
             profile=grotto.linux
             args=()
             if [[ "$MODE" == asan-ubsan ]]; then profile=grotto.linux.asan_ubsan; fi
@@ -229,19 +310,19 @@ jobs:
               --output-junit "$PWD/build/signer-ctest.xml" | tee build/signer-ctest.log
           ! grep -E '\*\*\*Skipped|Not Run' build/signer-ctest.log
       - name: Go toolchain for the real nak baseline test
-        if: matrix.mode == 'native' && steps.selection.outputs.affected != 'true'
+        if: matrix.mode == 'native' && steps.gate.outputs.affected != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: false
       - name: Build pinned nak (same interop peer as Groundhog CI)
-        if: matrix.mode == 'native' && steps.selection.outputs.affected != 'true'
+        if: matrix.mode == 'native' && steps.gate.outputs.affected != 'true'
         run: |
           go install github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
       - name: Known desktop baseline tests (executed, named quarantine)
-        if: matrix.mode == 'native' && steps.selection.outputs.affected != 'true'
+        if: matrix.mode == 'native' && steps.gate.outputs.affected != 'true'
         env:
           BUILD_DIR: ${{ github.workspace }}/build
           STATE_DIR: ${{ github.workspace }}/build/baseline
@@ -255,12 +336,12 @@ jobs:
           TAIL_LINES: all
         run: bash scripts/linux-gate-smoke.sh
       - name: Build the alternate GUI frontend
-        if: matrix.mode == 'native' && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.grotto_frontend == 'true')
+        if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.grotto_frontend == 'true')
         run: |
           meson setup build-meson apps/grotto -Dcmake_build_dir="$PWD/build"
           meson compile -C build-meson
       - name: Build and inspect the single native deb
-        if: matrix.mode == 'native' && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.grotto_package == 'true')
+        if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.grotto_package == 'true')
         run: |
           mkdir -p /tmp/grotto-package/source
           rsync -a --exclude=.git --exclude=/build --exclude=/build-meson --exclude=/debian \
@@ -272,7 +353,7 @@ jobs:
           dpkg-deb -c build/packages/grotto_*.deb | tee build/packages/contents.txt
           ! ls /tmp/grotto-package/grotto-daemon_*.deb
       - name: Shell extension tests
-        if: matrix.mode == 'native' && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.shell_extension == 'true')
+        if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.shell_extension == 'true')
         run: |
           # Private-bus GJS unit, not live GNOME Shell acceptance.
           sh gnome/nostr-shell-extension/tests/run-signer.sh
@@ -283,6 +364,12 @@ jobs:
           name: ${{ inputs.artifact_prefix }}grotto-${{ matrix.runner }}-${{ matrix.mode }}
           path: |
             dependency-versions.txt
+            ${{ runner.temp }}/grotto-execution/**/plan.json
+            ${{ runner.temp }}/grotto-execution/**/adapter-receipt.json
+            ${{ runner.temp }}/grotto-execution/**/legacy-result.json
+            ${{ runner.temp }}/grotto-execution/**/*.log
+            ${{ runner.temp }}/grotto-execution/**/ctest.xml
+            ${{ runner.temp }}/grotto-execution/**/screenshots/**
             tsan-runtime.log
             build/tsan-runtime-linkage.txt
             build/lsan-counterfactuals/

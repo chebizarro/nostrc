@@ -157,6 +157,28 @@ path and revokes remote admission first. Pairing tokens and session pause are no
 persisted. After installing an upgrade, reload systemd, restart once, inspect
 status/store health, then exercise one explicitly allowed and one denied request.
 
+## Automated prerequisites for daemon changes
+
+Before installed deployment acceptance, run the affected verification from the
+repository root:
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+```
+
+For uncommitted changes use `scripts/test-gate.sh --explain` then
+`scripts/test-gate.sh`. Inspect signer consumers and compatibility, not only a
+helper test. See [Development testing](DEVELOPMENT.md#testing) for
+`grotto.linux`, `grotto.linux.asan_ubsan` and the `nip55l`, `core.macos`,
+`grotto.tests.*` coverage labels and current profile IDs. Missing capabilities
+fail visibly. Ordinary daemon changes do not require whole-repository CTest or
+the legacy Linux gate. Use `--broad` only for selector-code changes,
+master/release/manual runs or a stated named reason. Automated verification does
+not prove installed activation, real keyring prompts or live desktop acceptance.
+
 ## Diagnostics and limits
 
 ```sh

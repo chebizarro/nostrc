@@ -56,6 +56,32 @@ sanitizer, manual and hosted promotion limitations remain explicit below.
 | Navigation/source subtraction in both builds | G10 source/resource inventories; G12 CMake and alternate Meson GUI build checks (Meson consumes CMake-built libraries/daemon) |
 | Version consolidation with About/daemon/package use | G12 CMake GROTTO_VERSION and Meson project version feed About/daemon; desktop-contract checks 0.1.0 metadata/Debian/RPM/Arch agreement, manifest maintained in the same change |
 
+## Reproducing automated evidence for current changes
+
+The G12 table below is a historical receipt, including failures and skips, not
+instructions to repeat whole-repository CTest or `scripts/linux-gate.sh` for each
+Grotto change. From the repository root, use the current affected route:
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+```
+
+For dirty work use `scripts/test-gate.sh --explain` then `scripts/test-gate.sh`.
+Record the exact range, plan, selected checks/compatibility, omissions and actual
+results. `grotto.linux` and `grotto.linux.asan_ubsan` are the Linux profiles; the
+`nip55l`, `core.macos`, `grotto.tests.*` coverage labels/current profile IDs and
+platform limits are explained in
+[Development testing](../../apps/grotto/DEVELOPMENT.md#testing). For explicit Linux
+ASan/UBSan verification append `--profile grotto.linux.asan_ubsan` to both commands;
+this projection is not full consumer coverage. Missing required capabilities fail
+visibly. Use `--broad` only for selector-code changes, master/release/manual runs
+or a stated named reason. Preserve G12's named quarantines and advisory TSan label;
+current local checks do not retroactively establish hosted/native release or
+manual-matrix acceptance, nor erase the failures recorded below.
+
 ## Automated and packaging evidence
 
 Runs are serial on this host; no concurrent agent/build workload was requested.

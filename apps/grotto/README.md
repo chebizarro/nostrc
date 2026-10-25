@@ -304,6 +304,27 @@ for versioned files, backup and the unsafe-old-binary rollback limit.
 No installed GNOME, physical-camera, Orca or manual release-matrix step is claimed
 by the local automated suites.
 
+## Verification for changes
+
+From the repository root, explain the affected set before executing it:
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+```
+
+For working changes use `scripts/test-gate.sh --explain` then
+`scripts/test-gate.sh`. See [Testing and agent briefs](DEVELOPMENT.md#testing)
+for `grotto.linux`, `grotto.linux.asan_ubsan` and the `nip55l`, `core.macos`,
+`grotto.tests.*` coverage labels and actual profile IDs. Inspect downstream
+compatibility and unrelated omissions. Use `--broad` only for selector-code
+changes, master/release/manual runs or a stated named reason; profile-restricted
+broad coverage is not whole-repository proof. Ordinary changes do not require
+whole-repository CTest or the legacy Linux gate. Automated checks do not replace
+[installed desktop acceptance](../../docs/testing/grotto-manual-acceptance.md).
+
 ## Contributing
 
 Contributions are welcome! Please read our [DEVELOPMENT.md](DEVELOPMENT.md) for details on our code of conduct and the process for submitting pull requests.

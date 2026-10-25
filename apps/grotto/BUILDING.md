@@ -188,6 +188,29 @@ The Flatpak is configured with minimal permissions for security:
 
 ---
 
+## Verify a Grotto or NIP-55L change
+
+Run from the repository root, not the build directory:
+
+```sh
+BASE=$(git merge-base origin/master HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --explain
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA"
+```
+
+For dirty work use `scripts/test-gate.sh --explain` then `scripts/test-gate.sh`.
+[Development testing](DEVELOPMENT.md#testing) explains `grotto.linux`,
+`grotto.linux.asan_ubsan`, and the `nip55l`, `core.macos`, `grotto.tests.*`
+coverage labels. Use the actual profile IDs printed in the plan; explicit
+`--profile` restricts coverage. Linux profiles need their Linux runner, not a
+macOS build. Selected missing capabilities must fail, not silently skip tests.
+
+Use `--broad` only for selector-code changes, master/release/manual validation
+or a stated named reason. Whole-repository CTest and the legacy Linux gate are
+not prerequisites for ordinary Grotto changes. Keep installed/manual acceptance
+separate from build and affected-test evidence.
+
 ## Troubleshooting
 
 ### Build Fails with Missing Headers

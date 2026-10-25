@@ -125,7 +125,8 @@ class SelectedPlanTests(unittest.TestCase):
             self.assertIn('ci-selected-execution.py prepare', child)
             self.assertIn('ci-selected-execution.py run', child)
             self.assertIn("echo 'affected=false'", child)
-            self.assertIn("steps.selection.outputs.affected != 'true'", child)
+            route = 'gate' if family == 'grotto' else 'selection'
+            self.assertIn(f"steps.{route}.outputs.affected != 'true'", child)
         self.assertIn('--plan "$RUNNER_TEMP/ci-selection/plan.json"', text)
 
 
