@@ -6,9 +6,6 @@ set(PLUGIN_NAME mls-groups)
 # Find libadwaita for UI widgets
 pkg_check_modules(LIBADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
 
-# Find libsoup for Blossom HTTP uploads (Phase 7)
-pkg_check_modules(LIBSOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
-
 # Get the gnostr app directory (two levels up from plugin)
 set(GNOSTR_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 # Get the project root
@@ -76,7 +73,8 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::LIBPEAS
     PkgConfig::JSON_GLIB
     PkgConfig::LIBADWAITA
-    PkgConfig::LIBSOUP
+    nostr_gobject
+    bud02
 )
 
 # Link libgo for include paths

@@ -7,7 +7,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(GNOSTR 0 1 0)
+declare_component_version(GNOSTR 0 1 1)
 
 set(APP_CLIENT_NAME "GNostr")
 set(APP_CLIENT_BIN "gnostr")
@@ -203,7 +203,7 @@ endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject library (GObject wrappers compiled once in nostr-gobject/)
 # Link nostr-gobject (GObject wrappers) and nostr-gtk (GTK4 widgets)
-target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject)
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject bud02)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
 
 # libgo fiber runtime (background scheduler API used by main_app.c)
@@ -670,7 +670,7 @@ if (BUILD_TESTING)
     src/util/relay_info.c
     src/ipc/signer_ipc.c
     src/ipc/gnostr-signer-service.c)
-  target_link_libraries(gnostr-test-blossom PRIVATE nostr_gobject)
+  target_link_libraries(gnostr-test-blossom PRIVATE nostr_gobject bud02)
   # Disable NIP-65 async publishing (avoids utils.c/nostr_relay dependency)
   target_compile_definitions(gnostr-test-blossom PRIVATE GNOSTR_RELAY_TEST_ONLY=1)
   target_link_libraries(gnostr-test-blossom PRIVATE PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB PkgConfig::SOUP3 nostr nip19 libgo)
@@ -687,6 +687,17 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-blossom PROPERTIES
     TIMEOUT 30
     LABELS "blossom;unit;gnostr")
+
+  add_executable(gnostr-test-blossom-transport
+    tests/test_blossom_transport.c src/util/blossom.c)
+  target_include_directories(gnostr-test-blossom-transport PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR})
+  target_compile_definitions(gnostr-test-blossom-transport PRIVATE GNOSTR_BLOSSOM_LOCAL_TEST=1)
+  target_link_libraries(gnostr-test-blossom-transport PRIVATE
+    nostr_gobject bud02 PkgConfig::JSON_GLIB PkgConfig::SOUP3)
+  _gnostr_apply_sanitizers(gnostr-test-blossom-transport)
+  add_test(NAME gnostr-test-blossom-transport COMMAND gnostr-test-blossom-transport)
+  set_tests_properties(gnostr-test-blossom-transport PROPERTIES TIMEOUT 30 LABELS "blossom;integration;gnostr")
 
   # The bug-report assembly test moved to nostr-gtk test_nip34_issue_model.c
   # with the shared issue model (nostrc-8xfib.5).

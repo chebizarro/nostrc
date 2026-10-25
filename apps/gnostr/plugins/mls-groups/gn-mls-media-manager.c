@@ -9,7 +9,9 @@
 #include <json-glib/json-glib.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 #include <marmot/marmot.h>
-#include <libsoup/soup.h>
+#include <nostr-gobject-1.0/gn-blossom-client.h>
+#include <nostr/bud02/auth.h>
+#include <nostr-event.h>
 
 #define DEFAULT_BLOSSOM_SERVER "https://blossom.primal.net"
 
@@ -28,7 +30,7 @@ struct _GnMlsMediaManager
   GnMarmotService     *service;             /* strong ref */
   GnostrPluginContext *plugin_context;      /* borrowed */
   gchar               *blossom_server_url;  /* owned */
-  SoupSession         *http_session;        /* owned */
+  GnBlossomClient     *blossom;        /* owned */
 };
 
 G_DEFINE_TYPE(GnMlsMediaManager, gn_mls_media_manager, G_TYPE_OBJECT)
@@ -41,7 +43,7 @@ gn_mls_media_manager_dispose(GObject *object)
   GnMlsMediaManager *self = GN_MLS_MEDIA_MANAGER(object);
 
   g_clear_object(&self->service);
-  g_clear_object(&self->http_session);
+  g_clear_object(&self->blossom);
   g_clear_pointer(&self->blossom_server_url, g_free);
   self->plugin_context = NULL;
 
@@ -61,7 +63,7 @@ gn_mls_media_manager_init(GnMlsMediaManager *self)
   self->service             = NULL;
   self->plugin_context      = NULL;
   self->blossom_server_url  = NULL;
-  self->http_session        = soup_session_new();
+  self->blossom             = NULL;
 }
 
 /* ── Upload result ───────────────────────────────────────────────── */
@@ -148,8 +150,10 @@ typedef struct
   gchar              *content_type;
   /* Encryption output */
   GBytes             *ciphertext;
+  GnBlossomClient    *blossom;      /* per-upload limits, not download policy */
   gchar              *nonce_b64;
   gchar              *hash_hex;
+  gchar              *wire_hash;
   guint64             epoch;
 } UploadData;
 
@@ -162,8 +166,10 @@ upload_data_free(UploadData *data)
   g_free(data->filename);
   g_free(data->content_type);
   g_clear_pointer(&data->ciphertext, g_bytes_unref);
+  g_clear_object(&data->blossom);
   g_free(data->nonce_b64);
   g_free(data->hash_hex);
+  g_free(data->wire_hash);
   g_free(data);
 }
 
@@ -175,47 +181,20 @@ on_blossom_upload_done(GObject      *source,
   UploadData *data = user_data;
   g_autoptr(GError) error = NULL;
 
-  SoupSession *session = SOUP_SESSION(source);
-  g_autoptr(GBytes) response_bytes =
-    soup_session_send_and_read_finish(session, result, &error);
-
-  if (response_bytes == NULL)
+  g_autofree gchar *blob_url = gn_blossom_client_upload_finish(
+    GN_BLOSSOM_CLIENT(source), result, &error);
+  if (blob_url == NULL)
     {
       g_task_return_error(data->task, g_steal_pointer(&error));
       g_object_unref(data->task);
       upload_data_free(data);
       return;
     }
-
-  /*
-   * Parse Blossom upload response to get the blob URL.
-   * Blossom returns JSON: { "url": "...", "sha256": "...", ... }
-   */
-  gsize resp_len = 0;
-  const gchar *resp_data = g_bytes_get_data(response_bytes, &resp_len);
-
-  g_autoptr(JsonParser) parser = json_parser_new();
-  g_autofree gchar *blob_url = NULL;
-
-  if (json_parser_load_from_data(parser, resp_data, (gssize)resp_len, NULL))
+  if (!*blob_url)
     {
-      JsonNode *root = json_parser_get_root(parser);
-      if (JSON_NODE_HOLDS_OBJECT(root))
-        {
-          JsonObject *obj = json_node_get_object(root);
-          const gchar *url = json_object_get_string_member_with_default(
-            obj, "url", NULL);
-          if (url != NULL)
-            blob_url = g_strdup(url);
-        }
-    }
-
-  if (blob_url == NULL)
-    {
-      /* Fallback: construct URL from server + hash */
-      blob_url = g_strdup_printf("%s/%s",
-                                  data->manager->blossom_server_url,
-                                  data->hash_hex);
+      g_free(blob_url);
+      blob_url = g_strdup_printf("%s/%s", data->manager->blossom_server_url,
+                                data->wire_hash);
     }
 
   g_info("MlsMediaManager: uploaded encrypted blob to %s", blob_url);
@@ -242,49 +221,50 @@ on_blossom_upload_done(GObject      *source,
 }
 
 static void
-do_blossom_upload(UploadData *data)
+on_upload_signed(GObject *source, GAsyncResult *result, gpointer user_data)
 {
-  GnMlsMediaManager *self = data->manager;
-
-  gsize cipher_len = 0;
-  const guint8 *cipher_bytes = g_bytes_get_data(data->ciphertext, &cipher_len);
-
-  /* Build Blossom PUT request */
-  g_autofree gchar *upload_url = g_strdup_printf("%s/upload",
-                                                   self->blossom_server_url);
-
-  SoupMessage *msg = soup_message_new(SOUP_METHOD_PUT, upload_url);
-  if (msg == NULL)
+  (void)source;
+  UploadData *data = user_data;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *signed_event = gnostr_plugin_context_request_sign_event_finish(
+    data->manager->plugin_context, result, &error);
+  if (!signed_event)
     {
-      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                              "Invalid Blossom server URL: %s", upload_url);
+      if (!error)
+        error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED, "Media authorization signing failed");
+      g_task_return_error(data->task, g_steal_pointer(&error));
       g_object_unref(data->task);
       upload_data_free(data);
       return;
     }
+  gn_blossom_client_upload_async(data->blossom, data->ciphertext,
+    data->wire_hash, "application/octet-stream", signed_event,
+    g_task_get_cancellable(data->task), on_blossom_upload_done, data);
+}
 
-  /* Set content type to application/octet-stream for encrypted blobs */
-  SoupMessageHeaders *req_headers =
-    soup_message_get_request_headers(msg);
-  soup_message_headers_set_content_type(req_headers,
-                                         "application/octet-stream", NULL);
-
-  /* Add SHA-256 hash header (Blossom requirement) */
-  soup_message_headers_append(req_headers, "X-SHA-256", data->hash_hex);
-
-  GBytes *body = g_bytes_new(cipher_bytes, cipher_len);
-  soup_message_set_request_body_from_bytes(msg, "application/octet-stream", body);
-  g_bytes_unref(body);
-
-  soup_session_send_and_read_async(
-    self->http_session,
-    msg,
-    G_PRIORITY_DEFAULT,
-    g_task_get_cancellable(data->task),
-    on_blossom_upload_done,
-    data);
-
-  g_object_unref(msg);
+static void
+do_blossom_upload(UploadData *data)
+{
+  /* BUD-02 binds the ciphertext on the wire, not the plaintext imeta hash. */
+  data->wire_hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, data->ciphertext);
+  data->blossom = gn_blossom_client_new(data->manager->blossom_server_url);
+  gn_blossom_client_set_network(data->blossom, g_proxy_resolver_get_default(),
+                               GN_BLOSSOM_NETWORK_DEFAULT);
+  gn_blossom_client_set_limits(data->blossom, MAX(g_bytes_get_size(data->ciphertext), 1), 60, NULL);
+  NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD,
+    data->wire_hash, 0, data->manager->blossom_server_url);
+  g_autofree gchar *json = event ? nostr_event_serialize_compact(event) : NULL;
+  nostr_event_free(event);
+  if (!json)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                             "Cannot build media authorization");
+      g_object_unref(data->task);
+      upload_data_free(data);
+      return;
+    }
+  gnostr_plugin_context_request_sign_event(data->manager->plugin_context, json,
+    g_task_get_cancellable(data->task), on_upload_signed, data);
 }
 
 static void
@@ -441,9 +421,8 @@ on_blossom_download_done(GObject      *source,
   DownloadData *data = user_data;
   g_autoptr(GError) error = NULL;
 
-  SoupSession *session = SOUP_SESSION(source);
-  g_autoptr(GBytes) cipher_bytes =
-    soup_session_send_and_read_finish(session, result, &error);
+  g_autoptr(GBytes) cipher_bytes = gn_blossom_client_download_finish(
+    GN_BLOSSOM_CLIENT(source), result, &error);
 
   if (cipher_bytes == NULL)
     {
@@ -551,6 +530,10 @@ gn_mls_media_manager_new(GnMarmotService     *service,
   self->blossom_server_url  = g_strdup(
     (blossom_server_url != NULL) ? blossom_server_url : DEFAULT_BLOSSOM_SERVER);
 
+  self->blossom = gn_blossom_client_new(self->blossom_server_url);
+  gn_blossom_client_set_network(self->blossom, g_proxy_resolver_get_default(),
+                               GN_BLOSSOM_NETWORK_DEFAULT);
+  gn_blossom_client_set_limits(self->blossom, 0, 60, NULL);
   return self;
 }
 
@@ -617,25 +600,27 @@ gn_mls_media_manager_download_async(GnMlsMediaManager   *self,
   data->nonce_b64    = g_strdup(nonce_b64);
   data->epoch        = epoch;
 
-  SoupMessage *msg = soup_message_new(SOUP_METHOD_GET, blossom_url);
-  if (msg == NULL)
+  /* Blossom addresses are the wire SHA-256, optionally followed by an extension.
+   * This legacy API carries no separate ciphertext hash. Refuse non-addressed
+   * URLs rather than silently dropping the shared client's integrity check. */
+  g_autoptr(GUri) uri = g_uri_parse(blossom_url, G_URI_FLAGS_ENCODED, NULL);
+  const gchar *path = uri ? g_uri_get_path(uri) : NULL;
+  const gchar *name = path ? strrchr(path, '/') : NULL;
+  name = name ? name + 1 : NULL;
+  gboolean valid = name && strlen(name) >= 64 && (name[64] == '.' || name[64] == '\0');
+  for (guint i = 0; valid && i < 64; i++)
+    valid = g_ascii_isxdigit(name[i]);
+  if (!valid)
     {
       g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                              "Invalid Blossom URL: %s", blossom_url);
+                             "Blossom URL has no ciphertext SHA-256 address");
       g_object_unref(task);
       download_data_free(data);
       return;
     }
-
-  soup_session_send_and_read_async(
-    self->http_session,
-    msg,
-    G_PRIORITY_DEFAULT,
-    cancellable,
-    on_blossom_download_done,
-    data);
-
-  g_object_unref(msg);
+  g_autofree gchar *wire_hash = g_ascii_strdown(name, 64);
+  gn_blossom_client_download_async(self->blossom, blossom_url, wire_hash,
+    cancellable, on_blossom_download_done, data);
 }
 
 GBytes *

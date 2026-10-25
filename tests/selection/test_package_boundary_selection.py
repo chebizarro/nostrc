@@ -64,6 +64,28 @@ class PackageBoundarySelection(unittest.TestCase):
                                 head="a" * 40, base="b" * 40, context="ci")
         self.assertNotIn("supported.nostr.gobject.blossom", test_plan["selected_checks"])
 
+    def test_gnostr_blossom_consumers_and_production_build_are_selected(self):
+        name = "supported.apps.gnostr.blossom"
+        check = self.policy["checks"][name]
+        self.assertTrue({"gnostr", "mls-groups", "gnostr-test-blossom-transport"} <= set(check["build_targets"]))
+        for path in ("apps/gnostr/src/util/blossom.c",
+                     "apps/gnostr/plugins/mls-groups/gn-mls-media-manager.c",
+                     "apps/gnostr/tests/test_blossom_transport.c",
+                     "nostr-gobject/src/gn-blossom-client.c",
+                     "libblossom/src/client.c", "nips/bud02/src/auth.c"):
+            with self.subTest(path=path):
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertEqual(plan["effective_mode"], "affected")
+                self.assertIn(name, plan["selected_checks"])
+                self.assertIn("supported.apps.gnostr.plugins.mls.groups", plan["selected_checks"])
+                self.assertNotIn("supported.nips.nip98", plan["selected_checks"])
+        plan = s.make_plan(self.policy, [change("apps/gnostr/src/util/blossom.c")],
+                           head="a" * 40, base="b" * 40, context="ci")
+        self.assertNotIn("supported.libblossom", plan["selected_checks"])
+        self.assertNotIn("supported.apps.gnostr.expensive", plan["selected_checks"])
+        self.assertNotIn("supported.apps.gnostr.display", plan["selected_checks"])
+
     def test_porthome_v2_tests_are_registered_for_all_porthome_profiles(self):
         targets = {"test_porthome_seal_v2", "test_porthome_ring_derivation",
                    "test_porthome_pad_buckets", "test_porthome_chunker",

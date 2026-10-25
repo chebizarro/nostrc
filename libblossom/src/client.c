@@ -48,7 +48,7 @@ struct blossom_client {
     blossom_error_t setup_error;
     long http_status;
     char http_reason[201];
-    const char *upload_auth; /* Borrowed only during put_signed(). */
+    const char *signed_auth; /* Borrowed only during put_signed()/delete_signed(). */
     char upload_content_type[BLOSSOM_PREFERRED_CT_MAX];
     blossom_signer_t signer; /* Copied at creation */
     bool has_signer;
@@ -246,20 +246,22 @@ static blossom_error_t make_auth_header(const blossom_client_t *c,
                                        const char *sha256_hex,
                                        char **out_header)
 {
-    if (c->upload_auth && action == NOSTR_BUD02_ACTION_UPLOAD) {
+    if (c->signed_auth) {
         NostrEvent *signed_ev = nostr_event_new();
         nostr_bud02_validate_options_t validation = { .expected_sha256 = sha256_hex };
-        bool ok = signed_ev && nostr_event_deserialize_signed(signed_ev, c->upload_auth, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        bool ok = signed_ev && nostr_event_deserialize_signed(signed_ev, c->signed_auth, NULL) == NOSTR_EVENT_VALIDATION_OK &&
             nostr_event_validate(signed_ev, NULL) == NOSTR_EVENT_VALIDATION_OK &&
             nostr_bud02_validate_auth_event(signed_ev, action, &validation) == NOSTR_BUD02_OK;
         char *value = ok ? nostr_bud02_create_auth_header(signed_ev) : NULL;
         nostr_event_free(signed_ev);
         if (!value) return BLOSSOM_ERR_AUTH;
         /* BUD-11: unpadded base64url for media upload authorization. */
-        for (char *p = value; *p; p++) {
-            if (*p == '+') *p = '-';
-            else if (*p == '/') *p = '_';
-            else if (*p == '=') { *p = 0; break; }
+        if (action == NOSTR_BUD02_ACTION_UPLOAD) {
+            for (char *p = value; *p; p++) {
+                if (*p == '+') *p = '-';
+                else if (*p == '/') *p = '_';
+                else if (*p == '=') { *p = 0; break; }
+            }
         }
         size_t n = strlen(value) + 16;
         *out_header = malloc(n);
@@ -841,7 +843,7 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
     if (out_desc) *out_desc = NULL;
     if (len > client->max_blob_bytes ||
         (client->caps.max_size && len > client->caps.max_size)) return BLOSSOM_ERR_TOO_LARGE;
-    if (!client->has_signer && !client->upload_auth)
+    if (!client->has_signer && !client->signed_auth)
         return BLOSSOM_ERR_AUTH;
 
     char hash_buf[65];
@@ -939,9 +941,9 @@ blossom_error_t blossom_client_put_signed(blossom_client_t *c, const uint8_t *da
     size_t len, const char *hash, const char *signed_json, blossom_blob_descriptor_t **desc)
 {
     if (!c || !valid_hex(hash) || !signed_json) return BLOSSOM_ERR_INVALID_ARG;
-    c->upload_auth = signed_json;
+    c->signed_auth = signed_json;
     blossom_error_t result = blossom_put_wire(c, data, len, hash, desc);
-    c->upload_auth = NULL;
+    c->signed_auth = NULL;
     return result;
 }
 
@@ -954,7 +956,7 @@ blossom_error_t blossom_client_delete(blossom_client_t *client,
 {
     if (!client || !valid_hex(sha256_hex))
         return BLOSSOM_ERR_INVALID_ARG;
-    if (!client->has_signer)
+    if (!client->has_signer && !client->signed_auth)
         return BLOSSOM_ERR_AUTH;
 
     /* Create auth header */
@@ -998,6 +1000,16 @@ blossom_error_t blossom_client_delete(blossom_client_t *client,
     curl_easy_cleanup(curl);
 
     return http_status_to_error(status);
+}
+
+blossom_error_t blossom_client_delete_signed(blossom_client_t *c,
+    const char *hash, const char *signed_json)
+{
+    if (!c || !valid_hex(hash) || !signed_json) return BLOSSOM_ERR_INVALID_ARG;
+    c->signed_auth = signed_json;
+    blossom_error_t result = blossom_client_delete(c, hash);
+    c->signed_auth = NULL;
+    return result;
 }
 
 /* =========================================================================

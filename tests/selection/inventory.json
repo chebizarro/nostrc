@@ -20,6 +20,35 @@
     ]
   },
   "checks": {
+    "supported.apps.gnostr.blossom": {
+      "nodes": [
+        "gnostr.blossom"
+      ],
+      "profiles": [
+        "core.linux",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "gnostr-test-blossom-transport"
+        ],
+        "groundhog.mdk08": [
+          "gnostr-test-blossom-transport"
+        ]
+      },
+      "build_targets": [
+        "gnostr",
+        "mls-groups",
+        "gnostr-test-blossom",
+        "gnostr-test-blossom-settings",
+        "gnostr-test-blossom-transport"
+      ],
+      "runtime_inputs": []
+    },
     "bindings.rust.consumer": {
       "nodes": ["bindings.rust"],
       "profiles": ["selection.operational.linux", "selection.operational.macos"],
@@ -19012,6 +19041,7 @@
         "execution.groundhog",
         "gnome.seahorse",
         "gnostr",
+        "gnostr.blossom",
         "gnostr.schema_inputs",
         "marmot.gobject",
         "nip47",
@@ -19247,6 +19277,7 @@
         "execution.core",
         "execution.groundhog",
         "gnostr",
+        "gnostr.blossom",
         "testing.framework",
         "libmarmot"
       ],
@@ -21549,6 +21580,21 @@
     ]
   },
   "nodes": {
+    "gnostr.blossom": {
+      "id": "gnostr.blossom",
+      "depends_on": [
+        "nostr.gobject",
+        "bud02",
+        "marmot.gobject"
+      ],
+      "owner_paths": [
+        "apps/gnostr/src/util/blossom.c",
+        "apps/gnostr/tests/test_blossom.c",
+        "apps/gnostr/tests/test_blossom_transport.c",
+        "apps/gnostr/plugins/mls-groups/gn-mls-media-manager.c"
+      ],
+      "rationale": "App signer/fallback policy and MLS ciphertext transfers consume GnBlossomClient and nips/bud02; build production consumers as well as entrypoint regressions."
+    },
     "execution.homed": {
       "id": "execution.homed",
       "depends_on": [],
@@ -23796,6 +23842,38 @@
     }
   },
       "path_rules": [
+    {
+      "exact": "apps/gnostr/src/util/blossom.c",
+      "nodes": [
+        "gnostr.blossom"
+      ],
+      "effect": "impact",
+      "reason": "Scoped GnBlossomClient app transport/auth consumer and executable entrypoint checks (nostrc-er4fz.9)."
+    },
+    {
+      "exact": "apps/gnostr/tests/test_blossom.c",
+      "nodes": [
+        "gnostr.blossom"
+      ],
+      "effect": "impact",
+      "reason": "Scoped GnBlossomClient app transport/auth consumer and executable entrypoint checks (nostrc-er4fz.9)."
+    },
+    {
+      "exact": "apps/gnostr/tests/test_blossom_transport.c",
+      "nodes": [
+        "gnostr.blossom"
+      ],
+      "effect": "impact",
+      "reason": "Scoped GnBlossomClient app transport/auth consumer and executable entrypoint checks (nostrc-er4fz.9)."
+    },
+    {
+      "exact": "apps/gnostr/plugins/mls-groups/gn-mls-media-manager.c",
+      "nodes": [
+        "gnostr.blossom"
+      ],
+      "effect": "impact",
+      "reason": "Scoped GnBlossomClient app transport/auth consumer and executable entrypoint checks (nostrc-er4fz.9)."
+    },
       {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault reconciler."},
       {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault reconciler contract."},
       {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault scheduling and namespace commit."},
