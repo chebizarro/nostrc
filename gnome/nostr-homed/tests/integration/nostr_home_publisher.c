@@ -39,7 +39,7 @@
 
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include <blossom/types.h>
 
 #include "nostr-event.h"
@@ -165,7 +165,7 @@ static int parse_args(int argc, char **argv, args_t *a) {
 typedef struct {
     const char *root;
     const uint8_t *home_key;
-    nh_porthome_blossom_t *bl;
+    blossom_pool_t *bl;
     nh_porthome_manifest *m;
 } up_ctx;
 
@@ -201,9 +201,9 @@ static int upload_chunks(up_ctx *uc, const char *rel,
             free(buf); close(fd); free(chs); return -1;
         }
         char hex[65];
-        int rc = nh_porthome_blossom_upload(uc->bl, ct, ctl, NULL, hex);
+        int rc = blossom_pool_upload(uc->bl, ct, ctl, NULL, hex);
         free(ct);
-        if (rc != NH_PORTHOME_BLOSSOM_OK) {
+        if (rc != BLOSSOM_POOL_OK) {
             fprintf(stderr, "blossom_upload rc=%d for chunk %zu of %s\n",
                     rc, idx, rel);
             free(buf); close(fd); free(chs); return -1;
@@ -389,23 +389,25 @@ static int cmd_publish(int argc, char **argv) {
      * PUTs. */
     install_signer(a.nsec_hex);
 
-    nh_porthome_blossom_opts_t bopts = {0};
+    blossom_pool_opts_t bopts = {0};
     bopts.servers    = a.blossom;
     bopts.n_servers  = a.blossom_n;
     bopts.max_blob_bytes = 32u * 1024u * 1024u;
-    nh_porthome_blossom_t *bl = NULL;
-    if (nh_porthome_blossom_new(&bopts, &g_test_signer, &bl) != 0) return 65;
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
+    if (blossom_pool_new(&bopts, &g_test_signer, &bl) != 0) return 65;
 
     nh_porthome_manifest m;
     uint8_t root_id[32]; memcpy(root_id, seed, 32);
     if (nh_porthome_manifest_init(&m, root_id) != 0) {
-        nh_porthome_blossom_free(bl); return 65;
+        blossom_pool_free(bl); return 65;
     }
 
     up_ctx uc = { a.fixture_dir, home_key, bl, &m };
     if (walk(a.fixture_dir, "", add_entry, &uc) != 0) {
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         return 66;
     }
 
@@ -413,7 +415,7 @@ static int cmd_publish(int argc, char **argv) {
     if (nh_porthome_manifest_encode_sealed(&m, home_key,
                                            &sealed, &sealed_len) != 0) {
         nh_porthome_manifest_dispose(&m);
-        nh_porthome_blossom_free(bl);
+        blossom_pool_free(bl);
         return 65;
     }
 
@@ -442,7 +444,7 @@ static int cmd_publish(int argc, char **argv) {
 
     free(sealed);
     nh_porthome_manifest_dispose(&m);
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
     return prc == 0 ? 0 : 67;
 }
 

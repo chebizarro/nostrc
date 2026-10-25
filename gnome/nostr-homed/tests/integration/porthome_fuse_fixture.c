@@ -39,7 +39,7 @@
 
 #define _GNU_SOURCE
 #include "nh_porthome_crypto.h"
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include "nh_syncd.h"
 #include <blossom/types.h>
 
@@ -180,7 +180,7 @@ static void bytes_to_hex(const uint8_t *b, size_t n, char *out) {
 typedef struct {
     const char           *root;
     const uint8_t        *home_key;
-    nh_porthome_blossom_t *bl;
+    blossom_pool_t *bl;
     json_t               *files;      /* rel -> {kind,mode,mtime_ns,size,
                                                  content_hash_hex,
                                                  chunk_addrs_hex,
@@ -272,9 +272,9 @@ static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
             EVP_MD_CTX_free(shac); free(buf); close(fd); json_decref(chunks_arr); return -1;
         }
         char hex[65];
-        int rc = nh_porthome_blossom_upload(uc->bl, ct, ctl, NULL, hex);
+        int rc = blossom_pool_upload(uc->bl, ct, ctl, NULL, hex);
         free(ct);
-        if (rc != NH_PORTHOME_BLOSSOM_OK) {
+        if (rc != BLOSSOM_POOL_OK) {
             fprintf(stderr, "fixture: blossom_upload rc=%d chunk %zu of %s\n",
                     rc, idx, rel);
             EVP_MD_CTX_free(shac); free(buf); close(fd); json_decref(chunks_arr); return -1;
@@ -478,21 +478,23 @@ static int cmd_publish(int argc, char **argv) {
     if (nh_porthome_key_derive(seed, home_key) != 0) return 65;
     if (install_signer(a.nsec_hex) != 0) return 65;
 
-    nh_porthome_blossom_opts_t bopts = {0};
+    blossom_pool_opts_t bopts = {0};
     bopts.servers = a.blossom;
     bopts.n_servers = a.blossom_n;
     bopts.max_blob_bytes = 32u * 1024u * 1024u;
-    nh_porthome_blossom_t *bl = NULL;
-    if (nh_porthome_blossom_new(&bopts, &g_signer, &bl) != 0) return 65;
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
+    if (blossom_pool_new(&bopts, &g_signer, &bl) != 0) return 65;
 
     json_t *files = json_object();
     up_ctx uc = { a.fixture_dir, home_key, bl, files, 0, a.chunk_size };
     if (walk_and_upload(a.fixture_dir, "", &uc) != 0) {
-        json_decref(files); nh_porthome_blossom_free(bl); return 66;
+        json_decref(files); blossom_pool_free(bl); return 66;
     }
 
     if (write_snapshot(&a, g_pk_hex, files) != 0) {
-        json_decref(files); nh_porthome_blossom_free(bl); return 68;
+        json_decref(files); blossom_pool_free(bl); return 68;
     }
     json_decref(files);
 
@@ -513,7 +515,7 @@ static int cmd_publish(int argc, char **argv) {
 
     memset(home_key, 0, sizeof home_key);
     memset(seed, 0, sizeof seed);
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
     fflush(stdout);
     return prc == 0 ? 0 : 67;
 }

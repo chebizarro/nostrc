@@ -45,7 +45,7 @@
 #include "nh_fuse_status.h"
 #include "nh_fuse_status_writer.h"
 #include "nh_fuse_table.h"
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include "nh_porthome_crypto.h"
 #include "nh_syncd_cache.h"
 #include "nh_porthome_notify.h"
@@ -95,7 +95,7 @@ static nh_fuse_table    *g_table         = NULL;
 static pthread_rwlock_t  g_table_rw      = PTHREAD_RWLOCK_INITIALIZER;
 static nh_fuse_source   *g_source        = NULL;
 static nh_syncd_cache   *g_cache         = NULL;
-static nh_porthome_blossom_t *g_blossom  = NULL;
+static blossom_pool_t *g_blossom  = NULL;
 static char             *g_state_dir     = NULL;
 static char             *g_status_path   = NULL;
 static char             *g_mountpoint    = NULL;
@@ -121,7 +121,7 @@ static uint8_t g_vault_home_key[32];
 static int public_blob_read(void *ctx, const uint8_t hash[32], uint8_t **out, size_t *n)
 {
     (void)ctx; char hex[65]; porthome_hex64(hash, hex);
-    return g_blossom && !nh_porthome_blossom_fetch(g_blossom, hex, out, n) ? 0 : VAULT_ERR_IO;
+    return g_blossom && !blossom_pool_fetch(g_blossom, hex, out, n) ? 0 : VAULT_ERR_IO;
 }
 #endif
 
@@ -818,14 +818,16 @@ int main(int argc, char **argv) {
                 start = p + 1;
             }
         }
-        nh_porthome_blossom_opts_t opts = {
+        blossom_pool_opts_t opts = {
             .servers = (const char *const *)arr,
             .n_servers = i,
             .timeout_seconds = 15,
             .max_retries = 1,
             .max_blob_bytes = 0,
         };
-        (void)nh_porthome_blossom_new(&opts, /*signer*/ NULL, &g_blossom);
+        const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+        opts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+        (void)blossom_pool_new(&opts, /*signer*/ NULL, &g_blossom);
         for (size_t k = 0; k < i; k++) free(arr[k]);
         free(arr);
     }
@@ -899,7 +901,7 @@ int main(int argc, char **argv) {
         pthread_rwlock_unlock(&g_table_rw);
         if (g_notifier)      { nh_porthome_notifier_free(g_notifier); g_notifier = NULL; }
         if (g_status_writer) { nh_fuse_status_writer_free(g_status_writer); g_status_writer = NULL; }
-        if (g_blossom) nh_porthome_blossom_free(g_blossom);
+        if (g_blossom) blossom_pool_free(g_blossom);
         if (g_cache) nh_syncd_cache_close(g_cache);
         free(home); free(g_state_dir); free(g_mountpoint); free(g_status_path);
         if (g_fuse_lock_fd >= 0) close(g_fuse_lock_fd);
@@ -956,7 +958,7 @@ int main(int argc, char **argv) {
     if (g_reload) { nh_fuse_reload_free(g_reload); g_reload = NULL; }
     if (g_notifier)      { nh_porthome_notifier_free(g_notifier); g_notifier = NULL; }
     if (g_status_writer) { nh_fuse_status_writer_free(g_status_writer); g_status_writer = NULL; }
-    if (g_blossom) nh_porthome_blossom_free(g_blossom);
+    if (g_blossom) blossom_pool_free(g_blossom);
     if (g_cache) nh_syncd_cache_close(g_cache);
     free(home); free(g_state_dir); free(g_mountpoint); free(g_status_path);
     if (g_fuse_lock_fd >= 0) close(g_fuse_lock_fd);

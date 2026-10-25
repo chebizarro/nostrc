@@ -65,7 +65,7 @@ typedef struct nh_porthome_prov_opts {
 } nh_porthome_prov_opts;
 
 /* Sink for fetching sealed chunks. Real callers wire this to a
- * nh_porthome_blossom_t; tests can pass an in-memory map. Returns 0
+ * blossom_pool_t; tests can pass an in-memory map. Returns 0
  * with a heap buffer (caller frees with free()) on success; non-zero
  * means "not available" and the provisioner returns LIMITED. */
 typedef int (*nh_porthome_prov_fetch_fn)(void *ctx, const char *sha256_hex,

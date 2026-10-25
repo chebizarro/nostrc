@@ -86,6 +86,28 @@ class PackageBoundarySelection(unittest.TestCase):
         self.assertNotIn("supported.apps.gnostr.expensive", plan["selected_checks"])
         self.assertNotIn("supported.apps.gnostr.display", plan["selected_checks"])
 
+    def test_homed_pool_guard_has_direct_consumer_ownership(self):
+        path = "gnome/nostr-homed/tests/unit/test_porthome_blossom_guards.c"
+        self.assertEqual(s.classify(self.policy, path)["nodes"],
+                         ["gnome.nostr_homed.porthome.test_inputs"])
+        plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                           base="b" * 40, context="ci")
+        self.assertEqual(set(plan["selected_checks"]), {"homed.vault.filesystem"})
+        check = self.policy["checks"]["homed.vault.filesystem"]
+        self.assertIn("test_porthome_blossom_guards", check["build_targets"])
+        self.assertIn("homed_porthome_blossom_guards",
+                      check["ctest_tests"]["homed.vault.linux"])
+        for path in ("gnome/nostr-homed/src/porthome/nh_porthome_blossom.c",
+                     "gnome/nostr-homed/include/nh_porthome_blossom.h",
+                     "gnome/nostr-homed/src/porthome-syncd/nh_syncd_pusher.c",
+                     "gnome/nostr-homed/src/porthome-fetch/nostr-home-fetch.c",
+                     "gnome/nostr-homed/src/porthome-fuse/nostr-home-fuse.c"):
+            with self.subTest(path=path):
+                plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                                   base="b" * 40, context="ci")
+                self.assertIn("homed.vault.filesystem", plan["selected_checks"])
+                self.assertNotIn("supported.libblossom", plan["selected_checks"])
+
     def test_porthome_v2_tests_are_registered_for_all_porthome_profiles(self):
         targets = {"test_porthome_seal_v2", "test_porthome_ring_derivation",
                    "test_porthome_pad_buckets", "test_porthome_chunker",
@@ -307,7 +329,7 @@ class PackageBoundarySelection(unittest.TestCase):
         self.assertIn(check_name, shared["selected_checks"])  # Signed protocol fixture is a real downstream input.
         check = self.policy["checks"][check_name]
         self.assertEqual(set(check["ctest_tests"]["homed.vault.linux"]), {
-            "homed_syncd_vault_protocol",
+            "homed_porthome_blossom_guards", "homed_syncd_vault_protocol",
             "homed_syncd_vault_runtime", "homed_syncd_vault_fuse",
             "homed_syncd_vault_fs", "homed_syncd_off_closure",
             "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure",

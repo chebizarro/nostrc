@@ -45,6 +45,12 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-er4fz.8: nostr-homed remains 0.5.0 (no bump). Remove the internal,
+  non-installed nh_porthome_blossom adapter and use libblossom's existing pool
+  API directly. Preserve the local-harness insecure opt-in at constructor call
+  sites; no installed API, CLI, configuration, storage or wire behavior changes.
+  libblossom has no shipped changes (no bump). No release tags.
+
 - nostrc-cu5e7: libjson PATCH 1.0.0 -> 1.0.1 fixes the optional GLib
   probe/link contract: NOSTR_WITH_GLIB=OFF no longer inherits GLib/GObject
   from libnostr-json. Sources and public C API are unchanged; GLib-enabled

@@ -10,7 +10,7 @@
  * call BUD-02 DELETE in v1 (§6.5).
  *
  * Per-server HEAD (not the "any server" aggregate that
- * nh_porthome_blossom_has() exposes) is done by calling libhanami
+ * blossom_pool_has() exposes) is done by calling libhanami
  * directly for each server: that keeps us honest about which servers
  * dropped the blob without touching src/porthome primitives (their
  * scope is stable — see the I3 plan).

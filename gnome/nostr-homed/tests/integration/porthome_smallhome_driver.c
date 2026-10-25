@@ -24,7 +24,7 @@
 
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 #include <blossom/types.h>
 #include <string.h>
 
@@ -182,7 +182,7 @@ static int walk_rec(const char *root, const char *rel, walk_cb cb, void *ud) {
 typedef struct {
     const char *fixture_root;
     const uint8_t *home_key;
-    nh_porthome_blossom_t *bl;
+    blossom_pool_t *bl;
     nh_porthome_manifest *m;
 } upload_ctx;
 
@@ -222,9 +222,9 @@ static int upload_file_chunks(upload_ctx *uc, const char *rel,
             free(buf); close(fd); free(chs); return -1;
         }
         char hex[65];
-        int rc = nh_porthome_blossom_upload(uc->bl, ct, ctlen, NULL, hex);
+        int rc = blossom_pool_upload(uc->bl, ct, ctlen, NULL, hex);
         free(ct);
-        if (rc != NH_PORTHOME_BLOSSOM_OK) {
+        if (rc != BLOSSOM_POOL_OK) {
             fprintf(stderr, "upload of chunk %zu of %s failed rc=%d\n", idx, rel, rc);
             free(buf); close(fd); free(chs); return -1;
         }
@@ -282,12 +282,14 @@ static int cmd_upload(const char *fixture_root, const char *sealed_out) {
     char **srv = split_servers(csv, &n_srv);
     if (!srv) die("split_servers");
 
-    nh_porthome_blossom_opts_t opts = {0};
+    blossom_pool_opts_t opts = {0};
     opts.servers = (const char *const *)srv;
     opts.n_servers = n_srv;
     opts.max_blob_bytes = 32u * 1024u * 1024u; /* generous for the 5 MiB fixture */
-    nh_porthome_blossom_t *bl = NULL;
-    if (nh_porthome_blossom_new(&opts, &g_test_signer, &bl) != 0) die("blossom_new");
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    opts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
+    if (blossom_pool_new(&opts, &g_test_signer, &bl) != 0) die("blossom_new");
 
     nh_porthome_manifest m;
     uint8_t root_id[32]; memcpy(root_id, seed, 32);
@@ -309,7 +311,7 @@ static int cmd_upload(const char *fixture_root, const char *sealed_out) {
     fflush(stdout);
 
     nh_porthome_manifest_dispose(&m);
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
     free_servers(srv, n_srv);
     free(sealed);
     return 0;
@@ -350,12 +352,14 @@ static int cmd_download(const char *sealed_in, const char *out_root) {
     size_t n_srv = 0;
     char **srv = split_servers(csv, &n_srv);
     if (!srv) die("split_servers");
-    nh_porthome_blossom_opts_t opts = {0};
+    blossom_pool_opts_t opts = {0};
     opts.servers = (const char *const *)srv;
     opts.n_servers = n_srv;
     opts.max_blob_bytes = 32u * 1024u * 1024u;
-    nh_porthome_blossom_t *bl = NULL;
-    if (nh_porthome_blossom_new(&opts, &g_test_signer, &bl) != 0) die("blossom_new");
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    opts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
+    blossom_pool_t *bl = NULL;
+    if (blossom_pool_new(&opts, &g_test_signer, &bl) != 0) die("blossom_new");
 
     size_t sealed_len = 0;
     uint8_t *sealed = slurp(sealed_in, &sealed_len);
@@ -390,8 +394,8 @@ static int cmd_download(const char *sealed_in, const char *out_root) {
                 char hex[65];
                 nh_porthome_hex64(e->chunks[j].sha256, hex);
                 uint8_t *sealed_chunk = NULL; size_t schunk_len = 0;
-                int rc = nh_porthome_blossom_fetch(bl, hex, &sealed_chunk, &schunk_len);
-                if (rc != NH_PORTHOME_BLOSSOM_OK) die("fetch chunk %s rc=%d", hex, rc);
+                int rc = blossom_pool_fetch(bl, hex, &sealed_chunk, &schunk_len);
+                if (rc != BLOSSOM_POOL_OK) die("fetch chunk %s rc=%d", hex, rc);
                 uint8_t *pt = NULL; size_t pt_len = 0;
                 if (nh_porthome_decrypt_chunk(home_key, sealed_chunk, schunk_len,
                                               &pt, &pt_len) != 0) die("decrypt chunk %s", hex);
@@ -408,7 +412,7 @@ static int cmd_download(const char *sealed_in, const char *out_root) {
     }
 
     nh_porthome_manifest_dispose(m); free(m);
-    nh_porthome_blossom_free(bl);
+    blossom_pool_free(bl);
     free_servers(srv, n_srv);
     return 0;
 }

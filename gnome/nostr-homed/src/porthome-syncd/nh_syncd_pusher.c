@@ -30,7 +30,7 @@
  */
 
 #include "nh_syncd.h"
-#include "nh_porthome_blossom.h"
+#include <blossom/pool.h>
 
 #include <blossom/shim.h>
 #include <blossom/types.h>
@@ -134,11 +134,11 @@ static uint64_t mono_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
 }
 
-/* Per-server PUT using the porthome-common Blossom wrapper. Opens a
- * single-endpoint wrapper each call so `nh_porthome_blossom_upload`'s
+/* Per-server PUT using the libblossom pool. Opens a
+ * single-endpoint pool each call so `blossom_pool_upload`'s
  * fan-out is reduced to exactly one server — the syncd pusher owns the
- * outer per-server iteration. Coordinated with the porthome-common
- * contract (see nh_porthome_blossom.h): the wrapper stays multi-server
+ * outer per-server iteration. Coordinated with the libblossom
+ * contract (see blossom/pool.h): the pool stays multi-server
  * capable; syncd just narrows its input list.
  *
  * Returns 0 on accept, an NH_SYNCD_ERR_* on refusal. */
@@ -163,19 +163,21 @@ static int upload_chunk_to_one_server(const nh_syncd_push_cfg *cfg,
 
     /* Real path: single-endpoint wrapper. */
     const char *one[1] = { server_url };
-    nh_porthome_blossom_opts_t bopts = {0};
+    blossom_pool_opts_t bopts = {0};
+    const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
     bopts.servers        = one;
     bopts.n_servers      = 1;
     bopts.max_blob_bytes = ct_len + NH_PORTHOME_SEAL_OVERHEAD + 4096;
-    nh_porthome_blossom_t *one_bl = NULL;
-    if (nh_porthome_blossom_new(&bopts, cfg->bud02_signer, &one_bl) != 0) {
+    blossom_pool_t *one_bl = NULL;
+    if (blossom_pool_new(&bopts, cfg->bud02_signer, &one_bl) != 0) {
         if (out_ms) *out_ms = mono_ms() - t0;
         return NH_SYNCD_ERR_UPLOAD;
     }
     char echo[65];
-    int urc = nh_porthome_blossom_upload(one_bl, ct, ct_len,
+    int urc = blossom_pool_upload(one_bl, ct, ct_len,
                                          expected_sha_hex, echo);
-    nh_porthome_blossom_free(one_bl);
+    blossom_pool_free(one_bl);
     if (out_ms) *out_ms = mono_ms() - t0;
     /* We don't get a raw HTTP status back through the wrapper's
      * boundary; leave 0 unless a test seam supplied one. */
@@ -199,7 +201,7 @@ static int upload_chunk_to_one_server(const nh_syncd_push_cfg *cfg,
  * in the snapshot in that case (test-injection path when
  * `n_blossom_servers == 0`). */
 static int upload_chunk(const nh_syncd_push_cfg *cfg,
-                        nh_porthome_blossom_t *bl,
+                        blossom_pool_t *bl,
                         const uint8_t *pt, size_t pt_len,
                         char out_addr_hex[65],
                         nh_syncd_upload_result *out_result,
@@ -212,7 +214,7 @@ static int upload_chunk(const nh_syncd_push_cfg *cfg,
     if (rc != 0) { set_err(err, "encrypt_chunk rc=%d", rc); return NH_SYNCD_ERR_CRYPTO; }
 
     /* PNG-shim consistency (nostrc-wmb5) + auto-decide (nostrc-si30).
-     * When the shim is active the downstream nh_porthome_blossom_upload
+     * When the shim is active the downstream blossom_pool_upload
      * will hash sha256(shim||ct) and PUT that address. The "sealed
      * address" this function publishes (out_addr_hex, stored in the
      * syncd state and rebuilt into every future manifest for this
@@ -223,7 +225,7 @@ static int upload_chunk(const nh_syncd_push_cfg *cfg,
      * consistency check trips HASH_MISMATCH once it wraps.
      *
      * We consult the SAME auto-decide helper that
-     * nh_porthome_blossom.c's shim gate uses. Both call sites walk the
+     * libblossom's pool shim gate uses. Both call sites walk the
      * same cfg->blossom_servers[] list, so libhanami's URL-keyed cache
      * makes them agree (a probe run on any URL is memoised for the
      * process). The env-var override still wins when set. */
@@ -262,7 +264,7 @@ static int upload_chunk(const nh_syncd_push_cfg *cfg,
      * per-server PUT loop for accurate accounting anyway). */
     if (bl && need == 1 && !cfg->upload_to_server_fn) {
         bool present = false;
-        (void)nh_porthome_blossom_has(bl, out_addr_hex, &present);
+        (void)blossom_pool_has(bl, out_addr_hex, &present);
         if (present) {
             if (out_result) {
                 out_result->total = n_servers;
@@ -515,13 +517,15 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
     }
 
     /* Open Blossom wrapper (only if we actually need to upload). */
-    nh_porthome_blossom_t *bl = NULL;
+    blossom_pool_t *bl = NULL;
     if (cfg->n_blossom_servers > 0) {
-        nh_porthome_blossom_opts_t bopts = {0};
+        blossom_pool_opts_t bopts = {0};
+        const char *allow_insecure = getenv("NH_PORTHOME_ALLOW_INSECURE");
+        bopts.allow_insecure = allow_insecure && !strcmp(allow_insecure, "1");
         bopts.servers   = cfg->blossom_servers;
         bopts.n_servers = cfg->n_blossom_servers;
         bopts.max_blob_bytes = NH_SYNCD_CHUNK_SIZE + NH_PORTHOME_SEAL_OVERHEAD + 4096;
-        if (nh_porthome_blossom_new(&bopts, cfg->bud02_signer, &bl) != 0) {
+        if (blossom_pool_new(&bopts, cfg->bud02_signer, &bl) != 0) {
             set_err(out_error_msg, "blossom_new failed");
             return NH_SYNCD_ERR_UPLOAD;
         }
@@ -699,13 +703,13 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
 
     if (cfg->on_upload_summary)
         cfg->on_upload_summary(cfg->on_upload_summary_ud, &worst_result);
-    if (bl) nh_porthome_blossom_free(bl);
+    if (bl) blossom_pool_free(bl);
     return NH_SYNCD_OK;
 
 fail:
     if (cfg->on_upload_summary)
         cfg->on_upload_summary(cfg->on_upload_summary_ud, &worst_result);
     (void)worst_error_class;
-    if (bl) nh_porthome_blossom_free(bl);
+    if (bl) blossom_pool_free(bl);
     return rc;
 }

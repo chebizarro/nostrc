@@ -48,14 +48,14 @@
 
 /* libhanami's signer type is a typedef of an anonymous struct in
  * hanami-types.h and cannot be forward-declared. Match the pattern
- * used by nh_syncd.h / nh_porthome_blossom.h. */
+ * used by nh_syncd.h / blossom/pool.h. */
 #include <blossom/types.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Disjoint from the nh_syncd_*, nh_porthome_*, nh_porthome_blossom_*
+/* Disjoint from the nh_syncd_*, nh_porthome_*, blossom_pool_*
  * ranges so callers can dispatch on rc across the whole stack. */
 typedef enum {
     NH_SYNCD_CACHE_OK              =    0,
@@ -288,7 +288,7 @@ int  nh_syncd_pin_ring_apply(const nh_syncd_pin_ring *r,
  *
  * For each blob in the current snapshot, HEAD against every configured
  * Blossom server; if any server returns 404, re-upload via
- * nh_porthome_blossom (BUD-02 PUT). Emits per-sweep counters and fires
+ * libblossom pool (BUD-02 PUT). Emits per-sweep counters and fires
  * an optional notification once per sweep when dropped > 0.
  * ───────────────────────────────────────────────────────────────── */
 
@@ -303,7 +303,7 @@ typedef int (*nh_syncd_head_fn)(void *ud,
                                 const char *server,
                                 const char *sha256_hex);
 
-/* Uploader test seam. Called instead of nh_porthome_blossom_upload
+/* Uploader test seam. Called instead of blossom_pool_upload
  * when non-NULL. Return 0 on success, <0 on failure. The sweep
  * reads plaintext bytes from the local cache (get_path); callers
  * that don't populate the cache must provide this seam. */
