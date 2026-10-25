@@ -2,8 +2,8 @@
 
 GNOME-free PCS v1/v2 crypto, canonical CBOR, manifest v1/v2 and sealed name
 codecs, wrap-seed derivation, and a storage-independent OID/sealed-object index.
-The existing manifest schema v2 is distinct from the shared-vault manifest
-extension (SV-2), which is not implemented here.
+The legacy flat manifest schema v2 (sealed names) is distinct from the
+shared-vault `dir_node` v2 in `<porthome/dir-node.h>`; both have explicit codecs.
 
 In-tree consumers link `nostrc::porthome` (`BUILD_LIBPORTHOME=ON`,
 `ENABLE_NIP44=ON`, `BUILD_LIBBLOSSOM=ON`). Installed consumers use
@@ -41,6 +41,30 @@ The v1 APIs and salts remain separate; neither decoder accepts the other version
 SplitMix64 table seed, rolling function and cut mask in `src/chunker.c` define
 its deterministic boundaries. Call repeatedly on the unconsumed suffix; no I/O,
 mutable global state or allocation is involved.
+
+Shared-vault codecs (SV-2):
+
+- `<porthome/dir-node.h>` encodes canonical integer-keyed CBOR for node ID,
+  epoch, entries and optional vault metadata. Directory payloads carry child ID,
+  epoch, manifest address and optional key override; file chunks retain their
+  own epoch IDs. Header comments specify every wire key. Decode rejects unknown,
+  missing, duplicated/out-of-order keys, wrong types/lengths, duplicate names,
+  non-canonical forms, unsafe symlinks and trailing bytes. Sealed wrappers use
+  PCS v2 manifest AEAD and bind the body epoch to the selected ring entry.
+- `<porthome/head.h>` encodes strict JSON with §5.2 field names, lowercase-hex
+  32-byte values and uint64 integers. Optional `ref_state` is omitted when absent.
+  JSON whitespace and field order are flexible; duplicate/unknown/missing fields,
+  escaped strings, invalid numbers and trailing bytes are refused. Resource caps
+  are documented in the header. NIP-44 content uses exactly
+  `nostr_nip44_convkey(head_key, BIP340_xonly_pub(head_key))`.
+- `porthome_head_event_new` constructs an **unsigned** kind-30078 event with
+  `d=porthome/v2/<hex vault_id>`; the caller's identity signer signs it. Open checks
+  the signature, kind, unique d tag and decrypted vault/epoch. Additional tags are
+  allowed. No relay I/O, fold, writer authorization, grants or ring mutation lives
+  here; a valid signature is not proof of writer authorization (SV-3).
+
+Legacy flat v1/v2 manifest APIs and homed's v1 kind-30078 pointer path are
+unchanged and do not fall through to the shared-vault decoder.
 
 `test_porthome_seal_v2` pins full envelopes/addresses from independent Python
 RFC5869 + ChaCha20Poly1305 reference calculations, including a v1 known answer.

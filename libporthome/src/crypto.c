@@ -8,6 +8,7 @@
  */
 
 #include <porthome/crypto.h>
+#include "crypto-internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -472,7 +473,7 @@ int porthome_encrypt_name_v2(const uint8_t node_key[32], const char *component,
     return encrypt_name(node_key, V2_NAME, component, out_hex);
 }
 
-static int ring_key(const porthome_ring_t *ring, uint64_t epoch,
+int porthome_ring_key(const porthome_ring_t *ring, uint64_t epoch,
                     const uint8_t **key) {
     if (!ring || (ring->count && !ring->entries) || !epoch) return PORTHOME_ERR_ARG;
     const uint8_t *match = NULL;
@@ -521,7 +522,7 @@ int porthome_decrypt_chunk_v2(const porthome_ring_t *ring,
     if (blob_len < PORTHOME_SEAL_OVERHEAD || blob[0] != PORTHOME_WIRE_VERSION_V2)
         return PORTHOME_ERR_VERSION;
     const uint8_t *key;
-    int rc = ring_key(ring, chunk_key_id, &key);
+    int rc = porthome_ring_key(ring, chunk_key_id, &key);
     if (rc != PORTHOME_OK) return rc;
     if (size_plain > INT_MAX) return PORTHOME_ERR_TOO_LARGE;
     if (blob_len - PORTHOME_SEAL_OVERHEAD != nip44_calc_padded_len(size_plain))
@@ -561,7 +562,7 @@ int porthome_decrypt_manifest_v2(const porthome_ring_t *ring,
     if (blob_len < PORTHOME_SEAL_OVERHEAD || blob[0] != PORTHOME_WIRE_VERSION_V2)
         return PORTHOME_ERR_VERSION;
     const uint8_t *key;
-    int rc = ring_key(ring, epoch, &key);
+    int rc = porthome_ring_key(ring, epoch, &key);
     if (rc != PORTHOME_OK) return rc;
     return open_blob(key, V2_MANIFEST, sizeof(V2_MANIFEST) - 1, PORTHOME_WIRE_VERSION_V2,
                       blob, blob_len, out, out_len);
