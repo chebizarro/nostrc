@@ -23,7 +23,6 @@ p.add_argument("--allowlist", required=True, type=Path)
 p.add_argument("--http-receipts", required=True, type=Path)
 p.add_argument("--blossom", default="http://127.0.0.1:18080")
 p.add_argument("--relay", default="ws://127.0.0.1:17777")
-p.add_argument("--disable-leak-check", action="store_true", help="Diagnostic only: pre-existing libblossom signed-GET leak nostrc-k1zq6; not leak-check acceptance")
 a = p.parse_args()
 assert os.geteuid() == 0, "Run in a disposable Linux test container: two actual UIDs are required"
 bin_dir = a.build / "gnome/nostr-homed"
@@ -45,7 +44,7 @@ def account(name, uid, secret, seed):
         NOSTR_HOMED_SYNCD_TEST_MODE="1", NOSTR_HOMED_SYNCD_SEED_HEX=seed,
         NOSTR_HOMED_SYNCD_BLOSSOM=a.blossom, NOSTR_HOMED_SYNCD_RELAYS=a.relay,
         NOSTR_HOMED_SYNCD_MIN_REPLICATION="1", NOSTR_HOMED_SYNCD_NOTIFY="0",
-        ASAN_OPTIONS=f"detect_leaks={0 if a.disable_leak_check else 1}:abort_on_error=1", UBSAN_OPTIONS="halt_on_error=1")
+        ASAN_OPTIONS="detect_leaks=1:abort_on_error=1", UBSAN_OPTIONS="halt_on_error=1")
     return dict(base=base, uid=uid, env=env, secret=secret, seed=seed)
 
 def as_user(ac):
@@ -139,8 +138,6 @@ def stop(proc):
     assert b"Sanitizer" not in out and b"runtime error:" not in out, out.decode(errors="replace")
 
 try:
-    if a.disable_leak_check:
-        print("DIAGNOSTIC: LeakSanitizer disabled for known pre-existing nostrc-k1zq6; not leak-check acceptance", flush=True)
     owner = account("owner", 1001, f"{1:064x}", "11"*32)
     member = account("member", 1002, f"{2:064x}", "22"*32)
     migrate = account("migration", 1001, f"{1:064x}", "33"*32)

@@ -13,7 +13,10 @@
 #include <string.h>
 #include <time.h>
 
+static size_t sign_count;
+
 static blossom_error_t sign_json(const char *json, char **out, void *key) {
+    sign_count++;
     *out = NULL;
     NostrEvent *ev = nostr_event_new();
     if (!ev) return BLOSSOM_ERR_NOMEM;
@@ -50,7 +53,7 @@ static void roundtrip(blossom_client_t *c, size_t n) {
     assert(blossom_client_get(c, hash, &wire, &wn) == BLOSSOM_OK);
     assert(wn == d->size);
     assert(blossom_client_get_content(c, hash, &content, &cn) == BLOSSOM_OK);
-    assert(cn == n && !memcmp(content, data, n));
+    assert(cn == n && (n == 0 || !memcmp(content, data, n)));
     bool exists = false;
     assert(blossom_client_head(c, hash, &exists) == BLOSSOM_OK && exists);
     assert(blossom_client_delete(c, hash) == BLOSSOM_OK);
@@ -134,6 +137,18 @@ int main(int argc, char **argv) {
             assert(blossom_pool_delete(pool, blobs[i].sha256_hex) == 0);
         }
         blossom_pool_free(pool); blossom_client_free(other);
+    } else if (!strcmp(argv[1], "auth-get")) {
+        assert(argc == 4);
+        assert(blossom_probe_capabilities(c) == BLOSSOM_OK);
+        assert(blossom_client_get_capabilities(c)->private_server == BLOSSOM_CAP_YES);
+        const char expected[] = "authenticated GET ownership regression";
+        for (size_t i = 0; i < 3; i++) {
+            uint8_t *data = NULL; size_t n = 0;
+            assert(blossom_client_get(c, argv[3], &data, &n) == BLOSSOM_OK);
+            assert(n == sizeof expected - 1 && !memcmp(data, expected, n));
+            free(data);
+            assert(sign_count == i + 1);
+        }
     } else if (!strcmp(argv[1], "private")) {
         assert(blossom_probe_capabilities(c) == BLOSSOM_OK);
         const blossom_server_capabilities_t *caps = blossom_client_get_capabilities(c);
