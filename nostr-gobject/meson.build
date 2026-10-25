@@ -1,5 +1,5 @@
 project('nostr-gobject', 'c',
-  version: '2.2.2',
+  version: '2.3.0',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [
@@ -166,6 +166,7 @@ signer_proxy = gnome.gdbus_codegen('signer_proxy',
 
 # ── Source files ─────────────────────────────────────────────────────
 nostr_gobject_sources = files(
+  'src/gn-blossom-client.c',
   'src/nostr-error.c',
   'src/nostr-enums.c',
   'src/nostr_event.c',
@@ -210,6 +211,7 @@ nostr_gobject_sources = files(
 
 # Header files (public API)
 nostr_gobject_headers = files(
+  'include/nostr-gobject-1.0/gn-blossom-client.h',
   'include/nostr-gobject-1.0/nostr-gobject.h',
   'include/nostr-gobject-1.0/nostr-error.h',
   'include/nostr-gobject-1.0/nostr-types.h',
@@ -267,7 +269,9 @@ nostr_gobject_ndb_inc = include_directories(
 )
 
 # Collect all dependencies
+blossom_dep = dependency('blossom', version: '>= 0.2.0')
 nostr_gobject_deps = [
+  blossom_dep,
   glib_dep,
   gobject_dep,
   gio_dep,
@@ -318,8 +322,8 @@ if get_option('introspection')
     sources: nostr_gobject_sources + nostr_gobject_headers,
     namespace: 'GNostr',
     nsversion: '1.0',
-    symbol_prefix: 'gnostr',
-    identifier_prefix: 'GNostr',
+    symbol_prefix: ['gnostr', 'gn'],
+    identifier_prefix: ['GNostr', 'Gnostr', 'Gn'],
     includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0'],
     install: true)
 
@@ -337,7 +341,7 @@ pkg = import('pkgconfig')
 pkg.generate(nostr_gobject_lib,
   name: 'nostr-gobject-1.0',
   description: 'GObject wrapper for libnostr — Nostr protocol library',
-  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
+  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'blossom >= 0.2.0'],
   requires_private: ['openssl', 'libsecp256k1'])
 
 # ── Header installation ──────────────────────────────────────────────
@@ -364,6 +368,10 @@ if get_option('tests')
     include_directories: nostr_gobject_pub_inc)
 
   test('nip19', test_nip19, env: test_env)
+
+  test_blossom = executable('test_blossom_client', 'tests/test_blossom_client.c',
+    dependencies: [nostr_gobject_dep, libnostr_dep, dependency('bud02'), dependency('libsoup-3.0')])
+  test('nostr-gobject:blossom', test_blossom, env: test_env, timeout: 30)
 
   # ── New tests (using testkit) ──────────────────────────────────────
   # gnostr_testkit_dep should be declared via tests/testkit/meson.build

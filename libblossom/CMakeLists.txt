@@ -23,7 +23,7 @@ target_include_directories(blossom
          $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE src)
-target_link_libraries(blossom PRIVATE nostrc::bud02 CURL::libcurl OpenSSL::Crypto
+target_link_libraries(blossom PRIVATE nostrc::bud02 CURL::libcurl OpenSSL::SSL OpenSSL::Crypto
   Threads::Threads PkgConfig::BLOSSOM_JSON)
 generate_export_header(blossom EXPORT_MACRO_NAME BLOSSOM_API
   EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/include/blossom/export.h")
@@ -31,7 +31,7 @@ if(NOT BUILD_SHARED_LIBS)
   target_compile_definitions(blossom PUBLIC BLOSSOM_STATIC_DEFINE)
 endif()
 set_target_properties(blossom PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(blossom 0 1 0)
+declare_component_version(blossom 0 2 0)
 set_target_properties(blossom PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/blossom")
 apply_versioning(blossom)

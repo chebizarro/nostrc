@@ -17,6 +17,8 @@
 #include "nostr-types.h"
 #include "nostr-enums.h"
 
+#include "gn-blossom-client.h"
+
 /* Core GObject wrappers (G-prefixed, no core header conflicts) */
 #include "nostr_event.h"
 #include "nostr_event_bus.h"

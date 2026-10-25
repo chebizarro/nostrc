@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <openssl/sha.h>
 #include <openssl/crypto.h>
+#include <openssl/ssl.h>
 #include <jansson.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -41,6 +42,13 @@ struct blossom_client {
     long timeout;           /* Seconds */
     size_t max_blob_bytes;
     bool allow_insecure;
+    blossom_transport_t transport;
+    bool proxy_connection;
+    struct curl_slist *dns_pins;
+    blossom_error_t setup_error;
+    long http_status;
+    char http_reason[201];
+    const char *upload_auth; /* Borrowed only during put_signed(). */
     char upload_content_type[BLOSSOM_PREFERRED_CT_MAX];
     blossom_signer_t signer; /* Copied at creation */
     bool has_signer;
@@ -55,24 +63,44 @@ static bool valid_hex(const char *s) {
     return true;
 }
 
-static bool public_ipv4(uint32_t host) {
-    return (host >> 24) != 0 && (host >> 24) != 10 &&
-        (host >> 24) != 127 && (host >> 16) != 0xa9fe &&
-        (host >> 20) != 0xac1 && (host >> 16) != 0xc0a8 &&
-        (host >> 22) != 0x191 && (host >> 24) < 224;
+static bool public_ipv4(const uint8_t *b) {
+    return !(b[0] == 0 || b[0] == 10 || b[0] == 127 || b[0] >= 224 ||
+        (b[0] == 169 && b[1] == 254) || (b[0] == 172 && (b[1] & 0xf0) == 16) ||
+        (b[0] == 192 && b[1] == 168) || (b[0] == 100 && (b[1] & 0xc0) == 64) ||
+        (b[0] == 192 && b[1] == 0 && b[2] == 0) || (b[0] == 198 && (b[1] & 0xfe) == 18));
+}
+static bool public_ipv6(const uint8_t *b) {
+    static const uint8_t zero[12] = {0};
+    if (!memcmp(b, zero, 10) && ((!b[10] && !b[11]) || (b[10] == 255 && b[11] == 255)))
+        return public_ipv4(b + 12);
+    if (!memcmp(b, zero, 8) && b[8] == 255 && b[9] == 255 && !b[10] && !b[11])
+        return public_ipv4(b + 12);
+    if (!memcmp(b, "\x00\x64\xff\x9b", 4)) {
+        if (!memcmp(b + 4, zero, 8)) return public_ipv4(b + 12);
+        if (b[4] || b[5] != 1 || b[8]) return false;
+        static const uint8_t layouts[][5] = {{6,7,9,10,11}, {7,9,10,11,12}, {9,10,11,12,13}, {12,13,14,15,16}};
+        bool any = false;
+        for (size_t i = 0; i < sizeof layouts / sizeof layouts[0]; i++) {
+            bool fits = true;
+            for (size_t j = layouts[i][4]; j < 16; j++) fits = fits && !b[j];
+            if (!fits) continue;
+            uint8_t v4[4] = {b[layouts[i][0]], b[layouts[i][1]], b[layouts[i][2]], b[layouts[i][3]]};
+            if (!public_ipv4(v4)) return false;
+            any = true;
+        }
+        return any;
+    }
+    if (b[0] == 0x20 && b[1] == 2) return public_ipv4(b + 2);
+    if (b[0] == 0x20 && b[1] == 1 && !b[2] && !b[3]) {
+        uint8_t client[4] = {b[12] ^ 255, b[13] ^ 255, b[14] ^ 255, b[15] ^ 255};
+        return public_ipv4(b + 4) && public_ipv4(client);
+    }
+    if (!memcmp(b, "\x20\x01\x0d\xb8", 4)) return false;
+    return (b[0] & 0xe0) == 0x20;
 }
 static bool public_address(const struct sockaddr *sa) {
-    if (sa->sa_family == AF_INET)
-        return public_ipv4(ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr));
-    if (sa->sa_family == AF_INET6) {
-        const struct in6_addr *a = &((const struct sockaddr_in6 *)sa)->sin6_addr;
-        if (IN6_IS_ADDR_V4MAPPED(a)) {
-            uint32_t v; memcpy(&v, a->s6_addr + 12, 4);
-            return public_ipv4(ntohl(v));
-        }
-        /* Global unicast only; excludes loopback, ULA, link-local and multicast. */
-        return (a->s6_addr[0] & 0xe0) == 0x20;
-    }
+    if (sa->sa_family == AF_INET) return public_ipv4((const uint8_t *)&((const struct sockaddr_in *)sa)->sin_addr);
+    if (sa->sa_family == AF_INET6) return public_ipv6(((const struct sockaddr_in6 *)sa)->sin6_addr.s6_addr);
     return false;
 }
 blossom_error_t blossom_url_check(const char *url, bool insecure) {
@@ -109,9 +137,12 @@ blossom_error_t blossom_url_check(const char *url, bool insecure) {
     return ok ? BLOSSOM_OK : BLOSSOM_ERR_INVALID_ARG;
 }
 static curl_socket_t blossom_open_socket(void *data, curlsocktype purpose, struct curl_sockaddr *addr) {
-    const blossom_client_t *c = data;
-    if (purpose != CURLSOCKTYPE_IPCXN || (!c->allow_insecure && !public_address(&addr->addr)))
+    blossom_client_t *c = data;
+    if (purpose != CURLSOCKTYPE_IPCXN || (!c->allow_insecure && !c->transport.allow_private_addresses &&
+        !c->proxy_connection && !public_address(&addr->addr))) {
+        c->setup_error = BLOSSOM_ERR_POLICY;
         return CURL_SOCKET_BAD;
+    }
     return socket(addr->family, addr->socktype, addr->protocol);
 }
 static size_t discard_body(void *p, size_t size, size_t count, void *ctx) {
@@ -215,6 +246,27 @@ static blossom_error_t make_auth_header(const blossom_client_t *c,
                                        const char *sha256_hex,
                                        char **out_header)
 {
+    if (c->upload_auth && action == NOSTR_BUD02_ACTION_UPLOAD) {
+        NostrEvent *signed_ev = nostr_event_new();
+        nostr_bud02_validate_options_t validation = { .expected_sha256 = sha256_hex };
+        bool ok = signed_ev && nostr_event_deserialize_signed(signed_ev, c->upload_auth, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+            nostr_event_validate(signed_ev, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+            nostr_bud02_validate_auth_event(signed_ev, action, &validation) == NOSTR_BUD02_OK;
+        char *value = ok ? nostr_bud02_create_auth_header(signed_ev) : NULL;
+        nostr_event_free(signed_ev);
+        if (!value) return BLOSSOM_ERR_AUTH;
+        /* BUD-11: unpadded base64url for media upload authorization. */
+        for (char *p = value; *p; p++) {
+            if (*p == '+') *p = '-';
+            else if (*p == '/') *p = '_';
+            else if (*p == '=') { *p = 0; break; }
+        }
+        size_t n = strlen(value) + 16;
+        *out_header = malloc(n);
+        if (*out_header) snprintf(*out_header, n, "Authorization: %s", value);
+        free(value);
+        return *out_header ? BLOSSOM_OK : BLOSSOM_ERR_NOMEM;
+    }
     if (!c->has_signer)
         return BLOSSOM_ERR_AUTH;
 
@@ -326,7 +378,9 @@ blossom_error_t blossom_client_new(const blossom_client_opts_t *opts,
     if (!out) return BLOSSOM_ERR_INVALID_ARG;
     *out = NULL;
     if (!opts || !opts->endpoint) return BLOSSOM_ERR_INVALID_ARG;
-    blossom_error_t url_error = blossom_url_check(opts->endpoint, opts->allow_insecure);
+    bool relaxed = opts->allow_insecure || (opts->transport &&
+        (opts->transport->allow_http || opts->transport->allow_private_addresses));
+    blossom_error_t url_error = blossom_url_check(opts->endpoint, relaxed);
     if (url_error != BLOSSOM_OK) return url_error;
 
     blossom_client_t *c = calloc(1, sizeof(*c));
@@ -350,6 +404,7 @@ blossom_error_t blossom_client_new(const blossom_client_opts_t *opts,
     c->timeout = (opts->timeout_seconds > 0) ? opts->timeout_seconds : 30;
     c->max_blob_bytes = opts->max_blob_bytes ? opts->max_blob_bytes : BLOSSOM_DEFAULT_MAX_BLOB_BYTES;
     c->allow_insecure = opts->allow_insecure;
+    if (opts->transport) c->transport = *opts->transport;
 
     if (signer && signer->sign) {
         c->signer = *signer; /* shallow copy — caller must keep pointers valid */
@@ -456,6 +511,7 @@ void blossom_client_free(blossom_client_t *client)
     if (!client) return;
     free(client->endpoint);
     free(client->user_agent);
+    curl_slist_free_all(client->dns_pins);
     free(client);
 }
 
@@ -463,21 +519,120 @@ void blossom_client_free(blossom_client_t *client)
  * Common curl setup
  * ========================================================================= */
 
-static CURL *setup_curl(const blossom_client_t *c, const char *url)
+static int transfer_progress(void *data, curl_off_t a, curl_off_t b, curl_off_t d, curl_off_t e)
 {
+    (void)a; (void)b; (void)d; (void)e;
+    blossom_client_t *c = data;
+    return c->transport.cancelled && c->transport.cancelled(c->transport.user_data);
+}
+
+static CURLcode private_tls_context(CURL *curl, void *ctx, void *data)
+{
+    (void)curl; (void)data;
+    SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+    SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+    return CURLE_OK;
+}
+
+long blossom_client_http_status(const blossom_client_t *c) { return c ? c->http_status : 0; }
+const char *blossom_client_http_reason(const blossom_client_t *c) { return c ? c->http_reason : ""; }
+static size_t response_header(char *line, size_t size, size_t count, void *data)
+{
+    blossom_client_t *c = data;
+    if (size && count > SIZE_MAX / size) return 0;
+    size_t n = size * count;
+    if (n > 5 && !strncasecmp(line, "HTTP/", 5)) {
+        const char *space = memchr(line, ' ', n);
+        c->http_status = space && line + n - space >= 4 &&
+            isdigit((unsigned char)space[1]) && isdigit((unsigned char)space[2]) && isdigit((unsigned char)space[3])
+            ? (space[1] - '0') * 100 + (space[2] - '0') * 10 + space[3] - '0' : 0;
+        c->http_reason[0] = 0;
+    } else if (n > 9 && !strncasecmp(line, "X-Reason:", 9)) {
+        size_t j = 0;
+        for (size_t i = 9; i < n && j < sizeof c->http_reason - 1; i++) {
+            unsigned char ch = (unsigned char)line[i];
+            if (ch == '\r' || ch == '\n') break;
+            if (ch >= 32 && ch < 127) c->http_reason[j++] = (char)ch;
+        }
+        c->http_reason[j] = 0;
+    }
+    return n;
+}
+
+static CURL *setup_curl(blossom_client_t *c, const char *url)
+{
+    c->setup_error = BLOSSOM_ERR_POLICY;
+    c->http_status = 0; c->http_reason[0] = 0;
+    if (transfer_progress(c, 0, 0, 0, 0)) { c->setup_error = BLOSSOM_ERR_CANCELLED; return NULL; }
+    bool http = !strncasecmp(url, "http://", 7);
+    if (blossom_url_check(url, c->allow_insecure || c->transport.allow_http ||
+                          c->transport.allow_private_addresses) != BLOSSOM_OK ||
+        (http && !c->allow_insecure && !c->transport.allow_http)) return NULL;
+    if (!c->allow_insecure && !c->transport.allow_private_addresses && !http &&
+        blossom_url_check(url, false) != BLOSSOM_OK) return NULL;
+    char *proxy = NULL, *addresses = NULL;
+    curl_slist_free_all(c->dns_pins); c->dns_pins = NULL;
+    if (c->transport.prepare) {
+        c->setup_error = c->transport.prepare(url, &proxy, &addresses, c->transport.user_data);
+        if (c->setup_error != BLOSSOM_OK) { free(proxy); free(addresses); return NULL; }
+    }
+    if (addresses && *addresses && (!proxy || !*proxy)) {
+        CURLU *u = curl_url();
+        char *host = NULL, *port = NULL;
+        if (u && curl_url_set(u, CURLUPART_URL, url, 0) == CURLUE_OK &&
+            curl_url_get(u, CURLUPART_HOST, &host, 0) == CURLUE_OK &&
+            curl_url_get(u, CURLUPART_PORT, &port, CURLU_DEFAULT_PORT) == CURLUE_OK) {
+            size_t n = strlen(host) + strlen(port) + strlen(addresses) + 3;
+            char *record = malloc(n);
+            if (record) {
+                snprintf(record, n, "%s:%s:%s", host, port, addresses);
+                c->dns_pins = curl_slist_append(NULL, record);
+                free(record);
+            }
+        }
+        curl_free(host); curl_free(port); curl_url_cleanup(u);
+        if (!c->dns_pins) { free(proxy); free(addresses); c->setup_error = BLOSSOM_ERR_NOMEM; return NULL; }
+    }
+    free(addresses);
+    c->proxy_connection = proxy && *proxy;
+    if (c->transport.disable_tls_sessions && !http) {
+        const char *backend = curl_version_info(CURLVERSION_NOW)->ssl_version;
+        if (!backend || strncmp(backend, "OpenSSL/", 8)) {
+            free(proxy); c->setup_error = BLOSSOM_ERR_UNSUPPORTED; return NULL;
+        }
+    }
     CURL *curl = curl_easy_init();
-    if (!curl) return NULL;
+    c->setup_error = BLOSSOM_ERR_NOMEM;
+    if (!curl) { free(proxy); return NULL; }
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
+    if (c->dns_pins) curl_easy_setopt(curl, CURLOPT_RESOLVE, c->dns_pins);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, c->timeout);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, c->user_agent);
     /* No redirect/proxy may bypass destination checks or leak auth. */
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, c->allow_insecure ? "http,https" : "https");
-    curl_easy_setopt(curl, CURLOPT_PROXY, "");
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, (c->allow_insecure || c->transport.allow_http) ? "http,https" : "https");
+    /* Required route controls must not silently fail open. */
+    if (curl_easy_setopt(curl, CURLOPT_PROXY, proxy ? proxy : "") != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "") != CURLE_OK) {
+        free(proxy); curl_easy_cleanup(curl); c->setup_error = BLOSSOM_ERR_UNSUPPORTED; return NULL;
+    }
+    free(proxy);
+    curl_easy_setopt(curl, CURLOPT_SSL_SESSIONID_CACHE, 0L);
+    curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+    curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
+    if (c->transport.disable_tls_sessions && !http &&
+        curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, private_tls_context) != CURLE_OK) {
+        curl_easy_cleanup(curl); c->setup_error = BLOSSOM_ERR_UNSUPPORTED; return NULL;
+    }
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, transfer_progress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, c);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, blossom_open_socket);
     curl_easy_setopt(curl, CURLOPT_OPENSOCKETDATA, (void *)c);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, response_header);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, c);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_body);
     curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)c->max_blob_bytes);
 
@@ -488,6 +643,7 @@ static blossom_error_t curl_code_to_error(CURLcode code)
 {
     switch (code) {
     case CURLE_OK:               return BLOSSOM_OK;
+    case CURLE_ABORTED_BY_CALLBACK: return BLOSSOM_ERR_CANCELLED;
     case CURLE_WRITE_ERROR:
     case CURLE_FILESIZE_EXCEEDED: return BLOSSOM_ERR_TOO_LARGE;
     case CURLE_OPERATION_TIMEDOUT: return BLOSSOM_ERR_TIMEOUT;
@@ -497,11 +653,18 @@ static blossom_error_t curl_code_to_error(CURLcode code)
     }
 }
 
+static blossom_error_t transfer_error(blossom_client_t *c, CURLcode code)
+{
+    if (code != CURLE_OK && c->setup_error == BLOSSOM_ERR_POLICY) return BLOSSOM_ERR_POLICY;
+    return curl_code_to_error(code);
+}
+
 static blossom_error_t http_status_to_error(long status)
 {
     if (status >= 200 && status < 300) return BLOSSOM_OK;
     if (status == 401 || status == 403) return BLOSSOM_ERR_AUTH;
     if (status == 404) return BLOSSOM_ERR_NOT_FOUND;
+    if (status == 413) return BLOSSOM_ERR_TOO_LARGE;
     if (status >= 400 && status < 500) return BLOSSOM_ERR_BLOSSOM;
     return BLOSSOM_ERR_NETWORK;
 }
@@ -528,7 +691,7 @@ blossom_error_t blossom_client_get(blossom_client_t *client,
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
-        return BLOSSOM_ERR_NOMEM;
+        return client->setup_error;
     }
 
     dyn_buf_t buf;
@@ -553,7 +716,7 @@ blossom_error_t blossom_client_get(blossom_client_t *client,
     if (res != CURLE_OK) {
         dyn_buf_free(&buf);
         curl_easy_cleanup(curl);
-        return curl_code_to_error(res);
+        return transfer_error(client, res);
     }
 
     long status = 0;
@@ -577,6 +740,43 @@ blossom_error_t blossom_client_get(blossom_client_t *client,
     return BLOSSOM_OK;
 }
 
+blossom_error_t blossom_client_get_url(blossom_client_t *c, const char *url,
+    const char *hash, uint8_t **out_data, size_t *out_len)
+{
+    if (!c || !url || !valid_hex(hash) || !out_data || !out_len) return BLOSSOM_ERR_INVALID_ARG;
+    *out_data = NULL; *out_len = 0;
+    char *current = strdup(url);
+    if (!current) return BLOSSOM_ERR_NOMEM;
+    for (unsigned hop = 0; ; hop++) {
+        CURL *curl = setup_curl(c, current);
+        free(current); current = NULL;
+        if (!curl) return c->setup_error;
+        dyn_buf_t buf; dyn_buf_init(&buf); buf.limit = c->max_blob_bytes;
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+        CURLcode rc = curl_easy_perform(curl);
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        if (rc == CURLE_OK && status >= 300 && status < 400 && hop < 3) {
+            char *next = NULL;
+            curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &next);
+            if (next) current = strdup(next);
+        }
+        curl_easy_cleanup(curl);
+        if (current) { dyn_buf_free(&buf); continue; }
+        blossom_error_t error = rc == CURLE_OK ? http_status_to_error(status) :
+            (c->setup_error == BLOSSOM_ERR_POLICY ? BLOSSOM_ERR_POLICY : curl_code_to_error(rc));
+        if (error == BLOSSOM_OK) {
+            char actual[65];
+            error = blossom_hash_blossom(buf.data, buf.len, actual);
+            if (error == BLOSSOM_OK && strcasecmp(actual, hash)) error = BLOSSOM_ERR_HASH_MISMATCH;
+        }
+        if (error != BLOSSOM_OK) { dyn_buf_free(&buf); return error; }
+        *out_data = buf.data; *out_len = buf.len;
+        return BLOSSOM_OK;
+    }
+}
+
 /* =========================================================================
  * BUD-01: HEAD
  * ========================================================================= */
@@ -597,7 +797,7 @@ blossom_error_t blossom_client_head(blossom_client_t *client,
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
-        return BLOSSOM_ERR_NOMEM;
+        return client->setup_error;
     }
 
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L); /* HEAD request */
@@ -616,7 +816,7 @@ blossom_error_t blossom_client_head(blossom_client_t *client,
 
     if (res != CURLE_OK) {
         curl_easy_cleanup(curl);
-        return curl_code_to_error(res);
+        return transfer_error(client, res);
     }
 
     long status = 0;
@@ -641,7 +841,7 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
     if (out_desc) *out_desc = NULL;
     if (len > client->max_blob_bytes ||
         (client->caps.max_size && len > client->caps.max_size)) return BLOSSOM_ERR_TOO_LARGE;
-    if (!client->has_signer)
+    if (!client->has_signer && !client->upload_auth)
         return BLOSSOM_ERR_AUTH;
 
     char hash_buf[65];
@@ -667,7 +867,7 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
     if (!curl) {
         free(url);
         free(auth_header);
-        return BLOSSOM_ERR_NOMEM;
+        return client->setup_error;
     }
 
     /* PUT with binary body.
@@ -687,11 +887,15 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, auth_header);
     headers = curl_slist_append(headers, cth);
+    char hash_header[80];
+    snprintf(hash_header, sizeof hash_header, "X-SHA-256: %s", sha256_hex);
+    headers = curl_slist_append(headers, hash_header);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     dyn_buf_t resp;
     dyn_buf_init(&resp);
-    resp.limit = client->max_blob_bytes;
+    resp.limit = 64u * 1024u;
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)resp.limit);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
 
@@ -703,7 +907,7 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         dyn_buf_free(&resp);
-        return curl_code_to_error(res);
+        return transfer_error(client, res);
     }
 
     long status = 0;
@@ -729,6 +933,16 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
 
     dyn_buf_free(&resp);
     return BLOSSOM_OK;
+}
+
+blossom_error_t blossom_client_put_signed(blossom_client_t *c, const uint8_t *data,
+    size_t len, const char *hash, const char *signed_json, blossom_blob_descriptor_t **desc)
+{
+    if (!c || !valid_hex(hash) || !signed_json) return BLOSSOM_ERR_INVALID_ARG;
+    c->upload_auth = signed_json;
+    blossom_error_t result = blossom_put_wire(c, data, len, hash, desc);
+    c->upload_auth = NULL;
+    return result;
 }
 
 /* =========================================================================
@@ -759,7 +973,7 @@ blossom_error_t blossom_client_delete(blossom_client_t *client,
     if (!curl) {
         free(url);
         free(auth_header);
-        return BLOSSOM_ERR_NOMEM;
+        return client->setup_error;
     }
 
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
@@ -775,7 +989,7 @@ blossom_error_t blossom_client_delete(blossom_client_t *client,
     if (res != CURLE_OK) {
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
-        return curl_code_to_error(res);
+        return transfer_error(client, res);
     }
 
     long status = 0;
@@ -812,7 +1026,7 @@ blossom_error_t blossom_client_list(blossom_client_t *client,
     CURL *curl = setup_curl(client, url);
     if (!curl) {
         free(url);
-        return BLOSSOM_ERR_NOMEM;
+        return client->setup_error;
     }
 
     dyn_buf_t buf;
@@ -836,7 +1050,7 @@ blossom_error_t blossom_client_list(blossom_client_t *client,
     if (res != CURLE_OK) {
         dyn_buf_free(&buf);
         curl_easy_cleanup(curl);
-        return curl_code_to_error(res);
+        return transfer_error(client, res);
     }
 
     long status = 0;
@@ -881,7 +1095,7 @@ static void put_one_blob(blossom_client_t *c,
     if (!url) { *out_err = BLOSSOM_ERR_NOMEM; return; }
 
     CURL *curl = setup_curl(c, url);
-    if (!curl) { free(url); *out_err = BLOSSOM_ERR_NOMEM; return; }
+    if (!curl) { free(url); *out_err = c->setup_error; return; }
 
     size_t hlen = 15 + 1 + strlen(auth_header_value) + 1; /* "Authorization: " + val + NUL */
     char *full = malloc(hlen);
@@ -1671,7 +1885,7 @@ blossom_error_t blossom_client_mirror(blossom_client_t *client,
     if (!curl) {
         free(url);
         free(auth_header);
-        return BLOSSOM_ERR_NOMEM;
+        return client->setup_error;
     }
 
     /* PUT /mirror with JSON body containing the source URL */
@@ -1705,7 +1919,8 @@ blossom_error_t blossom_client_mirror(blossom_client_t *client,
 
     dyn_buf_t resp;
     dyn_buf_init(&resp);
-    resp.limit = client->max_blob_bytes;
+    resp.limit = 64u * 1024u;
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)resp.limit);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
 
@@ -1718,7 +1933,7 @@ blossom_error_t blossom_client_mirror(blossom_client_t *client,
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         dyn_buf_free(&resp);
-        return curl_code_to_error(res);
+        return transfer_error(client, res);
     }
 
     long status = 0;

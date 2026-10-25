@@ -13,7 +13,7 @@ files already declare a version.
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.2.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 2.3.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
@@ -27,7 +27,7 @@ files already declare a version.
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.3.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.1.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
-| libblossom | `libblossom/` | 0.1.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
@@ -57,6 +57,15 @@ files already declare a version.
   bud02 has no change or bump. libjson's delayed core-link registration preserves
   its existing static/shared policy and shipped ABI: no version change.
   Selection/test-only changes need no version. Release columns do not change.
+
+- nostrc-er4fz.6 (R4 library API): nostr-gobject MINOR 2.3.0 adds
+  GnBlossomClient's GTask upload/download API and annotated GIR surface.
+  libblossom MINOR 0.2.0 adds explicit route/cancellation policy, verified
+  pre-signed raw uploads and bounded/hash-verified URL downloads. The extended
+  options struct is a 0.x ABI change: rebuild callers. Default transport stays
+  direct; proxy callers must supply an authoritative route. Private TLS mode
+  requires OpenSSL-backed curl and fails closed on unsupported backends.
+  No release columns or tags change.
 
 - nostrc-er4fz.3 (R2): new libblossom starts at 0.1.0. libhanami's
   MINOR-class 0.x ABI/build extraction folds into its still-unreleased 0.2.0
