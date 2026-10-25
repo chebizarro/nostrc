@@ -32,8 +32,8 @@ files already declare a version.
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
-| vaultctl | `tools/vaultctl/` | 0.2.0 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.4.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| vaultctl | `tools/vaultctl/` | 0.3.0 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
+| libvault | `libvault/` | 0.5.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -43,6 +43,13 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-hl30i.10 checkpoint fold: libvault MINOR 0.4.0 -> 0.5.0 adds the
+  explicitly owner-anchored current-head fold and transitive parent coverage.
+  Strict signed-history fold stays unchanged; no new wire event or trust source.
+  vaultctl MINOR 0.2.0 -> 0.3.0 consumes checkpoint discovery and inherits coverage
+  in administrative successors. libporthome stays 0.5.0; no codec/ABI change here.
+  Other components have no owned shipped changes. No release tags.
 
 - nostrc-hl30i.10 (SV-10 prerequisite): libporthome MINOR 0.4.0 -> 0.5.0
   completes the unreleased dir_node v2 encoding in place with required safe

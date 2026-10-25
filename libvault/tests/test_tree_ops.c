@@ -142,9 +142,19 @@ int main(void)
     assert(vault_tree_reseal(fresh, 0, 122, &io, &progress) == 0 && progress->remaining == 0);
     vault_tree_reseal_result_free(progress);
     assert(vault_tree_seal(fresh, &io, hash) == 0);
+    /* Owner successors preserve incorporation coverage of other writers. */
+    head->parents = calloc(1, sizeof(*head->parents));
+    assert(head->parents);
+    head->parents_len = 1;
+    memcpy(head->parents[0].writer, w.pub[1], 32);
+    head->parents[0].seq = 7;
+    memset(head->parents[0].root_manifest, 0x71, 32);
     porthome_head *new_head = NULL;
     assert(vault_tree_head_new(fresh, head, w.pub[0], hash, 2, &new_head) == 0 &&
-           new_head->seq == 2 && new_head->has_key_override);
+           new_head->seq == 2 && new_head->has_key_override && new_head->parents_len == 2);
+    for (size_t i = 0; i < new_head->parents_len; ++i)
+        assert(new_head->parents[i].seq ==
+               (!memcmp(new_head->parents[i].writer, w.pub[0], 32) ? 1 : 7));
     vault_record *new_record = record_of(&w, fresh, new_head);
     assert(vault_tree_check(fresh, &io, &checked) == 0 && checked.chunks == 2);
     vault_tree *eager = NULL;

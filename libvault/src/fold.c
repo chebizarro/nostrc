@@ -98,6 +98,22 @@ static int visit(graph *g, size_t index)
     g->state[index] = 2;
     return 0;
 }
+static int visit_edges(size_t i, size_t count, const uint8_t *edges, uint8_t *state)
+{
+    if (state[i] == 1)
+        return VAULT_ERR_CONFLICT;
+    if (state[i] == 2)
+        return 0;
+    state[i] = 1;
+    for (size_t j = 0; j < count; ++j)
+        if (edges[i * count + j]) {
+            int rc = visit_edges(j, count, edges, state);
+            if (rc)
+                return rc;
+        }
+    state[i] = 2;
+    return 0;
+}
 static int add_conflict(vault_fold_result *r, size_t *capacity, const char *path, size_t other,
                         int owner, int theirs, const vault_record *record)
 {
@@ -125,8 +141,8 @@ static int add_conflict(vault_fold_result *r, size_t *capacity, const char *path
     ++r->conflicts_len;
     return 0;
 }
-int vault_fold(const porthome_vault_info *anchor, const vault_record *const *records, size_t count,
-               vault_fold_result **out)
+static int fold(const porthome_vault_info *anchor, const vault_record *const *records, size_t count,
+                int checkpoint, vault_fold_result **out)
 {
     if (out)
         *out = NULL;
@@ -186,7 +202,7 @@ int vault_fold(const porthome_vault_info *anchor, const vault_record *const *rec
         if (memcmp(v->writer, anchor->owner, 32) || memcmp(p->owner, anchor->owner, 32) ||
             memcmp(p->vault_id, anchor->vault_id, 32))
             continue;
-        if (p->grants_rev > policy->grants_rev) {
+        if (!checkpoint && p->grants_rev > policy->grants_rev) {
             policy = p;
             policy_hash = policies[i];
             ambiguous = 0;
@@ -209,7 +225,8 @@ int vault_fold(const porthome_vault_info *anchor, const vault_record *const *rec
             if (!record_compare(v, records[j])) {
                 if (memcmp(v->head_hash, records[j]->head_hash, 32)) {
                     if (r->dispositions[i] == VAULT_HEAD_ACCEPTED &&
-                        r->dispositions[j] == VAULT_HEAD_ACCEPTED)
+                        r->dispositions[j] == VAULT_HEAD_ACCEPTED &&
+                        (!checkpoint || !memcmp(v->writer, policy->owner, 32)))
                         ambiguous = 1;
                 } else if (r->dispositions[i] == VAULT_HEAD_ACCEPTED)
                     r->dispositions[i] = VAULT_HEAD_DUPLICATE;
@@ -220,13 +237,48 @@ int vault_fold(const porthome_vault_info *anchor, const vault_record *const *rec
         rc = VAULT_ERR_CONFLICT;
         goto finish;
     }
-    graph g = {records, count, state, edges};
-    for (size_t i = 0; i < count; ++i)
-        if (r->dispositions[i] == VAULT_HEAD_ACCEPTED) {
-            rc = visit(&g, i);
+    if (checkpoint) {
+        for (size_t i = 0; i < count; ++i) {
+            if (r->dispositions[i] != VAULT_HEAD_ACCEPTED)
+                continue;
+            const porthome_head *h = records[i]->head;
+            for (size_t j = 0; j < count; ++j) {
+                if (r->dispositions[j] != VAULT_HEAD_ACCEPTED)
+                    continue;
+                if (i != j && !memcmp(records[i]->writer, policy->owner, 32) &&
+                    !memcmp(records[i]->writer, records[j]->writer, 32) &&
+                    h->seq == records[j]->head->seq &&
+                    memcmp(records[i]->head_hash, records[j]->head_hash, 32)) {
+                    rc = VAULT_ERR_CONFLICT;
+                    goto finish;
+                }
+                for (size_t p = 0; p < h->parents_len; ++p)
+                    if (!memcmp(h->parents[p].writer, records[j]->writer, 32) &&
+                        records[j]->head->seq <= h->parents[p].seq)
+                        edges[i * count + j] = 1;
+            }
+            /* A writer cannot incorporate itself from its own future. */
+            for (size_t p = 0; p < h->parents_len; ++p)
+                if (!memcmp(h->parents[p].writer, records[i]->writer, 32) &&
+                    h->parents[p].seq >= h->seq) {
+                    rc = VAULT_ERR_CONFLICT;
+                    goto finish;
+                }
+        }
+        for (size_t i = 0; i < count; ++i) {
+            rc = visit_edges(i, count, edges, state);
             if (rc)
                 goto finish;
         }
+    } else {
+        graph g = {records, count, state, edges};
+        for (size_t i = 0; i < count; ++i)
+            if (r->dispositions[i] == VAULT_HEAD_ACCEPTED) {
+                rc = visit(&g, i);
+                if (rc)
+                    goto finish;
+            }
+    }
     for (size_t i = 0; i < count; ++i)
         if (r->dispositions[i] == VAULT_HEAD_ACCEPTED) {
             int ancestor = 0;
@@ -245,7 +297,7 @@ int vault_fold(const porthome_vault_info *anchor, const vault_record *const *rec
         r->frontier[j] = x;
     }
     if (!r->frontier_len) {
-        rc = VAULT_ERR_INCOMPLETE;
+        rc = checkpoint ? VAULT_ERR_CONFLICT : VAULT_ERR_INCOMPLETE;
         goto finish;
     }
     if (r->frontier_len == 1)
@@ -318,4 +370,32 @@ finish:
         r->view = SIZE_MAX;
     *out = r;
     return rc;
+}
+int vault_fold(const porthome_vault_info *anchor, const vault_record *const *records, size_t count,
+               vault_fold_result **out)
+{
+    return fold(anchor, records, count, 0, out);
+}
+int vault_fold_checkpoint(const vault_grant *grant, const vault_record *const *records,
+                          size_t count, size_t owner_index, vault_fold_result **out)
+{
+    if (out)
+        *out = NULL;
+    if (!grant || !records || owner_index >= count || count > VAULT_MAX_HEADS || !out)
+        return VAULT_ERR_ARG;
+    for (size_t i = 0; i < count; ++i)
+        if (!records[i])
+            return VAULT_ERR_ARG;
+    const vault_record *owner = records[owner_index];
+    const porthome_vault_info *policy = owner->root->vault;
+    if (memcmp(owner->writer, grant->owner, 32) || memcmp(policy->owner, grant->owner, 32) ||
+        memcmp(policy->vault_id, grant->vault_id, 32) ||
+        memcmp(owner->root->node_id, grant->node_id, 32))
+        return VAULT_ERR_AUTH;
+    /* A caller cannot choose an older owner head from its current-head set. */
+    for (size_t i = 0; i < count; ++i)
+        if (!memcmp(records[i]->writer, grant->owner, 32) &&
+            records[i]->head->seq > owner->head->seq)
+            return VAULT_ERR_CONFLICT;
+    return fold(policy, records, count, 1, out);
 }

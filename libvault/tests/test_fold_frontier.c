@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "helpers.h"
+#include <openssl/crypto.h>
+#include <vault/tree.h>
 static int retained(const vault_fold_result *r, const uint8_t hash[32])
 {
     for (size_t i = 0; i < r->retained_roots_len; ++i)
@@ -124,6 +126,146 @@ int main(void)
                PORTHOME_ERR_CRYPTO &&
            !bad);
     nostr_event_free(event);
+    /* Fresh member: only an authenticated grant and current signed records,
+     * never the owner's private history or the missing base record. */
+    vault_grant grant = {.ring = w.ring, .cap = VAULT_CAP_WRITE, .issued_at = 1};
+    memcpy(grant.vault_id, w.vault.vault_id, 32);
+    memcpy(grant.node_id, w.node.node_id, 32);
+    memcpy(grant.owner, w.pub[0], 32);
+    memcpy(grant.root_manifest, vault_record_head(owner)->root_manifest, 32);
+    char *grant_body = NULL;
+    vault_grant *received = NULL;
+    assert(vault_grant_encode(&grant, &grant_body) == 0);
+    assert(vault_grant_decode(grant_body, &received) == 0);
+    OPENSSL_cleanse(grant_body, strlen(grant_body));
+    free(grant_body);
+    const vault_record *current[] = {owner, writer, stale, reader, forged};
+    vault_record *cold[5] = {0};
+    const vault_record *cold_current[5];
+    const unsigned authors[] = {0, 1, 1, 2, 1};
+    porthome_ring_t granted = vault_ring_view(&received->ring);
+    vault_blob_io remote = {&w, read_blob, NULL};
+    unsigned cold_reads = w.reads;
+    for (size_t i = 0; i < 5; ++i) {
+        NostrEvent *latest = NULL;
+        const porthome_head *body = vault_record_head(current[i]);
+        assert(porthome_head_event_new(body, granted.entries[0].node_key, w.pub[authors[i]],
+                                       &latest) == 0);
+        assert(nostr_event_sign(latest, w.secret[authors[i]]) == 0);
+        vault_tree *tree = NULL;
+        assert(vault_record_fetch(latest, received->vault_id, received->node_id, &granted,
+                                  body->epoch, NULL, NULL, &remote, &cold[i], &tree) == 0);
+        assert(vault_tree_count(tree) == 1);
+        vault_tree_free(tree);
+        nostr_event_free(latest);
+        cold_current[i] = cold[i];
+    }
+    assert(w.reads == cold_reads + 5); /* No missing ancestor was requested. */
+    assert(vault_fold_checkpoint(received, cold_current, 5, 0, &r) == 0 && r->view == 0 &&
+           r->frontier_len == 2 && r->conflicts_len == 1 &&
+           r->dispositions[2] == VAULT_HEAD_STALE && r->dispositions[3] == VAULT_HEAD_NONWRITER);
+    vault_fold_result_free(r);
+    for (size_t i = 0; i < 5; ++i)
+        vault_record_free(cold[i]);
+    assert(vault_fold_checkpoint(received, current, 5, 0, &r) == 0 && r->view == 0 &&
+           r->frontier_len == 2 && r->conflicts_len == 1);
+    assert(r->dispositions[2] == VAULT_HEAD_STALE && r->dispositions[3] == VAULT_HEAD_NONWRITER &&
+           r->dispositions[4] == VAULT_HEAD_POLICY);
+    assert(r->conflicts[0].other_record == 1 &&
+           !strcmp(r->conflicts[0].path_enc, w.entries[0].name_enc));
+    assert(retained(r, p.root_manifest));
+    vault_fold_result_free(r);
+    for (size_t offset = 0; offset < 5; ++offset) {
+        const vault_record *permuted[5];
+        size_t oi = 0;
+        for (size_t i = 0; i < 5; ++i) {
+            permuted[i] = current[(i + offset) % 5];
+            if (permuted[i] == owner)
+                oi = i;
+        }
+        assert(vault_fold_checkpoint(received, permuted, 5, oi, &r) == 0 &&
+               permuted[r->view] == owner && r->conflicts_len == 1);
+        vault_fold_result_free(r);
+    }
+    assert(vault_fold_checkpoint(received, current, 5, 1, &r) == VAULT_ERR_AUTH && !r);
+    const vault_record *writer_forks[] = {owner, writer, writer_fork};
+    assert(vault_fold_checkpoint(received, writer_forks, 3, 0, &r) == 0 && r->view == 0 &&
+           r->frontier_len == 3 && r->conflicts_len == 2);
+    vault_fold_result_free(r);
+    /* A parent at a missing higher sequence dominates a current older head of
+     * that writer: no exact-root match or archived intermediate is required. */
+    porthome_head_parent coverage = parent_of(writer, w.pub[1]);
+    coverage.seq = 5;
+    memset(coverage.root_manifest, 0x77, 32);
+    vault_record *covered = record_make(&w, 0, 3, 8, "covered", &coverage, 1, 0);
+    const vault_record *dominated[] = {covered, writer};
+    assert(vault_fold_checkpoint(received, dominated, 2, 0, &r) == 0 && r->view == 0 &&
+           r->frontier_len == 1);
+    vault_fold_result_free(r);
+    /* Neither stale nor unauthorized heads may suppress the owner's frontier. */
+    porthome_head_parent false_cover = parent_of(owner, w.pub[0]);
+    false_cover.seq = 999;
+    vault_record *stale_cover = record_make(&w, 1, 6, 7, "stale cover", &false_cover, 1, 0);
+    vault_record *reader_cover = record_make(&w, 2, 6, 8, "reader cover", &false_cover, 1, 0);
+    const vault_record *untrusted[] = {owner, stale_cover, reader_cover};
+    assert(vault_fold_checkpoint(received, untrusted, 3, 0, &r) == 0 && r->view == 0 &&
+           r->frontier_len == 1);
+    vault_fold_result_free(r);
+    const vault_record *new_policy[] = {new_owner, writer, forged, reader};
+    assert(vault_fold_checkpoint(received, new_policy, 4, 0, &r) == 0 && r->view == 0 &&
+           r->dispositions[1] == VAULT_HEAD_NONWRITER);
+    vault_fold_result_free(r);
+    assert(vault_fold_checkpoint(received, cycle, 2, 0, &r) == VAULT_ERR_CONFLICT);
+    vault_fold_result_free(r);
+    assert(vault_fold_checkpoint(received, ambiguous, 2, 0, &r) == VAULT_ERR_CONFLICT && !r);
+    /* Publishing carries every incorporated writer and their prior coverage;
+     * compression is by highest seq per writer, not just direct predecessor. */
+    porthome_head successor = {.seq = 4};
+    memcpy(successor.vault_id, w.vault.vault_id, 32);
+    const vault_record *incorporated[] = {owner, writer};
+    assert(vault_head_cover(&successor, incorporated, 2) == 0 && successor.parents_len == 2);
+    for (size_t i = 0; i < successor.parents_len; ++i) {
+        assert(successor.parents[i].seq == 2);
+        assert(!memcmp(successor.parents[i].writer, w.pub[0], 32) ||
+               !memcmp(successor.parents[i].writer, w.pub[1], 32));
+    }
+    const vault_record *carry[] = {covered};
+    assert(vault_head_cover(&successor, carry, 1) == 0 && successor.parents_len == 2);
+    for (size_t i = 0; i < successor.parents_len; ++i)
+        assert(successor.parents[i].seq == (!memcmp(successor.parents[i].writer, w.pub[0], 32) ? 3 : 5));
+    porthome_head_parent saved[2];
+    memcpy(saved, successor.parents, sizeof(saved));
+    const vault_record *forks[] = {writer, writer_fork};
+    porthome_head fork_head = {0};
+    memcpy(fork_head.vault_id, w.vault.vault_id, 32);
+    assert(vault_head_cover(&fork_head, forks, 2) == VAULT_ERR_CONFLICT && !fork_head.parents);
+    assert(!memcmp(saved, successor.parents, sizeof(saved)));
+    const vault_record *cover_forks[] = {covered, writer, writer_fork};
+    for (size_t offset = 0; offset < 3; ++offset) {
+        const vault_record *permuted[3];
+        for (size_t i = 0; i < 3; ++i)
+            permuted[i] = cover_forks[(i + offset) % 3];
+        assert(vault_head_cover(&successor, permuted, 3) == VAULT_ERR_CONFLICT &&
+               successor.parents_len == 2 && !memcmp(saved, successor.parents, sizeof(saved)));
+    }
+    porthome_head capped = {0};
+    memcpy(capped.vault_id, w.vault.vault_id, 32);
+    capped.parents = calloc(PORTHOME_HEAD_MAX_PARENTS, sizeof(*capped.parents));
+    assert(capped.parents);
+    capped.parents_len = PORTHOME_HEAD_MAX_PARENTS;
+    for (size_t i = 0; i < capped.parents_len; ++i) {
+        capped.parents[i].writer[0] = (uint8_t)(100 + i);
+        capped.parents[i].seq = 1;
+    }
+    porthome_head_parent *unchanged = capped.parents;
+    assert(vault_head_cover(&capped, incorporated, 2) == PORTHOME_ERR_TOO_LARGE &&
+           capped.parents == unchanged && capped.parents_len == PORTHOME_HEAD_MAX_PARENTS);
+    porthome_head_dispose(&capped);
+    porthome_head_dispose(&successor);
+    vault_grant_free(received);
+    vault_record_free(covered);
+    vault_record_free(stale_cover);
+    vault_record_free(reader_cover);
     vault_record *all[] = {base,     owner,    writer,      stale,   reader,    forged,
                            reader_a, reader_b, writer_fork, deleted, new_owner, bad_policy,
                            ta,       tb,       ca,          cb};

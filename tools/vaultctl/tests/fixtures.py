@@ -213,8 +213,8 @@ def main():
             run('revoke','--resume','--reconcile','--budget','0')
             assert run('fold')['owner_view']!=before_migration
             run('fsck')
-            # A newer owner head without its signed parent closure cannot be
-            # the basis of another administrative mutation.
+            # A current signed owner checkpoint remains authoritative when
+            # replaceable relays no longer have its signed parent closure.
             def inject(mode):
                 path=base/f'{mode}.json'
                 generated=subprocess.run([helper,mode,str(state),f'{1:064x}',str(path)],capture_output=True,text=True,timeout=10)
@@ -223,7 +223,7 @@ def main():
                 for obj in (state/'objects').iterdir():lab.blobs[obj.name]=obj.read_bytes()
                 return e
             broken=inject('missing');attempts=len(lab.attempts)
-            run('grant','--recipient',pub(6),expect=2);assert len(lab.attempts)==attempts
+            run('grant','--recipient',pub(8));assert len(lab.attempts)>=attempts+2
             del lab.events[broken['id']]
             # Removing a directory from the latest snapshot must not discard its
             # epoch history needed by retained snapshots. Metadata-only grant

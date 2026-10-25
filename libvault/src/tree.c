@@ -337,15 +337,11 @@ int vault_tree_head_new(const vault_tree *t, const porthome_head *previous, cons
     memcpy(h->vault_id, n->vault->vault_id, 32);
     memcpy(h->root_manifest, root, 32);
     if (previous) {
-        h->parents = calloc(1, sizeof(*h->parents));
-        if (!h->parents) {
+        rc = vault_head_include(h, previous, actor);
+        if (rc) {
             free(h);
-            return VAULT_ERR_OOM;
+            return rc;
         }
-        h->parents_len = 1;
-        memcpy(h->parents[0].writer, actor, 32);
-        h->parents[0].seq = previous->seq;
-        memcpy(h->parents[0].root_manifest, previous->root_manifest, 32);
         h->has_key_override = previous->has_key_override || previous->epoch != n->epoch;
     }
     if (h->has_key_override)

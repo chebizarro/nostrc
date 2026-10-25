@@ -157,71 +157,23 @@ static int latest_owner(vc_app *a)
     }
     if (best == SIZE_MAX)
         return VAULT_ERR_INCOMPLETE;
-    /* Only the selected owner's signed ancestor closure can authorize an
-     * administrative successor. Unrelated writer forks cannot veto revoke. */
-    porthome_head *decoded[VAULT_MAX_HEADS] = {0};
-    uint8_t authors[VAULT_MAX_HEADS][32];
-    size_t queue[VAULT_MAX_HEADS], count = 1;
-    unsigned char seen[VAULT_MAX_HEADS] = {0};
-    vault_record *records[VAULT_MAX_HEADS] = {0};
+    /* Administrative successors use the verified current owner checkpoint;
+     * replaceable relays need not retain its old signed ancestors. */
+    vault_record *record = NULL;
     vault_tree *chosen = NULL;
     vault_fold_result *fold = NULL;
-    for (size_t i = 0; i < s->heads_len; i++) {
-        if (porthome_from_hex64(nostr_event_get_pubkey(s->heads[i].event), authors[i])) {
-            rc = VAULT_ERR_AUTH;
-            goto closure_done;
-        }
-        int parsed = porthome_head_event_open(s->heads[i].event, root->vault->vault_id, &ring,
-                                              s->heads[i].epoch, &decoded[i]);
-        if (parsed && i == best) {
-            rc = parsed;
-            goto closure_done;
-        }
+    vault_grant anchor = {0};
+    memcpy(anchor.owner, root->vault->owner, 32);
+    memcpy(anchor.vault_id, root->vault->vault_id, 32);
+    memcpy(anchor.node_id, root->node_id, 32);
+    rc = vc_record_load(a, s->heads[best].event, s->heads[best].epoch, &record, &chosen);
+    if (!rc) {
+        const vault_record *records[] = {record};
+        rc = vault_fold_checkpoint(&anchor, records, 1, 0, &fold);
     }
-    queue[0] = best;
-    seen[best] = 1;
-    for (size_t at = 0; at < count; at++) {
-        const porthome_head *h = decoded[queue[at]];
-        for (size_t p = 0; p < h->parents_len; p++) {
-            int found = 0;
-            for (size_t i = 0; i < s->heads_len; i++)
-                if (decoded[i] && decoded[i]->seq == h->parents[p].seq &&
-                    !memcmp(authors[i], h->parents[p].writer, 32) &&
-                    !memcmp(decoded[i]->root_manifest, h->parents[p].root_manifest, 32)) {
-                    found = 1;
-                    if (!seen[i]) {
-                        seen[i] = 1;
-                        queue[count++] = i;
-                    }
-                }
-            if (!found) {
-                vc_error(a, "owner predecessor has missing signed parent history");
-                rc = VAULT_ERR_INCOMPLETE;
-                goto closure_done;
-            }
-        }
-    }
-    for (size_t at = 0; at < count; at++) {
-        vault_tree *t = NULL;
-        rc = vc_record_load(a, s->heads[queue[at]].event, s->heads[queue[at]].epoch, &records[at],
-                            &t);
-        if (at == 0)
-            chosen = t;
-        else
-            vault_tree_free(t);
-        if (rc)
-            goto closure_done;
-    }
-    rc = vault_fold(root->vault, (const vault_record *const *)records, count, &fold);
-    if (!rc && fold->view != 0)
-        rc = VAULT_ERR_CONFLICT;
     if (!rc && vault_tree_node_at(chosen, 0, NULL)->epoch < root->epoch)
         rc = VAULT_ERR_EPOCH;
-closure_done:
-    for (size_t i = 0; i < s->heads_len; i++)
-        head_free(decoded[i]);
-    for (size_t i = 0; i < count; i++)
-        vault_record_free(records[i]);
+    vault_record_free(record);
     vault_fold_result_free(fold);
     if (rc) {
         vault_tree_free(chosen);
@@ -475,7 +427,7 @@ int vc_command_fold(vc_app *a)
     size_t n = 0;
     vault_fold_result *f = NULL;
     int rc = vc_collect_records(a, &r, &n, &f);
-    if (rc && rc != VAULT_ERR_CONFLICT)
+    if (rc && (rc != VAULT_ERR_CONFLICT || !f))
         goto done;
     printf("{\"owner_view\":");
     if (f->view == SIZE_MAX)
@@ -504,7 +456,7 @@ int vc_command_fsck(vc_app *a)
     size_t n = 0;
     vault_fold_result *f = NULL;
     int rc = vc_collect_records(a, &r, &n, &f);
-    if (rc && rc != VAULT_ERR_CONFLICT)
+    if (rc && (rc != VAULT_ERR_CONFLICT || !f))
         goto done;
     rc = 0;
     size_t nodes = 0, chunks = 0;
