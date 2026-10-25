@@ -827,12 +827,15 @@ These are presentation fields, not permission grants or fetched profile data.
 `arguments` wraps the exact existing input **tuple**; `reply` wraps the
 existing output tuple, currently `(s)`. Whitelist: `SignEvent`,
 `NIP04Encrypt`,
-`NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`. All use the same validated
-shared-service submission as their direct handlers; no self-D-Bus calls.
-`GetPublicKey`/`GetRelays` remain direct-only because D-Bus cannot encode
-their empty input tuple inside `v`; no special sentinel is accepted.
-`*ForApp`, `*B64`, `DecryptZapEvent` and `EnableTypedApprovalErrors` remain
-direct-only, as do management methods. Unknown names, recursion, wrong
+`NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`, and those four crypto methods'
+`ForApp` variants. The latter take `(ssss)` including the app ID; consumers
+feature-detect the `org.nostr.Signer.NamedContext=true` method annotation
+before using them (older context services accept only the plain methods).
+All use the same validated shared-service submission as their direct handlers;
+no self-D-Bus calls. `GetPublicKey`/`GetRelays` remain direct-only because
+D-Bus cannot encode their empty input tuple inside `v`; no special sentinel
+is accepted. Other `*ForApp`, `*B64`, `DecryptZapEvent` and
+`EnableTypedApprovalErrors` remain direct-only, as do management methods. Unknown names, recursion, wrong
 signatures and invalid context return `Error.InvalidInput`.
 
 Context keys: `reason:s` (≤160 Unicode characters and ≤512 UTF-8 bytes),

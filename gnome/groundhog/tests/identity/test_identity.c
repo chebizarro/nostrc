@@ -63,7 +63,7 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
   g_variant_get(parameters, "(&s&s&s)", &a, &b, &c);
   if (g_str_equal(method, "SignEvent")) {
     g_assert_cmpstr(b, ==, expected_npub);
-    g_assert_cmpstr(c, ==, "");
+    g_assert_cmpstr(c, ==, "org.nostr.Groundhog");
   } else {
     g_assert_true(g_str_equal(method, "NIP44Encrypt") ||
                   g_str_equal(method, "NIP44Decrypt"));
@@ -141,6 +141,8 @@ setup(void)
   nostrc_test_bus_up(test_bus);
   GError *error = NULL;
   server = nostrc_test_bus_connect(test_bus);
+  /* Deliberately legacy-only crypto: capability detection must keep these
+   * services working, while SignEvent still carries the stable named claim. */
   node = g_dbus_node_info_new_for_xml(
     "<node><interface name='org.nostr.Signer'>"
     "<method name='EnableTypedApprovalErrors'/>"

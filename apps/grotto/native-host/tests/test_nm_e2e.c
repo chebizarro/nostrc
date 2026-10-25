@@ -273,9 +273,8 @@ static void setup(E2E *e) {
    * event allows are deliberately absent: the test obtains an exact-kind
    * remembered grant through the real daemon. Web origins are
    * principals only when asserted by the trusted bridge (this build-tree
-   * host, via the test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES); the host
-   * calls GetPublicKey/GetRelays/NIP-04/44 without an app_id, so those run
-   * as the host itself (exe:<path>). */
+   * host, via the test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES). Every NIP-07
+   * method carries its page origin, including public-key and crypto calls. */
   g_autofree gchar *host_real = realpath(NMH_HOST_PATH, NULL);
   CHECK(host_real);
   g_autofree gchar *self_real = self_exe();
@@ -285,16 +284,23 @@ static void setup(E2E *e) {
   /* On a bus without caller PIDs (a macOS test bus), the signer deliberately
    * uses claimed:<app_id> rather than an executable or attested web origin.
    * Add only hermetic test grants for that fallback; Linux still exercises
-   * executable and bridge-origin principals through its own entries. */
-  g_autofree gchar *body = g_strdup_printf(
-      "[event]\nhttps://denied.example|*=deny\nclaimed:https://denied.example|*=deny\n"
-      "[get_public_key]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
-      "[get_relays]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip04_encrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
-      "[nip04_decrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
-      "[nip44_encrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
-      "[nip44_decrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n", host_real, NPUB);
-  write_file(grants, body);
+   * bridge-origin principals through its own entries. Never grant the empty
+   * claimed principal or a host-wide permission in this fixture. */
+  g_autoptr(GString) body = g_string_new(
+      "[event]\nhttps://denied.example|*=deny\nclaimed:https://denied.example|*=deny\n");
+  const gchar *operations[] = {"get_public_key", "get_relays", "nip04_encrypt",
+      "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
+  for (guint i = 0; i < G_N_ELEMENTS(operations); i++) {
+    const gchar *identity = i == 1 ? "*" : NPUB;
+    g_string_append_printf(body, "[%s]\nhttps://allowed.example|%s=allow\n"
+        "claimed:https://allowed.example|%s=allow\n"
+        "https://denied.example|%s=deny\nclaimed:https://denied.example|%s=deny\n",
+        operations[i], identity, identity, identity, identity);
+    if (i == 0)
+      g_string_append_printf(body, "https://other.example|%s=allow\n"
+          "claimed:https://other.example|%s=allow\n", identity, identity);
+  }
+  write_file(grants, body->str);
   e->relays_path = g_build_filename(ndir, "relays.conf", NULL);
   write_file(e->relays_path, "[\"wss://relay.example\", \"wss://nos.lol\"]\n");
 
@@ -359,6 +365,10 @@ int main(void) {
   CHECK(g_strcmp0(json_node_get_string(result_of(r)), PK_HEX) == 0);
   json_node_unref(r);
   g_print("ok getPublicKey -> %s\n", PK_HEX);
+  /* The same host must not lend this origin's read authority to another site. */
+  r = call(&e, "{\"id\":\"pk-denied\",\"method\":\"getPublicKey\",\"origin\":\"https://denied.example\"}");
+  CHECK(g_strcmp0(error_code_of(r), "rejected") == 0);
+  json_node_unref(r);
 
   /* Remember a real, validated note approval; forged fields still get dropped. */
   g_autofree gchar *note = g_strdup_printf(

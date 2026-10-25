@@ -210,7 +210,26 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   g_autoptr(GrottoApprovalRequest) request =
       g_list_model_get_item(grotto_approval_controller_get_pending(controller), 0);
   GVariant *info = grotto_approval_request_get_info(request);
-  guint size = 0; const gchar *flow = NULL;
+  guint size = 0, first_remaining = 0; const gchar *flow = NULL;
+  const gchar *principal = NULL, *claim = NULL;
+  gboolean rememberable = FALSE;
+  g_assert_true(g_variant_lookup(info, "principal", "&s", &principal));
+  g_assert_true(g_variant_lookup(info, "claimed_app_id", "&s", &claim));
+  g_assert_cmpstr(claim, ==, "org.nostr.Groundhog");
+  g_assert_true(g_variant_lookup(info, "rememberable", "b", &rememberable));
+  g_assert_true(rememberable);
+#ifdef __APPLE__
+  gboolean verified = TRUE;
+  g_assert_cmpstr(principal, ==, "claimed:org.nostr.Groundhog");
+  g_assert_true(g_variant_lookup(info, "verified", "b", &verified));
+  g_assert_false(verified);
+#endif
+  g_autofree gchar *permission_principal = g_strdup(principal);
+  g_assert_true(g_variant_lookup(info, "flow_remaining_seconds", "u", &first_remaining));
+  g_assert_cmpuint(first_remaining, >, 0); g_assert_cmpuint(first_remaining, <=, 600);
+  g_autofree gchar *permissions_path = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-permissions-v2.ini", NULL);
+  g_autofree gchar *before_flow = NULL;
+  g_assert_true(g_file_get_contents(permissions_path, &before_flow, NULL, NULL));
   g_assert_true(g_variant_lookup(info, "flow_size", "u", &size)); g_assert_cmpuint(size, ==, 4);
   g_assert_true(g_variant_lookup(info, "flow_id", "&s", &flow)); g_assert_true(*flow != 0);
   g_autofree gchar *flow_id = g_strdup(flow);
@@ -237,8 +256,9 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
 #endif
     grotto_approval_controller_decide_flow_async(controller, grotto_approval_request_get_id(request),
         TRUE, TRUE, NULL, decided, &decision);
-  WAIT(result.done && decision.done);
+  WAIT(decision.done);
   g_assert_no_error(decision.error); g_assert_true(decision.ok);
+  WAIT(result.done);
   g_assert_no_error(result.error); g_assert_nonnull(result.envelope);
   g_assert_cmpuint(prompts, ==, 1); /* all three recipient seals + self-copy; no extra prompts */
   for (guint i = 0; i < 3; i++) verify_wrap(result.envelope->recipient_wraps[i], keys[i], sender);
@@ -246,8 +266,20 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   gh_nip17_envelope_free(result.envelope);
   WAIT(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)) == 0);
 
+  /* Both encryption and seal consent are ephemeral, not permission rows. */
+  g_autofree gchar *after_flow = NULL;
+  g_assert_true(g_file_get_contents(permissions_path, &after_flow, NULL, NULL));
+  g_assert_cmpstr(after_flow, ==, before_flow);
+  g_autoptr(GError) rows_error = NULL;
+  g_autoptr(GVariant) rows_reply = g_dbus_connection_call_sync(bus, "org.nostr.Signer",
+      "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ListPermissions",
+      g_variant_new("(s)", permission_principal), G_VARIANT_TYPE("(aa{sv})"), 0, 5000, NULL, &rows_error);
+  g_assert_no_error(rows_error); g_assert_nonnull(rows_reply);
+  g_autoptr(GVariant) rows = g_variant_get_child_value(rows_reply, 0);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 0);
+
   /* An extra seal with the SAME caller/identity/transport/flow/size cannot
-   * borrow the exhausted send's consent, even though encryption is remembered. */
+   * borrow the exhausted send's consent or restart its first-arrival clock. */
   GhSigner *signer = gh_signer_new(bus, npub, NULL);
   g_assert_nonnull(signer);
   GhSignerContext context = {"Sign an extra encrypted message", "nip17-room-send", flow_id, size};
@@ -258,6 +290,9 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   g_assert_false(extra.done); g_assert_cmpuint(prompts, ==, 2);
   g_autoptr(GrottoApprovalRequest) excess =
       g_list_model_get_item(grotto_approval_controller_get_pending(controller), 0);
+  guint remaining = 0;
+  g_assert_true(g_variant_lookup(grotto_approval_request_get_info(excess), "flow_remaining_seconds", "u", &remaining));
+  g_assert_cmpuint(remaining, <=, first_remaining);
   grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(excess),
       FALSE, FALSE, 0, NULL, decided, &denial);
   WAIT(extra.done && denial.done);

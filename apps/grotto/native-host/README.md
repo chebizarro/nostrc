@@ -8,6 +8,13 @@ the wallet agent `org.nostr.Wallet1` through its origin-taking `*For`
 methods, so budgets and approvals are per site. It holds no key material
 and no wallet secret.
 
+NIP-07 forwarding requires the signer's origin-taking `ForApp` methods
+(nip55l ≥ 0.4.0). Public-key, relay and crypto calls carry the same validated
+origin as signing; there is no fallback to anonymous host-wide authority.
+Every signer operation uses the approval timeout. The daemon labels origins
+as verified only when it has trusted-bridge provenance; otherwise they are
+named, unverified claims.
+
 Install steps, security model, wire protocol and error codes are in
 `browser-extension/nip07/README.md` in the source tree. This file is shipped
 as `/usr/share/doc/nostr-signer-webext-host/README.md`.

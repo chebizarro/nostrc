@@ -5,23 +5,21 @@
  * the host never holds key material. Mapping (see
  * nips/nip55l/dbus/org.nostr.Signer.xml):
  *
- *   getPublicKey()            GetPublicKey() -> npub, returned as hex
+ *   getPublicKey()            GetPublicKeyForApp(app_id) -> npub, returned as hex
  *   signEvent(event)          SignEvent(canonical_event, identity, app_id)
  *                             -> complete signed event (nip55l >= 0.2.0);
  *                             app_id = page origin, so the signer's
  *                             ApprovalRequested dialog and ACL key on it
- *   getRelays()               GetRelays() -> {url: {read, write}};
+ *   getRelays()               GetRelaysForApp(app_id) -> {url: {read, write}};
  *                             Error.NotFound -> {}
- *   nip04.encrypt(pk, text)   NIP04Encrypt(text, pk, identity)
- *   nip04.decrypt(pk, ct)     NIP04Decrypt(ct, pk, identity)
- *   nip44.encrypt(pk, text)   NIP44Encrypt(text, pk, identity)
- *   nip44.decrypt(pk, ct)     NIP44Decrypt(ct, pk, identity)
+ *   nip04.encrypt(pk, text)   NIP04EncryptForApp(text, pk, identity, app_id)
+ *   nip04.decrypt(pk, ct)     NIP04DecryptForApp(ct, pk, identity, app_id)
+ *   nip44.encrypt(pk, text)   NIP44EncryptForApp(text, pk, identity, app_id)
+ *   nip44.decrypt(pk, ct)     NIP44DecryptForApp(ct, pk, identity, app_id)
  *
- * The daemon's encrypt/decrypt/GetPublicKey methods take no app_id and
- * raise no approval dialog today, so the extension gates those per origin
- * itself (browser-extension/nip07/README.md "Security model"; daemon-side
- * gating is nostrc-1e31); signEvent is gated by the signer. Calls that may wait on a human use the approval
- * timeout, the rest the plain call timeout.
+ * Every call carries the validated page origin. The daemon resolves whether
+ * that origin is verified or only claimed and gates each operation. All calls
+ * can wait for consent and therefore use the approval timeout.
  */
 #include "nm_router.h"
 #include "nm_policy.h"
@@ -123,7 +121,7 @@ static void on_reply(GObject *src, GAsyncResult *res, gpointer user_data) {
 }
 
 static void call_signer_full(NmRequest *req, Op op, const gchar *member, GVariant *args,
-                             gboolean interactive, const gchar *sent_event) {
+                             const gchar *sent_event) {
   GDBusConnection *bus = nm_router_get_bus(req->router);
   if (!bus) {
     if (args) g_variant_unref(g_variant_ref_sink(args));
@@ -137,17 +135,15 @@ static void call_signer_full(NmRequest *req, Op op, const gchar *member, GVarian
   c->sent_event = g_strdup(sent_event);
   g_dbus_connection_call(bus, cfg->signer_bus_name, SIGNER_PATH, SIGNER_IFACE, member,
                          args, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE,
-                         interactive ? cfg->approval_timeout_ms : cfg->call_timeout_ms,
+                         cfg->approval_timeout_ms,
                          nm_router_get_cancellable(req->router), on_reply, c);
 }
 
-static void call_signer(NmRequest *req, Op op, const gchar *member, GVariant *args,
-                        gboolean interactive) {
-  call_signer_full(req, op, member, args, interactive, NULL);
+static void call_signer(NmRequest *req, Op op, const gchar *member, GVariant *args) {
+  call_signer_full(req, op, member, args, NULL);
 }
 
-static void do_crypto(NmRequest *req, const gchar *member, const gchar *text_param,
-                      gboolean interactive) {
+static void do_crypto(NmRequest *req, const gchar *member, const gchar *text_param) {
   const gchar *text = nm_request_param_string(req, text_param);
   g_autofree gchar *pk = nm_pubkey_normalize(nm_request_param_string(req, "pubkey"));
   if (!pk) {
@@ -160,7 +156,7 @@ static void do_crypto(NmRequest *req, const gchar *member, const gchar *text_par
     return;
   }
   const NmRouterConfig *cfg = nm_router_get_config(req->router);
-  call_signer(req, OP_STRING, member, g_variant_new("(sss)", text, pk, cfg->identity), interactive);
+  call_signer(req, OP_STRING, member, g_variant_new("(ssss)", text, pk, cfg->identity, req->app_id));
 }
 
 static void nip07_dispatch(NmRequest *req) {
@@ -168,9 +164,9 @@ static void nip07_dispatch(NmRequest *req) {
   const NmRouterConfig *cfg = nm_router_get_config(req->router);
 
   if (g_strcmp0(m, "getPublicKey") == 0) {
-    call_signer(req, OP_PUBKEY, "GetPublicKey", NULL, FALSE);
+    call_signer(req, OP_PUBKEY, "GetPublicKeyForApp", g_variant_new("(s)", req->app_id));
   } else if (g_strcmp0(m, "getRelays") == 0) {
-    call_signer(req, OP_RELAYS, "GetRelays", NULL, FALSE);
+    call_signer(req, OP_RELAYS, "GetRelaysForApp", g_variant_new("(s)", req->app_id));
   } else if (g_strcmp0(m, "signEvent") == 0) {
     const gchar *why = NULL;
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
@@ -181,15 +177,15 @@ static void nip07_dispatch(NmRequest *req) {
       return;
     }
     call_signer_full(req, OP_SIGN, "SignEvent",
-                     g_variant_new("(sss)", ev, cfg->identity, req->app_id), TRUE, ev);
+                     g_variant_new("(sss)", ev, cfg->identity, req->app_id), ev);
   } else if (g_strcmp0(m, "nip04.encrypt") == 0) {
-    do_crypto(req, "NIP04Encrypt", "plaintext", FALSE);
+    do_crypto(req, "NIP04EncryptForApp", "plaintext");
   } else if (g_strcmp0(m, "nip04.decrypt") == 0) {
-    do_crypto(req, "NIP04Decrypt", "ciphertext", TRUE);
+    do_crypto(req, "NIP04DecryptForApp", "ciphertext");
   } else if (g_strcmp0(m, "nip44.encrypt") == 0) {
-    do_crypto(req, "NIP44Encrypt", "plaintext", FALSE);
+    do_crypto(req, "NIP44EncryptForApp", "plaintext");
   } else if (g_strcmp0(m, "nip44.decrypt") == 0) {
-    do_crypto(req, "NIP44Decrypt", "ciphertext", TRUE);
+    do_crypto(req, "NIP44DecryptForApp", "ciphertext");
   } else {
     nm_request_reply_error(req, NM_ERR_UNKNOWN_METHOD, NULL);
   }

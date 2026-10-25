@@ -188,7 +188,7 @@ static void on_approval_change(gpointer data, GVariant *info) {
   }
 }
 
-/* Only the plain gated client methods. Arguments are decoded once and sent
+/* Only gated client methods. Arguments are decoded once and sent
  * through gated_call_full, exactly as the generated direct handlers below. */
 static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *inv,
     const gchar *method, GVariant *arguments, GVariant *context) {
@@ -196,7 +196,9 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
     /* D-Bus cannot carry () inside v: no-input methods remain direct-only. */
     {"SignEvent", "(sss)", OP_SIGN_EVENT},
     {"NIP04Encrypt", "(sss)", OP_NIP04_ENCRYPT}, {"NIP04Decrypt", "(sss)", OP_NIP04_DECRYPT},
-    {"NIP44Encrypt", "(sss)", OP_NIP44_ENCRYPT}, {"NIP44Decrypt", "(sss)", OP_NIP44_DECRYPT}
+    {"NIP44Encrypt", "(sss)", OP_NIP44_ENCRYPT}, {"NIP44Decrypt", "(sss)", OP_NIP44_DECRYPT},
+    {"NIP04EncryptForApp", "(ssss)", OP_NIP04_ENCRYPT}, {"NIP04DecryptForApp", "(ssss)", OP_NIP04_DECRYPT},
+    {"NIP44EncryptForApp", "(ssss)", OP_NIP44_ENCRYPT}, {"NIP44DecryptForApp", "(ssss)", OP_NIP44_DECRYPT}
   };
   SignerGateContext ctx = {0};
   g_autoptr(GVariant) tuple = NULL;
@@ -229,13 +231,15 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
     const gchar *a = NULL, *b = NULL, *selector = "", *claimed = "";
     if (methods[i].op == OP_SIGN_EVENT)
       g_variant_get(tuple, "(&s&s&s)", &a, &selector, &claimed);
+    else if (!strcmp(methods[i].signature, "(ssss)"))
+      g_variant_get(tuple, "(&s&s&s&s)", &a, &b, &selector, &claimed);
     else g_variant_get(tuple, "(&s&s&s)", &a, &b, &selector);
     gated_call_full(o, inv, methods[i].op, a, b, selector, claimed, &ctx, TRUE);
     return TRUE;
   }
 invalid:
   g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
-    "CallWithContext requires a plain gated client method, its exact input tuple, and bounded reason/purpose/flow_id strings and optional flow_size:u (1..1024)");
+    "CallWithContext requires a supported gated client method, its exact input tuple, and bounded reason/purpose/flow_id strings and optional flow_size:u (1..1024)");
   return TRUE;
 }
 

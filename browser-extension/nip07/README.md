@@ -22,10 +22,10 @@ Bead: `nostrc-jjyp`. WebLN is described in [WebLN](#webln).
 
 | API | Signer call | Who approves |
 |-----|-------------|--------------|
-| `getPublicKey()` → hex | `GetPublicKey` (npub → hex in the host) | extension prompt, per site ("read") |
-| `getRelays()` → `{url: {read, write}}` | `GetRelays` (`NotFound` → `{}`) | extension prompt, per site ("read") |
+| `getPublicKey()` → hex | `GetPublicKeyForApp(origin)` (npub → hex in the host) | extension read prompt and desktop signer policy |
+| `getRelays()` → `{url: {read, write}}` | `GetRelaysForApp(origin)` (`NotFound` → `{}`) | extension read prompt and desktop signer policy |
 | `signEvent(event)` → signed event | `SignEvent(event, identity, app_id=origin)` | **desktop signer** dialog, keyed on the origin |
-| `nip04.encrypt/decrypt`, `nip44.encrypt/decrypt` | `NIP04*` / `NIP44*` | extension prompt, per site ("encrypt" / "decrypt") |
+| `nip04.encrypt/decrypt`, `nip44.encrypt/decrypt` | `NIP04*ForApp` / `NIP44*ForApp` (app_id=origin) | extension encrypt/decrypt prompt and desktop signer policy |
 
 ## Install
 
@@ -159,22 +159,24 @@ Two routes:
   in the browser's own canonical form (lowercase, no default port, no
   trailing `/`, punycode) — it validates, it never re-canonicalizes, so the
   key the extension gated on and the signer's ACL key cannot drift — and
-  passes it verbatim (`https://snort.social`) as `SignEvent`'s `app_id`.
-  The signer's `ApprovalRequested` dialog therefore names the site, and its
-  remembered decisions (`~/.config/gnostr/signer-acl.ini`) are per site.
+  passes it verbatim (`https://snort.social`) as the `app_id` of every signer call
+  (`SignEvent` or the corresponding `ForApp` method). The daemon resolves a
+  verified bridge origin when supported, otherwise a visibly unverified
+  `claimed:` principal. Remembered decisions are per principal and identity,
+  never a shared empty claim.
   Web app_ids always start with `https://` / `http://`, so they cannot
   collide with a desktop application's reverse-DNS app_id.
 * **Signing is approved by the desktop signer.** The extension does not
   prompt for `signEvent`; the signer shows its own dialog (or applies a
   remembered per-site decision).
-* **Everything else is gated here.** `org.nostr.Signer` does not take an
-  app_id for `GetPublicKey`, `GetRelays` or `NIP04*`/`NIP44*`, and raises no
-  dialog for them. The extension therefore asks per site in its own prompt
-  window (categories *read*, *encrypt*, *decrypt*). "Remember" stores an
+* **Other operations have two consent layers.** The desktop signer gates
+  public-key, relay and NIP-04/44 calls using their origin-taking methods.
+  The extension also asks per site in its own prompt window (categories
+  *read*, *encrypt*, *decrypt*). Its "Remember" stores an
   expiring grant in `storage.local` — 30 days for read/encrypt, **24 hours for
   decrypt** — listed and revocable on the options page. Decryption is its
   own category so a site allowed to read your pubkey cannot silently read
-  your DMs. Moving this gate into the signer is `nostrc-1e31`.
+  your DMs. These browser grants do not replace desktop signer consent.
 * **Channel hygiene.** Page ↔ content messages must come from the same
   window (`event.source === window`), carry the channel/direction markers and
   a per-request random id that the reply must echo. That id is only for
@@ -202,13 +204,12 @@ Two routes:
 * **Other processes of the same user.** `allowed_extensions` /
   `allowed_origins` only control which *browser extension* may launch the
   host; any local process can exec it — or, more directly, call
-  `org.nostr.Signer` itself. The daemon does not authenticate `app_id`, so a
-  local process can claim `https://snort.social` (inheriting that site's
-  remembered `SignEvent` decisions and naming it in the dialog), and it can
-  call `NIP04Decrypt`/`NIP44Decrypt` with no dialog at all. The bridge adds
-  no capability here; binding `app_id` to the D-Bus caller and gating
-  decrypt/encrypt/`GetPublicKey` in the daemon is `nostrc-1e31`
-  (nip55l). The extension's grants are a browser-side consent layer, not a
+  `org.nostr.Signer` itself. On supported Linux buses the daemon verifies
+  executable/bridge provenance; on buses without that evidence it labels
+  app IDs as unverified claims, which are not protection against malicious
+  same-user code. All sensitive calls are gated by daemon policy, including
+  direct calls without an app ID (which cannot receive reusable empty-claim
+  consent). The extension's grants are a browser-side consent layer, not a
   boundary against local code.
 * **Other extensions** running MAIN-world scripts share the page's world and
   can observe or race the page ↔ content channel; that is inherent to

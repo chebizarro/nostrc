@@ -1257,6 +1257,34 @@ static void test_call_with_context(Ctx *ctx) {
   g_variant_get(tuple, "(&s)", &text);
   assert_signed_event(text, ctx->pk_hex, 1, (int64_t)time(NULL));
   g_variant_unref(tuple); g_variant_unref(wrapped); watch_stop(ctx, &w);
+
+  /* Named crypto context must reach the same gate with its claim intact,
+   * never silently submit as the empty compatibility principal. */
+  const gchar *named[] = {"NIP04EncryptForApp", "NIP04DecryptForApp",
+      "NIP44EncryptForApp", "NIP44DecryptForApp"};
+  for (guint i = 0; i < G_N_ELEMENTS(named); i++) {
+    context_reject(ctx, named[i], context_arguments(), context_one(NULL, NULL));
+    Watch crypto; watch_start(ctx, &crypto);
+    GDBusConnection *consumer = open_conn();
+    crypto.a.pending_replies++;
+    g_dbus_connection_call(consumer, BUS_NAME, OBJ_PATH, IFACE, "CallWithContext",
+        g_variant_new("(sv@a{sv})", named[i],
+          g_variant_new("(ssss)", "ciphertext-or-plaintext", ctx->pk_hex, ctx->npub, "named-context"),
+          context_one("reason", g_variant_new_string("Review named crypto"))),
+        G_VARIANT_TYPE("(v)"), 0, 30000, NULL, on_async_reply, &crypto.a);
+    watch_wait_request(&crypto, 1);
+    g_autoptr(GError) named_error = NULL;
+    g_autoptr(GVariant) named_result = call(ctx->bus, "GetApprovalInfo",
+        g_variant_new("(s)", crypto.a.req_id), "(a{sv})", &named_error);
+    CHECK(named_result && !named_error);
+    g_autoptr(GVariant) row = g_variant_get_child_value(named_result, 0);
+    const gchar *claim = NULL, *principal = NULL;
+    CHECK(g_variant_lookup(row, "claimed_app_id", "&s", &claim) && !strcmp(claim, "named-context"));
+    CHECK(g_variant_lookup(row, "principal", "&s", &principal) && !strcmp(principal, pr(ctx, "named-context")));
+    approve(ctx, crypto.a.req_id, FALSE, FALSE); watch_wait_replies(&crypto);
+    CHECK(crypto.a.replies->len == 1 && crypto.a.replies->pdata[0] == NULL);
+    close_conn(consumer); watch_stop(ctx, &crypto);
+  }
 }
 
 static void test_gating(Ctx *ctx) {

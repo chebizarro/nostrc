@@ -51,7 +51,8 @@
          this, unawaited, right before a gated call. -->
     <!-- CallWithContext (0.7.0, additive): arguments is the exact input tuple
          of SignEvent,
-         NIP04Encrypt/Decrypt or NIP44Encrypt/Decrypt; reply wraps that method's
+           NIP04Encrypt/Decrypt or NIP44Encrypt/Decrypt (including their ForApp
+           variants when the NamedContext annotation is true); reply wraps that method's
          output tuple. Same caller authentication, gate and backend as direct
          calls. GetPublicKey/GetRelays remain direct-only: D-Bus cannot encode
          their empty input tuple inside v. ForApp, B64, DecryptZapEvent, EnableTypedApprovalErrors,
@@ -64,6 +65,7 @@
          Context is untrusted display/grouping data, never authority.
          Per-connection typed-error opt-in applies to wrapped calls too. -->
     <method name="CallWithContext">
+        <annotation name="org.nostr.Signer.NamedContext" value="true" />
       <arg type="s" direction="in" name="method" />
       <arg type="v" direction="in" name="arguments" />
       <arg type="a{sv}" direction="in" name="context" />

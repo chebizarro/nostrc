@@ -7,6 +7,9 @@
 #define SIGNER_BUS "org.nostr.Signer"
 #define SIGNER_PATH "/org/nostr/signer"
 #define SIGNER_INTERFACE "org.nostr.Signer"
+/* A named claim, not executable attestation. The daemon labels it accordingly
+ * when this platform cannot verify the caller. */
+#define SIGNER_APP_ID "org.nostr.Groundhog"
 #define MAX_RESULT (1024 * 1024)
 /* The signer can hold an approval for 300 seconds. Leave room for its typed
  * result instead of reporting a local transport timeout at 30 seconds. */
@@ -38,6 +41,7 @@ struct _Pending {
   gchar *peer;
   GVariant *context;
   gboolean wrapped;
+  gboolean named;
 };
 
 static GhNip55lSigner *
@@ -300,6 +304,18 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
   pending_free(p);
 }
 
+static const gchar *
+operation_method(Operation op, gboolean named)
+{
+  switch (op) {
+  case OP_SIGN: return "SignEvent";
+  case OP_ENCRYPT: return named ? "NIP44EncryptForApp" : "NIP44Encrypt";
+  case OP_NIP04_DECRYPT: return named ? "NIP04DecryptForApp" : "NIP04Decrypt";
+  case OP_DECRYPT: return named ? "NIP44DecryptForApp" : "NIP44Decrypt";
+  }
+  g_assert_not_reached();
+}
+
 static void
 introspection_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -309,7 +325,12 @@ introspection_done(GObject *source, GAsyncResult *result, gpointer data)
   if (reply) g_variant_get(reply, "(&s)", &xml);
   g_autoptr(GDBusNodeInfo) node = xml ? g_dbus_node_info_new_for_xml(xml, NULL) : NULL;
   GDBusInterfaceInfo *info = node ? g_dbus_node_info_lookup_interface(node, SIGNER_INTERFACE) : NULL;
-  gboolean context = info && g_dbus_interface_info_lookup_method(info, "CallWithContext");
+  p->named = info && g_dbus_interface_info_lookup_method(info, operation_method(p->op, TRUE));
+  GDBusMethodInfo *wrapper = info ? g_dbus_interface_info_lookup_method(info, "CallWithContext") : NULL;
+  gboolean context = p->context && wrapper;
+  if (context && p->op != OP_SIGN &&
+      g_strcmp0(g_dbus_annotation_info_lookup(wrapper->annotations, "org.nostr.Signer.NamedContext"), "true"))
+    p->named = FALSE; /* older context services accept only the legacy tuple */
   gboolean flow = info && g_dbus_interface_info_lookup_method(info, "ApproveFlowRequest");
   if (context && !flow) {
     /* G02 services understand context but not the later bounded-flow extension. */
@@ -371,11 +392,11 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
                          "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
                          -1, NULL, NULL, NULL);
-  if (p->context)
-    g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, "org.freedesktop.DBus.Introspectable",
-        "Introspect", NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 5000,
-        p->cancel, introspection_done, p);
-  else send_call(p, FALSE);
+  /* Choose the named API before executing, retaining legacy compatibility
+   * without replaying a call after an uncertain result. */
+  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, "org.freedesktop.DBus.Introspectable",
+      "Introspect", NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 5000,
+      p->cancel, introspection_done, p);
 }
 
 static void
@@ -389,10 +410,9 @@ send_call(Pending *p, gboolean wrapped)
     if (!g_dbus_connection_is_closed(p->bus)) g_dbus_connection_close(p->bus, NULL, NULL, NULL);
     pending_free(p); return;
   }
-  const gchar *method = p->op == OP_SIGN ? "SignEvent" :
-      p->op == OP_ENCRYPT ? "NIP44Encrypt" :
-      p->op == OP_NIP04_DECRYPT ? "NIP04Decrypt" : "NIP44Decrypt";
-  GVariant *tuple = p->op == OP_SIGN ? g_variant_new("(sss)", p->input, p->signer->npub, "") :
+  const gchar *method = operation_method(p->op, p->named);
+  GVariant *tuple = p->op == OP_SIGN ? g_variant_new("(sss)", p->input, p->signer->npub, SIGNER_APP_ID) :
+      p->named ? g_variant_new("(ssss)", p->input, p->peer, p->signer->npub, SIGNER_APP_ID) :
       g_variant_new("(sss)", p->input, p->peer, p->signer->npub);
   p->wrapped = wrapped;
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
