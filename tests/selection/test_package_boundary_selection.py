@@ -81,6 +81,25 @@ class PackageBoundarySelection(unittest.TestCase):
             self.assertEqual(set(plan["selected_checks"]),
                              {"supported.libporthome", "root.asan.libporthome"})
 
+    def test_vault_inputs_and_downstream_membership(self):
+        expected = {"root.asan.libvault", "supported.libvault"}
+        for path in ("libvault/src/fold.c", "libvault/include/vault/vault.h",
+                     "libvault/tests/test_revoke_lazy.c"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                               base="b" * 40, context="ci")
+            self.assertEqual(set(plan["selected_checks"]), expected)
+        for name in expected:
+            check = self.policy["checks"][name]
+            targets = {"test_vault_ring_derivation", "test_vault_revoke_lazy",
+                       "test_vault_fold_frontier", "test_vault_codecs"}
+            self.assertEqual(set(check["build_targets"]), targets)
+            for profile in check["profiles"]:
+                self.assertEqual(set(check["ctest_tests"][profile]), targets)
+        plan = s.make_plan(self.policy, [change("libporthome/src/head.c")],
+                           head="a" * 40, base="b" * 40, context="ci")
+        self.assertTrue(expected <= set(plan["selected_checks"]))
+        self.assertNotIn("supported.libblossom", plan["selected_checks"])
+
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
                            head="a" * 40, base="b" * 40, context="ci")

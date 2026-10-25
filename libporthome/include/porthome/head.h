@@ -23,6 +23,10 @@ typedef struct {
     uint64_t epoch, seq, grants_rev, written_at;
     porthome_head_parent *parents; /* Decoded array is owned. */
     size_t parents_len;
+    /* Root-only rekey metadata (§6.4): carried ONLY under this new key.
+     * Recipients obtain the key by grant/exporter, never via an old-key head. */
+    int has_key_override;
+    uint8_t key_override[32];
 } porthome_head;
 
 /* Head plaintext is JSON with the exact field names from §5.2; bytes32 are
@@ -30,7 +34,9 @@ typedef struct {
  * permits field reordering/JSON whitespace, refuses duplicate/unknown/missing
  * fields, escaped strings, non-uint/overflow numbers, wrong lengths and trailing
  * bytes. Epoch must be nonzero, written_at <= INT64_MAX. Sequence, parents and
- * grants_rev are data, not authorization/fold policy. ref_state is optional.
+ * grants_rev are data, not authorization/fold policy. ref_state and root
+ * key_override are optional. Sealing/opening requires key_override (if present)
+ * to equal the selected node key, preventing its disclosure under an old key.
  * Decode allocates; dispose then free(). Encode borrows input and returns malloc
  * UTF-8 bytes of out_len, plus a convenience NUL (not included in out_len).
  * Outputs are reset on failure. */

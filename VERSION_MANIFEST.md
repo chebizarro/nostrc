@@ -27,7 +27,8 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.3.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.3.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libvault | `libvault/` | 0.1.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -36,6 +37,18 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-hl30i.3 (SV-3/R5): new Layer-5 libvault starts at 0.1.0 with
+  owned rings/epoch changes, atomic revoke proposals, budgeted lazy/eager
+  re-seal tasks, authenticated snapshot/fold, grant rumor and self-list codecs,
+  VSP classification and the carrier callback interface. No GLib/libmarmot,
+  NIP-59 transport or vaultctl. libporthome MINOR 0.3.0 -> 0.4.0 adds the
+  optional root head key_override required by §6.4. This extends the 0.x head
+  struct ABI (recompile consumers) and wire schema; older head bodies still
+  decode. Seal/open require the override to equal the NEW selected node key,
+  never exposing it via an old-key head. Aggregate package-dispatch/selection
+  integration has no independently versioned component; libblossom 0.2.0,
+  libhanami 0.3.1 and all other component APIs/artifacts remain unchanged.
 
 - nostrc-hl30i.2 (SV-2): libporthome MINOR 0.2.1 -> 0.3.0 for additive
   shared-vault dir_node canonical-CBOR and NIP-44 head/body/event codec APIs.

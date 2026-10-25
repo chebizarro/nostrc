@@ -1,0 +1,131 @@
+# libvault (experimental, 0.1.0)
+
+Layer-5 shared-vault policy over libporthome. Public API: `<vault/vault.h>`;
+in-tree target: `nostrc::vault`. Installed consumers use
+`find_package(nostrc REQUIRED COMPONENTS vault)` or
+`pkg-config --static --cflags --libs vault`. Dependencies are libporthome,
+libblossom, libnostr/NIP-44 and OpenSSL, with no GLib or libmarmot requirement.
+For a GLib-free closure configure libnostr with `NOSTR_WITH_GLIB=OFF`.
+Enable `BUILD_LIBVAULT`, `BUILD_LIBPORTHOME`, `BUILD_LIBBLOSSOM`, `ENABLE_NIP44`.
+Standalone configuration uses the installed dependency prefix through
+`CMAKE_PREFIX_PATH` and `PKG_CONFIG_PATH`.
+
+## Rings and revocation
+
+An owned `vault_ring` holds ordered, nonzero epochs with distinct keys. Initialize
+or copy into a fresh zeroed destination; dispose before replacing it. Appends use
+latest epoch + 1, either with caller-supplied exporter material or a fresh random
+key. A borrowed `porthome_ring_t` retains PCS's exact-epoch, no-fallback behavior.
+Dropping history is explicit, not an automatic effect of revocation.
+
+`vault_revoke` returns an immutable proposal for §6.4 steps 1–3. It checks the
+owner actor identity, the current node address and epoch, then clones the node
+and ring, appends a random epoch, removes the member from both informational
+readers and authorized writers, increments `grants_rev`, and seals the new node.
+An unlisted reader can still be revoked: possession of keys, not readers[], is
+the read capability. The owner cannot revoke itself with this operation.
+
+For a subtree, the result contains the updated parent directory entry with the
+new override, child epoch and address. The caller must seal its parent and all
+changed ancestors. For a root, the input must be the owner's previously verified
+head; the result advances its sequence, references it as parent, and includes a
+head payload sealed **only under the new key**. The optional head `key_override`
+is never sealed with an old key. A grant/exporter must deliver the new key.
+An actor pubkey comparison does not establish key custody: the owner's actual
+signed publication is what makes the new writer policy authoritative.
+Carrier delivery, server allowlist updates and relay publication are not part of
+this proposal API.
+
+## Budgeted re-seal
+
+A `vault_reseal_task` takes explicit per-chunk jobs over borrowed mutable nodes
+and their rings. Nodes/rings must remain alive and unchanged outside the task.
+The caller supplies true plaintext chunk lengths; CDC lengths cannot be inferred
+from padded sizes or file totals, and trimming trailing zeros corrupts real data.
+The task verifies each proposed length by canonical old-key re-sealing before
+uploading anything. This preserves the existing manifest wire schema.
+
+Lazy mode executes an affordable prefix; eager mode requires the entire remaining
+budget before any I/O. Costs reserve download plus upload payload bytes, not HTTP
+headers or service overhead. Hashes are checked before decryption. Metadata is
+updated only after `put` confirms durable, hash-verified acceptance. Failures are
+terminal with no implicit retry; an uncertain upload exposes its pending address
+for caller reconciliation. Callbacks own transport/authentication and return
+malloc'd read buffers. The task never deletes old objects.
+
+After successful work the caller must seal the mutated manifests and ancestors.
+Only a **complete subtree inventory** proving no remaining old-epoch references
+permits explicit `vault_ring_drop_before` in future grants. Completing a partial
+job list is not that proof. Old blobs and removed members' cached keys remain
+readable together; service allowlist removal is a separate second factor.
+
+## Verified records and owner-sequencer fold
+
+`vault_record_open` verifies a real signed kind-30078 head using libporthome,
+checks every supplied manifest object's hash before AEAD, and closes the tree's
+child-ID/epoch/address graph. The caller supplies exact per-node rings, including
+independent override histories. Missing children fail with INCOMPLETE; cycles or
+repeated directory objects fail with CONFLICT. File blobs need not be downloaded
+for metadata folding. Records own their decoded head/root and per-path digests;
+the encrypted inputs and rings may be released after opening.
+
+`vault_fold` starts from trusted owner metadata. Only newer owner-signed records
+can advance the writer policy. Readers never admit a head. Nonwriters, old
+`grants_rev` heads and policy-forging heads are excluded from the materialized
+view. Parent identity is the complete `(writer, seq, root_manifest)` tuple;
+supply the signed history closure, including stale ancestors when referenced.
+Missing closure returns INCOMPLETE rather than inventing a frontier.
+
+One frontier head is the view. With multiple frontier heads, the latest
+unambiguous admitted owner head wins, even when it is an ancestor. Missing or
+forked owner state returns CONFLICT instead of a clock/LWW fallback. Conflicts
+are sorted per slash-joined encrypted path and identify the other writer/head,
+including deletion-vs-edit presence flags. Result indices refer to input order.
+All verified input roots and parent roots are returned as a retention set,
+including ignored heads. No object is deleted and no conflicting head is replaced.
+On INCOMPLETE/CONFLICT the caller still owns and must free the result; view is
+`SIZE_MAX`. Invalid arguments/allocation failure return no result.
+
+Bounds: 256 records, 4096 manifest objects per record, depth 128, and PCS's path,
+CBOR, entry, parent and member caps. Larger histories must be checkpointed by the
+caller rather than silently truncated.
+
+## Grants, discovery and carrier seam
+
+Grant bodies use strict named-field JSON matching §6.2, hex32 values, ordered
+`ring` entries, `cap` read/write and advisory relay/Blossom hints. A write grant
+alone does not admit a writer. Rumor construction creates an **unsigned** kind
+30804 with a canonical event ID and empty tags. It is never signed or published
+bare. Raw encoded bodies contain keys: wipe before freeing. Use
+`vault_grant_rumor_free` to wipe an owned rumor before normal event disposal.
+
+`vault_grant_carrier` is only a send/receive callback interface. Receive must
+supply an authenticated carrier sender, which is checked against the grant owner;
+a JSON author echo is not authentication. Callback errors propagate without
+retry. SV-4 implements the NIP-59 carrier; the separate Marmot adapter implements
+MLS exporter/group delivery. Neither carrier, preference discovery nor relay I/O
+is implemented here.
+
+The kind-10319 service-list plaintext is
+`{"vault-relay":[...],"vault-blossom":[...]}`. It is NIP-44 self-encrypted under
+the user's identity; public tags are empty. Builders return unsigned events for
+the ordinary identity signer. Open verifies the signature and self author before
+decrypting. Use the caller's ACK-aware relay path to publish it. Both codecs
+reject unknown/duplicate fields, malformed numbers/hex and trailing input;
+URLs are unescaped ASCII ws(s)/http(s), at most 2048 bytes, with 32 hints per set.
+JSON bodies are bounded at 65535 bytes (NIP-44's plaintext limit).
+
+VSP classification requires NIP-11 `limitation.auth_required: true` **and**
+`vault: true`. Blossom classification consumes libblossom's `private_server`
+capability; the probe wrapper invokes the actual libblossom probe/cache.
+Advertisements classify a service; they do not prove enforcement, existence
+hiding or allowlist behavior. Missing/ambiguous data never promotes to private.
+
+## Focused tests
+
+`test_vault_ring_derivation`, `test_vault_revoke_lazy`, and
+`test_vault_fold_frontier` cover §13 b/c/d with real PCS objects and signed heads.
+`test_vault_codecs` covers strict codecs, self-encrypted 10319 events, the carrier
+contract, NIP-11 classification and a bounded local HTTP server exercising the
+actual libblossom private-capability probe. That fixture is not live VSP-01 or
+NIP-59/Marmot acceptance. The implementation remains experimental.
