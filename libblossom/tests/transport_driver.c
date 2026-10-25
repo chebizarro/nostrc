@@ -4,6 +4,7 @@
 #include <blossom/shim.h>
 #include <nostr-event.h>
 #include <nostr-keys.h>
+#include <nostr/bud02/auth.h>
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
 #include <assert.h>
@@ -18,6 +19,14 @@ static blossom_error_t sign_json(const char *json, char **out, void *key) {
     if (!ev) return BLOSSOM_ERR_NOMEM;
     if (nostr_event_deserialize_compact(ev, json, NULL) == 1 && nostr_event_sign(ev, key) == 0)
         *out = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    return *out ? BLOSSOM_OK : BLOSSOM_ERR_AUTH;
+}
+static blossom_error_t wrong_hash_sign(const char *json, char **out, void *key) {
+    (void)json; *out = NULL;
+    NostrEvent *ev = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD,
+        "0000000000000000000000000000000000000000000000000000000000000000", 0, NULL);
+    if (ev && nostr_event_sign(ev, key) == 0) *out = nostr_event_serialize_compact(ev);
     nostr_event_free(ev);
     return *out ? BLOSSOM_OK : BLOSSOM_ERR_AUTH;
 }
@@ -139,6 +148,22 @@ int main(int argc, char **argv) {
         assert(blossom_client_get(anon, hash, &data, &n) == BLOSSOM_ERR_AUTH);
         blossom_client_free(anon);
         roundtrip(c, 1024);
+    } else if (!strcmp(argv[1], "bad-signer")) {
+        assert(blossom_probe_capabilities(c) == BLOSSOM_OK);
+        blossom_client_free(c);
+        signer.sign = wrong_hash_sign;
+        c = client(argv[2], &signer, 0);
+        const uint8_t body[] = "must not upload under another hash";
+        assert(blossom_client_put(c, body, sizeof body, NULL, NULL) == BLOSSOM_ERR_AUTH);
+        blossom_blob_t blob = {.bytes=body, .len=sizeof body};
+        blossom_batch_result_t result;
+        assert(blossom_client_put_batch(c, &blob, 1, &result) == BLOSSOM_ERR_AUTH);
+        assert(result.error == BLOSSOM_ERR_AUTH);
+        blossom_server_capabilities_t observed = *blossom_client_get_capabilities(c);
+        observed.batch_ok = BLOSSOM_CAP_NO;
+        blossom_capability_cache_set(argv[2], &observed);
+        assert(blossom_client_put_batch(c, &blob, 1, &result) == BLOSSOM_ERR_AUTH);
+        assert(result.error == BLOSSOM_ERR_AUTH);
     } else if (!strcmp(argv[1], "guards")) {
         blossom_client_free(c); c = client(argv[2], NULL, 128);
         for (int i = 0; i < 4; i++) {

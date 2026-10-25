@@ -108,7 +108,7 @@ def main():
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
     try:
-        for mode, suffix in (("roundtrip", "raw"), ("roundtrip", "png"), ("private", "private"), ("guards", "guard")):
+        for mode, suffix in (("roundtrip", "raw"), ("roundtrip", "png"), ("private", "private"), ("guards", "guard"), ("bad-signer", "raw")):
             subprocess.run([sys.argv[1], mode, base + "/" + suffix], check=True, timeout=90)
         subprocess.run([sys.argv[1], "pool", base + "/raw", base + "/png"], check=True, timeout=90)
         assert not any(scenario == "trap" for scenario, _, _ in requests)

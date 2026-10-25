@@ -236,7 +236,9 @@ static void notify_cb(void *ud, size_t dropped, size_t reup, const char *summary
 
 /* ---- BUD-02 delete against a real blossom via libhanami ---- */
 static int delete_blob(const char *server, const char *sha256_hex) {
+    const char *local = getenv("NH_PORTHOME_ALLOW_INSECURE");
     blossom_client_opts_t opts = {
+        .allow_insecure = local && !strcmp(local, "1"),
         .endpoint = server,
         .timeout_seconds = 30,
         .user_agent = "nostr-home-sweep-probe/0.1",

@@ -50,16 +50,22 @@ static void log_msg(const char *fmt, ...) {
     va_end(ap);
 }
 
-/* Default per-server HEAD via libhanami. Returns 1/0 or -1 on error. */
+static bool local_test_transport(void) {
+    const char *e = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    return e && !strcmp(e, "1");
+}
+
+/* Default per-server HEAD via libblossom. Returns 1/0 or -1 on error. */
 static int default_head(void *ud, const char *server, const char *sha256_hex) {
-    (void)ud;
+    const blossom_signer_t *signer = ud;
     blossom_client_opts_t opts = {
         .endpoint = server,
         .timeout_seconds = 15,
         .user_agent = "nostr-home-syncd-sweep/0.1",
+        .allow_insecure = local_test_transport(),
     };
     blossom_client_t *c = NULL;
-    if (blossom_client_new(&opts, NULL, &c) != BLOSSOM_OK) return -1;
+    if (blossom_client_new(&opts, signer, &c) != BLOSSOM_OK) return -1;
     bool exists = false;
     blossom_error_t rc = blossom_client_head(c, sha256_hex, &exists);
     blossom_client_free(c);
@@ -85,6 +91,7 @@ static int default_upload_all(default_upload_ctx *dc,
             .endpoint = dc->servers[si],
             .timeout_seconds = dc->timeout ? dc->timeout : 30,
             .user_agent = "nostr-home-syncd-sweep/0.1",
+            .allow_insecure = local_test_transport(),
         };
         blossom_client_t *c = NULL;
         if (blossom_client_new(&opts, dc->signer, &c) != BLOSSOM_OK) continue;
@@ -125,7 +132,7 @@ int nh_syncd_sweep_run_once(const nh_syncd_sweep_cfg *cfg,
     }
 
     nh_syncd_head_fn head_fn = cfg->head_fn ? cfg->head_fn : default_head;
-    void *head_ud = cfg->head_fn ? cfg->head_ud : NULL;
+    void *head_ud = cfg->head_fn ? cfg->head_ud : (void *)cfg->bud02_signer;
 
     default_upload_ctx duc = {
         .signer    = cfg->bud02_signer,

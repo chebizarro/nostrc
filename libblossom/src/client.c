@@ -208,6 +208,8 @@ static void strip_trailing_slash(char *s)
  * Auth helper: create "Authorization: Nostr <base64>" for a signed event
  * ========================================================================= */
 
+static NostrEvent *sign_event_via_client(const blossom_client_t *, NostrEvent *);
+
 static blossom_error_t make_auth_header(const blossom_client_t *c,
                                        nostr_bud02_action_t action,
                                        const char *sha256_hex,
@@ -216,54 +218,12 @@ static blossom_error_t make_auth_header(const blossom_client_t *c,
     if (!c->has_signer)
         return BLOSSOM_ERR_AUTH;
 
-    /* Create the BUD-02 auth event */
-    NostrEvent *ev = nostr_bud02_create_auth_event(
-        action, sha256_hex, 0, c->caps.server_tag_ok == BLOSSOM_CAP_YES ? c->endpoint : NULL);
-    if (!ev)
-        return BLOSSOM_ERR_NOSTR;
-
-    /* Set pubkey from signer */
-    nostr_event_set_pubkey(ev, c->signer.pubkey);
-
-    /* Serialize to JSON for signing */
-    char *unsigned_json = nostr_event_serialize_compact(ev);
-    if (!unsigned_json) {
-        nostr_event_free(ev);
-        return BLOSSOM_ERR_NOSTR;
-    }
-
-    /* Sign via callback */
-    char *signed_json = NULL;
-    blossom_error_t err = c->signer.sign(unsigned_json, &signed_json,
-                                         c->signer.user_data);
-    free(unsigned_json);
-
-    if (err != BLOSSOM_OK || !signed_json) {
-        nostr_event_free(ev);
-        free(signed_json);
-        return (err != BLOSSOM_OK) ? err : BLOSSOM_ERR_AUTH;
-    }
-
-    /* Deserialize the signed event back */
-    NostrEvent *signed_ev = nostr_event_new();
-    if (!signed_ev) {
-        nostr_event_free(ev);
-        free(signed_json);
-        return BLOSSOM_ERR_NOMEM;
-    }
-
-    if (nostr_event_deserialize_signed(signed_ev, signed_json, NULL) != NOSTR_EVENT_VALIDATION_OK ||
-        !nostr_event_check_signature(signed_ev) ||
-        !c->signer.pubkey || !nostr_event_get_pubkey(signed_ev) ||
-        strcmp(c->signer.pubkey, nostr_event_get_pubkey(signed_ev)) ||
-        nostr_event_get_kind(signed_ev) != NOSTR_BUD02_KIND) {
-        nostr_event_free(ev);
-        nostr_event_free(signed_ev);
-        free(signed_json);
-        return BLOSSOM_ERR_NOSTR;
-    }
-    free(signed_json);
+    NostrEvent *ev = nostr_bud02_create_auth_event(action, sha256_hex, 0,
+        c->caps.server_tag_ok == BLOSSOM_CAP_YES ? c->endpoint : NULL);
+    if (!ev) return BLOSSOM_ERR_NOSTR;
+    NostrEvent *signed_ev = sign_event_via_client(c, ev);
     nostr_event_free(ev);
+    if (!signed_ev) return BLOSSOM_ERR_AUTH;
 
     nostr_bud02_validate_options_t validation = {
         .expected_sha256 = sha256_hex, .expected_pubkey = c->signer.pubkey
@@ -758,7 +718,8 @@ blossom_error_t blossom_put_wire(blossom_client_t *client,
     }
 
     /* Parse blob descriptor from response */
-    if (out_desc && resp.data) {
+    if (out_desc && !resp.data) { dyn_buf_free(&resp); return BLOSSOM_ERR_BLOSSOM; }
+    if (out_desc) {
         *out_desc = parse_blob_descriptor((const char *)resp.data);
         if (!*out_desc || strcasecmp((*out_desc)->sha256, sha256_hex) || (*out_desc)->size != len) {
             blossom_blob_descriptor_free(*out_desc); *out_desc = NULL;
@@ -957,7 +918,7 @@ static void put_one_blob(blossom_client_t *c,
 
     if (rc != CURLE_OK) {
         *out_err = curl_code_to_error(rc);
-        *out_status = 0;
+        *out_status = status; /* Retain any HTTP refusal even if sending also failed. */
     } else {
         *out_status = status;
         *out_err = http_status_to_error(status);
@@ -972,6 +933,8 @@ static NostrEvent *sign_event_via_client(const blossom_client_t *c,
 {
     if (!c->has_signer) return NULL;
     nostr_event_set_pubkey(ev, c->signer.pubkey);
+    char requested_id[65];
+    if (nostr_event_compute_id(ev, requested_id) != NOSTR_EVENT_VALIDATION_OK) return NULL;
 
     char *unsigned_json = nostr_event_serialize_compact(ev);
     if (!unsigned_json) return NULL;
@@ -991,7 +954,8 @@ static NostrEvent *sign_event_via_client(const blossom_client_t *c,
         !nostr_event_check_signature(signed_ev) ||
         !c->signer.pubkey || !nostr_event_get_pubkey(signed_ev) ||
         strcmp(c->signer.pubkey, nostr_event_get_pubkey(signed_ev)) ||
-        nostr_event_get_kind(signed_ev) != NOSTR_BUD02_KIND) {
+        nostr_event_get_kind(signed_ev) != NOSTR_BUD02_KIND ||
+        !nostr_event_get_id(signed_ev) || strcmp(requested_id, nostr_event_get_id(signed_ev))) {
         nostr_event_free(signed_ev);
         free(signed_json);
         return NULL;
@@ -1013,6 +977,8 @@ static char *mint_batch_auth_header(blossom_client_t *c,
     nostr_event_free(ev);
     if (!signed_ev) return NULL;
     nostr_bud02_validate_options_t validation = { .expected_pubkey = c->signer.pubkey };
+    /* The canonical id check above binds ALL requested x-tags, not just
+     * the first x-tag checked by the codec's single-blob validator. */
     if (nostr_bud02_validate_auth_event(signed_ev, NOSTR_BUD02_ACTION_UPLOAD, &validation) != NOSTR_BUD02_OK) {
         nostr_event_free(signed_ev); return NULL;
     }
@@ -1033,7 +999,7 @@ static char *mint_single_auth_header(blossom_client_t *c,
     NostrEvent *signed_ev = sign_event_via_client(c, ev);
     nostr_event_free(ev);
     if (!signed_ev) return NULL;
-    nostr_bud02_validate_options_t validation = { .expected_pubkey = c->signer.pubkey };
+    nostr_bud02_validate_options_t validation = { .expected_pubkey = c->signer.pubkey, .expected_sha256 = hash };
     if (nostr_bud02_validate_auth_event(signed_ev, NOSTR_BUD02_ACTION_UPLOAD, &validation) != NOSTR_BUD02_OK) {
         nostr_event_free(signed_ev); return NULL;
     }
@@ -1096,8 +1062,10 @@ blossom_error_t blossom_put_batch_wire(blossom_client_t *c,
         batch_header = mint_batch_auth_header(c, hashes, count, srv);
         if (!batch_header) {
             free(hashes);
-            for (size_t i = 0; i < count; i++)
+            for (size_t i = 0; i < count; i++) {
+                out_results[i].error = BLOSSOM_ERR_AUTH;
                 out_results[i].error_class = "auth";
+            }
             return BLOSSOM_ERR_AUTH;
         }
     }
@@ -1402,6 +1370,7 @@ blossom_error_t blossom_probe_capabilities(blossom_client_t *c)
         }
     }
 
+    bool put_d_success = false;
     /* (d) strict-x binding — event with x=[h1], PUT blob2 (hash H2).
      * 401 -> STRICT; 2xx/non-auth 4xx -> PERMISSIVE. */
     {
@@ -1417,6 +1386,7 @@ blossom_error_t blossom_probe_capabilities(blossom_client_t *c)
                 c->caps.last_401_ts = (int64_t)time(NULL);
             } else if (st > 0) {
                 c->caps.strict_x_binding = BLOSSOM_CAP_NO;
+                put_d_success = st >= 200 && st < 300;
             }
         }
     }
@@ -1464,8 +1434,8 @@ blossom_error_t blossom_probe_capabilities(blossom_client_t *c)
     char h_shim[65] = {0};
     {
         size_t enc_len = blossom_shim_encoded_len(sizeof blob3);
-        uint8_t *shim_buf = (uint8_t *)malloc(enc_len);
-        if (shim_buf && random3_ok) {
+        uint8_t *shim_buf = random3_ok ? (uint8_t *)malloc(enc_len) : NULL;
+        if (shim_buf) {
             if (blossom_shim_wrap(blob3, sizeof blob3,
                                            shim_buf, enc_len) == BLOSSOM_OK) {
                 probe_sha256_hex(shim_buf, enc_len, h_shim);
@@ -1514,7 +1484,7 @@ blossom_error_t blossom_probe_capabilities(blossom_client_t *c)
                                      false, NOSTR_BUD02_ACTION_DELETE);
         if (hv) { probe_delete_blob(c, h1, hv); free(hv); }
     }
-    if (put_c_success_h2) {
+    if (put_c_success_h2 || put_d_success) {
         const char *hh[1] = { h2 };
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
                                      false, NOSTR_BUD02_ACTION_DELETE);
