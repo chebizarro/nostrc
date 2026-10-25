@@ -1,0 +1,40 @@
+# Opt-in VSP-01 layer. Requires Compose >=2.24.4 for !override.
+# docker compose -f docker-compose.yml -f docker-compose.vsp01.yml up -d
+# Only nginx is published. Never expose the upstream store directly.
+services:
+  blossom-lab:
+    # Private runs must not read/write the permissive demo's bind-mounted store.
+    volumes: !override
+      - blossom-data:/app/data
+      - ./blossom-server.config.yaml:/app/config.yml:ro
+
+  vsp-auth:
+    # Reuse the upstream's locked/cached BUD-11 verifier; no runtime npm install.
+    image: ghcr.io/hzrd149/blossom-server:6.4.1@sha256:446fa6c4b0ca529a1fbceabf5ea75839b5b76dfb0d0e1d150f3bae5f9a52b3b8
+    entrypoint: ["deno", "run", "--cached-only", "--allow-net", "--allow-read", "--allow-env=DEBUG", "/app/vsp01-auth.ts"]
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${VSP01_ALLOWLIST:-./allowlist.txt}:/config/allowlist.txt:ro
+      - ./vsp01-auth.ts:/app/vsp01-auth.ts:ro
+      - ./vsp01-conformance.ts:/app/vsp01-conformance.ts:ro
+    expose: ["3001"]
+    healthcheck:
+      test: ["CMD", "deno", "eval", "await fetch('http://127.0.0.1:3001/')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  nginx:
+    depends_on:
+      vsp-auth:
+        condition: service_healthy
+    ports: !override
+      - "127.0.0.1:${VSP01_PORT:-8443}:443"
+    volumes: !override
+      - ./nginx.vsp01.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${VSP01_CERT_DIR:-./certs}:/etc/vsp01-certs:ro
+
+volumes:
+  blossom-data:

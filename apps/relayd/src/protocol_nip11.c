@@ -107,6 +107,29 @@ int relayd_handle_nip11_root(struct lws *wsi, const RelaydCtx *ctx) {
   need_free = 1;
 #endif
   if (!body) body = (char*)"{\"name\":\"nostrc-relayd\"}";
+  if (ctx && (ctx->cfg.vault_enabled || strcmp(ctx->cfg.auth, "required") == 0)) {
+    /* The shared NIP-11 builder does not serialize auth_required yet. Add
+     * it here, including in builds without HAVE_NIP11. */
+    const char *lim = strstr(body, "\"limitation\":{");
+    const char *insert = lim ? lim + strlen("\"limitation\":{") : body + 1;
+    const char *extra = lim ? "\"auth_required\":true,"
+                            : "\"limitation\":{\"auth_required\":true},";
+    size_t prefix = (size_t)(insert - body);
+    size_t size = strlen(body) + strlen(extra) + 32;
+    char *marked = malloc(size);
+    if (!marked) {
+      if (need_free) free(body);
+      return -1; /* Never advertise an unprotected service on allocation failure. */
+    }
+    snprintf(marked, size, "%.*s%s%s", (int)prefix, body, extra, insert);
+    if (need_free) free(body);
+    body = marked;
+    need_free = 1;
+    if (ctx->cfg.vault_enabled) {
+      size_t length = strlen(body);
+      snprintf(body + length - 1, size - length + 1, ",\"vault\":true}");
+    }
+  }
   ws_http_send_nip11_json(wsi, body);
   if (need_free && body && body[0] == '{') free(body);
   return 0;

@@ -45,6 +45,7 @@ typedef struct ConnState {
   RelaydPendingSub subs[RELAYD_MAX_PENDING_SUBS];
   size_t nsubs;
   int authed;
+  int vault_authorized; /* Any successfully AUTHed allowlisted identity. */
   int need_auth_chal;
   char auth_chal[64];
   char authed_pubkey[128];

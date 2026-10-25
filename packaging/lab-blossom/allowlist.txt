@@ -1,0 +1,2 @@
+# Deny-all default. Set VSP01_ALLOWLIST to an operator-managed absolute path.
+# One lowercase 64-character hex pubkey per line; restart to reload.

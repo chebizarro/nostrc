@@ -269,7 +269,8 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         if (ctx->clients) ctx->clients->prev_client = cs;
         ((RelaydCtx*)ctx)->clients = cs;
         /* If auth is required, start unauthenticated */
-        cs->authed = (ctx && strcmp(ctx->cfg.auth, "required") == 0) ? 0 : 1;
+        cs->authed = (ctx && (ctx->cfg.vault_enabled ||
+                              strcmp(ctx->cfg.auth, "required") == 0)) ? 0 : 1;
         /* Monotonic weighted frame and verification buckets. */
         uint64_t now_ms = rate_limit_now_ms();
         rate_limit_bucket_init(&cs->frame_rate,
