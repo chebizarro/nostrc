@@ -1,0 +1,11 @@
+[package]
+name = "porthome-sys"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Raw bindings to the installed experimental libporthome C library"
+links = "porthome"
+
+[build-dependencies]
+bindgen.workspace = true
+pkg-config.workspace = true

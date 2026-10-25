@@ -91,6 +91,12 @@ jobs:
     with:
       sha: ${{ needs.select.outputs.sha }}
       artifact_prefix: ci-
+  rust:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.families), 'rust')
+    uses: ./.github/workflows/rust-bindings-ci.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
   gi:
     needs: select
     if: contains(fromJSON(needs.select.outputs.families), 'gi')
@@ -197,7 +203,7 @@ jobs:
   gate:
     name: Dependency gate
     if: always()
-    needs: [select, cheap, core, libgo, hanami, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
+    needs: [select, cheap, core, libgo, hanami, rust, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
     runs-on: ubuntu-24.04
     steps:
       - name: Selection and cheap guards must succeed

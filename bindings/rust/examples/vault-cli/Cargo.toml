@@ -1,0 +1,15 @@
+[package]
+name = "vault-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+porthome-sys = { path = "../../porthome-sys" }
+vault-sys = { path = "../../vault-sys" }
+libc = "0.2"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

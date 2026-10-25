@@ -29,6 +29,8 @@ files already declare a version.
 | libhanami | `libhanami/` | 0.3.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | libvault | `libvault/` | 0.2.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
+| vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -38,6 +40,13 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-er4fz.7 (R6): porthome-sys and vault-sys start at 0.1.0 for new,
+  experimental raw Rust APIs generated from installed C headers by bindgen.
+  The vault-cli consumer is a non-published example (Cargo package 0.1.0), not
+  an independently released CLI. No bump to libporthome, libvault or their C
+  dependencies: their shipped sources, headers and build contracts are unchanged.
+  CI/selection changes are internal and do not require a component bump.
 
 - nostrc-hl30i.4 (SV-4): libvault MINOR 0.1.0 -> 0.2.0 adds the NIP-59
   grant carrier through a separate `<vault/nip59.h>`; existing `vault.h`,
