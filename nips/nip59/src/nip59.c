@@ -8,7 +8,6 @@
 #include "nostr/nip59/nip59.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr-event.h"
-#include "nostr-auto-internal.h"
 #include "nostr-tag.h"
 #include "nostr-kinds.h"
 #include "nostr-keys.h"
@@ -264,20 +263,23 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
     }
 
     /* Decrypt with NIP-44 */
-    go_autofree uint8_t *decrypted = NULL;
+    uint8_t *decrypted = NULL;
+    char *json = NULL;
+    NostrEvent *inner_event = NULL;
+    NostrEvent *result = NULL;
     size_t decrypted_len = 0;
 
     int rc = nostr_nip44_decrypt_v2(recipient_sk_bin, sender_pk_bin,
                                      encrypted, &decrypted, &decrypted_len);
-    if (rc != 0 || !decrypted) return NULL;
+    if (rc != 0 || !decrypted) goto out;
 
     /* Parse inner event from JSON */
-    go_autoptr(NostrEvent) inner_event = nostr_event_new();
-    if (!inner_event) return NULL;
+    inner_event = nostr_event_new();
+    if (!inner_event) goto out;
 
     /* Null-terminate the decrypted content */
-    go_autofree char *json = malloc(decrypted_len + 1);
-    if (!json) return NULL;
+    json = malloc(decrypted_len + 1);
+    if (!json) goto out;
     memcpy(json, decrypted, decrypted_len);
     json[decrypted_len] = '\0';
 
@@ -291,7 +293,7 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
     if (!signed_inner) {
         status = nostr_event_deserialize_unsigned(inner_event, json, NULL);
         if (status != NOSTR_EVENT_VALIDATION_OK)
-            return NULL;
+            goto out;
     }
 
     if (signed_inner) {
@@ -302,9 +304,23 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
         status = nostr_event_compute_id(inner_event, canonical_id);
     }
     if (status != NOSTR_EVENT_VALIDATION_OK)
-        return NULL;
+        goto out;
 
-    return go_steal_pointer(&inner_event);
+    result = inner_event;
+    inner_event = NULL;
+out:
+    /* Unwrap may legitimately return an unsigned rumor with secret content.
+     * Wipe both raw plaintext copies, including parse/validation failures. */
+    if (decrypted) secure_wipe(decrypted, decrypted_len);
+    free(decrypted);
+    if (json) secure_wipe(json, decrypted_len + 1);
+    free(json);
+    if (inner_event) {
+        if (inner_event->content)
+            secure_wipe(inner_event->content, strlen(inner_event->content));
+        nostr_event_free(inner_event);
+    }
+    return result;
 }
 
 NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,

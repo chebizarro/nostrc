@@ -5,7 +5,7 @@ Name: vault
 Description: Shared-vault rings, epochs, grants, owner-sequencer fold and discovery
 Version: @vault_VERSION@
 Requires: porthome blossom
-Requires.private: nostr openssl
+Requires.private: nostr nip59 openssl
 Libs: -L${libdir} -lvault
 Libs.private: -lnostr_nip44_core
 Cflags: -I${includedir}

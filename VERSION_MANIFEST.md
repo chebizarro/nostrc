@@ -28,8 +28,9 @@ files already declare a version.
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.3.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.4.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
-| libvault | `libvault/` | 0.1.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| libvault | `libvault/` | 0.2.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.2.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
@@ -37,6 +38,15 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-hl30i.4 (SV-4): libvault MINOR 0.1.0 -> 0.2.0 adds the NIP-59
+  grant carrier through a separate `<vault/nip59.h>`; existing `vault.h`,
+  structs and callbacks are unchanged. The installed private link closure now
+  includes nip59. nip59 starts at 0.1.0 for its new installed static archive,
+  version header and .pc contract; the existing OBJECT target and C APIs are
+  unchanged. Its archive reuses the same objects (no copied implementation);
+  unwrap temporary plaintext is now wiped on success and rejection paths.
+  libporthome remains 0.4.0 and all other component versions remain unchanged.
 
 - nostrc-hl30i.3 (SV-3/R5): new Layer-5 libvault starts at 0.1.0 with
   owned rings/epoch changes, atomic revoke proposals, budgeted lazy/eager
