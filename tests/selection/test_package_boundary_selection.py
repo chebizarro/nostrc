@@ -64,6 +64,21 @@ class PackageBoundarySelection(unittest.TestCase):
                                 head="a" * 40, base="b" * 40, context="ci")
         self.assertNotIn("supported.nostr.gobject.blossom", test_plan["selected_checks"])
 
+    def test_porthome_v2_tests_are_registered_for_all_porthome_profiles(self):
+        targets = {"test_porthome_seal_v2", "test_porthome_ring_derivation",
+                   "test_porthome_pad_buckets", "test_porthome_chunker"}
+        for name in ("supported.libporthome", "root.asan.libporthome"):
+            check = self.policy["checks"][name]
+            self.assertTrue(targets <= set(check["build_targets"]))
+            for profile in check["profiles"]:
+                self.assertTrue(targets <= set(check["ctest_tests"][profile]))
+        for source in ("test_seal_v2.c", "test_ring_derivation.c",
+                       "test_pad_buckets.c", "test_chunker.c", "test_helpers.h"):
+            plan = s.make_plan(self.policy, [change("libporthome/tests/" + source)],
+                               head="a" * 40, base="b" * 40, context="ci")
+            self.assertEqual(set(plan["selected_checks"]),
+                             {"supported.libporthome", "root.asan.libporthome"})
+
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],
                            head="a" * 40, base="b" * 40, context="ci")

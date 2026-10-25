@@ -16,6 +16,9 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
+#include <openssl/bn.h>
+#include <limits.h>
+#include <nostr/nip44/padding.h>
 
 #include <nostr/nip44/kdf.h>
 
@@ -65,13 +68,13 @@ static int hex_nibble(char c) {
 
 int porthome_from_hex64(const char *in_hex, uint8_t out[32]) {
     if (!in_hex || !out) return PORTHOME_ERR_ARG;
+    if (strnlen(in_hex, 65) != 64) return PORTHOME_ERR_ARG;
     for (int i = 0; i < 32; i++) {
         int hi = hex_nibble(in_hex[2*i]);
         int lo = hex_nibble(in_hex[2*i+1]);
         if (hi < 0 || lo < 0) return PORTHOME_ERR_ARG;
         out[i] = (uint8_t)((hi << 4) | lo);
     }
-    if (in_hex[64] != '\0') return PORTHOME_ERR_ARG;
     return PORTHOME_OK;
 }
 
@@ -116,18 +119,21 @@ int porthome_key_derive(const uint8_t seed[32], uint8_t out_home_key[32]) {
  * plaintexts a single home has ever stored.
  * ──────────────────────────────────────────────────────────────────── */
 
-static int seal_v1(const uint8_t home_key[32],
+static int seal(const uint8_t home_key[32],
                    const char *salt, size_t salt_len,
+                   uint8_t version, const uint8_t *plain_hash,
                    const uint8_t *pt, size_t pt_len,
                    uint8_t **out_blob, size_t *out_blob_len,
                    uint8_t out_blob_sha256[32] /* nullable */) {
     if (!home_key || !out_blob || !out_blob_len) return PORTHOME_ERR_ARG;
     if (pt_len && !pt) return PORTHOME_ERR_ARG;
-    if (pt_len > PORTHOME_MAX_SEAL_PT) return PORTHOME_ERR_TOO_LARGE;
+    if (pt_len > PORTHOME_MAX_SEAL_PT || pt_len > INT_MAX) return PORTHOME_ERR_TOO_LARGE;
     *out_blob = NULL; *out_blob_len = 0;
 
     uint8_t pt_hash[32];
-    int rc = porthome_sha256(pt, pt_len, pt_hash);
+    int rc = PORTHOME_OK;
+    if (plain_hash) memcpy(pt_hash, plain_hash, sizeof(pt_hash));
+    else rc = porthome_sha256(pt, pt_len, pt_hash);
     if (rc != PORTHOME_OK) return rc;
 
     uint8_t nonce[PORTHOME_NONCE_LEN];
@@ -152,7 +158,7 @@ static int seal_v1(const uint8_t home_key[32],
         OPENSSL_cleanse(nonce, sizeof(nonce));
         return PORTHOME_ERR_OOM;
     }
-    blob[0] = PORTHOME_WIRE_VERSION;
+    blob[0] = version;
     memcpy(blob + 1, nonce, PORTHOME_NONCE_LEN);
     uint8_t *ct  = blob + 1 + PORTHOME_NONCE_LEN;
     uint8_t *tag = ct + pt_len;
@@ -193,17 +199,17 @@ seal_done:
     return PORTHOME_OK;
 }
 
-static int open_v1(const uint8_t home_key[32],
-                   const char *salt, size_t salt_len,
+static int open_blob(const uint8_t home_key[32],
+                   const char *salt, size_t salt_len, uint8_t version,
                    const uint8_t *blob, size_t blob_len,
                    uint8_t **out_pt, size_t *out_pt_len) {
     if (!home_key || !out_pt || !out_pt_len || !blob) return PORTHOME_ERR_ARG;
     *out_pt = NULL; *out_pt_len = 0;
     if (blob_len < (size_t)PORTHOME_SEAL_OVERHEAD) return PORTHOME_ERR_VERSION;
-    if (blob[0] != PORTHOME_WIRE_VERSION) return PORTHOME_ERR_VERSION;
+    if (blob[0] != version) return PORTHOME_ERR_VERSION;
 
     size_t pt_len = blob_len - PORTHOME_SEAL_OVERHEAD;
-    if (pt_len > PORTHOME_MAX_SEAL_PT) return PORTHOME_ERR_TOO_LARGE;
+    if (pt_len > PORTHOME_MAX_SEAL_PT || pt_len > INT_MAX) return PORTHOME_ERR_TOO_LARGE;
 
     const uint8_t *nonce = blob + 1;
     const uint8_t *ct    = blob + 1 + PORTHOME_NONCE_LEN;
@@ -253,34 +259,34 @@ int porthome_encrypt_chunk(const uint8_t home_key[32],
                               const uint8_t *pt, size_t pt_len,
                               uint8_t **out_ct, size_t *out_ct_len,
                               uint8_t out_sha256[32]) {
-    return seal_v1(home_key, SALT_CHUNK, sizeof(SALT_CHUNK) - 1,
+    return seal(home_key, SALT_CHUNK, sizeof(SALT_CHUNK) - 1, PORTHOME_WIRE_VERSION, NULL,
                    pt, pt_len, out_ct, out_ct_len, out_sha256);
 }
 
 int porthome_decrypt_chunk(const uint8_t home_key[32],
                               const uint8_t *ct, size_t ct_len,
                               uint8_t **out_pt, size_t *out_pt_len) {
-    return open_v1(home_key, SALT_CHUNK, sizeof(SALT_CHUNK) - 1,
+    return open_blob(home_key, SALT_CHUNK, sizeof(SALT_CHUNK) - 1, PORTHOME_WIRE_VERSION,
                    ct, ct_len, out_pt, out_pt_len);
 }
 
 int porthome_encrypt_manifest(const uint8_t home_key[32],
                                  const uint8_t *pt, size_t pt_len,
                                  uint8_t **out_ct, size_t *out_ct_len) {
-    return seal_v1(home_key, SALT_MANIFEST, sizeof(SALT_MANIFEST) - 1,
+    return seal(home_key, SALT_MANIFEST, sizeof(SALT_MANIFEST) - 1, PORTHOME_WIRE_VERSION, NULL,
                    pt, pt_len, out_ct, out_ct_len, NULL);
 }
 
 int porthome_decrypt_manifest(const uint8_t home_key[32],
                                  const uint8_t *ct, size_t ct_len,
                                  uint8_t **out_pt, size_t *out_pt_len) {
-    return open_v1(home_key, SALT_MANIFEST, sizeof(SALT_MANIFEST) - 1,
+    return open_blob(home_key, SALT_MANIFEST, sizeof(SALT_MANIFEST) - 1, PORTHOME_WIRE_VERSION,
                    ct, ct_len, out_pt, out_pt_len);
 }
 
 /* ────────────────────────────────────────────────────────────────────
  * Name-field AEAD (schema-v2, nostrc-q25o).
- * Same seal_v1/open_v1 machinery as chunks/manifests but with the
+ * Same seal/open_blob machinery as chunks/manifests but with the
  * name-purpose salt so a ciphertext produced under one purpose cannot
  * be redirected to another. Convergent (same plaintext → same bytes)
  * per D4. Callers use this to seal per-entry basenames and symlink
@@ -290,25 +296,20 @@ int porthome_decrypt_manifest(const uint8_t home_key[32],
 int porthome_encrypt_name_field(const uint8_t home_key[32],
                                    const uint8_t *pt, size_t pt_len,
                                    uint8_t **out_ct, size_t *out_ct_len) {
-    return seal_v1(home_key, SALT_NAME, sizeof(SALT_NAME) - 1,
+    return seal(home_key, SALT_NAME, sizeof(SALT_NAME) - 1, PORTHOME_WIRE_VERSION, NULL,
                    pt, pt_len, out_ct, out_ct_len, NULL);
 }
 
 int porthome_decrypt_name_field(const uint8_t home_key[32],
                                    const uint8_t *ct, size_t ct_len,
                                    uint8_t **out_pt, size_t *out_pt_len) {
-    return open_v1(home_key, SALT_NAME, sizeof(SALT_NAME) - 1,
+    return open_blob(home_key, SALT_NAME, sizeof(SALT_NAME) - 1, PORTHOME_WIRE_VERSION,
                    ct, ct_len, out_pt, out_pt_len);
 }
 
 /* ────────────────────────────────────────────────────────────────────
  * Name encryption (keyed hash; spec §7)
  * ──────────────────────────────────────────────────────────────────── */
-
-static int derive_name_key(const uint8_t home_key[32], uint8_t out[32]) {
-    return hkdf_sha256(SALT_NAME, sizeof(SALT_NAME) - 1,
-                       home_key, 32, NULL, 0, out, 32);
-}
 
 static int component_is_ok(const char *c) {
     if (!c) return 0;
@@ -321,14 +322,14 @@ static int component_is_ok(const char *c) {
     return 1;
 }
 
-int porthome_encrypt_name(const uint8_t home_key[32],
+static int encrypt_name(const uint8_t home_key[32], const char *salt,
                              const char *component,
                              char out_hex[PORTHOME_NAME_HEX_LEN]) {
     if (!home_key || !component || !out_hex) return PORTHOME_ERR_ARG;
     if (!component_is_ok(component)) return PORTHOME_ERR_PATH;
 
     uint8_t name_key[32];
-    int rc = derive_name_key(home_key, name_key);
+    int rc = hkdf_sha256(salt, strlen(salt), home_key, 32, NULL, 0, name_key, 32);
     if (rc != PORTHOME_OK) {
         OPENSSL_cleanse(name_key, sizeof(name_key));
         return rc;
@@ -352,6 +353,11 @@ int porthome_encrypt_name(const uint8_t home_key[32],
     out_hex[PORTHOME_NAME_HEX_LEN - 1] = '\0';
     OPENSSL_cleanse(mac, sizeof(mac));
     return PORTHOME_OK;
+}
+
+int porthome_encrypt_name(const uint8_t home_key[32], const char *component,
+                          char out_hex[PORTHOME_NAME_HEX_LEN]) {
+    return encrypt_name(home_key, SALT_NAME, component, out_hex);
 }
 
 int porthome_encrypt_path(const uint8_t home_key[32],
@@ -402,4 +408,161 @@ path_done:
     free(out);
     *out_joined = NULL;
     return rc;
+}
+
+/* PCS v2: salts are literal protocol constants; never reuse a v1 domain. */
+static const char V2_HOME[] = "porthome/v2/home";
+static const char V2_NODE[] = "porthome/v2/node";
+static const char V2_CHUNK[] = "porthome/v2/chunk";
+static const char V2_MANIFEST[] = "porthome/v2/manifest";
+static const char V2_NAME[] = "porthome/v2/name";
+static const char V2_HEAD[] = "porthome/v2/head";
+
+static int derive_v2(const char *salt, const uint8_t key[32],
+                     const uint8_t *info, size_t info_len, uint8_t out[32]) {
+    if (!key || !out) return PORTHOME_ERR_ARG;
+    int rc = hkdf_sha256(salt, strlen(salt), key, 32, info, info_len, out, 32);
+    if (rc != PORTHOME_OK) OPENSSL_cleanse(out, 32);
+    return rc;
+}
+
+int porthome_root_node_key(const uint8_t seed[32], uint8_t out[32]) {
+    return derive_v2(V2_HOME, seed, NULL, 0, out);
+}
+
+int porthome_child_node_key(const uint8_t parent[32], const uint8_t node_id[32],
+                            const uint8_t *key_override, uint8_t out[32]) {
+    if (!out) return PORTHOME_ERR_ARG;
+    if (key_override) { memmove(out, key_override, 32); return PORTHOME_OK; }
+    if (!node_id) return PORTHOME_ERR_ARG;
+    return derive_v2(V2_NODE, parent, node_id, 32, out);
+}
+
+int porthome_name_key_v2(const uint8_t node_key[32], uint8_t out[32]) {
+    return derive_v2(V2_NAME, node_key, NULL, 0, out);
+}
+
+int porthome_head_key_v2(const uint8_t node_key[32], uint8_t out[32]) {
+    if (!node_key || !out) return PORTHOME_ERR_ARG;
+    uint8_t raw[32];
+    int rc = derive_v2(V2_HEAD, node_key, NULL, 0, raw);
+    BIGNUM *scalar = NULL, *order = NULL;
+    BN_CTX *ctx = NULL;
+    if (rc != PORTHOME_OK) goto done;
+    rc = PORTHOME_ERR_CRYPTO;
+    scalar = BN_bin2bn(raw, 32, NULL);
+    ctx = BN_CTX_new();
+    if (!scalar || !ctx || !BN_hex2bn(&order,
+        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141")) goto done;
+    BN_set_flags(scalar, BN_FLG_CONSTTIME);
+    if (!BN_nnmod(scalar, scalar, order, ctx) || BN_is_zero(scalar) ||
+        BN_bn2binpad(scalar, out, 32) != 32) goto done;
+    rc = PORTHOME_OK;
+done:
+    OPENSSL_cleanse(raw, sizeof(raw));
+    BN_clear_free(scalar);
+    BN_free(order);
+    BN_CTX_free(ctx);
+    if (rc != PORTHOME_OK) OPENSSL_cleanse(out, 32);
+    return rc;
+}
+
+int porthome_encrypt_name_v2(const uint8_t node_key[32], const char *component,
+                             char out_hex[PORTHOME_NAME_HEX_LEN]) {
+    return encrypt_name(node_key, V2_NAME, component, out_hex);
+}
+
+static int ring_key(const porthome_ring_t *ring, uint64_t epoch,
+                    const uint8_t **key) {
+    if (!ring || (ring->count && !ring->entries) || !epoch) return PORTHOME_ERR_ARG;
+    const uint8_t *match = NULL;
+    uint64_t previous = 0;
+    for (size_t i = 0; i < ring->count; ++i) {
+        const porthome_ring_entry_t *entry = &ring->entries[i];
+        if (entry->epoch <= previous) return PORTHOME_ERR_ARG;
+        previous = entry->epoch;
+        if (entry->epoch == epoch) match = entry->node_key;
+    }
+    if (!match) return PORTHOME_ERR_EPOCH;
+    *key = match;
+    return PORTHOME_OK;
+}
+
+int porthome_encrypt_chunk_v2(const uint8_t node_key[32],
+    const uint8_t *pt, size_t pt_len, uint8_t **out, size_t *out_len,
+    uint8_t out_sha256[32]) {
+    if (out) *out = NULL;
+    if (out_len) *out_len = 0;
+    if (!node_key || !out || !out_len || (pt_len && !pt)) return PORTHOME_ERR_ARG;
+    if (pt_len > INT_MAX) return PORTHOME_ERR_TOO_LARGE;
+    size_t padded_len = nip44_calc_padded_len(pt_len);
+    if (padded_len > PORTHOME_MAX_SEAL_PT || padded_len > INT_MAX)
+        return PORTHOME_ERR_TOO_LARGE;
+    uint8_t hash[32];
+    int rc = porthome_sha256(pt, pt_len, hash);
+    if (rc != PORTHOME_OK) return rc;
+    uint8_t *padded = calloc(1, padded_len);
+    if (!padded) { OPENSSL_cleanse(hash, sizeof(hash)); return PORTHOME_ERR_OOM; }
+    if (pt_len) memcpy(padded, pt, pt_len);
+    rc = seal(node_key, V2_CHUNK, sizeof(V2_CHUNK) - 1, PORTHOME_WIRE_VERSION_V2,
+              hash, padded, padded_len, out, out_len, out_sha256);
+    OPENSSL_cleanse(hash, sizeof(hash));
+    OPENSSL_cleanse(padded, padded_len);
+    free(padded);
+    return rc;
+}
+
+int porthome_decrypt_chunk_v2(const porthome_ring_t *ring,
+    uint64_t chunk_key_id, const uint8_t *blob, size_t blob_len,
+    size_t size_plain, uint8_t **out, size_t *out_len) {
+    if (out) *out = NULL;
+    if (out_len) *out_len = 0;
+    if (!out || !out_len || !blob) return PORTHOME_ERR_ARG;
+    if (blob_len < PORTHOME_SEAL_OVERHEAD || blob[0] != PORTHOME_WIRE_VERSION_V2)
+        return PORTHOME_ERR_VERSION;
+    const uint8_t *key;
+    int rc = ring_key(ring, chunk_key_id, &key);
+    if (rc != PORTHOME_OK) return rc;
+    if (size_plain > INT_MAX) return PORTHOME_ERR_TOO_LARGE;
+    if (blob_len - PORTHOME_SEAL_OVERHEAD != nip44_calc_padded_len(size_plain))
+        return PORTHOME_ERR_ARG;
+    uint8_t *pt = NULL;
+    size_t padded_len = 0;
+    rc = open_blob(key, V2_CHUNK, sizeof(V2_CHUNK) - 1, PORTHOME_WIRE_VERSION_V2,
+                   blob, blob_len, &pt, &padded_len);
+    if (rc != PORTHOME_OK) return rc;
+    uint8_t tail = 0;
+    for (size_t i = size_plain; i < padded_len; ++i) tail |= pt[i];
+    if (tail) {
+        OPENSSL_cleanse(pt, padded_len);
+        free(pt);
+        return PORTHOME_ERR_CRYPTO;
+    }
+    *out = pt;
+    *out_len = size_plain;
+    return PORTHOME_OK;
+}
+
+int porthome_encrypt_manifest_v2(const uint8_t node_key[32],
+    const uint8_t *pt, size_t pt_len, uint8_t **out, size_t *out_len,
+    uint8_t out_sha256[32]) {
+    if (out) *out = NULL;
+    if (out_len) *out_len = 0;
+    return seal(node_key, V2_MANIFEST, sizeof(V2_MANIFEST) - 1,
+                PORTHOME_WIRE_VERSION_V2, NULL, pt, pt_len, out, out_len, out_sha256);
+}
+
+int porthome_decrypt_manifest_v2(const porthome_ring_t *ring,
+    uint64_t epoch, const uint8_t *blob, size_t blob_len,
+    uint8_t **out, size_t *out_len) {
+    if (out) *out = NULL;
+    if (out_len) *out_len = 0;
+    if (!out || !out_len || !blob) return PORTHOME_ERR_ARG;
+    if (blob_len < PORTHOME_SEAL_OVERHEAD || blob[0] != PORTHOME_WIRE_VERSION_V2)
+        return PORTHOME_ERR_VERSION;
+    const uint8_t *key;
+    int rc = ring_key(ring, epoch, &key);
+    if (rc != PORTHOME_OK) return rc;
+    return open_blob(key, V2_MANIFEST, sizeof(V2_MANIFEST) - 1, PORTHOME_WIRE_VERSION_V2,
+                      blob, blob_len, out, out_len);
 }

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  *
  * WARNING: EXPERIMENTAL AND UNREVIEWED.
- * Experimental PCS v1 primitives. Do not deploy without review.
+ * Experimental PCS v1/v2 primitives. Do not deploy without review.
  *
  * This module realises the D4 convergent-encryption construction from
  * docs/designs/home-from-relay.md, in the exact byte layout documented
@@ -41,6 +41,7 @@ extern "C" {
 /* Version byte prefix on every sealed blob. Bumped in lockstep with the
  * per-purpose HKDF salt strings if the layout ever changes. */
 #define PORTHOME_WIRE_VERSION   0x01
+#define PORTHOME_WIRE_VERSION_V2 0x02
 /* Overhead of the sealed-blob wire layout: 1 (version) + 12 (nonce) + 16 (tag). */
 #define PORTHOME_SEAL_OVERHEAD  29
 
@@ -59,6 +60,7 @@ typedef enum {
     PORTHOME_ERR_TOO_LARGE      = -5,
     PORTHOME_ERR_PATH           = -6,
     PORTHOME_ERR_OOM            = -7,
+    PORTHOME_ERR_EPOCH          = -8, /* requested epoch absent; no fallback */
 } porthome_status;
 
 /* ────────────────────────────────────────────────────────────────────
@@ -81,8 +83,8 @@ PORTHOME_API int porthome_key_derive(const uint8_t seed[PORTHOME_KEY_LEN],
  * Wire layout of the sealed chunk (also of the sealed manifest node):
  *   version[1] || nonce[12] || ciphertext[N] || tag[16]      (N == pt_len)
  *
- * key   = HKDF(salt="porthome/v1/chunk",    ikm=home_key, info=SHA256(pt), L=44)[0..32]
- * nonce = HKDF(salt="porthome/v1/chunk",    ikm=home_key, info=SHA256(pt), L=44)[32..44]
+ * nonce = HKDF(salt="porthome/v1/chunk", ikm=home_key, info=SHA256(pt), L=12)
+ * key   = HKDF(salt="porthome/v1/chunk", ikm=home_key, info=nonce, L=32)
  * ct||tag = ChaCha20-Poly1305(key, nonce, aad=NULL, pt)
  *
  * The Blossom address of the sealed chunk is SHA256(sealed_bytes).
@@ -177,6 +179,61 @@ PORTHOME_API void porthome_hex64(const uint8_t in[PORTHOME_SHA256_LEN],
 /* Parse 64 hex chars into a 32-byte buffer. Returns 0 on success. */
 PORTHOME_API int porthome_from_hex64(const char *in_hex,
                            uint8_t out[PORTHOME_SHA256_LEN]);
+
+/* PCS v2 cryptree. All keys and node IDs are 32 bytes. A non-NULL
+ * key_override is copied verbatim instead of deriving from parent/node_id.
+ * Input/output key buffers may alias. Head derivation reduces modulo the
+ * secp256k1 order; the negligible zero result fails with ERR_CRYPTO. */
+PORTHOME_API int porthome_root_node_key(const uint8_t seed[32], uint8_t out[32]);
+PORTHOME_API int porthome_child_node_key(const uint8_t parent[32],
+    const uint8_t node_id[32], const uint8_t *key_override, uint8_t out[32]);
+PORTHOME_API int porthome_name_key_v2(const uint8_t node_key[32], uint8_t out[32]);
+PORTHOME_API int porthome_head_key_v2(const uint8_t node_key[32], uint8_t out[32]);
+PORTHOME_API int porthome_encrypt_name_v2(const uint8_t node_key[32],
+    const char *component, char out_hex[PORTHOME_NAME_HEX_LEN]);
+
+/* Borrowed, immutable view. Entries must have strictly increasing, nonzero
+ * epochs. Epochs are metadata, not bytes in the sealed envelope. Select exactly
+ * chunk_key_id (or manifest epoch); never attempt another key after failure.
+ * Callers verify the requested Blossom address BEFORE invoking decode. */
+typedef struct {
+    uint64_t epoch;
+    uint8_t node_key[32];
+} porthome_ring_entry_t;
+typedef struct {
+    const porthome_ring_entry_t *entries;
+    size_t count;
+} porthome_ring_t;
+
+/* Explicit v2 paths; v1 APIs above never accept v2 and vice versa.
+ * Chunks: nonce binds SHA256(original plaintext), then deterministic zero
+ * padding to the NIP-44 bucket length (no NIP-44 u16 length prefix).
+ * size_plain comes from the authenticated manifest. Decode authenticates all
+ * padded bytes, checks the bucket length and zero tail, then truncates.
+ * Manifests: same v2 layout/domain separation, WITHOUT chunk padding; the
+ * manifest codec/schema is separate. Both return malloc buffers (free()).
+ * Valid output pointers are reset to NULL/0 on all failures. */
+PORTHOME_API int porthome_encrypt_chunk_v2(const uint8_t node_key[32],
+    const uint8_t *pt, size_t pt_len, uint8_t **out, size_t *out_len,
+    uint8_t out_sha256[32]);
+PORTHOME_API int porthome_decrypt_chunk_v2(const porthome_ring_t *ring,
+    uint64_t chunk_key_id, const uint8_t *blob, size_t blob_len,
+    size_t size_plain, uint8_t **out, size_t *out_len);
+PORTHOME_API int porthome_encrypt_manifest_v2(const uint8_t node_key[32],
+    const uint8_t *pt, size_t pt_len, uint8_t **out, size_t *out_len,
+    uint8_t out_sha256[32]);
+PORTHOME_API int porthome_decrypt_manifest_v2(const porthome_ring_t *ring,
+    uint64_t epoch, const uint8_t *blob, size_t blob_len,
+    uint8_t **out, size_t *out_len);
+
+/* Pure buzhash content-defined chunker. Repeatedly call on the remaining
+ * suffix. Returns the first cut, or len at EOF (the final chunk may be below
+ * MIN); returns 0 for empty input or NULL. Rolling window: 64 bytes; nominal
+ * target 256 KiB, minimum 64 KiB, hard maximum 1 MiB. */
+#define PORTHOME_CHUNK_MIN    (64u * 1024u)
+#define PORTHOME_CHUNK_TARGET (256u * 1024u)
+#define PORTHOME_CHUNK_MAX    (1024u * 1024u)
+PORTHOME_API size_t porthome_chunk_next(const uint8_t *data, size_t len);
 
 #ifdef __cplusplus
 }
