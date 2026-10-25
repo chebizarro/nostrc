@@ -61,6 +61,11 @@ _grotto_test(signer/background test-background grotto.gui REQUIRES private_bus
     "${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto-autostart.desktop.in")
 _grotto_test(signer/session-lock test-session-lock grotto.daemon REQUIRES private_bus)
 
+if(TEST signer/version)
+  nostrc_describe_test(signer/version OWNER grotto.gui TARGETS grotto
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test-version.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../src/main_app.c")
+endif()
 if(TEST signer/blueprint-drift)
   nostrc_describe_test(signer/blueprint-drift OWNER grotto.gui
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test-blueprint-drift.py"

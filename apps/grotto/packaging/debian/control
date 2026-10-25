@@ -42,8 +42,10 @@ Depends: ${shlibs:Depends},
          gstreamer1.0-plugins-good
 Recommends: gnome-shell-extension-nostr,
             gnome-keyring | org.freedesktop.secrets
-Breaks: grotto-daemon (<= 0.1.0-1)
-Replaces: grotto-daemon (<= 0.1.0-1)
+Breaks: grotto-daemon (<= 0.1.0-1),
+        nostr-signer-webext-host (<= 0.4.0-1)
+Replaces: grotto-daemon (<= 0.1.0-1),
+          nostr-signer-webext-host (<= 0.4.0-1)
 Description: Nostr identity management and signing service (Preview)
  Grotto is a GTK4/libadwaita application for managing Nostr identities
  and signing events. It keeps your private keys safe while allowing Nostr

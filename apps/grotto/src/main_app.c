@@ -991,6 +991,11 @@ static void on_app_show_shortcuts(GSimpleAction *action, GVariant *param, gpoint
 
 #ifndef GROTTO_APP_NO_MAIN
 int main(int argc, char **argv) {
+  if (argc == 2 && g_str_equal(argv[1], "--version")) {
+    g_print("Grotto %s\n", GROTTO_VERSION);
+    return 0;
+  }
+
   /* Initialize startup timing first thing */
   startup_timing_init();
   STARTUP_TIME_BEGIN(STARTUP_PHASE_INIT);

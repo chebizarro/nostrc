@@ -27,7 +27,9 @@ The single grotto_0.1.0-1_<arch>.deb includes GUI, daemon, both activation
 services, Control1 XML, private JSON runtime library, icons,
 schema, metainfo, opt-in autostart template, systemd user unit, network examples
 and native-host assets. The Shell extension is an optional recommendation.
-The old split grotto-daemon package is replaced, not newly emitted.
+The old split grotto-daemon package is replaced, not newly emitted. The bundled
+native host also replaces the legacy nostr-signer-webext-host <=0.4.0-1 package;
+apt may remove that package during the transition rather than overwrite its files.
 
 Build testing is OFF (a testing build must not be installed). Dedicated
 Grotto CI runs the real private-bus signer/nip55l suites separately. Native
