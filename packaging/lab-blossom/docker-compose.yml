@@ -1,89 +1,52 @@
-# packaging/lab-blossom/docker-compose.yml
-#
-# A permissive Blossom server for the lab / CI two-machine porthome demo
-# (nostrc-4f9v). Use this when neither of the community servers cooperates
-# with random-bytes uploads:
-#
-#   - blossom.sharegap.net  (raw)  — usually fine
-#   - blossom.primal.net   (PNG-shim required) — occasionally 500s
-#   - blossom.band          — 500 unknown error, out of the community set
-#
-# This recipe stands up a small, un-opinionated Blossom server (BUD-01/02)
-# behind an optional nginx TLS terminator. The upstream reference server
-# from hzrd149/blossom-server is Node/TypeScript; we pin a tag and mount
-# only a blobs volume and a single config file. No auth beyond BUD-02's
-# native kind-24242 event verification, no thumbnailing, no size cap
-# below 8 MiB.
-#
-# HOW TO USE
-# ==========
-# 1) Put this file on a host with a public IPv4/IPv6. The SSRF pre-check
-#    inside nostr-home-fetch refuses private ranges — see README §3.
-# 2) `docker compose up -d`
-# 3) Point your pusher at it:
-#      nostr-homed-provision --blossom https://<your-host>:8443 ...
-# 4) The volume `./blobs/` persists uploaded objects. Wipe it to start
-#    over; the reference server rehydrates its index on next start.
-#
-# WHAT THIS IS NOT
-# ================
-# - Not audited: for lab / CI use only. Do not host anyone else's data.
-# - Not distributed with a valid TLS cert. The nginx sidecar reads
-#    /etc/letsencrypt/live/<host>/ — you must run certbot on the host
-#    (or drop a self-signed cert in and accept the client warning; see
-#    README §4).
-# - Not a substitute for a hardened production Blossom deployment.
-
-version: "3.9"
-
+# VSP-01 reference lab. Only nginx is published; never expose blossom-lab
+# directly, since authorization and existence hiding happen at its front door.
 services:
-  # ------------------------------------------------------------------
-  # blossom-lab — hzrd149's reference Blossom server (upstream image).
-  # We pin by digest in production; the tag below is the last known-good
-  # release at the time this recipe was written. Bump when needed.
-  # ------------------------------------------------------------------
   blossom-lab:
-    image: ghcr.io/hzrd149/blossom-server:v1.0.0
-    container_name: blossom-lab
+    image: ghcr.io/hzrd149/blossom-server:6.4.1@sha256:446fa6c4b0ca529a1fbceabf5ea75839b5b76dfb0d0e1d150f3bae5f9a52b3b8
     restart: unless-stopped
     environment:
-      # BUD-02 default enforced — the upstream server verifies kind-24242
-      # events on PUT / DELETE without extra config.
-      - PORT=3000
-      # 8 MiB cap — porthome's canonical chunk is 4 MiB + ~14 KiB of
-      # AEAD overhead + 41-byte shim, so 8 MiB comfortably clears a
-      # doubled worst-case chunk without letting the lab become a
-      # blob dumping ground.
-      - MAX_FILE_SIZE=8388608
+      BLOSSOM_REQUIRE_CONFIG: "1"
     volumes:
-      - ./blobs:/data/blobs:rw
-      - ./blossom-server.config.yaml:/config/config.yaml:ro
-    command: ["--config", "/config/config.yaml"]
-    # Only bind on the loopback of the docker host; nginx does the
-    # public TLS termination. Comment this out and expose 3000 directly
-    # if you're intentionally running without TLS on a lab VLAN.
-    expose:
-      - "3000"
+      - blossom-data:/app/data
+      - ./blossom-server.config.yaml:/app/config.yml:ro
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "deno", "eval", "await fetch('http://127.0.0.1:3000/')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
-  # ------------------------------------------------------------------
-  # nginx — TLS terminator + reverse proxy. Optional: skip if you want
-  # to test against a plaintext http://blossom-lab:3000 URL, but the
-  # porthome pusher enforces https:// unless NH_PORTHOME_ALLOW_INSECURE=1
-  # is set on the client (lab-only escape hatch — see README §5).
-  # ------------------------------------------------------------------
+  vsp-auth:
+    # Reuse the server's locked, cached Nostr verifier; no runtime npm install.
+    image: ghcr.io/hzrd149/blossom-server:6.4.1@sha256:446fa6c4b0ca529a1fbceabf5ea75839b5b76dfb0d0e1d150f3bae5f9a52b3b8
+    entrypoint: ["deno", "run", "--cached-only", "--allow-net", "--allow-read", "--allow-env=DEBUG", "/app/vsp01-auth.ts"]
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${VSP01_ALLOWLIST:-./allowlist.txt}:/config/allowlist.txt:ro
+      - ./vsp01-auth.ts:/app/vsp01-auth.ts:ro
+      - ./vsp01-conformance.ts:/app/vsp01-conformance.ts:ro
+    expose: ["3001"]
+    healthcheck:
+      test: ["CMD", "deno", "eval", "await fetch('http://127.0.0.1:3001/')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
   nginx:
     image: nginx:1.27-alpine
-    container_name: blossom-lab-tls
     depends_on:
-      - blossom-lab
+      blossom-lab:
+        condition: service_healthy
+      vsp-auth:
+        condition: service_healthy
     restart: unless-stopped
     ports:
-      - "8443:443"
+      - "127.0.0.1:${VSP01_PORT:-8443}:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/blossom.conf:ro
-      # If you use letsencrypt, mount /etc/letsencrypt from the host:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${VSP01_CERT_DIR:-./certs}:/etc/vsp01-certs:ro
 
-# No named volumes — everything binds to ./ so the operator can inspect
-# the blob store on the host filesystem without shelling into a
-# container.
+volumes:
+  blossom-data:

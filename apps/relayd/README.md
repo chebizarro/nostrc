@@ -16,6 +16,43 @@ Two daemons share one relay core (`libnostr-relay-server`,
 `nostr-session-relayd --stats` prints the running daemon's statistics;
 `--upstream [EVENT_ID]` prints upstream delivery status (below).
 
+## AUTH and private vault service (VSP-01)
+
+The default remains `auth = "off"`. For a dedicated vault namespace:
+
+```toml
+auth = "optional"
+relay_url = "wss://vault.example.com/"
+vault_allowlist = "/etc/nostrc-relayd/vault-allowlist.txt"
+```
+
+The allowlist is operator service configuration, not a Nostr event: one lowercase
+64-character hex pubkey per line (up to 256), with blank lines and `#` comments.
+Restart to reload. An empty file denies all vault access; an unreadable or invalid
+file refuses startup. `relay_url` is the exact public URL clients put in AUTH's
+`relay` tag, including any trailing slash. Vault mode refuses `auth = "off"`.
+
+This isolated service protects **all** events of kinds 30078, 445 and 1059, rather
+than guessing a plaintext vault tag (gift-wrap outer events need not have one).
+REQ/COUNT without an explicit kinds restriction, including ids-only queries and
+mixed filters, are protected too. Explicit unrelated kinds retain normal behavior.
+Unauthenticated access returns `auth-required:`; a valid AUTH from a nonmember
+returns `restricted:`. NIP-11 advertises `limitation.auth_required: true` and
+`vault: true` only when vault mode is enabled (required-auth mode also advertises
+the former). Membership grants access to the service, **not** vault decryption.
+
+AUTH validates the signature, challenge, kind 22242, a ±10 minute timestamp window
+and the configured relay URL, and returns a correlated OK. Kind 22242 cannot be
+published as EVENT. Any successfully authenticated allowlisted identity on the
+connection permits vault operations; failed AUTH does not grant access. Keep
+`auth = "optional"` for vaults: legacy `required` mode additionally requires EVENT's
+author to equal the authenticated key, which is incompatible with random NIP-59
+outer authors. Vault mode authorizes the connection, not the outer author.
+
+This does not add live fan-out: relayd currently sends stored matches then EOSE
+and ends that query. For real-store VSP-01 checks run
+`packaging/lab-blossom/run_vsp01_lab.sh /absolute/path/to/nostrc-relayd`.
+
 ## Upstream federation (session relay)
 
 The session relay is a cache *and a queue*: what a local app publishes to

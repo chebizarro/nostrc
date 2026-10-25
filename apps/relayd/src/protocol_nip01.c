@@ -369,8 +369,29 @@ static void free_filter_array(NostrFilter **arr, size_t n) {
  * iterator -- sent nothing at all, and every client waited out its own
  * deadline on every REQ.
  */
+static int vault_kind(int kind) {
+  return kind == 30078 || kind == 445 || kind == 1059;
+}
+
+static const char *vault_denial(const RelaydCtx *ctx, const ConnState *cs) {
+  if (!ctx->cfg.vault_enabled || cs->vault_authorized) return NULL;
+  return cs->authed ? "restricted: pubkey not on vault allowlist"
+                    : "auth-required: vault requires NIP-42";
+}
+
+static int filters_include_vault(NostrFilter **filters, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    size_t kinds = nostr_filter_kinds_len(filters[i]);
+    /* An ids/authors/tags-only filter can still expose protected kinds. */
+    if (!kinds) return 1;
+    for (size_t k = 0; k < kinds; k++)
+      if (vault_kind(nostr_filter_kinds_get(filters[i], k))) return 1;
+  }
+  return 0;
+}
+
 static void handle_req(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
-                       const char *msg, size_t len) {
+                       const char *msg, size_t len, int count) {
   NostrStorage *st = ctx->storage;
   /* ["REQ", "<subid>", <filter>, ...]: the id must be the element right
    * after "REQ" -- not the first quoted string found anywhere. */
@@ -398,7 +419,7 @@ static void handle_req(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
     return;
   }
   if (strcmp(ctx->cfg.auth, "required") == 0 && !cs->authed) {
-    send_sub_reply(wsi, sub, sub_len, "auth-required");
+    send_sub_reply(wsi, sub, sub_len, "auth-required: NIP-42 required");
     return;
   }
   if (!filters_json) {
@@ -436,6 +457,17 @@ static void handle_req(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
   if (parsed != 0 || n == 0 || (int)n > ctx->cfg.max_filters) {
     send_sub_reply(wsi, sub, sub_len, nostr_limits_reason_invalid_filter());
     free_filter_array(arr, n);
+    return;
+  }
+  const char *denial = vault_denial(ctx, cs);
+  if (denial && filters_include_vault(arr, n)) {
+    send_sub_reply(wsi, sub, sub_len, denial);
+    free_filter_array(arr, n);
+    return;
+  }
+  if (count) {
+    free_filter_array(arr, n);
+    (void)relayd_handle_count(wsi, ctx, msg, len);
     return;
   }
   for (size_t i = 0; i < n; i++)
@@ -499,12 +531,12 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
   if (relayd_nip42_handle_auth_frame(wsi, cs, ctx, msg, len)) return;
   NostrStorage *st = ctx->storage;
   if (len >= 8 && memcmp(msg, "[\"COUNT\"", 8) == 0) {
-    (void)relayd_handle_count(wsi, ctx, msg, len);
+    handle_req(wsi, cs, ctx, msg, len, 1);
     return;
   }
   if (len >= 7 && memcmp(msg, "[\"EVENT\"", 7) == 0) {
     if (strcmp(ctx->cfg.auth, "required") == 0 && !cs->authed) {
-      char *ok = nostr_ok_build_json("0000", 0, "auth-required");
+      char *ok = nostr_ok_build_json("0000", 0, "auth-required: NIP-42 required");
       if (ok) { ws_send_text(wsi, ok); free(ok); }
       return;
     }
@@ -536,7 +568,15 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
     int rc_store = -1;
     int deferred = 0;
     const char *reason = ingress.reason;
-    if (decision == RELAY_INGRESS_DUPLICATE) {
+    const char *denial = ingress.event && vault_kind(nostr_event_get_kind(ingress.event))
+                             ? vault_denial(ctx, cs) : NULL;
+    if (denial) {
+      reason = denial;
+      (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+    } else if (ingress.event && nostr_event_get_kind(ingress.event) == 22242) {
+      reason = "invalid: use AUTH for kind 22242";
+      (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+    } else if (decision == RELAY_INGRESS_DUPLICATE) {
       rc_store = 0;
       metrics_on_duplicate_drop();
     } else if (decision != RELAY_INGRESS_ACCEPT) {
@@ -628,7 +668,7 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
     return;
   }
   if (len >= 7 && memcmp(msg, "[\"REQ\"", 6) == 0) {
-    handle_req(wsi, cs, ctx, msg, len);
+    handle_req(wsi, cs, ctx, msg, len, 0);
     return;
   }
   if (len >= 8 && memcmp(msg, "[\"CLOSE\"", 8) == 0) {

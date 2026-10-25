@@ -13,6 +13,14 @@ version = "0.1"
 
 # Auth mode: off|optional|required (NIP-42)
 auth = "off"
+# Opt-in VSP-01: set auth="optional", and uncomment BOTH fields below.
+# A dedicated service protects every event of kinds 30078, 445 and 1059;
+# broad REQ/COUNT filters which could include these kinds also require auth.
+# File: one lowercase hex pubkey per line, blank lines/# comments accepted.
+# Empty file denies everyone; missing/invalid file refuses startup. Restart
+# the relay to reload. Paths are relative to the daemon working directory.
+# vault_allowlist = "/etc/nostrc-relayd/vault-allowlist.txt"
+# relay_url = "wss://vault.example.com/"
 supported_nips = [1, 11, 42, 45]
 
 # Query and event limits

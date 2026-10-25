@@ -11,6 +11,7 @@ extern "C" {
 #define RELAYD_MAX_DRIVER_LEN 64
 #define RELAYD_MAX_SUPPORTED_NIPS 32
 #define RELAYD_MAX_STR 256
+#define RELAYD_MAX_VAULT_PUBKEYS 256
 
 typedef struct {
   char listen[RELAYD_MAX_LISTEN_LEN];
@@ -52,8 +53,14 @@ typedef struct {
   char contact[RELAYD_MAX_STR];
   char auth[RELAYD_MAX_STR];
   int negentropy_enabled;
+  /* An explicitly configured (even empty) allowlist enables VSP-01. */
+  int vault_enabled;
+  size_t vault_pubkeys_count;
+  char vault_pubkeys[RELAYD_MAX_VAULT_PUBKEYS][65];
+  char relay_url[RELAYD_MAX_STR];
 } RelaydConfig;
 
+int relayd_config_vault_allows(const RelaydConfig *cfg, const char *pubkey);
 int relayd_config_validate(const RelaydConfig *cfg, char *error,
                            size_t error_size);
 int relayd_config_load(const char *path, RelaydConfig *out);

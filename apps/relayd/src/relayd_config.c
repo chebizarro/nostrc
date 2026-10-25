@@ -22,6 +22,37 @@ static void trim(char *s) {
   while (n > 0 && isspace((unsigned char)s[n - 1])) s[--n] = 0;
 }
 
+int relayd_config_vault_allows(const RelaydConfig *cfg, const char *pubkey) {
+  if (!cfg || !pubkey) return 0;
+  for (size_t i = 0; i < cfg->vault_pubkeys_count; i++)
+    if (strcmp(cfg->vault_pubkeys[i], pubkey) == 0) return 1;
+  return 0;
+}
+
+static int load_vault_allowlist(const char *path, RelaydConfig *cfg) {
+  FILE *f = fopen(path, "r");
+  if (!f) return -1;
+  cfg->vault_enabled = 1;
+  cfg->vault_pubkeys_count = 0;
+  char line[256];
+  int rc = 0;
+  while (fgets(line, sizeof line, f)) {
+    trim(line);
+    if (!line[0] || line[0] == '#') continue;
+    if (strlen(line) != 64 || cfg->vault_pubkeys_count == RELAYD_MAX_VAULT_PUBKEYS) {
+      rc = -1; break;
+    }
+    for (size_t i = 0; i < 64; i++)
+      if (!(line[i] >= '0' && line[i] <= '9') &&
+          !(line[i] >= 'a' && line[i] <= 'f')) { rc = -1; break; }
+    if (rc) break;
+    memcpy(cfg->vault_pubkeys[cfg->vault_pubkeys_count++], line, 65);
+  }
+  if (ferror(f)) rc = -1;
+  fclose(f);
+  return rc;
+}
+
 static int parse_supported_nips(const char *val, int *out, int *outn) {
   *outn = 0;
   if (!val) return -1;
@@ -238,6 +269,14 @@ int relayd_config_validate(const RelaydConfig *cfg, char *error,
       strcmp(cfg->auth, "required") != 0)
     return fail(error, error_size, "auth must be off, optional, or required");
 
+  if (cfg->vault_pubkeys_count > RELAYD_MAX_VAULT_PUBKEYS)
+    return fail(error, error_size, "too many vault pubkeys");
+  if (cfg->vault_enabled &&
+      ((strncmp(cfg->relay_url, "ws://", 5) != 0 &&
+        strncmp(cfg->relay_url, "wss://", 6) != 0) ||
+       strcmp(cfg->auth, "off") == 0))
+    return fail(error, error_size, "vault requires relay_url and auth optional or required");
+
   /* listen must be host:port (or [v6]:port); reject port-only or malformed. */
   if (relayd_config_parse_listen(cfg->listen, NULL, 0, NULL) != 0)
     return fail(error, error_size,
@@ -329,6 +368,13 @@ int relayd_config_load(const char *path, RelaydConfig *out) {
       snprintf(out->description, sizeof(out->description), "%s", val);
     else if (strcmp(key, "contact") == 0)
       snprintf(out->contact, sizeof(out->contact), "%s", val);
+    else if (strcmp(key, "vault_allowlist") == 0) {
+      if (load_vault_allowlist(val, out) != 0) parse_failed = 1;
+    }
+    else if (strcmp(key, "relay_url") == 0) {
+      if (strlen(val) >= sizeof(out->relay_url)) parse_failed = 1;
+      else snprintf(out->relay_url, sizeof(out->relay_url), "%s", val);
+    }
     else if (strcmp(key, "auth") == 0)
       snprintf(out->auth, sizeof(out->auth), "%s", val);
     PARSE_FIELD("negentropy_enabled", negentropy_enabled)

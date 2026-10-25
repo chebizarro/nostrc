@@ -25,6 +25,11 @@ set_tests_properties(relayd_rate_limit_security PROPERTIES
   LABELS "security;relay;rate-limit"
 )
 
+add_executable(relayd_vault_config test_vault_config.c ../src/relayd_config.c)
+target_link_libraries(relayd_vault_config PRIVATE relay_security nostr)
+add_test(NAME relayd_vault_config COMMAND relayd_vault_config)
+set_tests_properties(relayd_vault_config PROPERTIES TIMEOUT 10 LABELS "security;relay;config;vault")
+
 # Unit coverage for the cfg.listen host+port parser (D1 regression).
 add_executable(relayd_bind_iface
   test_bind_iface.c
