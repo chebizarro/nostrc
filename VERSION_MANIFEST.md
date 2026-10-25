@@ -13,7 +13,7 @@ files already declare a version.
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.3.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 2.4.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
@@ -56,6 +56,13 @@ files already declare a version.
   unchanged. Its archive reuses the same objects (no copied implementation);
   unwrap temporary plaintext is now wiped on success and rejection paths.
   libporthome remains 0.4.0 and all other component versions remain unchanged.
+
+- nostrc-hl30i.6 (SV-6): nostr-gobject MINOR 2.3.0 -> 2.4.0 adds the
+  GnVault GTask adapter for grant sharing/acceptance, fold, revoke proposals
+  and budgeted re-seal execution, with libvault as a required public dependency.
+  Native libvault inputs stay caller-owned; boxed secret-bearing results and
+  GLib fold/progress results add no policy. No libvault, libporthome, application,
+  storage or wire-format change; other components retain their versions.
 
 - nostrc-hl30i.3 (SV-3/R5): new Layer-5 libvault starts at 0.1.0 with
   owned rings/epoch changes, atomic revoke proposals, budgeted lazy/eager

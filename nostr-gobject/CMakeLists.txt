@@ -14,7 +14,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 2)
-set(NOSTR_GOBJECT_MINOR_VERSION 3)
+set(NOSTR_GOBJECT_MINOR_VERSION 4)
 set(NOSTR_GOBJECT_MICRO_VERSION 0)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
@@ -75,6 +75,7 @@ add_custom_command(
 # ── Source files ─────────────────────────────────────────────────────
 set(NOSTR_GOBJECT_SOURCES
   src/gn-blossom-client.c
+  src/gn-vault.c
   src/nostr-error.c
   src/nostr-enums.c
   src/nostr_event.c
@@ -121,6 +122,7 @@ set(NOSTR_GOBJECT_SOURCES
 
 set(NOSTR_GOBJECT_HEADERS
   include/nostr-gobject-1.0/gn-blossom-client.h
+  include/nostr-gobject-1.0/gn-vault.h
   include/nostr-gobject-1.0/nostr-gobject.h
   include/nostr-gobject-1.0/nostr-error.h
   include/nostr-gobject-1.0/nostr-types.h
@@ -223,6 +225,16 @@ if(NOT TARGET nostrc::blossom)
 endif()
 nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrc::blossom)
 
+if(NOT TARGET nostrc::vault)
+  if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    find_package(nostrc REQUIRED CONFIG COMPONENTS vault)
+    pkg_check_modules(NOSTR_GOBJECT_VAULT REQUIRED vault>=0.1.0)
+  else()
+    message(FATAL_ERROR "nostr-gobject requires libvault; set BUILD_LIBVAULT=ON")
+  endif()
+endif()
+nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrc::vault)
+
 # Core GLib/GObject/GIO always PUBLIC (consumers need these headers)
 target_link_libraries(nostr_gobject
   PUBLIC
@@ -318,6 +330,12 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
       set(_gir_lib_dep  nostr_gobject)
     endif()
 
+    # Installed libvault's pkg-config includes cover its public dependencies.
+    set(_vault_gir_includes "")
+    foreach(_dir IN LISTS NOSTR_GOBJECT_VAULT_INCLUDE_DIRS)
+      list(APPEND _vault_gir_includes "-I${_dir}")
+    endforeach()
+
     # Collect absolute paths for scanner
     set(_gir_input "")
     foreach(_hdr ${NOSTR_GOBJECT_HEADERS})
@@ -362,6 +380,13 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           -I ${CMAKE_SOURCE_DIR}/libnostr/include
           -I ${CMAKE_BINARY_DIR}/libnostr/generated
           -I ${CMAKE_SOURCE_DIR}/libgo/include
+          ${_vault_gir_includes}
+          -I ${CMAKE_SOURCE_DIR}/libvault/include
+          -I ${CMAKE_BINARY_DIR}/libvault/include
+          -I ${CMAKE_SOURCE_DIR}/libporthome/include
+          -I ${CMAKE_BINARY_DIR}/libporthome/include
+          -I ${CMAKE_SOURCE_DIR}/libblossom/include
+          -I ${CMAKE_BINARY_DIR}/libblossom/include
           $<$<BOOL:${NSYNC_INCLUDE_DIR}>:-I${NSYNC_INCLUDE_DIR}>
           --include=GLib-2.0
           --include=GObject-2.0
@@ -395,7 +420,7 @@ includedir=\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}
 Name: nostr-gobject-1.0
 Description: GObject wrapper for libnostr — Nostr protocol library
 Version: ${NOSTR_GOBJECT_VERSION}
-Requires: glib-2.0 gobject-2.0 gio-2.0 blossom >= 0.2.0
+Requires: glib-2.0 gobject-2.0 gio-2.0 blossom >= 0.2.0 vault >= 0.1.0
 Requires.private: openssl libsecp256k1
 Libs: -L\${libdir} -lnostr-gobject-1.0
 Cflags: -I\${includedir}/nostr-gobject-1.0
@@ -419,6 +444,14 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h"
 
 # ── Tests ────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
+  add_executable(test_nostr_gobject_vault tests/test_vault.c)
+  target_link_libraries(test_nostr_gobject_vault PRIVATE nostr_gobject)
+  target_compile_options(test_nostr_gobject_vault PRIVATE -Wall -Wextra -Werror)
+  apply_sanitizers(test_nostr_gobject_vault)
+  add_test(NAME test_nostr_gobject_vault COMMAND test_nostr_gobject_vault)
+  set_tests_properties(test_nostr_gobject_vault PROPERTIES
+    TIMEOUT 30 LABELS "nostr-gobject;libvault;unit"
+    ENVIRONMENT "G_DEBUG=fatal-warnings,gc-friendly;G_SLICE=always-malloc")
   pkg_check_modules(BLOSSOM_TEST_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
   add_executable(test_nostr_gobject_blossom tests/test_blossom_client.c)
   target_link_libraries(test_nostr_gobject_blossom PRIVATE nostr_gobject nostrc::bud02 PkgConfig::BLOSSOM_TEST_SOUP)
