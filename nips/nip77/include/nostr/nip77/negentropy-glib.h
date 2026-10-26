@@ -9,9 +9,6 @@
 
 G_BEGIN_DECLS
 
-typedef struct _NostrNegSessionG      NostrNegSessionG;
-typedef struct _NostrNegSessionGClass NostrNegSessionGClass;
-
 #define NOSTR_TYPE_NEG_SESSION_G (nostr_neg_session_g_get_type())
 NOSTR_NIP77_GLIB_API G_DECLARE_FINAL_TYPE(NostrNegSessionG, nostr_neg_session_g, NOSTR, NEG_SESSION_G, GObject)
 
