@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP23_NOSTR_NIP23_NIP23_H
 #define NIPS_NIP23_NOSTR_NIP23_NIP23_H
 
+#include <nostr/nip23/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,7 +54,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if no "d" tag
  */
-int nostr_nip23_parse(const NostrEvent *ev, NostrNip23Article *out);
+NOSTR_NIP23_API int nostr_nip23_parse(const NostrEvent *ev, NostrNip23Article *out);
 
 /**
  * nostr_nip23_is_article:
@@ -60,7 +62,7 @@ int nostr_nip23_parse(const NostrEvent *ev, NostrNip23Article *out);
  *
  * Returns: true if event kind is 30023 (published long-form)
  */
-bool nostr_nip23_is_article(const NostrEvent *ev);
+NOSTR_NIP23_API bool nostr_nip23_is_article(const NostrEvent *ev);
 
 /**
  * nostr_nip23_is_draft:
@@ -68,7 +70,7 @@ bool nostr_nip23_is_article(const NostrEvent *ev);
  *
  * Returns: true if event kind is 30024 (draft long-form)
  */
-bool nostr_nip23_is_draft(const NostrEvent *ev);
+NOSTR_NIP23_API bool nostr_nip23_is_draft(const NostrEvent *ev);
 
 /**
  * nostr_nip23_is_long_form:
@@ -76,7 +78,7 @@ bool nostr_nip23_is_draft(const NostrEvent *ev);
  *
  * Returns: true if event kind is 30023 or 30024
  */
-bool nostr_nip23_is_long_form(const NostrEvent *ev);
+NOSTR_NIP23_API bool nostr_nip23_is_long_form(const NostrEvent *ev);
 
 /**
  * nostr_nip23_get_hashtags:
@@ -89,7 +91,7 @@ bool nostr_nip23_is_long_form(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip23_get_hashtags(const NostrEvent *ev, const char **tags,
+NOSTR_NIP23_API int nostr_nip23_get_hashtags(const NostrEvent *ev, const char **tags,
                               size_t max, size_t *out_count);
 
 /**
@@ -98,7 +100,7 @@ int nostr_nip23_get_hashtags(const NostrEvent *ev, const char **tags,
  *
  * Returns: number of "t" tags in the event
  */
-size_t nostr_nip23_count_hashtags(const NostrEvent *ev);
+NOSTR_NIP23_API size_t nostr_nip23_count_hashtags(const NostrEvent *ev);
 
 /**
  * nostr_nip23_estimate_reading_time:
@@ -109,7 +111,7 @@ size_t nostr_nip23_count_hashtags(const NostrEvent *ev);
  *
  * Returns: estimated minutes (minimum 1 if content is non-empty)
  */
-int nostr_nip23_estimate_reading_time(const char *content,
+NOSTR_NIP23_API int nostr_nip23_estimate_reading_time(const char *content,
                                        int words_per_minute);
 
 /**
@@ -122,7 +124,7 @@ int nostr_nip23_estimate_reading_time(const char *content,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip23_create_article(NostrEvent *ev, const NostrNip23Article *article);
+NOSTR_NIP23_API int nostr_nip23_create_article(NostrEvent *ev, const NostrNip23Article *article);
 
 /**
  * nostr_nip23_create_draft:
@@ -133,7 +135,7 @@ int nostr_nip23_create_article(NostrEvent *ev, const NostrNip23Article *article)
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip23_create_draft(NostrEvent *ev, const NostrNip23Article *article);
+NOSTR_NIP23_API int nostr_nip23_create_draft(NostrEvent *ev, const NostrNip23Article *article);
 
 /**
  * nostr_nip23_add_hashtag:
@@ -144,7 +146,7 @@ int nostr_nip23_create_draft(NostrEvent *ev, const NostrNip23Article *article);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip23_add_hashtag(NostrEvent *ev, const char *hashtag);
+NOSTR_NIP23_API int nostr_nip23_add_hashtag(NostrEvent *ev, const char *hashtag);
 
 #ifdef __cplusplus
 }

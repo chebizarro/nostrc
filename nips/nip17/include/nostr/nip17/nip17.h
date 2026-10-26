@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP17_H
 #define NOSTR_NIP17_H
 
+#include <nostr/nip17/export.h>
+
 /**
  * NIP-17: Private Direct Messages
  *
@@ -30,7 +32,7 @@ extern "C" {
  *
  * Returns: (transfer full) (nullable): new rumor event, or NULL on error
  */
-NostrEvent *nostr_nip17_create_rumor(const char *sender_pubkey_hex,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_create_rumor(const char *sender_pubkey_hex,
                                       const char *recipient_pubkey_hex,
                                       const char *content,
                                       int64_t created_at);
@@ -47,7 +49,7 @@ NostrEvent *nostr_nip17_create_rumor(const char *sender_pubkey_hex,
  *
  * Returns: (transfer full) (nullable): new seal event, or NULL on error
  */
-NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
                                      const char *sender_sk_hex,
                                      const char *recipient_pubkey_hex);
 
@@ -62,7 +64,7 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
  *
  * Returns: (transfer full) (nullable): new gift wrap event, or NULL on error
  */
-NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
                                           const char *recipient_pubkey_hex);
 
 /**
@@ -76,7 +78,7 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
  *
  * Returns: (transfer full) (nullable): gift wrap event ready to publish
  */
-NostrEvent *nostr_nip17_wrap_dm(const char *sender_sk_hex,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_wrap_dm(const char *sender_sk_hex,
                                  const char *recipient_pubkey_hex,
                                  const char *content);
 
@@ -89,7 +91,7 @@ NostrEvent *nostr_nip17_wrap_dm(const char *sender_sk_hex,
  *
  * Returns: (transfer full) (nullable): seal event, or NULL on error
  */
-NostrEvent *nostr_nip17_unwrap_gift_wrap(NostrEvent *gift_wrap,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_unwrap_gift_wrap(NostrEvent *gift_wrap,
                                           const char *recipient_sk_hex);
 
 /**
@@ -101,7 +103,7 @@ NostrEvent *nostr_nip17_unwrap_gift_wrap(NostrEvent *gift_wrap,
  *
  * Returns: (transfer full) (nullable): rumor event, or NULL on error
  */
-NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
                                      const char *recipient_sk_hex);
 
 /**
@@ -116,7 +118,7 @@ NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip17_decrypt_dm(NostrEvent *gift_wrap,
+NOSTR_NIP17_API int nostr_nip17_decrypt_dm(NostrEvent *gift_wrap,
                             const char *recipient_sk_hex,
                             char **content_out,
                             char **sender_pubkey_out);
@@ -136,7 +138,7 @@ int nostr_nip17_decrypt_dm(NostrEvent *gift_wrap,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip17_decrypt_dm_ex(NostrEvent *gift_wrap,
+NOSTR_NIP17_API int nostr_nip17_decrypt_dm_ex(NostrEvent *gift_wrap,
                                const char *recipient_sk_hex,
                                char **content_out,
                                char **sender_pubkey_out,
@@ -150,7 +152,7 @@ int nostr_nip17_decrypt_dm_ex(NostrEvent *gift_wrap,
  *
  * Returns: true if valid
  */
-bool nostr_nip17_validate_gift_wrap(NostrEvent *gift_wrap);
+NOSTR_NIP17_API bool nostr_nip17_validate_gift_wrap(NostrEvent *gift_wrap);
 
 /**
  * nostr_nip17_validate_seal:
@@ -162,7 +164,7 @@ bool nostr_nip17_validate_gift_wrap(NostrEvent *gift_wrap);
  *
  * Returns: true if valid
  */
-bool nostr_nip17_validate_seal(NostrEvent *seal, NostrEvent *rumor);
+NOSTR_NIP17_API bool nostr_nip17_validate_seal(NostrEvent *seal, NostrEvent *rumor);
 
 /* ---- DM Relay Preferences (Kind 10050) ---- */
 
@@ -186,7 +188,7 @@ typedef struct {
  *
  * Returns: (transfer full) (nullable): signed relay list event
  */
-NostrEvent *nostr_nip17_create_dm_relay_list(const char **relays,
+NOSTR_NIP17_API NostrEvent *nostr_nip17_create_dm_relay_list(const char **relays,
                                               const char *sk_hex);
 
 /**
@@ -197,7 +199,7 @@ NostrEvent *nostr_nip17_create_dm_relay_list(const char **relays,
  *
  * Returns: (transfer full) (nullable): relay list, or NULL on error
  */
-NostrDmRelayList *nostr_nip17_parse_dm_relay_list(NostrEvent *event);
+NOSTR_NIP17_API NostrDmRelayList *nostr_nip17_parse_dm_relay_list(NostrEvent *event);
 
 /**
  * nostr_nip17_free_dm_relay_list:
@@ -205,7 +207,7 @@ NostrDmRelayList *nostr_nip17_parse_dm_relay_list(NostrEvent *event);
  *
  * Frees a DM relay list and all its contents.
  */
-void nostr_nip17_free_dm_relay_list(NostrDmRelayList *list);
+NOSTR_NIP17_API void nostr_nip17_free_dm_relay_list(NostrDmRelayList *list);
 
 /**
  * nostr_nip17_get_dm_relays_for_pubkey:
@@ -221,7 +223,7 @@ void nostr_nip17_free_dm_relay_list(NostrDmRelayList *list);
  *
  * Returns: (transfer full) (nullable): relay list
  */
-NostrDmRelayList *nostr_nip17_get_dm_relays_from_event(NostrEvent *event,
+NOSTR_NIP17_API NostrDmRelayList *nostr_nip17_get_dm_relays_from_event(NostrEvent *event,
                                                         const char **default_relays);
 
 #ifdef __cplusplus

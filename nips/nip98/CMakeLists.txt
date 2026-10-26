@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 cmake_minimum_required(VERSION 3.16)
 project(nip98)
 
@@ -9,6 +11,8 @@ set(NIP98_SRC
 
 # Create the library
 add_library(nostr_nip98 ${NIP98_SRC})
+nostrc_library_visibility(nostr_nip98 NOSTR_NIP98_API
+  nostr/nip98/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip98")
 
 # Include directories
 target_include_directories(nostr_nip98 PUBLIC

@@ -1,7 +1,11 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(schema)
 
 add_library(schema OBJECT
     src/schema.c)
+nostrc_library_visibility(schema NOSTR_SCHEMA_API
+  nostr/schema/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/schema")
 
 target_include_directories(schema
     PUBLIC

@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP55L_SIGNER_OPS_H
 #define NOSTR_NIP55L_SIGNER_OPS_H
 
+#include <nostr/nip55l/export.h>
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -24,11 +26,11 @@ extern "C" {
  * (nostrc-qp24.16). 0.5.1: refuse to approve a parked D-Bus request whose
  * caller disconnected, even before its NameOwnerChanged cleanup runs. */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
-#define NOSTR_NIP55L_VERSION_MINOR 7
+#define NOSTR_NIP55L_VERSION_MINOR 8
 #define NOSTR_NIP55L_VERSION_PATCH 0
-#define NOSTR_NIP55L_VERSION_STRING "0.7.0"
+#define NOSTR_NIP55L_VERSION_STRING "0.8.0"
 
-int nostr_nip55l_get_public_key(char **out_npub);
+NOSTR_NIP55L_API int nostr_nip55l_get_public_key(char **out_npub);
 /* npub of the key that `current_user` selects, i.e. the key sign/encrypt/
  * decrypt would use for the same selector (empty = the active identity).
  * This is the canonical identity the daemon's ACL is keyed on: the selector
@@ -37,7 +39,7 @@ int nostr_nip55l_get_public_key(char **out_npub);
  * INVALID_KEY when no key matches (no Secret Service at all counts as an
  * empty store); BACKEND when the key store is there but cannot be read.
  * Caller frees *out_npub with free(). */
-int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
+NOSTR_NIP55L_API int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
 /* Normalise an identity selector supplied by another process (the D-Bus
  * daemon's callers, nostrc-a4w5). The in-process resolver follows the same
  * rules: selectors never provide secret-key material.
@@ -53,10 +55,10 @@ int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
  * NOT_FOUND: the store may hold the identity (nostrc-f6l29).
  * On success *out_selector is the selector to pass to the other calls and
  * *out_npub the npub it resolves to; free both with free(). */
-int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, char **out_npub);
+NOSTR_NIP55L_API int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, char **out_npub);
 /* Returns only the 128-hex Schnorr signature. In-process helper; the D-Bus
  * SignEvent method no longer returns this shape (see sign_event_json). */
-int nostr_nip55l_sign_event(const char *event_json,
+NOSTR_NIP55L_API int nostr_nip55l_sign_event(const char *event_json,
                             const char *current_user,
                             const char *app_id,
                             char **out_signature);
@@ -64,7 +66,7 @@ int nostr_nip55l_sign_event(const char *event_json,
  * All three outputs use the same internal state, guaranteeing consistency
  * (e.g. when created_at is auto-filled from 0 to now).
  * Any output pointer may be NULL if not needed. Caller frees non-NULL results. */
-int nostr_nip55l_sign_event_full(const char *event_json,
+NOSTR_NIP55L_API int nostr_nip55l_sign_event_full(const char *event_json,
                                  const char *current_user,
                                  const char *app_id,
                                  char **out_event_id,
@@ -76,7 +78,7 @@ int nostr_nip55l_sign_event_full(const char *event_json,
  * and a zero created_at is filled with the current time.
  * This is what org.nostr.Signer.SignEvent returns over D-Bus.
  * Caller frees the result with free(). */
-int nostr_nip55l_sign_event_json(const char *event_json,
+NOSTR_NIP55L_API int nostr_nip55l_sign_event_json(const char *event_json,
                                  const char *current_user,
                                  const char *app_id,
                                  char **out_signed_event_json);
@@ -88,16 +90,16 @@ int nostr_nip55l_sign_event_json(const char *event_json,
  * @current_user: identity selector (npub, key_id, hex public key, or NULL)
  * @out_signature: receives newly allocated 128-char hex Schnorr signature
  * Caller frees *out_signature with free(). */
-int nostr_nip55l_sign_hash(const char *hash_hex,
+NOSTR_NIP55L_API int nostr_nip55l_sign_hash(const char *hash_hex,
                            const char *current_user,
                            char **out_signature);
-int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
+NOSTR_NIP55L_API int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64);
-int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,
+NOSTR_NIP55L_API int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext);
-int nostr_nip55l_nip44_encrypt(const char *plaintext, const char *peer_pub_hex,
+NOSTR_NIP55L_API int nostr_nip55l_nip44_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64);
-int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
+NOSTR_NIP55L_API int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext);
 /* Binary-safe NIP-44: the plaintext side travels as standard base64.
  *
@@ -111,11 +113,11 @@ int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
  * the plaintext parameter/result is base64. The decode is strict and
  * canonical, so a typo fails the call rather than shortening the plaintext.
  * Caller frees the out parameter with free(). */
-int nostr_nip55l_nip44_encrypt_b64(const char *plaintext_b64, const char *peer_pub_hex,
+NOSTR_NIP55L_API int nostr_nip55l_nip44_encrypt_b64(const char *plaintext_b64, const char *peer_pub_hex,
                                    const char *current_user, char **out_cipher_b64);
-int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_hex,
+NOSTR_NIP55L_API int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_hex,
                                    const char *current_user, char **out_plaintext_b64);
-int nostr_nip55l_decrypt_zap_event(const char *event_json,
+NOSTR_NIP55L_API int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                    const char *current_user, char **out_json);
 /* GetRelays: the user's explicitly configured relays as a JSON array of
  * normalised ws:// / wss:// URL strings, read from
@@ -123,15 +125,15 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
  * Never touches the network.
  * Returns NOSTR_SIGNER_ERROR_NOT_FOUND when the file is absent or lists no
  * relays, NOSTR_SIGNER_ERROR_INVALID_JSON when it is malformed. */
-int nostr_nip55l_get_relays(char **out_relays_json);
+NOSTR_NIP55L_API int nostr_nip55l_get_relays(char **out_relays_json);
 /* Parse and normalise a relays.conf document: a JSON array of relay URL
  * strings (no JSON escapes, at most 64 entries, 64 KiB). Scheme and host are
  * lowercased, a bare trailing "/" is dropped, duplicates are removed.
  * NOT_FOUND for an empty array, INVALID_JSON for anything else malformed. */
-int nostr_nip55l_relays_normalize_json(const char *doc, size_t len, char **out_relays_json);
+NOSTR_NIP55L_API int nostr_nip55l_relays_normalize_json(const char *doc, size_t len, char **out_relays_json);
 /* Same normalisation for an in-memory URL list. INVALID_ARG if any entry is
  * not a relay URL, NOT_FOUND if n == 0. */
-int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_relays_json);
+NOSTR_NIP55L_API int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_relays_json);
 
 /* One-shot keyring migration (nostrc-bml6). Moves private keys stored under
  * the legacy libsecret schemas (org.gnostr.Signer/key, org.gnostr.Key) to the
@@ -153,20 +155,20 @@ typedef struct {
   unsigned failed;        /* transient failure; retried on the next start */
   int marker_written;     /* this pass wrote the completion marker */
 } nostr_nip55l_keyring_migration;
-int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
+NOSTR_NIP55L_API int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
 
 /* Build capability, not keyring availability or an identity inventory. */
-int nostr_nip55l_mnemonic_custody_supported(void);
+NOSTR_NIP55L_API int nostr_nip55l_mnemonic_custody_supported(void);
 /* Explicit management only: preserve a validated, empty-passphrase NIP-06
  * mnemonic in a separate custody role, never in ListIdentities. */
-int nostr_nip55l_store_key_with_mnemonic(const char *key, const char *label,
+NOSTR_NIP55L_API int nostr_nip55l_store_key_with_mnemonic(const char *key, const char *label,
                                        const char *mnemonic, char **out_npub);
 /* Explicit management import. Formats: key (nsec/hex), ncryptsec, mnemonic.
  * Encryption and mnemonic passphrases have different derivation semantics. */
-int nostr_nip55l_import_identity(const char *format, const char *input,
+NOSTR_NIP55L_API int nostr_nip55l_import_identity(const char *format, const char *input,
                                 const char *passphrase, const char *label, char **out_npub);
 /* Unpublished signature + independent-peer NIP-44 round-trip; no relay I/O. */
-int nostr_nip55l_identity_self_test(const char *identity);
+NOSTR_NIP55L_API int nostr_nip55l_identity_self_test(const char *identity);
 /* Explicit custody export for an authenticated management UI, never a client
  * permission. Formats: ncryptsec (NIP-49, log_n=16, nonempty UTF-8 passphrase
  * <=1024 bytes), nsec (separate deliberate raw-key action), or mnemonic (only
@@ -174,12 +176,12 @@ int nostr_nip55l_identity_self_test(const char *identity);
  * No mnemonic is invented from a key. Missing phrase returns NOT_FOUND.
  * ncryptsec needs the NIP-49 GLib adapter; otherwise NOT_SUPPORTED.
  * Caller wipes/frees the malloc output. Run off the daemon main loop. */
-int nostr_nip55l_export_identity(const char *identity, const char *format,
+NOSTR_NIP55L_API int nostr_nip55l_export_identity(const char *identity, const char *format,
                                 const char *passphrase, char **out_backup);
 
 /* Optional private key storage using libsecret when available. */
-int nostr_nip55l_store_key(const char *key, const char *identity);
-int nostr_nip55l_clear_key(const char *identity);
+NOSTR_NIP55L_API int nostr_nip55l_store_key(const char *key, const char *identity);
+NOSTR_NIP55L_API int nostr_nip55l_clear_key(const char *identity);
 
 /* npubs of every identity the signer holds: the key in the environment
  * (NOSTR_SIGNER_SECKEY_HEX / NOSTR_SIGNER_NSEC) first, if set, then the
@@ -189,7 +191,7 @@ int nostr_nip55l_clear_key(const char *identity);
  * NOSTR_SIGNER_ERROR_BACKEND when the key store cannot be read;
  * NOSTR_SIGNER_ERROR_NOT_FOUND when there is no key store (none built in, or
  * no Secret Service on the bus) and no environment key. */
-int nostr_nip55l_list_identities(char ***out_npubs, int *out_count);
+NOSTR_NIP55L_API int nostr_nip55l_list_identities(char ***out_npubs, int *out_count);
 
 /* Optional Unix owner metadata (no enforcement). Selector is key_id or npub. */
 /* Returns 0 on success, NOT_FOUND if libsecret unavailable or item missing. */
@@ -201,15 +203,15 @@ typedef unsigned int uid_t;
 #define _UID_T_DEFINED
 #endif
 #endif
-int nostr_nip55l_set_owner(const char *selector, uid_t uid, const char *username);
-int nostr_nip55l_clear_owner(const char *selector);
+NOSTR_NIP55L_API int nostr_nip55l_set_owner(const char *selector, uid_t uid, const char *username);
+NOSTR_NIP55L_API int nostr_nip55l_clear_owner(const char *selector);
 /* Outputs: has_owner=1 if present; if present, uid_out and username_out (caller frees username_out). */
-int nostr_nip55l_get_owner(const char *selector, int *has_owner, uid_t *uid_out, char **username_out);
+NOSTR_NIP55L_API int nostr_nip55l_get_owner(const char *selector, int *has_owner, uid_t *uid_out, char **username_out);
 
 /* Daemon transport-role custody. These never enumerate/cache an identity.
  * Load does not regenerate a missing entry. Caller wipes the 32-byte output. */
-int nostr_nip55l_bunker_transport_load(unsigned char key[32]);
-int nostr_nip55l_bunker_transport_store(const unsigned char key[32]);
+NOSTR_NIP55L_API int nostr_nip55l_bunker_transport_load(unsigned char key[32]);
+NOSTR_NIP55L_API int nostr_nip55l_bunker_transport_store(const unsigned char key[32]);
 
 #ifdef __cplusplus
 }

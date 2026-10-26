@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP99_NOSTR_NIP99_NIP99_H
 #define NIPS_NIP99_NOSTR_NIP99_NIP99_H
 
+#include <nostr/nip99/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,7 +69,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if no "d" tag
  */
-int nostr_nip99_parse(const NostrEvent *ev, NostrNip99Listing *out);
+NOSTR_NIP99_API int nostr_nip99_parse(const NostrEvent *ev, NostrNip99Listing *out);
 
 /**
  * nostr_nip99_validate:
@@ -78,7 +80,7 @@ int nostr_nip99_parse(const NostrEvent *ev, NostrNip99Listing *out);
  *
  * Returns: true if valid classified listing event
  */
-bool nostr_nip99_validate(const NostrEvent *ev);
+NOSTR_NIP99_API bool nostr_nip99_validate(const NostrEvent *ev);
 
 /**
  * nostr_nip99_is_listing:
@@ -86,7 +88,7 @@ bool nostr_nip99_validate(const NostrEvent *ev);
  *
  * Returns: true if kind is 30402 or 30403
  */
-bool nostr_nip99_is_listing(const NostrEvent *ev);
+NOSTR_NIP99_API bool nostr_nip99_is_listing(const NostrEvent *ev);
 
 /**
  * nostr_nip99_get_images:
@@ -99,7 +101,7 @@ bool nostr_nip99_is_listing(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip99_get_images(const NostrEvent *ev, NostrNip99Image *images,
+NOSTR_NIP99_API int nostr_nip99_get_images(const NostrEvent *ev, NostrNip99Image *images,
                             size_t max, size_t *out_count);
 
 /**
@@ -108,7 +110,7 @@ int nostr_nip99_get_images(const NostrEvent *ev, NostrNip99Image *images,
  *
  * Returns: number of "image" tags
  */
-size_t nostr_nip99_count_images(const NostrEvent *ev);
+NOSTR_NIP99_API size_t nostr_nip99_count_images(const NostrEvent *ev);
 
 /**
  * nostr_nip99_get_categories:
@@ -121,7 +123,7 @@ size_t nostr_nip99_count_images(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip99_get_categories(const NostrEvent *ev, const char **tags,
+NOSTR_NIP99_API int nostr_nip99_get_categories(const NostrEvent *ev, const char **tags,
                                 size_t max, size_t *out_count);
 
 /**
@@ -134,7 +136,7 @@ int nostr_nip99_get_categories(const NostrEvent *ev, const char **tags,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip99_create_listing(NostrEvent *ev, const NostrNip99Listing *listing);
+NOSTR_NIP99_API int nostr_nip99_create_listing(NostrEvent *ev, const NostrNip99Listing *listing);
 
 /**
  * nostr_nip99_add_image:
@@ -146,7 +148,7 @@ int nostr_nip99_create_listing(NostrEvent *ev, const NostrNip99Listing *listing)
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip99_add_image(NostrEvent *ev, const char *url,
+NOSTR_NIP99_API int nostr_nip99_add_image(NostrEvent *ev, const char *url,
                            const char *dimensions);
 
 /**
@@ -158,7 +160,7 @@ int nostr_nip99_add_image(NostrEvent *ev, const char *url,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip99_add_category(NostrEvent *ev, const char *category);
+NOSTR_NIP99_API int nostr_nip99_add_category(NostrEvent *ev, const char *category);
 
 #ifdef __cplusplus
 }

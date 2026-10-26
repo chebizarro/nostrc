@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP5F_NOSTR_NIP5F_NIP5F_H
 #define NIPS_NIP5F_NOSTR_NIP5F_NIP5F_H
 
+#include <nostr/nip5f/export.h>
+
 /* See SPEC source: nips/nip5f/SPEC_SOURCE -> ../../docs/proposals/5F.md */
 
 #ifdef __cplusplus
@@ -59,36 +61,36 @@ typedef struct {
 } Nip5fServerHooks;
 
 /* Server control. Every server accepts only peers of its own uid. */
-int nostr_nip5f_server_start(const char *socket_path, void **out_handle);
+NOSTR_NIP5F_API int nostr_nip5f_server_start(const char *socket_path, void **out_handle);
 /* Start with @hooks installed before the first accept (see above). */
-int nostr_nip5f_server_start_with_hooks(const char *socket_path, const Nip5fServerHooks *hooks,
+NOSTR_NIP5F_API int nostr_nip5f_server_start_with_hooks(const char *socket_path, const Nip5fServerHooks *hooks,
                                         void *user_data, void **out_handle);
 /* Serve one connection a transport accepted and authenticated itself (the
  * daemon's TCP lane) through @hooks, on a new detached thread. Takes
  * ownership of @fd and of peer->pidfd. Returns 0 on success. */
-int nostr_nip5f_serve_connection(int fd, const Nip5fPeer *peer, const Nip5fServerHooks *hooks,
+NOSTR_NIP5F_API int nostr_nip5f_serve_connection(int fd, const Nip5fPeer *peer, const Nip5fServerHooks *hooks,
                                  void *user_data);
-int nostr_nip5f_server_stop(void *handle);
-int nostr_nip5f_server_set_handlers(void *handle,
+NOSTR_NIP5F_API int nostr_nip5f_server_stop(void *handle);
+NOSTR_NIP5F_API int nostr_nip5f_server_set_handlers(void *handle,
   Nip5fGetPubFn get_pub, Nip5fSignEventFn sign_event,
   Nip5fNip44EncFn enc44, Nip5fNip44DecFn dec44,
   Nip5fListKeysFn list_keys, void *user_data);
 
 /* Built-in default handlers using libnostr primitives */
-int nostr_nip5f_builtin_get_public_key(char **out_pub_hex);
-int nostr_nip5f_builtin_sign_event(const char *event_json, const char *pubkey_hex, char **out_signed_event_json);
-int nostr_nip5f_builtin_nip44_encrypt(const char *peer_pub_hex, const char *plaintext, char **out_cipher_b64);
-int nostr_nip5f_builtin_nip44_decrypt(const char *peer_pub_hex, const char *cipher_b64, char **out_plaintext);
-int nostr_nip5f_builtin_list_public_keys(char **out_keys_json);
+NOSTR_NIP5F_API int nostr_nip5f_builtin_get_public_key(char **out_pub_hex);
+NOSTR_NIP5F_API int nostr_nip5f_builtin_sign_event(const char *event_json, const char *pubkey_hex, char **out_signed_event_json);
+NOSTR_NIP5F_API int nostr_nip5f_builtin_nip44_encrypt(const char *peer_pub_hex, const char *plaintext, char **out_cipher_b64);
+NOSTR_NIP5F_API int nostr_nip5f_builtin_nip44_decrypt(const char *peer_pub_hex, const char *cipher_b64, char **out_plaintext);
+NOSTR_NIP5F_API int nostr_nip5f_builtin_list_public_keys(char **out_keys_json);
 
 /* Client helpers */
-int nostr_nip5f_client_connect(const char *socket_path, void **out_conn);
-int nostr_nip5f_client_close(void *conn);
-int nostr_nip5f_client_get_public_key(void *conn, char **out_pub_hex);
-int nostr_nip5f_client_sign_event(void *conn, const char *event_json, const char *pubkey_hex, char **out_signed_event_json);
-int nostr_nip5f_client_nip44_encrypt(void *conn, const char *peer_pub_hex, const char *plaintext, char **out_cipher_b64);
-int nostr_nip5f_client_nip44_decrypt(void *conn, const char *peer_pub_hex, const char *cipher_b64, char **out_plaintext);
-int nostr_nip5f_client_list_public_keys(void *conn, char **out_keys_json);
+NOSTR_NIP5F_API int nostr_nip5f_client_connect(const char *socket_path, void **out_conn);
+NOSTR_NIP5F_API int nostr_nip5f_client_close(void *conn);
+NOSTR_NIP5F_API int nostr_nip5f_client_get_public_key(void *conn, char **out_pub_hex);
+NOSTR_NIP5F_API int nostr_nip5f_client_sign_event(void *conn, const char *event_json, const char *pubkey_hex, char **out_signed_event_json);
+NOSTR_NIP5F_API int nostr_nip5f_client_nip44_encrypt(void *conn, const char *peer_pub_hex, const char *plaintext, char **out_cipher_b64);
+NOSTR_NIP5F_API int nostr_nip5f_client_nip44_decrypt(void *conn, const char *peer_pub_hex, const char *cipher_b64, char **out_plaintext);
+NOSTR_NIP5F_API int nostr_nip5f_client_list_public_keys(void *conn, char **out_keys_json);
 
 #ifdef __cplusplus
 }

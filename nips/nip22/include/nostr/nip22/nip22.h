@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP22_NOSTR_NIP22_NIP22_H
 #define NIPS_NIP22_NOSTR_NIP22_NIP22_H
 
+#include <nostr/nip22/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,7 +54,7 @@ typedef struct {
  *
  * Returns: true if the event is a comment
  */
-bool nostr_nip22_is_comment(const NostrEvent *ev);
+NOSTR_NIP22_API bool nostr_nip22_is_comment(const NostrEvent *ev);
 
 /**
  * nostr_nip22_get_thread_root:
@@ -66,7 +68,7 @@ bool nostr_nip22_is_comment(const NostrEvent *ev);
  *
  * Returns: Reference with type NOSTR_NIP22_REF_NONE if not found
  */
-NostrNip22Ref nostr_nip22_get_thread_root(const NostrEvent *ev);
+NOSTR_NIP22_API NostrNip22Ref nostr_nip22_get_thread_root(const NostrEvent *ev);
 
 /**
  * nostr_nip22_get_immediate_parent:
@@ -80,7 +82,7 @@ NostrNip22Ref nostr_nip22_get_thread_root(const NostrEvent *ev);
  *
  * Returns: Reference with type NOSTR_NIP22_REF_NONE if not found
  */
-NostrNip22Ref nostr_nip22_get_immediate_parent(const NostrEvent *ev);
+NOSTR_NIP22_API NostrNip22Ref nostr_nip22_get_immediate_parent(const NostrEvent *ev);
 
 /**
  * nostr_nip22_get_root_kind:
@@ -91,7 +93,7 @@ NostrNip22Ref nostr_nip22_get_immediate_parent(const NostrEvent *ev);
  *
  * Returns: 0 on success, -ENOENT if no K tag, -EINVAL on error
  */
-int nostr_nip22_get_root_kind(const NostrEvent *ev, int *out_kind);
+NOSTR_NIP22_API int nostr_nip22_get_root_kind(const NostrEvent *ev, int *out_kind);
 
 /**
  * nostr_nip22_get_parent_kind:
@@ -102,7 +104,7 @@ int nostr_nip22_get_root_kind(const NostrEvent *ev, int *out_kind);
  *
  * Returns: 0 on success, -ENOENT if no k tag, -EINVAL on error
  */
-int nostr_nip22_get_parent_kind(const NostrEvent *ev, int *out_kind);
+NOSTR_NIP22_API int nostr_nip22_get_parent_kind(const NostrEvent *ev, int *out_kind);
 
 /**
  * nostr_nip22_create_comment:
@@ -121,7 +123,7 @@ int nostr_nip22_get_parent_kind(const NostrEvent *ev, int *out_kind);
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip22_create_comment(NostrEvent *ev, const char *content,
+NOSTR_NIP22_API int nostr_nip22_create_comment(NostrEvent *ev, const char *content,
                                 const char *root_id, const char *root_relay,
                                 int root_kind,
                                 const char *parent_id, const char *parent_relay,

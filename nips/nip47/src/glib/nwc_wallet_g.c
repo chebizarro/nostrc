@@ -2,7 +2,7 @@
 
 #include <glib.h>
 #include <stdlib.h>
-#include "nostr/nip47/nwc_wallet.h"
+#include "nostr/nip47/nwc_wallet_g.h"
 #include "nostr/nip47/nwc.h"
 #include "nostr/nip47/nwc_envelope.h"
 

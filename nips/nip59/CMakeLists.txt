@@ -1,4 +1,6 @@
-project(nip59 VERSION 0.1.0 LANGUAGES C)
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
+project(nip59 VERSION 0.2.0 LANGUAGES C)
 
 # Gift-wrap timestamps come from OpenSSL's CSPRNG (RAND_bytes).
 find_package(OpenSSL REQUIRED)
@@ -7,6 +9,8 @@ find_package(OpenSSL REQUIRED)
 add_library(nostr_nip59_core OBJECT
     src/nip59.c
 )
+nostrc_library_visibility(nostr_nip59_core NOSTR_NIP59_API
+  nostr/nip59/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip59")
 
 target_include_directories(nostr_nip59_core
     PUBLIC
@@ -29,6 +33,8 @@ target_link_libraries(nostr_nip59_core
 include(GNUInstallDirs)
 set_target_properties(nostr_nip59_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(nip59 STATIC $<TARGET_OBJECTS:nostr_nip59_core>)
+nostrc_library_visibility(nip59 NOSTR_NIP59_API
+  nostr/nip59/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip59")
 set_target_properties(nip59 PROPERTIES OUTPUT_NAME nostr_nip59_core)
 target_include_directories(nip59 PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

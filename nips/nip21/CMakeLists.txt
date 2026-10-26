@@ -1,7 +1,11 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip21)
 
 add_library(nip21 OBJECT
     src/nip21.c)
+nostrc_library_visibility(nip21 NOSTR_NIP21_API
+  nostr/nip21/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip21")
 
 target_include_directories(nip21
     PUBLIC

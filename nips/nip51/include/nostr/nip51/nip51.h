@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP51_H
 #define NOSTR_NIP51_H
 
+#include <nostr/nip51/export.h>
+
 /**
  * NIP-51: User Lists
  *
@@ -62,7 +64,7 @@ typedef struct {
  *
  * Returns: (transfer full): new list, or NULL on error
  */
-NostrList *nostr_nip51_list_new(void);
+NOSTR_NIP51_API NostrList *nostr_nip51_list_new(void);
 
 /**
  * nostr_nip51_list_free:
@@ -70,7 +72,7 @@ NostrList *nostr_nip51_list_new(void);
  *
  * Frees a list and all its entries.
  */
-void nostr_nip51_list_free(NostrList *list);
+NOSTR_NIP51_API void nostr_nip51_list_free(NostrList *list);
 
 /**
  * nostr_nip51_entry_new:
@@ -83,7 +85,7 @@ void nostr_nip51_list_free(NostrList *list);
  *
  * Returns: (transfer full) (nullable): new entry, or NULL on error
  */
-NostrListEntry *nostr_nip51_entry_new(const char *tag_name,
+NOSTR_NIP51_API NostrListEntry *nostr_nip51_entry_new(const char *tag_name,
                                        const char *value,
                                        const char *extra,
                                        bool is_private);
@@ -94,7 +96,7 @@ NostrListEntry *nostr_nip51_entry_new(const char *tag_name,
  *
  * Frees a list entry.
  */
-void nostr_nip51_entry_free(NostrListEntry *entry);
+NOSTR_NIP51_API void nostr_nip51_entry_free(NostrListEntry *entry);
 
 /**
  * nostr_nip51_list_add_entry:
@@ -103,7 +105,7 @@ void nostr_nip51_entry_free(NostrListEntry *entry);
  *
  * Adds an entry to the list.
  */
-void nostr_nip51_list_add_entry(NostrList *list, NostrListEntry *entry);
+NOSTR_NIP51_API void nostr_nip51_list_add_entry(NostrList *list, NostrListEntry *entry);
 
 /**
  * nostr_nip51_list_set_identifier:
@@ -112,7 +114,7 @@ void nostr_nip51_list_add_entry(NostrList *list, NostrListEntry *entry);
  *
  * Sets the identifier (d-tag) for addressable list types.
  */
-void nostr_nip51_list_set_identifier(NostrList *list, const char *identifier);
+NOSTR_NIP51_API void nostr_nip51_list_set_identifier(NostrList *list, const char *identifier);
 
 /**
  * nostr_nip51_list_set_title:
@@ -121,7 +123,7 @@ void nostr_nip51_list_set_identifier(NostrList *list, const char *identifier);
  *
  * Sets the optional title for the list.
  */
-void nostr_nip51_list_set_title(NostrList *list, const char *title);
+NOSTR_NIP51_API void nostr_nip51_list_set_title(NostrList *list, const char *title);
 
 /* ---- Convenience Entry Builders ---- */
 
@@ -133,7 +135,7 @@ void nostr_nip51_list_set_title(NostrList *list, const char *title);
  *
  * Adds a user mute entry (p-tag).
  */
-void nostr_nip51_mute_user(NostrList *list, const char *pubkey_hex, bool is_private);
+NOSTR_NIP51_API void nostr_nip51_mute_user(NostrList *list, const char *pubkey_hex, bool is_private);
 
 /**
  * nostr_nip51_mute_word:
@@ -143,7 +145,7 @@ void nostr_nip51_mute_user(NostrList *list, const char *pubkey_hex, bool is_priv
  *
  * Adds a word mute entry (word-tag).
  */
-void nostr_nip51_mute_word(NostrList *list, const char *word, bool is_private);
+NOSTR_NIP51_API void nostr_nip51_mute_word(NostrList *list, const char *word, bool is_private);
 
 /**
  * nostr_nip51_mute_hashtag:
@@ -153,7 +155,7 @@ void nostr_nip51_mute_word(NostrList *list, const char *word, bool is_private);
  *
  * Adds a hashtag mute entry (t-tag).
  */
-void nostr_nip51_mute_hashtag(NostrList *list, const char *hashtag, bool is_private);
+NOSTR_NIP51_API void nostr_nip51_mute_hashtag(NostrList *list, const char *hashtag, bool is_private);
 
 /**
  * nostr_nip51_mute_event:
@@ -163,7 +165,7 @@ void nostr_nip51_mute_hashtag(NostrList *list, const char *hashtag, bool is_priv
  *
  * Adds an event mute entry (e-tag).
  */
-void nostr_nip51_mute_event(NostrList *list, const char *event_id_hex, bool is_private);
+NOSTR_NIP51_API void nostr_nip51_mute_event(NostrList *list, const char *event_id_hex, bool is_private);
 
 /**
  * nostr_nip51_bookmark_event:
@@ -174,7 +176,7 @@ void nostr_nip51_mute_event(NostrList *list, const char *event_id_hex, bool is_p
  *
  * Adds an event bookmark entry (e-tag with optional relay).
  */
-void nostr_nip51_bookmark_event(NostrList *list,
+NOSTR_NIP51_API void nostr_nip51_bookmark_event(NostrList *list,
                                   const char *event_id_hex,
                                   const char *relay_hint,
                                   bool is_private);
@@ -187,7 +189,7 @@ void nostr_nip51_bookmark_event(NostrList *list,
  *
  * Adds a URL bookmark entry (r-tag).
  */
-void nostr_nip51_bookmark_url(NostrList *list, const char *url, bool is_private);
+NOSTR_NIP51_API void nostr_nip51_bookmark_url(NostrList *list, const char *url, bool is_private);
 
 /* ---- Event Creation ---- */
 
@@ -201,7 +203,7 @@ void nostr_nip51_bookmark_url(NostrList *list, const char *url, bool is_private)
  *
  * Returns: (transfer full) (nullable): signed event, or NULL on error
  */
-NostrEvent *nostr_nip51_create_mute_list(NostrList *list, const char *sk_hex);
+NOSTR_NIP51_API NostrEvent *nostr_nip51_create_mute_list(NostrList *list, const char *sk_hex);
 
 /**
  * nostr_nip51_create_bookmark_list:
@@ -213,7 +215,7 @@ NostrEvent *nostr_nip51_create_mute_list(NostrList *list, const char *sk_hex);
  *
  * Returns: (transfer full) (nullable): signed event, or NULL on error
  */
-NostrEvent *nostr_nip51_create_bookmark_list(NostrList *list, const char *sk_hex);
+NOSTR_NIP51_API NostrEvent *nostr_nip51_create_bookmark_list(NostrList *list, const char *sk_hex);
 
 /**
  * nostr_nip51_create_pin_list:
@@ -224,7 +226,7 @@ NostrEvent *nostr_nip51_create_bookmark_list(NostrList *list, const char *sk_hex
  *
  * Returns: (transfer full) (nullable): signed event, or NULL on error
  */
-NostrEvent *nostr_nip51_create_pin_list(NostrList *list, const char *sk_hex);
+NOSTR_NIP51_API NostrEvent *nostr_nip51_create_pin_list(NostrList *list, const char *sk_hex);
 
 /**
  * nostr_nip51_create_list:
@@ -237,7 +239,7 @@ NostrEvent *nostr_nip51_create_pin_list(NostrList *list, const char *sk_hex);
  *
  * Returns: (transfer full) (nullable): signed event, or NULL on error
  */
-NostrEvent *nostr_nip51_create_list(int kind, NostrList *list, const char *sk_hex);
+NOSTR_NIP51_API NostrEvent *nostr_nip51_create_list(int kind, NostrList *list, const char *sk_hex);
 
 /* ---- Event Parsing ---- */
 
@@ -252,7 +254,7 @@ NostrEvent *nostr_nip51_create_list(int kind, NostrList *list, const char *sk_he
  *
  * Returns: (transfer full) (nullable): parsed list, or NULL on error
  */
-NostrList *nostr_nip51_parse_list(NostrEvent *event, const char *sk_hex);
+NOSTR_NIP51_API NostrList *nostr_nip51_parse_list(NostrEvent *event, const char *sk_hex);
 
 /* ---- Private Entry Encryption ---- */
 
@@ -267,7 +269,7 @@ NostrList *nostr_nip51_parse_list(NostrEvent *event, const char *sk_hex);
  *
  * Returns: (transfer full) (nullable): encrypted content, or NULL on error
  */
-char *nostr_nip51_encrypt_private_entries(NostrListEntry **entries,
+NOSTR_NIP51_API char *nostr_nip51_encrypt_private_entries(NostrListEntry **entries,
                                            size_t count,
                                            const char *sk_hex);
 
@@ -281,7 +283,7 @@ char *nostr_nip51_encrypt_private_entries(NostrListEntry **entries,
  *
  * Returns: (transfer full) (nullable): array of entries, or NULL on error
  */
-NostrListEntry **nostr_nip51_decrypt_private_entries(const char *content,
+NOSTR_NIP51_API NostrListEntry **nostr_nip51_decrypt_private_entries(const char *content,
                                                        const char *sk_hex,
                                                        size_t *count_out);
 
@@ -292,7 +294,7 @@ NostrListEntry **nostr_nip51_decrypt_private_entries(const char *content,
  *
  * Frees an array of entries returned by decrypt_private_entries.
  */
-void nostr_nip51_free_entries(NostrListEntry **entries, size_t count);
+NOSTR_NIP51_API void nostr_nip51_free_entries(NostrListEntry **entries, size_t count);
 
 #ifdef __cplusplus
 }

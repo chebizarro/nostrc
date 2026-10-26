@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP77_NEGENTROPY_H
 #define NOSTR_NIP77_NEGENTROPY_H
 
+#include <nostr/nip77/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,24 +56,24 @@ typedef struct {
 } NostrNegStats;
 
 /* Construction */
-NostrNegSession *nostr_neg_session_new(const NostrNegDataSource *ds,
+NOSTR_NIP77_API NostrNegSession *nostr_neg_session_new(const NostrNegDataSource *ds,
                                        const NostrNegOptions *opts);
-void nostr_neg_session_free(NostrNegSession *s);
+NOSTR_NIP77_API void nostr_neg_session_free(NostrNegSession *s);
 
 /* Protocol round helpers
  * Returns newly-allocated hex buffers caller must free with free().
  */
-char *nostr_neg_build_initial_hex(NostrNegSession *s);
-int   nostr_neg_handle_peer_hex(NostrNegSession *s, const char *hex_msg);
-char *nostr_neg_build_next_hex(NostrNegSession *s);
+NOSTR_NIP77_API char *nostr_neg_build_initial_hex(NostrNegSession *s);
+NOSTR_NIP77_API int   nostr_neg_handle_peer_hex(NostrNegSession *s, const char *hex_msg);
+NOSTR_NIP77_API char *nostr_neg_build_next_hex(NostrNegSession *s);
 
 /* Stats */
-void  nostr_neg_get_stats(const NostrNegSession *s, NostrNegStats *out);
+NOSTR_NIP77_API void  nostr_neg_get_stats(const NostrNegSession *s, NostrNegStats *out);
 
 /* NEED IDs — event IDs the peer has that we don't.
  * Valid after protocol completes. Pointer owned by session.
  * Returns 0 on success, -1 on invalid arguments. */
-int   nostr_neg_get_need_ids(const NostrNegSession *s,
+NOSTR_NIP77_API int   nostr_neg_get_need_ids(const NostrNegSession *s,
                               const unsigned char **out_ids,
                               size_t *out_count);
 

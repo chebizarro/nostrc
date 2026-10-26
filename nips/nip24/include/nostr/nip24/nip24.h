@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP24_NOSTR_NIP24_NIP24_H
 #define NIPS_NIP24_NOSTR_NIP24_NIP24_H
 
+#include <nostr/nip24/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,7 +51,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input
  */
-int nostr_nip24_parse_profile(const char *json, NostrNip24Profile *out);
+NOSTR_NIP24_API int nostr_nip24_parse_profile(const char *json, NostrNip24Profile *out);
 
 /**
  * nostr_nip24_profile_free:
@@ -58,7 +60,7 @@ int nostr_nip24_parse_profile(const char *json, NostrNip24Profile *out);
  * Frees all allocated strings in the profile. Does NOT free the
  * struct itself (it may be stack-allocated).
  */
-void nostr_nip24_profile_free(NostrNip24Profile *profile);
+NOSTR_NIP24_API void nostr_nip24_profile_free(NostrNip24Profile *profile);
 
 /**
  * nostr_nip24_get_display_name:
@@ -69,7 +71,7 @@ void nostr_nip24_profile_free(NostrNip24Profile *profile);
  *
  * Returns: (transfer full) (nullable): display name or NULL
  */
-char *nostr_nip24_get_display_name(const char *json);
+NOSTR_NIP24_API char *nostr_nip24_get_display_name(const char *json);
 
 /**
  * nostr_nip24_is_bot:
@@ -77,7 +79,7 @@ char *nostr_nip24_get_display_name(const char *json);
  *
  * Returns: true if the "bot" field is true
  */
-bool nostr_nip24_is_bot(const char *json);
+NOSTR_NIP24_API bool nostr_nip24_is_bot(const char *json);
 
 #ifdef __cplusplus
 }

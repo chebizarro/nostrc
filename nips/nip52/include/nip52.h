@@ -1,6 +1,8 @@
 #ifndef NIP52_H
 #define NIP52_H
 
+#include <nostr/nip52/export.h>
+
 #include <stdint.h>
 #include <time.h>
 
@@ -33,8 +35,8 @@ typedef struct {
     char *end_tzid;
 } CalendarEvent;
 
-CalendarEvent *parse_calendar_event(const char *event_json);
-char *calendar_event_to_json(CalendarEvent *event);
-void free_calendar_event(CalendarEvent *event);
+NOSTR_NIP52_API CalendarEvent *parse_calendar_event(const char *event_json);
+NOSTR_NIP52_API char *calendar_event_to_json(CalendarEvent *event);
+NOSTR_NIP52_API void free_calendar_event(CalendarEvent *event);
 
 #endif // NIP52_H

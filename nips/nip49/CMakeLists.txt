@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip49)
 
@@ -17,6 +19,8 @@ set(NIP49_GLIB_SRC
 )
 
 add_library(nostr_nip49_core ${NIP49_CORE_SRC})
+nostrc_library_visibility(nostr_nip49_core NOSTR_NIP49_API
+  nostr/nip49/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip49")
 target_include_directories(nostr_nip49_core PUBLIC ${NIP49_INC}
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../nip19/include)
 find_path(SODIUM_INCLUDE_DIR sodium.h)
@@ -37,6 +41,8 @@ if (PkgConfig_FOUND)
 endif()
 if (GLIB2_FOUND)
   add_library(nostr_nip49_glib ${NIP49_GLIB_SRC})
+  nostrc_library_visibility(nostr_nip49_glib NOSTR_NIP49_GLIB_API
+    nostr/nip49/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip49")
   target_include_directories(nostr_nip49_glib PUBLIC ${NIP49_INC} ${GLIB2_INCLUDE_DIRS})
   target_link_directories(nostr_nip49_glib PUBLIC ${GLIB2_LIBRARY_DIRS})
   target_link_libraries(nostr_nip49_glib PUBLIC nostr_nip49_core ${GLIB2_LIBRARIES})

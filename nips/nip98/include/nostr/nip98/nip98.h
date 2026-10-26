@@ -12,6 +12,8 @@
 #ifndef NOSTR_NIP98_H
 #define NOSTR_NIP98_H
 
+#include <nostr/nip98/export.h>
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -79,7 +81,7 @@ typedef struct {
  * );
  * nostr_event_sign(auth, private_key);
  */
-NostrEvent *nostr_nip98_create_auth_event(const char *url,
+NOSTR_NIP98_API NostrEvent *nostr_nip98_create_auth_event(const char *url,
                                           const char *method,
                                           const char *payload_sha256_hex);
 
@@ -98,7 +100,7 @@ NostrEvent *nostr_nip98_create_auth_event(const char *url,
  * curl_easy_setopt(curl, CURLOPT_HTTPHEADER, "Authorization: <header>");
  * free(header);
  */
-char *nostr_nip98_create_auth_header(const NostrEvent *event);
+NOSTR_NIP98_API char *nostr_nip98_create_auth_header(const NostrEvent *event);
 
 /**
  * @brief Parse Authorization header and extract NIP-98 event
@@ -110,7 +112,7 @@ char *nostr_nip98_create_auth_header(const NostrEvent *event);
  * @param out_event Output pointer for the parsed event
  * @return NOSTR_NIP98_OK on success, error code otherwise
  */
-NostrNip98Result nostr_nip98_parse_auth_header(const char *header,
+NOSTR_NIP98_API NostrNip98Result nostr_nip98_parse_auth_header(const char *header,
                                                 NostrEvent **out_event);
 
 /**
@@ -142,7 +144,7 @@ NostrNip98Result nostr_nip98_parse_auth_header(const char *header,
  *     // Authentication failed
  * }
  */
-NostrNip98Result nostr_nip98_validate_auth_event(const NostrEvent *event,
+NOSTR_NIP98_API NostrNip98Result nostr_nip98_validate_auth_event(const NostrEvent *event,
                                                   const char *expected_url,
                                                   const char *expected_method,
                                                   const NostrNip98ValidateOptions *options);
@@ -153,7 +155,7 @@ NostrNip98Result nostr_nip98_validate_auth_event(const NostrEvent *event,
  * @param event NIP-98 event
  * @return URL string (internal pointer, do not free), or NULL if not found
  */
-const char *nostr_nip98_get_url(const NostrEvent *event);
+NOSTR_NIP98_API const char *nostr_nip98_get_url(const NostrEvent *event);
 
 /**
  * @brief Get the HTTP method from a NIP-98 auth event
@@ -161,7 +163,7 @@ const char *nostr_nip98_get_url(const NostrEvent *event);
  * @param event NIP-98 event
  * @return Method string (internal pointer, do not free), or NULL if not found
  */
-const char *nostr_nip98_get_method(const NostrEvent *event);
+NOSTR_NIP98_API const char *nostr_nip98_get_method(const NostrEvent *event);
 
 /**
  * @brief Get the payload hash from a NIP-98 auth event
@@ -169,7 +171,7 @@ const char *nostr_nip98_get_method(const NostrEvent *event);
  * @param event NIP-98 event
  * @return Payload hash hex string (internal pointer, do not free), or NULL if not present
  */
-const char *nostr_nip98_get_payload_hash(const NostrEvent *event);
+NOSTR_NIP98_API const char *nostr_nip98_get_payload_hash(const NostrEvent *event);
 
 /**
  * @brief Get error message for a NIP-98 result code
@@ -177,7 +179,7 @@ const char *nostr_nip98_get_payload_hash(const NostrEvent *event);
  * @param result Result code
  * @return Human-readable error message (static string, do not free)
  */
-const char *nostr_nip98_strerror(NostrNip98Result result);
+NOSTR_NIP98_API const char *nostr_nip98_strerror(NostrNip98Result result);
 
 #ifdef __cplusplus
 }

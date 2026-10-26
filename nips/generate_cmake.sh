@@ -8,15 +8,21 @@ OPTIONS_FILE="NipOptions.cmake"
 CMAKE_TEMPLATE='
 project(%NIP_NAME%)
 
-# Include the header files
-include_directories(include ${CMAKE_SOURCE_DIR}/libnostr/include)
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
 
 # Add the source files
 file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(%NIP_NAME% ${SOURCES})
-target_link_libraries(%NIP_NAME% nostr)
+nostrc_library_visibility(%NIP_NAME% NOSTR_%UPPER_NIP_NAME%_API
+    nostr/%NIP_NAMESPACE%/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/%NIP_NAMESPACE%")
+target_include_directories(%NIP_NAME% PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(%NIP_NAME% PUBLIC nostr)
+install(TARGETS %NIP_NAME% DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Add tests if available
 file(GLOB TEST_SOURCES "tests/*.c")
@@ -36,7 +42,8 @@ for dir in "$NIPS_DIR"/*; do
     if [ -d "$dir" ]; then
         # Get the name of the NIP directory and convert to uppercase
         NIP_NAME=$(basename "$dir")
-        UPPER_NIP_NAME=$(echo "$NIP_NAME" | tr '[:lower:]' '[:upper:]')
+        NIP_NAMESPACE=${NIP_NAME//-/_}
+        UPPER_NIP_NAME=$(echo "$NIP_NAMESPACE" | tr '[:lower:]' '[:upper:]')
 
         # Add ENABLE_NIP-X option to the options file
         OPTION="option(ENABLE_${UPPER_NIP_NAME} \"Enable ${NIP_NAME}\" OFF)"
@@ -50,7 +57,7 @@ for dir in "$NIPS_DIR"/*; do
         if [ ! -f "$dir/CMakeLists.txt" ]; then
             # Create the CMakeLists.txt file with the template content
             echo "Creating CMakeLists.txt in $dir"
-            echo "$CMAKE_TEMPLATE" | sed "s/%NIP_NAME%/$NIP_NAME/g" > "$dir/CMakeLists.txt"
+            echo "$CMAKE_TEMPLATE" | sed -e "s/%NIP_NAME%/$NIP_NAME/g" -e "s/%NIP_NAMESPACE%/$NIP_NAMESPACE/g" -e "s/%UPPER_NIP_NAME%/$UPPER_NIP_NAME/g" > "$dir/CMakeLists.txt"
         else
             echo "CMakeLists.txt already exists in $dir"
         fi

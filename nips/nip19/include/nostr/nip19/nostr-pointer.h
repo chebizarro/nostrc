@@ -1,6 +1,8 @@
 #ifndef __NOSTR_POINTER_H__
 #define __NOSTR_POINTER_H__
 
+#include <nostr/nip19/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,14 +33,14 @@ typedef struct {
     size_t relays_count;
 } NostrEntityPointer;
 
-NostrProfilePointer *nostr_profile_pointer_new(void);
-void nostr_profile_pointer_free(NostrProfilePointer *ptr);
+NOSTR_NIP19_API NostrProfilePointer *nostr_profile_pointer_new(void);
+NOSTR_NIP19_API void nostr_profile_pointer_free(NostrProfilePointer *ptr);
 
-NostrEventPointer *nostr_event_pointer_new(void);
-void nostr_event_pointer_free(NostrEventPointer *ptr);
+NOSTR_NIP19_API NostrEventPointer *nostr_event_pointer_new(void);
+NOSTR_NIP19_API void nostr_event_pointer_free(NostrEventPointer *ptr);
 
-NostrEntityPointer *nostr_entity_pointer_new(void);
-void nostr_entity_pointer_free(NostrEntityPointer *ptr);
+NOSTR_NIP19_API NostrEntityPointer *nostr_entity_pointer_new(void);
+NOSTR_NIP19_API void nostr_entity_pointer_free(NostrEntityPointer *ptr);
 
 #ifdef __cplusplus
 }

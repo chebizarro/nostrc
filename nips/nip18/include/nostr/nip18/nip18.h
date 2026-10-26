@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP18_NOSTR_NIP18_NIP18_H
 #define NIPS_NIP18_NOSTR_NIP18_NIP18_H
 
+#include <nostr/nip18/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -60,7 +62,7 @@ typedef struct {
  * Frees any allocated memory in the repost info structure.
  * The structure itself is not freed (caller-allocated).
  */
-void nostr_nip18_repost_info_clear(NostrRepostInfo *info);
+NOSTR_NIP18_API void nostr_nip18_repost_info_clear(NostrRepostInfo *info);
 
 /**
  * nostr_nip18_create_repost:
@@ -73,7 +75,7 @@ void nostr_nip18_repost_info_clear(NostrRepostInfo *info);
  *
  * Returns: (transfer full) (nullable): new unsigned repost event, or NULL on error
  */
-NostrEvent *nostr_nip18_create_repost(const NostrEvent *reposted_event,
+NOSTR_NIP18_API NostrEvent *nostr_nip18_create_repost(const NostrEvent *reposted_event,
                                        const char *relay_hint,
                                        bool include_json);
 
@@ -89,7 +91,7 @@ NostrEvent *nostr_nip18_create_repost(const NostrEvent *reposted_event,
  *
  * Returns: (transfer full) (nullable): new unsigned repost event, or NULL on error
  */
-NostrEvent *nostr_nip18_create_repost_from_id(const unsigned char event_id[32],
+NOSTR_NIP18_API NostrEvent *nostr_nip18_create_repost_from_id(const unsigned char event_id[32],
                                                const unsigned char author_pubkey[32],
                                                const char *relay_hint,
                                                const char *event_json);
@@ -105,7 +107,7 @@ NostrEvent *nostr_nip18_create_repost_from_id(const unsigned char event_id[32],
  *
  * Returns: (transfer full) (nullable): new unsigned repost event, or NULL on error
  */
-NostrEvent *nostr_nip18_create_generic_repost(const NostrEvent *reposted_event,
+NOSTR_NIP18_API NostrEvent *nostr_nip18_create_generic_repost(const NostrEvent *reposted_event,
                                                const char *relay_hint,
                                                bool include_json);
 
@@ -122,7 +124,7 @@ NostrEvent *nostr_nip18_create_generic_repost(const NostrEvent *reposted_event,
  *
  * Returns: (transfer full) (nullable): new unsigned repost event, or NULL on error
  */
-NostrEvent *nostr_nip18_create_generic_repost_from_id(const unsigned char event_id[32],
+NOSTR_NIP18_API NostrEvent *nostr_nip18_create_generic_repost_from_id(const unsigned char event_id[32],
                                                        const unsigned char author_pubkey[32],
                                                        int reposted_kind,
                                                        const char *relay_hint,
@@ -138,7 +140,7 @@ NostrEvent *nostr_nip18_create_generic_repost_from_id(const unsigned char event_
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip18_parse_repost(const NostrEvent *ev, NostrRepostInfo *out);
+NOSTR_NIP18_API int nostr_nip18_parse_repost(const NostrEvent *ev, NostrRepostInfo *out);
 
 /**
  * nostr_nip18_is_repost:
@@ -148,7 +150,7 @@ int nostr_nip18_parse_repost(const NostrEvent *ev, NostrRepostInfo *out);
  *
  * Returns: true if the event is a repost
  */
-bool nostr_nip18_is_repost(const NostrEvent *ev);
+NOSTR_NIP18_API bool nostr_nip18_is_repost(const NostrEvent *ev);
 
 /**
  * nostr_nip18_is_note_repost:
@@ -158,7 +160,7 @@ bool nostr_nip18_is_repost(const NostrEvent *ev);
  *
  * Returns: true if the event is a kind 6 repost
  */
-bool nostr_nip18_is_note_repost(const NostrEvent *ev);
+NOSTR_NIP18_API bool nostr_nip18_is_note_repost(const NostrEvent *ev);
 
 /**
  * nostr_nip18_is_generic_repost:
@@ -168,7 +170,7 @@ bool nostr_nip18_is_note_repost(const NostrEvent *ev);
  *
  * Returns: true if the event is a kind 16 repost
  */
-bool nostr_nip18_is_generic_repost(const NostrEvent *ev);
+NOSTR_NIP18_API bool nostr_nip18_is_generic_repost(const NostrEvent *ev);
 
 /* Quote reposts: kind 1 events with q-tag referencing another event */
 
@@ -184,7 +186,7 @@ bool nostr_nip18_is_generic_repost(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip18_add_q_tag(NostrEvent *ev,
+NOSTR_NIP18_API int nostr_nip18_add_q_tag(NostrEvent *ev,
                           const unsigned char quoted_event_id[32],
                           const char *relay_hint,
                           const unsigned char *author_pubkey);
@@ -213,7 +215,7 @@ typedef struct {
  *
  * Frees any allocated memory in the quote info structure.
  */
-void nostr_nip18_quote_info_clear(NostrQuoteInfo *info);
+NOSTR_NIP18_API void nostr_nip18_quote_info_clear(NostrQuoteInfo *info);
 
 /**
  * nostr_nip18_get_quote:
@@ -224,7 +226,7 @@ void nostr_nip18_quote_info_clear(NostrQuoteInfo *info);
  *
  * Returns: 0 if quote found, -ENOENT if no quote, negative errno on error
  */
-int nostr_nip18_get_quote(const NostrEvent *ev, NostrQuoteInfo *out);
+NOSTR_NIP18_API int nostr_nip18_get_quote(const NostrEvent *ev, NostrQuoteInfo *out);
 
 /**
  * nostr_nip18_has_quote:
@@ -234,7 +236,7 @@ int nostr_nip18_get_quote(const NostrEvent *ev, NostrQuoteInfo *out);
  *
  * Returns: true if the event quotes another event
  */
-bool nostr_nip18_has_quote(const NostrEvent *ev);
+NOSTR_NIP18_API bool nostr_nip18_has_quote(const NostrEvent *ev);
 
 #ifdef __cplusplus
 }

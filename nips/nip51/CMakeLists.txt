@@ -1,9 +1,13 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip51)
 
 # Core library
 add_library(nostr_nip51_core OBJECT
     src/nip51.c
 )
+nostrc_library_visibility(nostr_nip51_core NOSTR_NIP51_API
+  nostr/nip51/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip51")
 
 target_include_directories(nostr_nip51_core
     PUBLIC

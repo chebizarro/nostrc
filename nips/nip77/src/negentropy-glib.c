@@ -2,7 +2,6 @@
 #if defined(NOSTR_HAVE_GLIB)
 
 struct _NostrNegSessionG { GObject parent_instance; };
-struct _NostrNegSessionGClass { GObjectClass parent_class; };
 
 G_DEFINE_TYPE(NostrNegSessionG, nostr_neg_session_g, G_TYPE_OBJECT)
 

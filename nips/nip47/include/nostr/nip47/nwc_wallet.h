@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_H
 #define NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_H
 
+#include <nostr/nip47/export.h>
+
 #include "nwc.h"
 #include "nwc_envelope.h"
 
@@ -13,14 +15,14 @@ typedef struct {
   NostrNwcEncryption enc;
 } NostrNwcWalletSession;
 
-int nostr_nwc_wallet_session_init(NostrNwcWalletSession *s,
+NOSTR_NIP47_API int nostr_nwc_wallet_session_init(NostrNwcWalletSession *s,
                                   const char *client_pub_hex,
                                   const char **wallet_supported, size_t wallet_n,
                                   const char **client_supported, size_t client_n);
 
-void nostr_nwc_wallet_session_clear(NostrNwcWalletSession *s);
+NOSTR_NIP47_API void nostr_nwc_wallet_session_clear(NostrNwcWalletSession *s);
 
-int nostr_nwc_wallet_build_response(const NostrNwcWalletSession *s,
+NOSTR_NIP47_API int nostr_nwc_wallet_build_response(const NostrNwcWalletSession *s,
                                     const char *req_event_id,
                                     const NostrNwcResponseBody *body,
                                     char **out_event_json);
@@ -29,13 +31,13 @@ int nostr_nwc_wallet_build_response(const NostrNwcWalletSession *s,
  * wallet_sk_hex: 32-byte hex secret of wallet.
  * client_pub_hex: client pubkey (accepts x-only 64, SEC1 33/65 hex; auto-converts to x-only for NIP-44).
  */
-int nostr_nwc_wallet_encrypt(const NostrNwcWalletSession *s,
+NOSTR_NIP47_API int nostr_nwc_wallet_encrypt(const NostrNwcWalletSession *s,
                              const char *wallet_sk_hex,
                              const char *client_pub_hex,
                              const char *plaintext,
                              char **out_ciphertext);
 
-int nostr_nwc_wallet_decrypt(const NostrNwcWalletSession *s,
+NOSTR_NIP47_API int nostr_nwc_wallet_decrypt(const NostrNwcWalletSession *s,
                              const char *wallet_sk_hex,
                              const char *client_pub_hex,
                              const char *ciphertext,

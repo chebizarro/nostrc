@@ -8,14 +8,17 @@ function(nostrc_generate_export_header target macro header)
   # GenerateExportHeader keeps its template path in directory-scoped variables.
   include(GenerateExportHeader)
   get_target_property(_type ${target} TYPE)
-  if(NOT _type MATCHES "^(STATIC|SHARED|MODULE)_LIBRARY$")
+  if(NOT _type MATCHES "^(STATIC|SHARED|MODULE|OBJECT)_LIBRARY$")
     message(FATAL_ERROR "nostrc_generate_export_header requires a library: ${target}")
   endif()
-  string(TOUPPER "${target}" _prefix)
+  string(MAKE_C_IDENTIFIER "${target}" _prefix)
+  string(TOUPPER "${_prefix}" _prefix)
   set(_static_define "${_prefix}_STATIC_DEFINE")
   set(_include "${CMAKE_CURRENT_BINARY_DIR}/include")
   set(_extra "")
-  if(_type STREQUAL "STATIC_LIBRARY")
+  if(_type STREQUAL "STATIC_LIBRARY" OR _type STREQUAL "OBJECT_LIBRARY")
+    # OBJECT libraries have no DLL of their own: they belong to the final
+    # consumer, just like archives. Do not import another target's exports.
     target_compile_definitions(${target} PUBLIC ${_static_define})
     # ELF consumers such as libnostr-json resolve public API from the executable's
     # static archive. GenerateExportHeader normally makes static annotations empty;

@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP21_NOSTR_NIP21_NIP21_H
 #define NIPS_NIP21_NOSTR_NIP21_NIP21_H
 
+#include <nostr/nip21/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -35,7 +37,7 @@ extern "C" {
  *
  * Returns: true if the string is a valid nostr: URI
  */
-bool nostr_nip21_is_uri(const char *str);
+NOSTR_NIP21_API bool nostr_nip21_is_uri(const char *str);
 
 /**
  * nostr_nip21_parse:
@@ -50,7 +52,7 @@ bool nostr_nip21_is_uri(const char *str);
  *
  * Returns: 0 on success, -EINVAL if not a valid nostr: URI
  */
-int nostr_nip21_parse(const char *uri, NostrBech32Type *out_type,
+NOSTR_NIP21_API int nostr_nip21_parse(const char *uri, NostrBech32Type *out_type,
                        const char **out_bech32);
 
 /**
@@ -61,7 +63,7 @@ int nostr_nip21_parse(const char *uri, NostrBech32Type *out_type,
  *
  * Returns: (transfer full) (nullable): heap-allocated URI, caller frees
  */
-char *nostr_nip21_build(const char *bech32);
+NOSTR_NIP21_API char *nostr_nip21_build(const char *bech32);
 
 /**
  * nostr_nip21_build_npub:
@@ -71,7 +73,7 @@ char *nostr_nip21_build(const char *bech32);
  *
  * Returns: (transfer full) (nullable): heap-allocated URI, caller frees
  */
-char *nostr_nip21_build_npub(const uint8_t pubkey[32]);
+NOSTR_NIP21_API char *nostr_nip21_build_npub(const uint8_t pubkey[32]);
 
 /**
  * nostr_nip21_build_note:
@@ -81,7 +83,7 @@ char *nostr_nip21_build_npub(const uint8_t pubkey[32]);
  *
  * Returns: (transfer full) (nullable): heap-allocated URI, caller frees
  */
-char *nostr_nip21_build_note(const uint8_t event_id[32]);
+NOSTR_NIP21_API char *nostr_nip21_build_note(const uint8_t event_id[32]);
 
 /**
  * nostr_nip21_build_nprofile:
@@ -91,7 +93,7 @@ char *nostr_nip21_build_note(const uint8_t event_id[32]);
  *
  * Returns: (transfer full) (nullable): heap-allocated URI, caller frees
  */
-char *nostr_nip21_build_nprofile(const NostrProfilePointer *p);
+NOSTR_NIP21_API char *nostr_nip21_build_nprofile(const NostrProfilePointer *p);
 
 /**
  * nostr_nip21_build_nevent:
@@ -101,7 +103,7 @@ char *nostr_nip21_build_nprofile(const NostrProfilePointer *p);
  *
  * Returns: (transfer full) (nullable): heap-allocated URI, caller frees
  */
-char *nostr_nip21_build_nevent(const NostrEventPointer *e);
+NOSTR_NIP21_API char *nostr_nip21_build_nevent(const NostrEventPointer *e);
 
 /**
  * nostr_nip21_build_naddr:
@@ -111,7 +113,7 @@ char *nostr_nip21_build_nevent(const NostrEventPointer *e);
  *
  * Returns: (transfer full) (nullable): heap-allocated URI, caller frees
  */
-char *nostr_nip21_build_naddr(const NostrEntityPointer *a);
+NOSTR_NIP21_API char *nostr_nip21_build_naddr(const NostrEntityPointer *a);
 
 #ifdef __cplusplus
 }

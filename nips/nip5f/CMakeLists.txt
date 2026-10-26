@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 cmake_minimum_required(VERSION 3.22)
 
 set(NIP5F_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -17,6 +19,8 @@ set(NIP5F_GLIB_SRC
 )
 
 add_library(nostr_nip5f_core ${NIP5F_CORE_SRC})
+nostrc_library_visibility(nostr_nip5f_core NOSTR_NIP5F_API
+  nostr/nip5f/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip5f")
 target_include_directories(nostr_nip5f_core PUBLIC ${NIP5F_INC}
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_BINARY_DIR}/libnostr/generated
@@ -38,6 +42,8 @@ endif()
 
 if (GIO_FOUND)
   add_library(nostr_nip5f_glib ${NIP5F_GLIB_SRC})
+  nostrc_library_visibility(nostr_nip5f_glib NOSTR_NIP5F_GLIB_API
+    nostr/nip5f/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip5f")
   target_include_directories(nostr_nip5f_glib PUBLIC ${NIP5F_INC})
   # Add include directories from pkg-config
   if (GIO_INCLUDE_DIRS)
@@ -72,7 +78,8 @@ endif()
 
 # TCP test (optional; skips when endpoint/token not set)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
-  add_executable(test_nip5f_tcp ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
+  add_executable(test_nip5f_tcp ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sock_framing.c)
   target_link_libraries(test_nip5f_tcp PRIVATE nostr_nip5f_core nostr nostr_json)
   add_test(NAME test_nip5f_tcp COMMAND test_nip5f_tcp)
   set_tests_properties(test_nip5f_tcp PROPERTIES SKIP_RETURN_CODE 77)
@@ -99,7 +106,8 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_client_example.c)
 endif()
 
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_tcp_client_example.c)
-  add_executable(nip5f_tcp_client_example ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_tcp_client_example.c)
+  add_executable(nip5f_tcp_client_example ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip5f_tcp_client_example.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sock_framing.c)
   target_link_libraries(nip5f_tcp_client_example PRIVATE nostr_nip5f_core nostr nostr_json)
 endif()
 

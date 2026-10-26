@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP04_H
 #define NOSTR_NIP04_H
 
+#include <nostr/nip04/export.h>
+
 #include <stddef.h>
 #include <secure_buf.h>
 
@@ -46,7 +48,7 @@ extern "C" {
  *
  * Returns: 0 on success; non-zero on failure.
  */
-int nostr_nip04_encrypt(
+NOSTR_NIP04_API int nostr_nip04_encrypt(
     const char *plaintext_utf8,
     const char *receiver_pubkey_hex,
     const char *sender_seckey_hex,
@@ -66,7 +68,7 @@ int nostr_nip04_encrypt(
  *
  * Returns: 0 on success; non-zero on failure.
  */
-int nostr_nip04_decrypt(
+NOSTR_NIP04_API int nostr_nip04_decrypt(
     const char *content_b64_qiv,
     const char *sender_pubkey_hex,
     const char *receiver_seckey_hex,
@@ -77,7 +79,7 @@ int nostr_nip04_decrypt(
  * nostr_nip04_encrypt_secure:
  * Like nostr_nip04_encrypt but takes the sender secret key as a secure buffer.
  */
-int nostr_nip04_encrypt_secure(
+NOSTR_NIP04_API int nostr_nip04_encrypt_secure(
     const char *plaintext_utf8,
     const char *receiver_pubkey_hex,
     const nostr_secure_buf *sender_seckey,
@@ -91,7 +93,7 @@ int nostr_nip04_encrypt_secure(
  * Output format: "base64(ciphertext)?iv=base64(iv)".
  * WARNING: this format is unauthenticated and malleable.
  */
-int nostr_nip04_encrypt_legacy_secure(
+NOSTR_NIP04_API int nostr_nip04_encrypt_legacy_secure(
     const char *plaintext_utf8,
     const char *receiver_pubkey_hex,
     const nostr_secure_buf *sender_seckey,
@@ -103,7 +105,7 @@ int nostr_nip04_encrypt_legacy_secure(
  * Like nostr_nip04_decrypt but takes the receiver secret key as a secure
  * buffer. It has the same uniform "decrypt failed" error contract.
  */
-int nostr_nip04_decrypt_secure(
+NOSTR_NIP04_API int nostr_nip04_decrypt_secure(
     const char *content_b64_qiv,
     const char *sender_pubkey_hex,
     const nostr_secure_buf *receiver_seckey,
@@ -121,7 +123,7 @@ int nostr_nip04_decrypt_secure(
  *
  * Returns: 1 when legacy CBC decrypt is available; 0 in strict AEAD-only builds.
  */
-int nostr_nip04_legacy_decrypt_enabled(void);
+NOSTR_NIP04_API int nostr_nip04_legacy_decrypt_enabled(void);
 
 /**
  * nostr_nip04_shared_secret_hex: DEPRECATED — do not use in new code.
@@ -138,7 +140,7 @@ int nostr_nip04_legacy_decrypt_enabled(void);
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((deprecated("nostr_nip04_shared_secret_hex is deprecated; use AEAD encrypt/decrypt instead")))
 #endif
-int nostr_nip04_shared_secret_hex(
+NOSTR_NIP04_API int nostr_nip04_shared_secret_hex(
     const char *peer_pubkey_hex,
     const char *self_seckey_hex,
     char **out_shared_hex,

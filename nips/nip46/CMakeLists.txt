@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip46)
 
@@ -5,7 +7,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
 endif()
 # One version for the NIP-46 core and optional GLib client/bunker layer.
-declare_component_version(nip46 0 1 0)
+declare_component_version(nip46 0 2 0)
 
 set(NIP46_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -17,6 +19,8 @@ set(NIP46_CORE_SRC
 )
 
 add_library(nostr_nip46_core STATIC ${NIP46_CORE_SRC})
+nostrc_library_visibility(nostr_nip46_core NOSTR_NIP46_API
+  nostr/nip46/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip46")
 target_include_directories(nostr_nip46_core PUBLIC ${NIP46_INC})
 # Ensure nip44/nip04 headers are visible and libraries linked
 target_include_directories(nostr_nip46_core PUBLIC
@@ -34,6 +38,8 @@ if (NOSTR_WITH_GLIB AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GIO REQUIRED gio-2.0)
   add_library(nostr_nip46_glib ${NIP46_GLIB_SRC})
+  nostrc_library_visibility(nostr_nip46_glib NOSTR_NIP46_GLIB_API
+    nostr/nip46/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip46")
   target_include_directories(nostr_nip46_glib PUBLIC ${NIP46_INC} ${GIO_INCLUDE_DIRS})
   target_link_directories(nostr_nip46_glib PUBLIC ${GIO_LIBRARY_DIRS})
   if (TARGET nostr_glib)

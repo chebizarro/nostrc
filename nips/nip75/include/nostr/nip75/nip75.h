@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP75_NOSTR_NIP75_NIP75_H
 #define NIPS_NIP75_NOSTR_NIP75_NIP75_H
 
+#include <nostr/nip75/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,7 +56,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if no "amount" tag
  */
-int nostr_nip75_parse(const NostrEvent *ev, NostrNip75Goal *out);
+NOSTR_NIP75_API int nostr_nip75_parse(const NostrEvent *ev, NostrNip75Goal *out);
 
 /**
  * nostr_nip75_validate:
@@ -64,7 +66,7 @@ int nostr_nip75_parse(const NostrEvent *ev, NostrNip75Goal *out);
  *
  * Returns: true if valid zap goal event
  */
-bool nostr_nip75_validate(const NostrEvent *ev);
+NOSTR_NIP75_API bool nostr_nip75_validate(const NostrEvent *ev);
 
 /**
  * nostr_nip75_is_zap_goal:
@@ -72,7 +74,7 @@ bool nostr_nip75_validate(const NostrEvent *ev);
  *
  * Returns: true if event kind is 9041
  */
-bool nostr_nip75_is_zap_goal(const NostrEvent *ev);
+NOSTR_NIP75_API bool nostr_nip75_is_zap_goal(const NostrEvent *ev);
 
 /**
  * nostr_nip75_get_relays:
@@ -85,7 +87,7 @@ bool nostr_nip75_is_zap_goal(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip75_get_relays(const NostrEvent *ev, const char **relays,
+NOSTR_NIP75_API int nostr_nip75_get_relays(const NostrEvent *ev, const char **relays,
                             size_t max, size_t *out_count);
 
 /**
@@ -95,7 +97,7 @@ int nostr_nip75_get_relays(const NostrEvent *ev, const char **relays,
  *
  * Returns: true if goal has a deadline and it has passed
  */
-bool nostr_nip75_is_expired(const NostrNip75Goal *goal, int64_t now);
+NOSTR_NIP75_API bool nostr_nip75_is_expired(const NostrNip75Goal *goal, int64_t now);
 
 /**
  * nostr_nip75_is_complete:
@@ -104,7 +106,7 @@ bool nostr_nip75_is_expired(const NostrNip75Goal *goal, int64_t now);
  *
  * Returns: true if current >= target
  */
-bool nostr_nip75_is_complete(int64_t current_msats, int64_t target_msats);
+NOSTR_NIP75_API bool nostr_nip75_is_complete(int64_t current_msats, int64_t target_msats);
 
 /**
  * nostr_nip75_progress_percent:
@@ -113,7 +115,7 @@ bool nostr_nip75_is_complete(int64_t current_msats, int64_t target_msats);
  *
  * Returns: progress as 0.0–100.0+ percentage, 0.0 if target is 0
  */
-double nostr_nip75_progress_percent(int64_t current_msats,
+NOSTR_NIP75_API double nostr_nip75_progress_percent(int64_t current_msats,
                                      int64_t target_msats);
 
 /**
@@ -127,7 +129,7 @@ double nostr_nip75_progress_percent(int64_t current_msats,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip75_create_goal(NostrEvent *ev, const NostrNip75Goal *goal,
+NOSTR_NIP75_API int nostr_nip75_create_goal(NostrEvent *ev, const NostrNip75Goal *goal,
                              const char *content);
 
 /**
@@ -140,7 +142,7 @@ int nostr_nip75_create_goal(NostrEvent *ev, const NostrNip75Goal *goal,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip75_add_relays(NostrEvent *ev, const char **relays,
+NOSTR_NIP75_API int nostr_nip75_add_relays(NostrEvent *ev, const char **relays,
                             size_t n_relays);
 
 #ifdef __cplusplus

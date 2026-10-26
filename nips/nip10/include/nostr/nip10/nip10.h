@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP10_NOSTR_NIP10_NIP10_H
 #define NIPS_NIP10_NOSTR_NIP10_NIP10_H
 
+#include <nostr/nip10/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -35,7 +37,7 @@ typedef enum { NOSTR_E_MARK_NONE=0, NOSTR_E_MARK_ROOT, NOSTR_E_MARK_REPLY } Nost
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int nostr_nip10_add_marked_e_tag(NostrEvent *ev,
+NOSTR_NIP10_API int nostr_nip10_add_marked_e_tag(NostrEvent *ev,
                                  const unsigned char event_id[32],
                                  const char *relay_opt,
                                  NostrEMarker marker,
@@ -68,7 +70,7 @@ typedef struct {
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int  nostr_nip10_get_thread(const NostrEvent *ev, NostrThreadContext *out);
+NOSTR_NIP10_API int  nostr_nip10_get_thread(const NostrEvent *ev, NostrThreadContext *out);
 
 /**
  * nostr_nip10_ensure_p_participants:
@@ -81,7 +83,7 @@ int  nostr_nip10_get_thread(const NostrEvent *ev, NostrThreadContext *out);
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int  nostr_nip10_ensure_p_participants(NostrEvent *reply_ev, const NostrEvent *parent_ev);
+NOSTR_NIP10_API int  nostr_nip10_ensure_p_participants(NostrEvent *reply_ev, const NostrEvent *parent_ev);
 
 /**
  * NostrNip10ThreadInfo:
@@ -106,7 +108,7 @@ typedef struct {
  *
  * Frees the strings within a NostrNip10ThreadInfo and sets them to NULL.
  */
-void nostr_nip10_thread_info_clear(NostrNip10ThreadInfo *info);
+NOSTR_NIP10_API void nostr_nip10_thread_info_clear(NostrNip10ThreadInfo *info);
 
 /**
  * nostr_nip10_parse_thread_from_event:
@@ -122,7 +124,7 @@ void nostr_nip10_thread_info_clear(NostrNip10ThreadInfo *info);
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int nostr_nip10_parse_thread_from_event(const NostrEvent *ev, NostrNip10ThreadInfo *info);
+NOSTR_NIP10_API int nostr_nip10_parse_thread_from_event(const NostrEvent *ev, NostrNip10ThreadInfo *info);
 
 /**
  * nostr_nip10_parse_thread_from_json:
@@ -138,7 +140,7 @@ int nostr_nip10_parse_thread_from_event(const NostrEvent *ev, NostrNip10ThreadIn
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int nostr_nip10_parse_thread_from_json(const char *json_str, NostrNip10ThreadInfo *info);
+NOSTR_NIP10_API int nostr_nip10_parse_thread_from_json(const char *json_str, NostrNip10ThreadInfo *info);
 
 /**
  * nostr_nip10_parse_thread_from_tags:
@@ -150,7 +152,7 @@ int nostr_nip10_parse_thread_from_json(const char *json_str, NostrNip10ThreadInf
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadInfo *info);
+NOSTR_NIP10_API int nostr_nip10_parse_thread_from_tags(const NostrTags *tags, NostrNip10ThreadInfo *info);
 
 #ifdef __cplusplus
 }

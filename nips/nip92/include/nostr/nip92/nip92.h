@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP92_NOSTR_NIP92_NIP92_H
 #define NIPS_NIP92_NOSTR_NIP92_NIP92_H
 
+#include <nostr/nip92/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,7 +59,7 @@ typedef struct {
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip92_parse(const NostrEvent *ev, NostrNip92Entry *entries,
+NOSTR_NIP92_API int nostr_nip92_parse(const NostrEvent *ev, NostrNip92Entry *entries,
                        size_t max_entries, size_t *out_count);
 
 /**
@@ -70,7 +72,7 @@ int nostr_nip92_parse(const NostrEvent *ev, NostrNip92Entry *entries,
  *
  * Returns: 0 on success, -ENOENT if not found, -EINVAL on error
  */
-int nostr_nip92_find_url(const NostrEvent *ev, const char *url,
+NOSTR_NIP92_API int nostr_nip92_find_url(const NostrEvent *ev, const char *url,
                           NostrNip92Entry *out);
 
 /**
@@ -81,7 +83,7 @@ int nostr_nip92_find_url(const NostrEvent *ev, const char *url,
  *
  * Returns: number of imeta entries, or 0 if none
  */
-size_t nostr_nip92_count(const NostrEvent *ev);
+NOSTR_NIP92_API size_t nostr_nip92_count(const NostrEvent *ev);
 
 /**
  * nostr_nip92_build_tag:
@@ -94,7 +96,7 @@ size_t nostr_nip92_count(const NostrEvent *ev);
  *
  * Returns: (transfer full) (nullable): new NostrTag, or NULL on error
  */
-NostrTag *nostr_nip92_build_tag(const NostrNip92Entry *entry);
+NOSTR_NIP92_API NostrTag *nostr_nip92_build_tag(const NostrNip92Entry *entry);
 
 /**
  * nostr_nip92_add:
@@ -105,7 +107,7 @@ NostrTag *nostr_nip92_build_tag(const NostrNip92Entry *entry);
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip92_add(NostrEvent *ev, const NostrNip92Entry *entry);
+NOSTR_NIP92_API int nostr_nip92_add(NostrEvent *ev, const NostrNip92Entry *entry);
 
 #ifdef __cplusplus
 }

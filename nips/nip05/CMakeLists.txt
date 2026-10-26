@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip05)
 
@@ -16,6 +18,8 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip05 ${SOURCES})
+nostrc_library_visibility(nip05 NOSTR_NIP05_API
+  nostr/nip05/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip05")
 # MinGW has POSIX regex in a separate library (-lregex)
 if(WIN32 AND MINGW)
   target_link_libraries(nip05 PUBLIC nostr CURL::libcurl regex)

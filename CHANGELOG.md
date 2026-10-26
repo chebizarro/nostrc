@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
   Shared-library export sets and Windows static annotations are unchanged.
 
 ### Breaking library ABI changes
+- NIP-19, NIP-34, NIP-46 and NIP-59 are now 0.2.0; NIP-55L is 0.8.0;
+  Communikeys is 3.0.0. All NIP library targets now compile hidden-by-default
+  and export declared public APIs through package-owned generated headers.
+  Rebuild consumers with the matching development headers; incidental private
+  symbols are no longer an ABI. Unversioned NIP targets adopt the same boundary.
+  NIP-55L daemon/Grotto gate consumers link its private static implementation
+  closure rather than importing private permission/caller symbols from the
+  GLib DSO; generated D-Bus bindings remain exported by that DSO.
 - libnostr 2.0.0 and libnostr-json 2.0.0 export their declared public APIs
   instead of incidental implementation and embedded-archive symbols. Their
   shared-library ABI majors change from 1 to 2; rebuild dependent binaries.

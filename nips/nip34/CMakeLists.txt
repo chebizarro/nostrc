@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip34 C)
 
 if(NOT COMMAND declare_component_version)
@@ -10,6 +12,8 @@ include(GNUInstallDirs)
 file(GLOB NIP34_SOURCES "src/*.c")
 
 add_library(nip34 ${NIP34_SOURCES})
+nostrc_library_visibility(nip34 NOSTR_NIP34_API
+  nostr/nip34/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip34")
 target_compile_features(nip34 PRIVATE c_std_11)
 
 target_include_directories(nip34
@@ -22,7 +26,7 @@ target_link_libraries(nip34 PUBLIC nostr)
 
 # nostrc-4c0o: real SONAME (libnip34.so.0), shipped once in libnostr-nips0
 # (plan D-6) instead of privately inside libhanami0. Same policy as nip19.
-declare_component_version(nip34 0 1 0)
+declare_component_version(nip34 0 2 0)
 set_target_properties(nip34 PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
 apply_versioning(nip34)

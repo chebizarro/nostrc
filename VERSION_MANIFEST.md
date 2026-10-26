@@ -25,8 +25,8 @@ files already declare a version.
 | Grotto (Preview) | `apps/grotto/` | 0.1.0 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
-| NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
-| nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
+| NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
+| nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.5.2 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
@@ -36,14 +36,113 @@ files already declare a version.
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
 | libvault | `libvault/` | 0.5.1 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.3.1 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
-| nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
+| nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
-| nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
-| nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
+| nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
+| nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
+| nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.2 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### NIP visibility boundaries (nostrc-er4fz.10 phase B2)
+
+Hidden-by-default compilation removes incidental implementation exports without
+changing declared C signatures. Generated package-owned export headers are now
+required alongside the public headers. Core and optional GLib DLLs own separate
+macros. Static and OBJECT APIs retain default ELF visibility for executable-owned
+archive resolution; an OBJECT target is not a separate DLL exporter. bud02 was
+already conformant and remains 0.1.1 (no bump).
+
+The versioned NIPs below take an incompatible MINOR (pre-1.0) or MAJOR (stable)
+bump. Other NIP targets have no authoritative numeric version and are not listed
+as independently versioned components above: record the breaking export-boundary
+change, but do not invent a numeric base or a release tag. Their installed CMake
+export headers are still part of the owning package's build contract.
+
+| NIP package | Declared version | Decision / authoritative source |
+| --- | --- | --- |
+| `nip-cas0010` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip-cas0010/CMakeLists.txt` |
+| `nip-communikeys` | 3.0.0 | MAJOR 2.0.0 -> 3.0.0; `NIP_COMMUNIKEYS_VERSION`; `nips/nip-communikeys/CMakeLists.txt` |
+| `nip-concord` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip-concord/CMakeLists.txt` |
+| `nip01` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip01/CMakeLists.txt` |
+| `nip02` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip02/CMakeLists.txt` |
+| `nip04` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip04/CMakeLists.txt` |
+| `nip05` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip05/CMakeLists.txt` |
+| `nip06` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip06/CMakeLists.txt` |
+| `nip10` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip10/CMakeLists.txt` |
+| `nip11` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip11/CMakeLists.txt` |
+| `nip13` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip13/CMakeLists.txt` |
+| `nip14` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip14/CMakeLists.txt` |
+| `nip17` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip17/CMakeLists.txt` |
+| `nip18` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip18/CMakeLists.txt` |
+| `nip19` | 0.2.0 | MINOR 0.1.0 -> 0.2.0; `declare_component_version`; `nips/nip19/CMakeLists.txt` |
+| `nip21` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip21/CMakeLists.txt` |
+| `nip22` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip22/CMakeLists.txt` |
+| `nip23` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip23/CMakeLists.txt` |
+| `nip24` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip24/CMakeLists.txt` |
+| `nip25` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip25/CMakeLists.txt` |
+| `nip27` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip27/CMakeLists.txt` |
+| `nip28` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip28/CMakeLists.txt` |
+| `nip29` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip29/CMakeLists.txt` |
+| `nip30` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip30/CMakeLists.txt` |
+| `nip31` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip31/CMakeLists.txt` |
+| `nip34` | 0.2.0 | MINOR 0.1.0 -> 0.2.0; `declare_component_version`; `nips/nip34/CMakeLists.txt` |
+| `nip39` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip39/CMakeLists.txt` |
+| `nip40` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip40/CMakeLists.txt` |
+| `nip42` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip42/CMakeLists.txt` |
+| `nip44` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip44/CMakeLists.txt` |
+| `nip45` | Unversioned | No bump: inline-only public API; empty library translation unit has no exports; `nips/nip45/CMakeLists.txt` |
+| `nip46` | 0.2.0 | MINOR 0.1.0 -> 0.2.0; `declare_component_version` (core + GLib); `nips/nip46/CMakeLists.txt` |
+| `nip47` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip47/CMakeLists.txt` |
+| `nip49` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip49/CMakeLists.txt` |
+| `nip50` | Unversioned | No bump: inline-only public API; empty library translation unit has no exports; `nips/nip50/CMakeLists.txt` |
+| `nip51` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip51/CMakeLists.txt` |
+| `nip52` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip52/CMakeLists.txt` |
+| `nip53` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip53/CMakeLists.txt` |
+| `nip54` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip54/CMakeLists.txt` |
+| `nip55l` | 0.8.0 | MINOR 0.7.0 -> 0.8.0; `include/nostr/nip55l/signer_ops.h` (core + GLib + private service closure); `nips/nip55l/CMakeLists.txt` |
+| `nip57` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip57/CMakeLists.txt` |
+| `nip58` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip58/CMakeLists.txt` |
+| `nip59` | 0.2.0 | MINOR 0.1.0 -> 0.2.0; `project` + generated component version; `nips/nip59/CMakeLists.txt` |
+| `nip5f` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip5f/CMakeLists.txt` |
+| `nip60` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip60/CMakeLists.txt` |
+| `nip61` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip61/CMakeLists.txt` |
+| `nip65` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip65/CMakeLists.txt` |
+| `nip70` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip70/CMakeLists.txt` |
+| `nip73` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip73/CMakeLists.txt` |
+| `nip75` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip75/CMakeLists.txt` |
+| `nip77` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip77/CMakeLists.txt` |
+| `nip86` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip86/CMakeLists.txt` |
+| `nip92` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip92/CMakeLists.txt` |
+| `nip94` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip94/CMakeLists.txt` |
+| `nip98` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip98/CMakeLists.txt` |
+| `nip99` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip99/CMakeLists.txt` |
+| `nipb0` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nipb0/CMakeLists.txt` |
+| `schema` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/schema/CMakeLists.txt` |
+
+NIP-55L keeps its gate/evaluator/caller APIs private: daemon and Grotto consumers
+link the static implementation closure instead of importing those symbols from
+the GLib DSO. The GLib DSO exposes the generated D-Bus bindings with its own
+export macro and installed generated header. This does not change consent,
+principal derivation, persistence or wire behavior. Grotto, Signet and
+nostr-gobject receive build/dependency wiring only: no independent bump. No
+release columns or tags are changed. NIP-47/49 GLib implementations include
+  their own annotated public headers; NIP-5F's TCP example/test compile their
+  stateless private framing helper rather than importing it. Relayd's NIP-11
+  include follows its existing capability guard (no protocol behavior change).
+  These remain in the same B2 boundary/version decisions; relayd has no
+  authoritative numeric component version. The gnostr chess plugin receives
+  NIP-46 compile usage requirements without embedding a second host-owned core;
+  gnostr has no independent bump for this dependency wiring.
+
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase B2 infrastructure: no independent component bump
+  for the CMake visibility helper or NIP generators. OBJECT libraries use
+  archive-style annotations owned by their final consumer, including default
+  visibility of public ELF definitions. New NIP headers and generated CMake
+  use a package-owned export macro. Package ABI decisions are recorded below.
 
 - nostrc-ctisj: Groundhog stays 0.12.0 (no bump). The multi-send and MLS-files
   test executables compile the Blossom adapter directly and must declare its

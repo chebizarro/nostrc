@@ -28,7 +28,6 @@
 #include <openssl/rand.h>
 
 #include "metrics.h"
-#include "nip11.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-json.h"

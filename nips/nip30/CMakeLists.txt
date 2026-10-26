@@ -1,7 +1,11 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip30)
 
 add_library(nip30 OBJECT
     src/nip30.c)
+nostrc_library_visibility(nip30 NOSTR_NIP30_API
+  nostr/nip30/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip30")
 
 target_include_directories(nip30
     PUBLIC

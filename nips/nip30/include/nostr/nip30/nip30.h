@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP30_NOSTR_NIP30_NIP30_H
 #define NIPS_NIP30_NOSTR_NIP30_NIP30_H
 
+#include <nostr/nip30/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,7 +48,7 @@ typedef struct {
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip30_parse(const NostrEvent *ev, NostrNip30Emoji *entries,
+NOSTR_NIP30_API int nostr_nip30_parse(const NostrEvent *ev, NostrNip30Emoji *entries,
                        size_t max_entries, size_t *out_count);
 
 /**
@@ -55,7 +57,7 @@ int nostr_nip30_parse(const NostrEvent *ev, NostrNip30Emoji *entries,
  *
  * Returns: number of "emoji" tags
  */
-size_t nostr_nip30_count(const NostrEvent *ev);
+NOSTR_NIP30_API size_t nostr_nip30_count(const NostrEvent *ev);
 
 /**
  * nostr_nip30_get_url:
@@ -66,7 +68,7 @@ size_t nostr_nip30_count(const NostrEvent *ev);
  *
  * Returns: (transfer none) (nullable): borrowed URL or NULL
  */
-const char *nostr_nip30_get_url(const NostrEvent *ev, const char *shortcode);
+NOSTR_NIP30_API const char *nostr_nip30_get_url(const NostrEvent *ev, const char *shortcode);
 
 /**
  * nostr_nip30_find_all:
@@ -80,7 +82,7 @@ const char *nostr_nip30_get_url(const NostrEvent *ev, const char *shortcode);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip30_find_all(const char *content, NostrNip30Match *matches,
+NOSTR_NIP30_API int nostr_nip30_find_all(const char *content, NostrNip30Match *matches,
                           size_t max, size_t *out_count);
 
 /**
@@ -106,7 +108,7 @@ typedef const char *(*NostrNip30Replacer)(const char *name, size_t name_len,
  * Returns: (transfer full) (nullable): new string with replacements,
  *          caller must free(). NULL on allocation error.
  */
-char *nostr_nip30_replace_all(const char *content,
+NOSTR_NIP30_API char *nostr_nip30_replace_all(const char *content,
                                NostrNip30Replacer replacer,
                                void *user_data);
 
@@ -120,7 +122,7 @@ char *nostr_nip30_replace_all(const char *content,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip30_add_emoji(NostrEvent *ev, const char *shortcode,
+NOSTR_NIP30_API int nostr_nip30_add_emoji(NostrEvent *ev, const char *shortcode,
                            const char *url);
 
 #ifdef __cplusplus

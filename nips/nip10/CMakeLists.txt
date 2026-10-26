@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip10)
 
@@ -6,6 +8,8 @@ file(GLOB SOURCES "src/*.c")
 
 # Library
 add_library(nip10 ${SOURCES})
+nostrc_library_visibility(nip10 NOSTR_NIP10_API
+  nostr/nip10/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip10")
 target_link_libraries(nip10 nostr)
 target_include_directories(nip10
     PUBLIC

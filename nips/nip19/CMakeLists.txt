@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip19)
 
@@ -14,13 +16,15 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip19 ${SOURCES})
+nostrc_library_visibility(nip19 NOSTR_NIP19_API
+  nostr/nip19/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip19")
 target_link_libraries(nip19 nostr)
 
 # nostrc-4c0o: a real SONAME (libnip19.so.0 -> libnip19.so.0.1.0), mirroring
 # libnostr, so the shared build can ship once in libnostr-nips0 (plan D-6)
 # with ABI-based dependencies instead of a private copy per consumer.
 # Pre-1.0: bump the minor for additions, SOVERSION for any ABI break.
-declare_component_version(nip19 0 1 0)
+declare_component_version(nip19 0 2 0)
 set_target_properties(nip19 PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
 apply_versioning(nip19)

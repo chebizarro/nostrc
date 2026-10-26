@@ -1,4 +1,5 @@
 /* Minimal NIP-86 implementation with NIP-98 Authorization verification. */
+#include "nip86.h"
 
 #include <time.h>
 #include <openssl/sha.h>

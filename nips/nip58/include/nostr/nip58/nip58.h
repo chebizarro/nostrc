@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP58_NOSTR_NIP58_NIP58_H
 #define NIPS_NIP58_NOSTR_NIP58_NIP58_H
 
+#include <nostr/nip58/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,7 +51,7 @@ typedef struct {
  *
  * Returns: 0 on success (found "d" tag), -EINVAL on bad input, -ENOENT if no "d" tag
  */
-int nostr_nip58_parse_definition(const NostrEvent *ev, NostrNip58BadgeDef *out);
+NOSTR_NIP58_API int nostr_nip58_parse_definition(const NostrEvent *ev, NostrNip58BadgeDef *out);
 
 /**
  * nostr_nip58_validate_definition:
@@ -59,7 +61,7 @@ int nostr_nip58_parse_definition(const NostrEvent *ev, NostrNip58BadgeDef *out);
  *
  * Returns: true if valid badge definition event
  */
-bool nostr_nip58_validate_definition(const NostrEvent *ev);
+NOSTR_NIP58_API bool nostr_nip58_validate_definition(const NostrEvent *ev);
 
 /**
  * nostr_nip58_create_definition:
@@ -71,7 +73,7 @@ bool nostr_nip58_validate_definition(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip58_create_definition(NostrEvent *ev, const NostrNip58BadgeDef *def);
+NOSTR_NIP58_API int nostr_nip58_create_definition(NostrEvent *ev, const NostrNip58BadgeDef *def);
 
 /* ============== Badge Award (kind 8) ============== */
 
@@ -91,7 +93,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if no "a" tag
  */
-int nostr_nip58_parse_award(const NostrEvent *ev, NostrNip58BadgeAward *out);
+NOSTR_NIP58_API int nostr_nip58_parse_award(const NostrEvent *ev, NostrNip58BadgeAward *out);
 
 /**
  * nostr_nip58_validate_award:
@@ -101,7 +103,7 @@ int nostr_nip58_parse_award(const NostrEvent *ev, NostrNip58BadgeAward *out);
  *
  * Returns: true if valid badge award event
  */
-bool nostr_nip58_validate_award(const NostrEvent *ev);
+NOSTR_NIP58_API bool nostr_nip58_validate_award(const NostrEvent *ev);
 
 /**
  * nostr_nip58_award_count_awardees:
@@ -111,7 +113,7 @@ bool nostr_nip58_validate_award(const NostrEvent *ev);
  *
  * Returns: number of awardees
  */
-size_t nostr_nip58_award_count_awardees(const NostrEvent *ev);
+NOSTR_NIP58_API size_t nostr_nip58_award_count_awardees(const NostrEvent *ev);
 
 /**
  * nostr_nip58_award_get_awardees:
@@ -124,7 +126,7 @@ size_t nostr_nip58_award_count_awardees(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip58_award_get_awardees(const NostrEvent *ev,
+NOSTR_NIP58_API int nostr_nip58_award_get_awardees(const NostrEvent *ev,
                                     const char **pubkeys, size_t max,
                                     size_t *out_count);
 
@@ -139,7 +141,7 @@ int nostr_nip58_award_get_awardees(const NostrEvent *ev,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip58_create_award(NostrEvent *ev, const char *badge_ref,
+NOSTR_NIP58_API int nostr_nip58_create_award(NostrEvent *ev, const char *badge_ref,
                               const char **pubkeys, size_t n_pubkeys);
 
 /* ============== Profile Badges (kind 30008) ============== */
@@ -166,7 +168,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if invalid d tag
  */
-int nostr_nip58_parse_profile_badges(const NostrEvent *ev,
+NOSTR_NIP58_API int nostr_nip58_parse_profile_badges(const NostrEvent *ev,
                                       NostrNip58ProfileBadge *entries,
                                       size_t max_entries, size_t *out_count);
 
@@ -178,7 +180,7 @@ int nostr_nip58_parse_profile_badges(const NostrEvent *ev,
  *
  * Returns: true if valid profile badges event
  */
-bool nostr_nip58_validate_profile_badges(const NostrEvent *ev);
+NOSTR_NIP58_API bool nostr_nip58_validate_profile_badges(const NostrEvent *ev);
 
 /**
  * nostr_nip58_create_profile_badges:
@@ -190,7 +192,7 @@ bool nostr_nip58_validate_profile_badges(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip58_create_profile_badges(NostrEvent *ev,
+NOSTR_NIP58_API int nostr_nip58_create_profile_badges(NostrEvent *ev,
                                        const NostrNip58ProfileBadge *badges,
                                        size_t n_badges);
 

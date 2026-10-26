@@ -1,6 +1,8 @@
 #ifndef NIP94_H
 #define NIP94_H
 
+#include <nostr/nip94/export.h>
+
 #include <stdbool.h>
 
 typedef struct {
@@ -18,10 +20,10 @@ typedef struct {
     char *Thumb;
 } FileMetadata;
 
-FileMetadata parse_file_metadata(const char *event_content);
-bool is_video(const FileMetadata *fm);
-bool is_image(const FileMetadata *fm);
-char *display_image(const FileMetadata *fm);
-void free_file_metadata(FileMetadata *fm);
+NOSTR_NIP94_API FileMetadata parse_file_metadata(const char *event_content);
+NOSTR_NIP94_API bool is_video(const FileMetadata *fm);
+NOSTR_NIP94_API bool is_image(const FileMetadata *fm);
+NOSTR_NIP94_API char *display_image(const FileMetadata *fm);
+NOSTR_NIP94_API void free_file_metadata(FileMetadata *fm);
 
 #endif // NIP94_H

@@ -43,6 +43,12 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     $<TARGET_PROPERTY:nostr,INTERFACE_INCLUDE_DIRECTORIES>)
 target_compile_definitions(${PLUGIN_NAME} PRIVATE
     $<TARGET_PROPERTY:nostr,INTERFACE_COMPILE_DEFINITIONS>)
+if(TARGET nostr_nip46_core)
+    target_include_directories(${PLUGIN_NAME} PRIVATE
+        $<TARGET_PROPERTY:nostr_nip46_core,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${PLUGIN_NAME} PRIVATE
+        $<TARGET_PROPERTY:nostr_nip46_core,INTERFACE_COMPILE_DEFINITIONS>)
+endif()
 
 # nsync headers (cache var set by libnostr's find_path)
 if(NOT NSYNC_INCLUDE_DIR)
