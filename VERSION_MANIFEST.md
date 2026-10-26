@@ -222,6 +222,11 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   shared build follows the CMake executable-owned core policy. Build correction
   folded into the unreleased nostr-gobject 3.0.0 above; no further bump.
 
+- nostrc-dwwq5: nostr-gobject's Meson recipe now requires the CMake NIP-11
+  archive and compiles the declared relay NIP-11 API, matching its CMake build.
+  This PATCH-class build correction is folded into unreleased 3.0.0; no further
+  version bump or release-column change.
+
 - nostrc-er4fz.10 phase C: nostr-gobject MAJOR 2.5.0 -> 3.0.0 (SONAME 3).
   The library is compiled hidden-by-default. Declared functions, GTypes,
   enum/flags type functions, error quarks and the generated signer proxy are
