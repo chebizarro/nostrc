@@ -45,6 +45,12 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-er4fz.10 phase B2 infrastructure: no independent component bump
+  for the CMake visibility helper or NIP generators. OBJECT libraries use
+  archive-style annotations owned by their final consumer, including default
+  visibility of public ELF definitions. New NIP headers and generated CMake
+  use a package-owned export macro. Package ABI decisions are recorded below.
+
 - nostrc-ctisj: Groundhog stays 0.12.0 (no bump). The multi-send and MLS-files
   test executables compile the Blossom adapter directly and must declare its
   bud02 dependency. Test-only usage requirements; no shipped artifact, public
