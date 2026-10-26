@@ -1,3 +1,4 @@
+#include "nostr/nip44/nip44.h"
 #include <stdint.h>
 #include <string.h>
 #include <openssl/crypto.h>
