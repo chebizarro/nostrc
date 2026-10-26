@@ -5,6 +5,7 @@
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
