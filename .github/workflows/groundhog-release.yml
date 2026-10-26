@@ -184,7 +184,7 @@ jobs:
           UPSTREAM_VERSION: ${{ needs.source.outputs.version }}
         run: |
           set -eux
-          dnf install -y -q rpm-build rpmdevtools dnf-plugins-core xorg-x11-server-Xvfb dbus-daemon
+          dnf install -y -q rpm-build rpmdevtools dnf-plugins-core xorg-x11-server-Xvfb dbus-daemon patch
           tar -xzf src/groundhog-*.tar.gz
           dnf builddep -y -q groundhog-*/packaging/rpm/groundhog.spec
           rpmdev-setuptree

@@ -10,7 +10,11 @@ The root CMake build uses `cmake/NostrdbPatches.cmake` for both `nostrdb`
 (libnostr backend) and `nostrdb_vendored` (private storage backend). It copies
 `src/`, `deps/lmdb/`, CCAN's SHA256 directory, and the native test source into
 the build directory, applies these patches with
-`patch -f -F 0 -p1`, and compiles those copies. A `patch` executable is required.
+`patch -f -F 0 -p1`, and compiles those copies. A `patch` executable is required
+only when either vendor target exists. GNU patch and macOS `/usr/bin/patch` are
+supported. Install `patch` with the platform package manager, or set the CMake
+cache entry `NOSTRC_PATCH_EXECUTABLE` to its absolute path. Missing tools stop
+configure with an actionable error; patches are never silently skipped.
 The submodule, including its signed test fixtures, is never modified. Original
 inputs and patches are configure dependencies. Patch failure stops configure;
 a vendor update must reconcile or retire the affected patch, not disable it.

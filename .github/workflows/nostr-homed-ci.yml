@@ -42,7 +42,7 @@ jobs:
             image: fedora:40
             update: dnf -y update
             install: >-
-              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++
+              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++ patch
               jansson-devel glib2-devel gobject-introspection-devel
               sqlite-devel libcurl-devel
               fuse3-devel

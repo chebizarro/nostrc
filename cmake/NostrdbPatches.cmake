@@ -5,7 +5,14 @@ function(nostrc_patch_nostrdb target)
   if(NOT TARGET ${target})
     return()
   endif()
-  find_program(NOSTRC_PATCH_EXECUTABLE patch REQUIRED)
+  find_program(NOSTRC_PATCH_EXECUTABLE NAMES patch)
+  if(NOT NOSTRC_PATCH_EXECUTABLE)
+    message(FATAL_ERROR
+      "${target}: vendored nostrdb requires the 'patch' executable at configure time. "
+      "Install patch with your package manager (macOS also provides /usr/bin/patch), "
+      "or set NOSTRC_PATCH_EXECUTABLE to its absolute path. "
+      "The required vendor fixes will not be skipped.")
+  endif()
   set(_queue "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../third_party/patches/nostrdb")
   set(_overlay "${CMAKE_BINARY_DIR}/nostrdb-patched/${target}")
   get_target_property(_sources ${target} SOURCES)
