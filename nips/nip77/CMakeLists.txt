@@ -49,13 +49,16 @@ install(TARGETS nostr_nip77 EXPORT nostr-nip77-targets ARCHIVE DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
 
 # Optional GLib wrapper
-if(WITH_NIP77_GLIB AND NOSTR_HAVE_GLIB)
+if(WITH_NIP77_GLIB AND NOSTR_WITH_GLIB)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(NIP77_GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
   add_library(nostr_nip77_glib STATIC
     src/negentropy-glib.c
   )
   nostrc_library_visibility(nostr_nip77_glib NOSTR_NIP77_GLIB_API
     nostr/nip77/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip77")
-  target_link_libraries(nostr_nip77_glib PUBLIC nostr_nip77)
+  target_compile_definitions(nostr_nip77_glib PUBLIC NOSTR_HAVE_GLIB=1)
+  target_link_libraries(nostr_nip77_glib PUBLIC nostr_nip77 PkgConfig::NIP77_GLIB)
   target_include_directories(nostr_nip77_glib PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)

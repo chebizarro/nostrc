@@ -49,8 +49,8 @@ if (TARGET libgo)
 endif()
 
 # Link NIP-77 library if available
-if (TARGET nostr_nip77_core)
-    target_link_libraries(${PLUGIN_NAME} PRIVATE nostr_nip77_core)
+if (TARGET nostr_nip77)
+    target_link_libraries(${PLUGIN_NAME} PRIVATE nostr_nip77)
     target_compile_definitions(${PLUGIN_NAME} PRIVATE HAVE_NIP77=1)
 endif()
 

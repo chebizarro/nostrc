@@ -404,6 +404,13 @@ char *nostr_nip65_normalize_url(const char *url) {
     while (*url && isspace((unsigned char)*url)) url++;
     if (!*url) return NULL;
 
+    /* Trim surrounding whitespace, but reject it anywhere inside the URL. */
+    const char *url_end = url + strlen(url);
+    while (url_end > url && isspace((unsigned char)url_end[-1])) url_end--;
+    for (const char *p = url; p < url_end; ++p) {
+        if (isspace((unsigned char)*p)) return NULL;
+    }
+
     /* Check scheme */
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
@@ -420,14 +427,14 @@ char *nostr_nip65_normalize_url(const char *url) {
 
     /* Find host start */
     const char *host_start = scheme_end + 3;
-    if (!*host_start) {
+    if (host_start >= url_end) {
         free(scheme);
         return NULL;
     }
 
     /* Find host end (port or path) */
     const char *host_end = host_start;
-    while (*host_end && *host_end != ':' && *host_end != '/' && *host_end != '?' && *host_end != '#') {
+    while (host_end < url_end && *host_end != ':' && *host_end != '/' && *host_end != '?' && *host_end != '#') {
         host_end++;
     }
 
@@ -454,7 +461,7 @@ char *nostr_nip65_normalize_url(const char *url) {
     if (*host_end == ':') {
         const char *port_start = host_end + 1;
         const char *port_end = port_start;
-        while (*port_end && *port_end != '/' && *port_end != '?' && *port_end != '#') {
+        while (port_end < url_end && *port_end != '/' && *port_end != '?' && *port_end != '#') {
             port_end++;
         }
         size_t port_len = port_end - port_start;
@@ -472,7 +479,7 @@ char *nostr_nip65_normalize_url(const char *url) {
     char *path = NULL;
     if (*path_start == '/') {
         const char *path_end = path_start;
-        while (*path_end && *path_end != '?' && *path_end != '#') {
+        while (path_end < url_end && *path_end != '?' && *path_end != '#') {
             path_end++;
         }
         size_t path_len = path_end - path_start;

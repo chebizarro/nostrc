@@ -116,11 +116,11 @@ export headers are still part of the owning package's build contract.
 | `nip5f` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip5f/CMakeLists.txt` |
 | `nip60` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip60/CMakeLists.txt` |
 | `nip61` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip61/CMakeLists.txt` |
-| `nip65` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip65/CMakeLists.txt` |
+| `nip65` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; PATCH-level surrounding-whitespace normalization fix and internal-whitespace rejection (nostrc-ne170); `nips/nip65/CMakeLists.txt` |
 | `nip70` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip70/CMakeLists.txt` |
 | `nip73` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip73/CMakeLists.txt` |
 | `nip75` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip75/CMakeLists.txt` |
-| `nip77` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip77/CMakeLists.txt` |
+| `nip77` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; PATCH-level GLib option/dependency build correction for the existing wrapper API (nostrc-csvv2), no new public API; `nips/nip77/CMakeLists.txt` |
 | `nip86` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip86/CMakeLists.txt` |
 | `nip92` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip92/CMakeLists.txt` |
 | `nip94` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip94/CMakeLists.txt` |

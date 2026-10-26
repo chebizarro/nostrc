@@ -70,6 +70,43 @@ static void test_url_normalization(void) {
     assert(strcmp(normalized, "wss://relay.example.com") == 0);
     free(normalized);
 
+    const struct {
+        const char *input;
+        const char *expected;
+    } whitespace_cases[] = {
+        {"\twss://RELAY.EXAMPLE.COM", "wss://relay.example.com"},
+        {"wss://RELAY.EXAMPLE.COM\t", "wss://relay.example.com"},
+        {" \tWS://LOCALHOST \t ", "ws://localhost"},
+        {"\t wss://RELAY.EXAMPLE.COM/ \t", "wss://relay.example.com"},
+        {" \twss://RELAY.EXAMPLE.COM:8080\t ", "wss://relay.example.com:8080"},
+        {"\twss://RELAY.EXAMPLE.COM:8080/custom/// \t", "wss://relay.example.com:8080/custom"},
+        {" \twss://relay.example.com/custom?key=value#fragment\t ", "wss://relay.example.com/custom"},
+    };
+    for (size_t i = 0; i < sizeof(whitespace_cases) / sizeof(whitespace_cases[0]); ++i) {
+        normalized = nostr_nip65_normalize_url(whitespace_cases[i].input);
+        assert(normalized != NULL);
+        assert(strcmp(normalized, whitespace_cases[i].expected) == 0);
+        free(normalized);
+    }
+
+    const char *invalid_whitespace[] = {
+        " \t ",
+        " \twss:// \t",
+        "w ss://relay.example.com",
+        "wss\t://relay.example.com",
+        "wss://relay .example.com",
+        "wss://relay\t.example.com",
+        "wss://relay.example.com :8080",
+        "wss://relay.example.com:80\t80",
+        "wss://relay.example.com/custom path",
+        "wss://relay.example.com/custom\tpath",
+        "wss://relay.example.com/?key=bad value",
+        "wss://relay.example.com/#bad\tfragment",
+    };
+    for (size_t i = 0; i < sizeof(invalid_whitespace) / sizeof(invalid_whitespace[0]); ++i) {
+        assert(nostr_nip65_normalize_url(invalid_whitespace[i]) == NULL);
+    }
+
     /* Invalid returns NULL */
     assert(nostr_nip65_normalize_url(NULL) == NULL);
     assert(nostr_nip65_normalize_url("") == NULL);
@@ -101,11 +138,13 @@ static void test_entry_operations(void) {
     printf("test_entry_operations... ");
 
     /* Create entry */
-    NostrRelayEntry *entry = nostr_nip65_entry_new("wss://relay.example.com", NOSTR_RELAY_PERM_READ);
+    NostrRelayEntry *entry = nostr_nip65_entry_new(" \twss://RELAY.EXAMPLE.COM\t ", NOSTR_RELAY_PERM_READ);
     assert(entry != NULL);
     assert(entry->url != NULL);
     assert(strcmp(entry->url, "wss://relay.example.com") == 0);
     assert(entry->permission == NOSTR_RELAY_PERM_READ);
+
+    assert(nostr_nip65_entry_new("wss://relay .example.com", NOSTR_RELAY_PERM_READ) == NULL);
 
     /* Check permissions */
     assert(nostr_nip65_entry_is_readable(entry));
