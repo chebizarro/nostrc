@@ -132,7 +132,9 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   stateless private framing helper rather than importing it. Relayd's NIP-11
   include follows its existing capability guard (no protocol behavior change).
   These remain in the same B2 boundary/version decisions; relayd has no
-  authoritative numeric component version.
+  authoritative numeric component version. The gnostr chess plugin receives
+  NIP-46 compile usage requirements without embedding a second host-owned core;
+  gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
 
