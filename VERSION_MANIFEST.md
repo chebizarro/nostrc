@@ -49,7 +49,7 @@ files already declare a version.
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
-| nostr-seal | `gnome/nostr-seal/` | 0.1.2 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
+| nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
@@ -145,6 +145,16 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase D1 (B2 consumer regression): nostr-seal PATCH
+  0.1.2 -> 0.1.3. Phase B2 made `nips/nip49/include/nostr/nip49/nip49.h`
+  include a generated `nostr/nip49/export.h`, but nostr-seal compiles its own
+  static copy of the NIP-49 sources (`nostr_seal_nips`) without that header,
+  so it no longer built. The archive now generates its own export header with
+  the same macro (build correction; no CLI, API or nsealed v1 format change).
+  nostr-wallet-agent's `nwa-nip47` copy of NIP-47 gets the same correction;
+  it declares `NWA_VERSION` 0.1.0 but is not a listed component, so no
+  numeric bump. No tags or release-column changes.
 
 - nostrc-er4fz.10 phase D1: nostr-homed PATCH 0.5.0 -> 0.5.1. `pam_nostr.so`
   and `libnss_nostr.so.2` are compiled hidden-by-default and link with an exact

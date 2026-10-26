@@ -65,6 +65,12 @@ add_library(nwa-nip47 STATIC
 )
 # nip04 does not export its include directory; nip44 does.
 target_include_directories(nwa-nip47 PUBLIC ${_nip47}/include ${_nip47}/../nip04/include)
+# This archive owns its copy of the NIP-47 sources, so it also generates the
+# nostr/nip47/export.h their public headers include.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NostrcVisibility.cmake")
+nostrc_generate_export_header(nwa-nip47 NOSTR_NIP47_API nostr/nip47/export.h)
+target_include_directories(nwa-nip47 PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
 target_link_libraries(nwa-nip47 PUBLIC nostr nostr_json nostr_nip44_core nip04)
 set_target_properties(nwa-nip47 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
