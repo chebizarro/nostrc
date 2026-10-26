@@ -5,6 +5,8 @@ set(PLUGIN_NAME mls-groups)
 
 # Find libadwaita for UI widgets
 pkg_check_modules(LIBADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
+# Length-aware JSON strings are required for strict media-reference parsing.
+pkg_check_modules(MLS_MEDIA_JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 # Get the gnostr app directory (two levels up from plugin)
 set(GNOSTR_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
@@ -72,6 +74,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
     PkgConfig::GLIB
     PkgConfig::LIBPEAS
     PkgConfig::JSON_GLIB
+    PkgConfig::MLS_MEDIA_JANSSON
     PkgConfig::LIBADWAITA
     nostr_gobject
     bud02
@@ -131,6 +134,21 @@ if(BUILD_TESTING)
     target_link_libraries(gnostr-test-mls-group-error PRIVATE PkgConfig::GLIB)
     add_test(NAME gnostr-test-mls-group-error COMMAND gnostr-test-mls-group-error)
     set_tests_properties(gnostr-test-mls-group-error PROPERTIES
+        TIMEOUT 30
+        LABELS "mls;plugin;unit;gnostr")
+
+    # Exercise the production manager with real crypto and fixture transport.
+    add_executable(gnostr-test-mls-media-manager
+        tests/test_mls_media_manager.c
+        gn-mls-media-manager.c)
+    target_include_directories(gnostr-test-mls-media-manager PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${GNOSTR_APP_DIR}/src
+        ${PROJECT_ROOT}/nostr-gobject/include)
+    target_link_libraries(gnostr-test-mls-media-manager PRIVATE
+        marmot-gobject bud02 PkgConfig::GTK4 PkgConfig::JSON_GLIB PkgConfig::MLS_MEDIA_JANSSON)
+    add_test(NAME gnostr-test-mls-media-manager COMMAND gnostr-test-mls-media-manager)
+    set_tests_properties(gnostr-test-mls-media-manager PROPERTIES
         TIMEOUT 30
         LABELS "mls;plugin;unit;gnostr")
 

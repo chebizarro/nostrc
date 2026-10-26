@@ -6,22 +6,17 @@
 
 #include "gn-mls-media-manager.h"
 #include <gnostr-plugin-api.h>
-#include <json-glib/json-glib.h>
+#include <jansson.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 #include <marmot/marmot.h>
+#include <marmot/marmot-media.h>
+#include <stdlib.h>
+#include <string.h>
 #include <nostr-gobject-1.0/gn-blossom-client.h>
 #include <nostr/bud02/auth.h>
 #include <nostr-event.h>
 
 #define DEFAULT_BLOSSOM_SERVER "https://blossom.primal.net"
-
-/* MIP-04 imeta tag field names */
-#define IMETA_URL    "url"
-#define IMETA_NONCE  "nonce"
-#define IMETA_EPOCH  "epoch"
-#define IMETA_HASH   "x"
-#define IMETA_ENC    "encoding"
-#define IMETA_ENC_VAL "mls"
 
 struct _GnMlsMediaManager
 {
@@ -79,63 +74,100 @@ gn_mls_media_upload_result_free(GnMlsMediaUploadResult *result)
 
 /* ── imeta tag parsing ───────────────────────────────────────────── */
 
+static gboolean
+media_error(MarmotError err, const gchar *operation, GError **error)
+{
+  g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s: %s",
+              operation, marmot_error_string(err));
+  return FALSE;
+}
+
+static gboolean
+group_id_from_hex(const gchar *hex, MarmotGroupId *out, GError **error)
+{
+  g_autofree guint8 *bytes = NULL;
+  gsize n = strlen(hex);
+  if (n == 0 || n % 2 != 0)
+    goto invalid;
+  for (gsize i = 0; i < n; i++)
+    if (!g_ascii_isxdigit(hex[i]))
+      goto invalid;
+  bytes = g_malloc(n / 2);
+  for (gsize i = 0; i < n / 2; i++)
+    bytes[i] = (g_ascii_xdigit_value(hex[2 * i]) << 4) |
+               g_ascii_xdigit_value(hex[2 * i + 1]);
+  *out = marmot_group_id_new(bytes, n / 2);
+  return TRUE;
+invalid:
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                      "Invalid MLS group ID hex");
+  return FALSE;
+}
+
+static gchar *
+hash_hex(const guint8 hash[32])
+{
+  gchar *hex = g_malloc(65);
+  for (gsize i = 0; i < 32; i++)
+    g_snprintf(hex + 2 * i, 3, "%02x", hash[i]);
+  return hex;
+}
+
 gboolean
 gn_mls_media_manager_parse_imeta(const gchar *imeta_tag_json,
-                                   gchar      **out_url,
-                                   gchar      **out_nonce_b64,
-                                   guint64     *out_epoch,
-                                   gchar      **out_hash)
+                                  MarmotMediaReference *out,
+                                  GError **error)
 {
-  g_return_val_if_fail(imeta_tag_json != NULL, FALSE);
-
-  g_autoptr(JsonParser) parser = json_parser_new();
-  g_autoptr(GError) error = NULL;
-
-  if (!json_parser_load_from_data(parser, imeta_tag_json, -1, &error))
+  g_return_val_if_fail(imeta_tag_json != NULL && out != NULL, FALSE);
+  memset(out, 0, sizeof *out);
+  g_autofree const gchar **fields = NULL;
+  g_autofree size_t *lengths = NULL;
+  json_error_t parse_error;
+  json_t *arr = json_loads(imeta_tag_json, JSON_ALLOW_NUL, &parse_error);
+  MarmotError err = MARMOT_ERR_MEDIA_INVALID_REFERENCE;
+  if (!json_is_array(arr))
+    goto done;
+  size_t n = json_array_size(arr);
+  fields = g_new0(const gchar *, n + 1);
+  lengths = g_new0(size_t, n);
+  for (size_t i = 0; i < n; i++)
     {
-      g_warning("MlsMediaManager: failed to parse imeta tag: %s",
-                error->message);
-      return FALSE;
+      json_t *field = json_array_get(arr, i);
+      if (!json_is_string(field))
+        goto done;
+      fields[i] = json_string_value(field);
+      lengths[i] = json_string_length(field);
     }
+  /* Preserve lengths so libmarmot rejects embedded NULs instead of validating
+   * a truncated filename, locator, nonce or hash. */
+  err = marmot_media_imeta_parse(fields, lengths, n, out);
+done:
+  json_decref(arr);
+  return err == MARMOT_OK || media_error(err, "Invalid media reference", error);
+}
 
-  JsonNode *root = json_parser_get_root(parser);
-  if (!JSON_NODE_HOLDS_ARRAY(root))
+gboolean
+gn_mls_media_manager_check_epoch(GnMlsMediaManager *self,
+                                  const gchar *group_id_hex,
+                                  guint64 source_epoch,
+                                  GError **error)
+{
+  g_return_val_if_fail(GN_IS_MLS_MEDIA_MANAGER(self), FALSE);
+  g_return_val_if_fail(group_id_hex != NULL, FALSE);
+  MarmotGroupId gid = {0};
+  if (!group_id_from_hex(group_id_hex, &gid, error))
     return FALSE;
-
-  JsonArray *arr = json_node_get_array(root);
-  guint len = json_array_get_length(arr);
-
-  if (out_url)       *out_url       = NULL;
-  if (out_nonce_b64) *out_nonce_b64 = NULL;
-  if (out_epoch)     *out_epoch     = 0;
-  if (out_hash)      *out_hash      = NULL;
-
-  /*
-   * imeta tag format (NIP-92 / MIP-04 extension):
-   * ["imeta", "url <url>", "nonce <b64>", "epoch <n>", "x <hash>", "encoding mls"]
-   *
-   * Each element after "imeta" is a space-separated key-value pair.
-   */
-  for (guint i = 1; i < len; i++)
+  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
+  Marmot *marmot = client ? marmot_gobject_client_get_marmot(client) : NULL;
+  MarmotError err = MARMOT_ERR_INVALID_INPUT;
+  if (marmot)
     {
-      const gchar *entry = json_array_get_string_element(arr, i);
-      if (entry == NULL) continue;
-
-      g_auto(GStrv) parts = g_strsplit(entry, " ", 2);
-      if (parts == NULL || parts[0] == NULL || parts[1] == NULL)
-        continue;
-
-      if (g_strcmp0(parts[0], IMETA_URL) == 0 && out_url)
-        *out_url = g_strdup(parts[1]);
-      else if (g_strcmp0(parts[0], IMETA_NONCE) == 0 && out_nonce_b64)
-        *out_nonce_b64 = g_strdup(parts[1]);
-      else if (g_strcmp0(parts[0], IMETA_EPOCH) == 0 && out_epoch)
-        *out_epoch = g_ascii_strtoull(parts[1], NULL, 10);
-      else if (g_strcmp0(parts[0], IMETA_HASH) == 0 && out_hash)
-        *out_hash = g_strdup(parts[1]);
+      marmot_gobject_client_lock(client);
+      err = marmot_media_check_epoch(marmot, &gid, source_epoch);
+      marmot_gobject_client_unlock(client);
     }
-
-  return (out_url == NULL || *out_url != NULL);
+  marmot_group_id_free(&gid);
+  return err == MARMOT_OK || media_error(err, "Media epoch unavailable or changed; upload again", error);
 }
 
 /* ── Upload flow ─────────────────────────────────────────────────── */
@@ -151,10 +183,8 @@ typedef struct
   /* Encryption output */
   GBytes             *ciphertext;
   GnBlossomClient    *blossom;      /* per-upload limits, not download policy */
-  gchar              *nonce_b64;
-  gchar              *hash_hex;
+  MarmotMediaUpload   upload;
   gchar              *wire_hash;
-  guint64             epoch;
 } UploadData;
 
 static void
@@ -167,8 +197,7 @@ upload_data_free(UploadData *data)
   g_free(data->content_type);
   g_clear_pointer(&data->ciphertext, g_bytes_unref);
   g_clear_object(&data->blossom);
-  g_free(data->nonce_b64);
-  g_free(data->hash_hex);
+  marmot_media_upload_clear(&data->upload);
   g_free(data->wire_hash);
   g_free(data);
 }
@@ -199,20 +228,31 @@ on_blossom_upload_done(GObject      *source,
 
   g_info("MlsMediaManager: uploaded encrypted blob to %s", blob_url);
 
-  /* Build imeta tags */
-  GPtrArray *tags = g_ptr_array_new_with_free_func(g_free);
-  g_ptr_array_add(tags, g_strdup("imeta"));
-  g_ptr_array_add(tags, g_strdup_printf("%s %s", IMETA_URL, blob_url));
-  g_ptr_array_add(tags, g_strdup_printf("%s %s", IMETA_NONCE, data->nonce_b64));
-  g_ptr_array_add(tags, g_strdup_printf("%s %" G_GUINT64_FORMAT,
-                                         IMETA_EPOCH, data->epoch));
-  g_ptr_array_add(tags, g_strdup_printf("%s %s", IMETA_HASH, data->hash_hex));
-  g_ptr_array_add(tags, g_strdup_printf("%s %s", IMETA_ENC, IMETA_ENC_VAL));
-  g_ptr_array_add(tags, NULL);   /* NULL terminator */
+  char **fields = NULL;
+  size_t count = 0;
+  MarmotError err = marmot_media_reference_add_locator(&data->upload.reference,
+    MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, blob_url);
+  if (err == MARMOT_OK)
+    err = marmot_media_imeta_build(&data->upload.reference, NULL, &fields, &count);
+  if (err != MARMOT_OK || !gn_mls_media_manager_check_epoch(data->manager,
+        data->group_id_hex, data->upload.source_epoch, &error))
+    {
+      if (err != MARMOT_OK)
+        media_error(err, "Cannot build media reference", &error);
+      marmot_media_imeta_fields_free(fields, count);
+      g_task_return_error(data->task, g_steal_pointer(&error));
+      g_object_unref(data->task);
+      upload_data_free(data);
+      return;
+    }
 
   GnMlsMediaUploadResult *upload_result = g_new0(GnMlsMediaUploadResult, 1);
   upload_result->blossom_url = g_steal_pointer(&blob_url);
-  upload_result->imeta_tags  = (gchar **)g_ptr_array_steal(tags, NULL);
+  upload_result->source_epoch = data->upload.source_epoch;
+  upload_result->imeta_tags = g_new0(gchar *, count + 1);
+  for (size_t i = 0; i < count; i++)
+    upload_result->imeta_tags[i] = g_strdup(fields[i]);
+  marmot_media_imeta_fields_free(fields, count);
 
   g_task_return_pointer(data->task, upload_result,
                          (GDestroyNotify)gn_mls_media_upload_result_free);
@@ -246,7 +286,7 @@ static void
 do_blossom_upload(UploadData *data)
 {
   /* BUD-02 binds the ciphertext on the wire, not the plaintext imeta hash. */
-  data->wire_hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, data->ciphertext);
+  data->wire_hash = hash_hex(data->upload.reference.ciphertext_sha256);
   data->blossom = gn_blossom_client_new(data->manager->blossom_server_url);
   gn_blossom_client_set_network(data->blossom, g_proxy_resolver_get_default(),
                                GN_BLOSSOM_NETWORK_DEFAULT);
@@ -336,29 +376,31 @@ on_file_read(GObject      *source,
   gsize plain_len = 0;
   const guint8 *plain_bytes = g_bytes_get_data(data->plaintext, &plain_len);
 
-  /* Parse group ID hex to MarmotGroupId */
-  size_t gid_len = strlen(data->group_id_hex) / 2;
-  uint8_t *gid_bytes = g_malloc(gid_len);
-  for (size_t i = 0; i < gid_len; i++)
+  MarmotGroupId mls_group_id = {0};
+  if (!group_id_from_hex(data->group_id_hex, &mls_group_id, &error))
     {
-      unsigned int byte_val;
-      sscanf(data->group_id_hex + (i * 2), "%02x", &byte_val);
-      gid_bytes[i] = (uint8_t)byte_val;
+      g_task_return_error(data->task, g_steal_pointer(&error));
+      g_object_unref(data->task);
+      upload_data_free(data);
+      return;
     }
-  MarmotGroupId mls_group_id = marmot_group_id_new(gid_bytes, gid_len);
-  g_free(gid_bytes);
 
-  /* Call libmarmot encryption */
-  MarmotEncryptedMedia enc_result = {0};
+  g_autofree gchar *guessed = g_content_type_guess(data->filename, plain_bytes, plain_len, NULL);
+  data->content_type = guessed ? g_content_type_get_mime_type(guessed) : NULL;
+  if (!data->content_type)
+    data->content_type = g_strdup("application/octet-stream");
+
+  /* libmarmot derives encrypted-media-v2 keys from the source epoch's
+   * MLS-Exporter("marmot", "encrypted-media", 32). */
   /* A Marmot is not thread-safe: hold the client's lock (W17b C1). */
   marmot_gobject_client_lock(client);
-  MarmotError err = marmot_encrypt_media(
+  MarmotError err = marmot_media_encrypt(
     marmot,
     &mls_group_id,
     plain_bytes, plain_len,
     data->content_type,
     data->filename,
-    &enc_result);
+    &data->upload);
   marmot_gobject_client_unlock(client);
 
   marmot_group_id_free(&mls_group_id);
@@ -373,22 +415,8 @@ on_file_read(GObject      *source,
       return;
     }
 
-  g_info("MlsMediaManager: MIP-04 encryption successful (epoch %" G_GUINT64_FORMAT ")",
-         enc_result.imeta.epoch);
-
-  /* Store encryption results */
-  data->ciphertext = g_bytes_new_take(enc_result.encrypted_data, enc_result.encrypted_len);
-  enc_result.encrypted_data = NULL;  /* ownership transferred */
-
-  /* Convert nonce to base64 */
-  data->nonce_b64 = g_base64_encode(enc_result.nonce, sizeof(enc_result.nonce));
-  data->epoch = enc_result.imeta.epoch;
-
-  /* Convert file hash to hex */
-  GString *hash_str = g_string_sized_new(64);
-  for (size_t i = 0; i < sizeof(enc_result.file_hash); i++)
-    g_string_append_printf(hash_str, "%02x", enc_result.file_hash[i]);
-  data->hash_hex = g_string_free(hash_str, FALSE);
+  data->ciphertext = g_bytes_new_take(data->upload.ciphertext, data->upload.ciphertext_len);
+  data->upload.ciphertext = NULL; /* transferred to GBytes */
 
   do_blossom_upload(data);
 }
@@ -400,8 +428,8 @@ typedef struct
   GnMlsMediaManager *manager;       /* strong ref */
   GTask              *task;
   gchar              *group_id_hex;
-  gchar              *nonce_b64;
-  guint64             epoch;
+  MarmotMediaReference reference;
+  guint64             source_epoch;
 } DownloadData;
 
 static void
@@ -409,7 +437,7 @@ download_data_free(DownloadData *data)
 {
   g_clear_object(&data->manager);
   g_free(data->group_id_hex);
-  g_free(data->nonce_b64);
+  marmot_media_reference_clear(&data->reference);
   g_free(data);
 }
 
@@ -458,40 +486,25 @@ on_blossom_download_done(GObject      *source,
   gsize cipher_len = 0;
   const guint8 *cipher_data = g_bytes_get_data(cipher_bytes, &cipher_len);
 
-  /* Parse group ID hex to MarmotGroupId */
-  size_t gid_len = strlen(data->group_id_hex) / 2;
-  uint8_t *gid_bytes = g_malloc(gid_len);
-  for (size_t i = 0; i < gid_len; i++)
+  MarmotGroupId mls_group_id = {0};
+  if (!group_id_from_hex(data->group_id_hex, &mls_group_id, &error))
     {
-      unsigned int byte_val;
-      sscanf(data->group_id_hex + (i * 2), "%02x", &byte_val);
-      gid_bytes[i] = (uint8_t)byte_val;
+      g_task_return_error(data->task, g_steal_pointer(&error));
+      g_object_unref(data->task);
+      download_data_free(data);
+      return;
     }
-  MarmotGroupId mls_group_id = marmot_group_id_new(gid_bytes, gid_len);
-  g_free(gid_bytes);
-
-  /* Build imeta info for decryption */
-  MarmotImetaInfo imeta = {0};
-  imeta.epoch = data->epoch;
-
-  /* Decode nonce from base64 */
-  gsize nonce_len = 0;
-  guchar *nonce_decoded = g_base64_decode(data->nonce_b64, &nonce_len);
-  if (nonce_decoded != NULL && nonce_len == sizeof(imeta.nonce))
-    memcpy(imeta.nonce, nonce_decoded, sizeof(imeta.nonce));
-  g_free(nonce_decoded);
 
   /* Call libmarmot decryption */
   uint8_t *plaintext_out = NULL;
   size_t plaintext_len = 0;
 
   marmot_gobject_client_lock(client);   /* W17b C1 */
-  MarmotError err = marmot_decrypt_media(
-    marmot,
-    &mls_group_id,
-    cipher_data, cipher_len,
-    &imeta,
-    &plaintext_out, &plaintext_len);
+  /* libmarmot verifies ciphertext hash, AEAD and plaintext hash, using
+   * the carrying message's epoch, including any retained earlier secret. */
+  MarmotError err = marmot_media_decrypt(
+    marmot, &mls_group_id, data->source_epoch, &data->reference,
+    cipher_data, cipher_len, &plaintext_out, &plaintext_len);
   marmot_gobject_client_unlock(client);
 
   marmot_group_id_free(&mls_group_id);
@@ -508,6 +521,7 @@ on_blossom_download_done(GObject      *source,
 
   g_info("MlsMediaManager: MIP-04 decryption successful (%zu bytes)", plaintext_len);
 
+  g_task_set_task_data(data->task, g_strdup(data->reference.media_type), g_free);
   GBytes *result_bytes = g_bytes_new_take(plaintext_out, plaintext_len);
   g_task_return_pointer(data->task, result_bytes, (GDestroyNotify)g_bytes_unref);
   g_object_unref(data->task);
@@ -579,16 +593,15 @@ gn_mls_media_manager_upload_finish(GnMlsMediaManager *self,
 void
 gn_mls_media_manager_download_async(GnMlsMediaManager   *self,
                                       const gchar          *group_id_hex,
-                                      const gchar          *blossom_url,
-                                      const gchar          *nonce_b64,
-                                      guint64               epoch,
+                                      const gchar          *imeta_tag_json,
+                                      guint64               source_epoch,
                                       GCancellable         *cancellable,
                                       GAsyncReadyCallback   callback,
                                       gpointer              user_data)
 {
   g_return_if_fail(GN_IS_MLS_MEDIA_MANAGER(self));
   g_return_if_fail(group_id_hex != NULL);
-  g_return_if_fail(blossom_url != NULL);
+  g_return_if_fail(imeta_tag_json != NULL);
 
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gn_mls_media_manager_download_async);
@@ -597,28 +610,32 @@ gn_mls_media_manager_download_async(GnMlsMediaManager   *self,
   data->manager      = g_object_ref(self);
   data->task         = task;
   data->group_id_hex = g_strdup(group_id_hex);
-  data->nonce_b64    = g_strdup(nonce_b64);
-  data->epoch        = epoch;
+  data->source_epoch = source_epoch;
 
-  /* Blossom addresses are the wire SHA-256, optionally followed by an extension.
-   * This legacy API carries no separate ciphertext hash. Refuse non-addressed
-   * URLs rather than silently dropping the shared client's integrity check. */
-  g_autoptr(GUri) uri = g_uri_parse(blossom_url, G_URI_FLAGS_ENCODED, NULL);
-  const gchar *path = uri ? g_uri_get_path(uri) : NULL;
-  const gchar *name = path ? strrchr(path, '/') : NULL;
-  name = name ? name + 1 : NULL;
-  gboolean valid = name && strlen(name) >= 64 && (name[64] == '.' || name[64] == '\0');
-  for (guint i = 0; valid && i < 64; i++)
-    valid = g_ascii_isxdigit(name[i]);
-  if (!valid)
+  g_autoptr(GError) error = NULL;
+  if (!gn_mls_media_manager_parse_imeta(imeta_tag_json, &data->reference, &error))
     {
-      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                             "Blossom URL has no ciphertext SHA-256 address");
+      g_task_return_error(task, g_steal_pointer(&error));
       g_object_unref(task);
       download_data_free(data);
       return;
     }
-  g_autofree gchar *wire_hash = g_ascii_strdown(name, 64);
+  const gchar *blossom_url = NULL;
+  for (size_t i = 0; i < data->reference.locator_count; i++)
+    if (g_strcmp0(data->reference.locators[i].kind, MARMOT_MEDIA_LOCATOR_BLOSSOM_V1) == 0)
+      {
+        blossom_url = data->reference.locators[i].value;
+        break;
+      }
+  if (!blossom_url)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                             "Media reference has no supported Blossom locator");
+      g_object_unref(task);
+      download_data_free(data);
+      return;
+    }
+  g_autofree gchar *wire_hash = hash_hex(data->reference.ciphertext_sha256);
   gn_blossom_client_download_async(self->blossom, blossom_url, wire_hash,
     cancellable, on_blossom_download_done, data);
 }
@@ -631,8 +648,8 @@ gn_mls_media_manager_download_finish(GnMlsMediaManager *self,
 {
   g_return_val_if_fail(GN_IS_MLS_MEDIA_MANAGER(self), NULL);
 
+  GBytes *bytes = g_task_propagate_pointer(G_TASK(result), error);
   if (out_content_type != NULL)
-    *out_content_type = NULL;
-
-  return g_task_propagate_pointer(G_TASK(result), error);
+    *out_content_type = bytes ? g_strdup(g_task_get_task_data(G_TASK(result))) : NULL;
+  return bytes;
 }
