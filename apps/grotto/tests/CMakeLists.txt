@@ -483,8 +483,8 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
 endif()
 
 # G04: real Control1 dispatcher, shared gate/evaluator, private message bus.
-if (TARGET nostr_nip55l_glib)
-  get_target_property(_nip55l_definitions nostr_nip55l_glib COMPILE_DEFINITIONS)
+if (TARGET nostr_nip55l_service)
+  get_target_property(_nip55l_definitions nostr_nip55l_service COMPILE_DEFINITIONS)
 endif()
 if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
   add_executable(test-control-untrusted test-control-untrusted.c)
