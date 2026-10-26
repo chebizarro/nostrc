@@ -2,9 +2,13 @@
 
 #include "services/gnostr-media-source.h"
 #include <adwaita.h>
+#ifdef GNOSTR_PLUGIN_LOAD_TEST
+#include <libpeas.h>
+#endif
 #include <nostr-gtk-1.0/nostr-gtk.h>
 #include <glib/gstdio.h>
 #include <errno.h>
+#include <string.h>
 #include "ui/gnostr-main-window.h"
 #include "ui/gnostr-tray-icon.h"
 #ifdef __APPLE__
@@ -411,6 +415,35 @@ gnostr_ensure_gsettings_schemas(const char *argv0)
             bin_dir, inst_dir);
 }
 
+#ifdef GNOSTR_PLUGIN_LOAD_TEST
+/* Only present in test-enabled builds: exercise libpeas against the real
+ * GNostr executable, whose exported host API the modules resolve at load. */
+static int
+gnostr_test_plugin_load(int argc, char **argv)
+{
+  PeasEngine *engine;
+  int failures = 0;
+
+  adw_init();
+  engine = peas_engine_new();
+  for (int i = 2; i < argc; i++)
+    peas_engine_add_search_path(engine, argv[i], argv[i]);
+
+  for (int i = 2; i < argc; i++) {
+    const char *module_name = strrchr(argv[i], '/');
+    PeasPluginInfo *info;
+    module_name = module_name ? module_name + 1 : argv[i];
+    info = peas_engine_get_plugin_info(engine, module_name);
+    if (!info || !peas_engine_load_plugin(engine, info)) {
+      g_printerr("GNostr could not load plugin %s from %s\n", module_name, argv[i]);
+      failures++;
+    }
+  }
+  g_object_unref(engine);
+  return failures ? 1 : 0;
+}
+#endif
+
 int main(int argc, char **argv) {
   /* nostrc-deferred-free: G_SLICE=always-malloc removed. It was a no-op on
    * GLib >= 2.76 (slice allocator removed). The real crash cause was
@@ -422,6 +455,10 @@ int main(int argc, char **argv) {
   g_set_prgname("gnostr");
   /* nostrc-wqn0u: under test, never against the owner's profile. */
   gnostr_assert_private_profile();
+#ifdef GNOSTR_PLUGIN_LOAD_TEST
+  if (argc > 1 && g_strcmp0(argv[1], "--test-plugin-load") == 0)
+    return gnostr_test_plugin_load(argc, argv);
+#endif
 
   /* Initialize libadwaita - required for adaptive/responsive features */
 #ifdef __APPLE__

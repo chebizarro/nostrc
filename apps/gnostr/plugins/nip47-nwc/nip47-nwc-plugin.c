@@ -19,6 +19,7 @@
  * Copyright (C) 2026 Gnostr Contributors
  */
 
+#include "gnostr/nip47-nwc-export.h"
 #include "nip47-nwc-plugin.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
@@ -939,7 +940,7 @@ gchar *nip47_nwc_format_balance(gint64 balance_msat) {
  * Plugin Registration
  * ============================================================================ */
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

@@ -7,6 +7,7 @@
  * Copyright (C) 2026 Gnostr Contributors
  */
 
+#include "gnostr/nip77-negentropy-export.h"
 #include "nip77-negentropy-plugin.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
@@ -472,7 +473,7 @@ gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
  * Plugin registration for libpeas
  * ============================================================================ */
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

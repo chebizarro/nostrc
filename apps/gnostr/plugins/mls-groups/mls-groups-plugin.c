@@ -16,6 +16,7 @@
  * Copyright (C) 2026 Gnostr Contributors
  */
 
+#include "gnostr/mls-groups-export.h"
 #include "mls-groups-plugin.h"
 #include "gn-marmot-service.h"
 #include "gn-key-package-manager.h"
@@ -694,7 +695,7 @@ gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
  * libpeas module registration
  * ══════════════════════════════════════════════════════════════════════════ */
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

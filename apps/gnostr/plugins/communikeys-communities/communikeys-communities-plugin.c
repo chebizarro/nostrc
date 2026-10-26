@@ -1,3 +1,4 @@
+#include "gnostr/communikeys-communities-export.h"
 #include "communikeys-communities-plugin.h"
 #include "gn-communikeys-community-service.h"
 #include "ui/gn-communikeys-communities-panel.h"
@@ -103,7 +104,7 @@ static void ui_iface_init(GnostrUIExtensionInterface *iface) {
   iface->get_sidebar_items = get_sidebar_items;
   iface->create_panel_widget = create_panel;
 }
-G_MODULE_EXPORT void peas_register_types(PeasObjectModule *module) {
+GNOSTR_PLUGIN_ENTRY void peas_register_types(PeasObjectModule *module) {
   peas_object_module_register_extension_type(
     module, GNOSTR_TYPE_PLUGIN, COMMUNIKEYS_TYPE_COMMUNITIES_PLUGIN);
   peas_object_module_register_extension_type(

@@ -24,8 +24,11 @@ set(NOSTR_TESTING_SOURCES
     src/mock_relay_server.c
 )
 
-# Create static library
+# Test-only archive: consumers link it directly; it has no shared ABI or
+# symbols that must be resolved from a loaded module.
 add_library(nostr_testing STATIC ${NOSTR_TESTING_SOURCES})
+include("${CMAKE_SOURCE_DIR}/cmake/NostrcVisibility.cmake")
+nostrc_internal_visibility(nostr_testing)
 
 # Include directories
 target_include_directories(nostr_testing

@@ -7,6 +7,7 @@
  * Copyright (C) 2026 Gnostr Contributors
  */
 
+#include "gnostr/nip99-marketplace-export.h"
 #include "nip99-marketplace-plugin.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
@@ -554,7 +555,7 @@ nip99_marketplace_plugin_get_listing_count(Nip99MarketplacePlugin *self)
  * Plugin entry point for libpeas
  * ============================================================================ */
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

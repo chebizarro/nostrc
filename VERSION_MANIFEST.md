@@ -146,6 +146,19 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
 
 ## Recorded version decisions
 
+- nostrc-er4fz.10 phase D2: gnostr stays 0.2.0 (no bump). Its libpeas
+  modules now export only the `peas_register_types` loader entry; their
+  previous extra ELF definitions were not a declared consumer API. The
+  GNostr-host plugin-load check exists only in test-enabled builds. Grotto
+  stays 0.1.0 and nostr-signer-webext-host stays 0.2.0 (no bumps): their
+  affected targets are private static archives linked into installed
+  executables, not separately installed shared libraries. Groundhog stays
+  0.12.0 (no bump): its affected libraries are likewise private static
+  archives, with no promised executable dynamic-symbol ABI. The optional
+  `nostr_testing` install is a static test-support archive, not an
+  independently versioned component; hidden object symbols remain linkable
+  by its test consumers. No release tags or release columns change.
+
 - nostrc-er4fz.10 phase C: nostr-gtk MAJOR 1.2.0 -> 2.0.0 (SONAME 2 for
   `libnostr-gtk-1.0` and `libnostr-gtk-portable-1.0`). Both DSOs are compiled
   hidden-by-default with `NOSTR_GTK_API` / `NOSTR_GTK_PORTABLE_API` and
