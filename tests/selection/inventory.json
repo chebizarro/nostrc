@@ -28743,6 +28743,9 @@
       ],
       "compiler": "gcc",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -28860,6 +28863,9 @@
       ],
       "compiler": "gcc",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -28924,6 +28930,9 @@
       ],
       "compiler": "clang",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -29067,6 +29076,9 @@
       ],
       "compiler": "clang",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -29353,6 +29365,9 @@
       ],
       "compiler": "gcc",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -29408,6 +29423,9 @@
       ],
       "compiler": "gcc",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -29526,6 +29544,9 @@
       ],
       "compiler": "gcc",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
@@ -29589,6 +29610,9 @@
       ],
       "compiler": "gcc",
       "configure_args": [
+        "-DBUILD_LIBVAULT=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
         "-G",
         "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",

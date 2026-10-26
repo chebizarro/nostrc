@@ -121,6 +121,23 @@ class PolicyTests(unittest.TestCase):
                 for prefix in case.get("excluded_prefixes", []):
                     self.assertFalse(any(x.startswith(prefix) for x in result["selected_checks"]))
 
+    def test_vaultctl_profiles_configure_prerequisites(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for check_id in ("root.asan.vaultctl", "supported.vaultctl"):
+            check = p["checks"][check_id]
+            for profile_id in check["profiles"]:
+                with self.subTest(check=check_id, profile=profile_id):
+                    args = p["profiles"][profile_id]["configure_args"]
+                    for option in ("BUILD_LIBVAULT", "ENABLE_NIP42", "ENABLE_NIP11"):
+                        self.assertIn(f"-D{option}=ON", args)
+                        self.assertNotIn(f"-D{option}=OFF", args)
+                    result = plan(p, paths=("CMakeLists.txt",), profiles=[profile_id])
+                    self.assertIn(check_id, result["selected_checks"])
+                    self.assertIn("test_vaultctl_fixtures", check["ctest_tests"][profile_id])
+        result = plan(p, paths=("tools/vaultctl/tests/fixtures.py",),
+                      profiles=["core.macos.asan"])
+        self.assertEqual(result["selected_checks"], ["root.asan.vaultctl"])
+
     def test_permission_repeat_enrollment(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         for path in ("apps/grotto/tests/test-permission-repeat.c",
