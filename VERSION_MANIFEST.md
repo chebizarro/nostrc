@@ -209,6 +209,9 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   independently versioned component; hidden object symbols remain linkable
   by its test consumers. No release tags or release columns change.
 
+- nostrc-hd8a4/nostrc-oralk: nostr-gtk stays 2.0.0. The GNostrGtk-1.0
+  GIR generation fix and the Meson build's complete link closure are
+  PATCH-class build corrections folded into the unreleased 2.0.0.
 - nostrc-a67o0/nostrc-hd8a4: nostr-gtk stays 2.0.0 (no further bump). Removing
   the Gnostr-coupled widgets from `libnostr-gtk-1.0` is an incompatible change
   folded into the unreleased 2.0.0 MAJOR below: the types `NostrGtkNoteCardRow`,

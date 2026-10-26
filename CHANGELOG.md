@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The GNostrGtk-1.0 GIR/typelib generates and loads: the scanner names both
+  nostr-gtk DSOs by file name, preprocesses with the generated export headers,
+  binds a static build's wrapper to the GNostr-1.0 nostr-gobject instead of a
+  second copy, and under the Groundhog shared runtime links its probe with
+  nostr-gobject's build-tree contract.
 - nostr-gobject's build-tree link contract (`nostr-gobject-build-tree.pc`)
   records the run path of every shared library it lists, so contract-linked
   executables (including the GNostr and GNostrGtk scanner probes) start in a
