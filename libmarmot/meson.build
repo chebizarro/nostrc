@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.13.0',
+  version: '0.14.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -126,7 +126,12 @@ if sqlite3_dep.found()
 endif
 
 # Public include directories
-marmot_inc = include_directories('include')
+marmot_export_h = configure_file(
+  input: 'marmot-export.h.in',
+  output: 'marmot-export.h',
+  copy: true,
+)
+marmot_inc = include_directories('include', '.')
 marmot_src_inc = include_directories('src')
 
 # Gather dependencies. Users precede providers (NIP-44, libnostr, libnostrgo,
@@ -134,6 +139,11 @@ marmot_src_inc = include_directories('src')
 marmot_deps = [nip44_dep, nostr_dep, nostrgo_dep, openssl_dep, sodium_dep,
   secp256k1_dep]
 marmot_c_args = []
+if get_option('default_library') == 'static'
+  marmot_c_args += '-DMARMOT_STATIC_DEFINE'
+else
+  marmot_c_args += '-DMARMOT_BUILDING_DLL'
+endif
 if sqlite3_dep.found()
   marmot_deps += sqlite3_dep
   marmot_c_args += '-DMARMOT_HAVE_SQLITE=1'
@@ -155,6 +165,7 @@ libmarmot = library('marmot',
   marmot_sources,
   include_directories: [marmot_inc, marmot_src_inc],
   c_args: marmot_c_args,
+  gnu_symbol_visibility: 'hidden',
   dependencies: marmot_deps,
   install: true,
   version: marmot_version,
@@ -166,6 +177,7 @@ libmarmot = library('marmot',
 # Dependency object for consumers
 marmot_dep = declare_dependency(
   include_directories: marmot_inc,
+  compile_args: get_option('default_library') == 'static' ? ['-DMARMOT_STATIC_DEFINE'] : [],
   link_with: libmarmot,
   dependencies: [openssl_dep, sodium_dep, secp256k1_dep],
 )
@@ -180,6 +192,7 @@ install_headers(
   'include/marmot/marmot-storage.h',
   'include/marmot/marmot-group-profile.h',
   'include/marmot/marmot-group-components.h',
+  marmot_export_h,
   subdir: 'marmot',
 )
 

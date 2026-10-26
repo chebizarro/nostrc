@@ -183,6 +183,7 @@ if(MARMOT_GOBJECT_INTROSPECTION)
         --no-libtool
         -I${CMAKE_CURRENT_SOURCE_DIR}/include
         -I${CMAKE_SOURCE_DIR}/libmarmot/include
+        -I${CMAKE_BINARY_DIR}/libmarmot/include
         -I${CMAKE_CURRENT_BINARY_DIR}/include
         -L$<TARGET_FILE_DIR:${_marmot_gir_target}>
         --output=${CMAKE_CURRENT_BINARY_DIR}/${GIR_FILE}

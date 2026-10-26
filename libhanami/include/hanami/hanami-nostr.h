@@ -11,6 +11,8 @@
 #ifndef HANAMI_NOSTR_H
 #define HANAMI_NOSTR_H
 
+#include "hanami-export.h"
+
 #include "hanami-types.h"
 #include <nip34.h>
 #include <stddef.h>
@@ -60,7 +62,7 @@ typedef void (*hanami_nostr_event_cb)(const NostrEvent *event, void *user_data);
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_nostr_ctx_new(const char *const *relay_urls,
+HANAMI_API hanami_error_t hanami_nostr_ctx_new(const char *const *relay_urls,
                                     const hanami_signer_t *signer,
                                     hanami_nostr_ctx_t **out);
 
@@ -68,7 +70,7 @@ hanami_error_t hanami_nostr_ctx_new(const char *const *relay_urls,
  * hanami_nostr_ctx_free:
  * @ctx: (transfer full) (nullable): context to free
  */
-void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx);
+HANAMI_API void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx);
 
 /* =========================================================================
  * Publishing
@@ -88,7 +90,7 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx);
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_nostr_publish_repo(hanami_nostr_ctx_t *ctx,
+HANAMI_API hanami_error_t hanami_nostr_publish_repo(hanami_nostr_ctx_t *ctx,
                                          const char *repo_id,
                                          const char *name,
                                          const char *desc,
@@ -107,7 +109,7 @@ hanami_error_t hanami_nostr_publish_repo(hanami_nostr_ctx_t *ctx,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
+HANAMI_API hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
                                           const char *repo_id,
                                           const nip34_ref_t *refs,
                                           size_t ref_count,
@@ -125,7 +127,7 @@ hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
  * HANAMI_ERR_NOSTR on rejection, HANAMI_ERR_AUTH if authentication is required,
  * HANAMI_ERR_TIMEOUT on missing OK, or HANAMI_ERR_NETWORK if none connected.
  */
-hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
+HANAMI_API hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
                                           NostrEvent *event);
 
 /* =========================================================================
@@ -147,7 +149,7 @@ hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
  * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND after empty EOSE;
  * network, CLOSED, AUTH and timeout failures remain errors.
  */
-hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
+HANAMI_API hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
                                        const char *repo_id,
                                        const char *owner_pubkey,
                                        nip34_repository_t **out);
@@ -167,7 +169,7 @@ hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
  * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND after empty EOSE;
  * network, CLOSED, AUTH and timeout failures remain errors.
  */
-hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
+HANAMI_API hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
                                         const char *repo_id,
                                         const char *owner_pubkey,
                                         nip34_repo_state_t **out);
@@ -186,7 +188,7 @@ hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
  *
  * Returns: newly allocated filter, or NULL on error
  */
-NostrFilter *hanami_nostr_build_repo_filter(const char *repo_id,
+HANAMI_API NostrFilter *hanami_nostr_build_repo_filter(const char *repo_id,
                                             const char *owner_pubkey);
 
 /**
@@ -199,7 +201,7 @@ NostrFilter *hanami_nostr_build_repo_filter(const char *repo_id,
  *
  * Returns: newly allocated filter, or NULL on error
  */
-NostrFilter *hanami_nostr_build_state_filter(const char *repo_id,
+HANAMI_API NostrFilter *hanami_nostr_build_state_filter(const char *repo_id,
                                              const char *owner_pubkey);
 
 /**
@@ -211,7 +213,7 @@ NostrFilter *hanami_nostr_build_state_filter(const char *repo_id,
  *
  * Returns: newly allocated filter, or NULL on error
  */
-NostrFilter *hanami_nostr_build_patches_filter(const char *repo_addr);
+HANAMI_API NostrFilter *hanami_nostr_build_patches_filter(const char *repo_addr);
 
 #ifdef __cplusplus
 }

@@ -33,7 +33,7 @@ if(DEFINED CACHE{MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER})
 endif()
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 13)
+set(MARMOT_VERSION_MINOR 14)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
@@ -166,6 +166,9 @@ set_target_properties(marmot PROPERTIES
 # SONAME above is overwritten with "0" (W24 media-v2 re-review).
 set(marmot_SOVERSION "${MARMOT_SOVERSION}")
 apply_versioning(marmot)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(marmot MARMOT_API marmot-export.h "${CMAKE_INSTALL_INCLUDEDIR}/marmot")
 
 target_include_directories(marmot
   PUBLIC

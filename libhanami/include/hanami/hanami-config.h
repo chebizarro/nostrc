@@ -14,6 +14,8 @@
 #ifndef HANAMI_CONFIG_H
 #define HANAMI_CONFIG_H
 
+#include "hanami-export.h"
+
 #include "hanami-types.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -38,13 +40,13 @@ typedef struct hanami_config hanami_config_t;
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_config_new(hanami_config_t **out);
+HANAMI_API hanami_error_t hanami_config_new(hanami_config_t **out);
 
 /**
  * hanami_config_free:
  * @config: (transfer full) (nullable): config to free
  */
-void hanami_config_free(hanami_config_t *config);
+HANAMI_API void hanami_config_free(hanami_config_t *config);
 
 /**
  * hanami_config_load_env:
@@ -56,7 +58,7 @@ void hanami_config_free(hanami_config_t *config);
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_config_load_env(hanami_config_t *config);
+HANAMI_API hanami_error_t hanami_config_load_env(hanami_config_t *config);
 
 /**
  * hanami_config_load_gitconfig:
@@ -67,43 +69,43 @@ hanami_error_t hanami_config_load_env(hanami_config_t *config);
  *
  * Returns: HANAMI_OK on success (missing keys are not errors)
  */
-hanami_error_t hanami_config_load_gitconfig(hanami_config_t *config,
+HANAMI_API hanami_error_t hanami_config_load_gitconfig(hanami_config_t *config,
                                             void *repo);
 
 /* =========================================================================
  * Getters
  * ========================================================================= */
 
-const char *hanami_config_get_endpoint(const hanami_config_t *config);
-const char *const *hanami_config_get_relays(const hanami_config_t *config);
-size_t hanami_config_get_relay_count(const hanami_config_t *config);
-const char *hanami_config_get_cache_dir(const hanami_config_t *config);
-const char *hanami_config_get_index_backend(const hanami_config_t *config);
-size_t hanami_config_get_upload_threshold(const hanami_config_t *config);
-int hanami_config_get_prefetch_concurrency(const hanami_config_t *config);
-bool hanami_config_get_verify_on_read(const hanami_config_t *config);
+HANAMI_API const char *hanami_config_get_endpoint(const hanami_config_t *config);
+HANAMI_API const char *const *hanami_config_get_relays(const hanami_config_t *config);
+HANAMI_API size_t hanami_config_get_relay_count(const hanami_config_t *config);
+HANAMI_API const char *hanami_config_get_cache_dir(const hanami_config_t *config);
+HANAMI_API const char *hanami_config_get_index_backend(const hanami_config_t *config);
+HANAMI_API size_t hanami_config_get_upload_threshold(const hanami_config_t *config);
+HANAMI_API int hanami_config_get_prefetch_concurrency(const hanami_config_t *config);
+HANAMI_API bool hanami_config_get_verify_on_read(const hanami_config_t *config);
 /* Explicit local-fixture opt-in; default false. Never inferred from a URL. */
-bool hanami_config_get_allow_insecure(const hanami_config_t *config);
-void hanami_config_set_allow_insecure(hanami_config_t *config, bool allow);
+HANAMI_API bool hanami_config_get_allow_insecure(const hanami_config_t *config);
+HANAMI_API void hanami_config_set_allow_insecure(hanami_config_t *config, bool allow);
 
 /* =========================================================================
  * Setters
  * ========================================================================= */
 
-hanami_error_t hanami_config_set_endpoint(hanami_config_t *config,
+HANAMI_API hanami_error_t hanami_config_set_endpoint(hanami_config_t *config,
                                            const char *endpoint);
-hanami_error_t hanami_config_set_relays(hanami_config_t *config,
+HANAMI_API hanami_error_t hanami_config_set_relays(hanami_config_t *config,
                                          const char *const *relay_urls,
                                          size_t count);
-hanami_error_t hanami_config_set_cache_dir(hanami_config_t *config,
+HANAMI_API hanami_error_t hanami_config_set_cache_dir(hanami_config_t *config,
                                             const char *cache_dir);
-hanami_error_t hanami_config_set_index_backend(hanami_config_t *config,
+HANAMI_API hanami_error_t hanami_config_set_index_backend(hanami_config_t *config,
                                                 const char *backend);
-void hanami_config_set_upload_threshold(hanami_config_t *config,
+HANAMI_API void hanami_config_set_upload_threshold(hanami_config_t *config,
                                         size_t threshold);
-void hanami_config_set_prefetch_concurrency(hanami_config_t *config,
+HANAMI_API void hanami_config_set_prefetch_concurrency(hanami_config_t *config,
                                             int concurrency);
-void hanami_config_set_verify_on_read(hanami_config_t *config, bool verify);
+HANAMI_API void hanami_config_set_verify_on_read(hanami_config_t *config, bool verify);
 
 #ifdef __cplusplus
 }

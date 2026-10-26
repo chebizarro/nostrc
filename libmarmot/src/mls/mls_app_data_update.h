@@ -8,6 +8,8 @@
 #ifndef MLS_APP_DATA_UPDATE_H
 #define MLS_APP_DATA_UPDATE_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include "mls_tree.h"
 #include <stddef.h>
@@ -28,9 +30,9 @@ typedef struct {
 
 /* These encode/decode only the proposal body (after the u16 proposal type).
  * The component-specific payload and authorization are not validated here. */
-int  mls_app_data_update_serialize(const MlsAppDataUpdate *p, MlsTlsBuf *buf);
-int  mls_app_data_update_deserialize(MlsTlsReader *reader, MlsAppDataUpdate *p);
-void mls_app_data_update_clear(MlsAppDataUpdate *p);
+MARMOT_TEST_API int  mls_app_data_update_serialize(const MlsAppDataUpdate *p, MlsTlsBuf *buf);
+MARMOT_TEST_API int  mls_app_data_update_deserialize(MlsTlsReader *reader, MlsAppDataUpdate *p);
+MARMOT_TEST_API void mls_app_data_update_clear(MlsAppDataUpdate *p);
 
 /* The gate on GroupContextExtensions proposals (produced or received):
  * reject a recognizable app_data_dictionary (0x0006).  In a legacy group it
@@ -40,7 +42,7 @@ void mls_app_data_update_clear(MlsAppDataUpdate *p);
  * there at all).  Creation, Welcome and load admit an adopted GroupContext
  * through mls_app_components.h instead (nostrc-qp24.5.1).  Legacy opaque
  * extension bytes, including malformed lists, retain their read behavior. */
-int mls_group_extensions_supported(const uint8_t *data, size_t len);
+MARMOT_TEST_API int mls_group_extensions_supported(const uint8_t *data, size_t len);
 
 /* At most this many AppDataUpdate operations in one Commit: one per
  * component id (app-components/README.md; MDK v0.11.0
@@ -70,7 +72,7 @@ int mls_group_extensions_supported(const uint8_t *data, size_t len);
  * state is validated by mls_group_profile_check_entered() and the Marmot
  * layer.  *out is malloc()ed.
  */
-int mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
+MARMOT_TEST_API int mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
                               const MlsAppDataUpdate *const *ops, size_t n_ops,
                               uint8_t **out, size_t *out_len);
 
@@ -79,7 +81,7 @@ int mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
  * sender and committer are parent-epoch leaf indices. Returns a newly
  * allocated AppDataDictionary body on success, leaving input untouched.
  * Other components, removals, and older-epoch proposals remain unsupported. */
-int mls_app_data_update_admin_policy(
+MARMOT_TEST_API int mls_app_data_update_admin_policy(
     const uint8_t *dictionary, size_t dictionary_len,
     const MlsRatchetTree *parent_tree, const MlsRatchetTree *result_tree,
     uint64_t parent_epoch, uint64_t proposal_epoch,

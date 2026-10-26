@@ -12,6 +12,8 @@
 #ifndef HANAMI_REFDB_BACKEND_H
 #define HANAMI_REFDB_BACKEND_H
 
+#include "hanami-export.h"
+
 #include "hanami-types.h"
 #include <git2/types.h>
 
@@ -46,7 +48,7 @@ typedef struct {
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
+HANAMI_API hanami_error_t hanami_refdb_backend_new(git_refdb_backend **out,
                                         const hanami_refdb_backend_opts_t *opts);
 
 #ifdef __cplusplus

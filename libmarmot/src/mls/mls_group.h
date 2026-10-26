@@ -11,6 +11,8 @@
 #ifndef MLS_GROUP_H
 #define MLS_GROUP_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include "mls_tree.h"
 #include "mls_key_schedule.h"
@@ -133,7 +135,7 @@ typedef struct {
 } MlsProposal;
 
 /** Free proposal internals. */
-void mls_proposal_clear(MlsProposal *p);
+MARMOT_TEST_API void mls_proposal_clear(MlsProposal *p);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * MlsCommit - A Commit message (RFC 9420 §12.4)
@@ -170,7 +172,7 @@ typedef struct {
 } MlsUpdatePath;
 
 /** Free update path internals. */
-void mls_update_path_clear(MlsUpdatePath *up);
+MARMOT_TEST_API void mls_update_path_clear(MlsUpdatePath *up);
 
 /**
  * MlsCommit:
@@ -186,7 +188,7 @@ typedef struct {
 } MlsCommit;
 
 /** Free commit internals. */
-void mls_commit_clear(MlsCommit *c);
+MARMOT_TEST_API void mls_commit_clear(MlsCommit *c);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * MlsGroup - The core group state machine
@@ -245,7 +247,7 @@ typedef struct {
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Free all internal resources of an MlsGroup (but not the struct itself). */
-void mls_group_free(MlsGroup *g);
+MARMOT_TEST_API void mls_group_free(MlsGroup *g);
 
 /**
  * The structural invariants of @g's profile (nostrc-qp24.5.1): LEGACY needs
@@ -255,13 +257,13 @@ void mls_group_free(MlsGroup *g);
  * Account proofs are not verified cryptographically here.  Run on every
  * created, loaded or cloned state.
  */
-int mls_group_profile_check(const MlsGroup *g);
+MARMOT_TEST_API int mls_group_profile_check(const MlsGroup *g);
 
 /**
  * mls_group_profile_check() plus the resulting-epoch invariants of an epoch
  * the group enters (by Welcome or Commit): every admin is a member.
  */
-int mls_group_profile_check_entered(const MlsGroup *g);
+MARMOT_TEST_API int mls_group_profile_check_entered(const MlsGroup *g);
 
 /**
  * Reduce `g` to what reading the rest of its epoch's application messages
@@ -277,7 +279,7 @@ int mls_group_profile_check_entered(const MlsGroup *g);
  * epoch again -- or send.  mls_group_decrypt() still works; the state
  * serializes as before, with those fields zero.
  */
-void mls_group_strip_to_reader(MlsGroup *g);
+MARMOT_TEST_API void mls_group_strip_to_reader(MlsGroup *g);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group creation (RFC 9420 §11)
@@ -298,7 +300,7 @@ void mls_group_strip_to_reader(MlsGroup *g);
  * @param extensions_len      Length of extensions
  * @return 0 on success, negative error code on failure
  */
-int mls_group_create(MlsGroup *group,
+MARMOT_TEST_API int mls_group_create(MlsGroup *group,
                      const uint8_t *group_id, size_t group_id_len,
                      const uint8_t *credential_identity, size_t credential_identity_len,
                      const uint8_t signature_key_private[MLS_SIG_SK_LEN],
@@ -310,7 +312,7 @@ int mls_group_create(MlsGroup *group,
  * app_data_dictionary; nostrc-7vyi), covered by its signature.  Every type in
  * it must be one the Marmot leaf capabilities list.
  */
-int mls_group_create_with_leaf_extensions(MlsGroup *group,
+MARMOT_TEST_API int mls_group_create_with_leaf_extensions(MlsGroup *group,
                                           const uint8_t *group_id, size_t group_id_len,
                                           const uint8_t *credential_identity,
                                           size_t credential_identity_len,
@@ -342,7 +344,7 @@ typedef struct {
 } MlsAddResult;
 
 /** Free add result internals. */
-void mls_add_result_clear(MlsAddResult *r);
+MARMOT_TEST_API void mls_add_result_clear(MlsAddResult *r);
 
 /**
  * Add a member to the group.
@@ -360,7 +362,7 @@ void mls_add_result_clear(MlsAddResult *r);
  * @param result    Output commit + welcome
  * @return 0 on success
  */
-int mls_group_add_member(MlsGroup *group,
+MARMOT_TEST_API int mls_group_add_member(MlsGroup *group,
                          const MlsKeyPackage *kp,
                          MlsAddResult *result);
 
@@ -371,7 +373,7 @@ int mls_group_add_member(MlsGroup *group,
  * KeyPackage.  At most 64 KeyPackages; the same member twice (duplicate leaf
  * keys) is MARMOT_ERR_INVALID_ARG.  On failure the group is unchanged.
  */
-int mls_group_add_members(MlsGroup *group,
+MARMOT_TEST_API int mls_group_add_members(MlsGroup *group,
                           const MlsKeyPackage *const *kps, size_t kp_count,
                           MlsAddResult *result);
 
@@ -380,7 +382,7 @@ int mls_group_add_members(MlsGroup *group,
  * (MARMOT_TEST_HOOKS): when true, our Adds skip the check that a joiner
  * supports what the group requires, so a test can make the Commit a
  * non-conforming client sends and check that receivers refuse it. */
-extern bool mls_test_allow_unsupported_adds;
+extern MARMOT_TEST_API bool mls_test_allow_unsupported_adds;
 #endif
 
 /**
@@ -394,7 +396,7 @@ extern bool mls_test_allow_unsupported_adds;
  * re-encodes a libmarmot 0.10.0 group's GroupData this way when it adds
  * members (review W24 M1).
  */
-int mls_group_add_members_with_extensions(MlsGroup *group,
+MARMOT_TEST_API int mls_group_add_members_with_extensions(MlsGroup *group,
                                           const MlsKeyPackage *const *kps, size_t kp_count,
                                           const uint8_t *extensions, size_t extensions_len,
                                           MlsAddResult *result);
@@ -409,7 +411,7 @@ int mls_group_add_members_with_extensions(MlsGroup *group,
  * build the slot takeover W24 review B1 found.  On failure the group is
  * unchanged.
  */
-int mls_group_replace_members(MlsGroup *group,
+MARMOT_TEST_API int mls_group_replace_members(MlsGroup *group,
                               const uint32_t *removes, size_t remove_count,
                               const MlsKeyPackage *const *kps, size_t kp_count,
                               MlsAddResult *result);
@@ -429,7 +431,7 @@ typedef struct {
 } MlsCommitResult;
 
 /** Free commit result internals. */
-void mls_commit_result_clear(MlsCommitResult *r);
+MARMOT_TEST_API void mls_commit_result_clear(MlsCommitResult *r);
 
 /**
  * Remove a member from the group.
@@ -443,7 +445,7 @@ void mls_commit_result_clear(MlsCommitResult *r);
  * @param result      Output serialized commit
  * @return 0 on success
  */
-int mls_group_remove_member(MlsGroup *group,
+MARMOT_TEST_API int mls_group_remove_member(MlsGroup *group,
                             uint32_t leaf_index,
                             MlsCommitResult *result);
 
@@ -452,7 +454,7 @@ int mls_group_remove_member(MlsGroup *group,
  * UpdatePath).  Every leaf must be a current member other than us, named
  * once; otherwise MARMOT_ERR_INVALID_ARG.  On failure the group is unchanged.
  */
-int mls_group_remove_members(MlsGroup *group,
+MARMOT_TEST_API int mls_group_remove_members(MlsGroup *group,
                              const uint32_t *leaves, size_t leaf_count,
                              MlsCommitResult *result);
 
@@ -471,7 +473,7 @@ int mls_group_remove_members(MlsGroup *group,
  * @param result  Output serialized commit
  * @return 0 on success
  */
-int mls_group_self_update(MlsGroup *group,
+MARMOT_TEST_API int mls_group_self_update(MlsGroup *group,
                           MlsCommitResult *result);
 
 /**
@@ -480,7 +482,7 @@ int mls_group_self_update(MlsGroup *group,
  * app_data_dictionary; nostrc-rgb5) instead of the current leaf's
  * extensions.  The signature key and credential do not change.
  */
-int mls_group_self_update_with_leaf_extensions(MlsGroup *group,
+MARMOT_TEST_API int mls_group_self_update_with_leaf_extensions(MlsGroup *group,
                                                const uint8_t *leaf_ext, size_t leaf_ext_len,
                                                MlsCommitResult *result);
 
@@ -500,7 +502,7 @@ int mls_group_self_update_with_leaf_extensions(MlsGroup *group,
  * MARMOT_ERR_INVALID_ARG for a malformed list) is returned.  On success the
  * group is advanced to the new epoch; on failure it is unchanged.
  */
-int mls_group_commit_extensions(MlsGroup *group,
+MARMOT_TEST_API int mls_group_commit_extensions(MlsGroup *group,
                                 const uint8_t *extensions, size_t extensions_len,
                                 MlsCommitResult *result);
 
@@ -517,7 +519,7 @@ int mls_group_commit_extensions(MlsGroup *group,
  * signature checked), whatever its content: 0, or the error.  Nothing is
  * applied.
  */
-int mls_group_commit_authentic(const MlsGroup *group, const uint8_t *commit_data,
+MARMOT_TEST_API int mls_group_commit_authentic(const MlsGroup *group, const uint8_t *commit_data,
                                size_t commit_len, uint32_t sender_leaf);
 
 /**
@@ -534,7 +536,7 @@ int mls_group_commit_authentic(const MlsGroup *group, const uint8_t *commit_data
  * @return 0 with *out_removed set; MARMOT_ERR_MLS_PROCESS_MESSAGE for a
  *   Commit that does not authenticate or is malformed (*out_removed false)
  */
-int mls_group_commit_removes_self(const MlsGroup *group,
+MARMOT_TEST_API int mls_group_commit_removes_self(const MlsGroup *group,
                                   const uint8_t *commit_data, size_t commit_len,
                                   uint32_t sender_leaf, bool *out_removed);
 
@@ -550,7 +552,7 @@ int mls_group_commit_removes_self(const MlsGroup *group,
  *   MARMOT_ERR_MLS_PROCESS_MESSAGE otherwise (another group or epoch, a
  *   sender data that does not decrypt, an empty leaf)
  */
-int mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
+MARMOT_TEST_API int mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
                                uint32_t *out_leaf);
 
 /**
@@ -563,7 +565,7 @@ int mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t
  * @return 0 with *out_leaf set; MARMOT_ERR_MLS_FRAMING or
  *   MARMOT_ERR_MLS_PROCESS_MESSAGE otherwise
  */
-int mls_private_message_sender_leaf(const uint8_t sender_data_secret[32],
+MARMOT_TEST_API int mls_private_message_sender_leaf(const uint8_t sender_data_secret[32],
                                     const uint8_t *group_id, size_t group_id_len,
                                     uint64_t epoch, const uint8_t *msg, size_t msg_len,
                                     uint32_t *out_leaf);
@@ -584,7 +586,7 @@ int mls_private_message_sender_leaf(const uint8_t sender_data_secret[32],
  * @param sender_leaf  Leaf index of the committer
  * @return 0 on success
  */
-int mls_group_process_commit(MlsGroup *group,
+MARMOT_TEST_API int mls_group_process_commit(MlsGroup *group,
                              const uint8_t *commit_data, size_t commit_len,
                              uint32_t sender_leaf);
 
@@ -613,7 +615,7 @@ int mls_group_process_commit(MlsGroup *group,
  * @param proposal_count  Number of referenced-proposal messages
  * @return 0 on success, MARMOT_ERR_UNSUPPORTED for unsupported proposal types
  */
-int mls_group_process_commit_ex(MlsGroup *group,
+MARMOT_TEST_API int mls_group_process_commit_ex(MlsGroup *group,
                                 const uint8_t *commit_data, size_t commit_len,
                                 uint32_t sender_leaf,
                                 const uint8_t *const *proposal_msgs,
@@ -627,7 +629,7 @@ int mls_group_process_commit_ex(MlsGroup *group,
  * psk_secret computation.  Resumption PSKs for the current group/epoch are
  * resolved from group->epoch_secrets.resumption_psk.
  */
-int mls_group_process_commit_ex_with_psks(MlsGroup *group,
+MARMOT_TEST_API int mls_group_process_commit_ex_with_psks(MlsGroup *group,
                                           const uint8_t *commit_data,
                                           size_t commit_len,
                                           uint32_t sender_leaf,
@@ -664,7 +666,7 @@ typedef struct {
 } MlsOpenedProposal;
 
 /** Free an opened proposal's bytes. */
-void mls_opened_proposal_clear(MlsOpenedProposal *p);
+MARMOT_TEST_API void mls_opened_proposal_clear(MlsOpenedProposal *p);
 
 /**
  * Authenticate the standalone Proposal MLSMessage @msg in @group's epoch:
@@ -690,16 +692,16 @@ void mls_opened_proposal_clear(MlsOpenedProposal *p);
  *   MARMOT_ERR_UNSUPPORTED (another proposal type);
  *   MARMOT_ERR_MLS_PROCESS_MESSAGE (does not authenticate, malformed)
  */
-int mls_group_open_proposal(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
+MARMOT_TEST_API int mls_group_open_proposal(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
                             MlsOpenedProposal *out);
 
 /** Whether every member leaf of @group advertises proposal type @type in its
  *  capabilities (RFC 9420 section 12.2; a default type always counts). */
-bool mls_group_members_support_proposal(const MlsGroup *group, uint16_t type);
+MARMOT_TEST_API bool mls_group_members_support_proposal(const MlsGroup *group, uint16_t type);
 
 /** Whether @group's GroupContext required_capabilities list proposal type
  *  @type (MDK 0.8 sends SelfRemove only then; review M1). */
-bool mls_group_requires_proposal(const MlsGroup *group, uint16_t type);
+MARMOT_TEST_API bool mls_group_requires_proposal(const MlsGroup *group, uint16_t type);
 
 /**
  * MlsCommitSummary:
@@ -750,7 +752,7 @@ typedef struct {
  * when every member supports it; a leaf may be removed once.  @summary
  * (nullable) is filled on success.
  */
-int mls_group_process_commit_by_ref(MlsGroup *group,
+MARMOT_TEST_API int mls_group_process_commit_by_ref(MlsGroup *group,
                                     const uint8_t *commit_data, size_t commit_len,
                                     uint32_t sender_leaf,
                                     const uint8_t *const *acs, const size_t *ac_lens,
@@ -762,7 +764,7 @@ int mls_group_process_commit_by_ref(MlsGroup *group,
  * counts too.  @summary (nullable) gets what the Commit did with
  * departure requests (filled when *out_removed).
  */
-int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
+MARMOT_TEST_API int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
                                          const uint8_t *commit_data, size_t commit_len,
                                          uint32_t sender_leaf,
                                          const uint8_t *const *acs, const size_t *ac_lens,
@@ -781,7 +783,7 @@ int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
  * can compute it.  Free with mls_group_free().  @summary as for
  * mls_group_process_commit_by_ref().  @group is unchanged.
  */
-int mls_group_commit_public_result_by_ref(const MlsGroup *group,
+MARMOT_TEST_API int mls_group_commit_public_result_by_ref(const MlsGroup *group,
                                           const uint8_t *commit_data, size_t commit_len,
                                           uint32_t sender_leaf,
                                           const uint8_t *const *acs, const size_t *ac_lens,
@@ -798,7 +800,7 @@ int mls_group_commit_public_result_by_ref(const MlsGroup *group,
  * otherwise); installed through the resulting-epoch check like every
  * producer.  On failure the group is unchanged.
  */
-int mls_group_commit_adopted(MlsGroup *group,
+MARMOT_TEST_API int mls_group_commit_adopted(MlsGroup *group,
                              const uint32_t *removes, size_t remove_count,
                              const MlsKeyPackage *const *kps, size_t kp_count,
                              const MlsAppDataUpdate *adus, size_t adu_count,
@@ -813,7 +815,7 @@ int mls_group_commit_adopted(MlsGroup *group,
  *
  * @return 0; MARMOT_ERR_INVALID_ARG for a set that cannot be committed
  */
-int mls_group_commit_by_ref(MlsGroup *group,
+MARMOT_TEST_API int mls_group_commit_by_ref(MlsGroup *group,
                             const uint8_t *const *acs, const size_t *ac_lens, size_t ac_count,
                             MlsCommitResult *result);
 
@@ -823,7 +825,7 @@ int mls_group_commit_by_ref(MlsGroup *group,
  * encrypted with our handshake ratchet, whose step is taken in @group: store
  * it), and *out_own kept as receivers keep it. An admin commits it.
  */
-int mls_group_remove_self_proposal(MlsGroup *group, uint8_t **out_msg, size_t *out_len,
+MARMOT_TEST_API int mls_group_remove_self_proposal(MlsGroup *group, uint8_t **out_msg, size_t *out_len,
                                    MlsOpenedProposal *out_own);
 
 /**
@@ -833,7 +835,7 @@ int mls_group_remove_self_proposal(MlsGroup *group, uint8_t **out_msg, size_t *o
  * changed.  MARMOT_ERR_UNSUPPORTED when some member does not support
  * SelfRemove.
  */
-int mls_group_self_remove_proposal(const MlsGroup *group, uint8_t **out_msg, size_t *out_len,
+MARMOT_TEST_API int mls_group_self_remove_proposal(const MlsGroup *group, uint8_t **out_msg, size_t *out_len,
                                    MlsOpenedProposal *out_own);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -850,7 +852,7 @@ int mls_group_self_remove_proposal(const MlsGroup *group, uint8_t **out_msg, siz
  * @param out_len        Output length
  * @return 0 on success
  */
-int mls_group_encrypt(MlsGroup *group,
+MARMOT_TEST_API int mls_group_encrypt(MlsGroup *group,
                       const uint8_t *plaintext, size_t plaintext_len,
                       uint8_t **out_data, size_t *out_len);
 
@@ -865,7 +867,7 @@ int mls_group_encrypt(MlsGroup *group,
  * @param out_sender_leaf Output sender's leaf index (can be NULL)
  * @return 0 on success
  */
-int mls_group_decrypt(MlsGroup *group,
+MARMOT_TEST_API int mls_group_decrypt(MlsGroup *group,
                       const uint8_t *ciphertext, size_t ciphertext_len,
                       uint8_t **out_plaintext, size_t *out_pt_len,
                       uint32_t *out_sender_leaf);
@@ -878,20 +880,20 @@ int mls_group_decrypt(MlsGroup *group,
  * Compute the serialized GroupContext for the current epoch.
  * Caller frees *out_data.
  */
-int mls_group_context_build(const MlsGroup *group,
+MARMOT_TEST_API int mls_group_context_build(const MlsGroup *group,
                             uint8_t **out_data, size_t *out_len);
 
 /**
  * Compute the tree hash of the current ratchet tree.
  */
-int mls_group_tree_hash(const MlsGroup *group, uint8_t out[MLS_HASH_LEN]);
+MARMOT_TEST_API int mls_group_tree_hash(const MlsGroup *group, uint8_t out[MLS_HASH_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Commit serialization
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize a Commit to TLS wire format. */
-int mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf);
 
 /* At most this many proposals in a Commit: one AppDataUpdate per component
  * id (MLS_APP_DATA_UPDATE_MAX), and 1024 for every other kind (the receive
@@ -904,26 +906,26 @@ int mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf);
 #ifdef MARMOT_TEST_HOOKS
 /* Number of proposal-array moves by the most recent application-order sort.
  * The test checks the linear-work contract without a host-time budget. */
-extern size_t mls_test_proposal_sort_moves;
-int mls_test_sort_proposals_for_application(MlsProposal *proposals, size_t count);
+extern MARMOT_TEST_API size_t mls_test_proposal_sort_moves;
+MARMOT_TEST_API int mls_test_sort_proposals_for_application(MlsProposal *proposals, size_t count);
 #endif
 
 /** Deserialize a Commit from TLS wire format (at most
  *  MLS_COMMIT_MAX_PROPOSALS proposals). */
-int mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit);
+MARMOT_TEST_API int mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit);
 
 /** Serialize an UpdatePath to TLS wire format. */
-int mls_update_path_serialize(const MlsUpdatePath *up, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_update_path_serialize(const MlsUpdatePath *up, MlsTlsBuf *buf);
 
 /** Deserialize an UpdatePath from TLS wire format. */
-int mls_update_path_deserialize(MlsTlsReader *reader, MlsUpdatePath *up);
+MARMOT_TEST_API int mls_update_path_deserialize(MlsTlsReader *reader, MlsUpdatePath *up);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * TreeKEM UpdatePath helpers
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Derive commit_secret = DeriveSecret(root_path_secret, "path"). */
-int mls_treekem_commit_secret_from_path_secret(const uint8_t root_path_secret[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_treekem_commit_secret_from_path_secret(const uint8_t root_path_secret[MLS_HASH_LEN],
                                                uint8_t out[MLS_HASH_LEN]);
 
 /**
@@ -931,7 +933,7 @@ int mls_treekem_commit_secret_from_path_secret(const uint8_t root_path_secret[ML
  * copath resolution.  The caller provides the target node's HPKE private key;
  * the public key is read from the ratchet tree.
  */
-int mls_treekem_update_path_decrypt_secret(const MlsRatchetTree *tree,
+MARMOT_TEST_API int mls_treekem_update_path_decrypt_secret(const MlsRatchetTree *tree,
                                            const MlsUpdatePathNode *path_node,
                                            uint32_t copath_node_idx,
                                            uint32_t resolution_node_idx,
@@ -950,7 +952,7 @@ int mls_treekem_update_path_decrypt_secret(const MlsRatchetTree *tree,
  * The tree is mutated in place and may be partially updated if validation
  * fails; callers that need rollback should apply to a staged copy.
  */
-int mls_treekem_apply_update_path(MlsRatchetTree *tree,
+MARMOT_TEST_API int mls_treekem_apply_update_path(MlsRatchetTree *tree,
                                   uint32_t sender_leaf,
                                   const MlsUpdatePath *path);
 
@@ -965,7 +967,7 @@ int mls_treekem_apply_update_path(MlsRatchetTree *tree,
  * any mismatch MARMOT_ERR_WELCOME_INVALID is returned and the cache is left
  * as it was.
  */
-int mls_group_welcome_install_path_secret(MlsGroup *group, uint32_t committer_leaf,
+MARMOT_TEST_API int mls_group_welcome_install_path_secret(MlsGroup *group, uint32_t committer_leaf,
                                           const uint8_t path_secret[MLS_HASH_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -998,18 +1000,18 @@ typedef struct {
 } MlsGroupInfo;
 
 /** Free GroupInfo internals. */
-void mls_group_info_clear(MlsGroupInfo *gi);
+MARMOT_TEST_API void mls_group_info_clear(MlsGroupInfo *gi);
 
 /** Serialize GroupInfo to TLS wire format. */
-int mls_group_info_serialize(const MlsGroupInfo *gi, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_group_info_serialize(const MlsGroupInfo *gi, MlsTlsBuf *buf);
 
 /** Deserialize GroupInfo from TLS wire format. */
-int mls_group_info_deserialize(MlsTlsReader *reader, MlsGroupInfo *gi);
+MARMOT_TEST_API int mls_group_info_deserialize(MlsTlsReader *reader, MlsGroupInfo *gi);
 
 /**
  * Build GroupInfo from the current group state.
  */
-int mls_group_info_build(const MlsGroup *group, MlsGroupInfo *gi);
+MARMOT_TEST_API int mls_group_info_build(const MlsGroup *group, MlsGroupInfo *gi);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group state serialization (internal persistence)
@@ -1021,7 +1023,7 @@ int mls_group_info_build(const MlsGroup *group, MlsGroupInfo *gi);
  *
  * @return 0 on success
  */
-int mls_group_serialize(const MlsGroup *group,
+MARMOT_TEST_API int mls_group_serialize(const MlsGroup *group,
                         uint8_t **out_data, size_t *out_len);
 
 /**
@@ -1030,7 +1032,7 @@ int mls_group_serialize(const MlsGroup *group,
  *
  * @return 0 on success
  */
-int mls_group_deserialize(const uint8_t *data, size_t len,
+MARMOT_TEST_API int mls_group_deserialize(const uint8_t *data, size_t len,
                           MlsGroup *group);
 
 #ifdef __cplusplus

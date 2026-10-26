@@ -129,9 +129,8 @@ if(BUILD_TESTING)
         tests/test_mls_group_error.c
         gn-mls-group-error.c)
     target_include_directories(gnostr-test-mls-group-error PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${PROJECT_ROOT}/libmarmot/include)
-    target_link_libraries(gnostr-test-mls-group-error PRIVATE PkgConfig::GLIB)
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(gnostr-test-mls-group-error PRIVATE marmot PkgConfig::GLIB)
     add_test(NAME gnostr-test-mls-group-error COMMAND gnostr-test-mls-group-error)
     set_tests_properties(gnostr-test-mls-group-error PROPERTIES
         TIMEOUT 30

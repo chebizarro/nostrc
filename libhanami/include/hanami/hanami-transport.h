@@ -17,6 +17,8 @@
 #ifndef HANAMI_TRANSPORT_H
 #define HANAMI_TRANSPORT_H
 
+#include "hanami-export.h"
+
 #include "hanami-types.h"
 #include <git2/types.h>
 #include <git2/transport.h>
@@ -48,7 +50,7 @@ typedef struct {
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_transport_register(const hanami_transport_opts_t *opts);
+HANAMI_API hanami_error_t hanami_transport_register(const hanami_transport_opts_t *opts);
 
 /**
  * hanami_transport_unregister:
@@ -57,7 +59,7 @@ hanami_error_t hanami_transport_register(const hanami_transport_opts_t *opts);
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_transport_unregister(void);
+HANAMI_API hanami_error_t hanami_transport_unregister(void);
 
 /**
  * hanami_transport_parse_url:
@@ -70,7 +72,7 @@ hanami_error_t hanami_transport_unregister(void);
  *
  * Returns: HANAMI_OK on success, HANAMI_ERR_INVALID_ARG on parse failure
  */
-hanami_error_t hanami_transport_parse_url(const char *url,
+HANAMI_API hanami_error_t hanami_transport_parse_url(const char *url,
                                            char **endpoint,
                                            char **owner_pubkey,
                                            char **repo_id);

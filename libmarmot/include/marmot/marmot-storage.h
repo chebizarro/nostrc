@@ -14,6 +14,8 @@
 #ifndef MARMOT_STORAGE_H
 #define MARMOT_STORAGE_H
 
+#include "marmot-export.h"
+
 #include "marmot-types.h"
 #include "marmot-error.h"
 
@@ -322,7 +324,7 @@ typedef struct MarmotStorage {
  *
  * Returns: (transfer full): a new MarmotStorage, or NULL on error
  */
-MarmotStorage *marmot_storage_memory_new(void);
+MARMOT_API MarmotStorage *marmot_storage_memory_new(void);
 
 /**
  * marmot_storage_sqlite_new:
@@ -333,7 +335,7 @@ MarmotStorage *marmot_storage_memory_new(void);
  *
  * Returns: (transfer full): a new MarmotStorage, or NULL on error
  */
-MarmotStorage *marmot_storage_sqlite_new(const char *path,
+MARMOT_API MarmotStorage *marmot_storage_sqlite_new(const char *path,
                                           const char *encryption_key);
 
 /**
@@ -359,7 +361,7 @@ MarmotStorage *marmot_storage_sqlite_new(const char *path,
  *
  * Returns: (transfer full) (nullable): a new MarmotStorage, or NULL on error
  */
-MarmotStorage *marmot_storage_nostrdb_new(void *ndb_handle,
+MARMOT_API MarmotStorage *marmot_storage_nostrdb_new(void *ndb_handle,
                                            const char *mls_state_dir);
 
 /**
@@ -368,7 +370,7 @@ MarmotStorage *marmot_storage_nostrdb_new(void *ndb_handle,
  *
  * Destroys the storage backend, calling its destroy function.
  */
-void marmot_storage_free(MarmotStorage *storage);
+MARMOT_API void marmot_storage_free(MarmotStorage *storage);
 
 #ifdef __cplusplus
 }

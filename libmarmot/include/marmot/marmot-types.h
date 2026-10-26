@@ -10,6 +10,8 @@
 #ifndef MARMOT_TYPES_H
 #define MARMOT_TYPES_H
 
+#include "marmot-export.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -81,16 +83,16 @@ typedef struct {
 } MarmotGroupId;
 
 /** Create a MarmotGroupId from raw bytes (copies the data) */
-MarmotGroupId marmot_group_id_new(const uint8_t *data, size_t len);
+MARMOT_API MarmotGroupId marmot_group_id_new(const uint8_t *data, size_t len);
 
 /** Free a MarmotGroupId's internal data */
-void marmot_group_id_free(MarmotGroupId *gid);
+MARMOT_API void marmot_group_id_free(MarmotGroupId *gid);
 
 /** Compare two MarmotGroupIds for equality */
-bool marmot_group_id_equal(const MarmotGroupId *a, const MarmotGroupId *b);
+MARMOT_API bool marmot_group_id_equal(const MarmotGroupId *a, const MarmotGroupId *b);
 
 /** Get hex string representation (caller frees result) */
-char *marmot_group_id_to_hex(const MarmotGroupId *gid);
+MARMOT_API char *marmot_group_id_to_hex(const MarmotGroupId *gid);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Configuration
@@ -209,7 +211,7 @@ typedef struct {
  *
  * Returns: MarmotConfig with default values
  */
-MarmotConfig marmot_config_default(void);
+MARMOT_API MarmotConfig marmot_config_default(void);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group state
@@ -221,8 +223,8 @@ typedef enum {
     MARMOT_GROUP_STATE_PENDING  = 2,
 } MarmotGroupState;
 
-const char *marmot_group_state_to_string(MarmotGroupState state);
-MarmotGroupState marmot_group_state_from_string(const char *s);
+MARMOT_API const char *marmot_group_state_to_string(MarmotGroupState state);
+MARMOT_API MarmotGroupState marmot_group_state_from_string(const char *s);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group
@@ -277,10 +279,10 @@ typedef struct {
 } MarmotGroup;
 
 /** Allocate and zero-initialize a MarmotGroup */
-MarmotGroup *marmot_group_new(void);
+MARMOT_API MarmotGroup *marmot_group_new(void);
 
 /** Deep-free a MarmotGroup and all its owned data */
-void marmot_group_free(MarmotGroup *group);
+MARMOT_API void marmot_group_free(MarmotGroup *group);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Message state
@@ -342,10 +344,10 @@ typedef struct {
 } MarmotMessage;
 
 /** Allocate and zero-initialize a MarmotMessage */
-MarmotMessage *marmot_message_new(void);
+MARMOT_API MarmotMessage *marmot_message_new(void);
 
 /** Deep-free a MarmotMessage and all its owned data */
-void marmot_message_free(MarmotMessage *msg);
+MARMOT_API void marmot_message_free(MarmotMessage *msg);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Welcome state
@@ -412,10 +414,10 @@ typedef struct {
 } MarmotWelcome;
 
 /** Allocate and zero-initialize a MarmotWelcome */
-MarmotWelcome *marmot_welcome_new(void);
+MARMOT_API MarmotWelcome *marmot_welcome_new(void);
 
 /** Deep-free a MarmotWelcome and all its owned data */
-void marmot_welcome_free(MarmotWelcome *welcome);
+MARMOT_API void marmot_welcome_free(MarmotWelcome *welcome);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group exporter secret
@@ -489,19 +491,19 @@ typedef struct {
 } MarmotGroupDataExtension;
 
 /** Allocate and zero-initialize a MarmotGroupDataExtension */
-MarmotGroupDataExtension *marmot_group_data_extension_new(void);
+MARMOT_API MarmotGroupDataExtension *marmot_group_data_extension_new(void);
 
 /** Deep-free a MarmotGroupDataExtension */
-void marmot_group_data_extension_free(MarmotGroupDataExtension *ext);
+MARMOT_API void marmot_group_data_extension_free(MarmotGroupDataExtension *ext);
 
 /** Serialize extension to TLS wire format. Caller frees *out_data. */
-int marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
+MARMOT_API int marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
                                            uint8_t **out_data, size_t *out_len);
 
 /** Deserialize a MIP-01 extension (version 1 or later) from TLS wire format.
  *  Since 0.12.0 libmarmot 0.10.0's own layout is not accepted here (it is
  *  read only from a group's stored state). Caller frees result. */
-MarmotGroupDataExtension *marmot_group_data_extension_deserialize(
+MARMOT_API MarmotGroupDataExtension *marmot_group_data_extension_deserialize(
     const uint8_t *data, size_t len);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -520,7 +522,7 @@ typedef struct {
 } MarmotPagination;
 
 /** Default pagination (limit=1000, offset=0, sort=created_at) */
-MarmotPagination marmot_pagination_default(void);
+MARMOT_API MarmotPagination marmot_pagination_default(void);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Message processing result
@@ -669,7 +671,7 @@ typedef struct {
 } MarmotPendingProposal;
 
 /** Free a MarmotMessageResult's owned data */
-void marmot_message_result_free(MarmotMessageResult *result);
+MARMOT_API void marmot_message_result_free(MarmotMessageResult *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group creation result
@@ -694,7 +696,7 @@ typedef struct {
 } MarmotCreateGroupResult;
 
 /** Free a MarmotCreateGroupResult's owned data */
-void marmot_create_group_result_free(MarmotCreateGroupResult *result);
+MARMOT_API void marmot_create_group_result_free(MarmotCreateGroupResult *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group update types
@@ -726,7 +728,7 @@ typedef struct {
 } MarmotKeyPackageResult;
 
 /** Free a MarmotKeyPackageResult's owned data */
-void marmot_key_package_result_free(MarmotKeyPackageResult *result);
+MARMOT_API void marmot_key_package_result_free(MarmotKeyPackageResult *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Key package info (stored metadata for published KeyPackages)
@@ -753,10 +755,10 @@ typedef struct {
 } MarmotKeyPackageInfo;
 
 /** Allocate and zero-initialize a MarmotKeyPackageInfo */
-MarmotKeyPackageInfo *marmot_key_package_info_new(void);
+MARMOT_API MarmotKeyPackageInfo *marmot_key_package_info_new(void);
 
 /** Deep-free a MarmotKeyPackageInfo and all its owned data */
-void marmot_key_package_info_free(MarmotKeyPackageInfo *info);
+MARMOT_API void marmot_key_package_info_free(MarmotKeyPackageInfo *info);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Outgoing message result
@@ -771,7 +773,7 @@ typedef struct {
 } MarmotOutgoingMessage;
 
 /** Free a MarmotOutgoingMessage's owned data */
-void marmot_outgoing_message_free(MarmotOutgoingMessage *result);
+MARMOT_API void marmot_outgoing_message_free(MarmotOutgoingMessage *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group config for creation
@@ -825,7 +827,7 @@ typedef struct {
 } MarmotEncryptedMedia;
 
 /** Clear and free all data within an encrypted media result */
-void marmot_encrypted_media_clear(MarmotEncryptedMedia *result);
+MARMOT_API void marmot_encrypted_media_clear(MarmotEncryptedMedia *result);
 
 #ifdef __cplusplus
 }

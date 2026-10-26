@@ -30,6 +30,8 @@
 #ifndef MARMOT_MEDIA_H
 #define MARMOT_MEDIA_H
 
+#include "marmot-export.h"
+
 #include "marmot-error.h"
 #include "marmot-types.h"
 
@@ -101,7 +103,7 @@ typedef struct {
  * image/jpg -> image/jpeg.  *out is malloc'd.  MARMOT_ERR_INVALID_INPUT if the
  * value has no canonical form.
  */
-MarmotError marmot_media_type_canonicalize(const char *input, char **out);
+MARMOT_API MarmotError marmot_media_type_canonicalize(const char *input, char **out);
 
 /**
  * Encrypt one attachment for the group's current epoch.  media_type is
@@ -110,7 +112,7 @@ MarmotError marmot_media_type_canonicalize(const char *input, char **out);
  * An empty file is MARMOT_ERR_INVALID_INPUT.  A fresh random nonce is drawn
  * on every call, including a resend of the same file.
  */
-MarmotError marmot_media_encrypt(Marmot *m,
+MARMOT_API MarmotError marmot_media_encrypt(Marmot *m,
                                  const MarmotGroupId *mls_group_id,
                                  const uint8_t *plaintext, size_t plaintext_len,
                                  const char *media_type,
@@ -127,7 +129,7 @@ MarmotError marmot_media_encrypt(Marmot *m,
  * MARMOT_ERR_STORAGE_NOT_FOUND.  Each failure only makes this attachment
  * unavailable; it never invalidates the message that carried it.
  */
-MarmotError marmot_media_decrypt(Marmot *m,
+MARMOT_API MarmotError marmot_media_decrypt(Marmot *m,
                                  const MarmotGroupId *mls_group_id,
                                  uint64_t source_epoch,
                                  const MarmotMediaReference *reference,
@@ -143,16 +145,16 @@ MarmotError marmot_media_decrypt(Marmot *m,
  * same uninterrupted turn as marmot_create_message() (no Commit processed
  * in between).
  */
-MarmotError marmot_media_check_epoch(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_media_check_epoch(Marmot *m, const MarmotGroupId *mls_group_id,
                                      uint64_t source_epoch);
 
 /** Append a locator (copied).  Structure is checked by imeta_build. */
-MarmotError marmot_media_reference_add_locator(MarmotMediaReference *reference,
+MARMOT_API MarmotError marmot_media_reference_add_locator(MarmotMediaReference *reference,
                                                const char *kind,
                                                const char *value);
 
 /** Set or clear (NULL) the optional dim and thumbhash hints (copied). */
-MarmotError marmot_media_reference_set_hints(MarmotMediaReference *reference,
+MARMOT_API MarmotError marmot_media_reference_set_hints(MarmotMediaReference *reference,
                                              const char *dim,
                                              const char *thumbhash);
 
@@ -167,7 +169,7 @@ MarmotError marmot_media_reference_set_hints(MarmotMediaReference *reference,
  * policy forbids.  *out_fields is a NULL-terminated malloc'd array of
  * *out_count strings; free with marmot_media_imeta_fields_free().
  */
-MarmotError marmot_media_imeta_build(const MarmotMediaReference *reference,
+MARMOT_API MarmotError marmot_media_imeta_build(const MarmotMediaReference *reference,
                                      const char *const *allowed_kinds,
                                      char ***out_fields, size_t *out_count);
 
@@ -180,7 +182,7 @@ MarmotError marmot_media_imeta_build(const MarmotMediaReference *reference,
  * every other structural rule of the spec (duplicates, missing fields, bad
  * hashes/nonce, non-canonical m, filename profile, blurhash, locators).
  */
-MarmotError marmot_media_imeta_parse(const char *const *fields,
+MARMOT_API MarmotError marmot_media_imeta_parse(const char *const *fields,
                                      const size_t *field_lens,
                                      size_t field_count,
                                      MarmotMediaReference *out);
@@ -189,13 +191,13 @@ MarmotError marmot_media_imeta_parse(const char *const *fields,
  * The Blossom fallback fetch URL for an endpoint: base_url with trailing '/'
  * removed, '/', lowercase hex of ciphertext_sha256.  *out is malloc'd.
  */
-MarmotError marmot_media_blossom_fallback_url(const char *base_url,
+MARMOT_API MarmotError marmot_media_blossom_fallback_url(const char *base_url,
                                               const uint8_t ciphertext_sha256[32],
                                               char **out);
 
-void marmot_media_reference_clear(MarmotMediaReference *reference);
-void marmot_media_upload_clear(MarmotMediaUpload *upload);
-void marmot_media_imeta_fields_free(char **fields, size_t count);
+MARMOT_API void marmot_media_reference_clear(MarmotMediaReference *reference);
+MARMOT_API void marmot_media_upload_clear(MarmotMediaUpload *upload);
+MARMOT_API void marmot_media_imeta_fields_free(char **fields, size_t count);
 
 /* ── 0x8002 marmot.group.blossom.image.v1 ──────────────────────────────── */
 
@@ -213,11 +215,11 @@ typedef struct {
     char    *media_type;            /**< of the decrypted image */
 } MarmotGroupBlossomImage;
 
-MarmotError marmot_group_blossom_image_encode(const MarmotGroupBlossomImage *image,
+MARMOT_API MarmotError marmot_group_blossom_image_encode(const MarmotGroupBlossomImage *image,
                                               uint8_t **out, size_t *out_len);
 /** Exact decode; rejects partial state, bad lengths, a non-canonical media
  *  type, non-shortest length prefixes and trailing bytes. */
-MarmotError marmot_group_blossom_image_decode(const uint8_t *data, size_t len,
+MARMOT_API MarmotError marmot_group_blossom_image_decode(const uint8_t *data, size_t len,
                                               MarmotGroupBlossomImage *out);
 
 /**
@@ -225,17 +227,17 @@ MarmotError marmot_group_blossom_image_decode(const uint8_t *data, size_t len,
  * image_upload_key (AAD "marmot-group-image-v1" 0x00 media_type) and fill
  * the component state.  Upload *ciphertext under out->image_hash.
  */
-MarmotError marmot_group_image_encrypt(const uint8_t *plaintext, size_t plaintext_len,
+MARMOT_API MarmotError marmot_group_image_encrypt(const uint8_t *plaintext, size_t plaintext_len,
                                        const char *media_type,
                                        MarmotGroupBlossomImage *out,
                                        uint8_t **ciphertext, size_t *ciphertext_len);
 
 /** Check the blob against image_hash first, then open it. */
-MarmotError marmot_group_image_decrypt(const MarmotGroupBlossomImage *image,
+MARMOT_API MarmotError marmot_group_image_decrypt(const MarmotGroupBlossomImage *image,
                                        const uint8_t *ciphertext, size_t ciphertext_len,
                                        uint8_t **plaintext, size_t *plaintext_len);
 
-void marmot_group_blossom_image_clear(MarmotGroupBlossomImage *image);
+MARMOT_API void marmot_group_blossom_image_clear(MarmotGroupBlossomImage *image);
 
 /* ── 0x8007 marmot.group.avatar-url.v1 ─────────────────────────────────── */
 
@@ -268,7 +270,7 @@ typedef struct {
  * fragments, is MARMOT_ERR_INVALID_INPUT: libmarmot only produces bytes it
  * can prove canonical.
  */
-MarmotError marmot_group_avatar_url_normalize(const char *raw, char **out);
+MARMOT_API MarmotError marmot_group_avatar_url_normalize(const char *raw, char **out);
 
 /**
  * Encode normalizes url (an unverified or non-normalizable URL is
@@ -286,11 +288,11 @@ MarmotError marmot_group_avatar_url_normalize(const char *raw, char **out);
  *     subset whose normalization differs;
  *   - unverified: everything else; accepted with url_unverified set.
  */
-MarmotError marmot_group_avatar_url_encode(const MarmotGroupAvatarUrl *avatar,
+MARMOT_API MarmotError marmot_group_avatar_url_encode(const MarmotGroupAvatarUrl *avatar,
                                            uint8_t **out, size_t *out_len);
-MarmotError marmot_group_avatar_url_decode(const uint8_t *data, size_t len,
+MARMOT_API MarmotError marmot_group_avatar_url_decode(const uint8_t *data, size_t len,
                                            MarmotGroupAvatarUrl *out);
-void marmot_group_avatar_url_clear(MarmotGroupAvatarUrl *avatar);
+MARMOT_API void marmot_group_avatar_url_clear(MarmotGroupAvatarUrl *avatar);
 
 typedef enum {
     MARMOT_GROUP_AVATAR_NONE = 0,
@@ -301,7 +303,7 @@ typedef enum {
 } MarmotGroupAvatarSource;
 
 /** Rendering precedence (group-avatar-url-v1.md): either may be NULL. */
-MarmotGroupAvatarSource marmot_group_avatar_select(const MarmotGroupAvatarUrl *avatar_url,
+MARMOT_API MarmotGroupAvatarSource marmot_group_avatar_select(const MarmotGroupAvatarUrl *avatar_url,
                                                    const MarmotGroupBlossomImage *blossom_image);
 
 #ifdef __cplusplus

@@ -7,6 +7,8 @@
 #ifndef MARMOT_INTERNAL_H
 #define MARMOT_INTERNAL_H
 
+#include "marmot-internal-visibility.h"
+
 #include <marmot/marmot.h>
 #include <stdbool.h>
 
@@ -54,23 +56,23 @@ struct Marmot {
 };
 
 /** Free (and wipe) m->branch_cache (commits.c). */
-void marmot_branch_cache_free(Marmot *m);
+MARMOT_TEST_API void marmot_branch_cache_free(Marmot *m);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Internal helpers
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Hex-encode raw bytes. Caller frees result. Returns NULL on OOM. */
-char *marmot_hex_encode(const uint8_t *data, size_t len);
+MARMOT_TEST_API char *marmot_hex_encode(const uint8_t *data, size_t len);
 
 /** Hex-decode string into out. Returns 0 on success, -1 on invalid input. */
-int marmot_hex_decode(const char *hex, uint8_t *out, size_t out_len);
+MARMOT_TEST_API int marmot_hex_decode(const char *hex, uint8_t *out, size_t out_len);
 
 /** Constant-time comparison for n bytes. */
-int marmot_constant_time_eq(const uint8_t *a, const uint8_t *b, size_t n);
+MARMOT_TEST_API int marmot_constant_time_eq(const uint8_t *a, const uint8_t *b, size_t n);
 
 /** Get current UNIX timestamp. */
-int64_t marmot_now(void);
+MARMOT_TEST_API int64_t marmot_now(void);
 
 /** The created_at of the next kind:445 event we publish to this group: now,
  * or a second after the group's newest event we published or applied,
@@ -81,33 +83,33 @@ int64_t marmot_now(void);
  * the operation's storage transaction, which undoes the reservation if the
  * operation fails.  MARMOT_ERR_EVENT_RATE (Commits only): the bound is
  * reached, retry in a second. */
-MarmotError marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
+MARMOT_TEST_API MarmotError marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
                                          bool commit, int64_t *created_at);
 
 /** Another member's Commit, or the Welcome that added us, has this
  * created_at: our next event follows it (up to a minute ahead of our clock). */
-MarmotError marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
+MARMOT_TEST_API MarmotError marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
                                             int64_t created_at);
 
 /* nostrc-qp24.5.1.3: an adopted group's routing rotation moved it from
  * @from_nostr_group_id to @to_nostr_group_id.  Events at the new address are
  * dated after every event of the group at the old one: its created_at floor
  * (the newest event, the newest Commit) carries over, never lowered. */
-MarmotError marmot_carry_group_event_time(Marmot *m, const uint8_t from_nostr_group_id[32],
+MARMOT_TEST_API MarmotError marmot_carry_group_event_time(Marmot *m, const uint8_t from_nostr_group_id[32],
                                           const uint8_t to_nostr_group_id[32]);
 
 /** Decode GroupData we stored ourselves: MIP-01, or the layout libmarmot
  * 0.10.0 and older wrote (nostrc-c7ho).  Never for a Welcome's or a peer
  * Commit's GroupData: marmot_group_data_extension_deserialize() is for those. */
-MarmotGroupDataExtension *marmot_group_data_extension_deserialize_stored(
+MARMOT_TEST_API MarmotGroupDataExtension *marmot_group_data_extension_deserialize_stored(
     const uint8_t *data, size_t len);
 
 /** Ensure MLS identity is initialized. Returns 0 on success, -1 on error. */
-int marmot_ensure_identity(Marmot *m);
+MARMOT_TEST_API int marmot_ensure_identity(Marmot *m);
 
 /** The account proof of ed25519_pk for `owner` (104 bytes into `out`, which
  *  may be NULL), if this instance holds one (nostrc-7vyi). */
-bool marmot_account_proof_lookup(const Marmot *m, const uint8_t owner[32], uint8_t out[104]);
+MARMOT_TEST_API bool marmot_account_proof_lookup(const Marmot *m, const uint8_t owner[32], uint8_t out[104]);
 
 /* ── Storage transactions (nostrc-qp24.7) ─────────────────────────────────
  * Every public operation that may write runs between marmot_txn_begin() and
@@ -122,13 +124,13 @@ bool marmot_account_proof_lookup(const Marmot *m, const uint8_t owner[32], uint8
  * every output of the operation, which was rolled back. */
 
 /** Begin (or join) the operation's transaction. */
-MarmotError marmot_txn_begin(Marmot *m);
+MARMOT_TEST_API MarmotError marmot_txn_begin(Marmot *m);
 
 /** Commit the operation's writes even though it returns an error. */
-void marmot_txn_keep(Marmot *m);
+MARMOT_TEST_API void marmot_txn_keep(Marmot *m);
 
 /** End the operation's transaction; returns `result`, or the commit error. */
-MarmotError marmot_txn_end(Marmot *m, MarmotError result);
+MARMOT_TEST_API MarmotError marmot_txn_end(Marmot *m, MarmotError result);
 
 #ifdef __cplusplus
 }

@@ -10,6 +10,8 @@
 #ifndef MARMOT_ERROR_H
 #define MARMOT_ERROR_H
 
+#include "marmot-export.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -201,7 +203,7 @@ typedef enum {
  *
  * Returns: (transfer none): static string describing the error
  */
-const char *marmot_error_string(MarmotError error);
+MARMOT_API const char *marmot_error_string(MarmotError error);
 
 #ifdef __cplusplus
 }

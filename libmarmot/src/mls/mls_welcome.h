@@ -11,6 +11,8 @@
 #ifndef MLS_WELCOME_H
 #define MLS_WELCOME_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include "mls_group.h"
 #include "mls_key_package.h"
@@ -39,7 +41,7 @@ typedef struct {
 } MlsEncryptedGroupSecrets;
 
 /** Free EncryptedGroupSecrets internals. */
-void mls_encrypted_group_secrets_clear(MlsEncryptedGroupSecrets *egs);
+MARMOT_TEST_API void mls_encrypted_group_secrets_clear(MlsEncryptedGroupSecrets *egs);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Welcome (RFC 9420 §12.4.3.1)
@@ -63,17 +65,17 @@ typedef struct {
 } MlsWelcome;
 
 /** Free Welcome internals. */
-void mls_welcome_clear(MlsWelcome *w);
+MARMOT_TEST_API void mls_welcome_clear(MlsWelcome *w);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Serialization
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize a Welcome to TLS wire format. */
-int mls_welcome_serialize(const MlsWelcome *w, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_welcome_serialize(const MlsWelcome *w, MlsTlsBuf *buf);
 
 /** Deserialize a Welcome from TLS wire format. */
-int mls_welcome_deserialize(MlsTlsReader *reader, MlsWelcome *w);
+MARMOT_TEST_API int mls_welcome_deserialize(MlsTlsReader *reader, MlsWelcome *w);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Welcome processing (joining a group)
@@ -100,7 +102,7 @@ int mls_welcome_deserialize(MlsTlsReader *reader, MlsWelcome *w);
  * @param group_out       Output: initialized group state
  * @return 0 on success
  */
-int mls_welcome_process(const uint8_t *welcome_data, size_t welcome_len,
+MARMOT_TEST_API int mls_welcome_process(const uint8_t *welcome_data, size_t welcome_len,
                         const MlsKeyPackage *kp,
                         const MlsKeyPackagePrivate *kp_priv,
                         const uint8_t *ratchet_tree, size_t tree_len,
@@ -112,7 +114,7 @@ int mls_welcome_process(const uint8_t *welcome_data, size_t welcome_len,
  * The PSKs are combined per RFC 9420 §8.4 and used for both GroupInfo
  * decryption and joiner epoch-secret derivation.
  */
-int mls_welcome_process_with_psks(const uint8_t *welcome_data, size_t welcome_len,
+MARMOT_TEST_API int mls_welcome_process_with_psks(const uint8_t *welcome_data, size_t welcome_len,
                                   const MlsKeyPackage *kp,
                                   const MlsKeyPackagePrivate *kp_priv,
                                   const uint8_t *ratchet_tree, size_t tree_len,
@@ -124,7 +126,7 @@ int mls_welcome_process_with_psks(const uint8_t *welcome_data, size_t welcome_le
  *
  * Same as mls_welcome_process but takes a parsed MlsWelcome struct.
  */
-int mls_welcome_process_parsed(const MlsWelcome *welcome,
+MARMOT_TEST_API int mls_welcome_process_parsed(const MlsWelcome *welcome,
                                const MlsKeyPackage *kp,
                                const MlsKeyPackagePrivate *kp_priv,
                                const uint8_t *ratchet_tree, size_t tree_len,
@@ -136,14 +138,14 @@ int mls_welcome_process_parsed(const MlsWelcome *welcome,
  * *out_signer_leaf (nostrc-7vyi: the joiner binds that leaf to the Welcome's
  * sender).
  */
-int mls_welcome_process_parsed_signer(const MlsWelcome *welcome,
+MARMOT_TEST_API int mls_welcome_process_parsed_signer(const MlsWelcome *welcome,
                                       const MlsKeyPackage *kp,
                                       const MlsKeyPackagePrivate *kp_priv,
                                       MlsGroup *group_out,
                                       uint32_t *out_signer_leaf);
 
 /** Process a parsed Welcome with external PSK inputs. */
-int mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
+MARMOT_TEST_API int mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
                                          const MlsKeyPackage *kp,
                                          const MlsKeyPackagePrivate *kp_priv,
                                          const uint8_t *ratchet_tree, size_t tree_len,

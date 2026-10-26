@@ -15,7 +15,6 @@
 #include <git2/refs.h>
 #include <git2/oid.h>
 #include <git2/errors.h>
-#include <git2/sys/errors.h>
 #include <git2/sys/refdb_backend.h>
 #include <git2/sys/refs.h>
 

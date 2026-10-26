@@ -21,6 +21,8 @@
 #ifndef MARMOT_H
 #define MARMOT_H
 
+#include "marmot-export.h"
+
 #include "marmot-error.h"
 #include "marmot-types.h"
 #include "marmot-storage.h"
@@ -43,7 +45,7 @@ extern "C" {
  * returns MARMOT_ERR_MEDIA_LEGACY_FORMAT and leaves *result empty.  Use
  * marmot_media_encrypt() (marmot-media.h).
  */
-MarmotError marmot_encrypt_media(Marmot *m,
+MARMOT_API MarmotError marmot_encrypt_media(Marmot *m,
                                   const MarmotGroupId *mls_group_id,
                                   const uint8_t *file_data, size_t file_len,
                                   const char *mime_type,
@@ -57,7 +59,7 @@ MarmotError marmot_encrypt_media(Marmot *m,
  * MARMOT_ERR_MEDIA_INVALID_REFERENCE.  The epoch is the caller's: never take
  * it from a received tag (the old format let the sender choose it).
  */
-MarmotError marmot_decrypt_media(Marmot *m,
+MARMOT_API MarmotError marmot_decrypt_media(Marmot *m,
                                   const MarmotGroupId *mls_group_id,
                                   const uint8_t *encrypted_data, size_t enc_len,
                                   const MarmotImetaInfo *imeta,
@@ -88,7 +90,7 @@ MarmotError marmot_decrypt_media(Marmot *m,
  *
  * Returns: (transfer full) (nullable): new Marmot instance, or NULL on error
  */
-Marmot *marmot_new(MarmotStorage *storage);
+MARMOT_API Marmot *marmot_new(MarmotStorage *storage);
 
 /**
  * marmot_new_with_config:
@@ -99,7 +101,7 @@ Marmot *marmot_new(MarmotStorage *storage);
  *
  * Returns: (transfer full) (nullable): new Marmot instance, or NULL on error
  */
-Marmot *marmot_new_with_config(MarmotStorage *storage, const MarmotConfig *config);
+MARMOT_API Marmot *marmot_new_with_config(MarmotStorage *storage, const MarmotConfig *config);
 
 /**
  * marmot_free:
@@ -107,7 +109,7 @@ Marmot *marmot_new_with_config(MarmotStorage *storage, const MarmotConfig *confi
  *
  * Free a Marmot instance and its storage backend.
  */
-void marmot_free(Marmot *m);
+MARMOT_API void marmot_free(Marmot *m);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-00: Credentials & KeyPackages
@@ -150,7 +152,7 @@ void marmot_free(Marmot *m);
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_create_key_package(Marmot *m,
+MARMOT_API MarmotError marmot_create_key_package(Marmot *m,
                                        const uint8_t nostr_pubkey[32],
                                        const uint8_t nostr_sk[32],
                                        const char **relay_urls, size_t relay_count,
@@ -186,7 +188,7 @@ MarmotError marmot_create_key_package(Marmot *m,
  *   MarmotConfig.allow_unproven_self, which yields a legacy KeyPackage
  *   without one)
  */
-MarmotError marmot_create_key_package_unsigned(Marmot *m,
+MARMOT_API MarmotError marmot_create_key_package_unsigned(Marmot *m,
                                                 const uint8_t nostr_pubkey[32],
                                                 const char **relay_urls, size_t relay_count,
                                                 MarmotKeyPackageResult *result);
@@ -212,7 +214,7 @@ MarmotError marmot_create_key_package_unsigned(Marmot *m,
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; MARMOT_ERR_CRYPTO or
  *   MARMOT_ERR_MEMORY
  */
-MarmotError marmot_account_proof_template(Marmot *m,
+MARMOT_API MarmotError marmot_account_proof_template(Marmot *m,
                                            const uint8_t account_pubkey[32],
                                            char **out_unsigned_event_json);
 
@@ -236,7 +238,7 @@ MarmotError marmot_account_proof_template(Marmot *m,
  * Returns: MARMOT_OK; MARMOT_ERR_VALIDATION when the event is not such a
  *   template or its signature does not verify; MARMOT_ERR_INVALID_ARG
  */
-MarmotError marmot_set_account_proof(Marmot *m,
+MARMOT_API MarmotError marmot_set_account_proof(Marmot *m,
                                       const uint8_t account_pubkey[32],
                                       const char *signed_event_json);
 
@@ -248,7 +250,7 @@ MarmotError marmot_set_account_proof(Marmot *m,
  * Returns: whether this instance holds an account proof for @account_pubkey
  *   (marmot_set_account_proof(), or marmot_create_key_package() with the key)
  */
-bool marmot_has_account_proof(Marmot *m, const uint8_t account_pubkey[32]);
+MARMOT_API bool marmot_has_account_proof(Marmot *m, const uint8_t account_pubkey[32]);
 
 /**
  * marmot_select_key_package_event:
@@ -281,7 +283,7 @@ bool marmot_has_account_proof(Marmot *m, const uint8_t account_pubkey[32]);
  *   MARMOT_ERR_KEY_PACKAGE when no valid candidate remains, or
  *   MARMOT_ERR_MEMORY
  */
-MarmotError marmot_select_key_package_event(const char **event_jsons,
+MARMOT_API MarmotError marmot_select_key_package_event(const char **event_jsons,
                                              size_t count,
                                              const uint8_t owner_pubkey[32],
                                              size_t *out_index);
@@ -305,7 +307,7 @@ MarmotError marmot_select_key_package_event(const char **event_jsons,
  *   KeyPackage's validation failure (e.g. MARMOT_ERR_VALIDATION,
  *   MARMOT_ERR_KEY_PACKAGE_IDENTITY for a proof that does not verify)
  */
-MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
+MARMOT_API MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
                                                         bool *out_proven);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -352,7 +354,7 @@ MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
  *   a live KeyPackage of @owner_pubkey (never made here, or already
  *   retired); MARMOT_ERR_INVALID_ARG; storage errors (nothing deleted)
  */
-MarmotError marmot_key_package_confirm_published(Marmot *m,
+MARMOT_API MarmotError marmot_key_package_confirm_published(Marmot *m,
                                                  const uint8_t owner_pubkey[32],
                                                  const uint8_t key_package_ref[32]);
 
@@ -371,7 +373,7 @@ MarmotError marmot_key_package_confirm_published(Marmot *m,
  *
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
  */
-MarmotError marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubkey[32],
+MARMOT_API MarmotError marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubkey[32],
                                              int64_t now, size_t *out_deleted);
 
 /**
@@ -388,7 +390,7 @@ MarmotError marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubk
  *
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
  */
-MarmotError marmot_key_package_next_expiry(Marmot *m, const uint8_t owner_pubkey[32],
+MARMOT_API MarmotError marmot_key_package_next_expiry(Marmot *m, const uint8_t owner_pubkey[32],
                                            int64_t *out_not_after);
 
 /**
@@ -400,7 +402,7 @@ MarmotError marmot_key_package_next_expiry(Marmot *m, const uint8_t owner_pubkey
  *
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
  */
-MarmotError marmot_key_package_has_private_key(Marmot *m, const uint8_t key_package_ref[32],
+MARMOT_API MarmotError marmot_key_package_has_private_key(Marmot *m, const uint8_t key_package_ref[32],
                                                bool *out_present);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -467,7 +469,7 @@ typedef enum {
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG (also for an unknown @profile);
  *   storage errors
  */
-MarmotError marmot_key_package_next_expiry_for_profile(Marmot *m,
+MARMOT_API MarmotError marmot_key_package_next_expiry_for_profile(Marmot *m,
                                                        const uint8_t owner_pubkey[32],
                                                        MarmotKeyPackageProfile profile,
                                                        int64_t *out_not_after);
@@ -487,7 +489,7 @@ MarmotError marmot_key_package_next_expiry_for_profile(Marmot *m,
  * Returns: MARMOT_OK; MARMOT_ERR_STORAGE_NOT_FOUND when no KeyPackage of
  *   @profile was ever made; MARMOT_ERR_INVALID_ARG; storage errors
  */
-MarmotError marmot_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
+MARMOT_API MarmotError marmot_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
                                     MarmotKeyPackageProfile profile, char out_d_hex[65]);
 
 /**
@@ -506,7 +508,7 @@ MarmotError marmot_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
  *
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors (nothing deleted)
  */
-MarmotError marmot_key_package_retire_profile(Marmot *m, const uint8_t owner_pubkey[32],
+MARMOT_API MarmotError marmot_key_package_retire_profile(Marmot *m, const uint8_t owner_pubkey[32],
                                               MarmotKeyPackageProfile profile,
                                               size_t *out_deleted);
 
@@ -527,7 +529,7 @@ MarmotError marmot_key_package_retire_profile(Marmot *m, const uint8_t owner_pub
  *
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
  */
-MarmotError marmot_key_package_reserve_created_at(Marmot *m, const uint8_t owner_pubkey[32],
+MARMOT_API MarmotError marmot_key_package_reserve_created_at(Marmot *m, const uint8_t owner_pubkey[32],
                                                   int64_t now, int64_t *out_created_at);
 
 /**
@@ -546,7 +548,7 @@ MarmotError marmot_key_package_reserve_created_at(Marmot *m, const uint8_t owner
  *   yet, or the KeyPackage predates the lifecycle record);
  *   MARMOT_ERR_INVALID_ARG; storage errors
  */
-MarmotError marmot_key_package_last_used_profile(Marmot *m, const uint8_t owner_pubkey[32],
+MARMOT_API MarmotError marmot_key_package_last_used_profile(Marmot *m, const uint8_t owner_pubkey[32],
                                                  MarmotKeyPackageProfile *out_profile);
 
 /**
@@ -605,7 +607,7 @@ typedef int (*MarmotAccountSignFunc)(void *user_data,
  *   MARMOT_ERR_VALIDATION when the account signature fails or does not
  *   verify; other errors as marmot_create_key_package()
  */
-MarmotError marmot_create_key_package_for_profile(Marmot *m,
+MARMOT_API MarmotError marmot_create_key_package_for_profile(Marmot *m,
                                                    MarmotKeyPackageProfile profile,
                                                    const uint8_t nostr_pubkey[32],
                                                    const uint8_t nostr_sk[32],
@@ -630,7 +632,7 @@ MarmotError marmot_create_key_package_for_profile(Marmot *m,
  * created_at so relay-list migration never makes an older slot version.
  * Returns MARMOT_ERR_STORAGE_NOT_FOUND if no usable KeyPackage is held.
  */
-MarmotError marmot_republish_key_package_unsigned(Marmot *m,
+MARMOT_API MarmotError marmot_republish_key_package_unsigned(Marmot *m,
                                                    MarmotKeyPackageProfile profile,
                                                    const uint8_t nostr_pubkey[32],
                                                    const char **relay_urls,
@@ -656,7 +658,7 @@ MarmotError marmot_republish_key_package_unsigned(Marmot *m,
  *   MARMOT_ERR_DESERIALIZATION, MARMOT_ERR_MLS, MARMOT_ERR_AUTHOR_MISMATCH,
  *   MARMOT_ERR_UNEXPECTED_EVENT, ...)
  */
-MarmotError marmot_validate_key_package_event_json(const char *event_json,
+MARMOT_API MarmotError marmot_validate_key_package_event_json(const char *event_json,
                                                     MarmotKeyPackageProfile profile,
                                                     int64_t now,
                                                     uint8_t owner_out[32],
@@ -675,7 +677,7 @@ MarmotError marmot_validate_key_package_event_json(const char *event_json,
  *
  * Returns: as marmot_select_key_package_event()
  */
-MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons,
+MARMOT_API MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons,
                                                          size_t count,
                                                          const uint8_t owner_pubkey[32],
                                                          MarmotKeyPackageProfile profile,
@@ -717,7 +719,7 @@ MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_create_group(Marmot *m,
+MARMOT_API MarmotError marmot_create_group(Marmot *m,
                                  const uint8_t creator_pubkey[32],
                                  const char **key_package_event_jsons, size_t kp_count,
                                  const MarmotGroupConfig *config,
@@ -782,7 +784,7 @@ MarmotError marmot_create_group(Marmot *m,
  *   MARMOT_ERR_KEY_PACKAGE_IDENTITY; MARMOT_ERR_KEY_PACKAGE; KeyPackage
  *   validation errors; storage errors
  */
-MarmotError marmot_create_group_for_profile(Marmot *m,
+MARMOT_API MarmotError marmot_create_group_for_profile(Marmot *m,
                                              MarmotGroupProfile profile,
                                              const uint8_t creator_pubkey[32],
                                              const uint8_t creator_sk[32],
@@ -806,7 +808,7 @@ MarmotError marmot_create_group_for_profile(Marmot *m,
  * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND; MARMOT_ERR_DESERIALIZATION
  *   for a stored state that no longer validates
  */
-MarmotError marmot_get_group_profile(Marmot *m,
+MARMOT_API MarmotError marmot_get_group_profile(Marmot *m,
                                       const MarmotGroupId *mls_group_id,
                                       MarmotGroupProfile *out_profile);
 
@@ -835,7 +837,7 @@ MarmotError marmot_get_group_profile(Marmot *m,
  *   an authorization error when the Commit can never apply (it is
  *   discarded); a storage error leaves it pending (merge again or clear)
  */
-MarmotError marmot_merge_pending_commit(Marmot *m,
+MARMOT_API MarmotError marmot_merge_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
 
 /**
@@ -850,7 +852,7 @@ MarmotError marmot_merge_pending_commit(Marmot *m,
  *
  * Returns: MARMOT_OK (also when nothing was pending)
  */
-MarmotError marmot_clear_pending_commit(Marmot *m,
+MARMOT_API MarmotError marmot_clear_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
 
 /**
@@ -871,7 +873,7 @@ MarmotError marmot_clear_pending_commit(Marmot *m,
  *
  * Returns: MARMOT_OK (also when nothing is pending)
  */
-MarmotError marmot_get_pending_commit(Marmot *m,
+MARMOT_API MarmotError marmot_get_pending_commit(Marmot *m,
                                        const MarmotGroupId *mls_group_id,
                                        char **out_event_json,
                                        bool *out_superseded);
@@ -891,7 +893,7 @@ typedef struct {
 } MarmotUnsentWelcome;
 
 /** Free an array returned by marmot_get_unsent_welcomes(). */
-void marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count);
+MARMOT_API void marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count);
 
 /**
  * marmot_get_unsent_welcomes:
@@ -911,7 +913,7 @@ void marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count);
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_get_unsent_welcomes(Marmot *m,
+MARMOT_API MarmotError marmot_get_unsent_welcomes(Marmot *m,
                                         const MarmotGroupId *mls_group_id,
                                         MarmotUnsentWelcome **out_welcomes,
                                         size_t *out_count);
@@ -928,7 +930,7 @@ MarmotError marmot_get_unsent_welcomes(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
                                        const uint8_t (*ids)[32], size_t count);
 
 /**
@@ -946,7 +948,7 @@ MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_
  *
  * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND; MARMOT_ERR_MEMORY
  */
-MarmotError marmot_group_account_proof_template(Marmot *m,
+MARMOT_API MarmotError marmot_group_account_proof_template(Marmot *m,
                                                 const MarmotGroupId *mls_group_id,
                                                 char **out_unsigned_event_json);
 
@@ -971,7 +973,7 @@ MarmotError marmot_group_account_proof_template(Marmot *m,
  *   the template for our leaf signed by our account;
  *   MARMOT_ERR_OWN_COMMIT_PENDING; other errors as marmot_add_members()
  */
-MarmotError marmot_self_update(Marmot *m,
+MARMOT_API MarmotError marmot_self_update(Marmot *m,
                                const MarmotGroupId *mls_group_id,
                                const char *signed_proof_json,
                                char **out_commit_json);
@@ -1018,7 +1020,7 @@ MarmotError marmot_self_update(Marmot *m,
  * Returns: MARMOT_OK on success; MARMOT_ERR_KEY_PACKAGE_CAPABILITIES when an
  *   invitee's leaf lacks what the group requires
  */
-MarmotError marmot_add_members(Marmot *m,
+MARMOT_API MarmotError marmot_add_members(Marmot *m,
                                 const MarmotGroupId *mls_group_id,
                                 const char **key_package_event_jsons, size_t kp_count,
                                 char ***out_welcome_jsons, size_t *out_welcome_count,
@@ -1037,7 +1039,7 @@ MarmotError marmot_add_members(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_remove_members(Marmot *m,
+MARMOT_API MarmotError marmot_remove_members(Marmot *m,
                                    const MarmotGroupId *mls_group_id,
                                    const uint8_t (*member_pubkeys)[32], size_t count,
                                    char **out_commit_json);
@@ -1054,7 +1056,7 @@ MarmotError marmot_remove_members(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_leave_group(Marmot *m,
+MARMOT_API MarmotError marmot_leave_group(Marmot *m,
                                 const MarmotGroupId *mls_group_id);
 
 /**
@@ -1091,7 +1093,7 @@ MarmotError marmot_leave_group(Marmot *m,
  *   Commit of ours awaits a relay; MARMOT_ERR_USE_AFTER_EVICTION for a group
  *   that is not active
  */
-MarmotError marmot_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
                                char **out_event_json);
 
 /**
@@ -1108,7 +1110,7 @@ MarmotError marmot_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
  * Returns: MARMOT_OK (also when already Leaving); otherwise the error
  *   marmot_self_remove() would return
  */
-MarmotError marmot_can_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_can_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
                                    MarmotLeaveKind *out_kind);
 
 /**
@@ -1124,7 +1126,7 @@ MarmotError marmot_can_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
  *
  * Returns: MARMOT_OK (also when not Leaving)
  */
-MarmotError marmot_cancel_leave(Marmot *m, const MarmotGroupId *mls_group_id);
+MARMOT_API MarmotError marmot_cancel_leave(Marmot *m, const MarmotGroupId *mls_group_id);
 
 /**
  * marmot_is_leaving:
@@ -1135,7 +1137,7 @@ MarmotError marmot_cancel_leave(Marmot *m, const MarmotGroupId *mls_group_id);
  *
  * Returns: MARMOT_OK
  */
-MarmotError marmot_is_leaving(Marmot *m, const MarmotGroupId *mls_group_id, bool *out_leaving);
+MARMOT_API MarmotError marmot_is_leaving(Marmot *m, const MarmotGroupId *mls_group_id, bool *out_leaving);
 
 /**
  * marmot_get_pending_proposals:
@@ -1154,12 +1156,12 @@ MarmotError marmot_is_leaving(Marmot *m, const MarmotGroupId *mls_group_id, bool
  *
  * Returns: MARMOT_OK
  */
-MarmotError marmot_get_pending_proposals(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_get_pending_proposals(Marmot *m, const MarmotGroupId *mls_group_id,
                                          MarmotPendingProposal **out_proposals,
                                          size_t *out_count);
 
 /** Free an array returned by marmot_get_pending_proposals(). */
-void marmot_pending_proposals_free(MarmotPendingProposal *proposals);
+MARMOT_API void marmot_pending_proposals_free(MarmotPendingProposal *proposals);
 
 /**
  * marmot_commit_pending_proposals:
@@ -1184,7 +1186,7 @@ void marmot_pending_proposals_free(MarmotPendingProposal *proposals);
  *   MARMOT_ERR_UNSUPPORTED for an adopted-profile group (no Commits yet;
  *   its standalone proposals are not kept either)
  */
-MarmotError marmot_commit_pending_proposals(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_commit_pending_proposals(Marmot *m, const MarmotGroupId *mls_group_id,
                                             char **out_commit_json);
 
 /**
@@ -1199,7 +1201,7 @@ MarmotError marmot_commit_pending_proposals(Marmot *m, const MarmotGroupId *mls_
  * Returns: MARMOT_OK; MARMOT_ERR_DESERIALIZATION for a removal record that
  *   does not parse
  */
-MarmotError marmot_get_group_left(Marmot *m, const MarmotGroupId *mls_group_id, bool *out_left);
+MARMOT_API MarmotError marmot_get_group_left(Marmot *m, const MarmotGroupId *mls_group_id, bool *out_left);
 
 /**
  * marmot_get_group_removal:
@@ -1246,7 +1248,7 @@ MarmotError marmot_get_group_left(Marmot *m, const MarmotGroupId *mls_group_id, 
 /** Later-epoch events after which a removal is final (see below). */
 #define MARMOT_REMOVAL_FINAL_AFTER 5
 
-MarmotError marmot_get_group_removal(Marmot *m,
+MARMOT_API MarmotError marmot_get_group_removal(Marmot *m,
                                      const MarmotGroupId *mls_group_id,
                                      bool *out_removed, uint8_t out_remover[32],
                                      uint64_t *out_epoch, bool *out_final);
@@ -1276,7 +1278,7 @@ MarmotError marmot_get_group_removal(Marmot *m,
  * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED for a legacy group (its relays
  * are its GroupData's); MARMOT_ERR_GROUP_NOT_FOUND
  */
-MarmotError marmot_get_group_routing(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_get_group_routing(Marmot *m, const MarmotGroupId *mls_group_id,
                                      uint8_t out_nostr_group_id[32], char ***out_relays,
                                      size_t *out_relay_count, uint8_t (**out_previous)[32],
                                      size_t *out_previous_count);
@@ -1308,7 +1310,7 @@ MarmotError marmot_get_group_routing(Marmot *m, const MarmotGroupId *mls_group_i
  * is NULL, MARMOT_ERR_ADMIN_ONLY for non-admins, MARMOT_ERR_MLS /
  * MARMOT_ERR_UNSUPPORTED if the Commit cannot be made
  */
-MarmotError marmot_update_group_metadata(Marmot *m,
+MARMOT_API MarmotError marmot_update_group_metadata(Marmot *m,
                                           const MarmotGroupId *mls_group_id,
                                           const MarmotGroupConfig *config,
                                           char **out_commit_json);
@@ -1328,7 +1330,7 @@ MarmotError marmot_update_group_metadata(Marmot *m,
  *
  * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND without MLS state
  */
-MarmotError marmot_get_self_remove_requirement(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_get_self_remove_requirement(Marmot *m, const MarmotGroupId *mls_group_id,
                                                bool *out_required, bool *out_upgradable);
 
 /**
@@ -1363,7 +1365,7 @@ MarmotError marmot_get_self_remove_requirement(Marmot *m, const MarmotGroupId *m
  *   not advertise SelfRemove; MARMOT_ERR_OWN_COMMIT_PENDING,
  *   MARMOT_ERR_LEAVING, MARMOT_ERR_USE_AFTER_EVICTION as for any Commit
  */
-MarmotError marmot_require_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_require_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
                                        char **out_commit_json);
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1389,7 +1391,7 @@ MarmotError marmot_require_self_remove(Marmot *m, const MarmotGroupId *mls_group
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_process_welcome(Marmot *m,
+MARMOT_API MarmotError marmot_process_welcome(Marmot *m,
                                     const uint8_t wrapper_event_id[32],
                                     const char *rumor_event_json,
                                     MarmotWelcome **out_welcome);
@@ -1410,7 +1412,7 @@ MarmotError marmot_process_welcome(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_process_welcome_from(Marmot *m,
+MARMOT_API MarmotError marmot_process_welcome_from(Marmot *m,
                                         const uint8_t wrapper_event_id[32],
                                         const char *rumor_event_json,
                                         const uint8_t sender_pubkey[32],
@@ -1437,7 +1439,7 @@ MarmotError marmot_process_welcome_from(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome);
+MARMOT_API MarmotError marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome);
 
 /**
  * marmot_accept_welcome_by_wrapper_id:
@@ -1451,7 +1453,7 @@ MarmotError marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome);
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_accept_welcome_by_wrapper_id(Marmot *m,
+MARMOT_API MarmotError marmot_accept_welcome_by_wrapper_id(Marmot *m,
                                                  const uint8_t wrapper_event_id[32],
                                                  MarmotGroup **out_group);
 
@@ -1464,7 +1466,7 @@ MarmotError marmot_accept_welcome_by_wrapper_id(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_decline_welcome(Marmot *m, const MarmotWelcome *welcome);
+MARMOT_API MarmotError marmot_decline_welcome(Marmot *m, const MarmotWelcome *welcome);
 
 /**
  * marmot_get_pending_welcomes:
@@ -1475,7 +1477,7 @@ MarmotError marmot_decline_welcome(Marmot *m, const MarmotWelcome *welcome);
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_get_pending_welcomes(Marmot *m,
+MARMOT_API MarmotError marmot_get_pending_welcomes(Marmot *m,
                                          const MarmotPagination *pagination,
                                          MarmotWelcome ***out_welcomes, size_t *out_count);
 
@@ -1490,7 +1492,7 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * epochs intentionally no longer contain the MLS exporter secret.
  * Since 0.13.0 (nostrc-hl30i.7).
  */
-MarmotError marmot_export_secret(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_export_secret(Marmot *m, const MarmotGroupId *mls_group_id,
                                   const uint8_t *label, size_t label_len,
                                   const uint8_t *context, size_t context_len,
                                   uint8_t *out, size_t out_len);
@@ -1542,7 +1544,7 @@ MarmotError marmot_export_secret(Marmot *m, const MarmotGroupId *mls_group_id,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_create_message(Marmot *m,
+MARMOT_API MarmotError marmot_create_message(Marmot *m,
                                    const MarmotGroupId *mls_group_id,
                                    const char *inner_event_json,
                                    MarmotOutgoingMessage *result);
@@ -1560,7 +1562,7 @@ MarmotError marmot_create_message(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_save_created_message(Marmot *m,
+MARMOT_API MarmotError marmot_save_created_message(Marmot *m,
                                          const MarmotGroupId *mls_group_id,
                                          const char *signed_group_event_json,
                                          const char *inner_event_json);
@@ -1669,7 +1671,7 @@ MarmotError marmot_save_created_message(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_process_message(Marmot *m,
+MARMOT_API MarmotError marmot_process_message(Marmot *m,
                                     const char *group_event_json,
                                     MarmotMessageResult *result);
 
@@ -1690,7 +1692,7 @@ MarmotError marmot_process_message(Marmot *m,
  * Since: 0.6.0
  * Returns: as marmot_process_message()
  */
-MarmotError marmot_process_rumor_message(Marmot *m,
+MARMOT_API MarmotError marmot_process_rumor_message(Marmot *m,
                                           const char *rumor_json,
                                           MarmotMessageResult *result);
 
@@ -1706,7 +1708,7 @@ MarmotError marmot_process_rumor_message(Marmot *m,
  *
  * Returns: MARMOT_OK on success (even if not found — check *out)
  */
-MarmotError marmot_get_group(Marmot *m,
+MARMOT_API MarmotError marmot_get_group(Marmot *m,
                               const MarmotGroupId *mls_group_id,
                               MarmotGroup **out);
 
@@ -1718,7 +1720,7 @@ MarmotError marmot_get_group(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_get_all_groups(Marmot *m,
+MARMOT_API MarmotError marmot_get_all_groups(Marmot *m,
                                    MarmotGroup ***out_groups, size_t *out_count);
 
 /**
@@ -1730,7 +1732,7 @@ MarmotError marmot_get_all_groups(Marmot *m,
  *
  * Returns group relay URLs through the Marmot handle without exposing storage.
  */
-MarmotError marmot_get_group_relay_urls(Marmot *m,
+MARMOT_API MarmotError marmot_get_group_relay_urls(Marmot *m,
                                          const MarmotGroupId *mls_group_id,
                                          MarmotGroupRelay **out_relays,
                                          size_t *out_count);
@@ -1752,7 +1754,7 @@ MarmotError marmot_get_group_relay_urls(Marmot *m,
  * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND when we hold no MLS state
  *   for the group; MARMOT_ERR_MEMORY
  */
-MarmotError marmot_get_group_members(Marmot *m,
+MARMOT_API MarmotError marmot_get_group_members(Marmot *m,
                                       const MarmotGroupId *mls_group_id,
                                       uint8_t (**out_members)[32],
                                       size_t *out_count);
@@ -1767,7 +1769,7 @@ MarmotError marmot_get_group_members(Marmot *m,
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_get_messages(Marmot *m,
+MARMOT_API MarmotError marmot_get_messages(Marmot *m,
                                  const MarmotGroupId *mls_group_id,
                                  const MarmotPagination *pagination,
                                  MarmotMessage ***out_msgs, size_t *out_count);

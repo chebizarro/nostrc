@@ -5,6 +5,14 @@ covered by the versioning initiative. **Declared version** is the version in the
 build metadata; it is not evidence that a release exists. **Latest release** is
 updated only after the matching component-prefixed Git tag has been published.
 
+Visibility phase B1 (`nostrc-er4fz.10`): libmarmot 0.13.0 → 0.14.0 and
+libhanami 0.4.0 → 0.5.0 are MINOR bumps. Hidden-by-default shared objects
+remove unannotated implementation symbols from their dynamic ABI; public
+header declarations remain exported. This is an ABI break for 0.x consumers
+that linked undocumented symbols, and requires rebuilding those consumers.
+No release tag is published by this change; all other components have no
+B1-owned shipped artifact change and no B1 bump.
+
 As of 2026-08-10, the repository has no component-specific release tags.
 Consequently, every component below is currently unreleased even where its build
 files already declare a version.
@@ -16,7 +24,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
-| libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.14.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -27,7 +35,7 @@ files already declare a version.
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
-| libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libhanami | `libhanami/` | 0.5.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.5.2 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |

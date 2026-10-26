@@ -17,6 +17,8 @@
 #ifndef HANAMI_GRASP_H
 #define HANAMI_GRASP_H
 
+#include "hanami-export.h"
+
 #include "hanami-types.h"
 #include <git2/types.h>
 #include <stdbool.h>
@@ -52,7 +54,7 @@ typedef struct {
  * hanami_grasp_info_free:
  * @info: (nullable): info to free
  */
-void hanami_grasp_info_free(hanami_grasp_info_t *info);
+HANAMI_API void hanami_grasp_info_free(hanami_grasp_info_t *info);
 
 /**
  * hanami_is_grasp_server:
@@ -68,7 +70,7 @@ void hanami_grasp_info_free(hanami_grasp_info_t *info);
  *
  * Returns: true if the URL combination indicates a GRASP server
  */
-bool hanami_is_grasp_server(const char *clone_url,
+HANAMI_API bool hanami_is_grasp_server(const char *clone_url,
                             const char *const *relay_urls,
                             size_t relay_count);
 
@@ -82,7 +84,7 @@ bool hanami_is_grasp_server(const char *clone_url,
  *
  * Returns: HANAMI_OK on success, HANAMI_ERR_INVALID_ARG if not a valid GRASP URL
  */
-hanami_error_t hanami_grasp_parse_clone_url(const char *clone_url,
+HANAMI_API hanami_error_t hanami_grasp_parse_clone_url(const char *clone_url,
                                              hanami_grasp_info_t **out);
 
 /**
@@ -97,7 +99,7 @@ hanami_error_t hanami_grasp_parse_clone_url(const char *clone_url,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_grasp_build_clone_url(const char *host,
+HANAMI_API hanami_error_t hanami_grasp_build_clone_url(const char *host,
                                              const char *npub,
                                              const char *repo_name,
                                              bool use_tls,
@@ -113,7 +115,7 @@ hanami_error_t hanami_grasp_build_clone_url(const char *host,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_grasp_build_relay_url(const char *host,
+HANAMI_API hanami_error_t hanami_grasp_build_relay_url(const char *host,
                                              bool use_tls,
                                              char **out);
 
@@ -152,7 +154,7 @@ typedef struct {
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_push_to_grasp(git_repository *repo,
+HANAMI_API hanami_error_t hanami_push_to_grasp(git_repository *repo,
                                      const hanami_grasp_push_opts_t *opts);
 
 /**
@@ -168,7 +170,7 @@ hanami_error_t hanami_push_to_grasp(git_repository *repo,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_grasp_fetch(git_repository *repo,
+HANAMI_API hanami_error_t hanami_grasp_fetch(git_repository *repo,
                                    const char *clone_url,
                                    const char *const *relay_urls,
                                    size_t relay_count);
@@ -186,7 +188,7 @@ hanami_error_t hanami_grasp_fetch(git_repository *repo,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_grasp_pr_refname(const char *event_id, char **out);
+HANAMI_API hanami_error_t hanami_grasp_pr_refname(const char *event_id, char **out);
 
 #ifdef __cplusplus
 }

@@ -7,11 +7,14 @@
 #ifndef MARMOT_KP_PROFILE_H
 #define MARMOT_KP_PROFILE_H
 
+#include "marmot-internal-visibility.h"
+
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
 #include "mls/mls_key_package.h"
 #include "mls/mls_app_components.h"
 #include "mls/mls-internal.h"
+#include <nostr-event.h>
 #include <nostr-tag.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -50,36 +53,36 @@ typedef struct {
 } MarmotComponentData;
 
 /* ComponentsList { ComponentID component_ids<V>; } */
-int  marmot_components_list_encode(const uint16_t *ids, size_t n, MlsTlsBuf *out);
-int  marmot_components_list_decode(const uint8_t *data, size_t len,
+MARMOT_TEST_API int  marmot_components_list_encode(const uint16_t *ids, size_t n, MlsTlsBuf *out);
+MARMOT_TEST_API int  marmot_components_list_decode(const uint8_t *data, size_t len,
                                    uint16_t **ids_out, size_t *n_out);
-bool marmot_u16_list_contains(const uint16_t *ids, size_t n, uint16_t id);
+MARMOT_TEST_API bool marmot_u16_list_contains(const uint16_t *ids, size_t n, uint16_t id);
 
 /* AppDataDictionary { ComponentData component_data<V>; }, entries strictly
  * ascending by component_id (encode refuses, parse rejects otherwise).
  * Parsed entries borrow from @data; free(*entries_out). */
-int marmot_app_data_dict_encode(const MarmotComponentData *entries, size_t n, MlsTlsBuf *out);
-int marmot_app_data_dict_parse(const uint8_t *data, size_t len,
+MARMOT_TEST_API int marmot_app_data_dict_encode(const MarmotComponentData *entries, size_t n, MlsTlsBuf *out);
+MARMOT_TEST_API int marmot_app_data_dict_parse(const uint8_t *data, size_t len,
                                MarmotComponentData **entries_out, size_t *n_out);
 
 /* In an Extension list (the bytes inside extensions<V>): the first
  * extension of @type (borrowed) and how many there are. */
-int marmot_extensions_find(const uint8_t *exts, size_t len, uint16_t type,
+MARMOT_TEST_API int marmot_extensions_find(const uint8_t *exts, size_t len, uint16_t type,
                            const uint8_t **data_out, size_t *dlen_out, size_t *count_out);
 
 /* MLSMessage { mls10, mls_key_package, KeyPackage } */
-int marmot_mls_message_frame_key_package(const MlsKeyPackage *kp, MlsTlsBuf *out);
-int marmot_mls_message_unframe_key_package(const uint8_t *data, size_t len,
+MARMOT_TEST_API int marmot_mls_message_frame_key_package(const MlsKeyPackage *kp, MlsTlsBuf *out);
+MARMOT_TEST_API int marmot_mls_message_unframe_key_package(const uint8_t *data, size_t len,
                                            MlsKeyPackage *kp_out);
 
 /* Account-identity proof v2: signed by @account_sk, else via @sign_fn. */
-MarmotError marmot_account_proof_create(const uint8_t account_pk[32], const uint8_t *account_sk,
+MARMOT_TEST_API MarmotError marmot_account_proof_create(const uint8_t account_pk[32], const uint8_t *account_sk,
                                         MarmotAccountSignFunc sign_fn, void *sign_data,
                                         uint16_t ciphersuite, uint16_t signature_scheme,
                                         const uint8_t *sig_key, size_t sig_key_len,
                                         uint64_t created_at,
                                         uint8_t out[MARMOT_ACCOUNT_PROOF_LEN]);
-MarmotError marmot_account_proof_verify(const uint8_t *proof, size_t proof_len,
+MARMOT_TEST_API MarmotError marmot_account_proof_verify(const uint8_t *proof, size_t proof_len,
                                         const uint8_t identity[32], uint16_t ciphersuite,
                                         uint16_t signature_scheme, const uint8_t *sig_key,
                                         size_t sig_key_len);
@@ -87,19 +90,19 @@ _Static_assert(sizeof(((struct Marmot *)0)->account_proof) == MARMOT_ACCOUNT_PRO
                "Marmot.account_proof holds one MarmotAuthorizationProof");
 
 /* NIP-01 id (hex) of the signing template, for tests. */
-char *marmot_account_proof_template_id(const uint8_t account_pk[32], uint64_t created_at,
+MARMOT_TEST_API char *marmot_account_proof_template_id(const uint8_t account_pk[32], uint64_t created_at,
                                        uint16_t ciphersuite, uint16_t signature_scheme,
                                        const uint8_t *sig_key, size_t sig_key_len);
 
 /* The unsigned signing template (NIP-01 JSON, caller frees) for a leaf
  * signature key under the Marmot ciphersuite, created at @created_at. */
-char *marmot_account_proof_template_json(const uint8_t account_pk[32], uint64_t created_at,
+MARMOT_TEST_API char *marmot_account_proof_template_json(const uint8_t account_pk[32], uint64_t created_at,
                                          const uint8_t *sig_key, size_t sig_key_len);
 
 /* The 104-byte proof from @signed_json, which must be exactly a signing
  * template for (@account_pk, its own created_at, the Marmot ciphersuite,
  * @sig_key) with a valid id and BIP-340 signature by @account_pk. */
-MarmotError marmot_account_proof_from_signed(const uint8_t account_pk[32],
+MARMOT_TEST_API MarmotError marmot_account_proof_from_signed(const uint8_t account_pk[32],
                                              const uint8_t *sig_key, size_t sig_key_len,
                                              const char *signed_json,
                                              uint8_t out[MARMOT_ACCOUNT_PROOF_LEN]);
@@ -123,48 +126,58 @@ typedef enum {
 } MarmotLeafProofStatus;
 
 /* The proof status of @leaf in a group (or KeyPackage) of @ciphersuite. */
-MarmotLeafProofStatus marmot_leaf_proof_status(const MlsLeafNode *leaf, uint16_t ciphersuite);
+MARMOT_TEST_API MarmotLeafProofStatus marmot_leaf_proof_status(const MlsLeafNode *leaf, uint16_t ciphersuite);
 
 /* Replace @leaf's extensions with the LeafNode app_data_dictionary carrying
  * app_components [0x0001, 0x8009], safe_aad [] and @proof (the entries MDK's
  * cgka-engine and libmarmot's ADOPTED profile emit). The leaf must be
  * (re-)signed afterwards. */
-MarmotError marmot_leaf_set_proof(MlsLeafNode *leaf, const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN]);
+MARMOT_TEST_API MarmotError marmot_leaf_set_proof(MlsLeafNode *leaf, const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN]);
 
 /* The serialized LeafNode extension list carrying @proof (see
  * marmot_leaf_set_proof()); *out is malloc()ed. */
-MarmotError marmot_leaf_proof_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+MARMOT_TEST_API MarmotError marmot_leaf_proof_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
                                          uint8_t **out, size_t *out_len);
 
 /* The LeafNode extension list of an adopted-profile leaf (nostrc-qp24.5.1):
  * one app_data_dictionary with app_components [0x0001] followed by
  * MLS_ADOPTED_SUPPORTED_COMPONENTS (the components libmarmot can be
  * required to support), safe_aad [] and @proof.  *out is malloc()ed. */
-MarmotError marmot_leaf_adopted_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+MARMOT_TEST_API MarmotError marmot_leaf_adopted_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
                                            uint8_t **out, size_t *out_len);
 
 /* marmot_leaf_set_proof() with marmot_leaf_adopted_extensions(). */
-MarmotError marmot_leaf_set_adopted_proof(MlsLeafNode *leaf,
+MARMOT_TEST_API MarmotError marmot_leaf_set_adopted_proof(MlsLeafNode *leaf,
                                           const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN]);
+
+/* Legacy-profile validator and parser used by tests and Marmot internals. */
+MARMOT_TEST_API MarmotError marmot_validate_key_package_event(NostrEvent *event,
+                                               MlsKeyPackage *kp_out,
+                                               uint8_t nostr_pubkey_out[32]);
+
+/* Legacy-profile parser used by the protocol tests and Marmot internals. */
+MARMOT_TEST_API MarmotError marmot_parse_key_package_event(const char *event_json,
+                                            MlsKeyPackage *kp_out,
+                                            uint8_t nostr_pubkey_out[32]);
 
 /* A signed kind:30443 event: id and signature verified, then validated
  * under @profile (marmot_validate_key_package_event_json()), the decoded
  * KeyPackage in @kp_out (caller clears) and its author in @nostr_pubkey_out. */
-MarmotError marmot_parse_key_package_event_for_profile(const char *event_json,
+MARMOT_TEST_API MarmotError marmot_parse_key_package_event_for_profile(const char *event_json,
                                                        MarmotKeyPackageProfile profile,
                                                        int64_t now, MlsKeyPackage *kp_out,
                                                        uint8_t nostr_pubkey_out[32]);
 
 /* RFC 9420 section 13.5 GREASE value (0x0A0A ... 0xEAEA). */
-bool marmot_mls_is_grease(uint16_t id);
+MARMOT_TEST_API bool marmot_mls_is_grease(uint16_t id);
 /* Whether the one @key id-list tag of @tags names exactly @ids (n) as a set,
  * GREASE ids left out when @skip_grease (nostrc-0bdg review L4/A2). */
-bool marmot_kp_id_list_tag_is_set(NostrTags *tags, const char *key, const uint16_t *ids,
+MARMOT_TEST_API bool marmot_kp_id_list_tag_is_set(NostrTags *tags, const char *key, const uint16_t *ids,
                                   size_t n, bool skip_grease);
 
 /* ADOPTED producer without the MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
  * build gate, for libmarmot's own tests only. */
-MarmotError marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t nostr_pubkey[32],
+MARMOT_TEST_API MarmotError marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t nostr_pubkey[32],
                                                        const uint8_t nostr_sk[32],
                                                        MarmotAccountSignFunc account_sign,
                                                        void *sign_data,
@@ -172,7 +185,7 @@ MarmotError marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t 
 /* The same with the last-resort marker chosen: without it, a single-use
  * KeyPackage (no KeyPackage-level app_data_dictionary), which libmarmot
  * never publishes -- for the lifecycle tests (nostrc-0bdg) only. */
-MarmotError marmot_create_key_package_adopted_internal_ex(Marmot *m,
+MARMOT_TEST_API MarmotError marmot_create_key_package_adopted_internal_ex(Marmot *m,
                                                           const uint8_t nostr_pubkey[32],
                                                           const uint8_t nostr_sk[32],
                                                           MarmotAccountSignFunc account_sign,

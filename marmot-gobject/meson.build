@@ -44,6 +44,7 @@ if not is_variable('marmot_dep')
       required: true)
     libmarmot_inc = include_directories(
       '../libmarmot/include',
+      cmake_build_dir / 'libmarmot' / 'include',
     )
     marmot_dep = declare_dependency(
       dependencies: libmarmot_static,

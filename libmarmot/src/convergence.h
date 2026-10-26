@@ -17,6 +17,8 @@
 #ifndef MARMOT_CONVERGENCE_H
 #define MARMOT_CONVERGENCE_H
 
+#include "marmot-internal-visibility.h"
+
 #include "commits.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -148,37 +150,37 @@ typedef struct {
     size_t           n_secrets;
 } ConvHistory;
 
-void conv_history_clear(ConvHistory *h);
-void conv_candidate_clear(ConvCandidate *c);
-void conv_entry_clear(ConvEntry *e);
+MARMOT_TEST_API void conv_history_clear(ConvHistory *h);
+MARMOT_TEST_API void conv_candidate_clear(ConvCandidate *c);
+MARMOT_TEST_API void conv_entry_clear(ConvEntry *e);
 
 /* Encode `h` as the retained-parent record.  The record keeps the layout
  * libmarmot 0.10.0 and later read -- u8 version 1, u64 parent epoch, the
  * applied Commit's key, the parent state, u8 tier, u32 pending count -- for
  * entries[0], with the rest after it.  -1 on failure (or no entry). */
-int conv_history_encode(const ConvHistory *h, uint8_t **out, size_t *out_len);
+MARMOT_TEST_API int conv_history_encode(const ConvHistory *h, uint8_t **out, size_t *out_len);
 
 /* Decode a retained-parent record of any version; -1 when it is not one.
  * A record without the W25 trailer yields its one entry, without Commit
  * bytes (and `reader` when it was stripped). */
-int conv_history_decode(const uint8_t *data, size_t len, ConvHistory *out);
+MARMOT_TEST_API int conv_history_decode(const uint8_t *data, size_t len, ConvHistory *out);
 
 /* The entry of `epoch`, or NULL. */
-ConvEntry *conv_history_entry(ConvHistory *h, uint64_t epoch);
+MARMOT_TEST_API ConvEntry *conv_history_entry(ConvHistory *h, uint64_t epoch);
 
 /* Whether `h` already has the witness (epoch, tag, sender); whether
  * (epoch, tag) has CONV_WITNESS_QUORUM_SENDERS distinct senders already. */
-bool conv_witness_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
+MARMOT_TEST_API bool conv_witness_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
                         const uint8_t sender[32]);
-bool conv_witness_full(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32]);
+MARMOT_TEST_API bool conv_witness_full(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32]);
 /* Whether the leaf `leaf` already witnesses (epoch, tag). */
-bool conv_witness_leaf_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
+MARMOT_TEST_API bool conv_witness_leaf_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
                              uint32_t leaf);
 /* Add a witness: 1 added, 0 known or not needed, -1 no room. */
-int conv_witness_add(ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
+MARMOT_TEST_API int conv_witness_add(ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
                      const uint8_t sender[32], uint32_t leaf);
 /* Distinct senders recorded for (epoch, tag), capped at the quorum. */
-size_t conv_witness_count(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32]);
+MARMOT_TEST_API size_t conv_witness_count(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32]);
 
 /* ── Branch comparison (convergence.md, "Branch selection") ──────────── */
 
@@ -206,16 +208,16 @@ typedef struct {
  * (retained-history.md: tip - epoch <= app_payload_past_epoch_limit),
  * min(distinct senders, quorum senders) summed; quorum when
  * CONV_WITNESS_QUORUM_EPOCHS epochs reach it. */
-void conv_score_witnesses(const ConvHistory *h, const ConvPathState *path, size_t n_path,
+MARMOT_TEST_API void conv_score_witnesses(const ConvHistory *h, const ConvPathState *path, size_t n_path,
                           ConvBranchScore *s);
 
 /* effective_commit_depth: raw depth plus the bounded witness boost. */
-uint64_t conv_effective_depth(const ConvBranchScore *s);
+MARMOT_TEST_API uint64_t conv_effective_depth(const ConvBranchScore *s);
 
 /* > 0 when `a` beats `b`, < 0 when `b` beats `a`, 0 only for the same tip.
  * Higher effective depth, quorum over none, higher witness score,
  * privileged before ordinary, lower committer, lower digest. */
-int conv_branch_cmp(const ConvBranchScore *a, const ConvBranchScore *b);
+MARMOT_TEST_API int conv_branch_cmp(const ConvBranchScore *a, const ConvBranchScore *b);
 
 #ifdef __cplusplus
 }

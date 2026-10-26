@@ -18,6 +18,8 @@
 #ifndef MLS_APP_COMPONENTS_H
 #define MLS_APP_COMPONENTS_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include "mls_tree.h"
 #include "mls_app_data_update.h"
@@ -133,7 +135,7 @@ typedef struct {
  * LEGACY and keeps its historical read behaviour (opaque, even
  * non-canonical, bytes; Marmot-layer GroupData rules).
  */
-MarmotGroupProfile mls_group_context_profile_of(const uint8_t *exts, size_t len);
+MARMOT_TEST_API MarmotGroupProfile mls_group_context_profile_of(const uint8_t *exts, size_t len);
 
 /*
  * Strict validation of an adopted GroupContext extension list.
@@ -156,7 +158,7 @@ MarmotGroupProfile mls_group_context_profile_of(const uint8_t *exts, size_t len)
  * unverified avatar URL is valid state), 0x8005 (8 bytes), 0x8006 and
  * 0x800b with the marmot-group-components.h codecs.
  */
-int mls_adopted_group_context_parse(const uint8_t *exts, size_t len,
+MARMOT_TEST_API int mls_adopted_group_context_parse(const uint8_t *exts, size_t len,
                                     MlsAdoptedGroupContext *out);
 
 /*
@@ -188,7 +190,7 @@ int mls_adopted_group_context_parse(const uint8_t *exts, size_t len,
  * An avatar or media endpoint URL outside libmarmot's verifiable subset is
  * valid (unverified, never contacted).
  */
-int mls_adopted_component_state_valid(uint16_t id, const uint8_t *data, size_t len);
+MARMOT_TEST_API int mls_adopted_component_state_valid(uint16_t id, const uint8_t *data, size_t len);
 
 /*
  * The structural member check of an adopted group: every leaf is a 32-byte
@@ -211,31 +213,31 @@ int mls_adopted_component_state_valid(uint16_t id, const uint8_t *data, size_t l
  * MARMOT_ERR_VALIDATION (MARMOT_ERR_EXTENSION_FORMAT for an undecodable leaf
  * dictionary).
  */
-int mls_adopted_tree_check(const MlsRatchetTree *tree, const MlsAdoptedGroupContext *gc,
+MARMOT_TEST_API int mls_adopted_tree_check(const MlsRatchetTree *tree, const MlsAdoptedGroupContext *gc,
                            bool admins_are_members);
 
 /* mls_adopted_tree_check() for one leaf (e.g. an invitee's KeyPackage leaf
  * before it is added), without the admin cross-check. */
-int mls_adopted_leaf_check(const MlsLeafNode *leaf, const MlsAdoptedGroupContext *gc);
+MARMOT_TEST_API int mls_adopted_leaf_check(const MlsLeafNode *leaf, const MlsAdoptedGroupContext *gc);
 
 /*
  * Classify (mls_group_context_profile_of()) and, for ADOPTED, validate the
  * GroupContext and (when @tree is non-NULL) the members.  *profile_out is
  * set on success.  Errors as the two functions above.
  */
-int mls_group_profile_admit(const uint8_t *exts, size_t exts_len,
+MARMOT_TEST_API int mls_group_profile_admit(const uint8_t *exts, size_t exts_len,
                             const MlsRatchetTree *tree, MarmotGroupProfile *profile_out);
 
 /* ── Component codecs (Marmot canonical encoding: QUIC varint lengths) ── */
 
 /* marmot.group.profile.v1: name<0..256>, description<0..4096>, UTF-8. */
-int mls_group_profile_v1_decode(const uint8_t *data, size_t len,
+MARMOT_TEST_API int mls_group_profile_v1_decode(const uint8_t *data, size_t len,
                                 const uint8_t **name, size_t *name_len,
                                 const uint8_t **description, size_t *description_len);
 
 /* marmot.group.admin-policy.v1: admins<V> of sorted, unique 32-byte keys,
  * at least one.  *keys borrows @data (count * 32 contiguous bytes). */
-int mls_admin_policy_v1_decode(const uint8_t *data, size_t len,
+MARMOT_TEST_API int mls_admin_policy_v1_decode(const uint8_t *data, size_t len,
                                const uint8_t **keys, size_t *count);
 
 typedef struct {
@@ -245,7 +247,7 @@ typedef struct {
 
 /* marmot.transport.nostr.routing.v1: nostr_group_id[32], relays<V> of
  * 1..16 sorted, unique relay URLs (transports/nostr.md relay URL profile). */
-int mls_nostr_routing_v1_decode(const uint8_t *data, size_t len,
+MARMOT_TEST_API int mls_nostr_routing_v1_decode(const uint8_t *data, size_t len,
                                 const uint8_t **nostr_group_id,
                                 MlsRelaySpan relays[MARMOT_NOSTR_ROUTING_MAX_RELAYS],
                                 size_t *relay_count);
@@ -260,14 +262,14 @@ int mls_nostr_routing_v1_decode(const uint8_t *data, size_t len,
  * last label is numeric, a strict dotted-quad IPv4 address.  Some URLs MDK
  * accepts are refused here (non-ASCII or percent-encoded hosts, short or
  * octal IPv4 forms, a space in the path); that direction fails closed. */
-bool mls_relay_url_valid(const uint8_t *url, size_t len);
+MARMOT_TEST_API bool mls_relay_url_valid(const uint8_t *url, size_t len);
 
 /* Strict UTF-8 (no overlongs, surrogates or code points past U+10FFFF). */
-bool mls_utf8_valid(const uint8_t *s, size_t len);
+MARMOT_TEST_API bool mls_utf8_valid(const uint8_t *s, size_t len);
 
 /* ComponentsList { ComponentID component_ids<V>; }, strictly ascending.
  * Up to @cap ids are copied to @ids; more is an error. */
-int mls_components_list_decode_strict(const uint8_t *data, size_t len,
+MARMOT_TEST_API int mls_components_list_decode_strict(const uint8_t *data, size_t len,
                                       uint16_t *ids, size_t cap, size_t *n);
 
 #endif /* MLS_APP_COMPONENTS_H */

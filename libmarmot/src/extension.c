@@ -41,6 +41,7 @@
 #include <marmot/marmot-types.h>
 #include <marmot/marmot-error.h>
 #include "mls/mls-internal.h"
+#include "marmot-internal.h"
 #include <stdlib.h>
 #include <string.h>
 

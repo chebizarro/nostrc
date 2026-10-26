@@ -8,6 +8,7 @@
  */
 
 #include <marmot/marmot-storage.h>
+#include "marmot-internal-visibility.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1424,7 +1425,7 @@ sql_destroy(void *ctx)
 
 /* The backend's connection, for libmarmot's own tests (not in a public
  * header): they check its pragmas. */
-void *marmot_storage_sqlite_test_handle(MarmotStorage *s);
+MARMOT_TEST_API void *marmot_storage_sqlite_test_handle(MarmotStorage *s);
 void *
 marmot_storage_sqlite_test_handle(MarmotStorage *s)
 {

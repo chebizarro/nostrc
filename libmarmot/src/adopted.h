@@ -12,6 +12,8 @@
 #ifndef MARMOT_ADOPTED_H
 #define MARMOT_ADOPTED_H
 
+#include "marmot-internal-visibility.h"
+
 #include "marmot-internal.h"
 #include "mls/mls_group.h"
 #include <stdbool.h>
@@ -25,11 +27,11 @@
  * group without a proof on every leaf is invalid.  MARMOT_OK or
  * MARMOT_ERR_KEY_PACKAGE_IDENTITY.
  */
-MarmotError marmot_adopted_members_proven(const MlsGroup *g);
+MARMOT_TEST_API MarmotError marmot_adopted_members_proven(const MlsGroup *g);
 
 /* Whether the member leaf @leaf of adopted group @g belongs to an account
  * listed in its marmot.group.admin-policy.v1 state. */
-bool marmot_adopted_leaf_is_admin(const MlsGroup *g, uint32_t leaf);
+MARMOT_TEST_API bool marmot_adopted_leaf_is_admin(const MlsGroup *g, uint32_t leaf);
 
 /*
  * The GroupContext extension list of a new adopted group (group-setup.md
@@ -43,7 +45,7 @@ bool marmot_adopted_leaf_is_admin(const MlsGroup *g, uint32_t leaf);
  * unique) and marmot.group.lifecycle.v1 = active.  Inputs are validated
  * (MARMOT_ERR_INVALID_ARG); *out is malloc()ed.
  */
-MarmotError marmot_adopted_group_context_build(const char *name, const char *description,
+MARMOT_TEST_API MarmotError marmot_adopted_group_context_build(const char *name, const char *description,
                                                const uint8_t (*admins)[32], size_t admin_count,
                                                const uint8_t nostr_group_id[32],
                                                const char *const *relays, size_t relay_count,
@@ -54,7 +56,7 @@ MarmotError marmot_adopted_group_context_build(const char *name, const char *des
  * borrowed pointers, after checking each against the Nostr relay URL
  * profile; 1..16 must remain.  MARMOT_ERR_INVALID_ARG otherwise.
  */
-MarmotError marmot_adopted_canonical_relays(const char *const *relays, size_t count,
+MARMOT_TEST_API MarmotError marmot_adopted_canonical_relays(const char *const *relays, size_t count,
                                             const char ***out, size_t *out_count);
 
 /*
@@ -64,18 +66,18 @@ MarmotError marmot_adopted_canonical_relays(const char *const *relays, size_t co
  * URLs of 0x8004 are returned in *relays_out (NULL-free array of malloc()ed
  * strings; free each and the array).
  */
-MarmotError marmot_adopted_group_from_mls(const MlsGroup *g, MarmotGroup **group_out,
+MARMOT_TEST_API MarmotError marmot_adopted_group_from_mls(const MlsGroup *g, MarmotGroup **group_out,
                                           char ***relays_out, size_t *relay_count_out);
 
 /* Free a relay array from marmot_adopted_group_from_mls(). */
-void marmot_adopted_relays_free(char **relays, size_t count);
+MARMOT_TEST_API void marmot_adopted_relays_free(char **relays, size_t count);
 
 /*
  * marmot_get_group_components() of an adopted GroupContext extension list
  * (MlsGroup.extensions_data) at @epoch.  The list must pass
  * mls_adopted_group_context_parse() (its error otherwise).
  */
-MarmotError marmot_adopted_components_from_extensions(const uint8_t *exts, size_t exts_len,
+MARMOT_TEST_API MarmotError marmot_adopted_components_from_extensions(const uint8_t *exts, size_t exts_len,
                                                       uint64_t epoch,
                                                       MarmotGroupComponents *out);
 
@@ -83,7 +85,7 @@ MarmotError marmot_adopted_components_from_extensions(const uint8_t *exts, size_
  * The profile of the stored group @gid (its MLS state).  For the public
  * marmot_get_group_profile().
  */
-MarmotError marmot_adopted_stored_profile(Marmot *m, const MarmotGroupId *gid,
+MARMOT_TEST_API MarmotError marmot_adopted_stored_profile(Marmot *m, const MarmotGroupId *gid,
                                           MarmotGroupProfile *out);
 
 #endif /* MARMOT_ADOPTED_H */
