@@ -167,7 +167,7 @@ class SharedDependencyEdges(Project):
         self.assertEqual(s.classify(self.policy, header)["nodes"], ["groundhog.account_relays"])
         for owner in ("groundhog.unclassified", "execution.groundhog"):
             self.assertEqual(self.policy["nodes"][owner]["depends_on"], [])
-        for path in ("nostr-gtk/data/ui/gnostr-composer.blp", "nostr-gtk/src/note-card-binding-ctx.h"):
+        for path in ("nostr-gtk/data/ui/gnostr-composer.blp", "nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view-private.h"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
             self.assertFalse(any(name.startswith(("mdk08.", "mdk011.")) for name in plan["selected_checks"]))
         plan = s.make_plan(self.policy, [change(EDGES[0][2])], head="a" * 40, base="b" * 40, context="ci")
@@ -327,7 +327,7 @@ class RelayJsonDependencyEdges(Project):
             ("apps/relayd/src/relay_ingress.c", {'supported.apps.grelay.tests'}),
             ("apps/relayd/include/relay_ingress.h", {'supported.apps.grelay.tests'}),
             ("nostr-gtk/data/ui/gnostr-composer.blp", set()),
-            ("nostr-gtk/src/note-card-binding-ctx.h", set()),
+            ("nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view-private.h", set()),
         ):
             with self.subTest(path=path):
                 before, after = [s.make_plan(policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
@@ -464,6 +464,6 @@ nostrc_finalize_test_inventory()
             impacted = set(s.impact_closure(self.policy, s.classify(self.policy, path)["nodes"]))
             self.assertTrue(set(check["nodes"]) & impacted)
             self.assertFalse((set(check["nodes"]) - {"groundhog.unclassified"}) & impacted)
-        for path in ("nostr-gtk/data/ui/gnostr-composer.blp", "nostr-gtk/src/note-card-binding-ctx.h"):
+        for path in ("nostr-gtk/data/ui/gnostr-composer.blp", "nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view-private.h"):
             plan = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
             self.assertFalse(any(name.startswith(("mdk08.", "mdk011.")) for name in plan["selected_checks"]))

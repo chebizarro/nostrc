@@ -3,7 +3,7 @@
 #ifndef GNOSTR_TIMELINE_REPOST_H
 #define GNOSTR_TIMELINE_REPOST_H
 
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include <nostr-gtk-1.0/gn-nostr-reference-resolver.h>
 #include "../model/gnostr-timeline-item-view-model.h"
 

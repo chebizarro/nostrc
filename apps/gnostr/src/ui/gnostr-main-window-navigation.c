@@ -11,8 +11,8 @@
 #include "gnostr-article-reader.h"
 
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include "gnostr-profile-pane.h"
+#include "gnostr-thread-view.h"
 
 #include "../util/utils.h"
 

@@ -12,8 +12,8 @@
 #include "gnostr-article-reader.h"
 
 #include <nostr-gobject-1.0/gnostr-relays.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include "gnostr-profile-pane.h"
+#include "gnostr-thread-view.h"
 
 void
 gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *self,

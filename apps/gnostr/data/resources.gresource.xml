@@ -12,7 +12,8 @@
     <file>ui/widgets/gnostr-dm-row.ui</file>
     <file>ui/widgets/gnostr-notifications-view.ui</file>
     <file>ui/widgets/gnostr-notification-row.ui</file>
-    <!-- gnostr-profile-pane.ui, gnostr-thread-view.ui moved to nostr-gtk -->
+    <!-- profile pane, thread view, note card row and note embed templates:
+         data/widgets/gnostr-widgets.gresource.xml (gnostr-widgets) -->
     <file>ui/widgets/gnostr-note-embed.ui</file>
     <file>ui/widgets/page-discover.ui</file>
     <file>ui/widgets/gnostr-profile-row.ui</file>

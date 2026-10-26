@@ -1,8 +1,10 @@
 # Timeline Library/App Boundary Proposal
 
-**Date:** 2026-04-01 (last updated 2026-04-16)  
-**Status:** Implemented (Phases 2–5 complete)  
-**Related beads:** `nostrc-elln`, `nostrc-elln.1`, `nostrc-lkoa`, `nostrc-hiei`, `nostrc-hqtn`
+**Date:** 2026-04-01 (last updated 2026-10-27)\
+**Status:** Implemented (Phases 2–5 complete); widget ownership revised, see
+[Current widget boundary](#current-widget-boundary)\
+**Related beads:** `nostrc-elln`, `nostrc-elln.1`, `nostrc-lkoa`, `nostrc-hiei`, `nostrc-hqtn`,
+`nostrc-a67o0`, `nostrc-hd8a4`
 
 ## Summary
 
@@ -43,11 +45,12 @@ More concretely:
 
 - `NostrGtkTimelineView` remains a reusable widget with scroll tracking, tabs,
   and list/factory plumbing
-- `NostrGtkNoteCardRow` remains a reusable row widget with generic presentation
-  APIs and generic action signals
 - GNostr provides an **adapter/controller layer** that binds app models to row
   widgets, performs GNostr-specific metadata lookups, and relays row actions to
   the main window
+
+A reusable note-card row was part of this proposal, but the row that exists
+today is app-owned; see [Current widget boundary](#current-widget-boundary).
 
 This keeps the library generic while still allowing GNostr to provide a rich
 product-specific experience.
@@ -59,7 +62,8 @@ product-specific experience.
 - `NostrGtkTimelineView` widget lifecycle
 - internal `GtkListView`, scroller, selection model, and tab UI
 - generic scroll/visibility helpers
-- generic row widgets and presentation setters
+- generic row widgets and presentation setters (none ship today; see
+  [Current widget boundary](#current-widget-boundary))
 - stable public APIs for any externally-supported timeline model helpers
 - generic signals/hooks needed by consumers
 
@@ -82,6 +86,36 @@ product-specific experience.
 
 `nostr-gtk` should **not** become a second application layer. It should not own
 GNostr-specific storage queries, main-window dispatch, or GNostr product policy.
+
+## Current widget boundary
+
+`libnostr-gtk-1.0` contains only widgets with no GNostr dependency: the
+timeline view and tabs, composer, card visibility policy and NIP-05 helpers
+(plus the portable library). It links on its own, with no reference to a
+GNostr symbol.
+
+These widgets are **GNostr-owned** and live in `apps/gnostr/src/widgets`, built
+as the app-internal `gnostr-widgets` archive (templates in
+`apps/gnostr/data/widgets`, keeping their historical `/org/nostr/gtk/...`
+resource paths):
+
+| Widget | Why it is app-owned |
+|--------|---------------------|
+| `NostrGtkProfilePane` | main window actions, profile-edit and status dialogs, note-card factory, follow-list model, bookmarks, pins, contacts, badges, user status |
+| `NostrGtkThreadView` | the app model `GnNostrEventItem`, a main-window report action, the shared query pool |
+| `NostrGtkNoteCardRow` (with its binding context and data bucket) | GNostr NIP helpers (imeta, custom emoji, NIP-03/32/48/71/73/84, zap amount formatting), the avatar cache over the GNostr media service, the shared HTTP session |
+| `GnostrNoteEmbed` | the avatar cache |
+
+While they lived in the library, `libnostr-gtk-1.0` carried 111 unresolved
+references into the app: only an executable holding the whole GNostr closure
+could link or load it (`nostrc-a67o0`, `nostrc-hd8a4`). They keep their type
+names (`NostrGtk*`, `GnostrNoteEmbed`); those names are not library API.
+
+A reusable note card may return to `nostr-gtk` only after the NIP helpers it
+uses move into `nostr-gtk`/`nostr-gobject` and avatar/HTTP loading becomes an
+injected provider (as `GnMediaSource` already is for the portable media
+viewer). Until then the boundary above is the correct layering: the app
+depends on the library, never the reverse.
 
 ## Public API Proposal
 

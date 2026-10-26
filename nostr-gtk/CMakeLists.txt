@@ -63,11 +63,8 @@ nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
 
 # ── Blueprint compilation ────────────────────────────────────────────
 set(NOSTR_GTK_BLUEPRINT_SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/nostr-note-card-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-composer.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gnostr-profile-pane.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-view.blp
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-note-embed.blp
 )
 
 # ── GResource compilation ────────────────────────────────────────────
@@ -80,32 +77,20 @@ nostrc_compile_blueprint_resources(GRESOURCE_C
 # ── Source files ─────────────────────────────────────────────────────
 # Standalone core: must compile and link without any apps/gnostr header or
 # symbol. nostr_gtk_init() lives here, so a consumer that only uses these
-# widgets can initialise the library without Gnostr.
+# widgets can initialise the library without Gnostr. The note card row,
+# thread view, profile pane and note embed depend on Gnostr app services and
+# are owned by apps/gnostr (docs/TIMELINE_LIBRARY_APP_BOUNDARY.md).
 set(NOSTR_GTK_CORE_SOURCES
   src/nostr-gtk-init.c
   src/gnostr-composer.c
   src/gnostr-card-visibility-policy.c
-  src/note-card-binding-ctx.c
-  src/note-card-data.c
   src/gn-timeline-tabs.c
   src/gnostr-timeline-view.c
   src/gnostr-nip05.c
 )
 
-# Transitional: these widgets still include apps/gnostr headers and resolve
-# Gnostr app symbols at final link time. They stay in the installed archive
-# to preserve the 1.x ABI, but only Gnostr (which provides those symbols) can
-# currently link them. Do not add sources to this list; decouple them instead.
-set(NOSTR_GTK_GNOSTR_COUPLED_SOURCES
-  src/gnostr-thread-view.c
-  src/gnostr-profile-pane.c
-  src/nostr-note-card-row.c
-  src/gnostr-note-embed.c
-)
-
 set(NOSTR_GTK_SOURCES
   ${NOSTR_GTK_CORE_SOURCES}
-  ${NOSTR_GTK_GNOSTR_COUPLED_SOURCES}
   ${GRESOURCE_C}
 )
 
@@ -123,14 +108,10 @@ set(NOSTR_GTK_ISSUE_MODEL_SOURCES
 
 set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-gtk.h
-  include/nostr-gtk-1.0/gnostr-thread-view.h
   include/nostr-gtk-1.0/gnostr-composer.h
-  include/nostr-gtk-1.0/gnostr-profile-pane.h
   include/nostr-gtk-1.0/gnostr-card-visibility-policy.h
-  include/nostr-gtk-1.0/nostr-note-card-row.h
   include/nostr-gtk-1.0/gn-timeline-tabs.h
   include/nostr-gtk-1.0/gnostr-timeline-view.h
-  include/nostr-gtk-1.0/gnostr-note-embed.h
   include/nostr-gtk-1.0/content_renderer.h
   include/nostr-gtk-1.0/nostr-gtk-error.h
   include/nostr-gtk-1.0/gnostr-nip05.h
@@ -342,11 +323,6 @@ target_include_directories(nostr_gtk
     ${CMAKE_BINARY_DIR}/libnostr/generated
 )
 
-# Transitional: apps/gnostr private headers are visible to the coupled sources
-# only, so the standalone core cannot regress into including them.
-set_source_files_properties(${NOSTR_GTK_GNOSTR_COUPLED_SOURCES}
-  PROPERTIES INCLUDE_DIRECTORIES
-    "${CMAKE_SOURCE_DIR}/apps/gnostr/src;${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui;${CMAKE_SOURCE_DIR}/apps/gnostr/src/model;${CMAKE_SOURCE_DIR}/apps/gnostr/src/util")
 
 # Public dependencies (propagated to consumers)
 target_link_libraries(nostr_gtk
@@ -371,6 +347,14 @@ if(SOUP3_FOUND)
   target_compile_definitions(nostr_gtk PRIVATE HAVE_SOUP3=1)
 endif()
 
+# The library never resolves symbols from its consumers (nostrc-a67o0): a
+# shared ELF build must link complete. (Mach-O and DLL links already fail on
+# undefined references.)
+get_target_property(_nostr_gtk_type nostr_gtk TYPE)
+if(_nostr_gtk_type STREQUAL "SHARED_LIBRARY" AND NOT APPLE AND NOT WIN32)
+  target_link_options(nostr_gtk PRIVATE "LINKER:--no-undefined")
+endif()
+
 # Inherit sanitizer flags from root CMakeLists.txt
 apply_sanitizers(nostr_gtk)
 
@@ -389,27 +373,40 @@ if(NOSTR_GTK_ENABLE_GIR)
   if(G_IR_SCANNER AND G_IR_COMPILER)
     get_target_property(_gtk_type nostr_gtk TYPE)
     if(_gtk_type STREQUAL "STATIC_LIBRARY")
+      # A typelib needs a loadable library: wrap the static legacy archive.
+      # nostr-gobject is not embedded again: the wrapper binds to the library
+      # GNostr-1.0 loads, so a GI process keeps one nostr-gobject GType
+      # registry (and the portable DSO's executable-owned references resolve
+      # against it).
+      if(TARGET nostr_gobject_shared)
+        set(_gir_gobject nostr_gobject_shared)
+      else()
+        set(_gir_gobject nostr_gobject)
+      endif()
       set(_gir_wrapper_dir "${CMAKE_CURRENT_BINARY_DIR}/gir_wrappers")
       file(MAKE_DIRECTORY ${_gir_wrapper_dir})
       file(WRITE "${_gir_wrapper_dir}/dummy.c"
            "/* GIR shared wrapper */\nint _nostr_gtk_gir_dummy(void){return 0;}\n")
       add_library(nostr_gtk_shared SHARED "${_gir_wrapper_dir}/dummy.c")
-      target_link_libraries(nostr_gtk_shared PRIVATE nostr_gtk)
+      add_dependencies(nostr_gtk_shared nostr_gtk)
+      target_link_libraries(nostr_gtk_shared PRIVATE
+        ${_gir_gobject} nostr_gtk_portable
+        PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+        PkgConfig::GIO2 PkgConfig::JSON_GLIB)
+      if(SOUP3_FOUND)
+        target_link_libraries(nostr_gtk_shared PRIVATE PkgConfig::SOUP3)
+      endif()
       if(APPLE)
         target_link_options(nostr_gtk_shared PRIVATE
-          "-Wl,-force_load,$<TARGET_FILE:nostr_gtk>"
-          "-Wl,-force_load,$<TARGET_FILE:nostr_gtk_portable>"
-          "-Wl,-undefined,dynamic_lookup")
-      else()
+          "-Wl,-force_load,$<TARGET_FILE:nostr_gtk>")
+      elseif(NOT WIN32)
         target_link_options(nostr_gtk_shared PRIVATE
-          -Wl,--whole-archive $<TARGET_FILE:nostr_gtk>
-          $<TARGET_FILE:nostr_gtk_portable> -Wl,--no-whole-archive)
+          -Wl,--whole-archive $<TARGET_FILE:nostr_gtk> -Wl,--no-whole-archive
+          "LINKER:--no-undefined")
       endif()
-      set(_gir_lib_name nostr_gtk_shared)
-      set(_gir_lib_dep  nostr_gtk_shared)
+      set(_gir_lib_dep nostr_gtk_shared)
     else()
-      set(_gir_lib_name nostr_gtk)
-      set(_gir_lib_dep  nostr_gtk)
+      set(_gir_lib_dep nostr_gtk)
     endif()
 
     set(_gir_input "")
@@ -426,26 +423,60 @@ if(NOSTR_GTK_ENABLE_GIR)
     set(_gir_dir  "${CMAKE_CURRENT_BINARY_DIR}/gir")
     set(_gir_file "${_gir_dir}/GNostrGtk-1.0.gir")
     set(_typelib  "${_gir_dir}/GNostrGtk-1.0.typelib")
+    # The scanned sources span both DSOs; name them by their file base names
+    # (OUTPUT_NAME), not their CMake target names.
+    set(_gir_library_dirs
+      "$<TARGET_FILE_DIR:${_gir_lib_dep}>:$<TARGET_FILE_DIR:nostr_gtk_portable>:$<TARGET_FILE_DIR:nostr_gobject>")
+    # Preprocess the headers as their consumers do: the generated export
+    # headers and every include directory the legacy target compiles with.
+    set(_gir_cppflags
+      "-I$<JOIN:$<FILTER:$<TARGET_PROPERTY:nostr_gtk,INCLUDE_DIRECTORIES>,EXCLUDE,^$>,$<SEMICOLON>-I>")
+    if(_gtk_type STREQUAL "STATIC_LIBRARY")
+      list(APPEND _gir_cppflags -DNOSTR_GTK_STATIC_DEFINE)
+    endif()
+
+    # Under NOSTRC_ARCHIVES_FROM_EXECUTABLE the scanner's temporary executable
+    # supplies the core the shared DSOs leave to their executable, as every
+    # executable consumer does: nostr-gobject's CMake-owned build-tree link
+    # contract (as for GNostr-1.0), plus the NIP-34 archive the portable
+    # library itself leaves to its executable.
+    set(_gir_contract_args "")
+    set(_gir_contract_dep "")
+    if(NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+      get_directory_property(_gir_gobject_contract
+        DIRECTORY "${PROJECT_ROOT}/nostr-gobject" DEFINITION _gobject_build_pc)
+      if(NOT _gir_gobject_contract OR NOT TARGET nostr-gobject-build-tree-pc)
+        message(FATAL_ERROR "GNostrGtk GIR needs nostr-gobject's build-tree link contract")
+      endif()
+      set(_gir_contract_args
+        --pkg "${_gir_gobject_contract}"
+        --pkg-export nostr-gtk-1.0
+        --extra-library $<TARGET_FILE_BASE_NAME:nip34>
+        --library-path $<TARGET_FILE_DIR:nip34>)
+      set(_gir_contract_dep nostr-gobject-build-tree-pc nip34)
+    endif()
 
     add_custom_command(
       OUTPUT ${_gir_file} ${_typelib}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${_gir_dir}
       COMMAND ${CMAKE_COMMAND} -E env
         GI_SCANNER_DISABLE_CACHE=1
-        "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:${_gir_lib_dep}>:$ENV{LD_LIBRARY_PATH}"
-        "DYLD_FALLBACK_LIBRARY_PATH=$<TARGET_FILE_DIR:${_gir_lib_dep}>:$ENV{DYLD_FALLBACK_LIBRARY_PATH}"
+        "LD_LIBRARY_PATH=${_gir_library_dirs}:$ENV{LD_LIBRARY_PATH}"
+        "DYLD_FALLBACK_LIBRARY_PATH=${_gir_library_dirs}:$ENV{DYLD_FALLBACK_LIBRARY_PATH}"
         ${G_IR_SCANNER}
           --namespace=GNostrGtk
           --nsversion=1.0
           --symbol-prefix=nostr_gtk
           --identifier-prefix=NostrGtk
           --warn-all
-          --library ${_gir_lib_name}
+          ${_gir_contract_args}
+          --library $<TARGET_FILE_BASE_NAME:${_gir_lib_dep}>
+          --library $<TARGET_FILE_BASE_NAME:nostr_gtk_portable>
           --library-path $<TARGET_FILE_DIR:${_gir_lib_dep}>
+          --library-path $<TARGET_FILE_DIR:nostr_gtk_portable>
           --pkg glib-2.0 --pkg gobject-2.0 --pkg gio-2.0
           --pkg gtk4 --pkg libadwaita-1
-          -I ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0
-          -I ${CMAKE_CURRENT_BINARY_DIR}
+          ${_gir_cppflags}
           --include=GLib-2.0
           --include=GObject-2.0
           --include=Gio-2.0
@@ -458,8 +489,9 @@ if(NOSTR_GTK_ENABLE_GIR)
       COMMAND ${G_IR_COMPILER}
           --includedir ${CMAKE_BINARY_DIR}/nostr-gobject/gir
           ${_gir_file} -o ${_typelib}
-      DEPENDS ${_gir_lib_dep}
+      DEPENDS ${_gir_lib_dep} nostr_gtk_portable ${_gir_contract_dep} ${_gir_input}
       COMMENT "Generating GNostrGtk-1.0 GIR and typelib"
+      COMMAND_EXPAND_LISTS
       VERBATIM
     )
 
@@ -682,58 +714,32 @@ if(BUILD_TESTING)
     LABELS "gtk;widget;perf"
     ENVIRONMENT "NOSTRC_TEST_PERF=1")
 
-  # Gnostr-coupled widget tests. They link the real Gnostr app-layer
-  # implementations from gnostr-widget-test-support (apps/gnostr), which is
-  # configured after this directory, so gate on the options that create it.
-  if(BUILD_APPS AND (NOT DEFINED BUILD_GNOSTR_APP OR BUILD_GNOSTR_APP))
-    set(_nostr_gtk_gnostr_test_libs
-      nostr_gtk gnostr-widget-test-support nostr_gobject
-      PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2)
-
-    gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress
-      SOURCES tests/test_listview_recycle_stress.c
-      LIBS    ${_nostr_gtk_gnostr_test_libs}
-      TIMEOUT 120
-    )
-
-    gn_add_gtest_xvfb(test_nostr_gtk_note_card_measure
-      SOURCES tests/test_note_card_measure.c
-      LIBS    ${_nostr_gtk_gnostr_test_libs}
-    )
-
-    gn_add_gtest_xvfb(test_nostr_gtk_widget_churn_leaks
-      SOURCES tests/test_widget_churn_leaks.c
-      LIBS    ${_nostr_gtk_gnostr_test_libs}
-      TIMEOUT 120
-    )
-
-    gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
-      SOURCES tests/test_thread_view_bounded_load.c
-      LIBS    ${_nostr_gtk_gnostr_test_libs}
-      TIMEOUT 120
-    )
-
-    # GTK 4.24 macOS frame-timing tolerance (nostrc-ykxf): shared header.
-    foreach(_gtk_widget_test
-      test_nostr_gtk_note_card_measure
+  # GtkListView fixtures with mock items: like the latency budget above they
+  # use neither nostr-gtk nor Gnostr symbols, so they link GTK alone. (The
+  # note-card measurement test uses the Gnostr-owned row and lives in
+  # apps/gnostr/tests.)
+  set(_nostr_gtk_fixture_libs
+    PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2)
+  gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress
+    SOURCES tests/test_listview_recycle_stress.c
+    LIBS    ${_nostr_gtk_fixture_libs}
+    TIMEOUT 120)
+  gn_add_gtest_xvfb(test_nostr_gtk_widget_churn_leaks
+    SOURCES tests/test_widget_churn_leaks.c
+    LIBS    ${_nostr_gtk_fixture_libs}
+    TIMEOUT 120)
+  gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
+    SOURCES tests/test_thread_view_bounded_load.c
+    LIBS    ${_nostr_gtk_fixture_libs}
+    TIMEOUT 120)
+  # GTK 4.24 macOS frame-timing tolerance (nostrc-ykxf): shared header.
+  foreach(_gtk_fixture_test
+      test_nostr_gtk_listview_recycle_stress
       test_nostr_gtk_widget_churn_leaks
-      test_nostr_gtk_thread_view_bounded
-      test_nostr_gtk_listview_recycle_stress
-    )
-      target_include_directories(${_gtk_widget_test} PRIVATE
-        ${CMAKE_SOURCE_DIR}/tests/common)
-    endforeach()
-
-    set_tests_properties(
-      test_nostr_gtk_listview_recycle_stress
-      test_nostr_gtk_note_card_measure
-      test_nostr_gtk_widget_churn_leaks
-      test_nostr_gtk_thread_view_bounded
-      test_nostr_gtk_listview_recycle_stress
-      PROPERTIES
-        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
-
-  endif()
+      test_nostr_gtk_thread_view_bounded)
+    target_include_directories(${_gtk_fixture_test} PRIVATE
+      ${CMAKE_SOURCE_DIR}/tests/common)
+  endforeach()
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")

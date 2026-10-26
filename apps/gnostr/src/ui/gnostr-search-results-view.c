@@ -9,7 +9,7 @@
  */
 
 #include "gnostr-search-results-view.h"
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include "gnostr-main-window.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/storage_ndb.h>

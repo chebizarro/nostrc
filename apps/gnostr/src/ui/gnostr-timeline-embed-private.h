@@ -11,7 +11,7 @@
 #ifndef GNOSTR_TIMELINE_EMBED_PRIVATE_H
 #define GNOSTR_TIMELINE_EMBED_PRIVATE_H
 
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include <gtk/gtk.h>
 #include <glib.h>
 

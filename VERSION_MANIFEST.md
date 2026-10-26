@@ -60,6 +60,10 @@ files already declare a version.
   the GIR scanner; preserve the one-core ELF model. Static scanner wrappers and
   their non-loadable installed metadata are now consistently build-tree-only.
   No header/ABI or wire/storage change. CMake and Meson versions agree.
+- nostrc-hd8a4: with `BUILD_SHARED_LIBS=ON` the build-tree contract also
+  records the run path of each shared library it lists (libblossom, libvault,
+  NIP codecs), so contract-linked executables such as the GIR probes start.
+  PATCH-class build correction folded into the unreleased 3.0.1; no further bump.
 - **Grotto Preview 0.1.0 → 0.1.1 (PATCH):** fix the alternate Meson frontend's
   Groundhog linkage using that contract; add focused executable/consumer tests.
   Update the manifest's authoritative and duplicate package versions together.
@@ -204,6 +208,22 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   `nostr_testing` install is a static test-support archive, not an
   independently versioned component; hidden object symbols remain linkable
   by its test consumers. No release tags or release columns change.
+
+- nostrc-hd8a4/nostrc-oralk: nostr-gtk stays 2.0.0. The GNostrGtk-1.0
+  GIR generation fix and the Meson build's complete link closure are
+  PATCH-class build corrections folded into the unreleased 2.0.0.
+- nostrc-a67o0/nostrc-hd8a4: nostr-gtk stays 2.0.0 (no further bump). Removing
+  the Gnostr-coupled widgets from `libnostr-gtk-1.0` is an incompatible change
+  folded into the unreleased 2.0.0 MAJOR below: the types `NostrGtkNoteCardRow`,
+  `NostrGtkThreadView`, `NostrGtkProfilePane`, `GnostrNoteEmbed` (with
+  `NostrGtkMediaTextureLoader`, `NostrGtkMediaResourceClass`,
+  `NostrGtkContentSubstType`, the media/link-preview callback types,
+  `ThreadNode`, `ThreadGraph`, `NoteCardBindingContext`), their functions,
+  `nostr_gtk_media_image_cache_size()` and the four headers leave the library,
+  its umbrella header and the GNostrGtk GIR. gnostr was their only consumer.
+  gnostr stays 0.2.0 (no bump): the same widgets are now its internal
+  `gnostr-widgets` archive with unchanged behavior and resource paths, and no
+  gnostr public surface changes. No tags or release-column changes.
 
 - nostrc-er4fz.10 phase C: nostr-gtk MAJOR 1.2.0 -> 2.0.0 (SONAME 2 for
   `libnostr-gtk-1.0` and `libnostr-gtk-portable-1.0`). Both DSOs are compiled

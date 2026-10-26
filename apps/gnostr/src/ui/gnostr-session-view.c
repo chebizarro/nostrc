@@ -7,14 +7,14 @@
 #include "gnostr-dm-inbox-view.h"
 #include "gnostr-notifications-view.h"
 /* nostrc-lx36: profile pane moved to nostr-gtk library */
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include "gnostr-profile-pane.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-repo-browser.h"
 #include "gnostr-calendar-events-view.h"
 #include "gnostr-filter-switcher.h"
 #include "gnostr-search-results-view.h"
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include "gnostr-thread-view.h"
 #include "gnostr-article-reader.h"
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include "gnostr-timeline-view-app-factory.h"

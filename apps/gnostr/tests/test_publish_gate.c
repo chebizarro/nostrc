@@ -16,7 +16,7 @@
 #include "ui/gnostr-publish-gate.h"
 
 #include <gtk/gtk.h>
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include <string.h>
 
 extern GResource *nostr_gtk_get_resource(void);

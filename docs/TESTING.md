@@ -263,7 +263,7 @@ All tests run with `G_DEBUG=fatal-warnings,gc-friendly` and `G_SLICE=always-mall
 
 | Test File | Test Count | What It Validates |
 |-----------|------------|-------------------|
-| `nostr-gtk/tests/test_note_card_measure.c` | 3 | Content corpus with 9 edge cases (short text, long text, many links, many hashtags, unicode-heavy, empty, newlines-only, single long word). Tests `gtk_widget_measure()` bounds and ScrolledWindow clamping. |
+| `apps/gnostr/tests/test_note_card_measure.c` | 3 | Content corpus with 9 edge cases (short text, long text, many links, many hashtags, unicode-heavy, empty, newlines-only, single long word). Tests `gtk_widget_measure()` bounds and ScrolledWindow clamping. |
 
 ### 4️⃣ Segfaults from Recycling / Signal Detachment
 
@@ -443,7 +443,7 @@ Same as above, but wraps execution in `xvfb-run -a` on Linux. On macOS, runs nat
 | 4 | `nostr-gobject/tests/test_profile_service_batching.c` | 9 | Service correctness | No |
 | 5 | `nostr-gobject/tests/integ/test_event_flow_ingest_subscribe.c` | 5 | Event flow | No |
 | 6 | `nostr-gtk/tests/test_listview_recycle_stress.c` | 6 | Segfault prevention | Yes |
-| 7 | `nostr-gtk/tests/test_note_card_measure.c` | 3 | Widget sizing | Yes |
+| 7 | `apps/gnostr/tests/test_note_card_measure.c` | 3 | Widget sizing | Yes |
 | 8 | `nostr-gtk/tests/test_widget_churn_leaks.c` | 2 | Memory leaks | Yes |
 | 9 | `nostr-gtk/tests/test_bind_latency_budget.c` | 2 | UI latency (mock) | Yes |
 | 10 | `nostr-gtk/tests/test_thread_view_bounded_load.c` | 5 | Sliding windows | Yes |
@@ -757,7 +757,7 @@ GTK_DEBUG=interactive GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
 | **Segfault** | ASan build crashes | `ctest -R recycle` | ASan trace → freed-by location | Test passes under ASan | Objects (signals) |
 | **Memory leak** | `ASAN_OPTIONS=detect_leaks=1` | Lifecycle test | LSAN trace → allocation site | `gn_test_assert_finalized()` | Objects (ref count) |
 | **Main-thread block** | UI stalls visibly | `ctest -R ndb-violations` | Violation dump → function name | Violation count = 0 | Statistics (frame times) |
-| **Widget sizing** | Broadway screenshot | `ctest -R note_card_measure` | Inspector Visual panel + CSS | Dimensions within bounds | **Visual + CSS** |
+| **Widget sizing** | Broadway screenshot | `ctest -R note-card-measure` | Inspector Visual panel + CSS | Dimensions within bounds | **Visual + CSS** |
 | **Signal race** | Random crash on scroll | Recycle stress test | Inspector Objects → Signals section | No ASan errors after 50 cycles | **Objects (Signals)** |
 | **Latency** | Broadway feels slow | Heartbeat test + NDB violations | Inspector Statistics + Recorder | Heartbeat missed count = 0 | **Statistics + Recorder** |
 

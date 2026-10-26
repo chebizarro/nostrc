@@ -7,8 +7,8 @@
 #include <nostr-gtk-1.0/gnostr-composer.h>
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include "gnostr-profile-pane.h"
+#include "gnostr-thread-view.h"
 #include "gnostr-article-reader.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/nostr_profile_service.h>
@@ -21,7 +21,7 @@
 #include "gnostr-classifieds-view.h"
 #include "gnostr-repo-browser.h"
 #include "../util/gnostr-plugin-manager.h"
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../model/gn-nostr-event-model.h"

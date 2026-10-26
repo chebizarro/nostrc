@@ -3,7 +3,7 @@
 #include "../services/gnostr-og-provider.h"
 #include "../util/utils.h"
 #include "../util/youtube_url.h"
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 
 #define YOUTUBE_EMBED_KEY "gnostr-youtube-embed"
 

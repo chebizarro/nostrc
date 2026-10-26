@@ -23,7 +23,10 @@ endif
 # Find xvfb-run for headless rendering (Linux only)
 xvfb_run = find_program('xvfb-run', required: host_machine.system() == 'linux')
 
-test_deps = [nostr_gtk_dep, gtk_dep, adw_dep, glib_dep, gobject_dep]
+# The GtkListView fixtures below use mock items and no nostr-gtk symbols;
+# they share tests/common/nostrc-test-gdk-frame.h.
+test_deps = [gtk_dep, adw_dep, glib_dep, gobject_dep,
+  declare_dependency(include_directories: include_directories('../../tests/common'))]
 
 portable_test = executable('test_portable', 'test_portable.c',
   c_args: ['-DNOSTR_GTK_MESON_EXTERNAL_CORE'],
@@ -85,24 +88,6 @@ else
   test('nostr-gtk:listview-recycle-stress', test_recycle,
     env: test_env,
     timeout: 120,
-  )
-endif
-
-# ── Widget sizing test ───────────────────────────────────────────────
-test_measure = executable(
-  'test_note_card_measure',
-  'test_note_card_measure.c',
-  dependencies: test_deps,
-)
-
-if xvfb_run.found()
-  test('nostr-gtk:note-card-measure', xvfb_run,
-    args: ['-a', test_measure],
-    env: test_env,
-  )
-else
-  test('nostr-gtk:note-card-measure', test_measure,
-    env: test_env,
   )
 endif
 

@@ -19325,17 +19325,20 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "core.linux": [
+          "gnostr-test-note-card-measure",
           "gnostr-test-publish-gate",
           "gnostr-test-real-bind-latency",
           "gnostr-test-timeline-repost"
         ],
         "groundhog.mdk08": [
+          "gnostr-test-note-card-measure",
           "gnostr-test-publish-gate",
           "gnostr-test-real-bind-latency",
           "gnostr-test-timeline-repost"
         ]
       },
       "build_targets": [
+        "gnostr-test-note-card-measure",
         "gnostr-test-publish-gate",
         "gnostr-test-real-bind-latency",
         "gnostr-test-timeline-repost"
@@ -20155,20 +20158,17 @@
       "ctest_tests": {
         "core.linux": [
           "test_nostr_gtk_listview_recycle_stress",
-          "test_nostr_gtk_note_card_measure",
           "test_nostr_gtk_thread_view_bounded",
           "test_nostr_gtk_widget_churn_leaks"
         ],
         "groundhog.mdk08": [
           "test_nostr_gtk_listview_recycle_stress",
-          "test_nostr_gtk_note_card_measure",
           "test_nostr_gtk_thread_view_bounded",
           "test_nostr_gtk_widget_churn_leaks"
         ]
       },
       "build_targets": [
         "test_nostr_gtk_listview_recycle_stress",
-        "test_nostr_gtk_note_card_measure",
         "test_nostr_gtk_thread_view_bounded",
         "test_nostr_gtk_widget_churn_leaks"
       ],
@@ -23336,7 +23336,7 @@
         "nostr-gtk/src",
         "nostr-gtk/include"
       ],
-      "rationale": "Legacy nostr_gtk target: NOSTR_GTK_CORE_SOURCES, NOSTR_GTK_GNOSTR_COUPLED_SOURCES and nonportable headers, linked PUBLIC to nostr_gtk_portable and embedding GRESOURCE_C. Gnostr consumes this target; portable-only consumers do not."
+      "rationale": "Legacy nostr_gtk target: NOSTR_GTK_CORE_SOURCES and nonportable headers, linked PUBLIC to nostr_gtk_portable and embedding GRESOURCE_C. It contains no Gnostr app code; the Gnostr-owned widgets are the gnostr-widgets archive under apps/gnostr. Gnostr consumes this target; portable-only consumers do not."
     },
     "nostrdb": {
       "depends_on": [
@@ -24416,22 +24416,6 @@
     },
     {
       "effect": "impact",
-      "exact": "nostr-gtk/src/note-card-binding-ctx.c",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/src/note-card-data.c",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "NOSTR_GTK_CORE_SOURCES in nostr-gtk/CMakeLists.txt."
-    },
-    {
-      "effect": "impact",
       "exact": "nostr-gtk/src/gn-timeline-tabs.c",
       "nodes": [
         "nostr.gtk"
@@ -24456,63 +24440,7 @@
     },
     {
       "effect": "impact",
-      "exact": "nostr-gtk/src/gnostr-thread-view.c",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/src/gnostr-profile-pane.c",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/src/nostr-note-card-row.c",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/src/gnostr-note-embed.c",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "NOSTR_GTK_GNOSTR_COUPLED_SOURCES in nostr-gtk/CMakeLists.txt."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/src/note-card-binding-ctx.h",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "Private header included by the legacy note-card sources."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/src/note-card-data.h",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "Private header included by the legacy note-card sources."
-    },
-    {
-      "effect": "impact",
       "exact": "nostr-gtk/include/nostr-gtk-1.0/nostr-gtk.h",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-thread-view.h",
       "nodes": [
         "nostr.gtk"
       ],
@@ -24528,23 +24456,7 @@
     },
     {
       "effect": "impact",
-      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-profile-pane.h",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
-    },
-    {
-      "effect": "impact",
       "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-card-visibility-policy.h",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/include/nostr-gtk-1.0/nostr-note-card-row.h",
       "nodes": [
         "nostr.gtk"
       ],
@@ -24561,14 +24473,6 @@
     {
       "effect": "impact",
       "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view.h",
-      "nodes": [
-        "nostr.gtk"
-      ],
-      "reason": "Legacy-only NOSTR_GTK_HEADERS; absent from NOSTR_GTK_PORTABLE_HEADERS."
-    },
-    {
-      "effect": "impact",
-      "exact": "nostr-gtk/include/nostr-gtk-1.0/gnostr-note-embed.h",
       "nodes": [
         "nostr.gtk"
       ],

@@ -31,25 +31,42 @@ json_glib_dep = dependency('json-glib-1.0', required: true)
 soup3_dep   = dependency('libsoup-3.0', required: false)
 libxml2_dep = dependency('libxml-2.0') # shared Open Graph parser (nostrc-8xfib.3)
 
-# nostr-gobject-1.0 (sibling library, pre-built)
+fs = import('fs')
+
+# ── Pre-built CMake tree ─────────────────────────────────────────────
 cmake_build_dir = get_option('cmake_build_dir')
 if cmake_build_dir == ''
   cmake_build_dir = meson.current_source_dir() / '..' / 'build'
 endif
 
-nostr_gobject_wrapper = cc.find_library('nostr_gobject_shared',
-  dirs: [cmake_build_dir / 'nostr-gobject'],
-  required: false)
-nostr_gobject_lib = nostr_gobject_wrapper
-if not (get_option('introspection') and nostr_gobject_wrapper.found())
-  nostr_gobject_lib = cc.find_library('nostr-gobject-1.0',
-    dirs: [cmake_build_dir / 'nostr-gobject'],
-    required: true)
+# nostr-gobject's uninstalled build-tree export is the CMake-owned link
+# contract: the exact nostr-gobject artifact, its archive closure (libnostr,
+# libnostr-json, libgo, NIP codecs, nostrdb, Vault/Blossom) and system
+# requirements. Do not duplicate that list here.
+nostr_gobject_link_export = cmake_build_dir / 'nostr-gobject' / 'nostr-gobject-build-tree.pc'
+if not fs.is_file(nostr_gobject_link_export)
+  error('Required CMake GNostr link export missing: ' + nostr_gobject_link_export +
+    '; build the nostr-gobject-build-tree-pc target first')
 endif
+nostr_gobject_link_dep = dependency(nostr_gobject_link_export, method: 'pkg-config')
 nostr_gobject_inc = include_directories('../nostr-gobject/include', cmake_build_dir / 'nostr-gobject/include')
 nostr_gobject_dep = declare_dependency(
-  dependencies: nostr_gobject_lib,
+  dependencies: nostr_gobject_link_dep,
   include_directories: nostr_gobject_inc)
+
+# NIP-34 is the one sibling the portable library uses beyond that contract.
+# Bind the artifact this tree built (shared, else archive) by explicit path.
+shared_suffix = host_machine.system() == 'darwin' ? '.dylib' : '.so'
+nip34_artifact = cmake_build_dir / 'nips/nip34' / ('libnip34' + shared_suffix)
+nip34_link_args = [nip34_artifact, '-Wl,-rpath,' + fs.parent(nip34_artifact)]
+if not fs.is_file(nip34_artifact)
+  nip34_artifact = cmake_build_dir / 'nips/nip34/libnip34.a'
+  nip34_link_args = [nip34_artifact]
+endif
+if not fs.is_file(nip34_artifact)
+  error('Required CMake artifact missing: ' + nip34_artifact)
+endif
+nip34_dep = declare_dependency(link_args: nip34_link_args)
 
 # ── Version header ───────────────────────────────────────────────────
 version_parts = meson.project_version().split('.')
@@ -75,11 +92,8 @@ nostr_gtk_blueprint_deps = []
 if blueprint_compiler.found()
   # Compile all blueprint files into the source data/ tree so GResource can find them
   _blp_sources = [
-    ['data/ui/nostr-note-card-row.blp', 'data/ui/nostr-note-card-row.ui'],
     ['data/ui/gnostr-composer.blp',     'data/ui/gnostr-composer.ui'],
-    ['data/ui/gnostr-profile-pane.blp', 'data/ui/gnostr-profile-pane.ui'],
     ['data/ui/widgets/gnostr-timeline-view.blp', 'data/ui/widgets/gnostr-timeline-view.ui'],
-    ['data/ui/widgets/gnostr-note-embed.blp',    'data/ui/widgets/gnostr-note-embed.ui'],
   ]
   foreach _blp : _blp_sources
     _compiled = custom_target('blp-' + _blp[0].underscorify(),
@@ -101,29 +115,16 @@ nostr_gtk_resources = gnome.compile_resources(
   dependencies: nostr_gtk_blueprint_deps)
 
 # ── Source files ─────────────────────────────────────────────────────
-# Standalone core: compiled without any apps/gnostr include directory.
-nostr_gtk_core_sources = files(
+# Standalone core: no apps/gnostr header or symbol (see CMakeLists.txt; the
+# Gnostr-coupled widgets are owned by apps/gnostr).
+nostr_gtk_sources = files(
   'src/nostr-gtk-init.c',
   'src/gnostr-composer.c',
   'src/gnostr-card-visibility-policy.c',
   'src/gnostr-nip05.c',
-  'src/note-card-binding-ctx.c',
-  'src/note-card-data.c',
   'src/gn-timeline-tabs.c',
   'src/gnostr-timeline-view.c',
 )
-
-# Transitional: widgets that still include apps/gnostr headers and resolve
-# Gnostr app symbols at final link time. Kept in the library for ABI; do not
-# add sources here (see CMakeLists.txt).
-nostr_gtk_gnostr_coupled_sources = files(
-  'src/gnostr-thread-view.c',
-  'src/gnostr-profile-pane.c',
-  'src/nostr-note-card-row.c',
-  'src/gnostr-note-embed.c',
-)
-
-nostr_gtk_sources = nostr_gtk_core_sources + nostr_gtk_gnostr_coupled_sources
 nostr_gtk_portable_sources = files(
   'src/content_renderer.c',
   'src/nostr-gtk-error.c',
@@ -173,13 +174,9 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/nostr-gtk.h',
   'include/nostr-gtk-1.0/nostr-gtk-error.h',
   'include/nostr-gtk-1.0/content_renderer.h',
-  'include/nostr-gtk-1.0/gnostr-thread-view.h',
   'include/nostr-gtk-1.0/gnostr-composer.h',
-  'include/nostr-gtk-1.0/gnostr-note-embed.h',
-  'include/nostr-gtk-1.0/gnostr-profile-pane.h',
   'include/nostr-gtk-1.0/gnostr-card-visibility-policy.h',
   'include/nostr-gtk-1.0/gnostr-nip05.h',
-  'include/nostr-gtk-1.0/nostr-note-card-row.h',
   'include/nostr-gtk-1.0/gn-timeline-tabs.h',
   'include/nostr-gtk-1.0/gnostr-timeline-view.h',
   'include/nostr-gtk-1.0/gn-markdown.h',
@@ -224,21 +221,12 @@ nostr_gtk_repo_inc = [include_directories(
 )]
 
 # NIP export headers are generated only for NIPs enabled in the CMake tree.
-fs = import('fs')
 foreach nip : ['nip19', 'nip34', 'nip10', 'nip25']
   generated = cmake_build_dir / 'nips' / nip / 'include'
   if fs.is_dir(generated)
     nostr_gtk_repo_inc += [include_directories(generated)]
   endif
 endforeach
-
-# Transitional: apps/gnostr private headers, visible to the coupled sources only.
-nostr_gtk_app_inc = include_directories(
-  '../apps/gnostr/src',
-  '../apps/gnostr/src/ui',
-  '../apps/gnostr/src/model',
-  '../apps/gnostr/src/util',
-)
 
 # ── Collect all dependencies ─────────────────────────────────────────
 nostr_gtk_deps = [
@@ -260,34 +248,19 @@ if soup3_dep.found()
   nostr_gtk_compile_args += ['-DHAVE_SOUP3=1']
 endif
 
-nostr_gtk_link_args = []
-if host_machine.system() == 'darwin'
-  nostr_gtk_link_args += ['-Wl,-undefined,dynamic_lookup']
-elif host_machine.system() == 'linux'
-  nostr_gtk_link_args += ['-Wl,--allow-shlib-undefined']
-endif
+# Both libraries link complete (Meson's default b_lundef=true adds
+# --no-undefined). Archive members they need are embedded hidden.
+nostr_gtk_link_args = cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL')
 
 # ── Build the libraries ──────────────────────────────────────────────
-nip19_lib = cc.find_library('nip19', dirs: [cmake_build_dir / 'nips/nip19'], required: true)
-nostrdb_storage_lib = cc.find_library('nostrdb_storage',
-  dirs: [cmake_build_dir / 'components/nostrdb'], required: true)
-nostrdb_vendored_lib = cc.find_library('nostrdb_vendored',
-  dirs: [cmake_build_dir / 'components/nostrdb'], required: true)
-nostrdb_lib = cc.find_library('nostrdb',
-  dirs: [cmake_build_dir / 'libnostr'], required: true)
-nip34_lib = cc.find_library('nip34', dirs: [cmake_build_dir / 'nips/nip34'], required: true)
-nostr_lib = cc.find_library('nostr',
-  dirs: [cmake_build_dir / 'libnostr'], required: true)
 nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
   nostr_gtk_portable_sources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
   dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep,
-                 json_glib_dep, libxml2_dep, nostr_gobject_dep, nip19_lib, nip34_lib,
-                 nostrdb_storage_lib, nostrdb_vendored_lib, nostrdb_lib,
-                 nostr_lib],
+                 json_glib_dep, libxml2_dep, nostr_gobject_dep, nip34_dep],
   version: meson.project_version(), soversion: '2',
   gnu_symbol_visibility: 'hidden',
-  link_args: nostr_gtk_link_args + cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
+  link_args: nostr_gtk_link_args,
   c_args: ['-Dnostr_gtk_portable_EXPORTS', '-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
            '-DNOSTR_GTK_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir')),
            '-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6',
@@ -297,28 +270,19 @@ nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
 nostr_gtk_portable_dep = declare_dependency(
   link_with: nostr_gtk_portable_lib,
   include_directories: [nostr_gtk_pub_inc, include_directories('.')],
-  dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep])
-
-nostr_gtk_gnostr_coupled = static_library('nostr-gtk-gnostr-coupled',
-  nostr_gtk_gnostr_coupled_sources,
-  include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc,
-                        nostr_gtk_app_inc],
-  dependencies: nostr_gtk_deps,
-  gnu_symbol_visibility: 'hidden',
-  c_args: nostr_gtk_compile_args + ['-Dnostr_gtk_EXPORTS'],
-  pic: true,
-  install: false)
+  # Like CMake's interface: an executable supplies the executable-owned core of
+  # the CMake nostr-gobject/libnostr-json it reaches through this library.
+  dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep,
+                 nostr_gobject_link_dep, nip34_dep])
 
 nostr_gtk_lib = library('nostr-gtk-1.0',
-  nostr_gtk_core_sources + nostr_gtk_resources,
+  nostr_gtk_sources + nostr_gtk_resources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
-  # These are our public widget definitions, not embedded dependency archives.
-  objects: nostr_gtk_gnostr_coupled.extract_all_objects(recursive: false),
   dependencies: nostr_gtk_deps + [nostr_gtk_portable_dep],
   version: meson.project_version(), soversion: '2',
   gnu_symbol_visibility: 'hidden',
   c_args: nostr_gtk_compile_args + ['-Dnostr_gtk_EXPORTS'],
-  link_args: nostr_gtk_link_args + cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
+  link_args: nostr_gtk_link_args,
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────
@@ -342,13 +306,14 @@ if get_option('introspection')
   gir_env = environment()
   gir_env.set('XDG_DATA_DIRS', ':'.join(gir_xdg_data_dirs))
 
-  nostr_gtk_gir = gnome.generate_gir(nostr_gtk_lib,
+  # The scanned sources span both DSOs.
+  nostr_gtk_gir = gnome.generate_gir([nostr_gtk_lib, nostr_gtk_portable_lib],
     sources: nostr_gtk_sources + nostr_gtk_portable_sources + nostr_gtk_headers,
     namespace: 'GNostrGtk',
     nsversion: '1.0',
     symbol_prefix: 'nostr_gtk',
     identifier_prefix: 'NostrGtk',
-    include_directories: [nostr_gtk_repo_inc, nostr_gtk_app_inc],
+    include_directories: [nostr_gtk_repo_inc],
     includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0', 'Gtk-4.0', 'Adw-1', 'GNostr-1.0'],
     extra_args: [
       '--add-include-path=' + nostr_gobject_gir_dir,

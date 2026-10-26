@@ -5,7 +5,7 @@
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 /* nostrc-hqtn: gnostr-main-window.h moved to gnostr-timeline-action-relay.c */
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 /* nostrc-hqtn: gnostr-zap-dialog.h moved to gnostr-timeline-action-relay.c */
 /* nostrc-hqtn: nostr_profile_provider.h moved to gnostr-timeline-action-relay.c */
 #include "../model/gn-nostr-event-item.h"

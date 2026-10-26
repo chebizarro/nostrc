@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- nostr-gtk's Meson build links against a shared or static CMake tree with
+  `--no-undefined`: it takes nostr-gobject's closure from the build-tree link
+  contract and NIP-34 by explicit artifact path, gives executables the
+  executable-owned core as CMake does, and its tests find
+  `tests/common`. macOS no longer links with `-undefined dynamic_lookup`.
+- The GNostrGtk-1.0 GIR/typelib generates and loads: the scanner names both
+  nostr-gtk DSOs by file name, preprocesses with the generated export headers,
+  binds a static build's wrapper to the GNostr-1.0 nostr-gobject instead of a
+  second copy, and under the Groundhog shared runtime links its probe with
+  nostr-gobject's build-tree contract.
+- nostr-gobject's build-tree link contract (`nostr-gobject-build-tree.pc`)
+  records the run path of every shared library it lists, so contract-linked
+  executables (including the GNostr and GNostrGtk scanner probes) start in a
+  `BUILD_SHARED_LIBS=ON` Groundhog build instead of failing to find
+  `libblossom.so.0`.
 - marmot-gobject 1.5.1 builds hidden-by-default with `MARMOT_GOBJECT_API`
   annotations (unchanged export set). Marmot-1.0 GIR/typelib generation finds
   the libmarmot headers and, in static builds, scans a loadable wrapper library.
@@ -18,6 +33,22 @@ All notable changes to this project will be documented in this file.
   Shared-library export sets and Windows static annotations are unchanged.
 
 ### Breaking library ABI changes
+- nostr-gtk 2.0.0 no longer contains the Gnostr-coupled widgets, which
+  depended on Gnostr app symbols (111 unresolved references) so that only the
+  Gnostr executable could link or load `libnostr-gtk-1.0`. Removed from the
+  library, its installed headers, `nostr-gtk.h` and the GNostrGtk GIR: the
+  types `NostrGtkNoteCardRow`, `NostrGtkThreadView`, `NostrGtkProfilePane`,
+  `GnostrNoteEmbed`, `NostrGtkMediaTextureLoader`, `NostrGtkMediaResourceClass`,
+  `NostrGtkContentSubstType`, `NostrGtkMediaTextureRequestFunc`,
+  `NostrGtkMediaTextureReadyFunc`, `NostrGtkLinkPreviewSetupFunc`,
+  `ThreadNode`, `ThreadGraph` and `NoteCardBindingContext`; their
+  `nostr_gtk_note_card_row_*`, `nostr_gtk_thread_view_*`,
+  `nostr_gtk_profile_pane_*`, `gnostr_note_embed_*` and
+  `note_card_binding_context_*` functions, `nostr_gtk_media_image_cache_size()`;
+  and the headers `nostr-note-card-row.h`, `gnostr-thread-view.h`,
+  `gnostr-profile-pane.h` and `gnostr-note-embed.h`. They are now internal
+  Gnostr widgets (`apps/gnostr/src/widgets`). `libnostr-gtk-1.0` keeps the
+  timeline view and tabs, composer, card visibility policy and NIP-05 API.
 - nostr-gtk 2.0.0 hides implementation symbols in `libnostr-gtk-1.0.so.2` and
   `libnostr-gtk-portable-1.0.so.2`; rebuild dependent binaries. Installed
   functions and GTypes remain exported through `NOSTR_GTK_API` and
