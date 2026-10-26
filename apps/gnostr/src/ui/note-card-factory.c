@@ -8,7 +8,6 @@
 
 #include "note-card-factory.h"
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
-#include "../../../../nostr-gtk/src/note-card-binding-ctx.h"  /* Internal: NoteCardBindingContext API */
 #include "../model/gn-nostr-event-item.h"
 #include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include "gnostr-avatar-cache.h"  /* nostrc-hci: avatar download API */

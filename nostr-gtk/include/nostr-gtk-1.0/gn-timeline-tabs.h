@@ -10,12 +10,13 @@
 #ifndef NOSTR_GTK_TIMELINE_TABS_H
 #define NOSTR_GTK_TIMELINE_TABS_H
 
+#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
 #define NOSTR_GTK_TYPE_TIMELINE_TABS (nostr_gtk_timeline_tabs_get_type())
-G_DECLARE_FINAL_TYPE(NostrGtkTimelineTabs, nostr_gtk_timeline_tabs, NOSTR_GTK, TIMELINE_TABS, GtkWidget)
+NOSTR_GTK_API G_DECLARE_FINAL_TYPE(NostrGtkTimelineTabs, nostr_gtk_timeline_tabs, NOSTR_GTK, TIMELINE_TABS, GtkWidget)
 
 /**
  * GnTimelineTabType:
@@ -35,26 +36,26 @@ typedef enum {
   GN_TIMELINE_TAB_CUSTOM,
 } GnTimelineTabType;
 
-NostrGtkTimelineTabs *nostr_gtk_timeline_tabs_new(void);
+NOSTR_GTK_API NostrGtkTimelineTabs *nostr_gtk_timeline_tabs_new(void);
 
-guint nostr_gtk_timeline_tabs_add_tab(NostrGtkTimelineTabs *self,
+NOSTR_GTK_API guint nostr_gtk_timeline_tabs_add_tab(NostrGtkTimelineTabs *self,
                                 GnTimelineTabType type,
                                 const char *label,
                                 const char *filter_value);
 
-void nostr_gtk_timeline_tabs_remove_tab(NostrGtkTimelineTabs *self, guint index);
+NOSTR_GTK_API void nostr_gtk_timeline_tabs_remove_tab(NostrGtkTimelineTabs *self, guint index);
 
-guint nostr_gtk_timeline_tabs_get_selected(NostrGtkTimelineTabs *self);
+NOSTR_GTK_API guint nostr_gtk_timeline_tabs_get_selected(NostrGtkTimelineTabs *self);
 
-void nostr_gtk_timeline_tabs_set_selected(NostrGtkTimelineTabs *self, guint index);
+NOSTR_GTK_API void nostr_gtk_timeline_tabs_set_selected(NostrGtkTimelineTabs *self, guint index);
 
-GnTimelineTabType nostr_gtk_timeline_tabs_get_tab_type(NostrGtkTimelineTabs *self, guint index);
+NOSTR_GTK_API GnTimelineTabType nostr_gtk_timeline_tabs_get_tab_type(NostrGtkTimelineTabs *self, guint index);
 
-const char *nostr_gtk_timeline_tabs_get_tab_filter_value(NostrGtkTimelineTabs *self, guint index);
+NOSTR_GTK_API const char *nostr_gtk_timeline_tabs_get_tab_filter_value(NostrGtkTimelineTabs *self, guint index);
 
-guint nostr_gtk_timeline_tabs_get_n_tabs(NostrGtkTimelineTabs *self);
+NOSTR_GTK_API guint nostr_gtk_timeline_tabs_get_n_tabs(NostrGtkTimelineTabs *self);
 
-void nostr_gtk_timeline_tabs_set_closable(NostrGtkTimelineTabs *self, guint index, gboolean closable);
+NOSTR_GTK_API void nostr_gtk_timeline_tabs_set_closable(NostrGtkTimelineTabs *self, guint index, gboolean closable);
 
 /**
  * nostr_gtk_timeline_tabs_find_tab_by_type:
@@ -63,7 +64,7 @@ void nostr_gtk_timeline_tabs_set_closable(NostrGtkTimelineTabs *self, guint inde
  *
  * Returns the index of the first tab matching @type, or -1 if none.
  */
-gint nostr_gtk_timeline_tabs_find_tab_by_type(NostrGtkTimelineTabs *self,
+NOSTR_GTK_API gint nostr_gtk_timeline_tabs_find_tab_by_type(NostrGtkTimelineTabs *self,
                                                GnTimelineTabType type);
 
 /**
@@ -75,7 +76,7 @@ gint nostr_gtk_timeline_tabs_find_tab_by_type(NostrGtkTimelineTabs *self,
  * Returns the index of the first tab with matching @type AND @filter_value,
  * or -1 if none. Used for deduplicating e.g. Search tabs by query text.
  */
-gint nostr_gtk_timeline_tabs_find_tab_by_type_and_value(NostrGtkTimelineTabs *self,
+NOSTR_GTK_API gint nostr_gtk_timeline_tabs_find_tab_by_type_and_value(NostrGtkTimelineTabs *self,
                                                         GnTimelineTabType type,
                                                         const char *filter_value);
 

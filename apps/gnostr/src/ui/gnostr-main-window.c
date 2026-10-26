@@ -296,7 +296,6 @@ static gboolean memory_stats_cb(gpointer data) {
 
   /* Get external cache stats */
   extern guint gnostr_avatar_cache_size(void);
-  extern guint nostr_gtk_media_image_cache_size(void);
   guint avatar_tex = gnostr_avatar_cache_size(); /* in-memory GdkTexture cache */
   guint media_cache = nostr_gtk_media_image_cache_size();
 

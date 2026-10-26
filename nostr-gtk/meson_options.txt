@@ -1,3 +1,5 @@
+option('cmake_build_dir', type: 'string', value: '',
+  description: 'Absolute path to the pre-built CMake tree (default: ../build)')
 option('introspection', type: 'boolean', value: false,
   description: 'Generate GObject Introspection data (GNostrGtk-1.0)')
 option('vapi', type: 'boolean', value: true,

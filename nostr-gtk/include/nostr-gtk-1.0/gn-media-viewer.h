@@ -1,5 +1,6 @@
 #ifndef GN_MEDIA_VIEWER_H
 #define GN_MEDIA_VIEWER_H
+#include "nostr-gtk-portable-export.h"
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-media-source.h>
 #include <nostr-gtk-1.0/gn-media-decode.h>
@@ -35,66 +36,66 @@ G_BEGIN_DECLS
  * clipboard, for the host to confirm (for example a toast).
  */
 #define GN_TYPE_MEDIA_VIEWER (gn_media_viewer_get_type())
-G_DECLARE_FINAL_TYPE(GnMediaViewer, gn_media_viewer, GN, MEDIA_VIEWER, GtkWindow)
-GnMediaViewer *gn_media_viewer_new(GtkWindow *parent);
+NOSTR_GTK_PORTABLE_API G_DECLARE_FINAL_TYPE(GnMediaViewer, gn_media_viewer, GN, MEDIA_VIEWER, GtkWindow)
+NOSTR_GTK_PORTABLE_API GnMediaViewer *gn_media_viewer_new(GtkWindow *parent);
 /* Sizes the panel to its parent (at least 400x300) and presents it. */
-void gn_media_viewer_present(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_present(GnMediaViewer *self);
 
 /* URLs identify gallery slots only (at most 256). Navigation never requests
  * data without a source whose policy allows it. */
-void gn_media_viewer_set_gallery(GnMediaViewer *self, const gchar *const *urls, guint current);
-gboolean gn_media_viewer_navigate(GnMediaViewer *self, gint delta);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_gallery(GnMediaViewer *self, const gchar *const *urls, guint current);
+NOSTR_GTK_PORTABLE_API gboolean gn_media_viewer_navigate(GnMediaViewer *self, gint delta);
 /* A texture carrying a GnAnimatedImage (gn_animated_image_set_for_texture())
  * is shown animated. */
-void gn_media_viewer_set_texture(GnMediaViewer *self, guint index, GdkTexture *texture);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_texture(GnMediaViewer *self, guint index, GdkTexture *texture);
 /* Any paintable: a texture, a GnAnimatedImage (plays while shown) or a
  * GtkMediaStream such as a GtkMediaFile (video: OSD controls, plays while
  * shown, pauses when navigated away or closed). */
-void gn_media_viewer_set_paintable(GnMediaViewer *self, guint index, GdkPaintable *paintable);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_paintable(GnMediaViewer *self, guint index, GdkPaintable *paintable);
 /* What is shown now, or NULL (not loaded). */
-GdkPaintable *gn_media_viewer_get_paintable(GnMediaViewer *self);
-void gn_media_viewer_set_texture_for_generation(GnMediaViewer *self,
+NOSTR_GTK_PORTABLE_API GdkPaintable *gn_media_viewer_get_paintable(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_texture_for_generation(GnMediaViewer *self,
                                                  guint64 generation, guint index,
                                                  GdkTexture *texture);
-void gn_media_viewer_set_paintable_for_generation(GnMediaViewer *self, guint64 generation,
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_paintable_for_generation(GnMediaViewer *self, guint64 generation,
                                                   guint index, GdkPaintable *paintable);
-guint64 gn_media_viewer_get_generation(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API guint64 gn_media_viewer_get_generation(GnMediaViewer *self);
 /* The Load action: emits "load-requested" and, with a source whose policy is
  * not BLOCKED, fetches. Nothing when the slot is loaded or loading. */
-void gn_media_viewer_request_load(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_request_load(GnMediaViewer *self);
 
 /* Host-driven states of the shown slot (ignored for another generation or
  * slot, or once loaded): a spinner; a message without Load; blocked with
  * Load (reason NULL: "Remote media is blocked"). */
-void gn_media_viewer_set_loading(GnMediaViewer *self, guint64 generation, guint index);
-void gn_media_viewer_set_error(GnMediaViewer *self, guint64 generation, guint index,
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_loading(GnMediaViewer *self, guint64 generation, guint index);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_error(GnMediaViewer *self, guint64 generation, guint index,
                                const char *message);
-void gn_media_viewer_set_blocked(GnMediaViewer *self, gboolean blocked, const char *reason);
-gboolean gn_media_viewer_get_loading(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_blocked(GnMediaViewer *self, gboolean blocked, const char *reason);
+NOSTR_GTK_PORTABLE_API gboolean gn_media_viewer_get_loading(GnMediaViewer *self);
 /* TRUE while the Load action is shown. */
-gboolean gn_media_viewer_get_load_offered(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API gboolean gn_media_viewer_get_load_offered(GnMediaViewer *self);
 /* The blocked or error text shown, or NULL. */
-const char *gn_media_viewer_get_message(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API const char *gn_media_viewer_get_message(GnMediaViewer *self);
 /* The shown slot's pending request, or NULL. */
-GCancellable *gn_media_viewer_get_cancellable(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API GCancellable *gn_media_viewer_get_cancellable(GnMediaViewer *self);
 
 /* The host's media plumbing (nullable); see gn-media-source.h. */
-void gn_media_viewer_set_source(GnMediaViewer *self, GnMediaSource *source);
-GnMediaSource *gn_media_viewer_get_source(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_source(GnMediaViewer *self, GnMediaSource *source);
+NOSTR_GTK_PORTABLE_API GnMediaSource *gn_media_viewer_get_source(GnMediaViewer *self);
 /* Limits for bytes fetched through the source (NULL: the defaults). */
-void gn_media_viewer_set_decode_limits(GnMediaViewer *self, const GnMediaDecodeLimits *limits);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_decode_limits(GnMediaViewer *self, const GnMediaDecodeLimits *limits);
 
-void gn_media_viewer_set_zoom(GnMediaViewer *self, gdouble zoom); /* 0 = fit */
-gdouble gn_media_viewer_get_zoom(GnMediaViewer *self);            /* 0 = fit */
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_zoom(GnMediaViewer *self, gdouble zoom); /* 0 = fit */
+NOSTR_GTK_PORTABLE_API gdouble gn_media_viewer_get_zoom(GnMediaViewer *self);            /* 0 = fit */
 /* The scale on screen, also when fitting. */
-gdouble gn_media_viewer_get_shown_zoom(GnMediaViewer *self);
-guint gn_media_viewer_get_index(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API gdouble gn_media_viewer_get_shown_zoom(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API guint gn_media_viewer_get_index(GnMediaViewer *self);
 
 /* "can-save" (default TRUE): offer Save for still images. */
-void gn_media_viewer_set_can_save(GnMediaViewer *self, gboolean can_save);
-gboolean gn_media_viewer_get_can_save(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_set_can_save(GnMediaViewer *self, gboolean can_save);
+NOSTR_GTK_PORTABLE_API gboolean gn_media_viewer_get_can_save(GnMediaViewer *self);
 /* The Save and Copy link actions. */
-void gn_media_viewer_save(GnMediaViewer *self);
-void gn_media_viewer_copy_link(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_save(GnMediaViewer *self);
+NOSTR_GTK_PORTABLE_API void gn_media_viewer_copy_link(GnMediaViewer *self);
 G_END_DECLS
 #endif

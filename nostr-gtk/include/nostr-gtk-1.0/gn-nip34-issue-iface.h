@@ -8,6 +8,7 @@
 #ifndef GN_NIP34_ISSUE_IFACE_H
 #define GN_NIP34_ISSUE_IFACE_H
 
+#include "nostr-gtk-portable-export.h"
 #include <gio/gio.h>
 #include <nostr-gtk-1.0/gn-nip34-issue.h>
 
@@ -18,7 +19,7 @@ G_BEGIN_DECLS
  * locked, because the signed event may already have reached a relay and a
  * retry would publish a duplicate issue. */
 #define GN_ISSUE_PUBLISH_ERROR (gn_issue_publish_error_quark())
-GQuark gn_issue_publish_error_quark(void);
+NOSTR_GTK_PORTABLE_API GQuark gn_issue_publish_error_quark(void);
 typedef enum {
   GN_ISSUE_PUBLISH_ERROR_NOT_SENT,
   GN_ISSUE_PUBLISH_ERROR_UNCONFIRMED,
@@ -27,7 +28,7 @@ typedef enum {
 /* ---- Publisher (required) ---- */
 
 #define GN_TYPE_ISSUE_PUBLISHER (gn_issue_publisher_get_type())
-G_DECLARE_INTERFACE(GnIssuePublisher, gn_issue_publisher, GN, ISSUE_PUBLISHER, GObject)
+NOSTR_GTK_PORTABLE_API G_DECLARE_INTERFACE(GnIssuePublisher, gn_issue_publisher, GN, ISSUE_PUBLISHER, GObject)
 
 struct _GnIssuePublisherInterface {
   GTypeInterface parent_iface;
@@ -44,20 +45,20 @@ struct _GnIssuePublisherInterface {
   gpointer padding[8];
 };
 
-void gn_issue_publisher_sign_and_publish_async(GnIssuePublisher *self, const gchar *unsigned_json,
+NOSTR_GTK_PORTABLE_API void gn_issue_publisher_sign_and_publish_async(GnIssuePublisher *self, const gchar *unsigned_json,
                                                const gchar *const *relays,
                                                GCancellable *cancellable,
                                                GAsyncReadyCallback callback, gpointer user_data);
-gboolean gn_issue_publisher_sign_and_publish_finish(GnIssuePublisher *self, GAsyncResult *result,
+NOSTR_GTK_PORTABLE_API gboolean gn_issue_publisher_sign_and_publish_finish(GnIssuePublisher *self, GAsyncResult *result,
                                                     gchar **event_id, gchar **message,
                                                     GError **error);
-gchar *gn_issue_publisher_normalize_relay(GnIssuePublisher *self, const gchar *url,
+NOSTR_GTK_PORTABLE_API gchar *gn_issue_publisher_normalize_relay(GnIssuePublisher *self, const gchar *url,
                                           GError **error);
 
 /* ---- Uploader (optional) ---- */
 
 #define GN_TYPE_ISSUE_UPLOADER (gn_issue_uploader_get_type())
-G_DECLARE_INTERFACE(GnIssueUploader, gn_issue_uploader, GN, ISSUE_UPLOADER, GObject)
+NOSTR_GTK_PORTABLE_API G_DECLARE_INTERFACE(GnIssueUploader, gn_issue_uploader, GN, ISSUE_UPLOADER, GObject)
 
 struct _GnIssueUploaderInterface {
   GTypeInterface parent_iface;
@@ -87,25 +88,25 @@ struct _GnIssueUploaderInterface {
   gpointer padding[4];
 };
 
-const gchar *gn_issue_uploader_describe_destination(GnIssueUploader *self);
-void gn_issue_uploader_upload_async(GnIssueUploader *self, GFile *file,
+NOSTR_GTK_PORTABLE_API const gchar *gn_issue_uploader_describe_destination(GnIssueUploader *self);
+NOSTR_GTK_PORTABLE_API void gn_issue_uploader_upload_async(GnIssueUploader *self, GFile *file,
                                     const gchar *content_type, GCancellable *cancellable,
                                     GAsyncReadyCallback callback, gpointer user_data);
-gchar *gn_issue_uploader_upload_finish(GnIssueUploader *self, GAsyncResult *result,
+NOSTR_GTK_PORTABLE_API gchar *gn_issue_uploader_upload_finish(GnIssueUploader *self, GAsyncResult *result,
                                        GError **error);
 /* NULL when the uploader offers no consent options. */
-GStrv gn_issue_uploader_dup_consent_options(GnIssueUploader *self);
-gboolean gn_issue_uploader_apply_consent_option(GnIssueUploader *self, guint index,
+NOSTR_GTK_PORTABLE_API GStrv gn_issue_uploader_dup_consent_options(GnIssueUploader *self);
+NOSTR_GTK_PORTABLE_API gboolean gn_issue_uploader_apply_consent_option(GnIssueUploader *self, guint index,
                                                 GError **error);
 /* NULL when the uploader offers no consent to retry the failed upload result. */
-gchar *gn_issue_uploader_dup_retry_consent(GnIssueUploader *self, GAsyncResult *result);
-gboolean gn_issue_uploader_apply_retry_consent(GnIssueUploader *self, GAsyncResult *result,
+NOSTR_GTK_PORTABLE_API gchar *gn_issue_uploader_dup_retry_consent(GnIssueUploader *self, GAsyncResult *result);
+NOSTR_GTK_PORTABLE_API gboolean gn_issue_uploader_apply_retry_consent(GnIssueUploader *self, GAsyncResult *result,
                                                GError **error);
 
 /* ---- Repository resolver (optional) ---- */
 
 #define GN_TYPE_ISSUE_REPO_RESOLVER (gn_issue_repo_resolver_get_type())
-G_DECLARE_INTERFACE(GnIssueRepoResolver, gn_issue_repo_resolver, GN, ISSUE_REPO_RESOLVER, GObject)
+NOSTR_GTK_PORTABLE_API G_DECLARE_INTERFACE(GnIssueRepoResolver, gn_issue_repo_resolver, GN, ISSUE_REPO_RESOLVER, GObject)
 
 struct _GnIssueRepoResolverInterface {
   GTypeInterface parent_iface;
@@ -121,10 +122,10 @@ struct _GnIssueRepoResolverInterface {
   gpointer padding[8];
 };
 
-void gn_issue_repo_resolver_resolve_async(GnIssueRepoResolver *self, const GnIssueTarget *hint,
+NOSTR_GTK_PORTABLE_API void gn_issue_repo_resolver_resolve_async(GnIssueRepoResolver *self, const GnIssueTarget *hint,
                                           GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data);
-GnIssueTarget *gn_issue_repo_resolver_resolve_finish(GnIssueRepoResolver *self,
+NOSTR_GTK_PORTABLE_API GnIssueTarget *gn_issue_repo_resolver_resolve_finish(GnIssueRepoResolver *self,
                                                      GAsyncResult *result, GError **error);
 
 G_END_DECLS

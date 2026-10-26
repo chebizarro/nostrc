@@ -18,6 +18,14 @@ All notable changes to this project will be documented in this file.
   Shared-library export sets and Windows static annotations are unchanged.
 
 ### Breaking library ABI changes
+- nostr-gtk 2.0.0 hides implementation symbols in `libnostr-gtk-1.0.so.2` and
+  `libnostr-gtk-portable-1.0.so.2`; rebuild dependent binaries. Installed
+  functions and GTypes remain exported through `NOSTR_GTK_API` and
+  `NOSTR_GTK_PORTABLE_API`, and `nostr_gtk_media_image_cache_size()` is now
+  declared in `nostr-note-card-row.h`. In static-core ELF builds the portable
+  DSO binds nostr-gobject, its NIP codecs and libnostr from the executable (as
+  in Groundhog builds) instead of embedding private copies, so it cannot be
+  loaded standalone by a process that does not provide them.
 - nostr-gobject 3.0.0 hides implementation and embedded-archive symbols
   (SONAME `libnostr-gobject-1.0.so.3`); rebuild dependent binaries. Declared
   functions, GTypes, enum/flags types, error quarks and the signer proxy remain

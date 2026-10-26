@@ -10,18 +10,19 @@
 #ifndef GNOSTR_CARD_VISIBILITY_POLICY_H
 #define GNOSTR_CARD_VISIBILITY_POLICY_H
 
+#include "nostr-gtk-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_CARD_VISIBILITY_POLICY (gnostr_card_visibility_policy_get_type())
-G_DECLARE_FINAL_TYPE(GnostrCardVisibilityPolicy,
+NOSTR_GTK_API G_DECLARE_FINAL_TYPE(GnostrCardVisibilityPolicy,
                      gnostr_card_visibility_policy,
                      GNOSTR,
                      CARD_VISIBILITY_POLICY,
                      GObject)
 
-GnostrCardVisibilityPolicy *gnostr_card_visibility_policy_new(void);
+NOSTR_GTK_API GnostrCardVisibilityPolicy *gnostr_card_visibility_policy_new(void);
 
 /*
  * gnostr_card_visibility_policy_replace_follow_snapshot:
@@ -32,7 +33,7 @@ GnostrCardVisibilityPolicy *gnostr_card_visibility_policy_new(void);
  * Replaces the current viewer follow snapshot. Returns %TRUE if the effective
  * viewer or followed-author membership changed.
  */
-gboolean gnostr_card_visibility_policy_replace_follow_snapshot(
+NOSTR_GTK_API gboolean gnostr_card_visibility_policy_replace_follow_snapshot(
     GnostrCardVisibilityPolicy *self,
     const char *viewer_pubkey_hex,
     const char * const *followed_pubkeys);
@@ -48,7 +49,7 @@ gboolean gnostr_card_visibility_policy_replace_follow_snapshot(
  * profile pairing, or author membership in the viewer follow snapshot. A NULL
  * policy degrades to explicit-or-profile visibility.
  */
-gboolean gnostr_card_visibility_policy_should_show(
+NOSTR_GTK_API gboolean gnostr_card_visibility_policy_should_show(
     GnostrCardVisibilityPolicy *self,
     const char *author_pubkey_hex,
     gboolean has_profile,

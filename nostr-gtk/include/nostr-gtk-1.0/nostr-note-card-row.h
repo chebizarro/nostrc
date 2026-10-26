@@ -12,6 +12,7 @@
  * Formerly NostrGtkNoteCardRow in the app layer.
  */
 
+#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include <nostr-gtk-1.0/gn-nostr-reference-card.h>
@@ -63,18 +64,18 @@ typedef struct _NostrGtkMediaTextureLoader NostrGtkMediaTextureLoader;
  * Creates a ref-counted loader interface. If @loader needs reference counting,
  * pass an owned reference and its matching unref function as @loader_destroy.
  */
-NostrGtkMediaTextureLoader *nostr_gtk_media_texture_loader_new(
+NOSTR_GTK_API NostrGtkMediaTextureLoader *nostr_gtk_media_texture_loader_new(
     gpointer loader,
     NostrGtkMediaTextureRequestFunc request_func,
     GDestroyNotify loader_destroy);
-NostrGtkMediaTextureLoader *nostr_gtk_media_texture_loader_ref(
+NOSTR_GTK_API NostrGtkMediaTextureLoader *nostr_gtk_media_texture_loader_ref(
     NostrGtkMediaTextureLoader *loader);
-void nostr_gtk_media_texture_loader_unref(
+NOSTR_GTK_API void nostr_gtk_media_texture_loader_unref(
     NostrGtkMediaTextureLoader *loader);
 
 #define NOSTR_GTK_TYPE_NOTE_CARD_ROW (nostr_gtk_note_card_row_get_type())
 
-G_DECLARE_FINAL_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, NOSTR_GTK, NOTE_CARD_ROW, GtkWidget)
+NOSTR_GTK_API G_DECLARE_FINAL_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, NOSTR_GTK, NOTE_CARD_ROW, GtkWidget)
 
 /* Signals
  * "open-nostr-target" (gchar* target, gpointer user_data)
@@ -104,11 +105,11 @@ G_DECLARE_FINAL_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, NOSTR_GTK, NO
 
 typedef struct _NostrGtkNoteCardRow NostrGtkNoteCardRow;
 
-NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void);
+NOSTR_GTK_API NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void);
 
-void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url);
-void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 created_at, const char *fallback_ts);
-void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *content);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 created_at, const char *fallback_ts);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *content);
 
 /**
  * nostr_gtk_note_card_row_set_reserved_height:
@@ -118,7 +119,7 @@ void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *
  * Reserves at least @reserved_height pixels for the row during measurement so
  * compositor-bound snapshots can allocate stable geometry before content reveal.
  */
-void nostr_gtk_note_card_row_set_reserved_height(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_reserved_height(NostrGtkNoteCardRow *self,
                                                  gint reserved_height);
 
 /**
@@ -130,7 +131,7 @@ void nostr_gtk_note_card_row_set_reserved_height(NostrGtkNoteCardRow *self,
  * Sets the token used when emitting the measured-geometry signal. Changing the
  * token or generation resets the per-bind measurement report guard.
  */
-void nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
                                                 const gchar *geometry_token,
                                                 guint64 snapshot_generation);
 
@@ -143,13 +144,13 @@ void nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
  * only from deliberate user actions (for example revealing hidden content) to
  * allow GTK's natural height to exceed the reserved footprint.
  */
-void nostr_gtk_note_card_row_set_explicit_footprint_expansion(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_explicit_footprint_expansion(NostrGtkNoteCardRow *self,
                                                               gboolean allow_expansion);
 
-gint nostr_gtk_note_card_row_get_reserved_height(NostrGtkNoteCardRow *self);
-const gchar *nostr_gtk_note_card_row_get_geometry_token(NostrGtkNoteCardRow *self);
-guint64 nostr_gtk_note_card_row_get_snapshot_generation(NostrGtkNoteCardRow *self);
-gboolean nostr_gtk_note_card_row_get_explicit_footprint_expansion(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gint nostr_gtk_note_card_row_get_reserved_height(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const gchar *nostr_gtk_note_card_row_get_geometry_token(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API guint64 nostr_gtk_note_card_row_get_snapshot_generation(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_get_explicit_footprint_expansion(NostrGtkNoteCardRow *self);
 
 /**
  * NostrGtkContentSubstType:
@@ -173,7 +174,7 @@ typedef enum {
  * Used when the event's raw content is not human-readable (e.g., JSON
  * app data). The original content remains accessible via the context menu.
  */
-void nostr_gtk_note_card_row_set_content_substituted(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content_substituted(NostrGtkNoteCardRow *self,
                                                      const gchar *display_text,
                                                      NostrGtkContentSubstType type,
                                                      const gchar *raw_content);
@@ -188,7 +189,7 @@ void nostr_gtk_note_card_row_set_content_substituted(NostrGtkNoteCardRow *self,
  * without triggering avatar loading. Avatar loading is deferred to
  * Tier 2 (map signal) via nostr_gtk_note_card_row_set_avatar().
  */
-void nostr_gtk_note_card_row_set_author_name_only(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_author_name_only(NostrGtkNoteCardRow *self,
                                                 const char *display_name,
                                                 const char *handle);
 
@@ -200,7 +201,7 @@ void nostr_gtk_note_card_row_set_author_name_only(NostrGtkNoteCardRow *self,
  * Tier 2 deferred avatar loading. Loads the avatar from cache
  * or initiates an async download.
  */
-void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
                                       const char *avatar_url);
 
 /**
@@ -213,10 +214,10 @@ void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
  * render result, without creating media widgets, OG previews, or note
  * embeds. Those are deferred to Tier 2.
  */
-void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
                                                    const char *content,
                                                    const GnContentRenderResult *render);
-void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow *self,
                                                          const char *content,
                                                          const char *tags_json,
                                                          const GnContentRenderResult *render);
@@ -231,7 +232,7 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
  * Binds text from compositor-published VM data without parsing content or
  * creating lazy rich widgets during row bind.
  */
-void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
                                                     const char *content,
                                                     const char *markup);
 
@@ -243,7 +244,7 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
  * Injects an application-owned bounded media loader. The row keeps a strong
  * reference for its lifetime. Passing %NULL restores the nostr-gtk fallback.
  */
-void nostr_gtk_note_card_row_set_media_texture_loader(
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_media_texture_loader(
     NostrGtkNoteCardRow *self,
     NostrGtkMediaTextureLoader *loader);
 
@@ -259,7 +260,7 @@ void nostr_gtk_note_card_row_set_media_texture_loader(
  * Builds reusable fixed-size placeholder frames without retaining descriptor
  * data or attaching fetch/render activation. This is the lightweight bind path.
  */
-void nostr_gtk_note_card_row_reserve_rich_content(
+NOSTR_GTK_API void nostr_gtk_note_card_row_reserve_rich_content(
     NostrGtkNoteCardRow *self,
     const GPtrArray *descriptors,
     double media_reserved_height,
@@ -275,7 +276,7 @@ void nostr_gtk_note_card_row_reserve_rich_content(
  * Attaches fetch/render work to an existing reservation without changing its
  * allocation. Call only after the row has become visible.
  */
-void nostr_gtk_note_card_row_activate_rich_content(
+NOSTR_GTK_API void nostr_gtk_note_card_row_activate_rich_content(
     NostrGtkNoteCardRow *self,
     const GPtrArray *descriptors);
 
@@ -285,7 +286,7 @@ void nostr_gtk_note_card_row_activate_rich_content(
  * Compatibility helper that reserves and activates rich content in one call.
  * New GtkListView bind paths should reserve first and activate after visibility.
  */
-void nostr_gtk_note_card_row_set_rich_content(
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_rich_content(
     NostrGtkNoteCardRow *self,
     const GPtrArray *descriptors,
     double media_reserved_height,
@@ -293,8 +294,8 @@ void nostr_gtk_note_card_row_set_rich_content(
     double embed_reserved_height);
 
 /* Lightweight instrumentation for map-gated rich-child creation tests. */
-void  nostr_gtk_note_card_row_reset_rich_child_creation_count(void);
-guint nostr_gtk_note_card_row_get_rich_child_creation_count(void);
+NOSTR_GTK_API void  nostr_gtk_note_card_row_reset_rich_child_creation_count(void);
+NOSTR_GTK_API guint nostr_gtk_note_card_row_get_rich_child_creation_count(void);
 
 /**
  * nostr_gtk_note_card_row_apply_deferred_content:
@@ -304,9 +305,9 @@ guint nostr_gtk_note_card_row_get_rich_child_creation_count(void);
  * Tier 2 deferred content. Creates media widgets, OG previews,
  * and note embeds from the cached render result.
  */
-void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
                                                   const GnContentRenderResult *render);
-void nostr_gtk_note_card_row_apply_deferred_tag_metadata(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_apply_deferred_tag_metadata(NostrGtkNoteCardRow *self,
                                                        const char *content,
                                                        const char *tags_json);
 
@@ -319,7 +320,7 @@ void nostr_gtk_note_card_row_apply_deferred_tag_metadata(NostrGtkNoteCardRow *se
  * Sets note content from a pre-rendered GnContentRenderResult,
  * skipping the expensive gnostr_render_content() call.
  */
-void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
                                                 const char *content,
                                                 const GnContentRenderResult *render);
 
@@ -331,93 +332,93 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
  *
  * Sets the note content and parses imeta tags for enhanced media display.
  */
-void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, const char *content, const char *tags_json);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, const char *content, const char *tags_json);
 
-void nostr_gtk_note_card_row_set_depth(NostrGtkNoteCardRow *self, guint depth);
-void nostr_gtk_note_card_row_set_ids(NostrGtkNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex);
-void nostr_gtk_note_card_row_set_embed(NostrGtkNoteCardRow *self, const char *title, const char *snippet);
-void nostr_gtk_note_card_row_set_embed_rich(NostrGtkNoteCardRow *self, const char *title, const char *meta, const char *snippet);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_depth(NostrGtkNoteCardRow *self, guint depth);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_ids(NostrGtkNoteCardRow *self, const char *id_hex, const char *root_id, const char *pubkey_hex);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_embed(NostrGtkNoteCardRow *self, const char *title, const char *snippet);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_embed_rich(NostrGtkNoteCardRow *self, const char *title, const char *meta, const char *snippet);
 
-void nostr_gtk_note_card_row_set_nip05(NostrGtkNoteCardRow *self, const char *nip05, const char *pubkey_hex);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_nip05(NostrGtkNoteCardRow *self, const char *nip05, const char *pubkey_hex);
 
-void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_thread_info(NostrGtkNoteCardRow *self,
                                           const char *root_id,
                                           const char *parent_id,
                                           const char *parent_author_name,
                                           gboolean is_reply);
 
-void nostr_gtk_note_card_row_set_pinned(NostrGtkNoteCardRow *self, gboolean is_pinned);
-void nostr_gtk_note_card_row_set_bookmarked(NostrGtkNoteCardRow *self, gboolean is_bookmarked);
-void nostr_gtk_note_card_row_set_liked(NostrGtkNoteCardRow *self, gboolean is_liked);
-void nostr_gtk_note_card_row_set_like_count(NostrGtkNoteCardRow *self, guint count);
-void nostr_gtk_note_card_row_set_event_kind(NostrGtkNoteCardRow *self, gint kind);
-void nostr_gtk_note_card_row_set_reaction_breakdown(NostrGtkNoteCardRow *self, GHashTable *breakdown);
-void nostr_gtk_note_card_row_add_reaction(NostrGtkNoteCardRow *self, const char *emoji, const char *reactor_pubkey);
-void nostr_gtk_note_card_row_set_author_lud16(NostrGtkNoteCardRow *self, const char *lud16);
-void nostr_gtk_note_card_row_set_zap_stats(NostrGtkNoteCardRow *self, guint zap_count, gint64 total_msat);
-void nostr_gtk_note_card_row_set_reply_count(NostrGtkNoteCardRow *self, guint count);
-void nostr_gtk_note_card_row_set_is_own_note(NostrGtkNoteCardRow *self, gboolean is_own);
-void nostr_gtk_note_card_row_set_logged_in(NostrGtkNoteCardRow *self, gboolean logged_in);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_pinned(NostrGtkNoteCardRow *self, gboolean is_pinned);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_bookmarked(NostrGtkNoteCardRow *self, gboolean is_bookmarked);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_liked(NostrGtkNoteCardRow *self, gboolean is_liked);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_like_count(NostrGtkNoteCardRow *self, guint count);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_event_kind(NostrGtkNoteCardRow *self, gint kind);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_reaction_breakdown(NostrGtkNoteCardRow *self, GHashTable *breakdown);
+NOSTR_GTK_API void nostr_gtk_note_card_row_add_reaction(NostrGtkNoteCardRow *self, const char *emoji, const char *reactor_pubkey);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_author_lud16(NostrGtkNoteCardRow *self, const char *lud16);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_zap_stats(NostrGtkNoteCardRow *self, guint zap_count, gint64 total_msat);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_reply_count(NostrGtkNoteCardRow *self, guint count);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_is_own_note(NostrGtkNoteCardRow *self, gboolean is_own);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_logged_in(NostrGtkNoteCardRow *self, gboolean logged_in);
 
-void nostr_gtk_note_card_row_set_repost_info(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_repost_info(NostrGtkNoteCardRow *self,
                                           const char *reposter_pubkey_hex,
                                           const char *reposter_display_name,
                                           gint64 repost_created_at);
-void nostr_gtk_note_card_row_set_is_repost(NostrGtkNoteCardRow *self, gboolean is_repost);
-void nostr_gtk_note_card_row_set_repost_count(NostrGtkNoteCardRow *self, guint count);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_is_repost(NostrGtkNoteCardRow *self, gboolean is_repost);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_repost_count(NostrGtkNoteCardRow *self, guint count);
 
 /* NIP-18 / NIP-21 (nostrc-8xfib.6): shows @descriptor's target in the row's
  * GnNostrReferenceCard, resolved locally through @resolver (may be NULL).
  * Binding never fetches; the application may call
  * gn_nostr_reference_card_fetch() on nostr_gtk_note_card_row_get_reference_card()
  * under its own policy. NULL @descriptor hides the card. */
-void nostr_gtk_note_card_row_set_reference(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_reference(NostrGtkNoteCardRow *self,
                                            const GnNostrRepostDescriptor *descriptor,
                                            GnNostrReferenceResolver *resolver);
 /* The row's reference card, or NULL before set_reference(). */
-GnNostrReferenceCard *nostr_gtk_note_card_row_get_reference_card(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API GnNostrReferenceCard *nostr_gtk_note_card_row_get_reference_card(NostrGtkNoteCardRow *self);
 
 /* Deprecated: a precomputed quote preview; use set_reference(). */
 G_DEPRECATED_FOR(nostr_gtk_note_card_row_set_reference)
-void nostr_gtk_note_card_row_set_quote_info(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_quote_info(NostrGtkNoteCardRow *self,
                                          const char *quoted_event_id_hex,
                                          const char *quoted_content,
                                          const char *quoted_author_name);
 
-void nostr_gtk_note_card_row_set_zap_receipt_info(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_zap_receipt_info(NostrGtkNoteCardRow *self,
                                                 const char *sender_pubkey,
                                                 const char *sender_display_name,
                                                 const char *recipient_pubkey,
                                                 const char *recipient_display_name,
                                                 const char *target_event_id,
                                                 gint64 amount_msat);
-void nostr_gtk_note_card_row_set_is_zap_receipt(NostrGtkNoteCardRow *self, gboolean is_zap);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_is_zap_receipt(NostrGtkNoteCardRow *self, gboolean is_zap);
 
-void nostr_gtk_note_card_row_set_content_warning(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_content_warning(NostrGtkNoteCardRow *self,
                                               const char *content_warning_reason);
-gboolean nostr_gtk_note_card_row_is_content_blurred(NostrGtkNoteCardRow *self);
-void nostr_gtk_note_card_row_reveal_sensitive_content(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_content_blurred(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_reveal_sensitive_content(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_hashtags(NostrGtkNoteCardRow *self, const char *const *hashtags);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_hashtags(NostrGtkNoteCardRow *self, const char *const *hashtags);
 
-void nostr_gtk_note_card_row_set_relay_info(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_relay_info(NostrGtkNoteCardRow *self,
                                           const char *const *relay_urls);
 
-void nostr_gtk_note_card_row_set_labels(NostrGtkNoteCardRow *self, GPtrArray *labels);
-void nostr_gtk_note_card_row_add_label(NostrGtkNoteCardRow *self, const char *namespace, const char *label);
-void nostr_gtk_note_card_row_clear_labels(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_labels(NostrGtkNoteCardRow *self, GPtrArray *labels);
+NOSTR_GTK_API void nostr_gtk_note_card_row_add_label(NostrGtkNoteCardRow *self, const char *namespace, const char *label);
+NOSTR_GTK_API void nostr_gtk_note_card_row_clear_labels(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
                                            const char *title,
                                            const char *summary,
                                            const char *image_url,
                                            gint64 published_at,
                                            const char *d_tag,
                                            const char *const *hashtags);
-gboolean nostr_gtk_note_card_row_is_article(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_article_d_tag(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_article(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_article_d_tag(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
                                          const char *video_url,
                                          const char *thumb_url,
                                          const char *title,
@@ -426,11 +427,11 @@ void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
                                          gboolean is_vertical,
                                          const char *d_tag,
                                          const char *const *hashtags);
-gboolean nostr_gtk_note_card_row_is_video(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_video_d_tag(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_video_url(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_video(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_video_d_tag(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_video_url(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
                                              const char *name,
                                              const char *description,
                                              const char *const *clone_urls,
@@ -438,42 +439,42 @@ void nostr_gtk_note_card_row_set_git_repo_mode(NostrGtkNoteCardRow *self,
                                              const char *const *topics,
                                              gsize maintainer_count,
                                              const char *license);
-void nostr_gtk_note_card_row_set_git_patch_mode(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_git_patch_mode(NostrGtkNoteCardRow *self,
                                               const char *title,
                                               const char *repo_name,
                                               const char *commit_id);
-void nostr_gtk_note_card_row_set_git_issue_mode(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_git_issue_mode(NostrGtkNoteCardRow *self,
                                               const char *title,
                                               const char *repo_name,
                                               gboolean is_open,
                                               const char *const *labels);
-gboolean nostr_gtk_note_card_row_is_git_event(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_git_event(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_enable_text_selection(NostrGtkNoteCardRow *self, gboolean enable);
-const char *nostr_gtk_note_card_row_get_content_text(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_event_id(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_pubkey(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_enable_text_selection(NostrGtkNoteCardRow *self, gboolean enable);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_content_text(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_event_id(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_pubkey(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_proxy_info(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_proxy_info(NostrGtkNoteCardRow *self,
                                          const char *proxy_id,
                                          const char *protocol);
-void nostr_gtk_note_card_row_set_proxy_from_tags(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_proxy_from_tags(NostrGtkNoteCardRow *self,
                                               const char *tags_json);
-gboolean nostr_gtk_note_card_row_is_proxied(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_proxy_protocol(NostrGtkNoteCardRow *self);
-const char *nostr_gtk_note_card_row_get_proxy_id(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_proxied(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_proxy_protocol(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API const char *nostr_gtk_note_card_row_get_proxy_id(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_ots_proof(NostrGtkNoteCardRow *self, const char *tags_json);
-void nostr_gtk_note_card_row_set_ots_status(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_ots_proof(NostrGtkNoteCardRow *self, const char *tags_json);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_ots_status(NostrGtkNoteCardRow *self,
                                          gint status,
                                          gint64 verified_timestamp,
                                          guint block_height);
-gboolean nostr_gtk_note_card_row_has_ots_proof(NostrGtkNoteCardRow *self);
-gint64 nostr_gtk_note_card_row_get_ots_timestamp(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_has_ots_proof(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gint64 nostr_gtk_note_card_row_get_ots_timestamp(NostrGtkNoteCardRow *self);
 
-void nostr_gtk_note_card_row_set_external_ids(NostrGtkNoteCardRow *self, const char *tags_json);
-gboolean nostr_gtk_note_card_row_has_external_ids(NostrGtkNoteCardRow *self);
-void nostr_gtk_note_card_row_clear_external_ids(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_external_ids(NostrGtkNoteCardRow *self, const char *tags_json);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_has_external_ids(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_clear_external_ids(NostrGtkNoteCardRow *self);
 
 /**
  * nostr_gtk_note_card_row_get_avatar_widgets:
@@ -484,25 +485,41 @@ void nostr_gtk_note_card_row_clear_external_ids(NostrGtkNoteCardRow *self);
  * Returns the internal avatar image and initials widgets so the app-level
  * factory can trigger async downloads on cache miss.
  */
-void nostr_gtk_note_card_row_get_avatar_widgets(NostrGtkNoteCardRow *self,
+NOSTR_GTK_API void nostr_gtk_note_card_row_get_avatar_widgets(NostrGtkNoteCardRow *self,
                                                 GtkWidget **out_image,
                                                 GtkWidget **out_initials);
 
-GCancellable *nostr_gtk_note_card_row_get_cancellable(NostrGtkNoteCardRow *self);
-void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self);
-void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self);
-gboolean nostr_gtk_note_card_row_is_disposed(NostrGtkNoteCardRow *self);
-gboolean nostr_gtk_note_card_row_is_bound(NostrGtkNoteCardRow *self);
-guint64 nostr_gtk_note_card_row_get_binding_id(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API GCancellable *nostr_gtk_note_card_row_get_cancellable(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_disposed(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API gboolean nostr_gtk_note_card_row_is_bound(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API guint64 nostr_gtk_note_card_row_get_binding_id(NostrGtkNoteCardRow *self);
 
-/* nostrc-ncr-lifecycle: Binding context accessor for factory use.
- * Returns the current binding context (opaque type). Full API for
- * NoteCardBindingContext is in the internal header note-card-binding-ctx.h. */
+/* Binding-cycle handle for asynchronous host callbacks. Cancellation and
+ * creation remain widget-owned; hosts retain a handle and acquire the row
+ * only while that binding is current. */
 #ifndef NOTE_CARD_BINDING_CTX_TYPEDEF
 #define NOTE_CARD_BINDING_CTX_TYPEDEF
 typedef struct _NoteCardBindingContext NoteCardBindingContext;
 #endif
-NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCardRow *self);
+NOSTR_GTK_API NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCardRow *self);
+
+/* ref() returns a full reference; unref() consumes it. get_row() returns a
+ * full GObject reference, or NULL after cancellation/finalization. */
+NOSTR_GTK_API NoteCardBindingContext *note_card_binding_context_ref(NoteCardBindingContext *ctx);
+NOSTR_GTK_API void note_card_binding_context_unref(NoteCardBindingContext *ctx);
+NOSTR_GTK_API GObject *note_card_binding_context_get_row(NoteCardBindingContext *ctx);
+
+/**
+ * nostr_gtk_media_image_cache_size:
+ *
+ * Note-card media textures are owned and byte-accounted by the application
+ * media service; this telemetry accessor is retained for compatibility.
+ *
+ * Returns: always 0
+ */
+NOSTR_GTK_API guint nostr_gtk_media_image_cache_size(void);
 
 /**
  * NostrGtkLinkPreviewSetupFunc:
@@ -516,7 +533,7 @@ NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCard
  */
 typedef void (*NostrGtkLinkPreviewSetupFunc)(GnOgPreviewCard *card, const char *url,
                                              gpointer user_data);
-void nostr_gtk_note_card_row_set_link_preview_setup(NostrGtkLinkPreviewSetupFunc func,
+NOSTR_GTK_API void nostr_gtk_note_card_row_set_link_preview_setup(NostrGtkLinkPreviewSetupFunc func,
                                                     gpointer user_data);
 
 G_END_DECLS

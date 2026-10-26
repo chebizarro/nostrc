@@ -158,7 +158,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %dir %{_libdir}/groundhog
 %{_libdir}/groundhog/libnostr-json.so.2
 %{_libdir}/groundhog/libnostr-gobject-1.0.so.3*
-%{_libdir}/groundhog/libnostr-gtk-portable-1.0.so.1*
+%{_libdir}/groundhog/libnostr-gtk-portable-1.0.so.2*
 %{_datadir}/applications/org.nostr.Groundhog.desktop
 %{_datadir}/dbus-1/services/org.nostr.Groundhog.service
 %{_datadir}/glib-2.0/schemas/org.nostr.Groundhog.gschema.xml

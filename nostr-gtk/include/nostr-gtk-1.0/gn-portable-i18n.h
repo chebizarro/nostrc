@@ -6,6 +6,7 @@
  */
 #pragma once
 
+#include "nostr-gtk-portable-export.h"
 #include <glib.h>
 
 G_BEGIN_DECLS
@@ -16,6 +17,6 @@ G_BEGIN_DECLS
  * directory with UTF-8 output, once, and returns the domain name. Widgets call
  * it from class_init; a host that relocates catalogs may call
  * bindtextdomain(GN_PORTABLE_GETTEXT_DOMAIN, dir) afterwards. */
-const char *gn_portable_gettext_domain(void);
+NOSTR_GTK_PORTABLE_API const char *gn_portable_gettext_domain(void);
 
 G_END_DECLS

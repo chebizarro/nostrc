@@ -321,7 +321,6 @@ include|apps/gnostr/src/ui/gnostr-zap-dialog.c|../util/nwc.h
 include|apps/gnostr/src/ui/gnostr-zap-dialog.c|../util/zap.h
 include|apps/gnostr/src/ui/gnostr-zap-goal-card.c|../util/nip75_zap_goals.h
 include|apps/gnostr/src/ui/gnostr-zap-goal-widget.c|../util/nip75_goals.h
-include|apps/gnostr/src/ui/note-card-factory.c|../../../../nostr-gtk/src/note-card-binding-ctx.h
 include|apps/gnostr/src/ui/note-card-factory.c|../model/gn-nostr-event-item.h
 include|apps/gnostr/src/ui/page-discover-live.c|../util/nip53_live.h
 include|apps/gnostr/src/ui/page-discover-people.c|../model/gn-profile-list-model.h

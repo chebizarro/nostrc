@@ -15,7 +15,7 @@ files already declare a version.
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
-| nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
+| nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
@@ -137,6 +137,22 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase C: nostr-gtk MAJOR 1.2.0 -> 2.0.0 (SONAME 2 for
+  `libnostr-gtk-1.0` and `libnostr-gtk-portable-1.0`). Both DSOs are compiled
+  hidden-by-default with `NOSTR_GTK_API` / `NOSTR_GTK_PORTABLE_API` and
+  installed generated export headers; installed functions and GTypes stay
+  exported, while private-header helpers and template-internal types leave the
+  ELF export table. `nostr_gtk_media_image_cache_size()`, already exported for
+  telemetry compatibility, is now declared in `nostr-note-card-row.h`. When
+  nostr-gobject is static on ELF, the shared portable DSO takes it, the
+  NIP-19/34 codecs and libnostr from the executable, as Groundhog builds and
+  libnostr-json already do, instead of embedding hidden second copies (GType
+  registry, libnostr state); it can no longer be dlopen()ed by a process that
+  does not supply them. gnostr stays 0.2.0 (no
+  bump): it uses the declared binding-context and cache-size functions instead
+  of a private header and local externs, with no behavior change; the Groundhog
+  RPM file list follows portable SONAME 2. No tags or release-column changes.
 
 - nostrc-er4fz.10 phase C: marmot-gobject PATCH 1.5.0 -> 1.5.1 (SONAME
   stays 1). It is compiled hidden-by-default with `MARMOT_GOBJECT_API` and an

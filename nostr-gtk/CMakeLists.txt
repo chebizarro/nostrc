@@ -15,8 +15,8 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 
 # ── Version metadata ─────────────────────────────────────────────────
-set(NOSTR_GTK_MAJOR_VERSION 1)
-set(NOSTR_GTK_MINOR_VERSION 2)
+set(NOSTR_GTK_MAJOR_VERSION 2)
+set(NOSTR_GTK_MINOR_VERSION 0)
 set(NOSTR_GTK_MICRO_VERSION 0)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
@@ -245,6 +245,15 @@ apply_sanitizers(gn_issue_model)
 # ── Portable library target ─────────────────────────────────────────
 add_library(nostr_gtk_portable SHARED ${NOSTR_GTK_PORTABLE_SOURCES}
   $<TARGET_OBJECTS:gn_content_parser> $<TARGET_OBJECTS:gn_issue_model>)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(nostr_gtk_portable NOSTR_GTK_PORTABLE_API
+  nostr-gtk-portable-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr-gtk-1.0")
+# These objects belong to the portable DSO, including on DLL platforms.
+foreach(_objects gn_content_parser gn_issue_model)
+  set_target_properties(${_objects} PROPERTIES C_VISIBILITY_PRESET hidden)
+  target_include_directories(${_objects} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/include")
+  target_compile_definitions(${_objects} PRIVATE nostr_gtk_portable_EXPORTS)
+endforeach()
 set_target_properties(nostr_gtk_portable PROPERTIES
   OUTPUT_NAME nostr-gtk-portable-1.0
   VERSION ${NOSTR_GTK_VERSION}
@@ -253,14 +262,31 @@ target_include_directories(nostr_gtk_portable PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0)
+# On ELF a static nostr-gobject belongs to the executable, as under
+# NOSTRC_ARCHIVES_FROM_EXECUTABLE: a hidden embedded copy would register its
+# GTypes twice, and the NIP codecs below would embed a private libnostr. The
+# DSO then binds them from its executable, like libnostr-json. ld64 and DLLs
+# need the embedded copies, as in the root policy.
+get_target_property(_portable_gobject_type nostr_gobject TYPE)
+set(_portable_exe_owned_gobject OFF)
+if(_portable_gobject_type STREQUAL "STATIC_LIBRARY" AND NOT APPLE AND NOT WIN32)
+  set(_portable_exe_owned_gobject ON)
+  set_property(TARGET nostr_gtk_portable PROPERTY NOSTRC_ARCHIVES_FROM_EXECUTABLE ON)
+endif()
 target_link_libraries(nostr_gtk_portable PUBLIC
   PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2
   PkgConfig::GOBJECT2 PkgConfig::GIO2
-  PRIVATE nostr_gobject PkgConfig::JSON_GLIB PkgConfig::NOSTR_GTK_LIBXML2)
+  PRIVATE PkgConfig::JSON_GLIB PkgConfig::NOSTR_GTK_LIBXML2)
+if(_portable_exe_owned_gobject)
+  nostrc_link_archives(nostr_gtk_portable PRIVATE nostr_gobject)
+else()
+  # A shared nostr-gobject (Groundhog) stays a real DT_NEEDED dependency.
+  target_link_libraries(nostr_gtk_portable PRIVATE nostr_gobject)
+endif()
 # nip19 (and, through nostr_gobject, libnostr) are static archives its
 # executable already holds; see NOSTRC_ARCHIVES_FROM_EXECUTABLE.
 nostrc_link_archives(nostr_gtk_portable PRIVATE nip19 nip34)
-if(NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+if(NOSTRC_ARCHIVES_FROM_EXECUTABLE OR _portable_exe_owned_gobject)
   # A private dependency of a shared library is not on its consumers' link;
   # an executable that links only this library still has to supply the
   # archives both shared libraries leave undefined.
@@ -281,6 +307,8 @@ endif()
 
 # ── Legacy library target ───────────────────────────────────────────
 add_library(nostr_gtk ${NOSTR_GTK_SOURCES})
+nostrc_library_visibility(nostr_gtk NOSTR_GTK_API
+  nostr-gtk-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr-gtk-1.0")
 target_link_libraries(nostr_gtk PUBLIC nostr_gtk_portable)
 
 set(nostr_gtk_VERSION "${NOSTR_GTK_VERSION}")

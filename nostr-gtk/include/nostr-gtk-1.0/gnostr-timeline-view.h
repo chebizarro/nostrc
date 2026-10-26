@@ -14,19 +14,20 @@
 #ifndef NOSTR_GTK_TIMELINE_VIEW_H
 #define NOSTR_GTK_TIMELINE_VIEW_H
 
+#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
 #include "gn-timeline-tabs.h"
 
 G_BEGIN_DECLS
 
 #define NOSTR_GTK_TYPE_TIMELINE_VIEW (nostr_gtk_timeline_view_get_type())
-G_DECLARE_FINAL_TYPE(NostrGtkTimelineView, nostr_gtk_timeline_view, NOSTR_GTK, TIMELINE_VIEW, GtkWidget)
+NOSTR_GTK_API G_DECLARE_FINAL_TYPE(NostrGtkTimelineView, nostr_gtk_timeline_view, NOSTR_GTK, TIMELINE_VIEW, GtkWidget)
 
 /* Internal model item type (opaque to external code but usable via GType). */
 typedef struct _TimelineItem TimelineItem;
-GType timeline_item_get_type(void);
+NOSTR_GTK_API GType timeline_item_get_type(void);
 
-GtkWidget *nostr_gtk_timeline_view_new(void);
+NOSTR_GTK_API GtkWidget *nostr_gtk_timeline_view_new(void);
 
 /**
  * nostr_gtk_timeline_view_set_factory:
@@ -36,16 +37,16 @@ GtkWidget *nostr_gtk_timeline_view_new(void);
  * Set the factory used to create and bind list item widgets.
  * This must be called before any items will be rendered.
  */
-void nostr_gtk_timeline_view_set_factory(NostrGtkTimelineView *self, GtkListItemFactory *factory);
+NOSTR_GTK_API void nostr_gtk_timeline_view_set_factory(NostrGtkTimelineView *self, GtkListItemFactory *factory);
 
 /* Assign a model (selection model wrapping a list model) to the internal GtkListView. */
-void nostr_gtk_timeline_view_set_model(NostrGtkTimelineView *self, GtkSelectionModel *model);
+NOSTR_GTK_API void nostr_gtk_timeline_view_set_model(NostrGtkTimelineView *self, GtkSelectionModel *model);
 
 /* Convenience: ensure a GtkStringList exists and prepend a text row quickly. */
-void nostr_gtk_timeline_view_prepend_text(NostrGtkTimelineView *self, const char *text);
+NOSTR_GTK_API void nostr_gtk_timeline_view_prepend_text(NostrGtkTimelineView *self, const char *text);
 
 /* Prepend a structured item with identity/time/depth. */
-void nostr_gtk_timeline_view_prepend(NostrGtkTimelineView *self,
+NOSTR_GTK_API void nostr_gtk_timeline_view_prepend(NostrGtkTimelineView *self,
                                    const char *display,
                                    const char *handle,
                                    const char *ts,
@@ -54,29 +55,29 @@ void nostr_gtk_timeline_view_prepend(NostrGtkTimelineView *self,
 
 /* Set a tree of TimelineItem roots (GListModel of internal items); the view flattens
  * roots and their children into the internal list store. */
-void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots);
+NOSTR_GTK_API void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots);
 
 /* Helpers for building thread trees from outside the view implementation. */
-void nostr_gtk_timeline_item_add_child(TimelineItem *parent, TimelineItem *child);
-GListModel *nostr_gtk_timeline_item_get_children(TimelineItem *item);
+NOSTR_GTK_API void nostr_gtk_timeline_item_add_child(TimelineItem *parent, TimelineItem *child);
+NOSTR_GTK_API GListModel *nostr_gtk_timeline_item_get_children(TimelineItem *item);
 
 /* Get the internal scrolled window for scroll position monitoring */
-GtkWidget *nostr_gtk_timeline_view_get_scrolled_window(NostrGtkTimelineView *self);
+NOSTR_GTK_API GtkWidget *nostr_gtk_timeline_view_get_scrolled_window(NostrGtkTimelineView *self);
 
 /* Get the internal GtkListView for direct scroll operations */
-GtkWidget *nostr_gtk_timeline_view_get_list_view(NostrGtkTimelineView *self);
+NOSTR_GTK_API GtkWidget *nostr_gtk_timeline_view_get_list_view(NostrGtkTimelineView *self);
 
 /* Get the timeline tabs widget */
-NostrGtkTimelineTabs *nostr_gtk_timeline_view_get_tabs(NostrGtkTimelineView *self);
+NOSTR_GTK_API NostrGtkTimelineTabs *nostr_gtk_timeline_view_get_tabs(NostrGtkTimelineView *self);
 
 /* Show/hide the timeline tabs bar */
-void nostr_gtk_timeline_view_set_tabs_visible(NostrGtkTimelineView *self, gboolean visible);
+NOSTR_GTK_API void nostr_gtk_timeline_view_set_tabs_visible(NostrGtkTimelineView *self, gboolean visible);
 
 /* Add a hashtag tab and switch to it */
-void nostr_gtk_timeline_view_add_hashtag_tab(NostrGtkTimelineView *self, const char *hashtag);
+NOSTR_GTK_API void nostr_gtk_timeline_view_add_hashtag_tab(NostrGtkTimelineView *self, const char *hashtag);
 
 /* Add an author tab and switch to it */
-void nostr_gtk_timeline_view_add_author_tab(NostrGtkTimelineView *self, const char *pubkey_hex, const char *display_name);
+NOSTR_GTK_API void nostr_gtk_timeline_view_add_author_tab(NostrGtkTimelineView *self, const char *pubkey_hex, const char *display_name);
 
 /**
  * Signals:
@@ -86,15 +87,15 @@ void nostr_gtk_timeline_view_add_author_tab(NostrGtkTimelineView *self, const ch
 
 /* Scroll position tracking */
 
-gboolean nostr_gtk_timeline_view_get_visible_range(NostrGtkTimelineView *self,
+NOSTR_GTK_API gboolean nostr_gtk_timeline_view_get_visible_range(NostrGtkTimelineView *self,
                                                   guint *start,
                                                   guint *end);
 
-gboolean nostr_gtk_timeline_view_is_item_visible(NostrGtkTimelineView *self, guint index);
+NOSTR_GTK_API gboolean nostr_gtk_timeline_view_is_item_visible(NostrGtkTimelineView *self, guint index);
 
-gboolean nostr_gtk_timeline_view_is_fast_scrolling(NostrGtkTimelineView *self);
+NOSTR_GTK_API gboolean nostr_gtk_timeline_view_is_fast_scrolling(NostrGtkTimelineView *self);
 
-gdouble nostr_gtk_timeline_view_get_scroll_velocity(NostrGtkTimelineView *self);
+NOSTR_GTK_API gdouble nostr_gtk_timeline_view_get_scroll_velocity(NostrGtkTimelineView *self);
 
 /**
  * nostr_gtk_timeline_view_begin_programmatic_scroll:
@@ -105,7 +106,7 @@ gdouble nostr_gtk_timeline_view_get_scroll_velocity(NostrGtkTimelineView *self);
  * the jump is not mistaken for fast user scrolling. Must be paired with
  * nostr_gtk_timeline_view_end_programmatic_scroll(); pairs must not nest.
  */
-void nostr_gtk_timeline_view_begin_programmatic_scroll(NostrGtkTimelineView *self);
+NOSTR_GTK_API void nostr_gtk_timeline_view_begin_programmatic_scroll(NostrGtkTimelineView *self);
 
 /**
  * nostr_gtk_timeline_view_end_programmatic_scroll:
@@ -114,7 +115,7 @@ void nostr_gtk_timeline_view_begin_programmatic_scroll(NostrGtkTimelineView *sel
  * Re-enable scroll-velocity tracking after a programmatic scroll and
  * re-sync the tracker to the current position.
  */
-void nostr_gtk_timeline_view_end_programmatic_scroll(NostrGtkTimelineView *self);
+NOSTR_GTK_API void nostr_gtk_timeline_view_end_programmatic_scroll(NostrGtkTimelineView *self);
 
 G_END_DECLS
 

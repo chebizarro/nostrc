@@ -1,5 +1,6 @@
 #ifndef GN_MEDIA_SOURCE_H
 #define GN_MEDIA_SOURCE_H
+#include "nostr-gtk-portable-export.h"
 #include <gtk/gtk.h>
 G_BEGIN_DECLS
 /*
@@ -33,7 +34,7 @@ typedef enum {
 } GnMediaPolicy;
 
 #define GN_TYPE_MEDIA_SOURCE (gn_media_source_get_type())
-G_DECLARE_INTERFACE(GnMediaSource, gn_media_source, GN, MEDIA_SOURCE, GObject)
+NOSTR_GTK_PORTABLE_API G_DECLARE_INTERFACE(GnMediaSource, gn_media_source, GN, MEDIA_SOURCE, GObject)
 
 struct _GnMediaSourceInterface {
   GTypeInterface parent_iface;
@@ -47,22 +48,22 @@ struct _GnMediaSourceInterface {
 };
 
 /* BLOCKED when the implementation has no get_policy or url is empty. */
-GnMediaPolicy gn_media_source_get_policy(GnMediaSource *self, const char *url, GnMediaKind kind);
-void gn_media_source_fetch_async(GnMediaSource *self, const char *url, GnMediaKind kind,
+NOSTR_GTK_PORTABLE_API GnMediaPolicy gn_media_source_get_policy(GnMediaSource *self, const char *url, GnMediaKind kind);
+NOSTR_GTK_PORTABLE_API void gn_media_source_fetch_async(GnMediaSource *self, const char *url, GnMediaKind kind,
                                  gsize max_bytes, GCancellable *cancellable,
                                  GAsyncReadyCallback callback, gpointer user_data);
-GBytes *gn_media_source_fetch_finish(GnMediaSource *self, GAsyncResult *result, GError **error);
+NOSTR_GTK_PORTABLE_API GBytes *gn_media_source_fetch_finish(GnMediaSource *self, GAsyncResult *result, GError **error);
 /* (transfer full): NULL with G_IO_ERROR_NOT_SUPPORTED when not implemented. */
-GtkMediaStream *gn_media_source_open_stream(GnMediaSource *self, const char *url, GError **error);
-void gn_media_source_adopt(GnMediaSource *self, GtkWidget *widget);
+NOSTR_GTK_PORTABLE_API GtkMediaStream *gn_media_source_open_stream(GnMediaSource *self, const char *url, GError **error);
+NOSTR_GTK_PORTABLE_API void gn_media_source_adopt(GnMediaSource *self, GtkWidget *widget);
 
 /* A process-wide source for widgets that are built deep inside other
  * nostr-gtk widgets (note cards, profile panes) and cannot be handed one.
  * Unset (NULL) by default: such widgets then load nothing by themselves.
  * The library never consults it for widgets the host creates directly. */
-void gn_media_source_set_default(GnMediaSource *source);
+NOSTR_GTK_PORTABLE_API void gn_media_source_set_default(GnMediaSource *source);
 /* (transfer none) (nullable) */
-GnMediaSource *gn_media_source_get_default(void);
+NOSTR_GTK_PORTABLE_API GnMediaSource *gn_media_source_get_default(void);
 
 G_END_DECLS
 #endif

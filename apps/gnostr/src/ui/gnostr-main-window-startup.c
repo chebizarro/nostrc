@@ -4,6 +4,7 @@
 
 #include "gnostr-session-view.h"
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-startup-live-eose.h"
 #include "gnostr-timeline-feed-controller.h"
@@ -67,7 +68,6 @@ memory_stats_cb_local(gpointer data)
   guint gift_wrap_queue = self->gift_wrap_queue ? self->gift_wrap_queue->len : 0;
 
   extern guint gnostr_avatar_cache_size(void);
-  extern guint nostr_gtk_media_image_cache_size(void);
   guint avatar_tex = gnostr_avatar_cache_size();
   guint media_cache = nostr_gtk_media_image_cache_size();
 

@@ -1,5 +1,6 @@
 #ifndef GN_MEDIA_DECODE_H
 #define GN_MEDIA_DECODE_H
+#include "nostr-gtk-portable-export.h"
 #include <gtk/gtk.h>
 G_BEGIN_DECLS
 /*
@@ -29,23 +30,23 @@ typedef struct {
 } GnMediaDecodeLimits;
 
 /* 16 MiB, 8192 px, PNG | JPEG | GIF (no fallback). */
-void gn_media_decode_limits_init_default(GnMediaDecodeLimits *limits);
+NOSTR_GTK_PORTABLE_API void gn_media_decode_limits_init_default(GnMediaDecodeLimits *limits);
 
 /* GN_MEDIA_FORMAT_PNG, _JPEG, _GIF or _NONE. */
-GnMediaFormats gn_media_sniff(GBytes *bytes);
+NOSTR_GTK_PORTABLE_API GnMediaFormats gn_media_sniff(GBytes *bytes);
 /* The size a PNG, JPEG or GIF header declares, without decoding.
  * G_IO_ERROR_NOT_SUPPORTED for another format, G_IO_ERROR_INVALID_DATA for a
  * missing or malformed header. out_* are nullable. */
-gboolean gn_media_probe_dimensions(GBytes *bytes, GnMediaFormats *out_format, guint *out_width,
+NOSTR_GTK_PORTABLE_API gboolean gn_media_probe_dimensions(GBytes *bytes, GnMediaFormats *out_format, guint *out_width,
                                    guint *out_height, GError **error);
 
 /* (transfer full): a GdkTexture, or a GnAnimatedImage for an animated GIF.
  * Blocking; safe to call from a worker thread. limits NULL: the defaults. */
-GdkPaintable *gn_media_decode(GBytes *bytes, const GnMediaDecodeLimits *limits, GError **error);
+NOSTR_GTK_PORTABLE_API GdkPaintable *gn_media_decode(GBytes *bytes, const GnMediaDecodeLimits *limits, GError **error);
 /* gn_media_decode() on a worker thread. */
-void gn_media_decode_async(GBytes *bytes, const GnMediaDecodeLimits *limits,
+NOSTR_GTK_PORTABLE_API void gn_media_decode_async(GBytes *bytes, const GnMediaDecodeLimits *limits,
                            GCancellable *cancellable, GAsyncReadyCallback callback,
                            gpointer user_data);
-GdkPaintable *gn_media_decode_finish(GAsyncResult *result, GError **error);
+NOSTR_GTK_PORTABLE_API GdkPaintable *gn_media_decode_finish(GAsyncResult *result, GError **error);
 G_END_DECLS
 #endif

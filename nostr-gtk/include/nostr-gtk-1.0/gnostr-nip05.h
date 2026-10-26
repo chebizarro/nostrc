@@ -1,6 +1,7 @@
 #ifndef GNOSTR_NIP05_H
 #define GNOSTR_NIP05_H
 
+#include "nostr-gtk-export.h"
 #include <glib.h>
 #include <gtk/gtk.h>
 
@@ -52,9 +53,9 @@ typedef void (*GnostrNip05VerifyCallback)(GnostrNip05Result *result, gpointer us
  */
 #ifdef HAVE_SOUP3
 typedef struct _SoupSession SoupSession;
-void gnostr_nip05_set_soup_session(SoupSession *session);
+NOSTR_GTK_API void gnostr_nip05_set_soup_session(SoupSession *session);
 #else
-void gnostr_nip05_set_soup_session(gpointer session);
+NOSTR_GTK_API void gnostr_nip05_set_soup_session(gpointer session);
 #endif
 
 /**
@@ -65,7 +66,7 @@ void gnostr_nip05_set_soup_session(gpointer session);
  * @param out_domain Output for domain (caller frees)
  * @return TRUE if valid format, FALSE otherwise
  */
-gboolean gnostr_nip05_parse(const char *identifier, char **out_local, char **out_domain);
+NOSTR_GTK_API gboolean gnostr_nip05_parse(const char *identifier, char **out_local, char **out_domain);
 
 /**
  * Verify NIP-05 identifier asynchronously.
@@ -85,7 +86,7 @@ gboolean gnostr_nip05_parse(const char *identifier, char **out_local, char **out
  *                    the callback for that caller, not the shared verification
  *                    request if other listeners are waiting.
  */
-void gnostr_nip05_verify_async(const char *identifier,
+NOSTR_GTK_API void gnostr_nip05_verify_async(const char *identifier,
                                const char *expected_pubkey,
                                GnostrNip05VerifyCallback callback,
                                gpointer user_data,
@@ -97,28 +98,28 @@ void gnostr_nip05_verify_async(const char *identifier,
  * @param identifier The NIP-05 identifier
  * @return Cached result or NULL if not cached/expired. Caller must free with gnostr_nip05_result_free().
  */
-GnostrNip05Result *gnostr_nip05_cache_get(const char *identifier);
+NOSTR_GTK_API GnostrNip05Result *gnostr_nip05_cache_get(const char *identifier);
 
 /**
  * Store NIP-05 verification result in cache.
  *
  * @param result The result to cache (takes ownership)
  */
-void gnostr_nip05_cache_put(GnostrNip05Result *result);
+NOSTR_GTK_API void gnostr_nip05_cache_put(GnostrNip05Result *result);
 
 /**
  * Free a NIP-05 verification result.
  *
  * @param result The result to free
  */
-void gnostr_nip05_result_free(GnostrNip05Result *result);
+NOSTR_GTK_API void gnostr_nip05_result_free(GnostrNip05Result *result);
 
 /**
  * Create a verified NIP-05 badge widget (checkmark icon).
  *
  * @return A new GtkImage with verification badge styling
  */
-GtkWidget *gnostr_nip05_create_badge(void);
+NOSTR_GTK_API GtkWidget *gnostr_nip05_create_badge(void);
 
 /**
  * Get display string for NIP-05 (e.g., "@user" for "_@domain.com" or "user@domain.com")
@@ -126,12 +127,12 @@ GtkWidget *gnostr_nip05_create_badge(void);
  * @param identifier The NIP-05 identifier
  * @return Display string (caller frees)
  */
-char *gnostr_nip05_get_display(const char *identifier);
+NOSTR_GTK_API char *gnostr_nip05_get_display(const char *identifier);
 
 /**
  * Clear expired entries from the NIP-05 cache.
  */
-void gnostr_nip05_cache_cleanup(void);
+NOSTR_GTK_API void gnostr_nip05_cache_cleanup(void);
 
 /**
  * Get verification status string for debugging.
@@ -139,7 +140,7 @@ void gnostr_nip05_cache_cleanup(void);
  * @param status The status enum value
  * @return Static string describing the status
  */
-const char *gnostr_nip05_status_to_string(GnostrNip05Status status);
+NOSTR_GTK_API const char *gnostr_nip05_status_to_string(GnostrNip05Status status);
 
 G_END_DECLS
 

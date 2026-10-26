@@ -11,6 +11,7 @@
 
 #define NOSTR_GTK_INSIDE
 
+#include "nostr-gtk-export.h"
 #include <glib.h>
 
 #include "nostr-gtk-version.h"
@@ -49,7 +50,7 @@ G_BEGIN_DECLS
  *
  * Initializes the nostr-gtk library. Call once before using widgets.
  */
-void nostr_gtk_init(void);
+NOSTR_GTK_API void nostr_gtk_init(void);
 
 
 G_END_DECLS
