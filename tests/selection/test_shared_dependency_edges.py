@@ -179,7 +179,7 @@ class RelayJsonDependencyEdges(Project):
 
     edges = (("relayd", "libjson", "test_relay_req_contract", "libjson/src/json.c",
               "libjson/include/nostr_jansson.h"),
-             ("shared.tests", "libjson", "test_connection_recv_drain", "libjson/src/json.c",
+             ("shared.tests", "libjson", "test_connection_writable_rearm", "libjson/src/json.c",
               "libjson/include/nostr_jansson.h"),
              ("grelay", "relayd", "grelay_ingress_security", "apps/relayd/src/relay_ingress.c",
               "apps/relayd/include/relay_ingress.h"))
@@ -236,7 +236,9 @@ class RelayJsonDependencyEdges(Project):
             source.write_text(f'#include "{header}"\nstatic int unused_fixture_body;\n')
         consumers = (
             ("test_relay_req_contract", "apps/relayd/tests/CMakeLists.txt", "relayd"),
-            ("test_connection_recv_drain", "tests/CMakeLists.txt", "shared.tests"),
+            # recv_drain is now a core-only white-box test; writable_rearm
+            # retains the authored libnostr + nostr_json consumer link.
+            ("test_connection_writable_rearm", "tests/CMakeLists.txt", "shared.tests"),
             ("grelay_ingress_security", "apps/grelay/tests/CMakeLists.txt", "grelay"),
         )
         commands = ["cmake_minimum_required(VERSION 3.22)", "project(relay_json_edges C)",
@@ -244,7 +246,8 @@ class RelayJsonDependencyEdges(Project):
                     *libraries, "add_subdirectory(libjson)", "add_subdirectory(apps/relayd)"]
         for name, path, owner in consumers:
             commands += [f"add_executable({name} main.c)",
-                         *statements(path, "target_link_libraries", name),
+                         *statements(path, "target_link_libraries", name,
+                                     ["nostr_json"] if owner == "shared.tests" else ()),
                          f"add_test(NAME {name} COMMAND {name})",
                          f"nostrc_describe_test({name} OWNER {owner} TARGETS {name} INPUTS vector.txt)"]
         commands += ["add_test(NAME omitted COMMAND test_relay_req_contract)",
