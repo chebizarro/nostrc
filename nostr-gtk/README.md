@@ -26,8 +26,9 @@ cmake --build build
 ### Meson (standalone, with GIR/VAPI)
 ```bash
 cd nostr-gtk
-# Requires the sibling nostr-gobject and nip19 CMake libraries built first.
-meson setup build -Dintrospection=true -Dvapi=true
+# Requires a built CMake tree, including its nostr-gobject-build-tree-pc
+# target (nostr-gobject's link contract) and nips/nip34.
+meson setup build -Dcmake_build_dir=$PWD/../build -Dintrospection=true -Dvapi=true
 meson compile -C build
 ```
 

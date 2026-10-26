@@ -23,8 +23,10 @@ endif
 # Find xvfb-run for headless rendering (Linux only)
 xvfb_run = find_program('xvfb-run', required: host_machine.system() == 'linux')
 
-# The GtkListView fixtures below use mock items and no nostr-gtk symbols.
-test_deps = [gtk_dep, adw_dep, glib_dep, gobject_dep]
+# The GtkListView fixtures below use mock items and no nostr-gtk symbols;
+# they share tests/common/nostrc-test-gdk-frame.h.
+test_deps = [gtk_dep, adw_dep, glib_dep, gobject_dep,
+  declare_dependency(include_directories: include_directories('../../tests/common'))]
 
 portable_test = executable('test_portable', 'test_portable.c',
   c_args: ['-DNOSTR_GTK_MESON_EXTERNAL_CORE'],

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- nostr-gtk's Meson build links against a shared or static CMake tree with
+  `--no-undefined`: it takes nostr-gobject's closure from the build-tree link
+  contract and NIP-34 by explicit artifact path, gives executables the
+  executable-owned core as CMake does, and its tests find
+  `tests/common`. macOS no longer links with `-undefined dynamic_lookup`.
 - The GNostrGtk-1.0 GIR/typelib generates and loads: the scanner names both
   nostr-gtk DSOs by file name, preprocesses with the generated export headers,
   binds a static build's wrapper to the GNostr-1.0 nostr-gobject instead of a
