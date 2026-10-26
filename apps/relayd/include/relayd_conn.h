@@ -11,21 +11,34 @@ extern "C" {
 
 /* NIP-01: a subscription id is a non-empty string of at most 64 chars. */
 #define RELAYD_SUBID_MAX 64
-/* Hard cap on REQs one connection may have streaming at once; the
+/* Hard cap on active REQs one connection may retain at once; the
  * effective limit is min(cfg.max_subs, this). */
 #define RELAYD_MAX_PENDING_SUBS 16
 #define RELAYD_MAX_PENDING_ACKS 256
+#define RELAYD_MAX_QUEUED_FRAMES 256
+#define RELAYD_MAX_QUEUED_BYTES (2u * 1024u * 1024u)
 
-/* A REQ whose stored results are still being sent. The relay has no live
- * fan-out, so a subscription ends at its EOSE. */
+struct NostrFilter;
+typedef struct RelaydFrame {
+  struct RelaydFrame *next;
+  char *text;
+  size_t length;
+  char subid[RELAYD_SUBID_MAX + 1]; /* empty for control frames */
+  char event_id[65];
+} RelaydFrame;
+
+/* Stored catch-up followed by live delivery, until CLOSE/replacement. */
 typedef struct {
   void *it; /* storage iterator (from query or search); released by query_free */
   char subid[RELAYD_SUBID_MAX + 1];
+  struct NostrFilter **filters;
+  size_t nfilters;
+  int eose_sent;
 } RelaydPendingSub;
 
 typedef struct RelaydPendingAck {
   struct RelaydPendingAck *next;
-  RelayIngressResult ingress; /* replay reservation; event is freed after enqueue */
+  RelayIngressResult ingress; /* owns event and replay reservation until commit */
   char *old_replaceable_id;
   uint64_t deadline_ms;
   int ready;
@@ -40,10 +53,16 @@ typedef struct ConnState {
   RelaydPendingAck *ack_head;
   RelaydPendingAck *ack_tail;
   size_t nacks;
-  /* FIFO: subs[0] is streamed by on_writable until its EOSE, then the rest
-   * follow in arrival order. */
+  RelaydFrame *send_head;
+  RelaydFrame *send_tail;
+  size_t send_count;
+  size_t send_bytes;
+  int closing; /* queue overflow or write failure: disconnect, never drop silently */
+  /* Backfill iterators are streamed in arrival order; EOSE retains filters. */
   RelaydPendingSub subs[RELAYD_MAX_PENDING_SUBS];
   size_t nsubs;
+  size_t backfill_cursor;
+  int prefer_backfill;
   int authed;
   int vault_authorized; /* Any successfully AUTHed allowlisted identity. */
   int need_auth_chal;

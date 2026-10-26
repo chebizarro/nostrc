@@ -334,6 +334,13 @@ files already declare a version.
   to that header, with unchanged API and wire/storage formats: no bump from
   unreleased 0.2.2. Boundary tooling, CI and tests need no component bump.
 
+- nostrc-vqu69: relayd retains NIP-01 subscriptions after EOSE and fans out
+  newly committed matching events, with per-subscriber AUTH/VSP-01 enforcement
+  and bounded service-thread send buffering. PATCH-class shipped protocol bug
+  correction; relayd remains unversioned, with no authoritative numeric source
+  to bump. nostr-homed changes only its SV-10 integration harness (live owner
+  fold instead of explicit catch-up): no shipped artifact change, no bump.
+
 - nostrc-hrfis: relayd fails closed on NIP-42 challenge RNG failure using
   OpenSSL RAND_bytes. PATCH-class security correction; relayd is unversioned
   (no authoritative component version source), so no numeric bump is invented.

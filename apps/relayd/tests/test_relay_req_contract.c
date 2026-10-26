@@ -2,11 +2,12 @@
  * test_relay_req_contract — the NIP-01 REQ contract of libnostr-relay-server
  * (nostrc-prqu.14), with and without storage.
  *
- * Every REQ must get a terminal reply promptly: EOSE once the stored
+ * Every REQ must reach a catch-up boundary promptly: EOSE once the stored
  * matches (possibly none) are sent, or CLOSED with a machine-readable
- * reason when the relay refuses it. The server runs in-process on a Unix
+ * reason when the relay refuses it. Successful subscriptions remain live. The server runs in-process on a Unix
  * listener, first with no storage at all, then with a scripted fake
- * storage covering every query outcome the vtable allows.
+ * storage covering every query outcome the vtable allows, then real
+ * nostrdb when available. Live delivery uses a second publishing connection.
  */
 #define _GNU_SOURCE
 #include <pthread.h>
@@ -24,6 +25,10 @@
 #include "nostr-storage.h"
 #include "relayd_config.h"
 #include "relay_policy.h"
+#include "protocol_nip01.h"
+#ifdef HAVE_TEST_NOSTRDB
+#include "nostrdb_storage.h"
+#endif
 
 /* ---- scripted fake storage ------------------------------------------- */
 
@@ -42,6 +47,7 @@ static struct {
   int last_kinds[4]; /* first kind of each filter the store was handed */
   char last_author[65]; /* first author of the first filter */
   int puts;
+  void (*on_query)(void);
 } g_fake;
 
 typedef struct { int remaining; } FakeIter;
@@ -57,6 +63,11 @@ static void *fake_query(NostrStorage *st, const NostrFilter *filters,
                         uint64_t until, int *err) {
   (void)st; (void)limit; (void)since; (void)until;
   g_fake.queries++;
+  if (g_fake.on_query) {
+    void (*callback)(void) = g_fake.on_query;
+    g_fake.on_query = NULL;
+    callback();
+  }
   g_fake.last_nfilters = nfilters;
   for (size_t i = 0; i < nfilters && i < 4; i++)
     g_fake.last_kinds[i] = nostr_filter_kinds_len(&filters[i])
@@ -213,6 +224,13 @@ static void async_commit_all(void) {
   void *ctx = g_async.notify_ctx;
   pthread_mutex_unlock(&g_async.mutex);
   if (notify) notify(ctx);
+}
+
+/* Invoked by query() on the service thread: queue the whole live batch
+ * before this REQ installs its backfill, making scheduling fairness exact. */
+static void commit_during_query(void) {
+  async_commit_all();
+  relayd_nip01_reconcile_all(lws_context_user(g_async.notify_ctx));
 }
 
 /* ---- in-process server ------------------------------------------------ */
@@ -390,6 +408,10 @@ static void run_with_storage(const char *dir) {
     expect_reply(fd, "[\"REQ\",\"b\",{\"kinds\":[1]}]", "[\"EOSE\",\"b\"]",
                  "NULL iterator without error -> EOSE");
 
+    expect_reply(fd, "[\"REQ\",\"full\",{\"kinds\":[1]}]",
+                 "[\"CLOSED\",\"full\",\"rate-limited:", "EOSE subscriptions still count toward max_subs");
+    CHECK(ws_send(fd, "[\"CLOSE\",\"a\"]") == 0, "close live a");
+    CHECK(ws_send(fd, "[\"CLOSE\",\"b\"]") == 0, "close live b");
     g_fake.mode = FAKE_NULL_ERR;
     expect_reply(fd, "[\"REQ\",\"c\",{\"kinds\":[1]}]",
                  "[\"CLOSED\",\"c\",\"error:", "query error -> CLOSED error");
@@ -401,6 +423,7 @@ static void run_with_storage(const char *dir) {
     CHECK(eose && strcmp(eose, "[\"EOSE\",\"d\"]") == 0,
           "EVENT then EOSE, got %s", eose ? eose : "(nothing)");
     free(eose);
+    CHECK(ws_send(fd, "[\"CLOSE\",\"d\"]") == 0, "close live d");
 
     /* NIP-01 multi-filter REQ: every filter reaches the store as one
      * contiguous array (was: arr[0] reinterpreted as an array). */
@@ -414,6 +437,7 @@ static void run_with_storage(const char *dir) {
           "store saw kinds %d,%d, want 7,30023", g_fake.last_kinds[0],
           g_fake.last_kinds[1]);
 
+    CHECK(ws_send(fd, "[\"CLOSE\",\"m\"]") == 0, "close live m");
     /* Pipelined REQs are queued and served in order (max_subs = 2 here);
      * one past the limit is refused with CLOSED "rate-limited:". */
     unsigned char *f1 = NULL, *f2 = NULL, *f3 = NULL;
@@ -439,6 +463,8 @@ static void run_with_storage(const char *dir) {
           r[2] ? r[2] : "(nothing)");
     for (int i = 0; i < 3; i++) free(r[i]);
 
+    CHECK(ws_send(fd, "[\"CLOSE\",\"p\"]") == 0, "close live p");
+    CHECK(ws_send(fd, "[\"CLOSE\",\"q\"]") == 0, "close live q");
     /* Reusing the in-flight id replaces the subscription (NIP-01): the
      * first iterator is freed, and exactly one EOSE follows. */
     CHECK(ws_send_pair(fd, "[\"REQ\",\"r\",{\"kinds\":[1]}]",
@@ -449,6 +475,7 @@ static void run_with_storage(const char *dir) {
           "replaced REQ: %s", r3 ? r3 : "(nothing)");
     free(r3);
     CHECK(g_fake.last_kinds[0] == 2, "replacement filter not used");
+    CHECK(ws_send(fd, "[\"CLOSE\",\"r\"]") == 0, "close live r");
     /* Nothing else is pending: a fresh REQ's EOSE is the very next frame. */
     expect_reply(fd, "[\"REQ\",\"t\",{\"kinds\":[1]}]", "[\"EOSE\",\"t\"]",
                  "no duplicate EOSE after replacement");
@@ -475,7 +502,7 @@ static void run_with_storage(const char *dir) {
       snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", id);
       int q0 = g_fake.queries;
       expect_reply(fd, frame, prefix, "replaceable EVENT -> OK true");
-      CHECK(g_fake.queries == q0 + 1, "stale check did not query the store");
+      CHECK(g_fake.queries == q0 + 2, "duplicate and stale checks query the store");
       CHECK(g_fake.last_nfilters == 1 && g_fake.last_kinds[0] == 0,
             "stale check filter: n=%zu kind=%d", g_fake.last_nfilters,
             g_fake.last_kinds[0]);
@@ -491,7 +518,7 @@ static void run_with_storage(const char *dir) {
     close(fd);
   }
   server_stop(&s);
-  CHECK(g_fake.frees == 9, "iterators freed %d, want 9 (a d m p q r r t + stale check)",
+  CHECK(g_fake.frees == 10, "iterators freed %d, want 10 (a d m p q r r t + duplicate/stale checks)",
         g_fake.frees);
 }
 
@@ -516,6 +543,9 @@ static char *signed_event_frame(const char *sk, const char *pk,
   return frame;
 }
 
+static void barrier(int fd);
+static void expect_event(int fd, const char *sub, const char *id);
+
 static void run_async_commit(const char *dir) {
   fprintf(stderr, "== async commit/timeout and independent client\n");
   pthread_mutex_lock(&g_async.mutex);
@@ -533,6 +563,8 @@ static void run_async_commit(const char *dir) {
   char *pk = sk ? nostr_key_get_public(sk) : NULL;
   CHECK(a >= 0 && b >= 0 && sk && pk, "async fixture setup");
   if (a >= 0 && b >= 0 && sk && pk) {
+    expect_reply(b, "[\"REQ\",\"live\",{\"kinds\":[1]}]",
+                 "[\"EOSE\",\"live\"]", "async live catch up");
     char *id = NULL;
     char *frame = signed_event_frame(sk, pk, 0, &id);
     CHECK(frame && ws_send(a, frame) == 0, "send stalled EVENT A");
@@ -568,6 +600,8 @@ static void run_async_commit(const char *dir) {
     CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
           "commit did not yield OK true: %s", reply ? reply : "(no reply)");
     free(reply);
+    expect_event(b, "live", id);
+    barrier(b);
     free(frame); free(id);
 
     frame = signed_event_frame(sk, pk, 1, &id);
@@ -595,6 +629,7 @@ static void run_async_commit(const char *dir) {
     fprintf(stderr, "  absent notification: client B EOSE %lld ms, OK false %lld ms\n",
             elapsed, timeout_elapsed);
     free(reply); free(frame); free(id);
+    barrier(b); /* timed-out storage did not fan out */
 
     enum { BURST = 100 };
     char *frames[BURST], *ids[BURST];
@@ -608,20 +643,306 @@ static void run_async_commit(const char *dir) {
       CHECK(frames[i] && ws_send(a, frames[i]) == 0, "send burst EVENT %d", i);
     CHECK(async_wait_queued(BURST + 2), "burst was not queued");
     long long queued_ms = now_ms() - burst_start;
-    async_commit_all();
+    g_fake.on_query = commit_during_query;
+    CHECK(ws_send(b, "[\"REQ\",\"fair\",{\"kinds\":[7]}]") == 0,
+          "start backfill behind queued live traffic");
     for (int i = 0; i < BURST; i++) {
       reply = ws_recv(a);
       snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", ids[i]);
       CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
             "burst OK %d out of order: %s", i,
             reply ? reply : "(no reply)");
-      free(reply); free(frames[i]); free(ids[i]);
+      free(reply);
+      free(frames[i]);
     }
+    int delivered = 0, got_eose = 0;
+    while (delivered < BURST || !got_eose) {
+      reply = ws_recv(b);
+      CHECK(reply, "fair scheduler reply");
+      if (!reply) break;
+      if (strcmp(reply, "[\"EOSE\",\"fair\"]") == 0) {
+        CHECK(!got_eose && delivered < BURST, "catch-up starved behind all live frames");
+        got_eose = 1;
+      } else {
+        CHECK(delivered < BURST && strncmp(reply, "[\"EVENT\",\"live\",", 16) == 0 &&
+              strstr(reply, ids[delivered]), "ordered live frame during fair catch-up: %s", reply);
+        delivered++;
+      }
+      free(reply);
+    }
+    for (int i = 0; i < BURST; i++) free(ids[i]);
     fprintf(stderr, "  async burst %d: queued in %lld ms, all ordered OKs in %lld ms\n",
             BURST, queued_ms, now_ms() - burst_start);
-    close(a); close(b);
+    frame = signed_event_frame(sk, pk, 1000, &id);
+    CHECK(frame && ws_send(a, frame) == 0, "send disconnecting publisher EVENT");
+    CHECK(async_wait_queued(BURST + 3), "disconnect EVENT queued");
+    shutdown(a, SHUT_WR);
+    reply = ws_recv(a);
+    CHECK(!reply, "publisher disconnected before commit");
+    free(reply);
+    close(a);
+    async_commit_all();
+    expect_event(b, "live", id);
+    barrier(b);
+    free(frame); free(id);
+    close(b);
   }
   free(pk); free(sk);
+  server_stop(&s);
+}
+
+static void run_live_overflow(const char *dir) {
+  fprintf(stderr, "== bounded live queue overflow disconnect\n");
+  pthread_mutex_lock(&g_async.mutex);
+  g_async.queued = g_async.committed = g_async.release_sync = 0;
+  pthread_mutex_unlock(&g_async.mutex);
+  memset(&g_fake, 0, sizeof g_fake);
+  g_fake.mode = FAKE_EMPTY_ITER;
+  NostrStorage st = { .vt = &g_async_vt };
+  Server s;
+  CHECK(server_start(&s, &st, dir, 16, &g_async_ops, 5000) == 0, "overflow server start");
+  int sub = connect_client(&s), pub = connect_client(&s);
+  for (int i = 0; i < 16; i++) {
+    char req[128], eose[64];
+    snprintf(req, sizeof req, "[\"REQ\",\"s%d\",{\"kinds\":[1]}]", i);
+    snprintf(eose, sizeof eose, "[\"EOSE\",\"s%d\"]", i);
+    expect_reply(sub, req, eose, "overflow subscription EOSE");
+  }
+  char *sk = nostr_key_generate_private(), *pk = nostr_key_get_public(sk);
+  char *ids[20];
+  for (int i = 0; i < 20; i++) {
+    char *frame = signed_event_frame(sk, pk, i, &ids[i]);
+    CHECK(frame && ws_send(pub, frame) == 0, "queue overflow event");
+    free(frame);
+  }
+  CHECK(async_wait_queued(20), "overflow batch queued");
+  /* One service-thread reconciliation creates 320 deliveries before any
+   * writable callback: deterministically exceeds the 256-frame bound. */
+  async_commit_all();
+  char *reply = ws_recv(sub);
+  CHECK(!reply, "overflow must disconnect instead of silently dropping events: %s",
+        reply ? reply : "(closed)");
+  free(reply);
+  for (int i = 0; i < 20; i++) {
+    char prefix[160];
+    snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", ids[i]);
+    reply = ws_recv(pub);
+    CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0, "publisher OK during subscriber overflow");
+    free(reply); free(ids[i]);
+  }
+  free(pk); free(sk);
+  close(sub); close(pub);
+  server_stop(&s);
+}
+
+/* All absence assertions use a same-socket EOSE barrier, not a quiet-period
+ * timeout. The EVENT's OK first establishes storage/fanout completion. */
+static void barrier(int fd) {
+  expect_reply(fd, "[\"REQ\",\"barrier\",{\"kinds\":[65535],\"limit\":0}]",
+               "[\"EOSE\",\"barrier\"]", "no stray EVENT before barrier");
+  CHECK(ws_send(fd, "[\"CLOSE\",\"barrier\"]") == 0, "close barrier");
+}
+
+static char *make_frame(const char *verb, const char *sk, const char *pk,
+                        int kind, int seq, const char *tags, char **id) {
+  char json[2048];
+  snprintf(json, sizeof json,
+           "{\"pubkey\":\"%s\",\"created_at\":%lld,\"kind\":%d,\"tags\":%s,\"content\":\"live-%d\"}",
+           pk, (long long)time(NULL) - 100 + seq, kind, tags ? tags : "[]", seq);
+  NostrEvent *ev = nostr_event_new();
+  CHECK(ev && nostr_event_deserialize(ev, json) == 0, "build live event");
+  CHECK(ev && nostr_event_sign(ev, sk) == 0, "sign live event");
+  *id = ev ? nostr_event_get_id(ev) : NULL;
+  char *serialized = ev ? nostr_event_serialize(ev) : NULL;
+  nostr_event_free(ev);
+  CHECK(serialized && *id, "serialize live event");
+  if (!serialized) return NULL;
+  size_t need = strlen(serialized) + 32;
+  char *frame = malloc(need);
+  if (frame) snprintf(frame, need, "[\"%s\",%s]", verb, serialized);
+  free(serialized);
+  return frame;
+}
+
+static void expect_event(int fd, const char *sub, const char *id) {
+  char prefix[128];
+  snprintf(prefix, sizeof prefix, "[\"EVENT\",\"%s\",", sub);
+  char *reply = ws_recv(fd);
+  CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0 && strstr(reply, id),
+        "live EVENT %s/%s: %s", sub, id, reply ? reply : "(none)");
+  free(reply);
+}
+
+static void publish(int fd, const char *frame, const char *id, int accepted) {
+  char prefix[160];
+  snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",%s", id, accepted ? "true" : "false");
+  expect_reply(fd, frame, prefix, "publish storage result");
+}
+
+static void run_live(const char *dir, NostrStorage *st,
+                     const RelaydAsyncStorageOps *ops) {
+  Server s;
+  CHECK(server_start(&s, st, dir, 8, ops, 0) == 0, "live server start");
+  int sub = connect_client(&s), pub = connect_client(&s), other = connect_client(&s);
+  char *sk = nostr_key_generate_private(), *pk = nostr_key_get_public(sk);
+  expect_reply(sub, "[\"REQ\",\"live\",{\"kinds\":[1],\"limit\":0},{\"kinds\":[1],\"limit\":0}]",
+               "[\"EOSE\",\"live\"]", "overlapping filters catch up");
+  expect_reply(other, "[\"REQ\",\"other\",{\"kinds\":[2],\"limit\":0}]",
+               "[\"EOSE\",\"other\"]", "nonmatching catch up");
+  if (ops) {
+    expect_reply(sub, "[\"REQ\",\"search\",{\"kinds\":[1],\"search\":\"live\",\"limit\":0}]",
+                 "[\"EOSE\",\"search\"]", "live search catch up");
+    expect_reply(sub, "[\"REQ\",\"nosearch\",{\"kinds\":[1],\"search\":\"zebra\",\"limit\":0}]",
+                 "[\"EOSE\",\"nosearch\"]", "nonmatching search catch up");
+  }
+  char *id = NULL, *frame = make_frame("EVENT", sk, pk, 1, 0, NULL, &id);
+  publish(pub, frame, id, 1);
+  expect_event(sub, "live", id);
+  if (ops) expect_event(sub, "search", id);
+  barrier(sub); /* overlapping filters yield only one EVENT */
+  barrier(other);
+  if (ops) {
+    CHECK(ws_send(sub, "[\"CLOSE\",\"search\"]") == 0, "close search");
+    CHECK(ws_send(sub, "[\"CLOSE\",\"nosearch\"]") == 0, "close nonmatching search");
+    barrier(sub);
+  }
+  publish(pub, frame, id, 1); /* replay-cache duplicate */
+  barrier(sub);
+  free(frame); free(id);
+
+  CHECK(ws_send(sub, "[\"CLOSE\",\"live\"]") == 0, "CLOSE live");
+  barrier(sub); /* CLOSE processed before publishing from the other socket */
+  frame = make_frame("EVENT", sk, pk, 1, 1, NULL, &id);
+  publish(pub, frame, id, 1);
+  barrier(sub);
+  free(frame); free(id);
+
+  expect_reply(sub, "[\"REQ\",\"live\",{\"kinds\":[1],\"limit\":0}]",
+               "[\"EOSE\",\"live\"]", "resubscribe");
+  expect_reply(sub, "[\"REQ\",\"live\",{\"kinds\":[2],\"limit\":0}]",
+               "[\"EOSE\",\"live\"]", "same-id replacement after EOSE");
+  frame = make_frame("EVENT", sk, pk, 1, 2, NULL, &id);
+  publish(pub, frame, id, 1);
+  barrier(sub);
+  free(frame); free(id);
+  frame = make_frame("EVENT", sk, pk, 2, 3, NULL, &id);
+  publish(pub, frame, id, 1);
+  expect_event(sub, "live", id);
+  expect_event(other, "other", id);
+  barrier(sub);
+  free(frame); free(id);
+
+  /* A valid signed but forbidden AUTH-kind EVENT must never fan out. */
+  expect_reply(sub, "[\"REQ\",\"reject\",{\"kinds\":[22242],\"limit\":0}]",
+               "[\"EOSE\",\"reject\"]", "rejection subscription");
+  frame = make_frame("EVENT", sk, pk, 22242, 4, NULL, &id);
+  publish(pub, frame, id, 0);
+  barrier(sub);
+  free(frame); free(id);
+  CHECK(ws_send(sub, "[\"CLOSE\",\"reject\"]") == 0, "close reject");
+
+  const int kinds[] = {0, 10001, 30023};
+  for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {
+    char req[160];
+    snprintf(req, sizeof req, "[\"REQ\",\"replace\",{\"kinds\":[%d],\"limit\":0}]", kinds[i]);
+    expect_reply(sub, req, "[\"EOSE\",\"replace\"]", "replaceable catch up");
+    frame = make_frame("EVENT", sk, pk, kinds[i], 10, "[[\"d\",\"article\"]]", &id);
+    publish(pub, frame, id, 1);
+    expect_event(sub, "replace", id);
+    char *newid = NULL, *newframe = make_frame("EVENT", sk, pk, kinds[i], 11,
+                                              "[[\"d\",\"article\"]]", &newid);
+    publish(pub, newframe, newid, 1);
+    expect_event(sub, "replace", newid);
+    if (ops) { /* real store rejects a superseded version */
+      publish(pub, frame, id, 1); /* ingress duplicate is acknowledged, not redelivered */
+      barrier(sub);
+      char *staleid = NULL, *stale = make_frame("EVENT", sk, pk, kinds[i], 9,
+                                                "[[\"d\",\"article\"]]", &staleid);
+      publish(pub, stale, staleid, 0);
+      barrier(sub);
+      free(stale); free(staleid);
+    }
+    free(frame); free(id); free(newframe); free(newid);
+  }
+  close(sub); /* live subscriptions and retained filters freed under ASan */
+  frame = make_frame("EVENT", sk, pk, 2, 30, NULL, &id);
+  publish(pub, frame, id, 1);
+  expect_event(other, "other", id);
+  close(pub); close(other);
+  server_stop(&s);
+  if (ops) {
+    /* A fresh relay policy/cache must still suppress an existing storage id. */
+    CHECK(server_start(&s, st, dir, 8, ops, 0) == 0, "restart live server");
+    sub = connect_client(&s); pub = connect_client(&s);
+    expect_reply(sub, "[\"REQ\",\"live\",{\"kinds\":[2],\"limit\":0}]",
+                 "[\"EOSE\",\"live\"]", "restart subscription");
+    publish(pub, frame, id, 1);
+    barrier(sub);
+    close(sub); close(pub);
+    server_stop(&s);
+  }
+  free(frame); free(id);
+  free(pk); free(sk);
+}
+
+static void authenticate(int fd, const char *sk, const char *pk) {
+  char *challenge = ws_recv(fd);
+  CHECK(challenge && strlen(challenge) == 43, "receive AUTH challenge");
+  char tags[256];
+  snprintf(tags, sizeof tags, "[[\"challenge\",\"%.32s\"],[\"relay\",\"wss://vault.example.com/\"]]",
+           challenge ? challenge + 9 : "");
+  free(challenge);
+  char *id = NULL, *frame = make_frame("AUTH", sk, pk, 22242, 1, tags, &id);
+  publish(fd, frame, id, 1);
+  free(frame); free(id);
+}
+
+static void run_vault_live(const char *dir, NostrStorage *st,
+                           const RelaydAsyncStorageOps *ops) {
+  char *sk = nostr_key_generate_private(), *pk = nostr_key_get_public(sk);
+  char *outsider_sk = nostr_key_generate_private(), *outsider_pk = nostr_key_get_public(outsider_sk);
+  RelaydConfig cfg;
+  CHECK(relayd_config_load(NULL, &cfg) == 0, "vault config");
+  snprintf(cfg.auth, sizeof cfg.auth, "%s", "optional");
+  snprintf(cfg.relay_url, sizeof cfg.relay_url, "%s", "wss://vault.example.com/");
+  cfg.vault_enabled = 1;
+  cfg.vault_pubkeys_count = 1;
+  snprintf(cfg.vault_pubkeys[0], sizeof cfg.vault_pubkeys[0], "%s", pk);
+  cfg.max_filters = 2;
+  Server s;
+  CHECK(server_start_config(&s, st, dir, 8, ops, 0, &cfg) == 0, "vault server start");
+  int allowed = connect_client(&s), pub = connect_client(&s);
+  int unauth = connect_client(&s), outsider = connect_client(&s);
+  authenticate(allowed, sk, pk);
+  authenticate(pub, sk, pk);
+  authenticate(outsider, outsider_sk, outsider_pk);
+  char *challenge = ws_recv(unauth);
+  CHECK(challenge && strstr(challenge, "AUTH"), "unauth challenge");
+  free(challenge);
+  expect_reply(allowed, "[\"REQ\",\"vault\",{\"limit\":0}]",
+               "[\"EOSE\",\"vault\"]", "allowlisted kindless live REQ");
+  expect_reply(unauth, "[\"REQ\",\"vault\",{\"limit\":0}]",
+               "[\"CLOSED\",\"vault\",\"auth-required:", "unauth kindless denied");
+  expect_reply(outsider, "[\"REQ\",\"vault\",{\"limit\":0}]",
+               "[\"CLOSED\",\"vault\",\"restricted:", "outsider kindless denied");
+  expect_reply(allowed, "[\"REQ\",\"excess\",{\"kinds\":[1]},{\"kinds\":[2]},{\"kinds\":[3]}]",
+               "[\"CLOSED\",\"excess\",\"invalid:", "max_filters enforced");
+  const int protected[] = {30078, 445, 1059};
+  for (int i = 0; i < 3; i++) {
+    char req[128];
+    snprintf(req, sizeof req, "[\"REQ\",\"vault\",{\"kinds\":[%d]}]", protected[i]);
+    expect_reply(unauth, req, "[\"CLOSED\",\"vault\",\"auth-required:", "unauth protected REQ denied");
+    expect_reply(outsider, req, "[\"CLOSED\",\"vault\",\"restricted:", "outsider protected REQ denied");
+    char *id = NULL, *frame = make_frame("EVENT", sk, pk, protected[i], 40 + i,
+                                        "[[\"d\",\"vault\"]]", &id);
+    publish(pub, frame, id, 1);
+    expect_event(allowed, "vault", id);
+    barrier(unauth);
+    barrier(outsider);
+    free(frame); free(id);
+  }
+  close(allowed); close(pub); close(unauth); close(outsider);
+  free(pk); free(sk); free(outsider_pk); free(outsider_sk);
   server_stop(&s);
 }
 
@@ -634,7 +955,29 @@ int main(void) {
   run_storage_less(dir);
   run_with_storage(dir);
   run_async_commit(dir);
-  rmdir(dir);
+  run_live_overflow(dir);
+  memset(&g_fake, 0, sizeof g_fake);
+  g_fake.mode = FAKE_EMPTY_ITER;
+  NostrStorage fake = { .vt = &g_fake_vt };
+  run_live(dir, &fake, NULL);
+  run_vault_live(dir, &fake, NULL);
+#ifdef HAVE_TEST_NOSTRDB
+  char db[256];
+  snprintf(db, sizeof db, "%s/db", dir);
+  NostrStorage *real = nostrdb_storage_new();
+  CHECK(real && real->vt->open(real, db, NULL) == 0, "open real nostrdb");
+  if (real) {
+    run_live(dir, real, nostrdb_storage_async_ops());
+    run_vault_live(dir, real, nostrdb_storage_async_ops());
+    real->vt->close(real);
+    free(real);
+  }
+  char path[300];
+  snprintf(path, sizeof path, "%s/data.mdb", db); unlink(path);
+  snprintf(path, sizeof path, "%s/lock.mdb", db); unlink(path);
+  CHECK(rmdir(db) == 0, "remove test database");
+#endif
+  CHECK(rmdir(dir) == 0, "remove test directory");
   if (g_failures) {
     fprintf(stderr, "test_relay_req_contract: %d failure(s)\n", g_failures);
     return 1;

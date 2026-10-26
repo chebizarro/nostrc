@@ -12,11 +12,14 @@ extern "C" {
 #endif
 
 struct ConnState;
+struct RelaydPendingAck;
 typedef struct {
   NostrStorage *storage;
   const RelaydAsyncStorageOps *async_storage;
   unsigned int ack_timeout_ms;
   struct ConnState *clients;
+  struct RelaydPendingAck *orphan_acks;
+  size_t pending_stores; /* global bound, including disconnected publishers */
   RelaydConfig cfg;
   RelayPolicy *policy;
   VerificationBudget *verification_budget;

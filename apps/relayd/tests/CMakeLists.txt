@@ -91,14 +91,18 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
   )
 endif()
 
-# NIP-01 REQ contract of the relay core, with and without storage: every
-# REQ ends in EOSE or CLOSED (nostrc-prqu.14). In-process server on a Unix
-# listener, scripted fake storage.
+# NIP-01 REQ catch-up/live contract, with and without storage: EOSE ends
+# history, not the subscription; CLOSED refuses a REQ. In-process server
+# on a Unix listener, scripted storage plus real nostrdb when available.
 if(UNIX AND NOT CYGWIN)
   find_package(Threads REQUIRED)
   add_executable(test_relay_req_contract test_relay_req_contract.c)
   target_link_libraries(test_relay_req_contract PRIVATE
     nostr-relay-server nostr nostr_json Threads::Threads)
+  if(TARGET nostrdb_storage)
+    target_link_libraries(test_relay_req_contract PRIVATE nostrdb_storage)
+    target_compile_definitions(test_relay_req_contract PRIVATE HAVE_TEST_NOSTRDB=1)
+  endif()
   add_test(NAME relayd_req_contract COMMAND test_relay_req_contract)
   set_tests_properties(relayd_req_contract PROPERTIES
     TIMEOUT 60

@@ -23,17 +23,138 @@
 #include "relay_ingress.h"
 #include "relay_policy.h"
 
-static void ws_send_text(struct lws *wsi, const char *s) {
-  if (!wsi || !s) return;
-  size_t blen = strlen(s);
-  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + blen);
-  if (!buf) return;
-  memcpy(&buf[LWS_PRE], s, blen);
-  lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_TEXT);
-  free(buf);
+static int conn_sub_find(const ConnState *cs, const char *sub, size_t sub_len);
+static const char *vault_denial(const RelaydCtx *ctx, const ConnState *cs);
+static int vault_kind(int kind);
+static int filters_include_vault(NostrFilter **filters, size_t n);
+
+static void frame_free(RelaydFrame *frame) {
+  free(frame->text);
+  free(frame);
 }
 
-static inline int is_replaceable_kind(int kind) { return kind == 0 || kind == 3 || kind == 41; }
+static void queue_text(ConnState *cs, const char *text, const char *subid,
+                       const char *event_id) {
+  if (!cs || !cs->wsi || !text || cs->closing) return;
+  size_t len = strlen(text);
+  if (cs->send_count >= RELAYD_MAX_QUEUED_FRAMES ||
+      len > RELAYD_MAX_QUEUED_BYTES - cs->send_bytes) goto overflow;
+  RelaydFrame *frame = calloc(1, sizeof *frame);
+  if (!frame) goto overflow;
+  frame->text = malloc(LWS_PRE + len);
+  if (!frame->text) { free(frame); goto overflow; }
+  memcpy(frame->text + LWS_PRE, text, len);
+  frame->length = len;
+  if (subid) snprintf(frame->subid, sizeof frame->subid, "%s", subid);
+  if (event_id) snprintf(frame->event_id, sizeof frame->event_id, "%s", event_id);
+  if (cs->send_tail) cs->send_tail->next = frame;
+  else cs->send_head = frame;
+  cs->send_tail = frame;
+  cs->send_count++;
+  cs->send_bytes += len;
+  lws_callback_on_writable(cs->wsi);
+  return;
+overflow:
+  cs->closing = 1;
+  lws_callback_on_writable(cs->wsi);
+}
+
+void relayd_conn_send_text(struct lws *wsi, const char *text) {
+  if (wsi) queue_text((ConnState*)lws_wsi_user(wsi), text, NULL, NULL);
+}
+
+#define ws_send_text relayd_conn_send_text
+
+void relayd_conn_send_free_all(ConnState *cs) {
+  while (cs->send_head) {
+    RelaydFrame *next = cs->send_head->next;
+    frame_free(cs->send_head);
+    cs->send_head = next;
+  }
+  cs->send_tail = NULL;
+  cs->send_count = cs->send_bytes = 0;
+}
+
+static void send_event(ConnState *cs, const char *subid, const char *json,
+                        const char *id) {
+  size_t need = strlen(json) + strlen(subid) + 16;
+  char *frame = malloc(need);
+  if (!frame) { cs->closing = 1; lws_callback_on_writable(cs->wsi); return; }
+  snprintf(frame, need, "[\"EVENT\",\"%s\",%s]", subid, json);
+  queue_text(cs, frame, subid, id);
+  free(frame);
+}
+
+static int live_filter_matches(const RelaydCtx *ctx, NostrFilter *filter,
+                                NostrEvent *ev, const char *id) {
+  if (!nostr_filter_matches(filter, ev)) return 0;
+  const char *search = nostr_filter_get_search(filter);
+  if (!search || !*search) return 1;
+  /* NIP-50 semantics belong to the backend, not a substring approximation.
+   * Scope this event-triggered search to the one newly stored id. */
+  NostrStorage *st = ctx->storage;
+  if (!relayd_storage_can_query(st) || !st->vt->search) return -1;
+  NostrFilter *scope = nostr_filter_new();
+  NostrEvent *found = nostr_event_new();
+  if (!scope || !found) { nostr_filter_free(scope); nostr_event_free(found); return -1; }
+  nostr_filter_add_id(scope, id);
+  void *it = NULL;
+  int matches = 0;
+  int rc = st->vt->search(st, search, scope, 1, &it);
+  if (rc) matches = -1;
+  else if (it) {
+    size_t n = 1;
+    rc = st->vt->query_next(st, it, found, &n);
+    if (rc) matches = -1;
+    else if (n) {
+      char *found_id = nostr_event_get_id(found);
+      matches = found_id ? strcmp(found_id, id) == 0 : -1;
+      free(found_id);
+    }
+  }
+  if (it) st->vt->query_free(st, it);
+  nostr_event_free(found);
+  nostr_filter_free(scope);
+  return matches;
+}
+
+/* Called only from ingress/commit reconciliation on the lws service thread.
+ * A matching OR-list produces one delivery, not one per matching filter. */
+static void fanout(const RelaydCtx *ctx, NostrEvent *ev) {
+  char *json = nostr_event_serialize(ev);
+  char *id = nostr_event_get_id(ev);
+  if (!json || !id) {
+    for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
+      if (cs->nsubs) { cs->closing = 1; lws_callback_on_writable(cs->wsi); }
+    free(json); free(id);
+    return;
+  }
+  for (ConnState *cs = ctx->clients; cs; cs = cs->next_client) {
+    if (cs->closing ||
+        (strcmp(ctx->cfg.auth, "required") == 0 && !cs->authed)) continue;
+    for (size_t i = 0; i < cs->nsubs; i++) {
+      RelaydPendingSub *ps = &cs->subs[i];
+      if (vault_denial(ctx, cs) &&
+          (vault_kind(nostr_event_get_kind(ev)) ||
+           filters_include_vault(ps->filters, ps->nfilters))) continue;
+      for (size_t f = 0; f < ps->nfilters; f++) {
+        int matches = live_filter_matches(ctx, ps->filters[f], ev, id);
+        if (matches < 0) {
+          cs->closing = 1;
+          lws_callback_on_writable(cs->wsi);
+          break;
+        }
+        if (!matches) continue;
+        send_event(cs, ps->subid, json, id);
+        break;
+      }
+    }
+  }
+  free(id);
+  free(json);
+}
+
+static inline int is_replaceable_kind(int kind) { return kind == 0 || kind == 3 || (kind >= 10000 && kind < 20000); }
 static inline int is_param_replaceable_kind(int kind) { return kind >= 30000 && kind < 40000; }
 
 static uint32_t frame_operation_cost(const RelaydCtx *ctx, const char *msg,
@@ -132,12 +253,28 @@ static int conn_sub_find(const ConnState *cs, const char *sub, size_t sub_len) {
   return -1;
 }
 
-/* Drop pending sub `idx` without replying (CLOSE, replacement, or EOSE
- * already sent) and keep the FIFO order of the rest. */
+/* Drop a subscription and any queued deliveries on CLOSE/replacement. */
 static void conn_sub_remove(ConnState *cs, const RelaydCtx *ctx, size_t idx) {
   NostrStorage *st = ctx ? ctx->storage : NULL;
   if (cs->subs[idx].it && relayd_storage_can_query(st))
     st->vt->query_free(st, cs->subs[idx].it);
+  for (size_t f = 0; f < cs->subs[idx].nfilters; f++)
+    nostr_filter_free(cs->subs[idx].filters[f]);
+  free(cs->subs[idx].filters);
+  RelaydFrame **link = &cs->send_head;
+  cs->send_tail = NULL;
+  while (*link) {
+    RelaydFrame *frame = *link;
+    if (strcmp(frame->subid, cs->subs[idx].subid) == 0) {
+      *link = frame->next;
+      cs->send_count--;
+      cs->send_bytes -= frame->length;
+      frame_free(frame);
+    } else {
+      cs->send_tail = frame;
+      link = &frame->next;
+    }
+  }
   memmove(&cs->subs[idx], &cs->subs[idx + 1],
           (cs->nsubs - idx - 1) * sizeof(cs->subs[0]));
   cs->nsubs--;
@@ -164,9 +301,11 @@ static void ack_finish(RelaydPendingAck *ack, const RelaydCtx *ctx, int accepted
   ack->ready = 1;
   ack->accepted = accepted;
   (void)relay_ingress_finish(ctx->policy, &ack->ingress, accepted);
+  ((RelaydCtx*)ctx)->pending_stores--;
   if (accepted && ack->old_replaceable_id && ctx->storage->vt->delete_event)
     (void)ctx->storage->vt->delete_event(ctx->storage,
                                          ack->old_replaceable_id);
+  if (accepted) fanout(ctx, ack->ingress.event);
 }
 
 static void ack_schedule_timer(struct lws *wsi, const ConnState *cs) {
@@ -202,6 +341,31 @@ void relayd_nip01_reconcile_all(const RelaydCtx *ctx) {
   if (ctx->async_storage->drain) ctx->async_storage->drain(ctx->storage);
   for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
     ack_reconcile_connection(cs->wsi, cs, ctx);
+  RelaydPendingAck **link = &((RelaydCtx*)ctx)->orphan_acks;
+  while (*link) {
+    RelaydPendingAck *ack = *link;
+    int visible = ctx->async_storage->visible(ctx->storage, ack->ingress.binary_id);
+    if (visible == 0 && rate_limit_now_ms() < ack->deadline_ms) {
+      link = &ack->next;
+      continue;
+    }
+    ack_finish(ack, ctx, visible > 0);
+    *link = ack->next;
+    nostr_event_free(ack->ingress.event);
+    free(ack->old_replaceable_id);
+    free(ack);
+  }
+}
+
+void relayd_nip01_free_orphans(const RelaydCtx *ctx) {
+  while (ctx->orphan_acks) {
+    RelaydPendingAck *ack = ctx->orphan_acks;
+    ((RelaydCtx*)ctx)->orphan_acks = ack->next;
+    ack_finish(ack, ctx, 0);
+    nostr_event_free(ack->ingress.event);
+    free(ack->old_replaceable_id);
+    free(ack);
+  }
 }
 
 void relayd_nip01_on_timer(struct lws *wsi, ConnState *cs,
@@ -215,12 +379,14 @@ void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx) {
   while (ack) {
     RelaydPendingAck *next = ack->next;
     if (!ack->ready && ctx && ctx->async_storage) {
-      int visible = ctx->async_storage->visible(ctx->storage,
-                                                ack->ingress.binary_id);
-      ack_finish(ack, ctx, visible > 0);
+      /* Commit ownership outlives the publisher. Never retain ConnState. */
+      ack->next = ctx->orphan_acks;
+      ((RelaydCtx*)ctx)->orphan_acks = ack;
+    } else {
+      nostr_event_free(ack->ingress.event);
+      free(ack->old_replaceable_id);
+      free(ack);
     }
-    free(ack->old_replaceable_id);
-    free(ack);
     ack = next;
   }
   cs->ack_head = cs->ack_tail = NULL;
@@ -229,13 +395,15 @@ void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx) {
 
 static int ack_enqueue(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
                        RelayIngressResult *ingress, char **old_id) {
-  if (cs->nacks >= RELAYD_MAX_PENDING_ACKS) return -EAGAIN;
+  if (cs->nacks >= RELAYD_MAX_PENDING_ACKS ||
+      ctx->pending_stores >= RELAYD_MAX_PENDING_ACKS) return -EAGAIN;
   RelaydPendingAck *ack = calloc(1, sizeof *ack);
   if (!ack) return -ENOMEM;
   int rc = ctx->async_storage->enqueue(ctx->storage, ingress->event);
   if (rc != 0) { free(ack); return rc; }
   ack->ingress = *ingress;
-  ack->ingress.event = NULL; /* the caller frees its event after enqueue */
+  ingress->event = NULL; /* the ack owns it through commit and fanout */
+  ((RelaydCtx*)ctx)->pending_stores++;
   ingress->replay_reserved = 0; /* reservation now belongs to the ack */
   ack->old_replaceable_id = *old_id;
   *old_id = NULL;
@@ -249,66 +417,146 @@ static int ack_enqueue(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
   return 0;
 }
 
-void relayd_nip01_on_writable(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx) {
-  if (!wsi || !cs) return;
-  NostrStorage *st = ctx ? ctx->storage : NULL;
-  if (relayd_nip42_maybe_send_challenge_on_writable(wsi, cs, ctx)) return;
+static int write_text(struct lws *wsi, const char *text) {
+  if (!text) return -1;
+  size_t len = strlen(text);
+  unsigned char *buf = malloc(LWS_PRE + len);
+  if (!buf) return -1;
+  memcpy(buf + LWS_PRE, text, len);
+  int written = lws_write(wsi, buf + LWS_PRE, len, LWS_WRITE_TEXT);
+  free(buf);
+  return written < 0 || (size_t)written != len ? -1 : 0;
+}
+
+static int has_backfill(const ConnState *cs) {
+  for (size_t i = 0; i < cs->nsubs; i++)
+    if (!cs->subs[i].eose_sent) return 1;
+  return 0;
+}
+
+int relayd_nip01_on_writable(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx) {
+  if (!wsi || !cs || !ctx) return -1;
+  if (cs->closing) {
+    lws_close_reason(wsi, LWS_CLOSE_STATUS_POLICY_VIOLATION,
+                     (unsigned char*)"delivery unavailable", 20);
+    return -1;
+  }
+  if (relayd_nip42_maybe_send_challenge_on_writable(wsi, cs, ctx)) goto more;
   if (cs->ack_head && cs->ack_head->ready) {
     RelaydPendingAck *ack = cs->ack_head;
     char *ok = nostr_ok_build_json(ack->ingress.canonical_id, ack->accepted,
                                    ack->accepted ? "" : "error: storage commit unconfirmed");
-    if (ok) { ws_send_text(wsi, ok); free(ok); }
+    if (!ok) return -1;
+    ws_send_text(wsi, ok);
+    free(ok);
     cs->ack_head = ack->next;
     if (!cs->ack_head) cs->ack_tail = NULL;
     cs->nacks--;
+    nostr_event_free(ack->ingress.event);
     free(ack->old_replaceable_id);
     free(ack);
     ack_schedule_timer(wsi, cs);
-    if (cs->ack_head && cs->ack_head->ready) lws_callback_on_writable(wsi);
-    else if (cs->nsubs) lws_callback_on_writable(wsi);
-    return;
   }
-  if (cs->nsubs == 0 || !relayd_storage_can_query(st)) return;
-  RelaydPendingSub *ps = &cs->subs[0];
-  int sent_any = 0;
-  for (int i = 0; i < 8; i++) {
+  /* Live frames wait behind that subscription's catch-up/EOSE. Control
+   * frames can pass them. Exactly one lws_write per writable callback. */
+  if (cs->prefer_backfill && has_backfill(cs)) goto backfill;
+  RelaydFrame **link = &cs->send_head;
+  RelaydFrame *prev = NULL;
+  while (*link) {
+    RelaydFrame *frame = *link;
+    int idx = frame->subid[0] ? conn_sub_find(cs, frame->subid, strlen(frame->subid)) : -1;
+    if (idx >= 0 && !cs->subs[idx].eose_sent) {
+      prev = frame;
+      link = &frame->next;
+      continue;
+    }
+    *link = frame->next;
+    if (cs->send_tail == frame) cs->send_tail = prev;
+    cs->send_count--;
+    cs->send_bytes -= frame->length;
+    int n = lws_write(wsi, (unsigned char*)frame->text + LWS_PRE,
+                       frame->length, LWS_WRITE_TEXT);
+    int failed = n < 0 || (size_t)n != frame->length;
+    frame_free(frame);
+    if (failed) return -1;
+    cs->prefer_backfill = 1;
+    goto more;
+  }
+backfill:
+  for (size_t step = 0; step < cs->nsubs; step++) {
+    size_t i = (cs->backfill_cursor + step) % cs->nsubs;
+    RelaydPendingSub *ps = &cs->subs[i];
+    if (ps->eose_sent) continue;
+    cs->backfill_cursor = (i + 1) % cs->nsubs;
+    cs->prefer_backfill = 0;
+    const char *denial = vault_denial(ctx, cs);
+    if ((strcmp(ctx->cfg.auth, "required") == 0 && !cs->authed) ||
+        (denial && filters_include_vault(ps->filters, ps->nfilters))) {
+      char *closed = nostr_closed_build_json(ps->subid, denial ? denial : "auth-required: NIP-42 required");
+      int rc = write_text(wsi, closed);
+      free(closed);
+      conn_sub_remove(cs, ctx, i);
+      if (rc) return -1;
+      goto more;
+    }
+    NostrStorage *st = ctx->storage;
     NostrEvent *ev = nostr_event_new();
-    if (!ev) break;
-    size_t n = 1;
-    int rc = st->vt->query_next(st, ps->it, ev, &n);
-    char *ejson = NULL;
+    if (!ev) return -1;
+    size_t n = 0;
+    int rc = 0;
+    if (ps->it) {
+      n = 1;
+      rc = st->vt->query_next(st, ps->it, ev, &n);
+    }
     if (rc == 0 && n > 0) {
-      ejson = nostr_event_serialize_compact(ev);
-      if (!ejson) ejson = nostr_event_serialize(ev);
+      /* The writer can commit between the previous notification and this
+       * iterator read. Reconcile before sending so that a pending commit
+       * visible in history has exactly one queued live copy. */
+      relayd_nip01_reconcile_all(ctx);
+      char *id = nostr_event_get_id(ev);
+      int queued = 0;
+      for (RelaydFrame *f = cs->send_head; f; f = f->next)
+        if (id && strcmp(f->subid, ps->subid) == 0 &&
+            strcmp(f->event_id, id) == 0) { queued = 1; break; }
+      /* A commit during catch-up may also appear in the iterator. Keep
+       * the queued live copy and do not deliver that id twice. */
+      if (!queued && !(vault_denial(ctx, cs) && vault_kind(nostr_event_get_kind(ev)))) {
+        char *json = nostr_event_serialize(ev);
+        if (!json) { free(id); nostr_event_free(ev); return -1; }
+        size_t need = strlen(json) + strlen(ps->subid) + 16;
+        char *frame = malloc(need);
+        if (!frame) { free(json); free(id); nostr_event_free(ev); return -1; }
+        snprintf(frame, need, "[\"EVENT\",\"%s\",%s]", ps->subid, json);
+        rc = write_text(wsi, frame);
+        free(frame);
+        free(json);
+      }
+      free(id);
+      nostr_event_free(ev);
+      if (rc) return -1;
+      goto more;
     }
     nostr_event_free(ev);
-    if (!(rc == 0 && n > 0)) break;
-    if (ejson) {
-      /* subid is validated at REQ time: no quote, backslash or control
-       * character, so it can be embedded verbatim. */
-      size_t need = strlen(ejson) + strlen(ps->subid) + 64;
-      unsigned char *buf = (unsigned char*)malloc(LWS_PRE + need);
-      if (buf) {
-        int m = snprintf((char*)&buf[LWS_PRE], need, "[\"EVENT\",\"%s\",%s]", ps->subid, ejson);
-        if (m > 0) { lws_write(wsi, &buf[LWS_PRE], (size_t)m, LWS_WRITE_TEXT); sent_any = 1; }
-        free(buf);
-      }
-      free(ejson);
-    }
+    if (ps->it) st->vt->query_free(st, ps->it);
+    ps->it = NULL;
+    char *frame = rc ? nostr_closed_build_json(ps->subid, "error: query failed")
+                     : nostr_eose_build_json(ps->subid);
+    int failed = write_text(wsi, frame);
+    free(frame);
+    if (rc) conn_sub_remove(cs, ctx, i);
+    else ps->eose_sent = 1;
+    if (failed) return -1;
+    goto more;
   }
-  if (sent_any) {
-    lws_callback_on_writable(wsi);
-    return;
-  }
-  char *eose = nostr_eose_build_json(ps->subid);
-  if (eose) { ws_send_text(wsi, eose); free(eose); }
-  conn_sub_remove(cs, ctx, 0);
-  if (cs->nsubs > 0) lws_callback_on_writable(wsi);
+more:
+  if (cs->closing || cs->send_head || has_backfill(cs) ||
+      (cs->ack_head && cs->ack_head->ready)) lws_callback_on_writable(wsi);
+  return 0;
 }
 
 /* test-only ingress decision is provided in apps/relayd/src/policy_decider.c */
 
-/* Terminal reply for subscription `sub` (echoed in full, JSON-escaped):
+/* Reply for subscription `sub` (echoed in full, JSON-escaped):
  * EOSE when `closed_reason` is NULL, otherwise CLOSED with that reason. */
 static void send_sub_reply(struct lws *wsi, const char *sub, size_t sub_len,
                            const char *closed_reason) {
@@ -353,8 +601,8 @@ static void free_filter_array(NostrFilter **arr, size_t n) {
 }
 
 /*
- * NIP-01 REQ. Contract (nostrc-prqu.14): every REQ gets a terminal reply
- * promptly, whatever storage the relay has --
+ * NIP-01 REQ: every REQ gets a catch-up boundary or refusal promptly,
+ * whatever storage the relay has. EOSE retains the live subscription --
  *
  *   EOSE             every stored match (possibly none) has been sent. A
  *                    relay without storage has an empty store, so it
@@ -418,6 +666,9 @@ static void handle_req(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
                    "no backslash or control characters");
     return;
   }
+  /* Replacement also cancels buffered frames from the old generation. */
+  int existing = conn_sub_find(cs, sub, sub_len);
+  if (!count && existing >= 0) conn_sub_remove(cs, ctx, (size_t)existing);
   if (strcmp(ctx->cfg.auth, "required") == 0 && !cs->authed) {
     send_sub_reply(wsi, sub, sub_len, "auth-required: NIP-42 required");
     return;
@@ -426,17 +677,14 @@ static void handle_req(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
     send_sub_reply(wsi, sub, sub_len, "invalid: REQ needs at least one filter");
     return;
   }
-  /* NIP-01: a REQ reusing a pending id replaces that subscription. */
-  int existing = conn_sub_find(cs, sub, sub_len);
-  if (existing >= 0) conn_sub_remove(cs, ctx, (size_t)existing);
   size_t max_pending = ctx->cfg.max_subs > 0 &&
                                (size_t)ctx->cfg.max_subs < RELAYD_MAX_PENDING_SUBS
                            ? (size_t)ctx->cfg.max_subs
                            : RELAYD_MAX_PENDING_SUBS;
-  if (cs->nsubs >= max_pending) {
+  if (!count && cs->nsubs >= max_pending) {
     char reason[96];
     snprintf(reason, sizeof reason,
-             "rate-limited: at most %zu subscriptions in flight per connection",
+             "rate-limited: at most %zu active subscriptions per connection",
              max_pending);
     send_sub_reply(wsi, sub, sub_len, reason);
     return;
@@ -473,33 +721,72 @@ static void handle_req(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
   for (size_t i = 0; i < n; i++)
     if (arr[i]->limit > ctx->cfg.max_limit) arr[i]->limit = ctx->cfg.max_limit;
 
+  size_t nquery = 0;
+  for (size_t i = 0; i < n; i++) if (!arr[i]->limit_zero) nquery++;
   if (relayd_nip50_maybe_start_search(wsi, cs, ctx, sub, sub_len, arr, n)) {
     /* NIP-50 answered: CLOSED "unsupported: search", or a result stream
      * that on_writable finishes with EOSE. */
-  } else if (!relayd_storage_can_query(st)) {
+  } else if (!relayd_storage_can_query(st) || nquery == 0) {
     /* No storage means no stored events: the backfill is trivially done. */
-    send_sub_reply(wsi, sub, sub_len, NULL);
+    relayd_conn_sub_push(wsi, cs, sub, sub_len, NULL);
   } else {
     /* The storage vtable takes a contiguous NostrFilter array; `arr` holds
      * separately allocated filters. Shallow copies: `arr` keeps ownership,
      * so query() must not retain `filters` past its return. The top-level
      * limit argument is 0 ("derive from the filters"): each filter carries
      * its own limit, already clamped to max_limit above. */
-    NostrFilter *flat = (NostrFilter*)calloc(n, sizeof(NostrFilter));
+    NostrFilter *flat = (NostrFilter*)calloc(nquery, sizeof(NostrFilter));
     if (!flat) {
       send_sub_reply(wsi, sub, sub_len, "error: out of memory");
     } else {
-      for (size_t i = 0; i < n; i++) flat[i] = *arr[i];
+      size_t j = 0;
+      for (size_t i = 0; i < n; i++)
+        if (!arr[i]->limit_zero) flat[j++] = *arr[i];
       int err = 0;
-      void *it = st->vt->query(st, flat, n, 0, 0, 0, &err);
+      void *it = st->vt->query(st, flat, nquery, 0, 0, 0, &err);
       free(flat);
-      if (it)
+      if (err) {
+        if (it) st->vt->query_free(st, it);
+        send_sub_reply(wsi, sub, sub_len, "error: query failed");
+      } else {
         relayd_conn_sub_push(wsi, cs, sub, sub_len, it);
-      else
-        send_sub_reply(wsi, sub, sub_len, err ? "error: query failed" : NULL);
+      }
     }
   }
-  free_filter_array(arr, n);
+  int idx = conn_sub_find(cs, sub, sub_len);
+  if (idx >= 0) {
+    cs->subs[idx].filters = arr;
+    cs->subs[idx].nfilters = n;
+  } else {
+    free_filter_array(arr, n);
+  }
+}
+
+/* Replay reservations cover concurrent ingress; storage covers duplicates
+ * that predate the process/replay-cache lifetime. */
+static int stored_event_exists(const RelaydCtx *ctx, const RelayIngressResult *ingress) {
+  if (ctx->async_storage)
+    return ctx->async_storage->visible(ctx->storage, ingress->binary_id);
+  NostrStorage *st = ctx->storage;
+  if (!relayd_storage_can_query(st)) return 0;
+  NostrFilter *filter = nostr_filter_new();
+  NostrEvent *ev = nostr_event_new();
+  if (!filter || !ev) { nostr_filter_free(filter); nostr_event_free(ev); return -1; }
+  nostr_filter_add_id(filter, ingress->canonical_id);
+  int err = 0;
+  void *it = st->vt->query(st, filter, 1, 1, 0, 0, &err);
+  int exists = err ? -1 : 0;
+  if (it) {
+    size_t n = 1;
+    int rc = st->vt->query_next(st, it, ev, &n);
+    char *id = rc == 0 && n ? nostr_event_get_id(ev) : NULL;
+    exists = rc ? -1 : (id && strcmp(id, ingress->canonical_id) == 0);
+    free(id);
+    st->vt->query_free(st, it);
+  }
+  nostr_filter_free(filter);
+  nostr_event_free(ev);
+  return exists;
 }
 
 void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx, const void *in, size_t len) {
@@ -519,6 +806,10 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
       if (q1 && q2 && (size_t)(q2 - (q1 + 1)) < sizeof(subtmp)) {
         memcpy(subtmp, q1 + 1, (size_t)(q2 - (q1 + 1)));
         subtmp[(size_t)(q2 - (q1 + 1))] = '\0';
+      }
+      if (len >= 6 && memcmp(msg, "[\"REQ\"", 6) == 0) {
+        int idx = conn_sub_find(cs, subtmp, strlen(subtmp));
+        if (idx >= 0) conn_sub_remove(cs, ctx, (size_t)idx);
       }
       char *closed = nostr_closed_build_json(subtmp, "rate-limited");
       if (closed) { ws_send_text(wsi, closed); free(closed); }
@@ -591,6 +882,12 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
       reason = "error: store unavailable";
       (void)relay_ingress_finish(ctx->policy, &ingress, 0);
     } else {
+      int exists = stored_event_exists(ctx, &ingress);
+      if (exists < 0 || (exists > 0 && ctx->async_storage)) {
+        rc_store = exists > 0 ? 0 : -1;
+        reason = exists > 0 ? "duplicate: already stored" : "error: duplicate lookup failed";
+        (void)relay_ingress_finish(ctx->policy, &ingress, exists > 0);
+      } else {
       NostrEvent *ev = ingress.event;
       const char *epk = nostr_event_get_pubkey(ev);
       int kind = nostr_event_get_kind(ev);
@@ -610,9 +907,7 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
             if (is_param_replaceable_kind(kind)) {
               NostrTags *tags = (NostrTags*)nostr_event_get_tags(ev);
               const char *dval = tags ? nostr_tags_get_d(tags) : NULL;
-              if (dval && *dval) {
-                nostr_filter_tags_append(ff, "d", dval, NULL);
-              }
+              nostr_filter_tags_append(ff, "d", dval ? dval : "", NULL);
             }
             /* vt->query takes an array of NostrFilter structs: pass the
              * one filter itself (not an array of pointers to it). */
@@ -649,12 +944,17 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
             rc_store = st->vt->put_event(st, ev);
             reason = rc_store == 0 ? "" : "error: store failed";
             (void)relay_ingress_finish(ctx->policy, &ingress, rc_store == 0);
+            /* Synchronous wrappers may have additional durable effects
+             * (session outbox). Still call put_event for existing ids, but
+             * never redeliver them as newly stored events. */
+            if (rc_store == 0 && !exists) fanout(ctx, ev);
             if (rc_store == 0 && old_replaceable_id &&
                 st->vt->delete_event)
               (void)st->vt->delete_event(st, old_replaceable_id);
           }
         }
         free(old_replaceable_id);
+      }
       }
     }
 

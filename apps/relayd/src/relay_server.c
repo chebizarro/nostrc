@@ -310,6 +310,7 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
             (const RelaydCtx *)lws_context_user(lws_get_context(wsi));
         if (cs && ctx) {
           relayd_conn_subs_free_all(cs, ctx);
+          relayd_conn_send_free_all(cs);
           if (cs->wsi == wsi) {
             relayd_conn_acks_free_all(cs, ctx);
             if (cs->prev_client) cs->prev_client->next_client = cs->next_client;
@@ -339,8 +340,8 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
           (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
       break;
     case LWS_CALLBACK_SERVER_WRITEABLE:
-      relayd_nip01_on_writable(wsi, (ConnState*)user, (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
-      break;
+      return relayd_nip01_on_writable(wsi, (ConnState*)user,
+          (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
     case LWS_CALLBACK_RECEIVE: {
       const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
       ConnState *cs = (ConnState *)user;
@@ -706,6 +707,9 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
       break;
     }
 
+    /* Commit notifications wake us immediately; the existing loop wake
+     * also expires orphaned publisher commit deadlines without a busy loop. */
+    if (ctx.orphan_acks) relayd_nip01_reconcile_all(&ctx);
     unsigned long long now_ms = rate_limit_now_ms();
     if (last_ret_ms == 0 || now_ms - last_ret_ms >= 5000) {
       retention_tick(&ctx);
@@ -717,6 +721,7 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   lws_sul_cancel(&wake.sul);
   if (ctx.async_storage) ctx.async_storage->stop(ctx.storage);
   lws_context_destroy(context);
+  relayd_nip01_free_orphans(&ctx);
   sigaction(SIGINT, &prev_int, NULL);
   sigaction(SIGTERM, &prev_term, NULL);
   relay_policy_destroy(policy);
