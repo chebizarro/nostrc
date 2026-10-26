@@ -3,5 +3,5 @@
 .beads/issues.jsonl merge=union
 .beads/interactions.jsonl merge=union
 
-# Unified-diff context has a space prefix before tabs and on blank lines.
-third_party/patches/nostrdb/*.patch whitespace=-blank-at-eol,-space-before-tab
+# Unified-diff context includes literal blank lines and space prefixes.
+third_party/patches/nostrdb/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

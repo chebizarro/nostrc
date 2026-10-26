@@ -151,8 +151,34 @@ static void unaligned_sha256(void)
     }
 }
 
+static void unaligned_json_tokens(void)
+{
+    static const unsigned char expected_id[32] = {
+        0xbc, 0x22, 0xfd, 0xf4, 0x0d, 0x80, 0xeb, 0xa2,
+        0xb2, 0x43, 0xab, 0x3a, 0xb2, 0x1e, 0x9e, 0xe9,
+        0xe5, 0x65, 0x37, 0x71, 0x38, 0xd0, 0x18, 0x5e,
+        0x59, 0xfd, 0xb6, 0xcd, 0x34, 0x77, 0xd2, 0x15
+    };
+    unsigned char scratch[8192 + 8];
+    char json[1024];
+    int len = snprintf(json, sizeof json,
+        "{\"id\":\"%064x\",\"pubkey\":\"%064x\",\"sig\":\"%0128x\","
+        "\"created_at\":1000,\"kind\":1,\"tags\":[[\"t\",\"tag\"]],\"content\":\"word\"}",
+        1, 1, 0);
+    for (size_t offset = 0; offset < 8; ++offset) {
+        struct ndb_note *note;
+        CHECK(ndb_note_from_json(json, len, &note, scratch + offset, 8191));
+        CHECK(ndb_note_created_at(note) == 1000);
+        CHECK(ndb_note_kind(note) == 1);
+        unsigned char commitment[1024], id[32 + 8];
+        CHECK(ndb_calculate_id(note, commitment, sizeof commitment, id + offset));
+        CHECK(memcmp(id + offset, expected_id, sizeof expected_id) == 0);
+    }
+}
+
 int main(void)
 {
+    unaligned_json_tokens();
     unaligned_sha256();
     full_width_varints();
     empty_values();

@@ -1,0 +1,11 @@
+--- a/test.c
++++ b/test.c
+@@ -2887,7 +2887,7 @@
+ 	sub_id = ndb_subscribe(ndb, f, 1);
+ 
+ 	ndb_process_event(ndb, bad_note, strlen(bad_note));
+-	ndb_process_event(ndb, ok_note, strlen(bad_note));
++	ndb_process_event(ndb, ok_note, strlen(ok_note));
+ 
+ 	assert(ndb_wait_for_notes(ndb, sub_id, &note_key, 1) == 1);
+ 

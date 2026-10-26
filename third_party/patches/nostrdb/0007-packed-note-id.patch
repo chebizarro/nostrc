@@ -1,0 +1,20 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -8597,6 +8597,7 @@
+ 
+ int ndb_calculate_id(struct ndb_note *note, unsigned char *buf, int buflen, unsigned char *id) {
+ 	int len;
++	struct sha256 hash;
+ 
+ 	if (!(len = ndb_event_commitment(note, buf, buflen)))
+ 		return 0;
+@@ -8603,7 +8604,8 @@
+ 
+ 	//fprintf(stderr, "%.*s\n", len, buf);
+ 
+-	sha256((struct sha256*)id, buf, len);
++	sha256(&hash, buf, len);
++	memcpy(id, hash.u.u8, sizeof(hash.u.u8));
+ 
+ 	return 1;
+ }

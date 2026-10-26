@@ -30,9 +30,13 @@ function(nostrc_patch_nostrdb target)
     file(RELATIVE_PATH _relative "${_vendor}" "${_input}")
     configure_file("${_input}" "${_overlay}/${_relative}" COPYONLY)
   endforeach()
+  configure_file("${_vendor}/test.c" "${_overlay}/test.c" COPYONLY)
   foreach(_patch IN ITEMS 0001-lmdb-empty-values.patch
       0002-tag-timestamp-alignment.patch 0003-unsigned-varint-shift.patch
-      0004-ccan-sha256-alignment.patch)
+      0004-ccan-sha256-alignment.patch 0005-json-token-alignment.patch
+      0006-json-packed-kind.patch 0007-packed-note-id.patch
+      0008-native-replay-test-length.patch
+      0009-content-block-size-alignment.patch 0010-tag-metadata-alignment.patch)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_queue}/${_patch}")
     execute_process(
       COMMAND "${NOSTRC_PATCH_EXECUTABLE}" -f -F 0 -p1 -i "${_queue}/${_patch}"

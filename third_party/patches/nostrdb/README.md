@@ -8,8 +8,8 @@ The existing hex/talstr CMake compatibility headers are separate from this queue
 
 The root CMake build uses `cmake/NostrdbPatches.cmake` for both `nostrdb`
 (libnostr backend) and `nostrdb_vendored` (private storage backend). It copies
-`src/`, `deps/lmdb/`, and CCAN's SHA256 directory into the build directory,
-applies these patches with
+`src/`, `deps/lmdb/`, CCAN's SHA256 directory, and the native test source into
+the build directory, applies these patches with
 `patch -f -F 0 -p1`, and compiles those copies. A `patch` executable is required.
 The submodule, including its signed test fixtures, is never modified. Original
 inputs and patches are configure dependencies. Patch failure stops configure;
@@ -28,6 +28,22 @@ a vendor update must reconcile or retire the affected patch, not disable it.
 - **0004:** copy SHA256 input blocks into aligned local words before transforming
   them. `HAVE_UNALIGNED_ACCESS` describes hardware, not permission for an
   unaligned typed C load. Digest bytes and the public API are unchanged.
+- **0005:** align JSMN token storage within the JSON parser scratch buffer and
+  round its end down to a whole token. Giftwrap decoding can subdivide scratch
+  at an arbitrary byte offset; the parser must align its own typed storage.
+- **0006:** parse the note kind into a local integer, then use the packed-note
+  setter. Passing a pointer to the packed member to an ordinary integer parser
+  loses its alignment information and permits an unaligned typed store.
+- **0007:** calculate a note ID into an aligned SHA256 result, then copy its bytes
+  to the requested ID buffer. Packed giftwrap/PNS notes need not align their ID
+  member as a `struct sha256`.
+- **0008 (test only):** pass `strlen(ok_note)` for the replay test's `ok_note`,
+  rather than the longer `bad_note` length. Event bytes and the replay assertions
+  are unchanged; the test no longer reads past its string literal.
+- **0009:** copy the encoded content block's 16-bit length into its byte buffer,
+  rather than storing through a potentially unaligned `uint16_t *`.
+- **0010:** load tag-index note keys with `memcpy` when rebuilding reaction,
+  reply and repost metadata, just as in the tag-query path.
 
 ## Upstream status
 
@@ -57,12 +73,16 @@ ctest --test-dir "$BUILD" --output-on-failure \
 ```
 
 The regression covers empty-value insertion, overwrite and shrink; full-width
-varint round trips; SHA256 known-answer hashes at all eight buffer offsets;
+varint round trips; SHA256 known-answer hashes and JSON parsing at all eight
+buffer offsets;
 and ingestion/reopen/query of tag values at all eight length
 residues, with timestamp ordering assertions. Signature checking is intentionally
 outside that structural regression; the relayd tests exercise signed ingestion.
 
-nostrdb's native `test.c` can be linked against the patched CMake archive and
-its normal dependencies, with the same sanitizers; run it from a disposable
-copy of the vendor tree because its tests write databases under `testdata/`.
+nostrdb's patched native `test.c` is generated at
+`$BUILD/nostrdb-patched/<target>/test.c`. Link that source against the matching
+patched CMake archive and its normal dependencies, with the same sanitizers.
+Use the overlay's `src/` include directory so its inline helpers are patched too.
+Run from a disposable copy of the vendor tree because the tests write databases
+under `testdata/`; never run them against the original submodule's fixtures.
 Actual execution results and the separate native-suite blockers are in the bead.
