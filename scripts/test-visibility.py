@@ -102,6 +102,29 @@ target_link_libraries(consumer PRIVATE bridge fixture)
                 except subprocess.CalledProcessError as exc:
                     self.fail(exc.stdout)
 
+    def test_hyphenated_target_static_define(self):
+        # Target names such as marmot-gobject must yield valid C macro names.
+        with tempfile.TemporaryDirectory(prefix="nostrc-visibility-") as tmp:
+            src = pathlib.Path(tmp)
+            (src / "CMakeLists.txt").write_text(f'''
+cmake_minimum_required(VERSION 3.22)
+project(hyphenated_fixture C)
+include("{ROOT}/cmake/NostrcVisibility.cmake")
+add_library(fixture-core STATIC core.c)
+nostrc_library_visibility(fixture-core FIXTURE_API fixture/export.h "include/fixture")
+get_target_property(_defs fixture-core INTERFACE_COMPILE_DEFINITIONS)
+file(WRITE "${{CMAKE_BINARY_DIR}}/interface.txt" "${{_defs}}")
+''')
+            (src / "core.c").write_text('#include "fixture/export.h"\nFIXTURE_API int public_api(void) { return 42; }\n')
+            build = src / "build"
+            try:
+                run("cmake", "-S", str(src), "-B", str(build))
+                run("cmake", "--build", str(build))
+            except subprocess.CalledProcessError as exc:
+                self.fail(exc.stdout)
+            self.assertEqual((build / "interface.txt").read_text(),
+                             "FIXTURE_CORE_STATIC_DEFINE")
+
 
 if __name__ == "__main__":
     unittest.main()
