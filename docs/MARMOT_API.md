@@ -405,52 +405,56 @@ void marmot_message_result_free(MarmotMessageResult *result);
 
 ## MIP-04: Encrypted Media
 
+Use `<marmot/marmot-media.h>` for **encrypted-media-v2**. The retired
+`marmot_encrypt_media()` always returns `MARMOT_ERR_MEDIA_LEGACY_FORMAT`;
+it must not be used to produce new attachments.
+
 ```c
-// Encrypt a file for group sharing
-MarmotError marmot_encrypt_media(
-    Marmot *m,
-    const MarmotGroupId *mls_group_id,
-    const uint8_t *file_data,
-    size_t file_len,
-    const char *mime_type,                 // e.g., "image/png"
-    const char *filename,                  // e.g., "photo.png"
-    MarmotEncryptedMedia *result
-);
+MarmotError marmot_media_encrypt(
+    Marmot *m, const MarmotGroupId *mls_group_id,
+    const uint8_t *plaintext, size_t plaintext_len,
+    const char *media_type, const char *filename,
+    MarmotMediaUpload *out);
 
-// Decrypt a received encrypted file
-MarmotError marmot_decrypt_media(
-    Marmot *m,
-    const MarmotGroupId *mls_group_id,
-    const uint8_t *encrypted_data,
-    size_t enc_len,
-    const MarmotImetaInfo *imeta,
-    uint8_t **plaintext_out,               // Caller frees with free()
-    size_t *plaintext_len
-);
-
-// Encrypted media result
-typedef struct {
-    uint8_t        *encrypted_data;
-    size_t          encrypted_len;
-    uint8_t         nonce[12];             // ChaCha20-Poly1305 nonce
-    uint8_t         file_hash[32];         // SHA-256 of plaintext
-    size_t          original_size;         // Original file size
-    MarmotImetaInfo imeta;                 // Metadata for group message tags
-} MarmotEncryptedMedia;
-
-// Media metadata (from NIP-94 imeta tag)
-typedef struct {
-    char    *mime_type;
-    char    *filename;
-    char    *url;
-    size_t   original_size;
-    uint8_t  file_hash[32];
-    uint8_t  nonce[12];
-    uint64_t epoch;                        // MLS epoch for key derivation
-} MarmotImetaInfo;
-
-void marmot_encrypted_media_clear(MarmotEncryptedMedia *result);
+MarmotError marmot_media_decrypt(
+    Marmot *m, const MarmotGroupId *mls_group_id,
+    uint64_t source_epoch, const MarmotMediaReference *reference,
+    const uint8_t *ciphertext, size_t ciphertext_len,
+    uint8_t **plaintext_out, size_t *plaintext_len);
 ```
+
+`marmot_media_encrypt()` derives media_secret from
+`MLS-Exporter("marmot", "encrypted-media", 32)` for the current epoch. Its
+`MarmotMediaUpload` contains the ciphertext, `source_epoch`, and a
+`MarmotMediaReference` with both SHA-256 hashes, the 12-byte nonce, canonical
+media type and exact filename. Empty files are rejected. Upload the ciphertext
+under `reference.ciphertext_sha256`, then add the returned URL using
+`marmot_media_reference_add_locator(..., MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, url)`.
+Build the tag with `marmot_media_imeta_build()`, observing the group's allowed
+locator kinds:
+
+```text
+["imeta", "v encrypted-media-v2", "locator blossom-v1 <url>",
+ "ciphertext_sha256 <hex>", "plaintext_sha256 <hex>",
+ "nonce <hex>", "m <type>", "filename <name>"]
+```
+
+The source epoch is **not** in the tag. Send the carrying message in
+`upload.source_epoch`; call `marmot_media_check_epoch()` in the same uninterrupted
+turn as message creation (no Commit processed between them), and encrypt/upload
+again if it returns `MARMOT_ERR_MEDIA_EPOCH_CHANGED`.
+
+On receipt, parse the complete tag with `marmot_media_imeta_parse()`, download
+using its ciphertext hash, and pass the decrypted carrying message's
+`MarmotMessageResult.app_msg.epoch` to `marmot_media_decrypt()`. That API supports
+retained earlier epochs and checks the ciphertext hash, AEAD, then plaintext
+hash. A missing epoch secret or invalid attachment makes only the attachment
+unavailable. It must not cause fallback to the current epoch or legacy format.
+
+Free uploads with `marmot_media_upload_clear()`, references with
+`marmot_media_reference_clear()`, tag fields with
+`marmot_media_imeta_fields_free()`, and decrypted bytes with `free()`. See the
+header for complete signatures, validation rules and errors.
 
 ---
 

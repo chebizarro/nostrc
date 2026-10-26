@@ -7,7 +7,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(GNOSTR 0 1 1)
+declare_component_version(GNOSTR 0 2 0)
 
 set(APP_CLIENT_NAME "GNostr")
 set(APP_CLIENT_BIN "gnostr")
