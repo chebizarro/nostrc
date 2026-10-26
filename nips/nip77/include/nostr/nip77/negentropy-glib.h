@@ -1,11 +1,10 @@
 #ifndef NOSTR_NIP77_NEGENTROPY_GLIB_H
 #define NOSTR_NIP77_NEGENTROPY_GLIB_H
 
-#include <nostr/nip77/glib-export.h>
-
 #include <stdbool.h>
 
 #if defined(NOSTR_HAVE_GLIB)
+#include <nostr/nip77/glib-export.h>
 #include <glib-object.h>
 
 G_BEGIN_DECLS

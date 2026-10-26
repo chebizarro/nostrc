@@ -16,6 +16,12 @@ def run(*args, **kwargs):
 
 
 class VisibilityTests(unittest.TestCase):
+    def test_disabled_glib_nip77_header(self):
+        # This installed header is intentionally harmless without GLib enabled,
+        # even when no optional GLib library/export header was generated.
+        run("cc", "-E", "-x", "c", "-I" + str(ROOT / "nips/nip77/include"), "-",
+            input='#include <nostr/nip77/negentropy-glib.h>\n')
+
     def test_nip_generator(self):
         with tempfile.TemporaryDirectory(prefix="nostrc-nip-generator-") as tmp:
             src = pathlib.Path(tmp)
