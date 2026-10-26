@@ -1,0 +1,38 @@
+# cmake -DNM=<nm> -DAPPLE=<bool> -DMODULE=<file> -DEXPECTED=a,b,c -P ...
+# Fail unless MODULE's defined dynamic symbols are exactly EXPECTED.
+if(APPLE)
+  set(_args -gU)
+else()
+  set(_args -D --defined-only)
+endif()
+execute_process(COMMAND "${NM}" ${_args} "${MODULE}"
+  OUTPUT_VARIABLE _out RESULT_VARIABLE _rc ERROR_VARIABLE _err)
+if(NOT _rc EQUAL 0)
+  message(FATAL_ERROR "${NM} failed on ${MODULE}: ${_err}")
+endif()
+string(REGEX REPLACE "\n+$" "" _out "${_out}")
+string(REPLACE "\n" ";" _lines "${_out}")
+set(_actual "")
+foreach(_line IN LISTS _lines)
+  # "<address> <type> <name>[@version]"; keep the name.
+  if(_line MATCHES "([^ \t@]+)(@[^ \t]*)?$")
+    set(_name "${CMAKE_MATCH_1}")
+    if(APPLE)
+      string(REGEX REPLACE "^_" "" _name "${_name}")
+    endif()
+    list(APPEND _actual "${_name}")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES _actual)
+list(SORT _actual)
+string(REPLACE "," ";" _expected "${EXPECTED}")
+list(SORT _expected)
+if(NOT _actual STREQUAL _expected)
+  set(_extra ${_actual})
+  list(REMOVE_ITEM _extra ${_expected})
+  set(_missing ${_expected})
+  list(REMOVE_ITEM _missing ${_actual})
+  message(FATAL_ERROR "${MODULE}: loader export set differs from the declared "
+    "entry points. Unexpected: [${_extra}] Missing (undefined or not marked "
+    "visibility(\"default\")): [${_missing}]")
+endif()

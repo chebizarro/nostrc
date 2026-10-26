@@ -29,7 +29,7 @@ files already declare a version.
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
-| nostr-homed | `gnome/nostr-homed/` | 0.5.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
+| nostr-homed | `gnome/nostr-homed/` | 0.5.1 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | Grotto (Preview) | `apps/grotto/` | 0.1.0 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
@@ -145,6 +145,28 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase D1: nostr-homed PATCH 0.5.0 -> 0.5.1. `pam_nostr.so`
+  and `libnss_nostr.so.2` are compiled hidden-by-default and link with an exact
+  export list (`nostrc_module_visibility`): the PAM module exports only
+  `pam_sm_authenticate`, `pam_sm_setcred`, `pam_sm_acct_mgmt`,
+  `pam_sm_open_session` and `pam_sm_close_session` (48 -> 5 ELF exports); the
+  NSS module exports only the five `_nss_nostr_*` entry points declared in
+  `include/nss_nostr.h` (33 -> 5). The removed exports were auth-client,
+  identity-reader, QR and secure-memory internals from archives linked into
+  dlopen()ed modules, never a link contract; the loader ABI is unchanged
+  (packaging/build correction). The unversioned p11-kit module
+  `libgnostr-pkcs11.so` likewise exports only `C_GetFunctionList` (its
+  internal `gnostr_p11_get_function_list` is hidden); it has no authoritative
+  version, so no numeric bump. gnome/seahorse has no plugin: its unversioned,
+  uninstalled-header `gnostr-secret` archive is compiled hidden-by-default with
+  a generated (not installed) `GNOSTR_SECRET_API` header; every external symbol
+  was already declared API, so its object symbols are unchanged (no bump).
+  libnostr-publish (0.1.0, not a listed component) was already hidden-by-default
+  with `NOSTR_PUBLISH_API`; its 66 ELF exports equal its annotated declarations
+  and are unchanged (no change, no bump). Consumers (nip55l, Groundhog, gnostr,
+  nostr-dav/share/seal/settings/wallet-agent) are rebuilt, not modified. No
+  tags or release-column changes.
 
 - nostrc-er4fz.10 phase D2: gnostr stays 0.2.0 (no bump). Its libpeas
   modules now export only the `peas_register_types` loader entry; their

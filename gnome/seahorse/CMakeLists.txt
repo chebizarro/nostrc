@@ -17,6 +17,16 @@ target_include_directories(gnostr-secret PUBLIC
 target_compile_features(gnostr-secret PRIVATE c_std_11)
 # Linked into libnostr_nip55l_core, which is shared under BUILD_SHARED_LIBS.
 set_target_properties(gnostr-secret PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden by default: secret_store.h's GNOSTR_SECRET_API declarations are the
+# archive's whole API (the generator keeps them default-visible for archives).
+# The export header is not installed because secret_store.h is not installed.
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+nostrc_generate_export_header(gnostr-secret GNOSTR_SECRET_API
+  seahorse/gnostr-secret-export.h)
+set_target_properties(gnostr-secret PROPERTIES
+  C_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+target_include_directories(gnostr-secret PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
 
 # The archive and schema doc are only installed for an explicit helper
 # build; as an internal dependency of the signer they are linked in.
