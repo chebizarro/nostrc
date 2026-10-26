@@ -217,7 +217,7 @@ libnostr_inc = include_directories(
 # string_array.h; the standalone build needs libgo/include on the path.
 libgo_inc = include_directories('../libgo/include', nostrc_build_dir_opt / 'libgo/include')
 
-nips_inc = include_directories(
+nips_inc = [include_directories(
   '../nips/nip01/include',
   '../nips/nip04/include',
   '../nips/nip17/include',
@@ -225,11 +225,11 @@ nips_inc = include_directories(
   '../nips/nip44/include',
   '../nips/nip46/include',
   '../nips/nip11/include',
-)
+)]
 foreach nip : ['nip01', 'nip04', 'nip17', 'nip19', 'nip44', 'nip46', 'nip11']
   export_inc = nostrc_build_dir_opt / 'nips' / nip / 'include'
   if fs.is_dir(export_inc)
-    nips_inc += include_directories(export_inc)
+    nips_inc += [include_directories(export_inc)]
   endif
 endforeach
 

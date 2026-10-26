@@ -119,7 +119,7 @@ libnostr_inc = include_directories(
   cmake_build_dir / 'libjson/include',
 )
 libgo_inc = include_directories('../../libgo/include', cmake_build_dir / 'libgo/include')
-nips_inc = include_directories(
+nips_inc = [include_directories(
   '../../nips/nip01/include',
   '../../nips/nip02/include',
   '../../nips/nip04/include',
@@ -150,11 +150,11 @@ nips_inc = include_directories(
   '../../nips/nip86/include',
   '../../nips/nip94/include',
   '../../gnome/common',
-)
+)]
 foreach nip : ['nip01', 'nip02', 'nip04', 'nip05', 'nip06', 'nip10', 'nip11', 'nip17', 'nip19', 'nip29', 'nip31', 'nip34', 'nip42', 'nip44', 'nip45', 'nip46', 'nip47', 'nip49', 'nip50', 'nip51', 'nip52', 'nip53', 'nip54', 'nip55l', 'nip5f', 'nip77', 'nip86', 'nip94']
   export_inc = cmake_build_dir / 'nips' / nip / 'include'
   if fs.is_dir(export_inc)
-    nips_inc += include_directories(export_inc)
+    nips_inc += [include_directories(export_inc)]
   endif
 endforeach
 

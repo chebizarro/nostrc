@@ -117,9 +117,9 @@ endif
 if nip49_glib_static.found()
   nip49_libs += nip49_glib_static
 endif
-nip49_includes = include_directories('../nips/nip49/include')
+nip49_includes = [include_directories('../nips/nip49/include')]
 if fs.is_dir(cmake_build_dir / 'nips/nip49/include')
-  nip49_includes += include_directories(cmake_build_dir / 'nips/nip49/include')
+  nip49_includes += [include_directories(cmake_build_dir / 'nips/nip49/include')]
 endif
 nip49_dep = declare_dependency(
   dependencies: nip49_libs,
