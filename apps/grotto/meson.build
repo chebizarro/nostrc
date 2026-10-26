@@ -5,7 +5,7 @@
 # This provides meson build support alongside the existing CMake configuration.
 
 project('grotto', 'c',
-  version: '0.1.0',
+  version: '0.1.1',
   default_options: [
     'c_std=gnu11',
     'warning_level=2',
@@ -49,46 +49,36 @@ cmake_build_dir = get_option('cmake_build_dir')
 if cmake_build_dir == ''
   cmake_build_dir = fs.parent(fs.parent(meson.current_source_dir())) / 'build'
 endif
-nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
-  dirs: [cmake_build_dir / 'nostr-gobject'])
+cmake_configuration = get_option('cmake_configuration')
+nostr_gobject_link_dir = cmake_build_dir / 'nostr-gobject'
+if cmake_configuration != ''
+  nostr_gobject_link_dir = nostr_gobject_link_dir / cmake_configuration
+endif
+nostr_gobject_link_export = nostr_gobject_link_dir / 'nostr-gobject-build-tree.pc'
+if not fs.is_file(nostr_gobject_link_export)
+  error('Required CMake GNostr link export missing: ' + nostr_gobject_link_export +
+    '; build the nostr-gobject-build-tree-pc target first (set cmake_configuration for a multi-config tree)')
+endif
+# Core archive paths are explicit in Libs; system dependencies remain shared.
+# Let Meson parse pkg-config output (including quoted paths), not split strings.
+nostr_gobject_link_dep = dependency(nostr_gobject_link_export,
+  method: 'pkg-config')
 nostr_gobject_inc = include_directories('../../nostr-gobject/include',
   cmake_build_dir / 'nostr-gobject/include')
 # The GUI uses Control1; only the CMake-owned daemon hosts the bunker/gate.
-nip55l_core_lib = cc.find_library('nostr_nip55l_core', dirs: [cmake_build_dir / 'nips/nip55l'])
+nip55l_core_lib = cc.find_library('nostr_nip55l_core', dirs: [cmake_build_dir / 'nips/nip55l' / cmake_configuration])
+# NIP-55L's secret backend is a direct GUI-side dependency, not part of GNostr.
+gnostr_secret_lib = cc.find_library('gnostr-secret', dirs: [cmake_build_dir / 'gnome/seahorse' / cmake_configuration])
 nostr_gobject_dep = declare_dependency(
-  dependencies: nostr_gobject_shared,
+  dependencies: nostr_gobject_link_dep,
   include_directories: nostr_gobject_inc)
 
-# Dependencies of the prebuilt archives, matching the CMake GUI linkage.
-# Meson owns the GUI/templates; the daemon and protocol libraries remain CMake-owned.
-protocol_deps = []
-foreach component : [
-  ['nostr_nip46_core', 'nips/nip46'], ['nip04', 'nips/nip04'], ['nip06', 'nips/nip06'],
-  ['nip19', 'nips/nip19'], ['nip11', 'nips/nip11'], ['nostr_nip44_core', 'nips/nip44'],
-  ['nostr_nip49_core', 'nips/nip49'], ['nostr_nip49_glib', 'nips/nip49'],
-  ['gnostr-secret', 'gnome/seahorse'],
-  ['nostr', 'libnostr'], ['nostrgo', 'libgo'], ['nostr-json', 'libjson'],
-  ['nostrdb_storage', 'components/nostrdb'], ['nostrdb_vendored', 'components/nostrdb'],
-  ['nostrdb', 'libnostr']]
-  protocol_deps += cc.find_library(component[0], dirs: [cmake_build_dir / component[1]])
-endforeach
-foreach library : ['openssl', 'libsodium', 'libsecp256k1', 'libwebsockets', 'jansson', 'libcurl']
-  protocol_deps += dependency(library)
-endforeach
-dependency_library_dirs = []
+# CMake owns the complete executable-side closure, including Blossom/Vault and
+# optional/system/vendored dependencies. Do not duplicate that list here.
 dependency_include_dirs = []
 foreach prefix : get_option('dependency_prefixes')
-  dependency_library_dirs += prefix / 'lib'
   dependency_include_dirs += include_directories(prefix / 'include')
 endforeach
-system_libdir = glib_dep.get_variable(pkgconfig: 'libdir')
-protocol_deps += cc.find_library('nsync', dirs: dependency_library_dirs + [system_libdir, cmake_build_dir / 'third_party/nsync'])
-flatcc_dep = cc.find_library('flatccrt', required: false,
-  dirs: dependency_library_dirs + [system_libdir, cmake_build_dir / 'components/nostrdb/flatcc/lib'])
-if flatcc_dep.found()
-  protocol_deps += flatcc_dep
-endif
-protocol_deps += dependency('threads')
 
 # Configure compile definitions
 conf_data = configuration_data()
@@ -287,7 +277,7 @@ if host_machine.system() == 'darwin'
 endif
 
 # Main executable
-executable(app_bin,
+grotto_exe = executable(app_bin,
   app_sources,
   app_ui_sources,
   app_resources,
@@ -299,7 +289,7 @@ executable(app_bin,
     nips_inc,
     nostr_gobject_inc,
   ] + dependency_include_dirs,
-  dependencies: app_deps + [nip55l_core_lib] + protocol_deps,
+  dependencies: app_deps + [nip55l_core_lib, gnostr_secret_lib],
   c_args: [
     '-DGROTTO_VERSION="@0@"'.format(meson.project_version()),
     '-DAPP_ID="@0@"'.format(app_id),
@@ -320,6 +310,15 @@ executable(app_bin,
   ],
   install: true,
 )
+
+# Exercise the actual alternate frontend and a GObject consumer linked by this
+# recipe, not a CMake binary standing in for the Meson result.
+test('grotto-version', grotto_exe, args: ['--version'])
+event_test = executable('test-grotto-gobject-event',
+  '../../nostr-gobject/tests/test_nostr_event.c',
+  dependencies: [nostr_gobject_dep, glib_dep, gobject_dep, gio_dep],
+  include_directories: include_directories('../../nostr-gobject/include'))
+test('grotto-gobject-event', event_test)
 
 # Install GSettings schema
 install_data('data/org.nostr.Grotto.gschema.xml',

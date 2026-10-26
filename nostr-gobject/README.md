@@ -43,9 +43,49 @@ meson compile -C build
 pkg-config --cflags --libs nostr-gobject-1.0
 ```
 
+### CMake build-tree executable contract
+
+With `BUILD_GROUNDHOG=ON` on ELF, the shared GObject runtime intentionally
+leaves core/archive symbols for its executable to supply (one libnostr per
+process). In-tree CMake executables can link `nostrc::gobject_executable`;
+existing `nostr_gobject` consumers retain the same transitive requirements.
+External build systems must not link just the shared library or guess its
+archive closure:
+
+```bash
+cmake --build build --target nostr-gobject-build-tree-pc
+pkg-config --libs "$PWD/build/nostr-gobject/nostr-gobject-build-tree.pc"
+```
+
+This **uninstalled**, build-tree-only `.pc` is generated from the same owning
+archive list as the CMake executable link interface, using exact target artifacts,
+optional dependencies, rpaths and the one-core linker policy. Build the matching
+CMake libraries before linking an external consumer. For a multi-config tree,
+the `.pc` lives under `nostr-gobject/<configuration>/`; select it with Grotto's
+`-Dcmake_configuration=Debug` (or the configuration you built) and the runtime
+check's `--configuration Debug`. Grotto's Meson frontend
+and the GIR scanner's temporary executable use this same contract. Do not link
+a second copy of the core into the shared GObject library.
+
 ### GObject Introspection
 - GIR: `GNostr-1.0.gir`
 - Typelib: `GNostr-1.0.typelib`
+
+Enable CMake generation with `-DNOSTR_GOBJECT_ENABLE_GIR=ON`. A static build's
+scanner wrapper and its GIR/typelib are build-tree-only: none is installed.
+Only a shared runtime's GIR/typelib is installed.
+
+In the executable-owned ELF layout, an embedding host must also supply the
+executable link contract. A plain Python executable does not supply it; fixing
+the scanner link does not make that process an owning host. The explicit local
+PyGObject check builds a Python embedding executable against the `.pc` above
+(requires matching `python3-embed` development files and PyGObject):
+
+```bash
+python3 scripts/check-gobject-gir-runtime.py build
+python3 scripts/check-gir-exports.py build/nostr-gobject/gir/GNostr-1.0.gir \
+    build/nostr-gobject/libnostr-gobject-1.0.so
+```
 
 ### Vala
 ```vala

@@ -240,13 +240,13 @@ if [[ "${CREATE_PACKAGE}" == "true" ]]; then
     # Build NSIS installer
     cd "${SCRIPT_DIR}"
     makensis \
-        -DVERSION="0.1.0" \
+        -DVERSION="0.1.1" \
         -DARCH="x64" \
         -DBUILD_DIR="${BUILD_DIR}" \
         -DDEPS_DIR="${BUILD_DIR}/deps" \
         grotto.nsi
 
-    log "Installer created: ${SCRIPT_DIR}/GNostrSigner-0.1.0-x64-setup.exe"
+    log "Installer created: ${SCRIPT_DIR}/GNostrSigner-0.1.1-x64-setup.exe"
 fi
 
 log "Build process completed!"
