@@ -188,10 +188,15 @@ class RelayJsonDependencyEdges(Project):
         super().setUp()
         self.policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
 
-        def statement(path, command, target, required=()):
+        def statements(path, command, target, required=()):
             source = (ROOT / path).read_text()
             matches = re.findall(r"\b" + command + r"\(" + re.escape(target) + r"\s+[^()]*\)", source)
             matches = [value for value in matches if set(required) <= set(value[:-1].split()[1:])]
+            self.assertTrue(matches, (path, command, target, required))
+            return matches
+
+        def statement(path, command, target, required=()):
+            matches = statements(path, command, target, required)
             self.assertEqual(len(matches), 1, (path, command, target, required))
             return matches[0]
 
@@ -208,7 +213,7 @@ class RelayJsonDependencyEdges(Project):
         self.assertIn('#include "relay_ingress.h"', (ROOT / self.edges[2][3]).read_text())
         libraries = ["add_library(nostr INTERFACE)", "add_library(libnostr INTERFACE)"]
         libraries += [f"add_library({name} INTERFACE IMPORTED)" for name in
-                      ("OpenSSL::SSL", "OpenSSL::Crypto", "Threads::Threads")]
+                      ("OpenSSL::SSL", "OpenSSL::Crypto", "Threads::Threads", "nostrdb_storage")]
         (self.root / "libjson/src").mkdir(parents=True)
         (self.root / "libjson/CMakeLists.txt").write_text(json_target + "\n")
         relay_dir = self.root / "apps/relayd"
@@ -239,7 +244,7 @@ class RelayJsonDependencyEdges(Project):
                     *libraries, "add_subdirectory(libjson)", "add_subdirectory(apps/relayd)"]
         for name, path, owner in consumers:
             commands += [f"add_executable({name} main.c)",
-                         statement(path, "target_link_libraries", name),
+                         *statements(path, "target_link_libraries", name),
                          f"add_test(NAME {name} COMMAND {name})",
                          f"nostrc_describe_test({name} OWNER {owner} TARGETS {name} INPUTS vector.txt)"]
         commands += ["add_test(NAME omitted COMMAND test_relay_req_contract)",
