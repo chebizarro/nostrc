@@ -1,4 +1,5 @@
 #include <glib.h>
+#include "nostr/nip49/nip49_g.h"
 #include "nostr/nip49/nip49.h"
 
 static int glib_nfkc_cb(const char *in_utf8, char **out_nfkc) {

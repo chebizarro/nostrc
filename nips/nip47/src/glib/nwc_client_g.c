@@ -1,7 +1,7 @@
 /* GLib wrappers for NIP-47 client */
 #include <glib.h>
 #include <stdlib.h>
-#include "nostr/nip47/nwc_client.h"
+#include "nostr/nip47/nwc_client_g.h"
 #include "nostr/nip47/nwc.h"
 #include "nostr/nip47/nwc_envelope.h"
 #include "nostr/nip47/nwc_info.h"

@@ -127,7 +127,12 @@ the GLib DSO. The GLib DSO exposes the generated D-Bus bindings with its own
 export macro and installed generated header. This does not change consent,
 principal derivation, persistence or wire behavior. Grotto, Signet and
 nostr-gobject receive build/dependency wiring only: no independent bump. No
-release columns or tags are changed.
+release columns or tags are changed. NIP-47/49 GLib implementations include
+  their own annotated public headers; NIP-5F's TCP example/test compile their
+  stateless private framing helper rather than importing it. Relayd's NIP-11
+  include follows its existing capability guard (no protocol behavior change).
+  These remain in the same B2 boundary/version decisions; relayd has no
+  authoritative numeric component version.
 
 ## Recorded version decisions
 

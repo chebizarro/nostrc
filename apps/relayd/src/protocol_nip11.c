@@ -3,7 +3,9 @@
 #include <libwebsockets.h>
 #include "relayd_ctx.h"
 #include "protocol_nip11.h"
+#ifdef HAVE_NIP11
 #include "nip11.h"
+#endif
 
 /* Helper macro for adding a custom header; bails out on failure. */
 #define ADD_HDR(wsi, name, val, p, end) do {                                \
