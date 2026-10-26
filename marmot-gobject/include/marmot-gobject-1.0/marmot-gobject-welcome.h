@@ -9,13 +9,14 @@
 #ifndef MARMOT_GOBJECT_WELCOME_H
 #define MARMOT_GOBJECT_WELCOME_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 #include "marmot-gobject-enums.h"
 
 G_BEGIN_DECLS
 
 #define MARMOT_GOBJECT_TYPE_WELCOME (marmot_gobject_welcome_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectWelcome, marmot_gobject_welcome, MARMOT_GOBJECT, WELCOME, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectWelcome, marmot_gobject_welcome, MARMOT_GOBJECT, WELCOME, GObject)
 
 /**
  * MarmotGobjectWelcome:
@@ -36,7 +37,7 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectWelcome, marmot_gobject_welcome, MARMOT_GOBJEC
  * Since: 1.0
  */
 
-MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data(const gchar *event_id_hex,
+MARMOT_GOBJECT_API MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data(const gchar *event_id_hex,
                                                             const gchar *group_name,
                                                             const gchar *group_description,
                                                             const gchar *welcomer_hex,
@@ -45,7 +46,7 @@ MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data(const gchar *event_id
                                                             const gchar *mls_group_id_hex,
                                                             const gchar *nostr_group_id_hex);
 
-MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data_full(const gchar *event_id_hex,
+MARMOT_GOBJECT_API MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data_full(const gchar *event_id_hex,
                                                                  const gchar *group_name,
                                                                  const gchar *group_description,
                                                                  const gchar *welcomer_hex,
@@ -58,14 +59,14 @@ MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data_full(const gchar *eve
 
 /* ── Property accessors ──────────────────────────────────────────── */
 
-const gchar *marmot_gobject_welcome_get_event_id(MarmotGobjectWelcome *self);
-const gchar *marmot_gobject_welcome_get_group_name(MarmotGobjectWelcome *self);
-const gchar *marmot_gobject_welcome_get_group_description(MarmotGobjectWelcome *self);
-const gchar *marmot_gobject_welcome_get_welcomer(MarmotGobjectWelcome *self);
-guint        marmot_gobject_welcome_get_member_count(MarmotGobjectWelcome *self);
-MarmotGobjectWelcomeState marmot_gobject_welcome_get_state(MarmotGobjectWelcome *self);
-const gchar *marmot_gobject_welcome_get_mls_group_id(MarmotGobjectWelcome *self);
-const gchar *marmot_gobject_welcome_get_nostr_group_id(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_event_id(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_group_name(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_group_description(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_welcomer(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API guint        marmot_gobject_welcome_get_member_count(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API MarmotGobjectWelcomeState marmot_gobject_welcome_get_state(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_mls_group_id(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_nostr_group_id(MarmotGobjectWelcome *self);
 
 /**
  * marmot_gobject_welcome_get_relay_urls:
@@ -73,7 +74,7 @@ const gchar *marmot_gobject_welcome_get_nostr_group_id(MarmotGobjectWelcome *sel
  *
  * Returns: (transfer none) (array zero-terminated=1) (nullable): relay URLs
  */
-const gchar * const *marmot_gobject_welcome_get_relay_urls(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar * const *marmot_gobject_welcome_get_relay_urls(MarmotGobjectWelcome *self);
 
 /**
  * marmot_gobject_welcome_get_wrapper_event_id:
@@ -82,7 +83,7 @@ const gchar * const *marmot_gobject_welcome_get_relay_urls(MarmotGobjectWelcome 
  * Returns: (transfer none) (nullable): the gift-wrap event ID as hex,
  *   needed for accept/decline operations
  */
-const gchar *marmot_gobject_welcome_get_wrapper_event_id(MarmotGobjectWelcome *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_welcome_get_wrapper_event_id(MarmotGobjectWelcome *self);
 
 /**
  * marmot_gobject_welcome_set_wrapper_event_id:
@@ -91,10 +92,10 @@ const gchar *marmot_gobject_welcome_get_wrapper_event_id(MarmotGobjectWelcome *s
  *
  * Sets the wrapper event ID. Called internally by process_welcome.
  */
-void marmot_gobject_welcome_set_wrapper_event_id(MarmotGobjectWelcome *self,
+MARMOT_GOBJECT_API void marmot_gobject_welcome_set_wrapper_event_id(MarmotGobjectWelcome *self,
                                                    const gchar *wrapper_event_id_hex);
 
-void marmot_gobject_welcome_set_relay_urls(MarmotGobjectWelcome *self,
+MARMOT_GOBJECT_API void marmot_gobject_welcome_set_relay_urls(MarmotGobjectWelcome *self,
                                              const gchar * const *relay_urls);
 
 G_END_DECLS

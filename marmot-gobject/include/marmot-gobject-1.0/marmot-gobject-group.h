@@ -9,13 +9,14 @@
 #ifndef MARMOT_GOBJECT_GROUP_H
 #define MARMOT_GOBJECT_GROUP_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 #include "marmot-gobject-enums.h"
 
 G_BEGIN_DECLS
 
 #define MARMOT_GOBJECT_TYPE_GROUP (marmot_gobject_group_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectGroup, marmot_gobject_group, MARMOT_GOBJECT, GROUP, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectGroup, marmot_gobject_group, MARMOT_GOBJECT, GROUP, GObject)
 
 /**
  * MarmotGobjectGroup:
@@ -50,14 +51,14 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectGroup, marmot_gobject_group, MARMOT_GOBJECT, G
  *
  * Returns: (transfer full): a new #MarmotGobjectGroup
  */
-MarmotGobjectGroup *marmot_gobject_group_new_from_data(const gchar *mls_group_id_hex,
+MARMOT_GOBJECT_API MarmotGobjectGroup *marmot_gobject_group_new_from_data(const gchar *mls_group_id_hex,
                                                         const gchar *nostr_group_id_hex,
                                                         const gchar *name,
                                                         const gchar *description,
                                                         MarmotGobjectGroupState state,
                                                         guint64 epoch);
 
-MarmotGobjectGroup *marmot_gobject_group_new_from_data_full(const gchar *mls_group_id_hex,
+MARMOT_GOBJECT_API MarmotGobjectGroup *marmot_gobject_group_new_from_data_full(const gchar *mls_group_id_hex,
                                                              const gchar *nostr_group_id_hex,
                                                              const gchar *name,
                                                              const gchar *description,
@@ -75,7 +76,7 @@ MarmotGobjectGroup *marmot_gobject_group_new_from_data_full(const gchar *mls_gro
  *
  * Returns: (transfer none): the MLS group ID as a hex string
  */
-const gchar *marmot_gobject_group_get_mls_group_id(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_group_get_mls_group_id(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_nostr_group_id:
@@ -83,7 +84,7 @@ const gchar *marmot_gobject_group_get_mls_group_id(MarmotGobjectGroup *self);
  *
  * Returns: (transfer none): the Nostr group ID as a hex string
  */
-const gchar *marmot_gobject_group_get_nostr_group_id(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_group_get_nostr_group_id(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_name:
@@ -91,7 +92,7 @@ const gchar *marmot_gobject_group_get_nostr_group_id(MarmotGobjectGroup *self);
  *
  * Returns: (transfer none) (nullable): the group name
  */
-const gchar *marmot_gobject_group_get_name(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_group_get_name(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_description:
@@ -99,7 +100,7 @@ const gchar *marmot_gobject_group_get_name(MarmotGobjectGroup *self);
  *
  * Returns: (transfer none) (nullable): the group description
  */
-const gchar *marmot_gobject_group_get_description(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_group_get_description(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_state:
@@ -107,7 +108,7 @@ const gchar *marmot_gobject_group_get_description(MarmotGobjectGroup *self);
  *
  * Returns: the group state
  */
-MarmotGobjectGroupState marmot_gobject_group_get_state(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API MarmotGobjectGroupState marmot_gobject_group_get_state(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_epoch:
@@ -115,7 +116,7 @@ MarmotGobjectGroupState marmot_gobject_group_get_state(MarmotGobjectGroup *self)
  *
  * Returns: the current MLS epoch
  */
-guint64 marmot_gobject_group_get_epoch(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API guint64 marmot_gobject_group_get_epoch(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_admin_count:
@@ -123,7 +124,7 @@ guint64 marmot_gobject_group_get_epoch(MarmotGobjectGroup *self);
  *
  * Returns: number of admins in the group
  */
-guint marmot_gobject_group_get_admin_count(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API guint marmot_gobject_group_get_admin_count(MarmotGobjectGroup *self);
 
 /**
  * marmot_gobject_group_get_admin_pubkey_hex:
@@ -132,7 +133,7 @@ guint marmot_gobject_group_get_admin_count(MarmotGobjectGroup *self);
  *
  * Returns: (transfer full) (nullable): admin pubkey as hex, or NULL if out of range
  */
-gchar *marmot_gobject_group_get_admin_pubkey_hex(MarmotGobjectGroup *self, guint index);
+MARMOT_GOBJECT_API gchar *marmot_gobject_group_get_admin_pubkey_hex(MarmotGobjectGroup *self, guint index);
 
 /**
  * marmot_gobject_group_get_last_message_at:
@@ -140,7 +141,7 @@ gchar *marmot_gobject_group_get_admin_pubkey_hex(MarmotGobjectGroup *self, guint
  *
  * Returns: timestamp of last message, or 0 if none
  */
-gint64 marmot_gobject_group_get_last_message_at(MarmotGobjectGroup *self);
+MARMOT_GOBJECT_API gint64 marmot_gobject_group_get_last_message_at(MarmotGobjectGroup *self);
 
 G_END_DECLS
 

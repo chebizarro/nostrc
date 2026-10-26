@@ -17,7 +17,7 @@ files already declare a version.
 | nostr-gobject | `nostr-gobject/` | 3.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
-| marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
+| marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
@@ -137,6 +137,14 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase C: marmot-gobject PATCH 1.5.0 -> 1.5.1 (SONAME
+  stays 1). It is compiled hidden-by-default with `MARMOT_GOBJECT_API` and an
+  installed generated `marmot-gobject-export.h`, but every symbol it exported
+  is declared API, so its ELF export set is unchanged: no ABI break. The
+  Marmot-1.0 GIR now finds the libmarmot headers and scans a loadable wrapper in
+  static builds, and its Meson build compiles against its own public headers
+  (nostrc-6s6bt): packaging/build corrections.
 
 - nostrc-hbysr: nostr-gobject's Meson build binds the renamed CMake core
   artifacts (`libnostr.a`, `libnostr-json`, `libnostrgo.a`) and its archive

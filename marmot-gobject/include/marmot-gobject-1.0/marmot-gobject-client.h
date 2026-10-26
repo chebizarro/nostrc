@@ -10,6 +10,7 @@
 #ifndef MARMOT_GOBJECT_CLIENT_H
 #define MARMOT_GOBJECT_CLIENT_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "marmot-gobject-group.h"
@@ -22,7 +23,7 @@
 G_BEGIN_DECLS
 
 #define MARMOT_GOBJECT_TYPE_CLIENT (marmot_gobject_client_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectClient, marmot_gobject_client, MARMOT_GOBJECT, CLIENT, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectClient, marmot_gobject_client, MARMOT_GOBJECT, CLIENT, GObject)
 
 /**
  * MarmotGobjectClient:
@@ -67,7 +68,7 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectClient, marmot_gobject_client, MARMOT_GOBJECT,
  *
  * Returns: (transfer full): a new #MarmotGobjectClient
  */
-MarmotGobjectClient *marmot_gobject_client_new(MarmotGobjectStorage *storage);
+MARMOT_GOBJECT_API MarmotGobjectClient *marmot_gobject_client_new(MarmotGobjectStorage *storage);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-00: Key Package (async)
@@ -92,7 +93,7 @@ MarmotGobjectClient *marmot_gobject_client_new(MarmotGobjectStorage *storage);
  * For signer-only flows where the caller does not hold the secret key,
  * use marmot_gobject_client_create_key_package_unsigned_async() instead.
  */
-void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
                                                      const gchar *nostr_pubkey_hex,
                                                      const gchar *nostr_sk_hex,
                                                      const gchar * const *relay_urls,
@@ -126,7 +127,7 @@ void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
  *
  * Since: 1.0
  */
-void marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient *self,
                                                               const gchar *nostr_pubkey_hex,
                                                               const gchar * const *relay_urls,
                                                               GCancellable *cancellable,
@@ -144,7 +145,7 @@ void marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient
  * Returns: (transfer full) (nullable): the unsigned key package event JSON,
  *   or NULL on error. The caller must sign this event before publishing.
  */
-gchar *marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectClient *self,
                                                                  GAsyncResult *result,
                                                                  GError **error);
 
@@ -165,7 +166,7 @@ gchar *marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectCli
  *
  * Since: 1.4
  */
-gchar *marmot_gobject_client_get_account_proof_template(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_get_account_proof_template(MarmotGobjectClient *self,
                                                         const gchar *nostr_pubkey_hex,
                                                         GError **error);
 
@@ -186,7 +187,7 @@ gchar *marmot_gobject_client_get_account_proof_template(MarmotGobjectClient *sel
  *
  * Since: 1.4
  */
-gboolean marmot_gobject_client_set_account_proof(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_set_account_proof(MarmotGobjectClient *self,
                                                  const gchar *nostr_pubkey_hex,
                                                  const gchar *signed_event_json,
                                                  GError **error);
@@ -200,7 +201,7 @@ gboolean marmot_gobject_client_set_account_proof(MarmotGobjectClient *self,
  *
  * Since: 1.4
  */
-gboolean marmot_gobject_client_has_account_proof(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_has_account_proof(MarmotGobjectClient *self,
                                                  const gchar *nostr_pubkey_hex);
 
 /**
@@ -213,7 +214,7 @@ gboolean marmot_gobject_client_has_account_proof(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): the key package event JSON, or NULL on error
  */
-gchar *marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self,
                                                         GAsyncResult *result,
                                                         GError **error);
 
@@ -237,7 +238,7 @@ gchar *marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self
  *
  * Since: 1.1
  */
-gint marmot_gobject_select_key_package_event(const gchar * const *event_jsons,
+MARMOT_GOBJECT_API gint marmot_gobject_select_key_package_event(const gchar * const *event_jsons,
                                              const gchar *owner_pubkey_hex,
                                              GError **error);
 
@@ -261,7 +262,7 @@ gint marmot_gobject_select_key_package_event(const gchar * const *event_jsons,
  *
  * Asynchronously creates a new MLS group.
  */
-void marmot_gobject_client_create_group_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_create_group_async(MarmotGobjectClient *self,
                                                const gchar *creator_pubkey_hex,
                                                const gchar * const *key_package_jsons,
                                                const gchar *group_name,
@@ -285,7 +286,7 @@ void marmot_gobject_client_create_group_async(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): the created #MarmotGobjectGroup, or NULL on error
  */
-MarmotGobjectGroup *marmot_gobject_client_create_group_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API MarmotGobjectGroup *marmot_gobject_client_create_group_finish(MarmotGobjectClient *self,
                                                                GAsyncResult *result,
                                                                gchar ***out_welcome_jsons,
                                                                gchar **out_evolution_json,
@@ -306,7 +307,7 @@ MarmotGobjectGroup *marmot_gobject_client_create_group_finish(MarmotGobjectClien
  *
  * Asynchronously processes a welcome message.
  */
-void marmot_gobject_client_process_welcome_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_process_welcome_async(MarmotGobjectClient *self,
                                                   const gchar *wrapper_event_id_hex,
                                                   const gchar *rumor_event_json,
                                                   GCancellable *cancellable,
@@ -331,7 +332,7 @@ void marmot_gobject_client_process_welcome_async(MarmotGobjectClient *self,
  *
  * Since: 1.4
  */
-void marmot_gobject_client_process_welcome_from_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_process_welcome_from_async(MarmotGobjectClient *self,
                                                       const gchar *wrapper_event_id_hex,
                                                       const gchar *sender_pubkey_hex,
                                                       const gchar *rumor_event_json,
@@ -347,7 +348,7 @@ void marmot_gobject_client_process_welcome_from_async(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): the #MarmotGobjectWelcome, or NULL on error
  */
-MarmotGobjectWelcome *marmot_gobject_client_process_welcome_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API MarmotGobjectWelcome *marmot_gobject_client_process_welcome_finish(MarmotGobjectClient *self,
                                                                      GAsyncResult *result,
                                                                      GError **error);
 
@@ -359,7 +360,7 @@ MarmotGobjectWelcome *marmot_gobject_client_process_welcome_finish(MarmotGobject
  * @callback: callback
  * @user_data: data for @callback
  */
-void marmot_gobject_client_accept_welcome_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_accept_welcome_async(MarmotGobjectClient *self,
                                                  MarmotGobjectWelcome *welcome,
                                                  GCancellable *cancellable,
                                                  GAsyncReadyCallback callback,
@@ -373,7 +374,7 @@ void marmot_gobject_client_accept_welcome_async(MarmotGobjectClient *self,
  *
  * Returns: %TRUE on success
  */
-gboolean marmot_gobject_client_accept_welcome_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_accept_welcome_finish(MarmotGobjectClient *self,
                                                       GAsyncResult *result,
                                                       GError **error);
 
@@ -392,7 +393,7 @@ gboolean marmot_gobject_client_accept_welcome_finish(MarmotGobjectClient *self,
  *
  * Asynchronously encrypts and wraps an event for the group.
  */
-void marmot_gobject_client_send_message_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_send_message_async(MarmotGobjectClient *self,
                                                const gchar *mls_group_id_hex,
                                                const gchar *inner_event_json,
                                                GCancellable *cancellable,
@@ -407,7 +408,7 @@ void marmot_gobject_client_send_message_async(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): the encrypted group event JSON, or NULL on error
  */
-gchar *marmot_gobject_client_send_message_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_send_message_finish(MarmotGobjectClient *self,
                                                   GAsyncResult *result,
                                                   GError **error);
 
@@ -425,7 +426,7 @@ gchar *marmot_gobject_client_send_message_finish(MarmotGobjectClient *self,
  * changes nothing.  A kind:445 rumor taken out of a NIP-59 gift wrap goes
  * to marmot_gobject_client_process_rumor_message_async() instead.
  */
-void marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
                                                   const gchar *group_event_json,
                                                   GCancellable *cancellable,
                                                   GAsyncReadyCallback callback,
@@ -454,7 +455,7 @@ void marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): decrypted inner event JSON, or NULL
  */
-gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
                                                      GAsyncResult *result,
                                                      MarmotGobjectMessageResultType *out_result_type,
                                                      GError **error);
@@ -474,7 +475,7 @@ gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
  *
  * Since: 1.3
  */
-void marmot_gobject_client_process_rumor_message_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_process_rumor_message_async(MarmotGobjectClient *self,
                                                         const gchar *rumor_json,
                                                         GCancellable *cancellable,
                                                         GAsyncReadyCallback callback,
@@ -494,7 +495,7 @@ void marmot_gobject_client_process_rumor_message_async(MarmotGobjectClient *self
  *
  * Since: 1.3
  */
-gchar *marmot_gobject_client_process_rumor_message_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_process_rumor_message_finish(MarmotGobjectClient *self,
                                                             GAsyncResult *result,
                                                             MarmotGobjectMessageResultType *out_result_type,
                                                             GError **error);
@@ -515,7 +516,7 @@ gchar *marmot_gobject_client_process_rumor_message_finish(MarmotGobjectClient *s
  *
  * Since: 1.2
  */
-void marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self,
                                                         const gchar *mls_group_id_hex,
                                                         const gchar *name,
                                                         const gchar *description,
@@ -538,7 +539,7 @@ void marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self
  *
  * Since: 1.2
  */
-gchar *marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *self,
                                                            GAsyncResult *result,
                                                            GError **error);
 
@@ -557,7 +558,7 @@ gchar *marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *s
  *
  * Since: 1.2
  */
-void marmot_gobject_client_merge_pending_commit_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_merge_pending_commit_async(MarmotGobjectClient *self,
                                                        const gchar *mls_group_id_hex,
                                                        GCancellable *cancellable,
                                                        GAsyncReadyCallback callback,
@@ -573,7 +574,7 @@ void marmot_gobject_client_merge_pending_commit_async(MarmotGobjectClient *self,
  *
  * Since: 1.2
  */
-gboolean marmot_gobject_client_merge_pending_commit_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_merge_pending_commit_finish(MarmotGobjectClient *self,
                                                             GAsyncResult *result,
                                                             GError **error);
 
@@ -591,7 +592,7 @@ gboolean marmot_gobject_client_merge_pending_commit_finish(MarmotGobjectClient *
  *
  * Since: 1.2
  */
-void marmot_gobject_client_clear_pending_commit_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_clear_pending_commit_async(MarmotGobjectClient *self,
                                                        const gchar *mls_group_id_hex,
                                                        GCancellable *cancellable,
                                                        GAsyncReadyCallback callback,
@@ -607,7 +608,7 @@ void marmot_gobject_client_clear_pending_commit_async(MarmotGobjectClient *self,
  *
  * Since: 1.2
  */
-gboolean marmot_gobject_client_clear_pending_commit_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_clear_pending_commit_finish(MarmotGobjectClient *self,
                                                             GAsyncResult *result,
                                                             GError **error);
 
@@ -627,7 +628,7 @@ gboolean marmot_gobject_client_clear_pending_commit_finish(MarmotGobjectClient *
  *
  * Since: 1.2
  */
-gchar *marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar *marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
                                                 const gchar *mls_group_id_hex,
                                                 gboolean *out_superseded,
                                                 GError **error);
@@ -651,7 +652,7 @@ gchar *marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
  *
  * Since: 1.2
  */
-gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
                                                    const gchar *mls_group_id_hex,
                                                    gchar ***out_ids_hex,
                                                    gchar ***out_rumors,
@@ -672,7 +673,7 @@ gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
  *
  * Since: 1.2
  */
-gboolean marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gboolean marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
                                                   const gchar *mls_group_id_hex,
                                                   const gchar * const *ids_hex,
                                                   GError **error);
@@ -699,7 +700,7 @@ gboolean marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
  * code MARMOT_ERR_MEDIA_LEGACY_FORMAT; encrypted-media-v2 is
  * marmot_media_encrypt() in libmarmot.
  */
-void marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
                                                 const gchar *mls_group_id_hex,
                                                 GBytes *file_data,
                                                 const gchar *mime_type,
@@ -717,7 +718,7 @@ void marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
  * Returns: (transfer full) (nullable): encrypted media metadata and data,
  *   or NULL on error
  */
-MarmotGobjectEncryptedMedia *marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API MarmotGobjectEncryptedMedia *marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
                                                                          GAsyncResult *result,
                                                                          GError **error);
 
@@ -738,7 +739,7 @@ MarmotGobjectEncryptedMedia *marmot_gobject_client_encrypt_media_finish(MarmotGo
  *
  * Asynchronously decrypts media from an MLS group.
  */
-void marmot_gobject_client_decrypt_media_async(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API void marmot_gobject_client_decrypt_media_async(MarmotGobjectClient *self,
                                                 const gchar *mls_group_id_hex,
                                                 GBytes *encrypted_data,
                                                 const gchar *mime_type,
@@ -759,7 +760,7 @@ void marmot_gobject_client_decrypt_media_async(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): decrypted data as #GBytes, or NULL on error
  */
-GBytes *marmot_gobject_client_decrypt_media_finish(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API GBytes *marmot_gobject_client_decrypt_media_finish(MarmotGobjectClient *self,
                                                     GAsyncResult *result,
                                                     GError **error);
 
@@ -777,7 +778,7 @@ GBytes *marmot_gobject_client_decrypt_media_finish(MarmotGobjectClient *self,
  *
  * Returns: (transfer full) (nullable): the #MarmotGobjectGroup, or NULL
  */
-MarmotGobjectGroup *marmot_gobject_client_get_group(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API MarmotGobjectGroup *marmot_gobject_client_get_group(MarmotGobjectClient *self,
                                                      const gchar *mls_group_id_hex,
                                                      GError **error);
 
@@ -791,7 +792,7 @@ MarmotGobjectGroup *marmot_gobject_client_get_group(MarmotGobjectClient *self,
  * Returns: (transfer full) (element-type MarmotGobjectGroup) (nullable):
  *   a #GPtrArray of #MarmotGobjectGroup, or NULL on error
  */
-GPtrArray *marmot_gobject_client_get_all_groups(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API GPtrArray *marmot_gobject_client_get_all_groups(MarmotGobjectClient *self,
                                                  GError **error);
 
 /**
@@ -807,7 +808,7 @@ GPtrArray *marmot_gobject_client_get_all_groups(MarmotGobjectClient *self,
  * Returns: (transfer full) (element-type MarmotGobjectMessage) (nullable):
  *   a #GPtrArray of #MarmotGobjectMessage, or NULL on error
  */
-GPtrArray *marmot_gobject_client_get_messages(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API GPtrArray *marmot_gobject_client_get_messages(MarmotGobjectClient *self,
                                                const gchar *mls_group_id_hex,
                                                guint limit,
                                                guint offset,
@@ -823,7 +824,7 @@ GPtrArray *marmot_gobject_client_get_messages(MarmotGobjectClient *self,
  * Returns: (transfer full) (element-type MarmotGobjectWelcome) (nullable):
  *   a #GPtrArray of #MarmotGobjectWelcome, or NULL on error
  */
-GPtrArray *marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API GPtrArray *marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self,
                                                        GError **error);
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -847,7 +848,7 @@ GPtrArray *marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self,
  *
  * Returns: (transfer none) (nullable): the underlying Marmot instance
  */
-struct Marmot *marmot_gobject_client_get_marmot(MarmotGobjectClient *self);
+MARMOT_GOBJECT_API struct Marmot *marmot_gobject_client_get_marmot(MarmotGobjectClient *self);
 
 /**
  * marmot_gobject_client_lock:
@@ -860,7 +861,7 @@ struct Marmot *marmot_gobject_client_get_marmot(MarmotGobjectClient *self);
  *
  * Since: 1.2
  */
-void marmot_gobject_client_lock(MarmotGobjectClient *self);
+MARMOT_GOBJECT_API void marmot_gobject_client_lock(MarmotGobjectClient *self);
 
 /**
  * marmot_gobject_client_unlock:
@@ -870,7 +871,7 @@ void marmot_gobject_client_lock(MarmotGobjectClient *self);
  *
  * Since: 1.2
  */
-void marmot_gobject_client_unlock(MarmotGobjectClient *self);
+MARMOT_GOBJECT_API void marmot_gobject_client_unlock(MarmotGobjectClient *self);
 
 /**
  * marmot_gobject_client_get_group_relay_urls:
@@ -884,7 +885,7 @@ void marmot_gobject_client_unlock(MarmotGobjectClient *self);
  * Returns: (transfer full) (array zero-terminated=1) (nullable):
  *   NULL-terminated array of relay URL strings, or NULL. Free with g_strfreev().
  */
-gchar **marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
+MARMOT_GOBJECT_API gchar **marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
                                                     const gchar *mls_group_id_hex,
                                                     gsize *out_count);
 

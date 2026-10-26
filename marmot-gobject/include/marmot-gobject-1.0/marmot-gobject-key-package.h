@@ -9,6 +9,7 @@
 #ifndef MARMOT_GOBJECT_KEY_PACKAGE_H
 #define MARMOT_GOBJECT_KEY_PACKAGE_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -26,7 +27,7 @@ G_BEGIN_DECLS
 #define MARMOT_GOBJECT_KIND_KEY_PACKAGE 30443
 
 #define MARMOT_GOBJECT_TYPE_KEY_PACKAGE (marmot_gobject_key_package_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectKeyPackage, marmot_gobject_key_package, MARMOT_GOBJECT, KEY_PACKAGE, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectKeyPackage, marmot_gobject_key_package, MARMOT_GOBJECT, KEY_PACKAGE, GObject)
 
 /**
  * MarmotGobjectKeyPackage:
@@ -56,7 +57,7 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectKeyPackage, marmot_gobject_key_package, MARMOT
  *
  * Returns: (transfer full): a new #MarmotGobjectKeyPackage
  */
-MarmotGobjectKeyPackage *marmot_gobject_key_package_new_from_data(const gchar *ref_hex,
+MARMOT_GOBJECT_API MarmotGobjectKeyPackage *marmot_gobject_key_package_new_from_data(const gchar *ref_hex,
                                                                     const gchar *owner_pubkey_hex,
                                                                     const gchar * const *relay_urls,
                                                                     gint64 created_at,
@@ -70,7 +71,7 @@ MarmotGobjectKeyPackage *marmot_gobject_key_package_new_from_data(const gchar *r
  *
  * Returns: (transfer none): the KeyPackageRef as a hex string
  */
-const gchar *marmot_gobject_key_package_get_ref(MarmotGobjectKeyPackage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_key_package_get_ref(MarmotGobjectKeyPackage *self);
 
 /**
  * marmot_gobject_key_package_get_owner_pubkey:
@@ -78,7 +79,7 @@ const gchar *marmot_gobject_key_package_get_ref(MarmotGobjectKeyPackage *self);
  *
  * Returns: (transfer none): the owner's Nostr pubkey as a hex string
  */
-const gchar *marmot_gobject_key_package_get_owner_pubkey(MarmotGobjectKeyPackage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_key_package_get_owner_pubkey(MarmotGobjectKeyPackage *self);
 
 /**
  * marmot_gobject_key_package_get_relay_urls:
@@ -86,7 +87,7 @@ const gchar *marmot_gobject_key_package_get_owner_pubkey(MarmotGobjectKeyPackage
  *
  * Returns: (transfer none) (array zero-terminated=1) (nullable): relay URLs
  */
-const gchar * const *marmot_gobject_key_package_get_relay_urls(MarmotGobjectKeyPackage *self);
+MARMOT_GOBJECT_API const gchar * const *marmot_gobject_key_package_get_relay_urls(MarmotGobjectKeyPackage *self);
 
 /**
  * marmot_gobject_key_package_get_created_at:
@@ -94,7 +95,7 @@ const gchar * const *marmot_gobject_key_package_get_relay_urls(MarmotGobjectKeyP
  *
  * Returns: the creation timestamp
  */
-gint64 marmot_gobject_key_package_get_created_at(MarmotGobjectKeyPackage *self);
+MARMOT_GOBJECT_API gint64 marmot_gobject_key_package_get_created_at(MarmotGobjectKeyPackage *self);
 
 /**
  * marmot_gobject_key_package_is_active:
@@ -102,7 +103,7 @@ gint64 marmot_gobject_key_package_get_created_at(MarmotGobjectKeyPackage *self);
  *
  * Returns: whether this is the active key package for the owner
  */
-gboolean marmot_gobject_key_package_is_active(MarmotGobjectKeyPackage *self);
+MARMOT_GOBJECT_API gboolean marmot_gobject_key_package_is_active(MarmotGobjectKeyPackage *self);
 
 G_END_DECLS
 

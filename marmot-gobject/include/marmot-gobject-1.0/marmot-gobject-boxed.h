@@ -10,6 +10,7 @@
 #ifndef MARMOT_GOBJECT_BOXED_H
 #define MARMOT_GOBJECT_BOXED_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -40,7 +41,7 @@ typedef struct {
     guint64 snapshot_ttl_seconds;
 } MarmotGobjectConfig;
 
-GType marmot_gobject_config_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_config_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_CONFIG (marmot_gobject_config_get_type())
 
 /**
@@ -50,7 +51,7 @@ GType marmot_gobject_config_get_type(void) G_GNUC_CONST;
  *
  * Returns: (transfer full): a new heap-allocated #MarmotGobjectConfig
  */
-MarmotGobjectConfig *marmot_gobject_config_new_default(void);
+MARMOT_GOBJECT_API MarmotGobjectConfig *marmot_gobject_config_new_default(void);
 
 /**
  * marmot_gobject_config_copy:
@@ -60,7 +61,7 @@ MarmotGobjectConfig *marmot_gobject_config_new_default(void);
  *
  * Returns: (transfer full): a new #MarmotGobjectConfig
  */
-MarmotGobjectConfig *marmot_gobject_config_copy(const MarmotGobjectConfig *config);
+MARMOT_GOBJECT_API MarmotGobjectConfig *marmot_gobject_config_copy(const MarmotGobjectConfig *config);
 
 /**
  * marmot_gobject_config_free:
@@ -69,7 +70,7 @@ MarmotGobjectConfig *marmot_gobject_config_copy(const MarmotGobjectConfig *confi
  * Frees a #MarmotGobjectConfig allocated by marmot_gobject_config_new_default()
  * or marmot_gobject_config_copy().
  */
-void marmot_gobject_config_free(MarmotGobjectConfig *config);
+MARMOT_GOBJECT_API void marmot_gobject_config_free(MarmotGobjectConfig *config);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MarmotGobjectPagination — GBoxed wrapper for MarmotPagination
@@ -89,7 +90,7 @@ typedef struct {
     gsize offset;
 } MarmotGobjectPagination;
 
-GType marmot_gobject_pagination_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_pagination_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_PAGINATION (marmot_gobject_pagination_get_type())
 
 /**
@@ -99,7 +100,7 @@ GType marmot_gobject_pagination_get_type(void) G_GNUC_CONST;
  *
  * Returns: (transfer full): a new heap-allocated #MarmotGobjectPagination
  */
-MarmotGobjectPagination *marmot_gobject_pagination_new_default(void);
+MARMOT_GOBJECT_API MarmotGobjectPagination *marmot_gobject_pagination_new_default(void);
 
 /**
  * marmot_gobject_pagination_new:
@@ -110,7 +111,7 @@ MarmotGobjectPagination *marmot_gobject_pagination_new_default(void);
  *
  * Returns: (transfer full): a new heap-allocated #MarmotGobjectPagination
  */
-MarmotGobjectPagination *marmot_gobject_pagination_new(gsize limit, gsize offset);
+MARMOT_GOBJECT_API MarmotGobjectPagination *marmot_gobject_pagination_new(gsize limit, gsize offset);
 
 /**
  * marmot_gobject_pagination_copy:
@@ -120,7 +121,7 @@ MarmotGobjectPagination *marmot_gobject_pagination_new(gsize limit, gsize offset
  *
  * Returns: (transfer full): a new #MarmotGobjectPagination
  */
-MarmotGobjectPagination *marmot_gobject_pagination_copy(const MarmotGobjectPagination *pagination);
+MARMOT_GOBJECT_API MarmotGobjectPagination *marmot_gobject_pagination_copy(const MarmotGobjectPagination *pagination);
 
 /**
  * marmot_gobject_pagination_free:
@@ -128,7 +129,7 @@ MarmotGobjectPagination *marmot_gobject_pagination_copy(const MarmotGobjectPagin
  *
  * Frees a #MarmotGobjectPagination.
  */
-void marmot_gobject_pagination_free(MarmotGobjectPagination *pagination);
+MARMOT_GOBJECT_API void marmot_gobject_pagination_free(MarmotGobjectPagination *pagination);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MarmotGobjectEncryptedMedia — GBoxed result for MIP-04 encryption
@@ -145,10 +146,10 @@ typedef struct {
     guint64 epoch;
 } MarmotGobjectEncryptedMedia;
 
-GType marmot_gobject_encrypted_media_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_encrypted_media_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_ENCRYPTED_MEDIA (marmot_gobject_encrypted_media_get_type())
 
-MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_new(GBytes *encrypted_data,
+MARMOT_GOBJECT_API MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_new(GBytes *encrypted_data,
                                                                  const gchar *mime_type,
                                                                  const gchar *filename,
                                                                  const gchar *url,
@@ -156,16 +157,16 @@ MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_new(GBytes *encrypte
                                                                  const guint8 file_hash[32],
                                                                  const guint8 nonce[12],
                                                                  guint64 epoch);
-MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_copy(const MarmotGobjectEncryptedMedia *media);
-void marmot_gobject_encrypted_media_free(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_copy(const MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API void marmot_gobject_encrypted_media_free(MarmotGobjectEncryptedMedia *media);
 
-GBytes *marmot_gobject_encrypted_media_get_data(MarmotGobjectEncryptedMedia *media);
-const gchar *marmot_gobject_encrypted_media_get_mime_type(MarmotGobjectEncryptedMedia *media);
-const gchar *marmot_gobject_encrypted_media_get_filename(MarmotGobjectEncryptedMedia *media);
-gsize marmot_gobject_encrypted_media_get_original_size(MarmotGobjectEncryptedMedia *media);
-const guint8 *marmot_gobject_encrypted_media_get_file_hash(MarmotGobjectEncryptedMedia *media);
-const guint8 *marmot_gobject_encrypted_media_get_nonce(MarmotGobjectEncryptedMedia *media);
-guint64 marmot_gobject_encrypted_media_get_epoch(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API GBytes *marmot_gobject_encrypted_media_get_data(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_encrypted_media_get_mime_type(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_encrypted_media_get_filename(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API gsize marmot_gobject_encrypted_media_get_original_size(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API const guint8 *marmot_gobject_encrypted_media_get_file_hash(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API const guint8 *marmot_gobject_encrypted_media_get_nonce(MarmotGobjectEncryptedMedia *media);
+MARMOT_GOBJECT_API guint64 marmot_gobject_encrypted_media_get_epoch(MarmotGobjectEncryptedMedia *media);
 
 G_END_DECLS
 

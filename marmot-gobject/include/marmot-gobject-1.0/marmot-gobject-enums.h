@@ -9,6 +9,7 @@
 #ifndef MARMOT_GOBJECT_ENUMS_H
 #define MARMOT_GOBJECT_ENUMS_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 #include <marmot/marmot-types.h>
 
@@ -28,10 +29,10 @@ typedef enum {
     MARMOT_GOBJECT_GROUP_STATE_PENDING  = 2,
 } MarmotGobjectGroupState;
 
-GType marmot_gobject_group_state_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_group_state_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_GROUP_STATE (marmot_gobject_group_state_get_type())
 
-MarmotGobjectGroupState marmot_gobject_group_state_from_marmot(MarmotGroupState state);
+MARMOT_GOBJECT_API MarmotGobjectGroupState marmot_gobject_group_state_from_marmot(MarmotGroupState state);
 
 /**
  * MarmotGobjectMessageState:
@@ -49,10 +50,10 @@ typedef enum {
     MARMOT_GOBJECT_MESSAGE_STATE_EPOCH_INVALIDATED  = 3,
 } MarmotGobjectMessageState;
 
-GType marmot_gobject_message_state_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_message_state_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_MESSAGE_STATE (marmot_gobject_message_state_get_type())
 
-MarmotGobjectMessageState marmot_gobject_message_state_from_marmot(MarmotMessageState state);
+MARMOT_GOBJECT_API MarmotGobjectMessageState marmot_gobject_message_state_from_marmot(MarmotMessageState state);
 
 /**
  * MarmotGobjectWelcomeState:
@@ -68,10 +69,10 @@ typedef enum {
     MARMOT_GOBJECT_WELCOME_STATE_DECLINED = 2,
 } MarmotGobjectWelcomeState;
 
-GType marmot_gobject_welcome_state_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_welcome_state_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_WELCOME_STATE (marmot_gobject_welcome_state_get_type())
 
-MarmotGobjectWelcomeState marmot_gobject_welcome_state_from_marmot(MarmotWelcomeState state);
+MARMOT_GOBJECT_API MarmotGobjectWelcomeState marmot_gobject_welcome_state_from_marmot(MarmotWelcomeState state);
 
 /**
  * MarmotGobjectMessageResultType:
@@ -89,10 +90,10 @@ typedef enum {
     MARMOT_GOBJECT_MESSAGE_RESULT_OWN_MESSAGE   = 4,
 } MarmotGobjectMessageResultType;
 
-GType marmot_gobject_message_result_type_get_type(void) G_GNUC_CONST;
+MARMOT_GOBJECT_API GType marmot_gobject_message_result_type_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_MESSAGE_RESULT_TYPE (marmot_gobject_message_result_type_get_type())
 
-MarmotGobjectMessageResultType marmot_gobject_message_result_type_from_marmot(MarmotMessageResultType type);
+MARMOT_GOBJECT_API MarmotGobjectMessageResultType marmot_gobject_message_result_type_from_marmot(MarmotMessageResultType type);
 
 G_END_DECLS
 

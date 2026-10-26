@@ -8,7 +8,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 set(MARMOT_GOBJECT_MAJOR_VERSION 1)
 set(MARMOT_GOBJECT_MINOR_VERSION 5)
-set(MARMOT_GOBJECT_MICRO_VERSION 0)
+set(MARMOT_GOBJECT_MICRO_VERSION 1)
 declare_component_version(MARMOT_GOBJECT
   ${MARMOT_GOBJECT_MAJOR_VERSION}
   ${MARMOT_GOBJECT_MINOR_VERSION}
@@ -68,6 +68,9 @@ set(MARMOT_GOBJECT_PUBLIC_HEADERS
 
 # ─── Library target ──────────────────────────────────────────────────────
 add_library(marmot-gobject ${MARMOT_GOBJECT_SOURCES})
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(marmot-gobject MARMOT_GOBJECT_API
+  marmot-gobject-export.h "${CMAKE_INSTALL_INCLUDEDIR}/marmot-gobject-1.0")
 set(marmot-gobject_VERSION "${MARMOT_GOBJECT_VERSION}")
 set_target_properties(marmot-gobject PROPERTIES
   C_STANDARD 11
@@ -132,6 +135,25 @@ if(MARMOT_GOBJECT_INTROSPECTION)
     set(GIR_FILE "${GIR_NAMESPACE}-${GIR_NSVERSION}.gir")
     set(TYPELIB_FILE "${GIR_NAMESPACE}-${GIR_NSVERSION}.typelib")
 
+    # A static build still needs a loadable library for the scanner/typelib.
+    get_target_property(_marmot_gobject_type marmot-gobject TYPE)
+    set(_marmot_gir_target marmot-gobject)
+    set(_marmot_gir_library marmot-gobject-1.0)
+    if(_marmot_gobject_type STREQUAL "STATIC_LIBRARY")
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gir-dummy.c" "/* GIR archive wrapper */\n")
+      add_library(marmot-gobject-gir-shared SHARED "${CMAKE_CURRENT_BINARY_DIR}/gir-dummy.c")
+      target_link_libraries(marmot-gobject-gir-shared PRIVATE marmot-gobject)
+      if(APPLE)
+        target_link_options(marmot-gobject-gir-shared PRIVATE
+          "-Wl,-force_load,$<TARGET_FILE:marmot-gobject>")
+      else()
+        target_link_options(marmot-gobject-gir-shared PRIVATE
+          -Wl,--whole-archive $<TARGET_FILE:marmot-gobject> -Wl,--no-whole-archive)
+      endif()
+      set(_marmot_gir_target marmot-gobject-gir-shared)
+      set(_marmot_gir_library marmot-gobject-gir-shared)
+    endif()
+
     # Collect all header file paths as strings for the scanner
     set(GIR_HEADER_ARGS "")
     foreach(h ${MARMOT_GOBJECT_PUBLIC_HEADERS})
@@ -150,7 +172,7 @@ if(MARMOT_GOBJECT_INTROSPECTION)
         --nsversion=${GIR_NSVERSION}
         --symbol-prefix=marmot_gobject
         --identifier-prefix=MarmotGobject
-        --library=marmot-gobject-1.0
+        --library=${_marmot_gir_library}
         --include=GLib-2.0
         --include=GObject-2.0
         --include=Gio-2.0
@@ -160,12 +182,13 @@ if(MARMOT_GOBJECT_INTROSPECTION)
         --warn-all
         --no-libtool
         -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        -I${CMAKE_SOURCE_DIR}/libmarmot/include
         -I${CMAKE_CURRENT_BINARY_DIR}/include
-        -L$<TARGET_FILE_DIR:marmot-gobject>
+        -L$<TARGET_FILE_DIR:${_marmot_gir_target}>
         --output=${CMAKE_CURRENT_BINARY_DIR}/${GIR_FILE}
         ${GIR_HEADER_ARGS}
         ${GIR_SOURCE_ARGS}
-      DEPENDS marmot-gobject ${MARMOT_GOBJECT_PUBLIC_HEADERS} ${MARMOT_GOBJECT_SOURCES}
+      DEPENDS ${_marmot_gir_target} ${MARMOT_GOBJECT_PUBLIC_HEADERS} ${MARMOT_GOBJECT_SOURCES}
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       COMMENT "Generating ${GIR_FILE}"
     )
@@ -184,15 +207,16 @@ if(MARMOT_GOBJECT_INTROSPECTION)
               ${CMAKE_CURRENT_BINARY_DIR}/${TYPELIB_FILE}
     )
 
-    # Install GIR and typelib
+    # Install GIR and typelib. A static build's typelib names the build-tree
+    # wrapper, which is not installed, so its introspection data stays local.
     pkg_get_variable(GIR_INSTALL_DIR gobject-introspection-1.0 girdir)
     pkg_get_variable(TYPELIB_INSTALL_DIR gobject-introspection-1.0 typelibdir)
 
-    if(GIR_INSTALL_DIR)
+    if(GIR_INSTALL_DIR AND NOT _marmot_gobject_type STREQUAL "STATIC_LIBRARY")
       install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${GIR_FILE}
         DESTINATION ${GIR_INSTALL_DIR})
     endif()
-    if(TYPELIB_INSTALL_DIR)
+    if(TYPELIB_INSTALL_DIR AND NOT _marmot_gobject_type STREQUAL "STATIC_LIBRARY")
       install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${TYPELIB_FILE}
         DESTINATION ${TYPELIB_INSTALL_DIR})
     endif()

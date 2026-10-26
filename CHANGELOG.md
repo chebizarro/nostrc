@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- marmot-gobject 1.5.1 builds hidden-by-default with `MARMOT_GOBJECT_API`
+  annotations (unchanged export set). Marmot-1.0 GIR/typelib generation finds
+  the libmarmot headers and, in static builds, scans a loadable wrapper library.
 - nostr-gobject's Meson build links the real `libnostr.a`, `libnostr-json`
   and `libnostrgo.a` artifacts and archive closure of the selected CMake tree
   (`-Dcmake_build_dir`), and fails visibly when one is missing, instead of
