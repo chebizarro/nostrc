@@ -49,9 +49,51 @@ connection permits vault operations; failed AUTH does not grant access. Keep
 author to equal the authenticated key, which is incompatible with random NIP-59
 outer authors. Vault mode authorizes the connection, not the outer author.
 
-This does not add live fan-out: relayd currently sends stored matches then EOSE
-and ends that query. For real-store VSP-01 checks run
+Challenges use OpenSSL `RAND_bytes`; if secure randomness is unavailable,
+relayd rejects the connection rather than issuing a predictable challenge.
+For real-store VSP-01 checks run
 `packaging/lab-blossom/run_vsp01_lab.sh /absolute/path/to/nostrc-relayd`.
+
+## NIP-01 catch-up and live delivery
+
+A successful REQ retains its filters after EOSE. EOSE marks only the end of
+stored catch-up; the subscription stays live until CLOSE, a new REQ with the
+same subscription id, or disconnect. `limit` applies to history, not live
+delivery (`limit: 0` requests live-only delivery). Active subscriptions,
+including those past EOSE, count toward `max_subs`; `max_filters` applies to
+each REQ. Replacing an id cancels its old iterator and buffered deliveries.
+
+Each accepted newly stored EVENT is delivered once per matching subscription,
+even when several of its filters match. Duplicate, rejected and unconfirmed
+writes do not fan out. Accepted replaceable/addressable events retain their
+original signed payload. With nostrdb, fanout and OK follow commit visibility;
+a disconnected publisher does not cancel a pending commit's live delivery.
+NIP-42 required-auth and VSP-01 authorization are checked for each subscriber,
+not inherited from the publisher. Protected kinds and kind-less filters retain
+the allowlist gate. Search filters use the storage backend's NIP-50 matcher.
+
+All connection/subscription ownership and WebSocket writes stay on the single
+libwebsockets service thread. The nostrdb writer only calls
+`lws_cancel_service`; reconciliation on the service thread performs fanout.
+Outbound frames share a per-connection buffer bounded to **256 frames and 2 MiB
+of serialized payload**, plus bounded frame metadata. Live frames wait for their
+subscription's EOSE; control replies can pass live frames still awaiting catch-up.
+Buffered delivery alternates with round-robin catch-up progress so a busy live
+subscription cannot starve another subscription's EOSE. Writes happen one frame
+per writable callback, using libwebsockets' own partial-write buffering. If the
+queue cannot accept a frame (including allocation failure), the connection is
+**disconnected** with WebSocket policy-violation status rather than silently
+losing events or allocating an unbounded queue. Clients must reconnect and
+reissue their REQs to catch up. Pending storage commits are separately bounded
+to 256 globally, including disconnected publishers; their deadlines are storage
+confirmation limits, not subscription lifetimes.
+
+Focused coverage: `ctest --test-dir <build> -R '^relayd_req_contract$'
+--output-on-failure` exercises the real WebSocket entrypoint with scripted
+storage and (when built) real nostrdb. Delivery/absence assertions use EVENT,
+OK, EOSE and same-connection barriers, not sleep-based quiet periods. The SV-10
+two-npub harness now waits for the already-subscribed owner's live conflict fold;
+it no longer restarts owner catch-up as a workaround for missing relay fanout.
 
 ## Upstream federation (session relay)
 

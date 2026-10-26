@@ -10,15 +10,8 @@
 #include "relayd_ctx.h"
 #include "protocol_nip45.h"
 
-static void ws_send_text(struct lws *wsi, const char *s) {
-  if (!wsi || !s) return;
-  size_t blen = strlen(s);
-  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + blen);
-  if (!buf) return;
-  memcpy(&buf[LWS_PRE], s, blen);
-  lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_TEXT);
-  free(buf);
-}
+#include "protocol_nip01.h"
+#define ws_send_text relayd_conn_send_text
 
 int relayd_handle_count(struct lws *wsi, const RelaydCtx *ctx, const char *msg, size_t len) {
   if (!wsi || !ctx || !msg || len < 8) return -EINVAL;

@@ -167,23 +167,25 @@ try:
     os.chown(member_file, member["uid"], member["uid"])
     # Real live subscription + watcher edit. Completion is an observable commit,
     # never a timed subscription close or a sleep standing in for EOSE.
-    print("LIMIT: nostrc-vqu69 relayd ends subscriptions at EOSE; owner fold uses explicit current-head catch-up, not client polling", flush=True)
     mp = launch(member)
     ready(mp)
     edited = b"member writer edit\n"
-    previous_generation = json.loads((member["base"] / "state/snapshot.json").read_text())["generation"]
     owner_edit = b"owner concurrent authoritative edit\n"
     (team / "file").write_bytes(owner_edit)
+    op = launch(owner)
+    ready(op)  # EOSE is catch-up completion, not subscription termination.
+    previous_generation = json.loads((member["base"] / "state/snapshot.json").read_text())["generation"]
     member_file.write_bytes(edited)
     conflict = owner["base"] / f"home/Portable/.conflicts/Portable/Team/file@{P2}"
     until(mp, lambda: member_file.read_bytes() == edited and
         json.loads((member["base"] / "state/snapshot.json").read_text())["generation"] > previous_generation)
+    until(op, lambda: conflict.is_file() and conflict.read_bytes() == edited)
     stop(mp)
-    run(owner, "nostr-home-syncd", "--vault-sync")
+    stop(op)
     assert conflict.is_file() and conflict.read_bytes() == edited
     assert (team / "file").read_bytes() == owner_edit
     fuse(owner, f"Portable/.conflicts/Portable/Team/file@{P2}", hashlib.sha256(edited).hexdigest())
-    print("PASS two UIDs/npubs: grant -> cold bootstrap -> live edit/head -> owner checkpoint fold -> conflict copy", flush=True)
+    print("PASS two UIDs/npubs: grant -> cold bootstrap -> live edit/head -> live owner fold -> conflict copy", flush=True)
     # A deletion is preserved in the signed source and existing status metadata.
     member_file.unlink()
     member_team = member_file.parent
@@ -253,7 +255,7 @@ try:
     fuse(migrate, "Portable/Team/nested/old", expected=6)
     assert len(a.http_receipts.read_text().splitlines()) == before
     print("PASS private cache miss: FUSE I/O error/status, zero HTTP/key fallback", flush=True)
-    print("PASS SV-10 local Linux two-account scenario; kernel FUSE mount and post-EOSE relay delivery not exercised", flush=True)
+    print("PASS SV-10 local Linux two-account scenario with post-EOSE live delivery; kernel FUSE mount not exercised", flush=True)
 finally:
     for proc in processes:
         if proc.poll() is None:

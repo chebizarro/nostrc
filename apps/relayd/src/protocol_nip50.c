@@ -9,15 +9,7 @@
 #include "protocol_nip50.h"
 #include "protocol_nip01.h"
 
-static void ws_send_text(struct lws *wsi, const char *s) {
-  if (!wsi || !s) return;
-  size_t blen = strlen(s);
-  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + blen);
-  if (!buf) return;
-  memcpy(&buf[LWS_PRE], s, blen);
-  lws_write(wsi, &buf[LWS_PRE], blen, LWS_WRITE_TEXT);
-  free(buf);
-}
+#define ws_send_text relayd_conn_send_text
 
 int relayd_nip50_maybe_start_search(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
                                     const char *sub, size_t sub_len,
@@ -34,6 +26,10 @@ int relayd_nip50_maybe_start_search(struct lws *wsi, ConnState *cs, const Relayd
     char subtmp[128]; size_t cplen = sub_len < sizeof(subtmp)-1 ? sub_len : sizeof(subtmp)-1; memcpy(subtmp, sub, cplen); subtmp[cplen]='\0';
     char *closed = nostr_closed_build_json(subtmp, "unsupported: search");
     if (closed) { ws_send_text(wsi, closed); free(closed);}                
+    return 1;
+  }
+  if (scope->limit_zero) {
+    relayd_conn_sub_push(wsi, cs, sub, sub_len, NULL);
     return 1;
   }
   void *it = NULL; int rc = st->vt->search(st, qsearch, scope, 0, &it);

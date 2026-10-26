@@ -9,17 +9,15 @@
 #include "relayd_ctx.h"
 #include "relayd_conn.h"
 #include "protocol_nip42.h"
+#include "protocol_nip01.h"
 
 int relayd_nip42_maybe_send_challenge_on_writable(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx) {
   (void)ctx;
   if (!wsi || !cs) return 0;
   if (!cs->need_auth_chal) return 0;
-  unsigned char *buf = (unsigned char*)malloc(LWS_PRE + 64 + strlen(cs->auth_chal));
-  if (buf) {
-    int m = snprintf((char*)&buf[LWS_PRE], 64 + (int)strlen(cs->auth_chal), "[\"AUTH\",\"%s\"]", cs->auth_chal);
-    if (m > 0) lws_write(wsi, &buf[LWS_PRE], (size_t)m, LWS_WRITE_TEXT);
-    free(buf);
-  }
+  char frame[96];
+  snprintf(frame, sizeof frame, "[\"AUTH\",\"%s\"]", cs->auth_chal);
+  relayd_conn_send_text(wsi, frame);
   cs->need_auth_chal = 0;
   return 1;
 }
@@ -28,13 +26,7 @@ static void send_auth_ok(struct lws *wsi, const char *id, int accepted) {
   char *reply = nostr_ok_build_json(id ? id : "", accepted,
                                    accepted ? "" : "invalid: NIP-42 authentication failed");
   if (!reply) return;
-  size_t size = strlen(reply);
-  unsigned char *buf = malloc(LWS_PRE + size);
-  if (buf) {
-    memcpy(buf + LWS_PRE, reply, size);
-    lws_write(wsi, buf + LWS_PRE, size, LWS_WRITE_TEXT);
-    free(buf);
-  }
+  relayd_conn_send_text(wsi, reply);
   free(reply);
 }
 
