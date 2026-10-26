@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 3)
 set(NOSTR_GOBJECT_MINOR_VERSION 0)
-set(NOSTR_GOBJECT_MICRO_VERSION 0)
+set(NOSTR_GOBJECT_MICRO_VERSION 1)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}
@@ -218,6 +218,7 @@ target_include_directories(nostr_gobject
 # Preserve that compile interface when Groundhog selects the shared runtime;
 # the shared DSO still owns the only copy of its GObject type symbols.
 set(_LINK_VIS PUBLIC)
+set(_nostr_gobject_archives "")
 
 if(NOT TARGET nostrc::blossom)
   if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -229,7 +230,7 @@ if(NOT TARGET nostrc::blossom)
     message(FATAL_ERROR "nostr-gobject requires libblossom; set BUILD_LIBBLOSSOM=ON")
   endif()
 endif()
-nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrc::blossom)
+list(APPEND _nostr_gobject_archives nostrc::blossom)
 
 if(NOT TARGET nostrc::vault)
   if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -239,7 +240,7 @@ if(NOT TARGET nostrc::vault)
     message(FATAL_ERROR "nostr-gobject requires libvault; set BUILD_LIBVAULT=ON")
   endif()
 endif()
-nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrc::vault)
+list(APPEND _nostr_gobject_archives nostrc::vault)
 
 # Core GLib/GObject/GIO always PUBLIC (consumers need these headers)
 target_link_libraries(nostr_gobject
@@ -254,7 +255,7 @@ target_link_libraries(nostr_gobject
 # must not hold a second copy of libnostr beside its executable's (root
 # CMakeLists.txt, NOSTRC_ARCHIVES_FROM_EXECUTABLE). nostr_json is shared but
 # brings the libnostr archive along on ELF.
-nostrc_link_archives(nostr_gobject ${_LINK_VIS}
+list(APPEND _nostr_gobject_archives
     libnostr
     nostr_json
     libgo
@@ -273,7 +274,7 @@ foreach(_nip nip04 nip06 nip11 nip19
              nostr_nip44_core nostr_nip46_core
              nostr_nip49_core nostr_nip49_glib)
   if(TARGET ${_nip})
-    nostrc_link_archives(nostr_gobject ${_LINK_VIS} ${_nip})
+    list(APPEND _nostr_gobject_archives ${_nip})
   endif()
 endforeach()
 
@@ -284,7 +285,7 @@ target_include_directories(nostr_gobject PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/nostrdb/deps/flatcc/include
 )
 if(TARGET nostrdb_storage)
-  nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrdb_storage)
+  list(APPEND _nostr_gobject_archives nostrdb_storage)
 endif()
 
 if(JSON_GLIB_FOUND)
@@ -297,8 +298,69 @@ if(ENABLE_NIP11)
   target_compile_definitions(nostr_gobject PRIVATE ENABLE_NIP11)
 endif()
 
+# Make the full executable-side archive contract explicit here, including the
+# static closure of Vault/Blossom and nostrdb. Both the CMake usage requirement
+# and the uninstalled pkg-config export below consume this one list.
+foreach(_dep nostrc::porthome nostrc::bud02 nip59 nostrdb nostrdb_vendored)
+  if(TARGET ${_dep})
+    list(APPEND _nostr_gobject_archives ${_dep})
+  endif()
+endforeach()
+nostrc_link_archives(nostr_gobject ${_LINK_VIS} ${_nostr_gobject_archives})
+
 # Inherit sanitizer flags from root CMakeLists.txt
 apply_sanitizers(nostr_gobject)
+
+# Executable consumers supply the archives intentionally omitted from the ELF
+# shared runtime. Keep nostr_gobject's existing transitive interface intact;
+# this named contract is also used by the GIR probe and external build systems.
+add_library(nostr_gobject_executable INTERFACE)
+add_library(nostrc::gobject_executable ALIAS nostr_gobject_executable)
+target_link_libraries(nostr_gobject_executable INTERFACE nostr_gobject)
+add_executable(nostr_gobject_link_contract EXCLUDE_FROM_ALL link_contract.c)
+target_link_libraries(nostr_gobject_link_contract PRIVATE nostrc::gobject_executable)
+apply_sanitizers(nostr_gobject_link_contract)
+
+# Like marmot-build-tree.pc, this is deliberately never installed. Exact target
+# artifacts bind consumers to this tree, not a same-named system installation.
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(_gobject_build_pc "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-build-tree.pc")
+  if(CMAKE_CONFIGURATION_TYPES)
+    set(_gobject_build_pc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/nostr-gobject-build-tree.pc")
+  endif()
+  set(_gobject_build_libs "\"$<TARGET_FILE:nostr_gobject>\"")
+  set(_gobject_build_flags "")
+  if(UNIX AND NOT APPLE)
+    # A shared runtime is needed even when reached indirectly. Group archives
+    # so static dependency cycles do not depend on pkg-config's deduplication.
+    set(_gobject_build_flags "-Wl,--no-as-needed")
+    string(APPEND _gobject_build_libs " -Wl,--start-group")
+  endif()
+  foreach(_dep IN LISTS _nostr_gobject_archives)
+    if(TARGET ${_dep})
+      string(APPEND _gobject_build_libs " \"$<TARGET_FILE:${_dep}>\"")
+    else()
+      string(APPEND _gobject_build_libs " \"${_dep}\"")
+    endif()
+  endforeach()
+  if(UNIX AND NOT APPLE)
+    string(APPEND _gobject_build_libs " -Wl,--end-group")
+  endif()
+  if(UNIX)
+    string(APPEND _gobject_build_flags
+      " -Wl,-rpath,\"$<TARGET_FILE_DIR:nostr_gobject>\" -Wl,-rpath,\"$<TARGET_FILE_DIR:nostr_json>\"")
+  endif()
+  set(_gobject_build_requires "glib-2.0 gobject-2.0 gio-2.0 openssl libsecp256k1 libwebsockets jansson libcurl")
+  if(JSON_GLIB_FOUND)
+    string(APPEND _gobject_build_requires " json-glib-1.0")
+  endif()
+  if(LIBSODIUM_FOUND)
+    string(APPEND _gobject_build_requires " libsodium")
+  endif()
+  file(GENERATE OUTPUT "${_gobject_build_pc}" CONTENT
+"Name: nostr-gobject-build-tree\nDescription: GNostr executable link contract in this CMake build tree\nVersion: ${NOSTR_GOBJECT_VERSION}\nLibs: ${_gobject_build_flags} ${_gobject_build_libs} -pthread\nRequires: ${_gobject_build_requires}\n")
+  add_custom_target(nostr-gobject-build-tree-pc ALL DEPENDS nostr_gobject_link_contract)
+endif()
 
 # ── GObject Introspection ────────────────────────────────────────────
 option(NOSTR_GOBJECT_ENABLE_GIR "Generate GNostr-1.0 GIR and typelib" OFF)
@@ -334,6 +396,17 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
     else()
       set(_gir_lib_name nostr-gobject-1.0)
       set(_gir_lib_dep  nostr_gobject)
+    endif()
+
+    set(_gir_contract_args "")
+    set(_gir_contract_dep "")
+    if(NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+      # The scanner's temporary executable is an ordinary executable consumer,
+      # just like Grotto. Give pkg-config the exact same CMake-owned closure.
+      set(_gir_contract_args
+        --pkg "${_gobject_build_pc}"
+        --pkg-export nostr-gobject-1.0)
+      set(_gir_contract_dep nostr-gobject-build-tree-pc)
     endif()
 
     # Installed libvault's pkg-config includes cover its public dependencies.
@@ -376,6 +449,7 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           --identifier-prefix=Gnostr
           --identifier-prefix=Gn
           --warn-all
+          ${_gir_contract_args}
           --library ${_gir_lib_name}
           --library-path $<TARGET_FILE_DIR:${_gir_lib_dep}>
           --library-path ${CMAKE_BINARY_DIR}/libnostr
@@ -404,17 +478,22 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           --output ${_gir_file}
           ${_gir_input}
       COMMAND ${G_IR_COMPILER} ${_gir_file} -o ${_typelib}
-      DEPENDS ${_gir_lib_dep}
+      DEPENDS ${_gir_lib_dep} ${_gir_contract_dep} ${_gir_input}
       COMMENT "Generating GNostr-1.0 GIR and typelib"
       VERBATIM
     )
 
     add_custom_target(nostr-gobject-gir ALL DEPENDS ${_typelib})
 
-    install(FILES ${_gir_file}
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/gir-1.0)
-    install(FILES ${_typelib}
-            DESTINATION ${CMAKE_INSTALL_LIBDIR}/girepository-1.0)
+    # A static build's scanner wrapper (including scanner-only app stubs) is
+    # deliberately not a runtime library. Keep its metadata build-tree-only too;
+    # installing a typelib that names that uninstalled wrapper is unusable.
+    if(NOT _glib_type STREQUAL "STATIC_LIBRARY")
+      install(FILES ${_gir_file}
+              DESTINATION ${CMAKE_INSTALL_DATADIR}/gir-1.0)
+      install(FILES ${_typelib}
+              DESTINATION ${CMAKE_INSTALL_LIBDIR}/girepository-1.0)
+    endif()
   else()
     message(WARNING "g-ir-scanner/g-ir-compiler not found; GIR generation disabled")
   endif()

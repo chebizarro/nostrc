@@ -66,6 +66,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.1.1" type="development" date="2026-10-27">
+      <description>
+        <p>Fix the alternate Meson frontend's Groundhog executable-side link closure.</p>
+      </description>
+    </release>
     <release version="0.1.0" type="development" date="2026-10-14">
       <description>
         <p>Unreleased Preview development snapshot; not promotion to stable:</p>

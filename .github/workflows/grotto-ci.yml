@@ -340,6 +340,7 @@ jobs:
         run: |
           meson setup build-meson apps/grotto -Dcmake_build_dir="$PWD/build"
           meson compile -C build-meson
+          meson test -C build-meson --print-errorlogs
       - name: Build and inspect the single native deb
         if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.grotto_package == 'true')
         run: |

@@ -2,7 +2,7 @@
 # Requires GTK >=4.14, libadwaita >=1.5, GLib >=2.80 (not RHEL 9/Fedora 38).
 %global app_id org.nostr.Grotto
 Name:           grotto
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Nostr identity management and signing service (Preview)
 License:        MIT
@@ -105,6 +105,9 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 %{_datadir}/doc/nostr-signer-webext-host/
 
 %changelog
+* Tue Oct 27 2026 Grotto Maintainers - 0.1.1-1
+- Fix the alternate Meson frontend's Groundhog executable-side link closure
+
 * Wed Oct 14 2026 Grotto Maintainers - 0.1.0-1
 - Fold native GUI/daemon packaging correction into unreleased Preview 0.1.0
 - Use canonical desktop/metainfo, activation, autostart template and network examples

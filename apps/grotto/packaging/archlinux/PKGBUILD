@@ -1,7 +1,7 @@
-# Build from a local, complete grotto-0.1.0.tar.gz archive (including submodules).
+# Build from a local, complete grotto-0.1.1.tar.gz archive (including submodules).
 # No published Grotto release is implied. See ../README.md.
 pkgname=grotto
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Nostr identity management and signing service (Preview)'
 arch=('x86_64' 'aarch64')
