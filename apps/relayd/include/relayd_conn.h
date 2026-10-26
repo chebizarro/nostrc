@@ -36,13 +36,22 @@ typedef struct {
   int eose_sent;
 } RelaydPendingSub;
 
+/* Storage ownership is independent of publisher connections and their timers. */
+typedef struct RelaydPendingStore {
+  struct RelaydPendingStore *next;
+  RelayIngressResult ingress; /* replay reservation; event is serialized below */
+  char *json;
+  size_t bytes;
+  char *old_replaceable_id;
+} RelaydPendingStore;
+
 typedef struct RelaydPendingAck {
   struct RelaydPendingAck *next;
-  RelayIngressResult ingress; /* owns event and replay reservation until commit */
-  char *old_replaceable_id;
+  RelaydPendingStore *store; /* NULL once committed */
+  char id[65];
   uint64_t deadline_ms;
   int ready;
-  int accepted;
+  int duplicate;
 } RelaydPendingAck;
 
 struct lws;
@@ -53,6 +62,8 @@ typedef struct ConnState {
   RelaydPendingAck *ack_head;
   RelaydPendingAck *ack_tail;
   size_t nacks;
+  char storage_notice_id[65]; /* outcome unknown: NOTICE then close, never OK */
+  int storage_notice_sent;
   RelaydFrame *send_head;
   RelaydFrame *send_tail;
   size_t send_count;

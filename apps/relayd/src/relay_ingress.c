@@ -93,7 +93,7 @@ RelayIngressDecision relay_ingress_validate_and_reserve(
       relay_policy_reserve(policy, result->binary_id, now_mono_ms);
   if (replay == RELAY_REPLAY_DUPLICATE) {
     result->decision = RELAY_INGRESS_DUPLICATE;
-    result->reason = "duplicate";
+    result->reason = "duplicate: already stored";
     return result->decision;
   }
   if (replay == RELAY_REPLAY_IN_PROGRESS) {

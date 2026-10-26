@@ -127,7 +127,11 @@ static NostrStorageVTable g_fake_vt = {
 typedef struct {
   pthread_mutex_t mutex;
   pthread_cond_t cond;
-  unsigned char ids[128][32];
+  unsigned char ids[1024][32];
+  int committed_out_of_order[1024];
+  int enqueue_error;
+  int visible_error;
+  int visible_error_reads;
   int queued;
   int committed;
   int release_sync;
@@ -172,7 +176,7 @@ static int async_fake_enqueue(NostrStorage *st, const NostrEvent *ev) {
   char *hex = nostr_event_get_id((NostrEvent*)ev);
   if (!hex) return -1;
   pthread_mutex_lock(&g_async.mutex);
-  int ok = g_async.queued < 128 &&
+  int ok = !g_async.enqueue_error && g_async.queued < 1024 &&
            relay_policy_hex_to_id(hex, g_async.ids[g_async.queued]);
   if (ok) g_async.queued++;
   pthread_cond_broadcast(&g_async.cond);
@@ -185,8 +189,14 @@ static int async_fake_visible(NostrStorage *st, const unsigned char id[32]) {
   (void)st;
   pthread_mutex_lock(&g_async.mutex);
   int found = 0;
-  for (int i = 0; i < g_async.committed; i++)
-    if (memcmp(id, g_async.ids[i], 32) == 0) { found = 1; break; }
+  for (int i = 0; i < g_async.queued; i++)
+    if ((i < g_async.committed || g_async.committed_out_of_order[i]) &&
+        memcmp(id, g_async.ids[i], 32) == 0) { found = 1; break; }
+  if (g_async.visible_error) {
+    found = -1;
+    g_async.visible_error_reads++;
+    pthread_cond_broadcast(&g_async.cond);
+  }
   pthread_mutex_unlock(&g_async.mutex);
   return found;
 }
@@ -544,6 +554,7 @@ static char *signed_event_frame(const char *sk, const char *pk,
 }
 
 static void barrier(int fd);
+static void expect_closed_without_text(int fd);
 static void expect_event(int fd, const char *sub, const char *id);
 
 static void run_async_commit(const char *dir) {
@@ -620,16 +631,29 @@ static void run_async_commit(const char *dir) {
     free(reply);
     reply = ws_recv(a);
     long long timeout_elapsed = now_ms() - timeout_start;
-    snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",false,\"error:", id);
-    CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
-          "deadline did not yield OK false error: %s",
+    CHECK(reply && strncmp(reply, "[\"NOTICE\",", 10) == 0 &&
+          strstr(reply, "error: storage outcome unknown") && strstr(reply, id),
+          "deadline did not yield event-bearing NOTICE: %s",
           reply ? reply : "(no reply)");
     CHECK(timeout_elapsed >= 1900 && timeout_elapsed < 3000,
           "2-second commit deadline took %lld ms", timeout_elapsed);
-    fprintf(stderr, "  absent notification: client B EOSE %lld ms, OK false %lld ms\n",
+    fprintf(stderr, "  absent notification: client B EOSE %lld ms, NOTICE %lld ms\n",
             elapsed, timeout_elapsed);
+    free(reply);
+    expect_closed_without_text(a);
+    close(a);
+    barrier(b); /* invisible storage has not fanned out */
+    async_commit_all();
+    expect_event(b, "live", id);
+    barrier(b); /* late commit fanned out exactly once */
+    a = connect_client(&s);
+    CHECK(ws_send(a, frame) == 0, "resubmit late-committed event");
+    reply = ws_recv(a);
+    snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true,\"duplicate:", id);
+    CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
+          "late resubmission must be duplicate true: %s", reply ? reply : "(none)");
     free(reply); free(frame); free(id);
-    barrier(b); /* timed-out storage did not fan out */
+    barrier(b);
 
     enum { BURST = 100 };
     char *frames[BURST], *ids[BURST];
@@ -690,6 +714,8 @@ static void run_async_commit(const char *dir) {
   free(pk); free(sk);
   server_stop(&s);
 }
+
+#include "late_storage_cases.h"
 
 static void run_live_overflow(const char *dir) {
   fprintf(stderr, "== bounded live queue overflow disconnect\n");
@@ -897,6 +923,26 @@ static void authenticate(int fd, const char *sk, const char *pk) {
   free(frame); free(id);
 }
 
+static void run_required_malformed(const char *dir) {
+  async_reset();
+  RelaydConfig cfg;
+  CHECK(relayd_config_load(NULL, &cfg) == 0, "required auth config");
+  strcpy(cfg.auth, "required");
+  strcpy(cfg.relay_url, "wss://vault.example.com/");
+  NostrStorage st = { .vt = &g_async_vt };
+  Server s;
+  CHECK(server_start_config(&s, &st, dir, 8, &g_async_ops, 600, &cfg) == 0, "required auth server");
+  int pub = connect_client(&s);
+  char *sk = nostr_key_generate_private(), *pk = nostr_key_get_public(sk);
+  authenticate(pub, sk, pk);
+  expect_reply(pub, "[\"EVENT\",{\"kind\":1,\"content\":\"missing pubkey\"}]",
+               "[\"OK\",\"0000\",false,", "authenticated malformed event rejected safely");
+  CHECK(async_queued_count() == 0, "malformed event reached storage");
+  barrier(pub);
+  close(pub); free(pk); free(sk);
+  server_stop(&s);
+}
+
 static void run_vault_live(const char *dir, NostrStorage *st,
                            const RelaydAsyncStorageOps *ops) {
   char *sk = nostr_key_generate_private(), *pk = nostr_key_get_public(sk);
@@ -955,6 +1001,13 @@ int main(void) {
   run_storage_less(dir);
   run_with_storage(dir);
   run_async_commit(dir);
+  run_storage_waiters(dir, 900);
+  run_storage_waiters(dir, 0);
+  run_out_of_order_acks(dir);
+  run_waiter_saturation(dir);
+  run_storage_saturation(dir);
+  run_storage_failures_and_bytes(dir);
+  run_required_malformed(dir);
   run_live_overflow(dir);
   memset(&g_fake, 0, sizeof g_fake);
   g_fake.mode = FAKE_EMPTY_ITER;
@@ -967,6 +1020,7 @@ int main(void) {
   NostrStorage *real = nostrdb_storage_new();
   CHECK(real && real->vt->open(real, db, NULL) == 0, "open real nostrdb");
   if (real) {
+    run_real_late_commit(dir, real);
     run_live(dir, real, nostrdb_storage_async_ops());
     run_vault_live(dir, real, nostrdb_storage_async_ops());
     real->vt->close(real);

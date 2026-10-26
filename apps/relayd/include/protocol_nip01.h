@@ -17,7 +17,7 @@ extern "C" {
 int relayd_nip01_on_writable(struct lws *wsi, ConnState *cs,
                               const RelaydCtx *ctx);
 void relayd_nip01_reconcile_all(const RelaydCtx *ctx);
-void relayd_nip01_free_orphans(const RelaydCtx *ctx);
+void relayd_nip01_free_pending(const RelaydCtx *ctx);
 /* Service-thread only; bounded buffering, drained only on writable callbacks. */
 void relayd_conn_send_text(struct lws *wsi, const char *text);
 void relayd_conn_send_free_all(ConnState *cs);

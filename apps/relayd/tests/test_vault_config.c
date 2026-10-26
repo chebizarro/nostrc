@@ -25,6 +25,20 @@ int main(void) {
   write_file(config, text);
   RelaydConfig cfg;
   assert(relayd_config_load(NULL, &cfg) == 0 && !cfg.vault_enabled);
+  assert(cfg.storage_max_pending_events == 256);
+  assert(cfg.storage_max_pending_bytes == 16 * 1024 * 1024);
+  write_file(config, "storage_max_pending_events = 2\nstorage_max_pending_bytes = 1024\n");
+  assert(relayd_config_load(config, &cfg) == 0);
+  assert(cfg.storage_max_pending_events == 2 && cfg.storage_max_pending_bytes == 1024);
+  write_file(config, "storage_max_pending_events = 0\n");
+  assert(relayd_config_load(config, &cfg) != 0);
+  write_file(config, "storage_max_pending_events = 65537\n");
+  assert(relayd_config_load(config, &cfg) != 0);
+  write_file(config, "storage_max_pending_bytes = 1023\n");
+  assert(relayd_config_load(config, &cfg) != 0);
+  write_file(config, "storage_max_pending_bytes = 1073741825\n");
+  assert(relayd_config_load(config, &cfg) != 0);
+  write_file(config, text);
   assert(relayd_config_load(config, &cfg) != 0); /* Missing is not public. */
   write_file(list, "# deny all\n\n");
   assert(relayd_config_load(config, &cfg) == 0 && cfg.vault_enabled);

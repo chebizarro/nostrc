@@ -162,6 +162,9 @@ static void apply_defaults(RelaydConfig *cfg) {
   cfg->max_event_bytes =
       runtime_int(nostr_limit_max_event_size(), 256 * 1024);
 
+  cfg->storage_max_pending_events = 256;
+  cfg->storage_max_pending_bytes = 16 * 1024 * 1024;
+
   cfg->rate_ops_per_sec = 20;
   cfg->rate_burst = 40;
   cfg->rate_event_cost = 5;
@@ -215,6 +218,12 @@ int relayd_config_validate(const RelaydConfig *cfg, char *error,
   if (cfg->max_event_bytes < 1024 ||
       cfg->max_event_bytes > RELAYD_MAX_EVENT_BYTES)
     return fail(error, error_size, "max_event_bytes out of range");
+
+  if (cfg->storage_max_pending_events < 1 ||
+      cfg->storage_max_pending_events > 65536 ||
+      cfg->storage_max_pending_bytes < 1024 ||
+      cfg->storage_max_pending_bytes > 1024 * 1024 * 1024)
+    return fail(error, error_size, "storage pending limits out of range");
 
   if (cfg->rate_ops_per_sec <= 0 ||
       cfg->rate_ops_per_sec > (int)RATE_LIMIT_MAX_RATE ||
@@ -337,6 +346,8 @@ int relayd_config_load(const char *path, RelaydConfig *out) {
     PARSE_FIELD("max_limit", max_limit)
     PARSE_FIELD("max_subs", max_subs)
     PARSE_FIELD("max_event_bytes", max_event_bytes)
+    PARSE_FIELD("storage_max_pending_events", storage_max_pending_events)
+    PARSE_FIELD("storage_max_pending_bytes", storage_max_pending_bytes)
     PARSE_FIELD("rate_ops_per_sec", rate_ops_per_sec)
     PARSE_FIELD("rate_burst", rate_burst)
     PARSE_FIELD("rate_event_cost", rate_event_cost)
