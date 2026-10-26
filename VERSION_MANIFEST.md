@@ -45,6 +45,11 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-ctisj: Groundhog stays 0.12.0 (no bump). The multi-send and MLS-files
+  test executables compile the Blossom adapter directly and must declare its
+  bud02 dependency. Test-only usage requirements; no shipped artifact, public
+  contract or application behavior changes. No tags or release-column changes.
+
 - nostrc-hlw04: PATCH build/link correction for bud02 0.1.0 -> 0.1.1,
   libblossom 0.3.0 -> 0.3.1, libporthome 0.5.1 -> 0.5.2, libvault
   0.5.0 -> 0.5.1 and libvault-marmot 0.1.0 -> 0.1.1. Their existing public
