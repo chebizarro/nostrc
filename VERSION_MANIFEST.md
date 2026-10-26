@@ -138,6 +138,13 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
 
 ## Recorded version decisions
 
+- nostrc-hbysr: nostr-gobject's Meson build binds the renamed CMake core
+  artifacts (`libnostr.a`, `libnostr-json`, `libnostrgo.a`) and its archive
+  closure by explicit path in the selected tree (`-Dcmake_build_dir`), failing
+  visibly instead of resolving pre-rename names or system libraries. On Linux a
+  shared build follows the CMake executable-owned core policy. Build correction
+  folded into the unreleased nostr-gobject 3.0.0 above; no further bump.
+
 - nostrc-er4fz.10 phase C: nostr-gobject MAJOR 2.5.0 -> 3.0.0 (SONAME 3).
   The library is compiled hidden-by-default. Declared functions, GTypes,
   enum/flags type functions, error quarks and the generated signer proxy are

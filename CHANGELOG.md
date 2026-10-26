@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- nostr-gobject's Meson build links the real `libnostr.a`, `libnostr-json`
+  and `libnostrgo.a` artifacts and archive closure of the selected CMake tree
+  (`-Dcmake_build_dir`), and fails visibly when one is missing, instead of
+  requesting pre-rename names or falling back to system libraries.
 - Static bud02, libblossom, libporthome, libvault and libvault-marmot retain
   default visibility on public API definitions, allowing Groundhog's shared
   GObject layer to resolve those APIs from executable-supplied archives.
