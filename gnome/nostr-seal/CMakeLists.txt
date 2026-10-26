@@ -104,15 +104,14 @@ if(BUILD_TESTING)
   target_link_libraries(test-nostr-seal PRIVATE nostr_seal_core)
   add_test(NAME nostr_seal_unit COMMAND test-nostr-seal)
 
-  if(ENABLE_NOSTR_SHARE)
-    add_executable(test-nostr-seal-publish tests/test-nseal-publish.c)
-    target_compile_options(test-nostr-seal-publish PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(test-nostr-seal-publish PRIVATE nostr_seal_core)
-    target_compile_definitions(test-nostr-seal-publish PRIVATE
-      "NSEAL_CLI_PATH=\"$<TARGET_FILE:nostr-seal>\"")
-    add_test(NAME nostr_seal_publish COMMAND test-nostr-seal-publish)
-    set_tests_properties(nostr_seal_publish PROPERTIES LABELS "nostr-seal" TIMEOUT 60)
-  endif()
+  add_executable(test-nostr-seal-publish tests/test-nseal-publish.c)
+  target_compile_options(test-nostr-seal-publish PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(test-nostr-seal-publish PRIVATE nostr_seal_core)
+  target_compile_definitions(test-nostr-seal-publish PRIVATE
+    "NSEAL_CLI_PATH=\"$<TARGET_FILE:nostr-seal>\"")
+  add_dependencies(test-nostr-seal-publish nostr-seal)
+  add_test(NAME nostr_seal_publish COMMAND test-nostr-seal-publish)
+  set_tests_properties(nostr_seal_publish PROPERTIES LABELS "nostr-seal" TIMEOUT 60)
 
   # ~/.config/nostr/seal.conf defaults (written by org.nostr.Settings).
   add_executable(test-nostr-seal-config tests/test-nseal-config.c)

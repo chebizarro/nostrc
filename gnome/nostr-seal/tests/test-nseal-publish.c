@@ -1,14 +1,17 @@
-/* nostr-seal --publish (nostrc-hby8): kind-1063 shape + CLI dry run. */
+/* nostr-seal --publish: kind-1063 shape, CLI dry run and disabled-build errors. */
 #include "nostr-seal.h"
 #include "nseal-publish.h"
 
 #include <glib/gstdio.h>
+#ifdef NSEAL_HAVE_PUBLISH
 #include <json-glib/json-glib.h>
+#endif
 #include <string.h>
 
 #define PK_A "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
 #define PK_B "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2"
 
+#ifdef NSEAL_HAVE_PUBLISH
 static gboolean has_tag(JsonArray *tags, const char *k, const char *v) {
   for (guint i = 0; i < json_array_get_length(tags); i++) {
     JsonArray *t = json_array_get_array_element(tags, i);
@@ -115,9 +118,41 @@ static void test_cli_dry_run(void) {
   g_remove(in); g_remove(out); g_remove(share_conf); g_remove(seal_conf); g_rmdir(dir);
 }
 
+#else
+static void test_publish_unavailable(void) {
+  g_assert_false(nseal_publish_available());
+  const char *recipients[] = {PK_A, NULL};
+  g_assert_null(nseal_publish_event_json(PK_A, 1700000000, "https://b.example/x",
+                                        PK_B, 4242, recipients, FALSE));
+  const NsealPublishOptions opts = { .dry_run = TRUE };
+  g_autoptr(GError) error = NULL;
+  g_assert_false(nseal_publish_file("missing.nsealed", &opts, &error));
+  g_assert_error(error, NSEAL_ERROR, NSEAL_ERROR_ARG);
+  g_assert_nonnull(strstr(error->message, "built without publishing support"));
+  g_assert_false(nseal_publish_file("missing.nsealed", NULL, NULL));
+}
+
+static void test_cli_unavailable(void) {
+  const char *argv[] = {NSEAL_CLI_PATH, "publish", "--dry-run", "missing.nsealed", NULL};
+  g_autofree char *out = NULL, *err = NULL;
+  int status = 0;
+  g_assert_true(g_spawn_sync(NULL, (char **)argv, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                             &out, &err, &status, NULL));
+  g_assert_false(g_spawn_check_wait_status(status, NULL));
+  g_assert_cmpstr(out, ==, "");
+  g_assert_nonnull(strstr(err, "built without publishing support"));
+}
+#endif
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
+#ifdef NSEAL_HAVE_PUBLISH
+  g_assert_true(nseal_publish_available());
   g_test_add_func("/nseal/publish/event-shape", test_event_shape);
   g_test_add_func("/nseal/publish/cli-dry-run", test_cli_dry_run);
+#else
+  g_test_add_func("/nseal/publish/unavailable", test_publish_unavailable);
+  g_test_add_func("/nseal/publish/cli-unavailable", test_cli_unavailable);
+#endif
   return g_test_run();
 }

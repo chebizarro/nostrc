@@ -269,13 +269,18 @@ out:
 
 #else /* !NSEAL_HAVE_PUBLISH */
 
-char *nseal_publish_event_json(const char *pubkey_hex, gint64 created_at, const char *url,
-                               const char *sha256_hex, guint64 size,
-                               const char *const *recipients_hex, gboolean pretty) {
+char *nseal_publish_event_json(const char *pubkey_hex G_GNUC_UNUSED,
+                               gint64 created_at G_GNUC_UNUSED,
+                               const char *url G_GNUC_UNUSED,
+                               const char *sha256_hex G_GNUC_UNUSED,
+                               guint64 size G_GNUC_UNUSED,
+                               const char *const *recipients_hex G_GNUC_UNUSED,
+                               gboolean pretty G_GNUC_UNUSED) {
   return NULL;
 }
 
-gboolean nseal_publish_file(const char *path, const NsealPublishOptions *opts, GError **error) {
+gboolean nseal_publish_file(const char *path G_GNUC_UNUSED,
+                            const NsealPublishOptions *opts G_GNUC_UNUSED, GError **error) {
   g_set_error_literal(error, NSEAL_ERROR, NSEAL_ERROR_ARG,
                       "this nostr-seal was built without publishing support "
                       "(needs nostr-share: -DENABLE_NOSTR_SHARE=ON)");
