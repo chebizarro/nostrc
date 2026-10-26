@@ -72,35 +72,35 @@ nip04_static = cc.find_library('nip04',
   static: true)
 nip04_dep = declare_dependency(
   dependencies: nip04_static,
-  include_directories: include_directories('../nips/nip04/include'))
+  include_directories: include_directories('../nips/nip04/include', cmake_build_dir / 'nips/nip04/include'))
 
 nip06_static = cc.find_library('nip06',
   dirs: [cmake_build_dir / 'nips' / 'nip06'],
   static: true)
 nip06_dep = declare_dependency(
   dependencies: nip06_static,
-  include_directories: include_directories('../nips/nip06/include'))
+  include_directories: include_directories('../nips/nip06/include', cmake_build_dir / 'nips/nip06/include'))
 
 nip19_static = cc.find_library('nip19',
   dirs: [cmake_build_dir / 'nips' / 'nip19'],
   static: true)
 nip19_dep = declare_dependency(
   dependencies: nip19_static,
-  include_directories: include_directories('../nips/nip19/include'))
+  include_directories: include_directories('../nips/nip19/include', cmake_build_dir / 'nips/nip19/include'))
 
 nip44_core_static = cc.find_library('nostr_nip44_core',
   dirs: [cmake_build_dir / 'nips' / 'nip44'],
   static: true)
 nip44_dep = declare_dependency(
   dependencies: nip44_core_static,
-  include_directories: include_directories('../nips/nip44/include'))
+  include_directories: include_directories('../nips/nip44/include', cmake_build_dir / 'nips/nip44/include'))
 
 nip46_core_static = cc.find_library('nostr_nip46_core',
   dirs: [cmake_build_dir / 'nips' / 'nip46'],
   static: true)
 nip46_dep = declare_dependency(
   dependencies: nip46_core_static,
-  include_directories: include_directories('../nips/nip46/include'))
+  include_directories: include_directories('../nips/nip46/include', cmake_build_dir / 'nips/nip46/include'))
 
 nip49_core_static = cc.find_library('nostr_nip49_core',
   dirs: [cmake_build_dir / 'nips' / 'nip49'],
@@ -119,7 +119,7 @@ if nip49_glib_static.found()
 endif
 nip49_dep = declare_dependency(
   dependencies: nip49_libs,
-  include_directories: include_directories('../nips/nip49/include'))
+  include_directories: include_directories('../nips/nip49/include', cmake_build_dir / 'nips/nip49/include'))
 
 # ── System crypto dependencies ───────────────────────────────────────
 secp256k1_dep = dependency('libsecp256k1')
