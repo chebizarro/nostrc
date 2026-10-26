@@ -21,12 +21,8 @@ set_target_properties(gnostr-secret PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # archive's whole API (the generator keeps them default-visible for archives).
 # The export header is not installed because secret_store.h is not installed.
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
-nostrc_generate_export_header(gnostr-secret GNOSTR_SECRET_API
-  seahorse/gnostr-secret-export.h)
-set_target_properties(gnostr-secret PROPERTIES
-  C_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-target_include_directories(gnostr-secret PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
+nostrc_library_visibility(gnostr-secret GNOSTR_SECRET_API
+  seahorse/gnostr-secret-export.h "" NO_INSTALL)
 
 # The archive and schema doc are only installed for an explicit helper
 # build; as an internal dependency of the signer they are linked in.
