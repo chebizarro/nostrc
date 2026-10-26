@@ -244,6 +244,11 @@ if(ENABLE_NIP61)
     add_subdirectory(nips/nip61)
 endif()
 
+option(ENABLE_NIP65 "Enable nip65 (Relay List Metadata)" ON)
+if(ENABLE_NIP65)
+    add_subdirectory(nips/nip65)
+endif()
+
 option(ENABLE_NIP70 "Enable nip70 (Protected Events)" ON)
 if(ENABLE_NIP70)
     add_subdirectory(nips/nip70)

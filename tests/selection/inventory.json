@@ -1713,6 +1713,31 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "root.asan.nip65": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip65"
+        ],
+        "core.linux.asan": [
+          "test_nip65"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "nip65",
+        "nip65.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.nip70": {
       "build_targets": [],
       "cost": "ordinary",
@@ -6148,6 +6173,8 @@
         "nip60.test_inputs",
         "nip61",
         "nip61.test_inputs",
+        "nip65",
+        "nip65.test_inputs",
         "nip70",
         "nip70.test_inputs",
         "nip73",
@@ -6311,6 +6338,8 @@
         "nip60.test_inputs",
         "nip61",
         "nip61.test_inputs",
+        "nip65",
+        "nip65.test_inputs",
         "nip70",
         "nip70.test_inputs",
         "nip73",
@@ -6473,6 +6502,8 @@
         "nip60.test_inputs",
         "nip61",
         "nip61.test_inputs",
+        "nip65",
+        "nip65.test_inputs",
         "nip70",
         "nip70.test_inputs",
         "nip73",
@@ -8348,6 +8379,7 @@
         "{source}/nips/nip5f/TestInventory.cmake",
         "{source}/nips/nip60/TestInventory.cmake",
         "{source}/nips/nip61/TestInventory.cmake",
+        "{source}/nips/nip65/TestInventory.cmake",
         "{source}/nips/nip70/TestInventory.cmake",
         "{source}/nips/nip73/TestInventory.cmake",
         "{source}/nips/nip75/TestInventory.cmake",
@@ -15564,6 +15596,51 @@
       },
       "build_targets": [
         "test_nip61"
+      ],
+      "runtime_inputs": []
+    },
+    "supported.nips.nip65": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "nip65",
+        "nip65.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "test_nip65"
+        ],
+        "grotto.linux": [
+          "test_nip65"
+        ],
+        "core.linux": [
+          "test_nip65"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nip65"
+        ],
+        "groundhog.mdk08": [
+          "test_nip65"
+        ],
+        "groundhog.mdk011": [
+          "test_nip65"
+        ]
+      },
+      "build_targets": [
+        "test_nip65"
       ],
       "runtime_inputs": []
     },
@@ -27252,6 +27329,14 @@
     },
     {
       "prefix": "nips/nip61/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip65/TestInventory.cmake",
       "nodes": [
         "selection.contract"
       ],

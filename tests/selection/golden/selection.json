@@ -184,6 +184,42 @@
     ]
   },
   {
+    "name": "nip65_source",
+    "paths": [
+      "nips/nip65/src/nip65.c"
+    ],
+    "mode": "affected",
+    "checks": [
+      "core.default_build",
+      "grotto.default_build",
+      "groundhog.default_build",
+      "root.asan.nip65",
+      "supported.nips.nip65"
+    ],
+    "excluded_prefixes": [
+      "root.asan.nip77",
+      "supported.nips.nip77"
+    ]
+  },
+  {
+    "name": "nip65_tests",
+    "paths": [
+      "nips/nip65/tests/test_nip65.c"
+    ],
+    "mode": "affected",
+    "checks": [
+      "core.default_build",
+      "grotto.default_build",
+      "groundhog.default_build",
+      "root.asan.nip65",
+      "supported.nips.nip65"
+    ],
+    "excluded_prefixes": [
+      "root.asan.nip77",
+      "supported.nips.nip77"
+    ]
+  },
+  {
     "name": "nip44",
     "paths": [
       "nips/nip44/src/core/nip44.c"
@@ -468,6 +504,7 @@
       "supported.nips.nip5f.signer_endpoint",
       "supported.nips.nip60",
       "supported.nips.nip61",
+      "supported.nips.nip65",
       "supported.nips.nip70",
       "supported.nips.nip73",
       "supported.nips.nip75",
