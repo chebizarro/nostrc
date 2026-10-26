@@ -1,5 +1,10 @@
 # Nostr testing and debugging tools
-option(BUILD_VAULTCTL "Build the shared-vault CLI" ${BUILD_LIBVAULT})
+set(_vaultctl_default OFF)
+if(BUILD_LIBVAULT AND ENABLE_NIP42 AND ENABLE_NIP11)
+    set(_vaultctl_default ON)
+endif()
+option(BUILD_VAULTCTL "Build the shared-vault CLI" ${_vaultctl_default})
+unset(_vaultctl_default)
 if(BUILD_VAULTCTL)
     add_subdirectory(vaultctl)
 endif()
