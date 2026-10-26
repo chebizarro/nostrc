@@ -218,6 +218,31 @@ configure_file(
   @ONLY
 )
 
+# Meson wrappers built against this CMake tree need its exact archive closure,
+# not the install-tree -lmarmot lookup from marmot.pc. Keep the paths tied to
+# CMake targets so shared and static configurations export their real artifacts.
+if(TARGET nostr AND TARGET nostr_nip44_core AND TARGET nostrgo)
+  set(_marmot_build_nostrdb "")
+  if(TARGET nostrdb)
+    set(_marmot_build_nostrdb " $<TARGET_FILE:nostrdb>")
+  endif()
+  set(_marmot_build_nsync "${NSYNC_LIB}")
+  if(NSYNC_LIB)
+    if(TARGET ${NSYNC_LIB})
+      set(_marmot_build_nsync "$<TARGET_FILE:${NSYNC_LIB}>")
+    endif()
+  endif()
+  set(_marmot_build_requires "libsodium libsecp256k1 openssl libwebsockets")
+  if(SQLITE3_FOUND)
+    string(APPEND _marmot_build_requires " sqlite3")
+  endif()
+  if(LMDB_FOUND)
+    string(APPEND _marmot_build_requires " lmdb")
+  endif()
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/marmot-build-tree.pc" CONTENT
+"Name: marmot-build-tree\nDescription: Exact libmarmot link closure in this CMake build tree\nVersion: ${MARMOT_VERSION_STRING}\nLibs: $<TARGET_FILE:marmot> $<TARGET_FILE:nostr_nip44_core> $<TARGET_FILE:nostr> $<TARGET_FILE:nostrgo>${_marmot_build_nostrdb}\nLibs.private: ${_marmot_build_nsync}\nRequires.private: ${_marmot_build_requires}\n")
+endif()
+
 # ─── Install ─────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 

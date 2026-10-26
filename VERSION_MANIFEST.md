@@ -215,6 +215,12 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   static builds, and its Meson build compiles against its own public headers
   (nostrc-6s6bt): packaging/build corrections.
 
+- nostrc-goodv: marmot-gobject's Meson recipe consumes the CMake build tree's
+  exact libmarmot link closure and adds the test's libnostr/libgo include paths.
+  This PATCH-class build correction is folded into unreleased 1.5.1; no further
+  bump. libmarmot's build-tree-only link export does not alter its installed
+  artifact or public contract, so unreleased 0.14.0 receives no further bump.
+
 - nostrc-hbysr: nostr-gobject's Meson build binds the renamed CMake core
   artifacts (`libnostr.a`, `libnostr-json`, `libnostrgo.a`) and its archive
   closure by explicit path in the selected tree (`-Dcmake_build_dir`), failing
