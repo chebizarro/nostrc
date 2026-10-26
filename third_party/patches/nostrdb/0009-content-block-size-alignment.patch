@@ -1,0 +1,31 @@
+--- a/src/content_parser.c
++++ b/src/content_parser.c
+@@ -112,7 +112,8 @@
+ 	// we decode the raw bech32 directly into the output buffer
+ 	struct cursor u8, u5;
+ 	unsigned char *start;
+-	uint16_t *u8_size;
++	unsigned char *u8_size;
++	uint16_t size;
+ 	enum nostr_bech32_type type;
+ 	size_t u5_out_len, u8_out_len;
+ 	static const int MAX_PREFIX = 8;
+@@ -128,7 +129,7 @@
+ 		goto fail;
+ 	//
+ 	// save a spot for the raw bech32 buffer size
+-	u8_size = (uint16_t*)p->buffer.p;
++	u8_size = p->buffer.p;
+ 	if (!cursor_skip(&p->buffer, 2))
+ 		goto fail;
+ 
+@@ -160,7 +161,8 @@
+ 		goto fail;
+ 
+ 	// mark the size of the bech32 buffer
+-	*u8_size = (uint16_t)u8_out_len;
++	size = (uint16_t)u8_out_len;
++	memcpy(u8_size, &size, sizeof(size));
+ 
+ 	return 1;
+ 

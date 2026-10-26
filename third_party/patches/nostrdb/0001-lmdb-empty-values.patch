@@ -1,0 +1,25 @@
+--- a/deps/lmdb/mdb.c
++++ b/deps/lmdb/mdb.c
+@@ -6960,9 +6960,10 @@
+ 			 */
+ 			if (F_ISSET(flags, MDB_RESERVE))
+ 				data->mv_data = olddata.mv_data;
+-			else if (!(mc->mc_flags & C_SUB))
+-				memcpy(olddata.mv_data, data->mv_data, data->mv_size);
+-			else {
++			else if (!(mc->mc_flags & C_SUB)) {
++				if (data->mv_size)
++					memcpy(olddata.mv_data, data->mv_data, data->mv_size);
++			} else {
+ 				if (key->mv_size != NODEKSZ(leaf))
+ 					goto new_ksize;
+ 				memcpy(NODEKEY(leaf), key->mv_data, key->mv_size);
+@@ -7406,7 +7407,7 @@
+ 				memcpy(ndata, data->mv_data, sizeof(pgno_t));
+ 			else if (F_ISSET(flags, MDB_RESERVE))
+ 				data->mv_data = ndata;
+-			else
++			else if (data->mv_size)
+ 				memcpy(ndata, data->mv_data, data->mv_size);
+ 		} else {
+ 			memcpy(ndata, &ofp->mp_pgno, sizeof(pgno_t));

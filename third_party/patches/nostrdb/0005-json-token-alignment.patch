@@ -1,0 +1,19 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -8166,9 +8166,15 @@
+ 
+ 	unsigned char *tok_start = buf + half;
+ 	unsigned char *tok_end = buf + bufsize;
++	size_t align = _Alignof(jsmntok_t);
++	size_t padding = (align - (uintptr_t)tok_start % align) % align;
++
++	if ((size_t)(tok_end - tok_start) < padding)
++		return 0;
++	tok_start += padding;
+ 
+ 	p->toks = (jsmntok_t*)tok_start;
+-	p->toks_end = (jsmntok_t*)tok_end;
++	p->toks_end = p->toks + (tok_end - tok_start) / sizeof(jsmntok_t);
+ 	p->num_tokens = 0;
+ 	p->json = json;
+ 	p->json_len = json_len;

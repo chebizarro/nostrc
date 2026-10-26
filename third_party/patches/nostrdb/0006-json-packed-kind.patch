@@ -1,0 +1,21 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -9478,15 +9478,16 @@
+ 			ndb_builder_set_sig(&parser->builder, hexbuf);
+ 		} else if (start[0] == 'k' && jsoneq(json, tok, tok_len, "kind")) {
+ 			// kind
++			unsigned int kind;
+ 			tok = &parser->toks[i+1];
+ 			start = json + tok->start;
+ 			if (tok->type != JSMN_PRIMITIVE || tok_len <= 0)
+ 				return 0;
+-			if (!parse_unsigned_int(start, toksize(tok),
+-						&parser->builder.note->kind)) {
++			if (!parse_unsigned_int(start, toksize(tok), &kind)) {
+ 					ndb_debug("kind parse_unsigned_int failed\n");
+ 					return 0;
+ 			}
++			ndb_builder_set_kind(&parser->builder, kind);
+ 			parsed |= NDB_PARSED_KIND;
+ 		} else if (start[0] == 'c') {
+ 			if (jsoneq(json, tok, tok_len, "created_at")) {
