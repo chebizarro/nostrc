@@ -23,6 +23,8 @@ typedef struct {
   int max_limit;
   int max_subs;
   int max_event_bytes;
+  int storage_max_pending_events;
+  int storage_max_pending_bytes;
 
   int rate_ops_per_sec;
   int rate_burst;

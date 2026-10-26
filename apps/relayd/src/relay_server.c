@@ -624,6 +624,7 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
     return 1;
   }
 
+  ctx.lws_context = context;
   if (ctx.async_storage &&
       (!ctx.async_storage->start || !ctx.async_storage->stop ||
        !ctx.async_storage->enqueue || !ctx.async_storage->visible ||
@@ -707,9 +708,6 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
       break;
     }
 
-    /* Commit notifications wake us immediately; the existing loop wake
-     * also expires orphaned publisher commit deadlines without a busy loop. */
-    if (ctx.orphan_acks) relayd_nip01_reconcile_all(&ctx);
     unsigned long long now_ms = rate_limit_now_ms();
     if (last_ret_ms == 0 || now_ms - last_ret_ms >= 5000) {
       retention_tick(&ctx);
@@ -719,9 +717,10 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
 
   s_shutting_down = 1;
   lws_sul_cancel(&wake.sul);
+  lws_sul_cancel(&ctx.storage_read_retry);
   if (ctx.async_storage) ctx.async_storage->stop(ctx.storage);
   lws_context_destroy(context);
-  relayd_nip01_free_orphans(&ctx);
+  relayd_nip01_free_pending(&ctx);
   sigaction(SIGINT, &prev_int, NULL);
   sigaction(SIGTERM, &prev_term, NULL);
   relay_policy_destroy(policy);

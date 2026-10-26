@@ -45,6 +45,15 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-83pab: relayd separates async storage reservations from publisher ACK
+  deadlines, sends NOTICE/close (not false OK) on unknown outcomes, reconciles
+  late commits once and attaches bounded resubmission waiters. Adds documented
+  `storage_max_pending_events` / `storage_max_pending_bytes` configuration:
+  MINOR-class additive configuration plus a shipped protocol bug correction.
+  relayd remains unversioned (`apps/relayd/CMakeLists.txt` has no authoritative
+  numeric version), so no numeric bump is invented. libnostr, libgo, libjson and
+  vendored nostrdb APIs/artifacts are unchanged: no component bumps.
+
 - nostrc-clqf4: nostr-homed remains 0.5.0 (no bump). Gate the NIP-46
   wrap-key test on its auth-runtime prerequisite; test registration only,
   with no shipped artifact or public contract change. No release tags.

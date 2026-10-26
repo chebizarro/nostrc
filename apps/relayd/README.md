@@ -84,14 +84,70 @@ per writable callback, using libwebsockets' own partial-write buffering. If the
 queue cannot accept a frame (including allocation failure), the connection is
 **disconnected** with WebSocket policy-violation status rather than silently
 losing events or allocating an unbounded queue. Clients must reconnect and
-reissue their REQs to catch up. Pending storage commits are separately bounded
-to 256 globally, including disconnected publishers; their deadlines are storage
-confirmation limits, not subscription lifetimes.
+reissue their REQs to catch up.
+
+### Storage confirmation and late commits
+
+`OK true` and live fanout require committed visibility. A definitive enqueue
+refusal returns `OK false`; it cannot subsequently commit or fan out. Once a
+write is admitted, absence or a lookup error does **not** prove storage failure.
+At the **10-second confirmation deadline**, relayd sends
+`["NOTICE","error: storage outcome unknown for event <id>"]` and closes the
+publisher WebSocket, ending its subscriptions too. It sends **no OK** for that
+unknown outcome: NIP-01 has no indeterminate OK, and `OK false` would claim denial.
+
+Storage ownership outlives the publisher. A commit notification reconciles the
+reservation and fans out the confirmed event once to matching authorized live
+subscribers. Resubmission while unresolved attaches a waiter to the existing
+write; it never enqueues another copy. Each waiter has its own confirmation
+deadline. Commit yields `OK true` to all remaining waiters (resubmissions use
+`duplicate:`). Resubmission after reconciliation returns `OK true duplicate:`
+without another live delivery. Failed visibility **reads** retry on a
+connection-independent 100 ms–1 s capped backoff, so a commit wake is not lost
+to a transient read error. Successful reads reporting an invisible event do
+not poll; writes are never retried.
+
+Configure these global bounds in `relay.toml`:
+
+```toml
+storage_max_pending_events = 256
+storage_max_pending_bytes = 16777216
+```
+
+The event limit accepts 1–65536; the byte limit accepts 1024–1073741824.
+The byte budget counts retained canonical event JSON including its NUL, not
+whole-process RSS or backend scratch memory. Both are reserved **before enqueue**
+and include timed-out/disconnected writes. ACK waiters (including ready but
+unsent OKs) are bounded to twice the event limit globally and 256 per connection.
+If waiter capacity is full for an unresolved resubmission, it gets the same
+unknown NOTICE and connection close immediately, never a false rejection.
+
+At saturation, **new writes are refused before enqueue** with
+`OK false rate-limited: storage reconciliation capacity exhausted`.
+Already-stored duplicates and reads remain available. Reservations have no TTL
+and are never evicted to admit new writes. A saturation log records cumulative
+refusals, retained events/bytes and waiter count at the first refusal and powers
+of two. Confirmed commits release capacity.
+
+nostrdb has four independent ingest workers before its single writer. Their
+completion order can differ from submission order: a later committed event is
+**not a failure watermark** for an earlier invisible event. The current backend
+cannot cancel or report terminal failures after admission. Permanently unknown
+writes can therefore pin capacity indefinitely and stop new-write admission;
+relayd does not guess failures or retry them. Reservations are process-local,
+not a durable crash-recovery/fanout journal; shutdown discards tracking without
+claiming that outstanding writes failed. These semantics apply to the async
+nostrdb path, not synchronous storage wrappers such as the session outbox tee.
 
 Focused coverage: `ctest --test-dir <build> -R '^relayd_req_contract$'
 --output-on-failure` exercises the real WebSocket entrypoint with scripted
 storage and (when built) real nostrdb. Delivery/absence assertions use EVENT,
-OK, EOSE and same-connection barriers, not sleep-based quiet periods. The SV-10
+OK, NOTICE/close handshakes, EOSE and same-connection barriers, not sleep-based
+quiet periods. Fault cases cover late commit, attached waiter deadlines (with
+replay enabled and disabled), waiter/count/byte saturation, non-admission,
+out-of-order commits and visibility-read recovery after disconnect. A held
+write released through the real nostrdb adapter verifies its actual commit
+notification, live delivery, stored query and duplicate-success path. The SV-10
 two-npub harness now waits for the already-subscribed owner's live conflict fold;
 it no longer restarts owner catch-up as a workaround for missing relay fanout.
 

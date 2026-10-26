@@ -33,6 +33,12 @@ max_subs = 8
 # EVENT JSON bytes, checked before JSON allocation or signature verification.
 max_event_bytes = 262144
 
+# Global unresolved async writes, including disconnected/timed-out publishers.
+# Capacity is reserved before enqueue; unknown writes have no TTL eviction.
+# Byte budget: retained canonical JSON including NUL, not total process RSS.
+storage_max_pending_events = 256
+storage_max_pending_bytes = 16777216
+
 # Monotonic weighted frame token bucket. CLOSE costs zero, controls cost one,
 # REQ/COUNT cost 1 + filter count, and EVENT uses rate_event_cost.
 rate_ops_per_sec = 20

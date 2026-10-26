@@ -121,8 +121,8 @@ static int live_filter_matches(const RelaydCtx *ctx, NostrFilter *filter,
 /* Called only from ingress/commit reconciliation on the lws service thread.
  * A matching OR-list produces one delivery, not one per matching filter. */
 static void fanout(const RelaydCtx *ctx, NostrEvent *ev) {
-  char *json = nostr_event_serialize(ev);
-  char *id = nostr_event_get_id(ev);
+  char *json = ev ? nostr_event_serialize(ev) : NULL;
+  char *id = ev ? nostr_event_get_id(ev) : NULL;
   if (!json || !id) {
     for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
       if (cs->nsubs) { cs->closing = 1; lws_callback_on_writable(cs->wsi); }
@@ -296,22 +296,29 @@ void relayd_conn_subs_free_all(ConnState *cs, const RelaydCtx *ctx) {
   while (cs->nsubs > 0) conn_sub_remove(cs, ctx, cs->nsubs - 1);
 }
 
-static void ack_finish(RelaydPendingAck *ack, const RelaydCtx *ctx, int accepted) {
-  if (ack->ready) return;
-  ack->ready = 1;
-  ack->accepted = accepted;
-  (void)relay_ingress_finish(ctx->policy, &ack->ingress, accepted);
-  ((RelaydCtx*)ctx)->pending_stores--;
-  if (accepted && ack->old_replaceable_id && ctx->storage->vt->delete_event)
-    (void)ctx->storage->vt->delete_event(ctx->storage,
-                                         ack->old_replaceable_id);
-  if (accepted) fanout(ctx, ack->ingress.event);
+static RelaydPendingStore *pending_find(const RelaydCtx *ctx,
+                                         const unsigned char id[32]) {
+  for (RelaydPendingStore *p = ctx->pending_stores; p; p = p->next)
+    if (memcmp(p->ingress.binary_id, id, 32) == 0) return p;
+  return NULL;
+}
+
+static int storage_saturated(const RelaydCtx *ctx) {
+  RelaydCtx *mutable = (RelaydCtx*)ctx;
+  mutable->storage_saturation_count++;
+  /* Log the first refusal and powers of two, without a per-frame log flood. */
+  unsigned long long n = mutable->storage_saturation_count;
+  if ((n & (n - 1)) == 0)
+    fprintf(stderr, "relayd: storage reconciliation saturated: refusals=%llu pending=%zu bytes=%zu waiters=%zu\n",
+            n, ctx->pending_store_count, ctx->pending_store_bytes, ctx->pending_acks);
+  return -EAGAIN;
 }
 
 static void ack_schedule_timer(struct lws *wsi, const ConnState *cs) {
   uint64_t first = UINT64_MAX;
-  for (const RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next)
-    if (!ack->ready && ack->deadline_ms < first) first = ack->deadline_ms;
+  if (!cs->storage_notice_id[0])
+    for (const RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next)
+      if (!ack->ready && ack->deadline_ms < first) first = ack->deadline_ms;
   if (first == UINT64_MAX) {
     lws_set_timer_usecs(wsi, LWS_SET_TIMER_USEC_CANCEL);
     return;
@@ -320,57 +327,108 @@ static void ack_schedule_timer(struct lws *wsi, const ConnState *cs) {
   lws_set_timer_usecs(wsi, first > now ? (first - now) * 1000u : 1u);
 }
 
-static void ack_reconcile_connection(struct lws *wsi, ConnState *cs,
-                                     const RelaydCtx *ctx) {
-  if (!ctx->async_storage || !cs->ack_head) return;
+static void ack_unknown(struct lws *wsi, ConnState *cs, const char *id) {
+  if (!cs->storage_notice_id[0])
+    memcpy(cs->storage_notice_id, id, sizeof cs->storage_notice_id);
+  ack_schedule_timer(wsi, cs);
+  lws_callback_on_writable(wsi);
+}
+
+static int ack_has_ready(const ConnState *cs) {
+  for (const RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next)
+    if (ack->ready) return 1;
+  return 0;
+}
+
+static void ack_reconcile_connection(struct lws *wsi, ConnState *cs) {
   uint64_t now = rate_limit_now_ms();
   for (RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next) {
-    if (ack->ready) continue;
-    int visible = ctx->async_storage->visible(ctx->storage,
-                                              ack->ingress.binary_id);
-    if (visible > 0) ack_finish(ack, ctx, 1);
-    else if (visible < 0 || now >= ack->deadline_ms)
-      ack_finish(ack, ctx, 0);
+    if (!ack->ready && now >= ack->deadline_ms) {
+      ack_unknown(wsi, cs, ack->id);
+      return;
+    }
   }
   ack_schedule_timer(wsi, cs);
-  if (cs->ack_head->ready) lws_callback_on_writable(wsi);
+  if (ack_has_ready(cs)) lws_callback_on_writable(wsi);
+}
+
+static void pending_free(RelaydPendingStore *p, const RelaydCtx *ctx) {
+  ((RelaydCtx*)ctx)->pending_store_count--;
+  ((RelaydCtx*)ctx)->pending_store_bytes -= p->bytes;
+  free(p->json);
+  free(p->old_replaceable_id);
+  free(p);
+}
+
+static void storage_read_retry_cb(lws_sorted_usec_list_t *sul) {
+  RelaydCtx *ctx = lws_container_of(sul, RelaydCtx, storage_read_retry);
+  ctx->storage_read_retry_active = 0;
+  relayd_nip01_reconcile_all(ctx);
 }
 
 void relayd_nip01_reconcile_all(const RelaydCtx *ctx) {
   if (!ctx || !ctx->async_storage) return;
   if (ctx->async_storage->drain) ctx->async_storage->drain(ctx->storage);
-  for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
-    ack_reconcile_connection(cs->wsi, cs, ctx);
-  RelaydPendingAck **link = &((RelaydCtx*)ctx)->orphan_acks;
+  int read_error = 0;
+  RelaydPendingStore **link = &((RelaydCtx*)ctx)->pending_stores;
   while (*link) {
-    RelaydPendingAck *ack = *link;
-    int visible = ctx->async_storage->visible(ctx->storage, ack->ingress.binary_id);
-    if (visible == 0 && rate_limit_now_ms() < ack->deadline_ms) {
-      link = &ack->next;
+    RelaydPendingStore *p = *link;
+    /* Zero and read errors are both nonterminal. Ingest workers can reorder
+     * submissions, so visibility of another id is NOT a failure watermark. */
+    int visible = ctx->async_storage->visible(ctx->storage, p->ingress.binary_id);
+    if (visible <= 0) {
+      if (visible < 0) read_error = 1;
+      link = &p->next;
       continue;
     }
-    ack_finish(ack, ctx, visible > 0);
-    *link = ack->next;
-    nostr_event_free(ack->ingress.event);
-    free(ack->old_replaceable_id);
-    free(ack);
+    (void)relay_ingress_finish(ctx->policy, &p->ingress, 1);
+    if (p->old_replaceable_id && ctx->storage->vt->delete_event)
+      (void)ctx->storage->vt->delete_event(ctx->storage, p->old_replaceable_id);
+    NostrEvent *ev = nostr_event_new();
+    if (ev && nostr_event_deserialize(ev, p->json) != 0) {
+      nostr_event_free(ev);
+      ev = NULL;
+    }
+    fanout(ctx, ev); /* allocation failure closes subscribers visibly */
+    nostr_event_free(ev);
+    for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
+      for (RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next)
+        if (ack->store == p) { ack->store = NULL; ack->ready = 1; }
+    *link = p->next;
+    pending_free(p, ctx);
   }
+  /* Retry a failed visibility READ with bounded backoff, never a write or
+   * an invisible write's completion. A consumed commit wake must not be lost
+   * to a transient read error after every publisher has disconnected. */
+  RelaydCtx *mutable = (RelaydCtx*)ctx;
+  if (read_error && ctx->lws_context && !ctx->storage_read_retry_active) {
+    unsigned int delay = ctx->storage_read_retry_ms ? ctx->storage_read_retry_ms : 100u;
+    mutable->storage_read_retry_active = 1;
+    mutable->storage_read_retry_ms = delay < 500u ? delay * 2u : 1000u;
+    lws_sul_schedule(ctx->lws_context, 0, &mutable->storage_read_retry,
+                     storage_read_retry_cb, delay * 1000u);
+  } else if (!read_error) {
+    lws_sul_cancel(&mutable->storage_read_retry);
+    mutable->storage_read_retry_active = 0;
+    mutable->storage_read_retry_ms = 100u;
+  }
+  for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
+    ack_reconcile_connection(cs->wsi, cs);
 }
 
-void relayd_nip01_free_orphans(const RelaydCtx *ctx) {
-  while (ctx->orphan_acks) {
-    RelaydPendingAck *ack = ctx->orphan_acks;
-    ((RelaydCtx*)ctx)->orphan_acks = ack->next;
-    ack_finish(ack, ctx, 0);
-    nostr_event_free(ack->ingress.event);
-    free(ack->old_replaceable_id);
-    free(ack);
+void relayd_nip01_free_pending(const RelaydCtx *ctx) {
+  /* Shutdown discards process-local ownership, not a claim of write failure. */
+  while (ctx->pending_stores) {
+    RelaydPendingStore *p = ctx->pending_stores;
+    ((RelaydCtx*)ctx)->pending_stores = p->next;
+    pending_free(p, ctx);
   }
 }
 
 void relayd_nip01_on_timer(struct lws *wsi, ConnState *cs,
                            const RelaydCtx *ctx) {
-  if (cs && ctx) ack_reconcile_connection(wsi, cs, ctx);
+  (void)wsi;
+  if (cs && ctx) relayd_nip01_reconcile_all(ctx);
 }
 
 void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx) {
@@ -378,15 +436,8 @@ void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx) {
   RelaydPendingAck *ack = cs->ack_head;
   while (ack) {
     RelaydPendingAck *next = ack->next;
-    if (!ack->ready && ctx && ctx->async_storage) {
-      /* Commit ownership outlives the publisher. Never retain ConnState. */
-      ack->next = ctx->orphan_acks;
-      ((RelaydCtx*)ctx)->orphan_acks = ack;
-    } else {
-      nostr_event_free(ack->ingress.event);
-      free(ack->old_replaceable_id);
-      free(ack);
-    }
+    if (ctx) ((RelaydCtx*)ctx)->pending_acks--;
+    free(ack);
     ack = next;
   }
   cs->ack_head = cs->ack_tail = NULL;
@@ -394,26 +445,62 @@ void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx) {
 }
 
 static int ack_enqueue(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
-                       RelayIngressResult *ingress, char **old_id) {
+                       RelayIngressResult *ingress, char **old_id,
+                       RelaydPendingStore *pending) {
+  /* Bound waiters independently, including ready-but-unsent OKs. */
   if (cs->nacks >= RELAYD_MAX_PENDING_ACKS ||
-      ctx->pending_stores >= RELAYD_MAX_PENDING_ACKS) return -EAGAIN;
+      ctx->pending_acks >= 2u * (size_t)ctx->cfg.storage_max_pending_events)
+    return storage_saturated(ctx);
   RelaydPendingAck *ack = calloc(1, sizeof *ack);
   if (!ack) return -ENOMEM;
-  int rc = ctx->async_storage->enqueue(ctx->storage, ingress->event);
-  if (rc != 0) { free(ack); return rc; }
-  ack->ingress = *ingress;
-  ingress->event = NULL; /* the ack owns it through commit and fanout */
-  ((RelaydCtx*)ctx)->pending_stores++;
-  ingress->replay_reserved = 0; /* reservation now belongs to the ack */
-  ack->old_replaceable_id = *old_id;
-  *old_id = NULL;
+  ack->duplicate = pending != NULL;
+  if (!pending) {
+    if (ctx->pending_store_count >= (size_t)ctx->cfg.storage_max_pending_events) {
+      free(ack);
+      return storage_saturated(ctx);
+    }
+    pending = calloc(1, sizeof *pending);
+    if (!pending) { free(ack); return -ENOMEM; }
+    pending->json = nostr_event_serialize(ingress->event);
+    if (!pending->json) { free(pending); free(ack); return -ENOMEM; }
+    pending->bytes = strlen(pending->json) + 1;
+    size_t limit = (size_t)ctx->cfg.storage_max_pending_bytes;
+    if (pending->bytes > limit || ctx->pending_store_bytes > limit - pending->bytes) {
+      free(pending->json); free(pending); free(ack);
+      return storage_saturated(ctx);
+    }
+    /* Reserve all ownership before the backend may take the write. */
+    pending->ingress = *ingress;
+    pending->ingress.event = NULL;
+    RelaydPendingStore **tail = &((RelaydCtx*)ctx)->pending_stores;
+    while (*tail) tail = &(*tail)->next;
+    *tail = pending;
+    ((RelaydCtx*)ctx)->pending_store_count++;
+    ((RelaydCtx*)ctx)->pending_store_bytes += pending->bytes;
+    int rc = ctx->async_storage->enqueue(ctx->storage, ingress->event);
+    if (rc != 0) {
+      *tail = NULL;
+      pending_free(pending, ctx);
+      free(ack);
+      return rc; /* contract: nonzero means definitively NOT admitted */
+    }
+    ingress->replay_reserved = 0;
+    nostr_event_free(ingress->event);
+    ingress->event = NULL;
+    pending->old_replaceable_id = *old_id;
+    *old_id = NULL;
+  }
+  ack->store = pending;
+  memcpy(ack->id, pending->ingress.canonical_id, sizeof ack->id);
   unsigned int timeout = ctx->ack_timeout_ms ? ctx->ack_timeout_ms : 10000u;
   ack->deadline_ms = rate_limit_now_ms() + timeout;
   if (cs->ack_tail) cs->ack_tail->next = ack;
   else cs->ack_head = ack;
   cs->ack_tail = ack;
   cs->nacks++;
-  ack_reconcile_connection(wsi, cs, ctx);
+  ((RelaydCtx*)ctx)->pending_acks++;
+  relayd_nip01_reconcile_all(ctx);
+  (void)wsi;
   return 0;
 }
 
@@ -441,21 +528,42 @@ int relayd_nip01_on_writable(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
                      (unsigned char*)"delivery unavailable", 20);
     return -1;
   }
+  if (cs->storage_notice_id[0]) {
+    if (cs->storage_notice_sent) return -1;
+    cs->storage_notice_sent = 1;
+    char notice[192];
+    snprintf(notice, sizeof notice,
+             "[\"NOTICE\",\"error: storage outcome unknown for event %s\"]",
+             cs->storage_notice_id);
+    if (write_text(wsi, notice) < 0) return -1;
+    lws_close_reason(wsi, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION,
+                     (unsigned char*)"storage outcome unknown", 23);
+    return -1;
+  }
   if (relayd_nip42_maybe_send_challenge_on_writable(wsi, cs, ctx)) goto more;
-  if (cs->ack_head && cs->ack_head->ready) {
-    RelaydPendingAck *ack = cs->ack_head;
-    char *ok = nostr_ok_build_json(ack->ingress.canonical_id, ack->accepted,
-                                   ack->accepted ? "" : "error: storage commit unconfirmed");
+  /* Nostrdb ingesters may complete out of order. A confirmed waiter must
+   * not sit behind another id's unresolved write on the same connection. */
+  RelaydPendingAck **ack_link = &cs->ack_head;
+  RelaydPendingAck *ack_prev = NULL;
+  while (*ack_link && !(*ack_link)->ready) {
+    ack_prev = *ack_link;
+    ack_link = &ack_prev->next;
+  }
+  if (*ack_link) {
+    RelaydPendingAck *ack = *ack_link;
+    char *ok = nostr_ok_build_json(ack->id, 1,
+                                   ack->duplicate ? "duplicate: already stored" : "");
     if (!ok) return -1;
-    ws_send_text(wsi, ok);
+    int written = write_text(wsi, ok);
     free(ok);
-    cs->ack_head = ack->next;
-    if (!cs->ack_head) cs->ack_tail = NULL;
+    if (written < 0) return -1;
+    *ack_link = ack->next;
+    if (cs->ack_tail == ack) cs->ack_tail = ack_prev;
     cs->nacks--;
-    nostr_event_free(ack->ingress.event);
-    free(ack->old_replaceable_id);
+    ((RelaydCtx*)ctx)->pending_acks--;
     free(ack);
     ack_schedule_timer(wsi, cs);
+    goto more;
   }
   /* Live frames wait behind that subscription's catch-up/EOSE. Control
    * frames can pass them. Exactly one lws_write per writable callback. */
@@ -550,7 +658,7 @@ backfill:
   }
 more:
   if (cs->closing || cs->send_head || has_backfill(cs) ||
-      (cs->ack_head && cs->ack_head->ready)) lws_callback_on_writable(wsi);
+      ack_has_ready(cs)) lws_callback_on_writable(wsi);
   return 0;
 }
 
@@ -790,7 +898,7 @@ static int stored_event_exists(const RelaydCtx *ctx, const RelayIngressResult *i
 }
 
 void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx, const void *in, size_t len) {
-  if (!wsi || !cs || !ctx || !in || len < 2) return;
+  if (!wsi || !cs || !ctx || !in || len < 2 || cs->storage_notice_id[0]) return;
   const char *msg = (const char*)in;
   uint32_t operation_cost = frame_operation_cost(ctx, msg, len);
   if (operation_cost > 0 &&
@@ -867,6 +975,22 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
     } else if (ingress.event && nostr_event_get_kind(ingress.event) == 22242) {
       reason = "invalid: use AUTH for kind 22242";
       (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+    } else if (ingress.event && strcmp(ctx->cfg.auth, "required") == 0 &&
+               cs->authed_pubkey[0] &&
+               (!nostr_event_get_pubkey(ingress.event) ||
+                strcmp(nostr_event_get_pubkey(ingress.event), cs->authed_pubkey) != 0)) {
+      reason = "restricted: auth pubkey mismatch";
+      (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+    } else if (ctx->async_storage &&
+               (decision == RELAY_INGRESS_ACCEPT ||
+                decision == RELAY_INGRESS_REJECT_REPLAY_ERROR) &&
+               pending_find(ctx, ingress.binary_id)) {
+      /* A resubmission joins the original operation; it is never enqueued. */
+      char *unused_old_id = NULL;
+      rc_store = ack_enqueue(wsi, cs, ctx, &ingress, &unused_old_id,
+                             pending_find(ctx, ingress.binary_id));
+      deferred = 1;
+      if (rc_store != 0) ack_unknown(wsi, cs, ingress.canonical_id);
     } else if (decision == RELAY_INGRESS_DUPLICATE) {
       rc_store = 0;
       metrics_on_duplicate_drop();
@@ -934,9 +1058,9 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
         } else {
           if (ctx->async_storage) {
             rc_store = ack_enqueue(wsi, cs, ctx, &ingress,
-                                   &old_replaceable_id);
+                                   &old_replaceable_id, NULL);
             deferred = rc_store == 0;
-            reason = rc_store == -EAGAIN ? "rate-limited: too many pending events"
+            reason = rc_store == -EAGAIN ? "rate-limited: storage reconciliation capacity exhausted"
                                          : "error: store enqueue failed";
             if (!deferred)
               (void)relay_ingress_finish(ctx->policy, &ingress, 0);
