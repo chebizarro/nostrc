@@ -21,6 +21,8 @@
 #ifndef LIBGO_FIBER_HOOKS_H
 #define LIBGO_FIBER_HOOKS_H
 
+#include "libgo-export.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,7 +39,7 @@ typedef void *gof_fiber_handle;
  * Use this to detect whether the caller is inside the fiber scheduler.
  * Returns NULL from normal pthreads, non-NULL from fiber workers.
  */
-gof_fiber_handle gof_hook_current(void);
+LIBGO_API gof_fiber_handle gof_hook_current(void);
 
 /**
  * @brief Park (block) the current fiber cooperatively.
@@ -51,7 +53,7 @@ gof_fiber_handle gof_hook_current(void);
  *
  * No-op if not called from a fiber context.
  */
-void gof_hook_block_current(void);
+LIBGO_API void gof_hook_block_current(void);
 
 /**
  * @brief Park the current fiber until a deadline (or early wake via make_runnable).
@@ -67,7 +69,7 @@ void gof_hook_block_current(void);
  *
  * No-op if not called from a fiber context.
  */
-void gof_hook_block_current_until(uint64_t deadline_ns);
+LIBGO_API void gof_hook_block_current_until(uint64_t deadline_ns);
 
 /**
  * @brief Make a previously-parked fiber runnable again.
@@ -75,7 +77,7 @@ void gof_hook_block_current_until(uint64_t deadline_ns);
  * Safe to call from any thread (fiber worker, poller, or normal pthread).
  * The fiber will be enqueued to a worker's run queue.
  */
-void gof_hook_make_runnable(gof_fiber_handle f);
+LIBGO_API void gof_hook_make_runnable(gof_fiber_handle f);
 
 #ifdef __cplusplus
 }

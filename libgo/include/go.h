@@ -1,6 +1,8 @@
 #ifndef GO_H
 #define GO_H
 
+#include "libgo-export.h"
+
 #include "channel.h"
 #include "context.h"
 #include "counter.h"
@@ -18,7 +20,7 @@
 // Launch a detached goroutine-like thread executing start_routine(arg).
 // Returns 0 on success, non-zero on failure.
 // Prefer coordinating completion with GoWaitGroup instead of sleeps.
-int go(void *(*start_routine)(void *), void *arg);
+LIBGO_API int go(void *(*start_routine)(void *), void *arg);
 
 /**
  * @brief Launch a fiber (cooperative lightweight thread) instead of an OS thread.
@@ -40,7 +42,7 @@ int go(void *(*start_routine)(void *), void *arg);
  * @note The fiber scheduler must be running (via gof_start_background() or
  *       gof_run()) before calling this.
  */
-int go_fiber(void (*fn)(void *arg), void *arg, size_t stack_bytes);
+LIBGO_API int go_fiber(void (*fn)(void *arg), void *arg, size_t stack_bytes);
 
 /**
  * @brief Convenience wrapper: launch a fiber with the default stack size.
@@ -65,10 +67,10 @@ static inline int go_fiber_default(void (*fn)(void *arg), void *arg) {
  * @param arg           Argument passed to start_routine.
  * @return 0 on success, non-zero on failure.
  */
-int go_fiber_compat(void *(*start_routine)(void *), void *arg);
+LIBGO_API int go_fiber_compat(void *(*start_routine)(void *), void *arg);
 
 // Get the current count of active goroutines (for debugging)
-int go_get_active_count(void);
+LIBGO_API int go_get_active_count(void);
 
 /**
  * @brief Register a fiber spawn function with libgo.
@@ -84,6 +86,6 @@ int go_get_active_count(void);
 struct gof_fiber;
 typedef struct gof_fiber gof_fiber_t;
 typedef void (*gof_fn)(void *arg);
-void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t));
+LIBGO_API void go_register_fiber_spawn(gof_fiber_t* (*spawn_fn)(gof_fn, void*, size_t));
 
 #endif // GO_H

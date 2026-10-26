@@ -29,6 +29,8 @@
 #ifndef LIBGO_BLOCKING_EXECUTOR_H
 #define LIBGO_BLOCKING_EXECUTOR_H
 
+#include "libgo-export.h"
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -44,7 +46,7 @@ extern "C" {
  * Safe to call multiple times (subsequent calls are no-ops).
  * Thread-safe.
  */
-int go_blocking_executor_init(size_t num_threads);
+LIBGO_API int go_blocking_executor_init(size_t num_threads);
 
 /**
  * @brief Submit a blocking function to the executor.
@@ -63,7 +65,7 @@ int go_blocking_executor_init(size_t num_threads);
  * @param arg Argument passed to fn.
  * @return The return value of fn(arg).
  */
-void *go_blocking_submit(void *(*fn)(void *arg), void *arg);
+LIBGO_API void *go_blocking_submit(void *(*fn)(void *arg), void *arg);
 
 /**
  * @brief Shut down the blocking executor.
@@ -73,19 +75,19 @@ void *go_blocking_submit(void *(*fn)(void *arg), void *arg);
  *
  * Safe to call multiple times.
  */
-void go_blocking_executor_shutdown(void);
+LIBGO_API void go_blocking_executor_shutdown(void);
 
 /**
  * @brief Get the number of currently active (busy) executor threads.
  *
  * Useful for metrics and debugging.
  */
-int go_blocking_executor_active_count(void);
+LIBGO_API int go_blocking_executor_active_count(void);
 
 /**
  * @brief Get the number of pending (queued but not started) work items.
  */
-int go_blocking_executor_pending_count(void);
+LIBGO_API int go_blocking_executor_pending_count(void);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,8 @@
 #ifndef __NOSTR_TIMESTAMP_H__
 #define __NOSTR_TIMESTAMP_H__
 
+#include "nostr-export.h"
+
 /* Public header for GI-friendly timestamp API. */
 
 #include <time.h>
@@ -13,8 +15,8 @@ extern "C" {
 /* Canonical typedef and API */
 typedef int64_t NostrTimestamp;
 
-int64_t nostr_timestamp_now(void);
-time_t  nostr_timestamp_to_time(NostrTimestamp t);
+NOSTR_API int64_t nostr_timestamp_now(void);
+NOSTR_API time_t  nostr_timestamp_to_time(NostrTimestamp t);
 
 /* Potential GI notes:
  * nostr_timestamp_now: Returns: (type int64): Unix epoch seconds

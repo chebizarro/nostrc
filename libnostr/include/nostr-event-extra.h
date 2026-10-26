@@ -1,7 +1,10 @@
 #ifndef __NOSTR_EVENT_EXTRA_H__
 #define __NOSTR_EVENT_EXTRA_H__
 
-/* GLib-friendly transitional header for event extra fields helpers */
+#include "nostr-json-export.h"
+
+/* GLib-friendly transitional header. These helpers are implemented and
+ * exported by libjson, not by the core libnostr DLL. */
 
 #include <stdbool.h>
 
@@ -20,7 +23,7 @@ extern "C" {
  *
  * Sets/overwrites an extra field on @event.
  */
-void nostr_event_set_extra(NostrEvent *event, const char *key, void *value);
+NOSTR_JSON_API void nostr_event_set_extra(NostrEvent *event, const char *key, void *value);
 
 /**
  * nostr_event_remove_extra:
@@ -29,7 +32,7 @@ void nostr_event_set_extra(NostrEvent *event, const char *key, void *value);
  *
  * Removes an extra field.
  */
-void nostr_event_remove_extra(NostrEvent *event, const char *key);
+NOSTR_JSON_API void nostr_event_remove_extra(NostrEvent *event, const char *key);
 
 /**
  * nostr_event_get_extra:
@@ -38,7 +41,7 @@ void nostr_event_remove_extra(NostrEvent *event, const char *key);
  *
  * Returns: (transfer none) (nullable) (type gpointer): internal pointer to value
  */
-void *nostr_event_get_extra(NostrEvent *event, const char *key);
+NOSTR_JSON_API void *nostr_event_get_extra(NostrEvent *event, const char *key);
 
 /**
  * nostr_event_get_extra_string:
@@ -47,7 +50,7 @@ void *nostr_event_get_extra(NostrEvent *event, const char *key);
  *
  * Returns: (transfer full) (nullable): newly-allocated copy of string value
  */
-char *nostr_event_get_extra_string(NostrEvent *event, const char *key);
+NOSTR_JSON_API char *nostr_event_get_extra_string(NostrEvent *event, const char *key);
 
 /**
  * nostr_event_get_extra_number:
@@ -57,7 +60,7 @@ char *nostr_event_get_extra_string(NostrEvent *event, const char *key);
  *
  * Returns: %TRUE on success
  */
-bool nostr_event_get_extra_number(NostrEvent *event, const char *key, double *out);
+NOSTR_JSON_API bool nostr_event_get_extra_number(NostrEvent *event, const char *key, double *out);
 
 /**
  * nostr_event_get_extra_bool:
@@ -67,7 +70,7 @@ bool nostr_event_get_extra_number(NostrEvent *event, const char *key, double *ou
  *
  * Returns: %TRUE on success
  */
-bool nostr_event_get_extra_bool(NostrEvent *event, const char *key, bool *out);
+NOSTR_JSON_API bool nostr_event_get_extra_bool(NostrEvent *event, const char *key, bool *out);
 
 #ifdef __cplusplus
 }

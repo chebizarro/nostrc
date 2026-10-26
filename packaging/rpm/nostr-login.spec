@@ -165,7 +165,7 @@ Summary:        Nostr protocol implementation for C (headless ABI)
 %description -n libnostr
 libnostr is a C implementation of the Nostr protocol: event/tag encoding,
 signing/verification (secp256k1), transport (libwebsockets) and helper
-types.  Ships the shared library libnostr.so.1 built with the GLib-free
+types.  Ships the shared library libnostr.so.2 built with the GLib-free
 (headless) ABI (NOSTR_WITH_GLIB=OFF, decision D-14) so servers install the
 nostr-login stack with no GLib/GTK/GNOME dependency.
 
@@ -1157,8 +1157,8 @@ fi
 
 %files -n libnostr
 %license LICENSE
-%{_libdir}/libnostr.so.1
-%{_libdir}/libnostr.so.1.*
+%{_libdir}/libnostr.so.2
+%{_libdir}/libnostr.so.2.*
 
 %files -n libnostr-devel
 %{_libdir}/libnostr.so
@@ -1181,6 +1181,7 @@ fi
 %{_libdir}/libnostrgo.so
 %{_libdir}/pkgconfig/libnostrgo.pc
 %{_libdir}/pkgconfig/libgo.pc
+%{_includedir}/libgo-export.h
 %{_includedir}/go.h
 %{_includedir}/blocking_executor.h
 %{_includedir}/channel.h
@@ -1219,8 +1220,8 @@ fi
 
 %files -n libnostr-json
 %license LICENSE
-%{_libdir}/libnostr-json.so.1
-%{_libdir}/libnostr-json.so.1.*
+%{_libdir}/libnostr-json.so.2
+%{_libdir}/libnostr-json.so.2.*
 # D-4 compat symlink: shipped in the runtime package for one release.
 %{_libdir}/libnostr_json.so
 

@@ -4,7 +4,7 @@
 #include "nostr-filter.h"
 
 /* Manual boxed type registration to avoid macro union incompatibilities. */
-GType nostr_filter_get_type(void) {
+NOSTR_API GType nostr_filter_get_type(void) {
   static gsize g_define_type_id = 0;
   if (g_once_init_enter(&g_define_type_id)) {
     GType t = g_boxed_type_register_static(

@@ -1,6 +1,8 @@
 #ifndef LIBNOSTR_NOSTR_INIT_H
 #define LIBNOSTR_NOSTR_INIT_H
 
+#include "nostr-export.h"
+
 /*
  * libnostr global initialization and cleanup
  *
@@ -21,7 +23,7 @@ extern "C" {
  * Initializes global library state. Safe to call multiple times; increments
  * a refcount internally. Must be balanced with nostr_global_cleanup().
  */
-int nostr_global_init(void);
+NOSTR_API int nostr_global_init(void);
 
 /**
  * nostr_global_cleanup:
@@ -29,7 +31,7 @@ int nostr_global_init(void);
  * Decrements the init refcount and performs cleanup when it reaches zero.
  * Safe to call multiple times after matching init calls.
  */
-void nostr_global_cleanup(void);
+NOSTR_API void nostr_global_cleanup(void);
 
 #ifdef __cplusplus
 }

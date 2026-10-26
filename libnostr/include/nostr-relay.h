@@ -1,6 +1,8 @@
 #ifndef __NOSTR_RELAY_H__
 #define __NOSTR_RELAY_H__
 
+#include "nostr-export.h"
+
 /* Canonical NostrRelay public header */
 
 #include <stdbool.h>
@@ -43,7 +45,7 @@ typedef struct NostrRelay {
  *
  * Returns: (type GType): the GType of NostrRelay
  */
-GType nostr_relay_get_type(void);
+NOSTR_API GType nostr_relay_get_type(void);
 #endif
 
 /* GI-facing API (stable symbol names) */
@@ -55,7 +57,7 @@ GType nostr_relay_get_type(void);
  *
  * Returns: (transfer full) (nullable): new relay
  */
-NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err);
+NOSTR_API NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err);
 
 /**
  * nostr_relay_free:
@@ -63,7 +65,7 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err);
  *
  * Convenience alias for unref.
  */
-void        nostr_relay_free(NostrRelay *relay);
+NOSTR_API void        nostr_relay_free(NostrRelay *relay);
 
 /**
  * nostr_relay_ref:
@@ -73,7 +75,7 @@ void        nostr_relay_free(NostrRelay *relay);
  *
  * Returns: (transfer none) (nullable): same relay
  */
-NostrRelay *nostr_relay_ref(NostrRelay *relay);
+NOSTR_API NostrRelay *nostr_relay_ref(NostrRelay *relay);
 
 /**
  * nostr_relay_unref:
@@ -81,7 +83,7 @@ NostrRelay *nostr_relay_ref(NostrRelay *relay);
  *
  * Decrements the reference count and frees when it reaches zero. Safe on NULL.
  */
-void        nostr_relay_unref(NostrRelay *relay);
+NOSTR_API void        nostr_relay_unref(NostrRelay *relay);
 
 /**
  * nostr_relay_connect:
@@ -90,13 +92,13 @@ void        nostr_relay_unref(NostrRelay *relay);
  *
  * Returns: success
  */
-bool        nostr_relay_connect(NostrRelay *relay, Error **err);
+NOSTR_API bool        nostr_relay_connect(NostrRelay *relay, Error **err);
 
 /**
  * nostr_relay_disconnect:
  * @relay: (nullable): relay
  */
-void        nostr_relay_disconnect(NostrRelay *relay);
+NOSTR_API void        nostr_relay_disconnect(NostrRelay *relay);
 
 /**
  * nostr_relay_close:
@@ -105,7 +107,7 @@ void        nostr_relay_disconnect(NostrRelay *relay);
  *
  * Returns: success
  */
-bool        nostr_relay_close(NostrRelay *relay, Error **err);
+NOSTR_API bool        nostr_relay_close(NostrRelay *relay, Error **err);
 
 /**
  * nostr_relay_subscribe:
@@ -116,7 +118,7 @@ bool        nostr_relay_close(NostrRelay *relay, Error **err);
  *
  * Returns: success
  */
-bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filters, Error **err);
+NOSTR_API bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filters, Error **err);
 
 /**
  * nostr_relay_prepare_subscription:
@@ -131,14 +133,14 @@ bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilter
  * Returns: (transfer none) (nullable): internal subscription pointer, or NULL
  *   if @relay or @filters is NULL
  */
-struct NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext *ctx, NostrFilters *filters);
+NOSTR_API struct NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext *ctx, NostrFilters *filters);
 
 /**
  * nostr_relay_publish:
  * @relay: (nullable): relay
  * @event: (nullable): event
  */
-void        nostr_relay_publish(NostrRelay *relay, NostrEvent *event);
+NOSTR_API void        nostr_relay_publish(NostrRelay *relay, NostrEvent *event);
 
 /**
  * nostr_relay_publish_and_wait:
@@ -154,7 +156,7 @@ void        nostr_relay_publish(NostrRelay *relay, NostrEvent *event);
  *
  * Returns: true only when the relay sends OK with ok=true.
  */
-bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
+NOSTR_API bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
                                          uint64_t timeout_ms, Error **err);
 
 /**
@@ -163,7 +165,7 @@ bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
  * @sign: (nullable): sign callback
  * @err: (out) (optional) (nullable): error out param
  */
-void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err);
+NOSTR_API void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err);
 
 /**
  * nostr_relay_count:
@@ -174,7 +176,7 @@ void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error
  *
  * Returns: count
  */
-int64_t     nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *filter, Error **err);
+NOSTR_API int64_t     nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *filter, Error **err);
 
 /**
  * nostr_relay_is_connected:
@@ -182,7 +184,7 @@ int64_t     nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *fi
  *
  * Returns: whether the relay has an active connection (may be in handshake)
  */
-bool        nostr_relay_is_connected(NostrRelay *relay);
+NOSTR_API bool        nostr_relay_is_connected(NostrRelay *relay);
 
 /**
  * nostr_relay_is_established:
@@ -192,20 +194,20 @@ bool        nostr_relay_is_connected(NostrRelay *relay);
  *          is ready for message exchange. Use this when you need to ensure
  *          the connection is fully established before sending messages.
  */
-bool        nostr_relay_is_established(NostrRelay *relay);
+NOSTR_API bool        nostr_relay_is_established(NostrRelay *relay);
 /* nostrc-oz77: nostr_relay_connect() returns once the dial has started;
  * lws connects asynchronously. Block (off the main thread) until the current
  * connection's WebSocket handshake succeeds -> true, or fails (refused port,
  * TLS or upgrade error, closed) or @timeout_ms passes -> false with @err set.
  * The relay's own reconnect loop is left alone either way. */
-bool        nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error **err);
+NOSTR_API bool        nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error **err);
 
 /**
  * nostr_relay_enable_debug_raw:
  * @relay: (nullable): relay
  * @enable: enable flag
  */
-void        nostr_relay_enable_debug_raw(NostrRelay *relay, int enable);
+NOSTR_API void        nostr_relay_enable_debug_raw(NostrRelay *relay, int enable);
 
 /**
  * nostr_relay_get_debug_raw_channel:
@@ -213,7 +215,7 @@ void        nostr_relay_enable_debug_raw(NostrRelay *relay, int enable);
  *
  * Returns: (transfer none) (nullable): internal channel owned by relay
  */
-GoChannel  *nostr_relay_get_debug_raw_channel(NostrRelay *relay);
+NOSTR_API GoChannel  *nostr_relay_get_debug_raw_channel(NostrRelay *relay);
 
 /* Accessors (GLib-friendly) */
 /**
@@ -222,7 +224,7 @@ GoChannel  *nostr_relay_get_debug_raw_channel(NostrRelay *relay);
  *
  * Returns: (transfer none) (nullable): internal URL string
  */
-const char *nostr_relay_get_url_const(const NostrRelay *relay);
+NOSTR_API const char *nostr_relay_get_url_const(const NostrRelay *relay);
 
 /**
  * nostr_relay_get_context:
@@ -230,7 +232,7 @@ const char *nostr_relay_get_url_const(const NostrRelay *relay);
  *
  * Returns: (transfer none) (nullable): connection GoContext
  */
-GoContext *nostr_relay_get_context(const NostrRelay *relay);
+NOSTR_API GoContext *nostr_relay_get_context(const NostrRelay *relay);
 
 /**
  * nostr_relay_get_write_channel:
@@ -238,7 +240,7 @@ GoContext *nostr_relay_get_context(const NostrRelay *relay);
  *
  * Returns: (transfer none) (nullable): the write channel used internally
  */
-GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay);
+NOSTR_API GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay);
 
 /**
  * nostr_relay_write:
@@ -256,7 +258,7 @@ GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay);
  *
  * Returns: (transfer full) (nullable): channel of Error* result
  */
-GoChannel *nostr_relay_write(NostrRelay *relay, char *msg);
+NOSTR_API GoChannel *nostr_relay_write(NostrRelay *relay, char *msg);
 
 /* ========================================================================
  * Auto-reconnection with exponential backoff (nostrc-4du)
@@ -307,7 +309,7 @@ typedef void (*NostrRelayStateCallback)(NostrRelay *relay,
  *
  * Default: enabled (true)
  */
-void nostr_relay_set_auto_reconnect(NostrRelay *relay, bool enable);
+NOSTR_API void nostr_relay_set_auto_reconnect(NostrRelay *relay, bool enable);
 
 /**
  * nostr_relay_get_auto_reconnect:
@@ -315,7 +317,7 @@ void nostr_relay_set_auto_reconnect(NostrRelay *relay, bool enable);
  *
  * Returns: Whether auto-reconnection is enabled
  */
-bool nostr_relay_get_auto_reconnect(NostrRelay *relay);
+NOSTR_API bool nostr_relay_get_auto_reconnect(NostrRelay *relay);
 
 /**
  * nostr_relay_get_connection_state:
@@ -323,7 +325,7 @@ bool nostr_relay_get_auto_reconnect(NostrRelay *relay);
  *
  * Returns: Current connection state
  */
-NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay);
+NOSTR_API NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay);
 
 /**
  * nostr_relay_get_connection_state_name:
@@ -331,7 +333,7 @@ NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay);
  *
  * Returns: Human-readable state name (static string)
  */
-const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state);
+NOSTR_API const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state);
 
 /**
  * NostrRelayDestroyNotify:
@@ -357,7 +359,7 @@ typedef void (*NostrRelayDestroyNotify)(void *user_data);
  * frees @user_data after removing the callback should register it with
  * nostr_relay_set_state_callback_full() instead.
  */
-void nostr_relay_set_state_callback(NostrRelay *relay,
+NOSTR_API void nostr_relay_set_state_callback(NostrRelay *relay,
                                     NostrRelayStateCallback callback,
                                     void *user_data);
 
@@ -384,7 +386,7 @@ void nostr_relay_set_state_callback(NostrRelay *relay,
  *
  * Since: 1.1
  */
-void nostr_relay_set_state_callback_full(NostrRelay *relay,
+NOSTR_API void nostr_relay_set_state_callback_full(NostrRelay *relay,
                                          NostrRelayStateCallback callback,
                                          void *user_data,
                                          NostrRelayDestroyNotify destroy);
@@ -415,7 +417,7 @@ typedef void (*NostrRelayAuthCallback)(NostrRelay *relay,
  * and use nostr_relay_set_auth_callback_full() when the data is freed after
  * the callback is removed.
  */
-void nostr_relay_set_auth_callback(NostrRelay *relay,
+NOSTR_API void nostr_relay_set_auth_callback(NostrRelay *relay,
                                    NostrRelayAuthCallback callback,
                                    void *user_data);
 
@@ -431,7 +433,7 @@ void nostr_relay_set_auth_callback(NostrRelay *relay,
  *
  * Since: 1.1
  */
-void nostr_relay_set_auth_callback_full(NostrRelay *relay,
+NOSTR_API void nostr_relay_set_auth_callback_full(NostrRelay *relay,
                                         NostrRelayAuthCallback callback,
                                         void *user_data,
                                         NostrRelayDestroyNotify destroy);
@@ -442,7 +444,7 @@ void nostr_relay_set_auth_callback_full(NostrRelay *relay,
  *
  * Returns: Number of consecutive failed reconnection attempts (0 if connected)
  */
-int nostr_relay_get_reconnect_attempt(NostrRelay *relay);
+NOSTR_API int nostr_relay_get_reconnect_attempt(NostrRelay *relay);
 
 /**
  * nostr_relay_get_next_reconnect_ms:
@@ -450,7 +452,7 @@ int nostr_relay_get_reconnect_attempt(NostrRelay *relay);
  *
  * Returns: Milliseconds until next reconnection attempt (0 if not in backoff)
  */
-uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay);
+NOSTR_API uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay);
 
 /**
  * nostr_relay_reconnect_now:
@@ -459,7 +461,7 @@ uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay);
  * Request immediate reconnection, bypassing backoff delay.
  * Has no effect if already connected or connection attempt in progress.
  */
-void nostr_relay_reconnect_now(NostrRelay *relay);
+NOSTR_API void nostr_relay_reconnect_now(NostrRelay *relay);
 
 /* ========================================================================
  * Extension message handler (NIP-77 negentropy, etc.)
@@ -477,7 +479,7 @@ void nostr_relay_reconnect_now(NostrRelay *relay);
  * Used for NIP-77 negentropy (NEG-MSG, NEG-ERR) and other extensions.
  * Called from relay worker thread - use thread-safe operations.
  */
-void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *));
+NOSTR_API void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *));
 
 /**
  * NostrRelayOkResponseCallback:
@@ -508,7 +510,7 @@ typedef void (*NostrRelayOkResponseCallback)(const char *event_id,
  * and use nostr_relay_set_ok_callback_full() when the data is freed after
  * the callback is removed.
  */
-void nostr_relay_set_ok_callback(NostrRelay *relay,
+NOSTR_API void nostr_relay_set_ok_callback(NostrRelay *relay,
                                   NostrRelayOkResponseCallback callback,
                                   void *user_data);
 
@@ -524,7 +526,7 @@ void nostr_relay_set_ok_callback(NostrRelay *relay,
  *
  * Since: 1.1
  */
-void nostr_relay_set_ok_callback_full(NostrRelay *relay,
+NOSTR_API void nostr_relay_set_ok_callback_full(NostrRelay *relay,
                                       NostrRelayOkResponseCallback callback,
                                       void *user_data,
                                       NostrRelayDestroyNotify destroy);

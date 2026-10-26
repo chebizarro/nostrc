@@ -11,9 +11,9 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.1.4 | Unreleased | — | `libnostr/CMakeLists.txt` |
-| libjson (libnostr-json) | `libjson/` | 1.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
-| libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
+| libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.5.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
@@ -67,6 +67,34 @@ files already declare a version.
   libjson and the other independently versioned components have no direct
   changes (no bump); downstream consumers receive this dependency correction
   when rebuilt. No release tags or release-column changes.
+- nostrc-er4fz.10 phase A: libnostr MAJOR 1.1.4 -> 2.0.0 and libjson
+  MAJOR 1.0.1 -> 2.0.0; libgo MINOR 0.1.3 -> 0.2.0 (pre-1.0 breaking
+  change). Hidden-by-default compilation and explicit library-owned exports
+  remove accidentally visible implementation symbols, including embedded
+  archive exports on ELF. This is an ABI break even though declared public
+  function signatures are unchanged. Public static-archive symbols retain
+  default visibility for the supported ELF executable-to-DSO binding route.
+  libjson remains an always-shared provider; its helper declarations in the
+  legacy core json.h and nostr-event-extra.h use libjson's DLL export/import
+  macro, not libnostr's.
+  libgo retains the weak metrics and fiber interposition hooks required by
+  its runtime consumers. Private libnostr test hooks are not shipped exports.
+  The new CMake helper is internal infrastructure, with no independent version.
+  bud02, libblossom, libporthome, libvault and libvault-marmot remain unchanged
+  (no bump): retain their existing generated-header/static-export behavior
+  rather than changing it as part of this helper introduction. gnostr and
+  nostr-gobject have no bump: internal build/scanner header-search paths
+  consume generated core headers, and the storage adapter uses declared cache
+  APIs instead of ad-hoc externs; their shipped APIs and behavior are unchanged.
+  Signet remains 0.7.0 (no bump): its private-hook test links one static core
+  and the real JSON/NIP codec sources without a second core DSO; its Meson
+  header paths track generated core headers. Grotto's Meson header paths do
+  the same (no application API or behavior change). Debian runtime names and RPM file lists follow ABI major 2;
+  libnostr-json2 replaces/breaks libnostr-json1 because of their common legacy
+  compatibility symlink. Development package lists include generated headers.
+  Groundhog/Grotto bundle file lists follow libjson's new SONAME; no independent
+  application API or behavior changes, so no application version bump. Other
+  consumers are rebuilt, not modified. No tags or release columns are changed.
 
 - nostrc-clqf4: nostr-homed remains 0.5.0 (no bump). Gate the NIP-46
   wrap-key test on its auth-runtime prerequisite; test registration only,

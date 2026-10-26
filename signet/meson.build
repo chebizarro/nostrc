@@ -208,10 +208,14 @@ endif
 # Include paths to monorepo headers (match existing monorepo patterns)
 root_inc = include_directories('..')
 signet_inc = include_directories('include')
-libnostr_inc = include_directories('../libnostr/include')
+libnostr_inc = include_directories(
+  '../libnostr/include',
+  nostrc_build_dir_opt / 'libnostr/include',
+  nostrc_build_dir_opt / 'libjson/include',
+)
 # libnostr public headers (e.g. nostr-tag.h) include libgo headers such as
 # string_array.h; the standalone build needs libgo/include on the path.
-libgo_inc = include_directories('../libgo/include')
+libgo_inc = include_directories('../libgo/include', nostrc_build_dir_opt / 'libgo/include')
 
 nips_inc = include_directories(
   '../nips/nip01/include',

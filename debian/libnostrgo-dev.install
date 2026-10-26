@@ -1,6 +1,7 @@
 usr/lib/*/libnostrgo.so
 usr/lib/*/pkgconfig/libnostrgo.pc
 usr/lib/*/pkgconfig/libgo.pc
+usr/include/libgo-export.h
 usr/include/go.h
 usr/include/blocking_executor.h
 usr/include/channel.h

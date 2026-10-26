@@ -1,6 +1,8 @@
 #ifndef LIBNOSTR_NOSTR_CRYPTO_BIP39_H
 #define LIBNOSTR_NOSTR_CRYPTO_BIP39_H
 
+#include "nostr-export.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,13 +19,13 @@ extern "C" {
  * - lowercase ASCII words
  * - checksum bits verified
  */
-bool nostr_bip39_validate(const char *mnemonic);
+NOSTR_API bool nostr_bip39_validate(const char *mnemonic);
 
 /* Generate a new mnemonic with 12/15/18/21/24 words. Caller must free() the returned string. */
-char *nostr_bip39_generate(int word_count);
+NOSTR_API char *nostr_bip39_generate(int word_count);
 
 /* PBKDF2-HMAC-SHA512(mnemonic, "mnemonic" + passphrase, 2048) -> 64 bytes */
-bool nostr_bip39_seed(const char *mnemonic, const char *passphrase, uint8_t out[64]);
+NOSTR_API bool nostr_bip39_seed(const char *mnemonic, const char *passphrase, uint8_t out[64]);
 
 #ifdef __cplusplus
 }

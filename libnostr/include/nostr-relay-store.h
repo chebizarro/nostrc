@@ -1,6 +1,8 @@
 #ifndef __GNOSTR_RELAY_STORE_H__
 #define __GNOSTR_RELAY_STORE_H__
 
+#include "nostr-export.h"
+
 /* Public header exposing GI-friendly names for NostrRelayStore/NostrMultiStore (canonical). */
 
 #include <stdbool.h>
@@ -25,10 +27,10 @@ typedef struct {
 } NostrMultiStore;
 
 /* Canonical API */
-NostrMultiStore *nostr_multi_store_new(size_t initial_size);
-void              nostr_multi_store_free(NostrMultiStore *multi);
-int               nostr_multi_store_publish(NostrMultiStore *multi, void *ctx, NostrEvent *event);
-int               nostr_multi_store_query_sync(NostrMultiStore *multi, void *ctx, NostrFilter *filter, NostrEvent ***events, size_t *events_count);
+NOSTR_API NostrMultiStore *nostr_multi_store_new(size_t initial_size);
+NOSTR_API void              nostr_multi_store_free(NostrMultiStore *multi);
+NOSTR_API int               nostr_multi_store_publish(NostrMultiStore *multi, void *ctx, NostrEvent *event);
+NOSTR_API int               nostr_multi_store_query_sync(NostrMultiStore *multi, void *ctx, NostrFilter *filter, NostrEvent ***events, size_t *events_count);
 
 /* Accessors (GLib-friendly) */
 /**
@@ -37,7 +39,7 @@ int               nostr_multi_store_query_sync(NostrMultiStore *multi, void *ctx
  *
  * Returns: number of stores (0 if @multi is NULL)
  */
-size_t nostr_multi_store_get_count(const NostrMultiStore *multi);
+NOSTR_API size_t nostr_multi_store_get_count(const NostrMultiStore *multi);
 
 /**
  * nostr_multi_store_get_nth:
@@ -46,7 +48,7 @@ size_t nostr_multi_store_get_count(const NostrMultiStore *multi);
  *
  * Returns: (transfer none) (nullable): pointer to store at @index
  */
-NostrRelayStore *nostr_multi_store_get_nth(const NostrMultiStore *multi, size_t index);
+NOSTR_API NostrRelayStore *nostr_multi_store_get_nth(const NostrMultiStore *multi, size_t index);
 
 #ifdef __cplusplus
 }

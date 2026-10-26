@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 1 1 4)
+declare_component_version(NOSTR 2 0 0)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
@@ -132,6 +132,11 @@ configure_file(
 # Library target (named 'nostr' so pkg-config uses -lnostr). Provide 'libnostr' alias for compatibility.
 add_library(nostr ${LIBNOSTR_SOURCES})
 add_library(libnostr ALIAS nostr)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(nostr NOSTR_API nostr-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
+# json.h declares both the core handshake and libjson's public helpers.
+target_include_directories(nostr PUBLIC
+  $<TARGET_PROPERTY:nostr_json,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # The component declaration uses the public NOSTR_ prefix while the target is
 # lowercase. Associate the configured public header and version with the target
@@ -335,6 +340,14 @@ if(LIBNOSTR_WITH_NOSTRDB)
     endif()
     # Link our libnostr against nostrdb
     target_link_libraries(nostr PUBLIC nostrdb)
+    if(APPLE AND BUILD_SHARED_LIBS)
+      # Mach-O equivalent of ELF --exclude-libs: hide the embedded backend,
+      # without changing the archive's visibility for its other consumers.
+      target_link_options(nostr PRIVATE "LINKER:-load_hidden,$<TARGET_FILE:nostrdb>")
+      if(FLATCCRT_LIB MATCHES "\\.a$")
+        target_link_options(nostr PRIVATE "LINKER:-load_hidden,${FLATCCRT_LIB}")
+      endif()
+    endif()
   else()
     message(WARNING "LIBNOSTR_WITH_NOSTRDB=ON but nostrdb sources not found at ${LIBNOSTR_NDB_VENDOR_PATH}.\n"
                     "Please clone https://github.com/damus-io/nostrdb into third_party/nostrdb or set LIBNOSTR_NDB_VENDOR_PATH.")
@@ -345,6 +358,31 @@ endif()
 # Tests (CTest). Real regression tests for audited core behavior.
 # -----------------------------------------------------------------------------
 option(LIBNOSTR_BUILD_TESTS "Build libnostr unit tests" ON)
+if(BUILD_TESTING OR LIBNOSTR_BUILD_TESTS)
+  set(_nostr_internal_test_lib nostr)
+  if(BUILD_SHARED_LIBS)
+    # Private hooks are not a DLL ABI. These white-box tests use an uninstalled
+    # archive of the same sources/options; public-API tests still link the DSO.
+    get_target_property(_nostr_test_sources nostr SOURCES)
+    add_library(nostr_test_internal STATIC ${_nostr_test_sources})
+    target_include_directories(nostr_test_internal PUBLIC
+      $<TARGET_PROPERTY:nostr,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(nostr_test_internal PUBLIC NOSTR_STATIC_DEFINE
+      $<TARGET_PROPERTY:nostr,COMPILE_DEFINITIONS>)
+    target_compile_options(nostr_test_internal PRIVATE
+      $<TARGET_PROPERTY:nostr,COMPILE_OPTIONS>)
+    target_link_directories(nostr_test_internal PUBLIC
+      $<TARGET_PROPERTY:nostr,LINK_DIRECTORIES>)
+    target_link_libraries(nostr_test_internal PUBLIC
+      $<TARGET_PROPERTY:nostr,LINK_LIBRARIES>)
+    set_target_properties(nostr_test_internal PROPERTIES C_VISIBILITY_PRESET hidden)
+    if(COMMAND apply_sanitizers)
+      apply_sanitizers(nostr_test_internal)
+    endif()
+    set(_nostr_internal_test_lib nostr_test_internal)
+  endif()
+  add_library(nostr_internal_test ALIAS ${_nostr_internal_test_lib})
+endif()
 if(LIBNOSTR_BUILD_TESTS)
   enable_testing()
   add_executable(test_core_audit tests/test_core_audit.c)
@@ -363,7 +401,7 @@ if(LIBNOSTR_BUILD_TESTS)
   add_test(NAME libnostr_event_validation COMMAND test_event_validation)
 
   add_executable(test_networking_audit tests/test_networking_audit.c)
-  target_link_libraries(test_networking_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
+  target_link_libraries(test_networking_audit PRIVATE ${_nostr_internal_test_lib} OpenSSL::Crypto ${SECP256K1_LIB})
   target_include_directories(test_networking_audit PRIVATE include src)
   add_test(NAME libnostr_networking_audit COMMAND test_networking_audit)
 
@@ -371,13 +409,13 @@ if(LIBNOSTR_BUILD_TESTS)
   # offline and against an in-process loopback libwebsockets fixture relay.
   find_package(Threads REQUIRED)
   add_executable(test_subscription_dispatch tests/test_subscription_dispatch.c)
-  target_link_libraries(test_subscription_dispatch PRIVATE nostr Threads::Threads)
+  target_link_libraries(test_subscription_dispatch PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
   target_include_directories(test_subscription_dispatch PRIVATE include src)
   add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
   set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
 
   add_executable(test_reconnect_same_second tests/test_reconnect_same_second.c)
-  target_link_libraries(test_reconnect_same_second PRIVATE nostr Threads::Threads)
+  target_link_libraries(test_reconnect_same_second PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
   target_include_directories(test_reconnect_same_second PRIVATE include src)
   add_test(NAME libnostr_reconnect_same_second COMMAND test_reconnect_same_second)
   set_tests_properties(libnostr_reconnect_same_second PROPERTIES TIMEOUT 60)
@@ -385,7 +423,7 @@ if(LIBNOSTR_BUILD_TESTS)
   # nostrc-flp7: a callback's user data outlives every call already in
   # progress when the callback is replaced or removed. Offline.
   add_executable(test_relay_callback_lifetime tests/test_relay_callback_lifetime.c)
-  target_link_libraries(test_relay_callback_lifetime PRIVATE nostr Threads::Threads)
+  target_link_libraries(test_relay_callback_lifetime PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
   target_include_directories(test_relay_callback_lifetime PRIVATE include src)
   add_test(NAME libnostr_relay_callback_lifetime COMMAND test_relay_callback_lifetime)
   set_tests_properties(libnostr_relay_callback_lifetime PROPERTIES TIMEOUT 60)
@@ -394,7 +432,7 @@ if(LIBNOSTR_BUILD_TESTS)
   # still queued when the relay was freed) is answered and releases the
   # writer's reference on its answer channel. Offline.
   add_executable(test_relay_write_unsent tests/test_relay_write_unsent.c)
-  target_link_libraries(test_relay_write_unsent PRIVATE nostr Threads::Threads)
+  target_link_libraries(test_relay_write_unsent PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
   target_include_directories(test_relay_write_unsent PRIVATE include src)
   add_test(NAME libnostr_relay_write_unsent COMMAND test_relay_write_unsent)
   set_tests_properties(libnostr_relay_write_unsent PROPERTIES TIMEOUT 60)
@@ -404,7 +442,7 @@ if(LIBNOSTR_BUILD_TESTS)
   # against loopback servers. Its leaks show under LeakSanitizer: the target
   # and test share one name so groundhog-ci.yml's sanitizer job can list it.
   add_executable(test_relay_teardown_leaks tests/test_relay_teardown_leaks.c)
-  target_link_libraries(test_relay_teardown_leaks PRIVATE nostr Threads::Threads)
+  target_link_libraries(test_relay_teardown_leaks PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
   target_include_directories(test_relay_teardown_leaks PRIVATE include src)
   add_test(NAME test_relay_teardown_leaks COMMAND test_relay_teardown_leaks)
   set_tests_properties(test_relay_teardown_leaks PROPERTIES TIMEOUT 60)

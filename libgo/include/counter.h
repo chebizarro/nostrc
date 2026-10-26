@@ -1,6 +1,8 @@
 #ifndef GO_COUNTER_H
 #define GO_COUNTER_H
 
+#include "libgo-export.h"
+
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -13,14 +15,14 @@ typedef struct {
     int num_counters;                                // Number of counters
 } LongAdder;
 
-LongAdder *long_adder_create(void);
+LIBGO_API LongAdder *long_adder_create(void);
 
-void long_adder_increment(LongAdder *adder);
+LIBGO_API void long_adder_increment(LongAdder *adder);
 
-long long long_adder_sum(LongAdder *adder);
+LIBGO_API long long long_adder_sum(LongAdder *adder);
 
-void long_adder_reset(LongAdder *adder);
+LIBGO_API void long_adder_reset(LongAdder *adder);
 
-void long_adder_destroy(LongAdder *adder);
+LIBGO_API void long_adder_destroy(LongAdder *adder);
 
 #endif // GO_COUNTER_H

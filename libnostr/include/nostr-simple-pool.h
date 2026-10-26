@@ -1,6 +1,8 @@
 #ifndef __NOSTR_SIMPLE_POOL_H__
 #define __NOSTR_SIMPLE_POOL_H__
 
+#include "nostr-export.h"
+
 /* GLib-friendly transitional header for SimplePool */
 
 #include <stddef.h>
@@ -129,12 +131,12 @@ typedef struct _NostrDirectedFilters {
  *
  * Returns: (transfer full): newly-allocated `NostrSimplePool*`
  */
-NostrSimplePool *nostr_simple_pool_new(void);
+NOSTR_API NostrSimplePool *nostr_simple_pool_new(void);
 /**
  * nostr_simple_pool_free:
  * @pool: (transfer full): pool to free
  */
-void nostr_simple_pool_free(NostrSimplePool *pool);
+NOSTR_API void nostr_simple_pool_free(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_ensure_relay:
  * @pool: (transfer none): pool
@@ -142,7 +144,7 @@ void nostr_simple_pool_free(NostrSimplePool *pool);
  *
  * Ensures the relay is present in the pool.
  */
-void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
+NOSTR_API void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
 /**
  * nostr_simple_pool_ensure_relay_async:
  * @pool: (transfer none): pool
@@ -160,7 +162,7 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
  * blocking variant from an event loop freezes the whole process for the
  * duration (fp-1r0k).
  */
-void nostr_simple_pool_ensure_relay_async(NostrSimplePool *pool, const char *url);
+NOSTR_API void nostr_simple_pool_ensure_relay_async(NostrSimplePool *pool, const char *url);
 /**
  * nostr_simple_pool_add_relay:
  * @pool: (transfer none): pool
@@ -168,7 +170,7 @@ void nostr_simple_pool_ensure_relay_async(NostrSimplePool *pool, const char *url
  *
  * Adds an existing relay to the pool. The pool does not take ownership.
  */
-void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay);
+NOSTR_API void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay);
 
 /**
  * nostr_simple_pool_remove_relay:
@@ -178,7 +180,7 @@ void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay);
  * Removes a relay from the pool by URL. Disconnects and frees the relay.
  * Returns: true if the relay was found and removed, false otherwise.
  */
-bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url);
+NOSTR_API bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url);
 
 /**
  * nostr_simple_pool_disconnect_all:
@@ -191,7 +193,7 @@ bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url);
  * otherwise dial straight back everything this call just dropped. The next
  * nostr_simple_pool_start() re-arms it.
  */
-void nostr_simple_pool_disconnect_all(NostrSimplePool *pool);
+NOSTR_API void nostr_simple_pool_disconnect_all(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_start:
  * @pool: (transfer none): pool
@@ -199,7 +201,7 @@ void nostr_simple_pool_disconnect_all(NostrSimplePool *pool);
  * Starts pool workers. Idempotent: a second call on an already-running pool is
  * a no-op rather than a second worker thread with the first one orphaned.
  */
-void nostr_simple_pool_start(NostrSimplePool *pool);
+NOSTR_API void nostr_simple_pool_start(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_stop:
  * @pool: (transfer none): pool
@@ -211,7 +213,7 @@ void nostr_simple_pool_start(NostrSimplePool *pool);
  * already be in flight is the stall this whole mechanism exists to remove. The
  * worker is retired by nostr_simple_pool_free().
  */
-void nostr_simple_pool_stop(NostrSimplePool *pool);
+NOSTR_API void nostr_simple_pool_stop(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_subscribe:
  * @pool: (transfer none): pool
@@ -224,14 +226,14 @@ void nostr_simple_pool_stop(NostrSimplePool *pool);
  * must not call this setter or free the pool from inside the callback. Setter
  * serializes against in-flight notifications; no public struct/ABI change. */
 typedef void (*NostrPoolSubscriptionCallback)(NostrRelay *, const char *state, const char *reason, void *);
-void nostr_simple_pool_set_subscription_callback(NostrSimplePool *, NostrPoolSubscriptionCallback, void *);
+NOSTR_API void nostr_simple_pool_set_subscription_callback(NostrSimplePool *, NostrPoolSubscriptionCallback, void *);
 /* Configure new subscriptions before subscribe(): reconnect from now-seconds,
  * never from an untrusted received timestamp. The consumer must enforce its
  * admission/freshness window and durable replay guard; use unique=false when
  * retry deliveries need replies. Zero preserves default cursor recovery.
  * Returns false if the pool's private subscription registry is unavailable. */
-bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
-void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
+NOSTR_API bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
+NOSTR_API void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
  * nostr_simple_pool_subscribe_async:
  * @pool: (transfer none): pool
@@ -250,7 +252,7 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
  * skipped for auto_unsub_on_eose pools -- call
  * nostr_simple_pool_set_auto_unsub_on_eose(pool, false) if you rely on it.
  */
-void nostr_simple_pool_subscribe_async(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
+NOSTR_API void nostr_simple_pool_subscribe_async(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
  * nostr_simple_pool_query_single:
  * @pool: (transfer none): pool
@@ -258,7 +260,7 @@ void nostr_simple_pool_subscribe_async(NostrSimplePool *pool, const char **urls,
  * @url_count: number of URLs
  * @filter: (transfer none): filter
  */
-void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter);
+NOSTR_API void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilter filter);
 
 /**
  * Convenience configuration API
@@ -266,14 +268,14 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
 /* Middleware takes ownership of each incoming->event (free it or retain it);
  * the incoming wrapper and relay are borrowed for the call. This also applies
  * to the extended and batch variants below. */
-void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
+NOSTR_API void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
                                              void (*cb)(NostrIncomingEvent *));
-void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,
+NOSTR_API void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,
                                                void (*cb)(NostrIncomingEvent *, void *),
                                                void *user_data);
-void nostr_simple_pool_set_batch_middleware(NostrSimplePool *pool,
+NOSTR_API void nostr_simple_pool_set_batch_middleware(NostrSimplePool *pool,
                                             void (*cb)(NostrIncomingEvent *items, size_t count));
-void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable);
+NOSTR_API void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable);
 
 /* ========================================================================
  * Brown List API (nostrc-py1)
@@ -290,7 +292,7 @@ void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable
  *
  * Default: enabled (true)
  */
-void nostr_simple_pool_set_brown_list_enabled(NostrSimplePool *pool, bool enabled);
+NOSTR_API void nostr_simple_pool_set_brown_list_enabled(NostrSimplePool *pool, bool enabled);
 
 /**
  * nostr_simple_pool_get_brown_list_enabled:
@@ -298,7 +300,7 @@ void nostr_simple_pool_set_brown_list_enabled(NostrSimplePool *pool, bool enable
  *
  * Returns: whether brown list is enabled
  */
-bool nostr_simple_pool_get_brown_list_enabled(NostrSimplePool *pool);
+NOSTR_API bool nostr_simple_pool_get_brown_list_enabled(NostrSimplePool *pool);
 
 /**
  * nostr_simple_pool_get_brown_list:
@@ -308,7 +310,7 @@ bool nostr_simple_pool_get_brown_list_enabled(NostrSimplePool *pool);
  *
  * Returns: (transfer none): the pool's brown list, or NULL if not initialized
  */
-NostrBrownList *nostr_simple_pool_get_brown_list(NostrSimplePool *pool);
+NOSTR_API NostrBrownList *nostr_simple_pool_get_brown_list(NostrSimplePool *pool);
 
 /**
  * nostr_simple_pool_is_relay_browned:
@@ -319,7 +321,7 @@ NostrBrownList *nostr_simple_pool_get_brown_list(NostrSimplePool *pool);
  *
  * Returns: true if relay is brown-listed
  */
-bool nostr_simple_pool_is_relay_browned(NostrSimplePool *pool, const char *url);
+NOSTR_API bool nostr_simple_pool_is_relay_browned(NostrSimplePool *pool, const char *url);
 
 /**
  * nostr_simple_pool_clear_brown_list:
@@ -327,7 +329,7 @@ bool nostr_simple_pool_is_relay_browned(NostrSimplePool *pool, const char *url);
  *
  * Clear all brown-listed relays, allowing them to be retried immediately.
  */
-void nostr_simple_pool_clear_brown_list(NostrSimplePool *pool);
+NOSTR_API void nostr_simple_pool_clear_brown_list(NostrSimplePool *pool);
 
 /**
  * nostr_simple_pool_clear_relay_brown:
@@ -338,7 +340,7 @@ void nostr_simple_pool_clear_brown_list(NostrSimplePool *pool);
  *
  * Returns: true if relay was found and cleared
  */
-bool nostr_simple_pool_clear_relay_brown(NostrSimplePool *pool, const char *url);
+NOSTR_API bool nostr_simple_pool_clear_relay_brown(NostrSimplePool *pool, const char *url);
 
 /**
  * nostr_simple_pool_get_brown_list_stats:
@@ -347,7 +349,7 @@ bool nostr_simple_pool_clear_relay_brown(NostrSimplePool *pool, const char *url)
  *
  * Get statistics about the brown list.
  */
-void nostr_simple_pool_get_brown_list_stats(NostrSimplePool *pool, NostrBrownListStats *stats);
+NOSTR_API void nostr_simple_pool_get_brown_list_stats(NostrSimplePool *pool, NostrBrownListStats *stats);
 
 #ifdef __cplusplus
 }

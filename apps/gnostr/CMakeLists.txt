@@ -1025,7 +1025,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/libjson/include
     ${_NOSTR_CONFIG_DIR})
   target_link_libraries(gnostr-test-dm-gift-wrap-validation PRIVATE
-    PkgConfig::GLIB nostr_json)
+      PkgConfig::GLIB libnostr nostr_json)
   _gnostr_apply_sanitizers(gnostr-test-dm-gift-wrap-validation)
   add_test(NAME gnostr-test-dm-gift-wrap-validation COMMAND gnostr-test-dm-gift-wrap-validation)
   set_tests_properties(gnostr-test-dm-gift-wrap-validation PROPERTIES

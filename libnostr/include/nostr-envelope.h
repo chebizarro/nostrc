@@ -1,6 +1,8 @@
 #ifndef __NOSTR_NOSTR_ENVELOPE_H__
 #define __NOSTR_NOSTR_ENVELOPE_H__
 
+#include "nostr-export.h"
+
 /* GLib-friendly public accessors for Envelope and subtypes. */
 
 #include <stdbool.h>
@@ -93,51 +95,51 @@ typedef struct {
 } NostrAuthEnvelope;
 
 /* Generic */
-NostrEnvelopeType nostr_envelope_get_type(const NostrEnvelope *env);
-NostrEnvelope *nostr_envelope_parse(const char *json);
-void nostr_envelope_free(NostrEnvelope *envelope);
+NOSTR_API NostrEnvelopeType nostr_envelope_get_type(const NostrEnvelope *env);
+NOSTR_API NostrEnvelope *nostr_envelope_parse(const char *json);
+NOSTR_API void nostr_envelope_free(NostrEnvelope *envelope);
 
 /* Compact fast-path deserializer (used by json.c with backend fallback) */
 typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
-int nostr_envelope_deserialize_compact(NostrEnvelope *envelope, const char *json,
+NOSTR_API int nostr_envelope_deserialize_compact(NostrEnvelope *envelope, const char *json,
                                         NostrJsonErrorInfo *err_out);
 /* Compact fast-path serializer (used by json.c with backend fallback) */
-char *nostr_envelope_serialize_compact(const NostrEnvelope *envelope);
+NOSTR_API char *nostr_envelope_serialize_compact(const NostrEnvelope *envelope);
 
 /* EVENT */
-const char    *nostr_event_envelope_get_subscription_id(const NostrEventEnvelope *env);
-NostrEvent    *nostr_event_envelope_get_event(const NostrEventEnvelope *env);
+NOSTR_API const char    *nostr_event_envelope_get_subscription_id(const NostrEventEnvelope *env);
+NOSTR_API NostrEvent    *nostr_event_envelope_get_event(const NostrEventEnvelope *env);
 
 /* REQ */
-const char     *nostr_req_envelope_get_subscription_id(const NostrReqEnvelope *env);
-NostrFilters   *nostr_req_envelope_get_filters(const NostrReqEnvelope *env);
+NOSTR_API const char     *nostr_req_envelope_get_subscription_id(const NostrReqEnvelope *env);
+NOSTR_API NostrFilters   *nostr_req_envelope_get_filters(const NostrReqEnvelope *env);
 
 /* COUNT */
-const char     *nostr_count_envelope_get_subscription_id(const NostrCountEnvelope *env);
-NostrFilters   *nostr_count_envelope_get_filters(const NostrCountEnvelope *env);
-int             nostr_count_envelope_get_count(const NostrCountEnvelope *env);
+NOSTR_API const char     *nostr_count_envelope_get_subscription_id(const NostrCountEnvelope *env);
+NOSTR_API NostrFilters   *nostr_count_envelope_get_filters(const NostrCountEnvelope *env);
+NOSTR_API int             nostr_count_envelope_get_count(const NostrCountEnvelope *env);
 
 /* NOTICE */
-const char    *nostr_notice_envelope_get_message(const NostrNoticeEnvelope *env);
+NOSTR_API const char    *nostr_notice_envelope_get_message(const NostrNoticeEnvelope *env);
 
 /* EOSE */
-const char    *nostr_eose_envelope_get_message(const NostrEOSEEnvelope *env);
+NOSTR_API const char    *nostr_eose_envelope_get_message(const NostrEOSEEnvelope *env);
 
 /* CLOSE */
-const char    *nostr_close_envelope_get_message(const NostrCloseEnvelope *env);
+NOSTR_API const char    *nostr_close_envelope_get_message(const NostrCloseEnvelope *env);
 
 /* CLOSED */
-const char    *nostr_closed_envelope_get_subscription_id(const NostrClosedEnvelope *env);
-const char    *nostr_closed_envelope_get_reason(const NostrClosedEnvelope *env);
+NOSTR_API const char    *nostr_closed_envelope_get_subscription_id(const NostrClosedEnvelope *env);
+NOSTR_API const char    *nostr_closed_envelope_get_reason(const NostrClosedEnvelope *env);
 
 /* OK */
-const char    *nostr_ok_envelope_get_event_id(const NostrOKEnvelope *env);
-bool           nostr_ok_envelope_get_ok(const NostrOKEnvelope *env);
-const char    *nostr_ok_envelope_get_reason(const NostrOKEnvelope *env);
+NOSTR_API const char    *nostr_ok_envelope_get_event_id(const NostrOKEnvelope *env);
+NOSTR_API bool           nostr_ok_envelope_get_ok(const NostrOKEnvelope *env);
+NOSTR_API const char    *nostr_ok_envelope_get_reason(const NostrOKEnvelope *env);
 
 /* AUTH */
-const char    *nostr_auth_envelope_get_challenge(const NostrAuthEnvelope *env);
-NostrEvent    *nostr_auth_envelope_get_event(const NostrAuthEnvelope *env);
+NOSTR_API const char    *nostr_auth_envelope_get_challenge(const NostrAuthEnvelope *env);
+NOSTR_API NostrEvent    *nostr_auth_envelope_get_event(const NostrAuthEnvelope *env);
 
 #ifdef __cplusplus
 }

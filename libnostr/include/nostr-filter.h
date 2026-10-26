@@ -1,6 +1,8 @@
 #ifndef __NOSTR_FILTER_H__
 #define __NOSTR_FILTER_H__
 
+#include "nostr-export.h"
+
 /* Public header: standardized Nostr filter APIs. */
 
 #include <stddef.h>
@@ -61,8 +63,8 @@ typedef struct NostrFilters {
 } NostrFilters;
 
 /* Constructors / matchers */
-NostrFilter  *nostr_filter_new(void);
-void          nostr_filter_free(NostrFilter *filter);
+NOSTR_API NostrFilter  *nostr_filter_new(void);
+NOSTR_API void          nostr_filter_free(NostrFilter *filter);
 /**
  * nostr_filter_clear:
  * @filter: (nullable): filter to clear
@@ -76,11 +78,11 @@ void          nostr_filter_free(NostrFilter *filter);
  * - This function is also safe to call on a zeroed filter (e.g., after
  *   `nostr_filters_add()` which zeros the source to prevent double-free).
  */
-void          nostr_filter_clear(NostrFilter *filter);
-bool          nostr_filter_matches(NostrFilter *filter, NostrEvent *event);
-bool          nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event);
+NOSTR_API void          nostr_filter_clear(NostrFilter *filter);
+NOSTR_API bool          nostr_filter_matches(NostrFilter *filter, NostrEvent *event);
+NOSTR_API bool          nostr_filter_match_ignoring_timestamp(NostrFilter *filter, NostrEvent *event);
 
-NostrFilters *nostr_filters_new(void);
+NOSTR_API NostrFilters *nostr_filters_new(void);
 /**
  * nostr_filters_add:
  * @filters: (not nullable): destination vector
@@ -96,17 +98,17 @@ NostrFilters *nostr_filters_new(void);
  *
  * Returns: %true on success, %false on failure.
  */
-bool          nostr_filters_add(NostrFilters *filters, NostrFilter *filter);
-void          nostr_filters_free(NostrFilters *filters);
-bool          nostr_filters_match(NostrFilters *filters, NostrEvent *event);
-bool          nostr_filters_match_ignoring_timestamp(NostrFilters *filters, NostrEvent *event);
+NOSTR_API bool          nostr_filters_add(NostrFilters *filters, NostrFilter *filter);
+NOSTR_API void          nostr_filters_free(NostrFilters *filters);
+NOSTR_API bool          nostr_filters_match(NostrFilters *filters, NostrEvent *event);
+NOSTR_API bool          nostr_filters_match_ignoring_timestamp(NostrFilters *filters, NostrEvent *event);
 
 /* Deep-copy for boxed */
-NostrFilter  *nostr_filter_copy(const NostrFilter *filter);
+NOSTR_API NostrFilter  *nostr_filter_copy(const NostrFilter *filter);
 
 #ifdef __GI_SCANNER__
 #include <glib-object.h>
-GType nostr_filter_get_type(void);
+NOSTR_API GType nostr_filter_get_type(void);
 #define NOSTR_TYPE_FILTER (nostr_filter_get_type())
 #endif
 
@@ -127,14 +129,14 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrFilter, nostr_filter_free)
  *
  * Returns: (transfer none) (nullable): internal StringArray view of IDs
  */
-const StringArray *nostr_filter_get_ids(const NostrFilter *filter);
+NOSTR_API const StringArray *nostr_filter_get_ids(const NostrFilter *filter);
 /**
  * nostr_filter_set_ids:
  * @filter: (nullable): filter (no-op if NULL)
  * @ids: (nullable) (array length=count) (element-type utf8): IDs to set; copied internally
  * @count: number of IDs
  */
-void nostr_filter_set_ids(NostrFilter *filter, const char *const *ids, size_t count);
+NOSTR_API void nostr_filter_set_ids(NostrFilter *filter, const char *const *ids, size_t count);
 
 /**
  * nostr_filter_get_kinds:
@@ -142,13 +144,13 @@ void nostr_filter_set_ids(NostrFilter *filter, const char *const *ids, size_t co
  *
  * Returns: (transfer none) (nullable): internal IntArray view of kinds
  */
-const IntArray *nostr_filter_get_kinds(const NostrFilter *filter);
+NOSTR_API const IntArray *nostr_filter_get_kinds(const NostrFilter *filter);
 /**
  * nostr_filter_set_kinds:
  * @filter: (nullable): filter (no-op if NULL)
  * @kinds: (nullable) (array length=count): kinds to set; copied internally
  */
-void nostr_filter_set_kinds(NostrFilter *filter, const int *kinds, size_t count);
+NOSTR_API void nostr_filter_set_kinds(NostrFilter *filter, const int *kinds, size_t count);
 
 /**
  * nostr_filter_get_authors:
@@ -156,13 +158,13 @@ void nostr_filter_set_kinds(NostrFilter *filter, const int *kinds, size_t count)
  *
  * Returns: (transfer none) (nullable): internal StringArray view of authors
  */
-const StringArray *nostr_filter_get_authors(const NostrFilter *filter);
+NOSTR_API const StringArray *nostr_filter_get_authors(const NostrFilter *filter);
 /**
  * nostr_filter_set_authors:
  * @filter: (nullable): filter (no-op if NULL)
  * @authors: (nullable) (array length=count) (element-type utf8): copied internally
  */
-void nostr_filter_set_authors(NostrFilter *filter, const char *const *authors, size_t count);
+NOSTR_API void nostr_filter_set_authors(NostrFilter *filter, const char *const *authors, size_t count);
 
 /**
  * nostr_filter_get_tags:
@@ -170,7 +172,7 @@ void nostr_filter_set_authors(NostrFilter *filter, const char *const *authors, s
  *
  * Returns: (transfer none) (nullable): owned tags pointer
  */
-NostrTags *nostr_filter_get_tags(const NostrFilter *filter);
+NOSTR_API NostrTags *nostr_filter_get_tags(const NostrFilter *filter);
 /**
  * nostr_filter_set_tags:
  * @filter: (nullable): filter (no-op if NULL)
@@ -178,7 +180,7 @@ NostrTags *nostr_filter_get_tags(const NostrFilter *filter);
  *
  * Ownership: takes full ownership of @tags.
  */
-void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags);
+NOSTR_API void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags);
 
 /**
  * nostr_filter_get_since:
@@ -189,7 +191,7 @@ void nostr_filter_set_tags(NostrFilter *filter, NostrTags *tags);
  *
  * Returns: since timestamp (Unix epoch seconds), or 0 if unset
  */
-NostrTimestamp nostr_filter_get_since(const NostrFilter *filter);
+NOSTR_API NostrTimestamp nostr_filter_get_since(const NostrFilter *filter);
 /**
  * nostr_filter_set_since:
  * @filter: (nullable): filter (no-op if NULL)
@@ -199,7 +201,7 @@ NostrTimestamp nostr_filter_get_since(const NostrFilter *filter);
  * Only events with `created_at >= since` will match this filter.
  * Per NIP-01, the boundary is inclusive — an event at exactly @since matches.
  */
-void nostr_filter_set_since(NostrFilter *filter, NostrTimestamp since);
+NOSTR_API void nostr_filter_set_since(NostrFilter *filter, NostrTimestamp since);
 
 /**
  * nostr_filter_get_until:
@@ -210,7 +212,7 @@ void nostr_filter_set_since(NostrFilter *filter, NostrTimestamp since);
  *
  * Returns: until timestamp (Unix epoch seconds), or 0 if unset
  */
-NostrTimestamp nostr_filter_get_until(const NostrFilter *filter);
+NOSTR_API NostrTimestamp nostr_filter_get_until(const NostrFilter *filter);
 /**
  * nostr_filter_set_until:
  * @filter: (nullable): filter (no-op if NULL)
@@ -223,7 +225,7 @@ NostrTimestamp nostr_filter_get_until(const NostrFilter *filter);
  * For pagination, use `oldest_event->created_at - 1` to avoid fetching
  * the same boundary event twice.
  */
-void nostr_filter_set_until(NostrFilter *filter, NostrTimestamp until);
+NOSTR_API void nostr_filter_set_until(NostrFilter *filter, NostrTimestamp until);
 
 /**
  * nostr_filter_get_limit:
@@ -231,13 +233,13 @@ void nostr_filter_set_until(NostrFilter *filter, NostrTimestamp until);
  *
  * Returns: limit value (or 0 if unset)
  */
-int nostr_filter_get_limit(const NostrFilter *filter);
+NOSTR_API int nostr_filter_get_limit(const NostrFilter *filter);
 /**
  * nostr_filter_set_limit:
  * @filter: (nullable): filter (no-op if NULL)
  * @limit: integer limit
  */
-void nostr_filter_set_limit(NostrFilter *filter, int limit);
+NOSTR_API void nostr_filter_set_limit(NostrFilter *filter, int limit);
 
 /**
  * nostr_filter_get_search:
@@ -245,13 +247,13 @@ void nostr_filter_set_limit(NostrFilter *filter, int limit);
  *
  * Returns: (transfer none) (nullable): search string
  */
-const char *nostr_filter_get_search(const NostrFilter *filter);
+NOSTR_API const char *nostr_filter_get_search(const NostrFilter *filter);
 /**
  * nostr_filter_set_search:
  * @filter: (nullable): filter (no-op if NULL)
  * @search: (nullable): duplicated internally
  */
-void nostr_filter_set_search(NostrFilter *filter, const char *search);
+NOSTR_API void nostr_filter_set_search(NostrFilter *filter, const char *search);
 
 /**
  * nostr_filter_get_limit_zero:
@@ -259,59 +261,59 @@ void nostr_filter_set_search(NostrFilter *filter, const char *search);
  *
  * Returns: whether non-standard limit_zero is set
  */
-bool nostr_filter_get_limit_zero(const NostrFilter *filter);
+NOSTR_API bool nostr_filter_get_limit_zero(const NostrFilter *filter);
 /**
  * nostr_filter_set_limit_zero:
  * @filter: (nullable): filter (no-op if NULL)
  * @limit_zero: boolean
  */
-void nostr_filter_set_limit_zero(NostrFilter *filter, bool limit_zero);
+NOSTR_API void nostr_filter_set_limit_zero(NostrFilter *filter, bool limit_zero);
 
 /* GI-friendly helpers (migrated from nostr-filter-wrap.h) */
 /* ids */
-size_t        nostr_filter_ids_len(const NostrFilter *filter);
-const char   *nostr_filter_ids_get(const NostrFilter *filter, size_t index);
+NOSTR_API size_t        nostr_filter_ids_len(const NostrFilter *filter);
+NOSTR_API const char   *nostr_filter_ids_get(const NostrFilter *filter, size_t index);
 
 /* kinds */
-size_t        nostr_filter_kinds_len(const NostrFilter *filter);
-int           nostr_filter_kinds_get(const NostrFilter *filter, size_t index);
+NOSTR_API size_t        nostr_filter_kinds_len(const NostrFilter *filter);
+NOSTR_API int           nostr_filter_kinds_get(const NostrFilter *filter, size_t index);
 
 /* authors */
-size_t        nostr_filter_authors_len(const NostrFilter *filter);
-const char   *nostr_filter_authors_get(const NostrFilter *filter, size_t index);
+NOSTR_API size_t        nostr_filter_authors_len(const NostrFilter *filter);
+NOSTR_API const char   *nostr_filter_authors_get(const NostrFilter *filter, size_t index);
 
 /* timestamps as int64 for GI */
-int64_t       nostr_filter_get_since_i64(const NostrFilter *filter);
-void          nostr_filter_set_since_i64(NostrFilter *filter, int64_t since);
-int64_t       nostr_filter_get_until_i64(const NostrFilter *filter);
-void          nostr_filter_set_until_i64(NostrFilter *filter, int64_t until);
+NOSTR_API int64_t       nostr_filter_get_since_i64(const NostrFilter *filter);
+NOSTR_API void          nostr_filter_set_since_i64(NostrFilter *filter, int64_t since);
+NOSTR_API int64_t       nostr_filter_get_until_i64(const NostrFilter *filter);
+NOSTR_API void          nostr_filter_set_until_i64(NostrFilter *filter, int64_t until);
 
 /* tags 2D array-like accessors */
-size_t        nostr_filter_tags_len(const NostrFilter *filter);
-size_t        nostr_filter_tag_len(const NostrFilter *filter, size_t tag_index);
-const char   *nostr_filter_tag_get(const NostrFilter *filter, size_t tag_index, size_t item_index);
+NOSTR_API size_t        nostr_filter_tags_len(const NostrFilter *filter);
+NOSTR_API size_t        nostr_filter_tag_len(const NostrFilter *filter, size_t tag_index);
+NOSTR_API const char   *nostr_filter_tag_get(const NostrFilter *filter, size_t tag_index, size_t item_index);
 
 /* relays */
-const StringArray *nostr_filter_get_relays(const NostrFilter *filter);
-void nostr_filter_set_relays(NostrFilter *filter, const char *const *relays, size_t count);
-size_t        nostr_filter_relays_len(const NostrFilter *filter);
-const char   *nostr_filter_relays_get(const NostrFilter *filter, size_t index);
+NOSTR_API const StringArray *nostr_filter_get_relays(const NostrFilter *filter);
+NOSTR_API void nostr_filter_set_relays(NostrFilter *filter, const char *const *relays, size_t count);
+NOSTR_API size_t        nostr_filter_relays_len(const NostrFilter *filter);
+NOSTR_API const char   *nostr_filter_relays_get(const NostrFilter *filter, size_t index);
 
 /* mutating helpers */
-void          nostr_filter_add_id(NostrFilter *filter, const char *id);
-void          nostr_filter_add_kind(NostrFilter *filter, int kind);
-void          nostr_filter_add_author(NostrFilter *filter, const char *author);
-void          nostr_filter_add_relay(NostrFilter *filter, const char *relay);
-void          nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay);
+NOSTR_API void          nostr_filter_add_id(NostrFilter *filter, const char *id);
+NOSTR_API void          nostr_filter_add_kind(NostrFilter *filter, int kind);
+NOSTR_API void          nostr_filter_add_author(NostrFilter *filter, const char *author);
+NOSTR_API void          nostr_filter_add_relay(NostrFilter *filter, const char *relay);
+NOSTR_API void          nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *value, const char *relay);
 
 /* Compact fast-path JSON (de)serializers */
-char         *nostr_filter_serialize_compact(const NostrFilter *filter);
+NOSTR_API char         *nostr_filter_serialize_compact(const NostrFilter *filter);
 typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
-int           nostr_filter_deserialize_compact(NostrFilter *filter, const char *json,
+NOSTR_API int           nostr_filter_deserialize_compact(NostrFilter *filter, const char *json,
                                                 NostrJsonErrorInfo *err_out);
 
 /* Backend-abstracted wrappers (prefer compact, fallback to backend) */
-int           nostr_filter_deserialize(NostrFilter *filter, const char *json);
+NOSTR_API int           nostr_filter_deserialize(NostrFilter *filter, const char *json);
 
 /* Optional legacy aliases (temporary): map old to new if enabled */
 #ifdef NOSTR_ENABLE_LEGACY_ALIASES
@@ -357,7 +359,7 @@ typedef struct NostrFilterBuilder NostrFilterBuilder;
  * Returns: (transfer full): A new NostrFilterBuilder, or NULL on allocation failure.
  *          Free with nostr_filter_builder_free() if not calling build().
  */
-NostrFilterBuilder *nostr_filter_builder_new(void);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_new(void);
 
 /**
  * nostr_filter_builder_ids:
@@ -368,7 +370,7 @@ NostrFilterBuilder *nostr_filter_builder_new(void);
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_ids(NostrFilterBuilder *builder, ...);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_ids(NostrFilterBuilder *builder, ...);
 
 /**
  * nostr_filter_builder_authors:
@@ -379,7 +381,7 @@ NostrFilterBuilder *nostr_filter_builder_ids(NostrFilterBuilder *builder, ...);
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_authors(NostrFilterBuilder *builder, ...);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_authors(NostrFilterBuilder *builder, ...);
 
 /**
  * nostr_filter_builder_kinds:
@@ -390,7 +392,7 @@ NostrFilterBuilder *nostr_filter_builder_authors(NostrFilterBuilder *builder, ..
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_kinds(NostrFilterBuilder *builder, ...);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_kinds(NostrFilterBuilder *builder, ...);
 
 /**
  * nostr_filter_builder_since:
@@ -401,7 +403,7 @@ NostrFilterBuilder *nostr_filter_builder_kinds(NostrFilterBuilder *builder, ...)
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_since(NostrFilterBuilder *builder, int64_t timestamp);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_since(NostrFilterBuilder *builder, int64_t timestamp);
 
 /**
  * nostr_filter_builder_until:
@@ -412,7 +414,7 @@ NostrFilterBuilder *nostr_filter_builder_since(NostrFilterBuilder *builder, int6
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_until(NostrFilterBuilder *builder, int64_t timestamp);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_until(NostrFilterBuilder *builder, int64_t timestamp);
 
 /**
  * nostr_filter_builder_limit:
@@ -423,7 +425,7 @@ NostrFilterBuilder *nostr_filter_builder_until(NostrFilterBuilder *builder, int6
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsigned int limit);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsigned int limit);
 
 /**
  * nostr_filter_builder_tag:
@@ -436,7 +438,7 @@ NostrFilterBuilder *nostr_filter_builder_limit(NostrFilterBuilder *builder, unsi
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_tag(NostrFilterBuilder *builder, const char *key, const char *value);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_tag(NostrFilterBuilder *builder, const char *key, const char *value);
 
 /**
  * nostr_filter_builder_relays:
@@ -447,7 +449,7 @@ NostrFilterBuilder *nostr_filter_builder_tag(NostrFilterBuilder *builder, const 
  *
  * Returns: (transfer none): The same builder for chaining
  */
-NostrFilterBuilder *nostr_filter_builder_relays(NostrFilterBuilder *builder, ...);
+NOSTR_API NostrFilterBuilder *nostr_filter_builder_relays(NostrFilterBuilder *builder, ...);
 
 /**
  * nostr_filter_builder_build:
@@ -458,7 +460,7 @@ NostrFilterBuilder *nostr_filter_builder_relays(NostrFilterBuilder *builder, ...
  *
  * Returns: (transfer full): A new NostrFilter, or NULL on failure.
  */
-NostrFilter *nostr_filter_builder_build(NostrFilterBuilder *builder);
+NOSTR_API NostrFilter *nostr_filter_builder_build(NostrFilterBuilder *builder);
 
 /**
  * nostr_filter_builder_free:
@@ -467,7 +469,7 @@ NostrFilter *nostr_filter_builder_build(NostrFilterBuilder *builder);
  * Frees a builder without constructing a filter.
  * Use this if you need to abort filter construction.
  */
-void nostr_filter_builder_free(NostrFilterBuilder *builder);
+NOSTR_API void nostr_filter_builder_free(NostrFilterBuilder *builder);
 
 /* GLib autoptr cleanup for NostrFilterBuilder */
 #if (defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)

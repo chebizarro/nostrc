@@ -1,6 +1,8 @@
 #ifndef GO_CHANNEL_H
 #define GO_CHANNEL_H
 
+#include "libgo-export.h"
+
 #include "context.h"
 #include "refptr.h"
 #include <nsync.h>
@@ -76,22 +78,22 @@ _Static_assert((offsetof(GoChannel, mutex) % NOSTR_CACHELINE) == 0, "GoChannel.m
 /* Creates a buffered channel holding up to @capacity elements (rounded up to
  * a power of two by default, NOSTR_CHANNEL_ENFORCE_POW2_CAP).  There are no
  * unbuffered channels: 0 is treated as 1. */
-GoChannel *go_channel_create(size_t capacity);
-GoChannel *go_channel_ref(GoChannel *chan);
-void go_channel_unref(GoChannel *chan);
-void go_channel_free(GoChannel *chan);
-int go_channel_send(GoChannel *chan, void *data);
-int go_channel_has_space(const void *chan);
-int go_channel_has_data(const void *chan);
-int go_channel_receive(GoChannel *chan, void **data);
+LIBGO_API GoChannel *go_channel_create(size_t capacity);
+LIBGO_API GoChannel *go_channel_ref(GoChannel *chan);
+LIBGO_API void go_channel_unref(GoChannel *chan);
+LIBGO_API void go_channel_free(GoChannel *chan);
+LIBGO_API int go_channel_send(GoChannel *chan, void *data);
+LIBGO_API int go_channel_has_space(const void *chan);
+LIBGO_API int go_channel_has_data(const void *chan);
+LIBGO_API int go_channel_receive(GoChannel *chan, void **data);
 // Non-blocking operations: return 0 on success, -1 if would block/closed
-int go_channel_try_send(GoChannel *chan, void *data);
-int go_channel_try_receive(GoChannel *chan, void **data);
-int go_channel_is_closed(GoChannel *chan);
-int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
-int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);
-void go_channel_close(GoChannel *chan);
+LIBGO_API int go_channel_try_send(GoChannel *chan, void *data);
+LIBGO_API int go_channel_try_receive(GoChannel *chan, void **data);
+LIBGO_API int go_channel_is_closed(GoChannel *chan);
+LIBGO_API int go_channel_send_with_context(GoChannel *chan, void *data, GoContext *ctx);
+LIBGO_API int go_channel_receive_with_context(GoChannel *chan, void **data, GoContext *ctx);
+LIBGO_API void go_channel_close(GoChannel *chan);
 // Get current channel depth (number of items in buffer)
-size_t go_channel_get_depth(GoChannel *chan);
+LIBGO_API size_t go_channel_get_depth(GoChannel *chan);
 
 #endif // GO_CHANNEL_H

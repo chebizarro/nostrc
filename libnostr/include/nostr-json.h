@@ -1,6 +1,8 @@
 #ifndef __NOSTR_JSON_H__
 #define __NOSTR_JSON_H__
 
+#include "nostr-export.h"
+
 /*
  * Nostr JSON Interface (GLib/GObject friendly)
  *
@@ -124,7 +126,7 @@ struct _NostrJsonProviderInterface {
     int   (*deserialize_filter)(NostrFilter *filter, const char *json);
 };
 
-GType nostr_json_provider_get_type(void);
+NOSTR_API GType nostr_json_provider_get_type(void);
 
 /**
  * nostr_json_provider_install:
@@ -133,14 +135,14 @@ GType nostr_json_provider_get_type(void);
  * Installs @provider as the active JSON backend by bridging to the legacy
  * `NostrJsonInterface` in `json.h`.
  */
-void nostr_json_provider_install(gpointer provider);
+NOSTR_API void nostr_json_provider_install(gpointer provider);
 
 /**
  * nostr_json_provider_uninstall:
  *
  * Uninstalls any active provider and clears the legacy interface.
  */
-void nostr_json_provider_uninstall(void);
+NOSTR_API void nostr_json_provider_uninstall(void);
 
 #endif /* NOSTR_HAVE_GLIB */
 

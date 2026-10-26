@@ -16,8 +16,6 @@
 
 #include "libnostr_store.h"
 
-/* Exported by the nostrdb backend for shutdown/cache maintenance. */
-void ln_ndb_force_close_txn_cache(void);
 
 static int rm_tree_cb(const char *path, const struct stat *st, int typeflag, struct FTW *ftwbuf)
 {

@@ -43,7 +43,7 @@ Vcs-Browser: https://github.com/chebizarro/nostrc
 Vcs-Git: https://github.com/chebizarro/nostrc.git
 Rules-Requires-Root: no
 
-Package: libnostr1
+Package: libnostr2
 Section: libs
 Architecture: any
 Multi-Arch: same
@@ -53,7 +53,7 @@ Description: Nostr protocol implementation for C (headless ABI)
  libnostr is a C implementation of the Nostr protocol: event/tag encoding,
  signing/verification (secp256k1), transport (libwebsockets) and helper types.
  .
- This package ships the shared library libnostr.so.1 built with the
+ This package ships the shared library libnostr.so.2 built with the
  GLib-free (headless) ABI (NOSTR_WITH_GLIB=OFF, decision D-14) so servers
  can install the nostr login stack with no GLib/GTK/GNOME dependency.
 
@@ -61,7 +61,7 @@ Package: libnostr-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: libnostr1 (= ${binary:Version}),
+Depends: libnostr2 (= ${binary:Version}),
          libnostr-json-dev (= ${binary:Version}),
          libnostrgo-dev (= ${binary:Version}),
          libssl-dev,
@@ -116,12 +116,14 @@ Description: Go-inspired concurrency primitives for C -- development files
  pkg-config metadata (libnostrgo.pc, with a libgo.pc compatibility
  symlink for one release).
 
-Package: libnostr-json1
+Package: libnostr-json2
 Section: libs
 Architecture: any
 Multi-Arch: same
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Breaks: libnostr-json1
+Replaces: libnostr-json1
 Description: Nostr JSON interop layer (jansson wrappers for libnostr)
  libnostr-json is the jansson-backed JSON interop layer for libnostr
  (encoding/decoding events, filters and query strings). The library was
@@ -132,7 +134,7 @@ Package: libnostr-json-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: libnostr-json1 (= ${binary:Version}),
+Depends: libnostr-json2 (= ${binary:Version}),
          libjansson-dev,
          ${misc:Depends}
 Description: Nostr JSON interop layer -- development files
@@ -294,7 +296,7 @@ Architecture: any
 Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends},
-         libnostr1 (= ${binary:Version})
+         libnostr2 (= ${binary:Version})
 Recommends: nostrc-session-relay (>= ${source:Version}),
             nostr-dav (>= ${source:Version})
 Description: Nostr NIP-29 + NIP-17 background notification daemon (Wave 4)
@@ -551,7 +553,7 @@ Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends},
          libhanami0 (= ${binary:Version}),
-         libnostr1 (= ${binary:Version}),
+         libnostr2 (= ${binary:Version}),
          nostr-authd (>= ${source:Version}),
          adduser
 Recommends: libnotify-bin
@@ -580,7 +582,7 @@ Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends},
          libhanami0 (= ${binary:Version}),
-         libnostr1 (= ${binary:Version}),
+         libnostr2 (= ${binary:Version}),
          fuse3
 Recommends: nostr-home-sync (= ${binary:Version})
 Description: Read-only portable-home FUSE overlay for nostr-homed (EXPERIMENTAL)
@@ -627,7 +629,7 @@ Section: utils
 Architecture: any
 Multi-Arch: foreign
 Depends: ${shlibs:Depends}, ${misc:Depends},
-         libnostr1 (= ${binary:Version})
+         libnostr2 (= ${binary:Version})
 Description: Encrypt files for Nostr public keys or a passphrase
  nostr-seal seals files for one or more npubs (NIP-44 v2 key agreement
  wrapping a random per-file key) or for a passphrase (NIP-49 scrypt +
