@@ -7,7 +7,7 @@
 #include "gnostr-community-view.h"
 #include "gnostr-community-card.h"
 #include "gnostr-avatar-cache.h"
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include <glib/gi18n.h>
 #include <time.h>
 

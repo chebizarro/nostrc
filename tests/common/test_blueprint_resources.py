@@ -27,9 +27,9 @@ options, unittest_args = parser.parse_known_args()
 IS_APP = options.component == "gnostr"
 COMPONENT = ROOT / ("apps/gnostr" if IS_APP else "nostr-gtk")
 MANIFEST = "resources.gresource.xml" if IS_APP else "nostr-gtk.gresource.xml"
-PRIMARY = "ui/gnostr-main-window.ui" if IS_APP else "ui/gnostr-profile-pane.ui"
+PRIMARY = "ui/gnostr-main-window.ui" if IS_APP else "ui/gnostr-composer.ui"
 RESOURCE = ("/org/gnostr/ui/" if IS_APP else "/org/nostr/gtk/") + PRIMARY
-MARKER = "Loading…" if IS_APP else "User profile"
+MARKER = "Loading…" if IS_APP else "Compose note"
 
 
 COMMAND_IDS = itertools.count(1)
@@ -69,7 +69,7 @@ def assert_primary_contract(test, content):
     if not IS_APP:
         template = root.find("template")
         test.assertIsNotNone(template)
-        test.assertEqual(template.attrib["class"], "NostrGtkProfilePane")
+        test.assertEqual(template.attrib["class"], "NostrGtkComposer")
         test.assertEqual(template.attrib["parent"], "GtkWidget")
         return
     test.assertIsNone(root.find(".//object[@class='AdwSpinner']"))
@@ -89,6 +89,22 @@ def normalized_xml(content):
             node.text = None
         node.tail = None
     return ET.tostring(root)
+
+
+def packaged_entry(relative):
+    for resource in ET.parse(COMPONENT / "data" / MANIFEST).getroot():
+        for entry in resource:
+            if entry.text == relative:
+                return entry
+    raise AssertionError(f"{relative} is not in {MANIFEST}")
+
+
+def assert_packaged_primary(test, extracted, source_bytes):
+    # GLib's xml-stripblanks preprocessing changes whitespace, not UI.
+    if packaged_entry(PRIMARY).attrib.get("preprocess") == "xml-stripblanks":
+        test.assertEqual(normalized_xml(extracted), normalized_xml(source_bytes))
+    else:
+        test.assertEqual(extracted, source_bytes)
 
 
 class ResourceBuildTests(unittest.TestCase):
@@ -199,7 +215,7 @@ int main(int argc, char **argv) {
         content = self.extract()
         self.assertIn(b"Fresh Blueprint marker", content)
         assert_primary_contract(self, content)
-        self.assertEqual(content, (self.build / "data" / PRIMARY).read_bytes())
+        assert_packaged_primary(self, content, (self.build / "data" / PRIMARY).read_bytes())
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
 
@@ -216,13 +232,14 @@ int main(int argc, char **argv) {
         self.assertTrue(generated.is_file())
         self.assertEqual(before, hashes(self.source))
 
-        source_only = ("ui/widgets/gnostr-note-embed.ui" if IS_APP else "gnostr-thread-view.ui")
+        if not IS_APP:
+            return  # every nostr-gtk UI file is compiled from a Blueprint
+        source_only = "ui/widgets/gnostr-note-embed.ui"
         ui = self.source / "data" / source_only
         self.write_input(ui, ui.read_text() + "\n<!-- source-only marker -->\n")
         before = hashes(self.source)
         self.compile()
-        prefix = "/org/gnostr/ui/" if IS_APP else "/org/nostr/gtk/"
-        self.assertEqual(self.extract(prefix + source_only), ui.read_bytes())
+        self.assertEqual(self.extract("/org/gnostr/ui/" + source_only), ui.read_bytes())
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
 
@@ -263,7 +280,7 @@ int main(int argc, char **argv) {
         self.configure()
         self.assertNotIn(PRIMARY, self.current_outputs)
         self.compile()
-        self.assertEqual(self.extract(), self.ui.read_bytes())
+        assert_packaged_primary(self, self.extract(), self.ui.read_bytes())
         self.assertNotIn(b"Obsolete generated marker", self.extract())
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
@@ -276,7 +293,7 @@ int main(int argc, char **argv) {
         self.configure("")
         before = hashes(self.source)
         self.compile()
-        self.assertEqual(self.extract(), self.ui.read_bytes())
+        assert_packaged_primary(self, self.extract(), self.ui.read_bytes())
         assert_primary_contract(self, self.extract())
         self.check_all_resources()
         self.assertEqual(before, hashes(self.source))
@@ -284,7 +301,7 @@ int main(int argc, char **argv) {
     def test_bad_blueprint_refuses_instead_of_using_valid_fallback(self):
         original = self.blp.read_text()
         invalid = (original.replace("Gtk.Spinner", "Adw.NoSuchSpinner") if IS_APP
-                   else original.replace("NostrGtkProfilePane: Widget", "NostrGtkProfilePane: Gtk.NoSuchWidget"))
+                   else original.replace("NostrGtkComposer: Widget", "NostrGtkComposer: Gtk.NoSuchWidget"))
         self.assertNotEqual(invalid, original)
         self.blp.write_text(invalid)
         self.configure()
@@ -300,7 +317,7 @@ int main(int argc, char **argv) {
         assert_primary_contract(self, content)
         invalid_templates = ([content.replace(b"GtkSpinner", b"AdwSpinner"),
                               content.replace(b'name="spinning">true', b'name="spinning">false')]
-                             if IS_APP else [content.replace(b"NostrGtkProfilePane", b"WrongWidget")])
+                             if IS_APP else [content.replace(b"NostrGtkComposer", b"WrongWidget")])
         for invalid in invalid_templates:
             with self.assertRaises(AssertionError):
                 assert_primary_contract(self, invalid)

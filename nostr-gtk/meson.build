@@ -75,11 +75,8 @@ nostr_gtk_blueprint_deps = []
 if blueprint_compiler.found()
   # Compile all blueprint files into the source data/ tree so GResource can find them
   _blp_sources = [
-    ['data/ui/nostr-note-card-row.blp', 'data/ui/nostr-note-card-row.ui'],
     ['data/ui/gnostr-composer.blp',     'data/ui/gnostr-composer.ui'],
-    ['data/ui/gnostr-profile-pane.blp', 'data/ui/gnostr-profile-pane.ui'],
     ['data/ui/widgets/gnostr-timeline-view.blp', 'data/ui/widgets/gnostr-timeline-view.ui'],
-    ['data/ui/widgets/gnostr-note-embed.blp',    'data/ui/widgets/gnostr-note-embed.ui'],
   ]
   foreach _blp : _blp_sources
     _compiled = custom_target('blp-' + _blp[0].underscorify(),
@@ -101,29 +98,16 @@ nostr_gtk_resources = gnome.compile_resources(
   dependencies: nostr_gtk_blueprint_deps)
 
 # ── Source files ─────────────────────────────────────────────────────
-# Standalone core: compiled without any apps/gnostr include directory.
-nostr_gtk_core_sources = files(
+# Standalone core: no apps/gnostr header or symbol (see CMakeLists.txt; the
+# Gnostr-coupled widgets are owned by apps/gnostr).
+nostr_gtk_sources = files(
   'src/nostr-gtk-init.c',
   'src/gnostr-composer.c',
   'src/gnostr-card-visibility-policy.c',
   'src/gnostr-nip05.c',
-  'src/note-card-binding-ctx.c',
-  'src/note-card-data.c',
   'src/gn-timeline-tabs.c',
   'src/gnostr-timeline-view.c',
 )
-
-# Transitional: widgets that still include apps/gnostr headers and resolve
-# Gnostr app symbols at final link time. Kept in the library for ABI; do not
-# add sources here (see CMakeLists.txt).
-nostr_gtk_gnostr_coupled_sources = files(
-  'src/gnostr-thread-view.c',
-  'src/gnostr-profile-pane.c',
-  'src/nostr-note-card-row.c',
-  'src/gnostr-note-embed.c',
-)
-
-nostr_gtk_sources = nostr_gtk_core_sources + nostr_gtk_gnostr_coupled_sources
 nostr_gtk_portable_sources = files(
   'src/content_renderer.c',
   'src/nostr-gtk-error.c',
@@ -173,13 +157,9 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/nostr-gtk.h',
   'include/nostr-gtk-1.0/nostr-gtk-error.h',
   'include/nostr-gtk-1.0/content_renderer.h',
-  'include/nostr-gtk-1.0/gnostr-thread-view.h',
   'include/nostr-gtk-1.0/gnostr-composer.h',
-  'include/nostr-gtk-1.0/gnostr-note-embed.h',
-  'include/nostr-gtk-1.0/gnostr-profile-pane.h',
   'include/nostr-gtk-1.0/gnostr-card-visibility-policy.h',
   'include/nostr-gtk-1.0/gnostr-nip05.h',
-  'include/nostr-gtk-1.0/nostr-note-card-row.h',
   'include/nostr-gtk-1.0/gn-timeline-tabs.h',
   'include/nostr-gtk-1.0/gnostr-timeline-view.h',
   'include/nostr-gtk-1.0/gn-markdown.h',
@@ -231,14 +211,6 @@ foreach nip : ['nip19', 'nip34', 'nip10', 'nip25']
     nostr_gtk_repo_inc += [include_directories(generated)]
   endif
 endforeach
-
-# Transitional: apps/gnostr private headers, visible to the coupled sources only.
-nostr_gtk_app_inc = include_directories(
-  '../apps/gnostr/src',
-  '../apps/gnostr/src/ui',
-  '../apps/gnostr/src/model',
-  '../apps/gnostr/src/util',
-)
 
 # ── Collect all dependencies ─────────────────────────────────────────
 nostr_gtk_deps = [
@@ -299,21 +271,9 @@ nostr_gtk_portable_dep = declare_dependency(
   include_directories: [nostr_gtk_pub_inc, include_directories('.')],
   dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep])
 
-nostr_gtk_gnostr_coupled = static_library('nostr-gtk-gnostr-coupled',
-  nostr_gtk_gnostr_coupled_sources,
-  include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc,
-                        nostr_gtk_app_inc],
-  dependencies: nostr_gtk_deps,
-  gnu_symbol_visibility: 'hidden',
-  c_args: nostr_gtk_compile_args + ['-Dnostr_gtk_EXPORTS'],
-  pic: true,
-  install: false)
-
 nostr_gtk_lib = library('nostr-gtk-1.0',
-  nostr_gtk_core_sources + nostr_gtk_resources,
+  nostr_gtk_sources + nostr_gtk_resources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
-  # These are our public widget definitions, not embedded dependency archives.
-  objects: nostr_gtk_gnostr_coupled.extract_all_objects(recursive: false),
   dependencies: nostr_gtk_deps + [nostr_gtk_portable_dep],
   version: meson.project_version(), soversion: '2',
   gnu_symbol_visibility: 'hidden',
@@ -348,7 +308,7 @@ if get_option('introspection')
     nsversion: '1.0',
     symbol_prefix: 'nostr_gtk',
     identifier_prefix: 'NostrGtk',
-    include_directories: [nostr_gtk_repo_inc, nostr_gtk_app_inc],
+    include_directories: [nostr_gtk_repo_inc],
     includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0', 'Gtk-4.0', 'Adw-1', 'GNostr-1.0'],
     extra_args: [
       '--add-include-path=' + nostr_gobject_gir_dir,

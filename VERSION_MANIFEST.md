@@ -205,6 +205,19 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   independently versioned component; hidden object symbols remain linkable
   by its test consumers. No release tags or release columns change.
 
+- nostrc-a67o0/nostrc-hd8a4: nostr-gtk stays 2.0.0 (no further bump). Removing
+  the Gnostr-coupled widgets from `libnostr-gtk-1.0` is an incompatible change
+  folded into the unreleased 2.0.0 MAJOR below: the types `NostrGtkNoteCardRow`,
+  `NostrGtkThreadView`, `NostrGtkProfilePane`, `GnostrNoteEmbed` (with
+  `NostrGtkMediaTextureLoader`, `NostrGtkMediaResourceClass`,
+  `NostrGtkContentSubstType`, the media/link-preview callback types,
+  `ThreadNode`, `ThreadGraph`, `NoteCardBindingContext`), their functions,
+  `nostr_gtk_media_image_cache_size()` and the four headers leave the library,
+  its umbrella header and the GNostrGtk GIR. gnostr was their only consumer.
+  gnostr stays 0.2.0 (no bump): the same widgets are now its internal
+  `gnostr-widgets` archive with unchanged behavior and resource paths, and no
+  gnostr public surface changes. No tags or release-column changes.
+
 - nostrc-er4fz.10 phase C: nostr-gtk MAJOR 1.2.0 -> 2.0.0 (SONAME 2 for
   `libnostr-gtk-1.0` and `libnostr-gtk-portable-1.0`). Both DSOs are compiled
   hidden-by-default with `NOSTR_GTK_API` / `NOSTR_GTK_PORTABLE_API` and

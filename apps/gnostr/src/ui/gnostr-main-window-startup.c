@@ -4,7 +4,7 @@
 
 #include "gnostr-session-view.h"
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include "gnostr-avatar-cache.h"
 #include "gnostr-startup-live-eose.h"
 #include "gnostr-timeline-feed-controller.h"
@@ -26,7 +26,7 @@
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/nostr_profile_service.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include "gnostr-profile-pane.h"
 
 /* nostrc-4bk: Type-safe adapter between GnostrThreadPrefetchIngestFunc
  * (gpointer, gchar*) and gnostr_main_window_ingest_queue_push_internal

@@ -1,5 +1,5 @@
 /* nostrc-lx36: NostrGtkProfilePane — moved from apps/gnostr/src/ui/ to nostr-gtk */
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include "gnostr-profile-pane.h"
 #include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 
 /* App-specific UI widgets — temporary cross-includes until fully decoupled */

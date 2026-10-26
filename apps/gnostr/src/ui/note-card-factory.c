@@ -7,7 +7,7 @@
  */
 
 #include "note-card-factory.h"
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include "../model/gn-nostr-event-item.h"
 #include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include "gnostr-avatar-cache.h"  /* nostrc-hci: avatar download API */

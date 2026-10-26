@@ -6,8 +6,6 @@ extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_syn
 extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_start -> nostr-gobject
 extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_stop -> nostr-gobject
 extern|apps/gnostr/plugins/nip77-negentropy/nip77-negentropy-plugin.c|gnostr_sync_service_sync_now -> nostr-gobject
-extern|apps/gnostr/src/ui/gnostr-main-window-startup.c|nostr_gtk_media_image_cache_size -> nostr-gtk
-extern|apps/gnostr/src/ui/gnostr-main-window.c|nostr_gtk_media_image_cache_size -> nostr-gtk
 extern|apps/grotto/daemon/grotto_control.c|nostr_nip06_private_key_from_seed -> nips/nip06
 extern|apps/grotto/daemon/main_daemon.c|signer_export -> nips/nip55l
 extern|apps/grotto/daemon/main_daemon.c|signer_pending_count -> nips/nip55l
@@ -31,15 +29,6 @@ extern|nips/nip55l/tests/test_nip55l_nip44_b64.c|nip44_base64_encode -> nips/nip
 extern|nostr-gobject/src/gnostr-app-bridge.c|nostr_event_free -> libnostr
 extern|nostr-gobject/src/storage_ndb.c|ln_ndb_force_close_txn_cache -> libnostr
 extern|nostr-gobject/src/storage_ndb.c|ln_ndb_invalidate_txn_cache_ext -> libnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_mute_thread -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_mute_user -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_request_quote -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_request_reply -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_request_repost -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_show_toast -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_view_thread_with_json -> apps/gnostr
-extern|nostr-gtk/src/gnostr-profile-pane.c|gnostr_main_window_view_thread_with_json -> apps/gnostr
-extern|nostr-gtk/src/gnostr-thread-view.c|gnostr_main_window_request_report_note -> apps/gnostr
 extern|tests/test_relay_ingress_policy.c|nostr_key_get_public -> libnostr
 extern|tests/testkit/gnostr-testkit.c|storage_ndb_ingest_event_json -> nostr-gobject
 extern|tests/testkit/gnostr-testkit.c|storage_ndb_init -> nostr-gobject
@@ -446,7 +435,6 @@ include|nips/nip77/backends/nostrdb/nostr-negentropy-ndb.h|../../include/nostr/n
 include|nips/nip77/src/neg_session.h|../include/nostr/nip77/negentropy.h
 include|nips/nip77/src/negentropy-glib.c|../include/nostr/nip77/negentropy-glib.h
 include|nips/nip77/tools/gnostr-neg.c|../include/nostr/nip77/negentropy.h
-include|nostr-gtk/src/gnostr-note-embed.c|../util/utils.h
 include|tests/test_connection_shutdown_order.c|../libnostr/src/relay-private.h
 include|tests/test_ndb_ingestion_simple.c|../libnostr/include/libnostr_store.h
 include|tests/test_relay_unsubscribe.c|../libnostr/src/subscription-private.h

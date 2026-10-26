@@ -39,10 +39,8 @@ class GtkOwnership(unittest.TestCase):
                      "nostr-gtk/src/gn-media-decode-private.h",
                      "nostr-gtk/src/gn-portable-i18n-private.h"}
         legacy = self.source_list("NOSTR_GTK_CORE_SOURCES")
-        legacy |= self.source_list("NOSTR_GTK_GNOSTR_COUPLED_SOURCES")
         legacy |= self.source_list("NOSTR_GTK_HEADERS") - portable
-        legacy |= {"nostr-gtk/src/note-card-binding-ctx.h", "nostr-gtk/src/note-card-data.h",
-                   "nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view-private.h"}
+        legacy |= {"nostr-gtk/include/nostr-gtk-1.0/gnostr-timeline-view-private.h"}
         self.assertTrue(portable.isdisjoint(legacy))
         for paths, owner in ((portable, "nostr.gtk.portable"), (legacy, "nostr.gtk")):
             for path in sorted(paths):
@@ -52,7 +50,10 @@ class GtkOwnership(unittest.TestCase):
         self.assertIn("$<TARGET_OBJECTS:gn_content_parser> $<TARGET_OBJECTS:gn_issue_model>", self.cmake)
         self.assertIn("target_link_libraries(nostr_gtk PUBLIC nostr_gtk_portable)", self.cmake)
         self.assertRegex(self.cmake, r"set\(NOSTR_GTK_SOURCES\s+\$\{NOSTR_GTK_CORE_SOURCES\}\s+"
-                         r"\$\{NOSTR_GTK_GNOSTR_COUPLED_SOURCES\}\s+\$\{GRESOURCE_C\}\s*\)")
+                         r"\$\{GRESOURCE_C\}\s*\)")
+        # The legacy library carries no Gnostr app include paths or test support.
+        self.assertNotIn("${CMAKE_SOURCE_DIR}/apps/gnostr", self.cmake)
+        self.assertNotIn("gnostr-widget-test-support", self.cmake)
         self.assertEqual(self.policy["nodes"]["nostr.gtk"]["depends_on"],
                          ["nostr.gtk.portable", "nostr.gtk.resources"])
         self.assertNotIn("nostr.gtk", self.policy["nodes"]["groundhog.conversations"]["depends_on"])
@@ -61,11 +62,12 @@ class GtkOwnership(unittest.TestCase):
     def test_every_tracked_resource_and_legacy_input_avoids_mdk_but_reaches_ui(self):
         paths = [str(path.relative_to(ROOT)) for path in (ROOT / "nostr-gtk/data").rglob("*")
                  if path.is_file()]
-        self.assertGreater(len(paths), 10)
+        # Manifest, Blueprints and their tracked UI fallbacks.
+        self.assertIn("nostr-gtk/data/nostr-gtk.gresource.xml", paths)
+        self.assertIn("nostr-gtk/data/ui/gnostr-composer.blp", paths)
         for path in paths:
             self.assertEqual(s.classify(self.policy, path)["nodes"], ["nostr.gtk.resources"])
-        paths += sorted(self.source_list("NOSTR_GTK_CORE_SOURCES") |
-                        self.source_list("NOSTR_GTK_GNOSTR_COUPLED_SOURCES"))
+        paths += sorted(self.source_list("NOSTR_GTK_CORE_SOURCES"))
         for path in paths:
             with self.subTest(path=path):
                 selected = self.selected(self.policy, path)

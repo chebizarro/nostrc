@@ -18,7 +18,7 @@
 #include "nostrc-test-gdk-frame.h"
 #include <adwaita.h>
 #include <glib.h>
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include <nostr-gtk-1.0/content_renderer.h>
 #include <nostr-gobject-1.0/gnostr-identity.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>

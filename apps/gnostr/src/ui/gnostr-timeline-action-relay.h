@@ -18,7 +18,7 @@
 #define GNOSTR_TIMELINE_ACTION_RELAY_H
 
 #include <glib-object.h>
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 
 G_BEGIN_DECLS
 

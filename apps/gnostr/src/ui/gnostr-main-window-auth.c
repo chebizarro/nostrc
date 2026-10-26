@@ -25,7 +25,7 @@
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include "gnostr-profile-pane.h"
 
 #include "nostr-filter.h"
 #include "nostr-kinds.h"

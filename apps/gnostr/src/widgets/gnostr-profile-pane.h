@@ -1,18 +1,17 @@
 #ifndef NOSTR_GTK_PROFILE_PANE_H
 #define NOSTR_GTK_PROFILE_PANE_H
 
-#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
-#include "nostr-gtk-error.h"
+#include <nostr-gtk-1.0/nostr-gtk-error.h>
 
 G_BEGIN_DECLS
 
 #define NOSTR_GTK_TYPE_PROFILE_PANE (nostr_gtk_profile_pane_get_type())
-NOSTR_GTK_API G_DECLARE_FINAL_TYPE(NostrGtkProfilePane, nostr_gtk_profile_pane, NOSTR_GTK, PROFILE_PANE, GtkWidget)
+G_DECLARE_FINAL_TYPE(NostrGtkProfilePane, nostr_gtk_profile_pane, NOSTR_GTK, PROFILE_PANE, GtkWidget)
 
-NOSTR_GTK_API NostrGtkProfilePane *nostr_gtk_profile_pane_new(void);
-NOSTR_GTK_API void nostr_gtk_profile_pane_set_pubkey(NostrGtkProfilePane *self, const char *pubkey_hex);
-NOSTR_GTK_API void nostr_gtk_profile_pane_clear(NostrGtkProfilePane *self);
+NostrGtkProfilePane *nostr_gtk_profile_pane_new(void);
+void nostr_gtk_profile_pane_set_pubkey(NostrGtkProfilePane *self, const char *pubkey_hex);
+void nostr_gtk_profile_pane_clear(NostrGtkProfilePane *self);
 /**
  * nostr_gtk_profile_pane_update_from_json:
  * @self: the profile pane
@@ -23,7 +22,7 @@ NOSTR_GTK_API void nostr_gtk_profile_pane_clear(NostrGtkProfilePane *self);
  *
  * Returns: %TRUE on success, %FALSE if the JSON is invalid or parsing failed
  */
-NOSTR_GTK_API gboolean nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self,
+gboolean nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePane *self,
                                                   const char *profile_json_str,
                                                   GError **error);
 
@@ -35,7 +34,7 @@ NOSTR_GTK_API gboolean nostr_gtk_profile_pane_update_from_json(NostrGtkProfilePa
  *
  * Returns: (transfer none): the current pubkey hex string, or NULL
  */
-NOSTR_GTK_API const char* nostr_gtk_profile_pane_get_current_pubkey(NostrGtkProfilePane *self);
+const char* nostr_gtk_profile_pane_get_current_pubkey(NostrGtkProfilePane *self);
 
 /**
  * nostr_gtk_profile_pane_set_own_pubkey:
@@ -45,7 +44,7 @@ NOSTR_GTK_API const char* nostr_gtk_profile_pane_get_current_pubkey(NostrGtkProf
  * Set the current user's pubkey to enable showing the Edit button
  * when viewing their own profile.
  */
-NOSTR_GTK_API void nostr_gtk_profile_pane_set_own_pubkey(NostrGtkProfilePane *self, const char *own_pubkey_hex);
+void nostr_gtk_profile_pane_set_own_pubkey(NostrGtkProfilePane *self, const char *own_pubkey_hex);
 
 /**
  * nostr_gtk_profile_pane_get_profile_json:
@@ -55,7 +54,7 @@ NOSTR_GTK_API void nostr_gtk_profile_pane_set_own_pubkey(NostrGtkProfilePane *se
  *
  * Returns: (transfer none): the profile JSON string, or NULL
  */
-NOSTR_GTK_API const char* nostr_gtk_profile_pane_get_profile_json(NostrGtkProfilePane *self);
+const char* nostr_gtk_profile_pane_get_profile_json(NostrGtkProfilePane *self);
 
 /**
  * nostr_gtk_profile_pane_refresh:
@@ -65,7 +64,7 @@ NOSTR_GTK_API const char* nostr_gtk_profile_pane_get_profile_json(NostrGtkProfil
  * The profile pane automatically fetches on set_pubkey, but this
  * can be used to manually trigger a refresh.
  */
-NOSTR_GTK_API void nostr_gtk_profile_pane_refresh(NostrGtkProfilePane *self);
+void nostr_gtk_profile_pane_refresh(NostrGtkProfilePane *self);
 
 /**
  * nostr_gtk_profile_pane_is_profile_cached:
@@ -75,7 +74,7 @@ NOSTR_GTK_API void nostr_gtk_profile_pane_refresh(NostrGtkProfilePane *self);
  *
  * Returns: TRUE if the profile was loaded from nostrdb cache, FALSE otherwise
  */
-NOSTR_GTK_API gboolean nostr_gtk_profile_pane_is_profile_cached(NostrGtkProfilePane *self);
+gboolean nostr_gtk_profile_pane_is_profile_cached(NostrGtkProfilePane *self);
 
 /**
  * nostr_gtk_profile_pane_set_following:
@@ -84,7 +83,7 @@ NOSTR_GTK_API gboolean nostr_gtk_profile_pane_is_profile_cached(NostrGtkProfileP
  *
  * Updates the Follow button label and style to reflect follow state.
  */
-NOSTR_GTK_API void nostr_gtk_profile_pane_set_following(NostrGtkProfilePane *self, gboolean is_following);
+void nostr_gtk_profile_pane_set_following(NostrGtkProfilePane *self, gboolean is_following);
 
 /**
  * Signals:

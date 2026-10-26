@@ -26,8 +26,8 @@
 #include "../util/gnostr-nostr-target.h"
 #include "../util/utils.h"
 
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "gnostr-thread-view.h"
+#include "nostr-note-card-row.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/storage_ndb.h>

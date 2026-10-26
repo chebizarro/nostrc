@@ -55,7 +55,8 @@ class ResourceProfileContracts(unittest.TestCase):
     def test_resource_sources_select_real_checks_without_portable_only_consumers(self):
         for path, required in (
                 ('apps/gnostr/data/ui/gnostr-main-window.blp', ['gnostr.resource_build']),
-                ('nostr-gtk/data/ui/gnostr-profile-pane.blp', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
+                ('nostr-gtk/data/ui/gnostr-composer.blp', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
+                ('apps/gnostr/data/widgets/ui/nostr-note-card-row.blp', ['gnostr.resource_build']),
                 ('nostr-gtk/data/nostr-gtk.gresource.xml', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
                 ('nostr-gtk/data/ui/gnostr-composer.ui', ['nostr.gtk.resource_build', 'gnostr.resource_build']),
                 ('cmake/NostrcGtkResources.cmake', ['gnostr.resource_build', 'nostr.gtk.resource_build']),

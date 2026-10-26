@@ -22,7 +22,7 @@
 #include "model/gnostr-timeline-hydrator.h"
 
 #include <gtk/gtk.h>
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 #include <nostr-event.h>
 #include <string.h>
 

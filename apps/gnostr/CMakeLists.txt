@@ -51,8 +51,7 @@ set(BLUEPRINT_SOURCES
   # gnostr-timeline-view.blp moved to nostr-gtk (nostrc-lx32)
   # gnostr-composer.blp moved to nostr-gtk (nostrc-lx35)
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-timeline-row.blp
-  # note-card-row.blp moved to nostr-gtk (nostrc-lx33)
-  # gnostr-note-embed.blp moved to nostr-gtk (regression fix)
+  # note card row, note embed and profile pane Blueprints: gnostr-widgets below
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/page-discover.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-profile-row.blp
   ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/widgets/gnostr-search-results-view.blp
@@ -211,6 +210,46 @@ target_include_directories(${APP_CLIENT_BIN} PRIVATE ${NSYNC_INCLUDE_DIR})
 # Link nostr-gobject (GObject wrappers) and nostr-gtk (GTK4 widgets)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gobject bud02)
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE nostr_gtk)
+
+# Gnostr-owned widgets (note card row, note embed, thread view, profile pane).
+# They call Gnostr app services (main window, models, NIP helpers, avatar
+# cache), so they are an internal archive of this app, not part of
+# libnostr-gtk-1.0. The archive leaves those app symbols to the executable
+# that links it: the app itself, or a test with gnostr-widget-test-support.
+nostrc_compile_blueprint_resources(GNOSTR_WIDGETS_RESOURCE_C
+  "${CMAKE_CURRENT_SOURCE_DIR}/data/widgets/gnostr-widgets.gresource.xml"
+  "${CMAKE_CURRENT_BINARY_DIR}/gnostr-widgets-resources.c"
+  gnostr_widget_blueprints
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/widgets/ui/nostr-note-card-row.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/widgets/ui/gnostr-profile-pane.blp
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/widgets/ui/widgets/gnostr-note-embed.blp)
+# The templates register from a constructor, so every executable links this
+# object directly rather than relying on archive member extraction.
+add_library(gnostr-widget-resources OBJECT ${GNOSTR_WIDGETS_RESOURCE_C})
+target_link_libraries(gnostr-widget-resources PRIVATE PkgConfig::GLIB)
+add_library(gnostr-widgets STATIC
+  src/widgets/gnostr-note-embed.c
+  src/widgets/gnostr-profile-pane.c
+  src/widgets/gnostr-thread-view.c
+  src/widgets/nostr-note-card-row.c
+  src/widgets/note-card-binding-ctx.c
+  src/widgets/note-card-data.c)
+target_compile_features(gnostr-widgets PRIVATE c_std_11)
+target_include_directories(gnostr-widgets
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/widgets
+  PRIVATE
+    $<TARGET_PROPERTY:${APP_CLIENT_BIN},INCLUDE_DIRECTORIES>
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/model)
+target_sources(gnostr-widgets INTERFACE $<TARGET_OBJECTS:gnostr-widget-resources>)
+target_link_libraries(gnostr-widgets PUBLIC
+  nostr_gtk nostr_gobject PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB
+  PkgConfig::JSON_GLIB)
+if(SOUP3_FOUND)
+  target_link_libraries(gnostr-widgets PRIVATE PkgConfig::SOUP3)
+  target_compile_definitions(gnostr-widgets PRIVATE HAVE_SOUP3=1)
+endif()
+target_link_libraries(${APP_CLIENT_BIN} PRIVATE gnostr-widgets)
 
 # libgo fiber runtime (background scheduler API used by main_app.c)
 if (TARGET go_fiber)
@@ -532,6 +571,8 @@ function(_gnostr_apply_sanitizers target)
 endfunction()
 
 _gnostr_apply_sanitizers(${APP_CLIENT_BIN})
+_gnostr_apply_sanitizers(gnostr-widgets)
+_gnostr_apply_sanitizers(gnostr-widget-resources)
 
 # ---- Headless live logger CLI ----
 add_executable(gnostr-live-log src/cli_live_logger.c)
@@ -866,7 +907,7 @@ if (BUILD_TESTING)
   gn_add_gtest_xvfb(gnostr-test-publish-gate
     SOURCES tests/test_publish_gate.c
             src/ui/gnostr-publish-gate.c
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
+    LIBS    gnostr-widgets gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
     ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
     TIMEOUT 60)
   target_include_directories(gnostr-test-publish-gate PRIVATE
@@ -885,7 +926,7 @@ if (BUILD_TESTING)
             src/model/gnostr-timeline-hydrator.c
             src/model/gnostr-timeline-item-view-model.c
             ${GRESOURCE_C}
-    LIBS    nostr_gtk gn_content_parser gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
+    LIBS    gnostr-widgets gn_content_parser gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
     ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
     TIMEOUT 60)
   target_include_directories(gnostr-test-timeline-repost PRIVATE
@@ -893,6 +934,17 @@ if (BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${PROJECT_ROOT}/nostr-gtk/include)
   set_tests_properties(gnostr-test-timeline-repost PROPERTIES
+    LABELS "gtk;widget;unit;gnostr")
+
+  # Note card row sizing (moved from nostr-gtk with the Gnostr-owned row).
+  gn_add_gtest_xvfb(gnostr-test-note-card-measure
+    SOURCES tests/test_note_card_measure.c
+    LIBS    gnostr-widgets gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADWAITA
+            PkgConfig::GLIB
+    ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+  target_include_directories(gnostr-test-note-card-measure PRIVATE
+    ${PROJECT_ROOT}/tests/common)
+  set_tests_properties(gnostr-test-note-card-measure PROPERTIES
     LABELS "gtk;widget;unit;gnostr")
 
   # Grotto (NIP-55L) session restore + identity selection

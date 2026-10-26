@@ -18,6 +18,22 @@ All notable changes to this project will be documented in this file.
   Shared-library export sets and Windows static annotations are unchanged.
 
 ### Breaking library ABI changes
+- nostr-gtk 2.0.0 no longer contains the Gnostr-coupled widgets, which
+  depended on Gnostr app symbols (111 unresolved references) so that only the
+  Gnostr executable could link or load `libnostr-gtk-1.0`. Removed from the
+  library, its installed headers, `nostr-gtk.h` and the GNostrGtk GIR: the
+  types `NostrGtkNoteCardRow`, `NostrGtkThreadView`, `NostrGtkProfilePane`,
+  `GnostrNoteEmbed`, `NostrGtkMediaTextureLoader`, `NostrGtkMediaResourceClass`,
+  `NostrGtkContentSubstType`, `NostrGtkMediaTextureRequestFunc`,
+  `NostrGtkMediaTextureReadyFunc`, `NostrGtkLinkPreviewSetupFunc`,
+  `ThreadNode`, `ThreadGraph` and `NoteCardBindingContext`; their
+  `nostr_gtk_note_card_row_*`, `nostr_gtk_thread_view_*`,
+  `nostr_gtk_profile_pane_*`, `gnostr_note_embed_*` and
+  `note_card_binding_context_*` functions, `nostr_gtk_media_image_cache_size()`;
+  and the headers `nostr-note-card-row.h`, `gnostr-thread-view.h`,
+  `gnostr-profile-pane.h` and `gnostr-note-embed.h`. They are now internal
+  Gnostr widgets (`apps/gnostr/src/widgets`). `libnostr-gtk-1.0` keeps the
+  timeline view and tabs, composer, card visibility policy and NIP-05 API.
 - nostr-gtk 2.0.0 hides implementation symbols in `libnostr-gtk-1.0.so.2` and
   `libnostr-gtk-portable-1.0.so.2`; rebuild dependent binaries. Installed
   functions and GTypes remain exported through `NOSTR_GTK_API` and

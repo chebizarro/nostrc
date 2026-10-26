@@ -9,7 +9,7 @@
 #include "../model/gnostr-timeline-batch.h"
 
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include "gnostr-thread-view.h"
 
 void
 gnostr_main_window_refresh_thread_view_profiles_if_visible_internal(GnostrMainWindow *self)

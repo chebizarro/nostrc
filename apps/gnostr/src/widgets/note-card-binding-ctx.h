@@ -13,7 +13,6 @@
 #define NOTE_CARD_BINDING_CTX_H
 
 #include <glib-object.h>
-#include "nostr-gtk-export.h"
 #include <gio/gio.h>
 
 G_BEGIN_DECLS
@@ -42,7 +41,7 @@ NoteCardBindingContext *note_card_binding_context_new (GObject *row);
  *
  * Returns: (transfer full): @ctx with an incremented ref count
  */
-NOSTR_GTK_API NoteCardBindingContext *note_card_binding_context_ref (NoteCardBindingContext *ctx);
+NoteCardBindingContext *note_card_binding_context_ref (NoteCardBindingContext *ctx);
 
 /**
  * note_card_binding_context_unref:
@@ -51,7 +50,7 @@ NOSTR_GTK_API NoteCardBindingContext *note_card_binding_context_ref (NoteCardBin
  * Atomically decrements the reference count. When it reaches zero,
  * the context is freed (weak ref cleared, cancellable released).
  */
-NOSTR_GTK_API void note_card_binding_context_unref (NoteCardBindingContext *ctx);
+void note_card_binding_context_unref (NoteCardBindingContext *ctx);
 
 /**
  * note_card_binding_context_cancel:
@@ -86,7 +85,7 @@ gboolean note_card_binding_context_is_cancelled (NoteCardBindingContext *ctx);
  *
  * Returns: (transfer full) (nullable): The row, or NULL if stale/finalized
  */
-NOSTR_GTK_API GObject *note_card_binding_context_get_row (NoteCardBindingContext *ctx);
+GObject *note_card_binding_context_get_row (NoteCardBindingContext *ctx);
 
 /**
  * note_card_binding_context_get_cancellable:

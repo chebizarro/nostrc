@@ -37,11 +37,7 @@
 #include "gn-timeline-tabs.h"
 #include "gnostr-card-visibility-policy.h"
 #include "gnostr-composer.h"
-#include "gnostr-note-embed.h"
-#include "gnostr-profile-pane.h"
-#include "gnostr-thread-view.h"
 #include "gnostr-timeline-view.h"
-#include "nostr-note-card-row.h"
 
 G_BEGIN_DECLS
 

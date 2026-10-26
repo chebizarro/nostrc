@@ -1,11 +1,11 @@
 /* nostr-gtk: NoteCardRow widget — moved from apps/gnostr/src/ui/ (nostrc-lx33) */
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 
 /* Child widgets (implementations provided by app at link time) */
 #include "gnostr-label-guard.h"
 #include <nostr-gtk-1.0/gn-media-viewer.h>
 #include <nostr-gtk-1.0/gn-video-player.h>
-#include <nostr-gtk-1.0/gnostr-note-embed.h>
+#include "gnostr-note-embed.h"
 #include "gnostr-avatar-cache.h"
 
 /* Standard/system libraries */
@@ -30,8 +30,8 @@
 #include "nip48_proxy.h"
 #include "nip03_opentimestamps.h"
 #include "nip73_external_ids.h"
-#include "gn-markdown-pango.h"
-#include "content_renderer.h"
+#include <nostr-gtk-1.0/gn-markdown-pango.h>
+#include <nostr-gtk-1.0/content_renderer.h>
 #include "note-card-binding-ctx.h"
 #include "note-card-data.h"
 

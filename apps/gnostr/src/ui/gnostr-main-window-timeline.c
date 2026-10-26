@@ -6,8 +6,8 @@
 #include "gnostr-filter-switcher.h"
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
-#include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include "gnostr-profile-pane.h"
+#include "gnostr-thread-view.h"
 
 #include "../model/gn-nostr-event-model.h"
 #include "../model/gnostr-filter-set.h"

@@ -1,14 +1,13 @@
 #ifndef NOSTR_GTK_THREAD_VIEW_H
 #define NOSTR_GTK_THREAD_VIEW_H
 
-#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
-#include "nostr-gtk-error.h"
+#include <nostr-gtk-1.0/nostr-gtk-error.h>
 
 G_BEGIN_DECLS
 
 #define NOSTR_GTK_TYPE_THREAD_VIEW (nostr_gtk_thread_view_get_type())
-NOSTR_GTK_API G_DECLARE_FINAL_TYPE(NostrGtkThreadView, nostr_gtk_thread_view, NOSTR_GTK, THREAD_VIEW, GtkWidget)
+G_DECLARE_FINAL_TYPE(NostrGtkThreadView, nostr_gtk_thread_view, NOSTR_GTK, THREAD_VIEW, GtkWidget)
 
 /**
  * ThreadNode:
@@ -39,7 +38,7 @@ typedef struct _ThreadGraph ThreadGraph;
  * - "open-profile" - emitted when user clicks on an author (const char *pubkey_hex)
  */
 
-NOSTR_GTK_API GtkWidget *nostr_gtk_thread_view_new(void);
+GtkWidget *nostr_gtk_thread_view_new(void);
 
 /**
  * nostr_gtk_thread_view_set_focus_event:
@@ -52,7 +51,7 @@ NOSTR_GTK_API GtkWidget *nostr_gtk_thread_view_new(void);
  *
  * Returns: %TRUE on success, %FALSE if the event ID is invalid
  */
-NOSTR_GTK_API gboolean nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self,
+gboolean nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView *self,
                                                 const char *event_id_hex,
                                                 GError **error);
 
@@ -66,7 +65,7 @@ NOSTR_GTK_API gboolean nostr_gtk_thread_view_set_focus_event(NostrGtkThreadView 
  * the event is added directly to the view without requiring nostrdb lookup.
  * This is useful when the event is already in memory (e.g., from timeline).
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_set_focus_event_with_json(NostrGtkThreadView *self,
+void nostr_gtk_thread_view_set_focus_event_with_json(NostrGtkThreadView *self,
                                                    const char *event_id_hex,
                                                    const char *event_json);
 
@@ -78,7 +77,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_set_focus_event_with_json(NostrGtkThrea
  * Sets the thread root event. All notes in the thread share this root.
  * If different from focus_event, the root will be shown at the top.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_set_thread_root(NostrGtkThreadView *self, const char *root_event_id_hex);
+void nostr_gtk_thread_view_set_thread_root(NostrGtkThreadView *self, const char *root_event_id_hex);
 
 /**
  * nostr_gtk_thread_view_set_thread_root_with_json:
@@ -89,7 +88,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_set_thread_root(NostrGtkThreadView *sel
  * Sets the thread root with optional JSON data. When event_json is provided,
  * the event is added directly to the view without requiring nostrdb lookup.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_set_thread_root_with_json(NostrGtkThreadView *self,
+void nostr_gtk_thread_view_set_thread_root_with_json(NostrGtkThreadView *self,
                                                    const char *root_event_id_hex,
                                                    const char *event_json);
 
@@ -99,7 +98,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_set_thread_root_with_json(NostrGtkThrea
  *
  * Clears the thread view and cancels any pending network requests.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_clear(NostrGtkThreadView *self);
+void nostr_gtk_thread_view_clear(NostrGtkThreadView *self);
 
 /**
  * nostr_gtk_thread_view_refresh:
@@ -107,7 +106,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_clear(NostrGtkThreadView *self);
  *
  * Refreshes the thread by re-querying nostrdb and relays.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_refresh(NostrGtkThreadView *self);
+void nostr_gtk_thread_view_refresh(NostrGtkThreadView *self);
 
 /**
  * nostr_gtk_thread_view_get_focus_event_id:
@@ -115,7 +114,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_refresh(NostrGtkThreadView *self);
  *
  * Returns: (transfer none): the hex event ID of the focus note, or NULL
  */
-NOSTR_GTK_API const char *nostr_gtk_thread_view_get_focus_event_id(NostrGtkThreadView *self);
+const char *nostr_gtk_thread_view_get_focus_event_id(NostrGtkThreadView *self);
 
 /**
  * nostr_gtk_thread_view_get_thread_root_id:
@@ -123,7 +122,7 @@ NOSTR_GTK_API const char *nostr_gtk_thread_view_get_focus_event_id(NostrGtkThrea
  *
  * Returns: (transfer none): the hex event ID of the thread root, or NULL
  */
-NOSTR_GTK_API const char *nostr_gtk_thread_view_get_thread_root_id(NostrGtkThreadView *self);
+const char *nostr_gtk_thread_view_get_thread_root_id(NostrGtkThreadView *self);
 
 /**
  * nostr_gtk_thread_view_update_profiles:
@@ -133,7 +132,7 @@ NOSTR_GTK_API const char *nostr_gtk_thread_view_get_thread_root_id(NostrGtkThrea
  * the profile provider cache. Call this after profiles have been
  * fetched from relays.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_update_profiles(NostrGtkThreadView *self);
+void nostr_gtk_thread_view_update_profiles(NostrGtkThreadView *self);
 
 /**
  * nostr_gtk_thread_view_toggle_branch:
@@ -143,7 +142,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_update_profiles(NostrGtkThreadView *sel
  * Toggles the collapsed state of a thread branch.
  * When collapsed, child replies are hidden and a count indicator is shown.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_toggle_branch(NostrGtkThreadView *self, const char *event_id_hex);
+void nostr_gtk_thread_view_toggle_branch(NostrGtkThreadView *self, const char *event_id_hex);
 
 /**
  * nostr_gtk_thread_view_expand_all:
@@ -151,7 +150,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_toggle_branch(NostrGtkThreadView *self,
  *
  * Expands all collapsed branches in the thread view.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_expand_all(NostrGtkThreadView *self);
+void nostr_gtk_thread_view_expand_all(NostrGtkThreadView *self);
 
 /**
  * nostr_gtk_thread_view_collapse_non_focus:
@@ -160,7 +159,7 @@ NOSTR_GTK_API void nostr_gtk_thread_view_expand_all(NostrGtkThreadView *self);
  * Collapses all branches not on the focus path (path from focus event to root).
  * The focus path remains expanded for easy reading.
  */
-NOSTR_GTK_API void nostr_gtk_thread_view_collapse_non_focus(NostrGtkThreadView *self);
+void nostr_gtk_thread_view_collapse_non_focus(NostrGtkThreadView *self);
 
 G_END_DECLS
 

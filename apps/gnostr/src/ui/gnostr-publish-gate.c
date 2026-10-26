@@ -1,7 +1,7 @@
 /* gnostr-publish-gate — see gnostr-publish-gate.h (nostrc-46h7). */
 #include "gnostr-publish-gate.h"
 
-#include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include "nostr-note-card-row.h"
 
 /* Main context only. */
 static char *s_reason;

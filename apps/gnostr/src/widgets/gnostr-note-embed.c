@@ -4,10 +4,10 @@
  * Renders nostr: URI references as compact embedded cards.
  */
 
-#include <nostr-gtk-1.0/gnostr-note-embed.h>
+#include "gnostr-note-embed.h"
 #include <nostr-gtk-1.0/content_renderer.h>
 #include "gnostr-avatar-cache.h"
-#include "../util/utils.h"
+#include "utils.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>

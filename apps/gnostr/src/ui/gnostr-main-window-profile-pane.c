@@ -9,7 +9,7 @@
 #include "../util/nip02_contacts.h"
 
 #include <nostr-gobject-1.0/gnostr-mute-list.h>
-#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include "gnostr-profile-pane.h"
 
 #include <string.h>
 
