@@ -22,15 +22,17 @@ function(nostrc_patch_nostrdb target)
   endif()
 
   # Copy both source directories, including headers: quoted includes must use
-  # patched headers too. CCAN and the other dependencies stay in the vendor tree.
+  # patched headers too. Only SHA256 needs a copy from CCAN.
   file(GLOB_RECURSE _inputs LIST_DIRECTORIES FALSE CONFIGURE_DEPENDS
-    "${_vendor}/src/*" "${_vendor}/deps/lmdb/*")
+    "${_vendor}/src/*" "${_vendor}/deps/lmdb/*"
+    "${_vendor}/ccan/ccan/crypto/sha256/*")
   foreach(_input IN LISTS _inputs)
     file(RELATIVE_PATH _relative "${_vendor}" "${_input}")
     configure_file("${_input}" "${_overlay}/${_relative}" COPYONLY)
   endforeach()
   foreach(_patch IN ITEMS 0001-lmdb-empty-values.patch
-      0002-tag-timestamp-alignment.patch 0003-unsigned-varint-shift.patch)
+      0002-tag-timestamp-alignment.patch 0003-unsigned-varint-shift.patch
+      0004-ccan-sha256-alignment.patch)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_queue}/${_patch}")
     execute_process(
       COMMAND "${NOSTRC_PATCH_EXECUTABLE}" -f -F 0 -p1 -i "${_queue}/${_patch}"
@@ -43,7 +45,7 @@ function(nostrc_patch_nostrdb target)
   set(_patched_sources "")
   foreach(_source IN LISTS _sources)
     file(RELATIVE_PATH _relative "${_vendor}" "${_source}")
-    if(_relative MATCHES "^(src|deps/lmdb)/")
+    if(_relative MATCHES "^(src|deps/lmdb|ccan/ccan/crypto/sha256)/")
       list(APPEND _patched_sources "${_overlay}/${_relative}")
     else()
       list(APPEND _patched_sources "${_source}")
@@ -51,5 +53,5 @@ function(nostrc_patch_nostrdb target)
   endforeach()
   set_property(TARGET ${target} PROPERTY SOURCES "${_patched_sources}")
   target_include_directories(${target} BEFORE PUBLIC
-    "${_overlay}/src" "${_overlay}/deps/lmdb")
+    "${_overlay}/src" "${_overlay}/deps/lmdb" "${_overlay}/ccan")
 endfunction()

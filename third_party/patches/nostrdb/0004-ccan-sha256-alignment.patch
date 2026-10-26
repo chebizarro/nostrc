@@ -1,0 +1,47 @@
+--- a/ccan/ccan/crypto/sha256/sha256.c
++++ b/ccan/ccan/crypto/sha256/sha256.c
+@@ -84,10 +84,12 @@
+ }
+ 
+ /** Perform one SHA-256 transformation, processing a 64-byte chunk. */
+-static void Transform(uint32_t *s, const uint32_t *chunk)
++static void Transform(uint32_t *s, const void *data)
+ {
++	uint32_t chunk[16];
+ 	uint32_t a = s[0], b = s[1], c = s[2], d = s[3], e = s[4], f = s[5], g = s[6], h = s[7];
+ 	uint32_t w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15;
++	memcpy(chunk, data, sizeof(chunk));
+ 
+ 	Round(a, b, c, &d, e, f, g, &h, 0x428a2f98, w0 = be32_to_cpu(chunk[0]));
+ 	Round(h, a, b, &c, d, e, f, &g, 0x71374491, w1 = be32_to_cpu(chunk[1]));
+@@ -167,15 +169,6 @@
+ 	s[7] += h;
+ }
+ 
+-static bool alignment_ok(const void *p UNUSED, size_t n UNUSED)
+-{
+-#if HAVE_UNALIGNED_ACCESS
+-	return true;
+-#else
+-	return ((size_t)p % n == 0);
+-#endif
+-}
+-
+ static void add(struct sha256_ctx *ctx, const void *p, size_t len)
+ {
+ 	const unsigned char *data = p;
+@@ -192,13 +185,7 @@
+ 	}
+ 
+ 	while (len >= 64) {
+-		/* Process full chunks directly from the source. */
+-		if (alignment_ok(data, sizeof(uint32_t)))
+-			Transform(ctx->s, (const uint32_t *)data);
+-		else {
+-			memcpy(ctx->buf.u8, data, sizeof(ctx->buf));
+-			Transform(ctx->s, ctx->buf.u32);
+-		}
++		Transform(ctx->s, data);
+ 		ctx->bytes += 64;
+ 		data += 64;
+ 		len -= 64;

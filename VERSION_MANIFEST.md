@@ -56,7 +56,7 @@ files already declare a version.
 
 - nostrc-wktgk: libnostr PATCH 1.1.3 -> 1.1.4 for shipped vendored
   nostrdb/LMDB undefined-behavior corrections. Empty-value copies, unaligned
-  index loads and full-width varint shifts are corrected without API,
+  index/crypto loads and full-width varint shifts are corrected without API,
   ABI, storage-format or wire-format changes. `components/nostrdb` and relayd
   also carry the corrected vendor code, but are unversioned internal adapter
   and application targets with no independent numeric version source. libgo,

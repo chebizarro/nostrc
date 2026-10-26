@@ -2,6 +2,7 @@
 #include "nostrdb.h"
 #include "lmdb.h"
 #include "cursor.h"
+#include <ccan/crypto/sha256/sha256.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,11 +134,29 @@ static void full_width_varints(void)
     }
 }
 
+static void unaligned_sha256(void)
+{
+    static const unsigned char expected[32] = {
+        0x68, 0x36, 0xcf, 0x13, 0xba, 0xc4, 0x00, 0xe9,
+        0x10, 0x50, 0x71, 0xcd, 0x6a, 0xf4, 0x70, 0x84,
+        0xdf, 0xac, 0xad, 0x4e, 0x5e, 0x30, 0x2c, 0x94,
+        0xbf, 0xed, 0x24, 0xe0, 0x13, 0xaf, 0xb7, 0x3e
+    };
+    unsigned char input[128 + 8];
+    memset(input, 'a', sizeof input);
+    for (size_t offset = 0; offset < 8; ++offset) {
+        struct sha256 digest;
+        sha256(&digest, input + offset, 128);
+        CHECK(memcmp(digest.u.u8, expected, sizeof expected) == 0);
+    }
+}
+
 int main(void)
 {
+    unaligned_sha256();
     full_width_varints();
     empty_values();
     tag_timestamps();
-    puts("PASS full-width varints, empty LMDB values and persisted tag timestamps");
+    puts("PASS unaligned SHA256, full-width varints, empty values and tag timestamps");
     return 0;
 }

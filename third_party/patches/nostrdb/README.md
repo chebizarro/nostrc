@@ -8,7 +8,8 @@ The existing hex/talstr CMake compatibility headers are separate from this queue
 
 The root CMake build uses `cmake/NostrdbPatches.cmake` for both `nostrdb`
 (libnostr backend) and `nostrdb_vendored` (private storage backend). It copies
-`src/` and `deps/lmdb/` into the build directory, applies these patches with
+`src/`, `deps/lmdb/`, and CCAN's SHA256 directory into the build directory,
+applies these patches with
 `patch -f -F 0 -p1`, and compiles those copies. A `patch` executable is required.
 The submodule, including its signed test fixtures, is never modified. Original
 inputs and patches are configure dependencies. Patch failure stops configure;
@@ -24,6 +25,9 @@ a vendor update must reconcile or retire the affected patch, not disable it.
 - **0003:** decode varint payload bits as unsigned before shifting. The full-text
   query's `UINT64_MAX` bound reaches bit 63, which a signed left shift cannot
   represent. The wire/storage encoding is unchanged.
+- **0004:** copy SHA256 input blocks into aligned local words before transforming
+  them. `HAVE_UNALIGNED_ACCESS` describes hardware, not permission for an
+  unaligned typed C load. Digest bytes and the public API are unchanged.
 
 ## Upstream status
 
@@ -53,7 +57,8 @@ ctest --test-dir "$BUILD" --output-on-failure \
 ```
 
 The regression covers empty-value insertion, overwrite and shrink; full-width
-varint round trips; and ingestion/reopen/query of tag values at all eight length
+varint round trips; SHA256 known-answer hashes at all eight buffer offsets;
+and ingestion/reopen/query of tag values at all eight length
 residues, with timestamp ordering assertions. Signature checking is intentionally
 outside that structural regression; the relayd tests exercise signed ingestion.
 
