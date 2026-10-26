@@ -11,6 +11,7 @@
 #define NOSTR_SUBSCRIPTION_TEST_HOOKS_H
 
 #include <glib.h>
+#include "nostr-gobject-export.h"
 
 G_BEGIN_DECLS
 
@@ -18,7 +19,7 @@ typedef struct _GNostrSubscription GNostrSubscription;
 
 /* Events waiting for the main loop; *eose_queued (nullable) is set to
  * whether an EOSE marker is waiting too. */
-guint gnostr_subscription_test_queued(GNostrSubscription *self, gboolean *eose_queued);
+NOSTR_GOBJECT_API guint gnostr_subscription_test_queued(GNostrSubscription *self, gboolean *eose_queued);
 
 G_END_DECLS
 

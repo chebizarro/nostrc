@@ -11,6 +11,7 @@
  */
 #pragma once
 
+#include "nostr-gtk-portable-export.h"
 #include <glib.h>
 #include "gn-markdown.h"
 
@@ -59,7 +60,7 @@ typedef struct {
 /* Markup for a parsed document; NULL options = FULL, no flags. A truncated
  * document is formatted as far as it was parsed: use
  * gn_markdown_pango_from_text() for the escaped full-text fallback. */
-gchar *gn_markdown_pango_format(const GnMarkdownDocument *document,
+NOSTR_GTK_PORTABLE_API gchar *gn_markdown_pango_format(const GnMarkdownDocument *document,
                                 const GnMarkdownPangoOptions *options);
 
 typedef enum {
@@ -84,28 +85,28 @@ typedef struct {
                       the original text); else NULL */
 } GnMarkdownPangoBlock;
 
-void gn_markdown_pango_block_free(GnMarkdownPangoBlock *block);
+NOSTR_GTK_PORTABLE_API void gn_markdown_pango_block_free(GnMarkdownPangoBlock *block);
 
 /* The FULL-mode formatting of @document (max_chars is ignored) split into
  * text and table blocks, in order; empty text between blocks is dropped.
  * Returns a GPtrArray of GnMarkdownPangoBlock that frees its elements. */
-GPtrArray *gn_markdown_pango_format_blocks(const GnMarkdownDocument *document,
+NOSTR_GTK_PORTABLE_API GPtrArray *gn_markdown_pango_format_blocks(const GnMarkdownDocument *document,
                                            const GnMarkdownPangoOptions *options);
 
 /* Whether any block of @blocks (nullable) is a table. */
-gboolean gn_markdown_pango_blocks_have_table(GPtrArray *blocks);
+NOSTR_GTK_PORTABLE_API gboolean gn_markdown_pango_blocks_have_table(GPtrArray *blocks);
 
 /* Parses @text and formats it. When the parser's input or token budget is
  * reached, the whole text is shown escaped instead (never silently cut). */
-gchar *gn_markdown_pango_from_text(const gchar *text,
+NOSTR_GTK_PORTABLE_API gchar *gn_markdown_pango_from_text(const gchar *text,
                                    const GnMarkdownPangoOptions *options);
 
 /* The text a reader sees, without markup or decorative glyphs, for
  * accessible descriptions. @max_chars 0 = no cap. */
-gchar *gn_markdown_plain_text(const GnMarkdownDocument *document, gsize max_chars);
+NOSTR_GTK_PORTABLE_API gchar *gn_markdown_plain_text(const GnMarkdownDocument *document, gsize max_chars);
 
 /* The target of the first image, or NULL. Never fetches: whether to load it
  * is the caller's (consent) decision. */
-gchar *gn_markdown_dup_first_image_target(const GnMarkdownDocument *document);
+NOSTR_GTK_PORTABLE_API gchar *gn_markdown_dup_first_image_target(const GnMarkdownDocument *document);
 
 G_END_DECLS

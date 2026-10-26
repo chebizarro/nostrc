@@ -19,6 +19,7 @@
 #ifndef GNOSTR_IDENTITY_H
 #define GNOSTR_IDENTITY_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <gio/gio.h>
 
@@ -51,7 +52,7 @@ typedef struct {
  * Must be called before gnostr_identity_get_current() or
  * gnostr_identity_set_current().
  */
-void gnostr_identity_init(const char *schema_id);
+NOSTR_GOBJECT_API void gnostr_identity_init(const char *schema_id);
 
 /**
  * gnostr_identity_free:
@@ -59,7 +60,7 @@ void gnostr_identity_init(const char *schema_id);
  *
  * Free an identity structure.
  */
-void gnostr_identity_free(GNostrIdentity *identity);
+NOSTR_GOBJECT_API void gnostr_identity_free(GNostrIdentity *identity);
 
 /**
  * gnostr_identity_copy:
@@ -69,7 +70,7 @@ void gnostr_identity_free(GNostrIdentity *identity);
  *
  * Returns: (transfer full): A copy of the identity.
  */
-GNostrIdentity *gnostr_identity_copy(const GNostrIdentity *identity);
+NOSTR_GOBJECT_API GNostrIdentity *gnostr_identity_copy(const GNostrIdentity *identity);
 
 /**
  * gnostr_identity_get_current:
@@ -79,7 +80,7 @@ GNostrIdentity *gnostr_identity_copy(const GNostrIdentity *identity);
  *
  * Returns: (transfer full) (nullable): The current identity, or %NULL if not logged in.
  */
-GNostrIdentity *gnostr_identity_get_current(void);
+NOSTR_GOBJECT_API GNostrIdentity *gnostr_identity_get_current(void);
 
 /**
  * gnostr_identity_set_current:
@@ -88,7 +89,7 @@ GNostrIdentity *gnostr_identity_get_current(void);
  * Set the currently active identity.
  * Requires gnostr_identity_init() to have been called.
  */
-void gnostr_identity_set_current(const char *npub);
+NOSTR_GOBJECT_API void gnostr_identity_set_current(const char *npub);
 
 /**
  * gnostr_identity_list_stored:
@@ -98,7 +99,7 @@ void gnostr_identity_set_current(const char *npub);
  *
  * Returns: (transfer full) (element-type GNostrIdentity): List of identities.
  */
-GList *gnostr_identity_list_stored(GError **error);
+NOSTR_GOBJECT_API GList *gnostr_identity_list_stored(GError **error);
 
 /**
  * gnostr_identity_signer_holds_key:
@@ -106,7 +107,7 @@ GList *gnostr_identity_list_stored(GError **error);
  *
  * Returns: %TRUE if the local signer's key store holds @npub.
  */
-gboolean gnostr_identity_signer_holds_key(const char *npub);
+NOSTR_GOBJECT_API gboolean gnostr_identity_signer_holds_key(const char *npub);
 
 /**
  * gnostr_identity_secure_storage_available:
@@ -114,7 +115,7 @@ gboolean gnostr_identity_signer_holds_key(const char *npub);
  * Returns: %TRUE if the platform key store can be queried for identity
  *   metadata.
  */
-gboolean gnostr_identity_secure_storage_available(void);
+NOSTR_GOBJECT_API gboolean gnostr_identity_secure_storage_available(void);
 
 G_END_DECLS
 

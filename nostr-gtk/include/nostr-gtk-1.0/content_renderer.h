@@ -1,6 +1,7 @@
 #ifndef APPS_GNOSTR_UTIL_CONTENT_RENDERER_H
 #define APPS_GNOSTR_UTIL_CONTENT_RENDERER_H
 
+#include "nostr-gtk-portable-export.h"
 #include <glib.h>
 #include <nostr-gtk-1.0/nostr-gtk-error.h>
 
@@ -80,7 +81,7 @@ typedef struct GnContentRenderResult {
  *
  * Returns: (transfer full) (nullable): parsed result, or %NULL on error.
  */
-GnContentRenderResult *gn_content_parse(const char *content,
+NOSTR_GTK_PORTABLE_API GnContentRenderResult *gn_content_parse(const char *content,
                                         int content_len,
                                         const char *tags_json,
                                         GError **error);
@@ -96,17 +97,17 @@ struct ndb_blocks;
  * Cached block slices are sanitized independently before entering markup so
  * offsets remain relative to the stored bytes.
  */
-GnContentRenderResult *gn_content_parse_with_blocks(const char *content,
+NOSTR_GTK_PORTABLE_API GnContentRenderResult *gn_content_parse_with_blocks(const char *content,
                                                     int content_len,
                                                     const char *tags_json,
                                                     struct ndb_blocks *blocks,
                                                     GError **error);
 
 /* Lightweight instrumentation used by parse-once pipeline tests. */
-void  gn_content_parser_reset_invocation_count(void);
-guint gn_content_parser_get_invocation_count(void);
+NOSTR_GTK_PORTABLE_API void  gn_content_parser_reset_invocation_count(void);
+NOSTR_GTK_PORTABLE_API guint gn_content_parser_get_invocation_count(void);
 
-void gn_content_descriptor_free(GnContentDescriptor *descriptor);
+NOSTR_GTK_PORTABLE_API void gn_content_descriptor_free(GnContentDescriptor *descriptor);
 
 /**
  * gnostr_render_content:
@@ -119,7 +120,7 @@ void gn_content_descriptor_free(GnContentDescriptor *descriptor);
  * Returns: (transfer full) (nullable): newly allocated result, or %NULL on
  *          error. Caller must free with gnostr_content_render_result_free().
  */
-GnContentRenderResult *gnostr_render_content(const char *content, int content_len,
+NOSTR_GTK_PORTABLE_API GnContentRenderResult *gnostr_render_content(const char *content, int content_len,
                                               GError **error);
 
 /**
@@ -128,7 +129,7 @@ GnContentRenderResult *gnostr_render_content(const char *content, int content_le
  *
  * Frees all fields and the struct itself.
  */
-void gnostr_content_render_result_free(GnContentRenderResult *result);
+NOSTR_GTK_PORTABLE_API void gnostr_content_render_result_free(GnContentRenderResult *result);
 
 /**
  * gnostr_render_content_markup:
@@ -142,7 +143,7 @@ void gnostr_content_render_result_free(GnContentRenderResult *result);
  * Returns: (nullable): newly allocated Pango markup string, or %NULL on
  *          error. Caller must g_free().
  */
-char *gnostr_render_content_markup(const char *content, int content_len,
+NOSTR_GTK_PORTABLE_API char *gnostr_render_content_markup(const char *content, int content_len,
                                     GError **error);
 
 /**
@@ -157,7 +158,7 @@ char *gnostr_render_content_markup(const char *content, int content_len,
  *          (g_free each + g_ptr_array_unref), or %NULL if no media found
  *          or on error.
  */
-GPtrArray *gnostr_extract_media_urls(const char *content, int content_len,
+NOSTR_GTK_PORTABLE_API GPtrArray *gnostr_extract_media_urls(const char *content, int content_len,
                                       GError **error);
 
 /**
@@ -170,7 +171,7 @@ GPtrArray *gnostr_extract_media_urls(const char *content, int content_len,
  *
  * Returns: @str (same pointer, for chaining)
  */
-char *gnostr_strip_zwsp(char *str);
+NOSTR_GTK_PORTABLE_API char *gnostr_strip_zwsp(char *str);
 
 /**
  * gnostr_sanitize_utf8:
@@ -182,7 +183,7 @@ char *gnostr_strip_zwsp(char *str);
  * Returns: (transfer full): newly allocated valid UTF-8 string.
  *          Caller must g_free().
  */
-char *gnostr_sanitize_utf8(const char *str);
+NOSTR_GTK_PORTABLE_API char *gnostr_sanitize_utf8(const char *str);
 
 /**
  * gnostr_safe_set_markup:

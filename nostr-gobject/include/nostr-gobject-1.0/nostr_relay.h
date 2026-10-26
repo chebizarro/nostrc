@@ -1,6 +1,7 @@
 #ifndef NOSTR_RELAY_H
 #define NOSTR_RELAY_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "nostr-enums.h"
@@ -36,7 +37,7 @@ typedef struct NostrFilter NostrFilter;
 /* Define GNostrRelay GObject */
 /* GLib wrapper type is prefixed with G to avoid clashing with core NostrRelay */
 #define GNOSTR_TYPE_RELAY (gnostr_relay_get_type())
-G_DECLARE_FINAL_TYPE(GNostrRelay, gnostr_relay, GNOSTR, RELAY, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrRelay, gnostr_relay, GNOSTR, RELAY, GObject)
 
 /**
  * GNostrRelay:
@@ -81,7 +82,7 @@ enum {
  *
  * Returns: (transfer full): a new #GNostrRelay
  */
-GNostrRelay *gnostr_relay_new(const gchar *url);
+NOSTR_GOBJECT_API GNostrRelay *gnostr_relay_new(const gchar *url);
 
 /**
  * gnostr_relay_connect:
@@ -93,7 +94,7 @@ GNostrRelay *gnostr_relay_new(const gchar *url);
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_relay_connect(GNostrRelay *self, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_relay_connect(GNostrRelay *self, GError **error);
 
 /**
  * gnostr_relay_connect_async:
@@ -105,7 +106,7 @@ gboolean gnostr_relay_connect(GNostrRelay *self, GError **error);
  * Asynchronously connects to the relay.
  * Emits "state-changed" signal on state transitions.
  */
-void gnostr_relay_connect_async(GNostrRelay *self,
+NOSTR_GOBJECT_API void gnostr_relay_connect_async(GNostrRelay *self,
                                  GCancellable *cancellable,
                                  GAsyncReadyCallback callback,
                                  gpointer user_data);
@@ -120,7 +121,7 @@ void gnostr_relay_connect_async(GNostrRelay *self,
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_relay_connect_finish(GNostrRelay *self,
+NOSTR_GOBJECT_API gboolean gnostr_relay_connect_finish(GNostrRelay *self,
                                       GAsyncResult *result,
                                       GError **error);
 
@@ -131,7 +132,7 @@ gboolean gnostr_relay_connect_finish(GNostrRelay *self,
  * Disconnects from the relay.
  * Emits "state-changed" signal.
  */
-void gnostr_relay_disconnect(GNostrRelay *self);
+NOSTR_GOBJECT_API void gnostr_relay_disconnect(GNostrRelay *self);
 
 /**
  * gnostr_relay_publish:
@@ -143,7 +144,7 @@ void gnostr_relay_disconnect(GNostrRelay *self);
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error);
 
 /**
  * gnostr_relay_query_sync:
@@ -156,7 +157,7 @@ gboolean gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **err
  *
  * Returns: (element-type NostrEvent) (transfer full) (nullable): array of events
  */
-GPtrArray *gnostr_relay_query_sync(GNostrRelay *self, NostrFilter *filter, GError **error);
+NOSTR_GOBJECT_API GPtrArray *gnostr_relay_query_sync(GNostrRelay *self, NostrFilter *filter, GError **error);
 
 /* Property accessors */
 
@@ -168,7 +169,7 @@ GPtrArray *gnostr_relay_query_sync(GNostrRelay *self, NostrFilter *filter, GErro
  *
  * Returns: (transfer none) (nullable): the relay URL
  */
-const gchar *gnostr_relay_get_url(GNostrRelay *self);
+NOSTR_GOBJECT_API const gchar *gnostr_relay_get_url(GNostrRelay *self);
 
 /**
  * gnostr_relay_get_state:
@@ -178,7 +179,7 @@ const gchar *gnostr_relay_get_url(GNostrRelay *self);
  *
  * Returns: the current #GNostrRelayState
  */
-GNostrRelayState gnostr_relay_get_state(GNostrRelay *self);
+NOSTR_GOBJECT_API GNostrRelayState gnostr_relay_get_state(GNostrRelay *self);
 
 /**
  * gnostr_relay_get_connected:
@@ -189,7 +190,7 @@ GNostrRelayState gnostr_relay_get_state(GNostrRelay *self);
  *
  * Returns: %TRUE if connected, %FALSE otherwise
  */
-gboolean gnostr_relay_get_connected(GNostrRelay *self);
+NOSTR_GOBJECT_API gboolean gnostr_relay_get_connected(GNostrRelay *self);
 
 /**
  * gnostr_relay_get_core_relay:
@@ -200,7 +201,7 @@ gboolean gnostr_relay_get_connected(GNostrRelay *self);
  *
  * Returns: (transfer none) (nullable): the core NostrRelay pointer
  */
-NostrRelay *gnostr_relay_get_core_relay(GNostrRelay *self);
+NOSTR_GOBJECT_API NostrRelay *gnostr_relay_get_core_relay(GNostrRelay *self);
 
 /* ---- NIP-11 Relay Information (nostrc-20) ---- */
 
@@ -216,7 +217,7 @@ typedef struct RelayInformationDocument GNostrRelayNip11Info;
  *
  * Returns: (transfer none) (nullable): the NIP-11 info, or %NULL if not yet fetched
  */
-const GNostrRelayNip11Info *gnostr_relay_get_nip11_info(GNostrRelay *self);
+NOSTR_GOBJECT_API const GNostrRelayNip11Info *gnostr_relay_get_nip11_info(GNostrRelay *self);
 
 /**
  * gnostr_relay_supports_nip:
@@ -228,7 +229,7 @@ const GNostrRelayNip11Info *gnostr_relay_get_nip11_info(GNostrRelay *self);
  *
  * Returns: %TRUE if the relay supports the given NIP
  */
-gboolean gnostr_relay_supports_nip(GNostrRelay *self, gint nip);
+NOSTR_GOBJECT_API gboolean gnostr_relay_supports_nip(GNostrRelay *self, gint nip);
 
 /**
  * gnostr_relay_fetch_nip11_async:
@@ -238,7 +239,7 @@ gboolean gnostr_relay_supports_nip(GNostrRelay *self, gint nip);
  * automatically on connect, but can be called to refresh.
  * Emits "nip11-info-fetched" signal when complete.
  */
-void gnostr_relay_fetch_nip11_async(GNostrRelay *self);
+NOSTR_GOBJECT_API void gnostr_relay_fetch_nip11_async(GNostrRelay *self);
 
 /* ---- NIP-42 Relay Authentication (nostrc-7og) ---- */
 
@@ -273,7 +274,7 @@ typedef void (*GNostrRelayAuthSignFunc)(NostrEvent *event,
  * if gnostr_relay_authenticate() is signing with it on another thread at
  * that moment, when that call returns (on that thread).
  */
-void gnostr_relay_set_auth_handler(GNostrRelay *self,
+NOSTR_GOBJECT_API void gnostr_relay_set_auth_handler(GNostrRelay *self,
                                     GNostrRelayAuthSignFunc sign_func,
                                     gpointer user_data,
                                     GDestroyNotify destroy);
@@ -288,7 +289,7 @@ void gnostr_relay_set_auth_handler(GNostrRelay *self,
  *
  * Returns: %TRUE if authentication event was sent, %FALSE on error
  */
-gboolean gnostr_relay_authenticate(GNostrRelay *self, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_relay_authenticate(GNostrRelay *self, GError **error);
 
 /**
  * gnostr_relay_get_authenticated:
@@ -296,7 +297,7 @@ gboolean gnostr_relay_authenticate(GNostrRelay *self, GError **error);
  *
  * Returns: %TRUE if the relay has been successfully authenticated
  */
-gboolean gnostr_relay_get_authenticated(GNostrRelay *self);
+NOSTR_GOBJECT_API gboolean gnostr_relay_get_authenticated(GNostrRelay *self);
 
 G_END_DECLS
 

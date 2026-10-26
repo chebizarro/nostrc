@@ -435,7 +435,11 @@ endif()
 # is not itself marked NOSTRC_ARCHIVES_FROM_EXECUTABLE (the condition is
 # evaluated on the target being linked).
 function(nostrc_link_archives target scope)
-  if(NOT NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+  # A shared consumer of a static GObject layer also needs this policy even
+  # when Groundhog is disabled: hidden archive copies cannot share GTypes or
+  # supply libnostr-json's executable-owned core symbols.
+  get_target_property(_nla_local ${target} NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+  if(NOT NOSTRC_ARCHIVES_FROM_EXECUTABLE AND NOT _nla_local)
     target_link_libraries(${target} ${scope} ${ARGN})
     return()
   endif()

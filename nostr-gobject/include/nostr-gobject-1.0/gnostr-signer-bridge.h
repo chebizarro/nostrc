@@ -16,6 +16,7 @@
 #ifndef GNOSTR_SIGNER_BRIDGE_H
 #define GNOSTR_SIGNER_BRIDGE_H
 
+#include "nostr-gobject-export.h"
 #include <gio/gio.h>
 
 G_BEGIN_DECLS
@@ -58,18 +59,18 @@ typedef struct {
  * Registers the higher-layer signer implementation with nostr-gobject.
  * The vtable is copied; the caller can free it after this returns.
  */
-void gnostr_signer_bridge_install(const GnostrSignerBridge *vtable);
+NOSTR_GOBJECT_API void gnostr_signer_bridge_install(const GnostrSignerBridge *vtable);
 
 /* Convenience accessors used by nostr-gobject internals. */
-gboolean gnostr_signer_bridge_is_available(void);
-void gnostr_signer_bridge_sign_event_async(const char *event_json,
+NOSTR_GOBJECT_API gboolean gnostr_signer_bridge_is_available(void);
+NOSTR_GOBJECT_API void gnostr_signer_bridge_sign_event_async(const char *event_json,
                                             GCancellable *cancellable,
                                             GAsyncReadyCallback callback,
                                             gpointer user_data);
-gboolean gnostr_signer_bridge_sign_event_finish(GAsyncResult *res,
+NOSTR_GOBJECT_API gboolean gnostr_signer_bridge_sign_event_finish(GAsyncResult *res,
                                                  char **out_signed_event,
                                                  GError **error);
-NostrOrgNostrSigner *gnostr_signer_bridge_proxy_get(GError **error);
+NOSTR_GOBJECT_API NostrOrgNostrSigner *gnostr_signer_bridge_proxy_get(GError **error);
 
 G_END_DECLS
 

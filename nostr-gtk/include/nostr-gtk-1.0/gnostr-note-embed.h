@@ -12,13 +12,14 @@
 #ifndef GNOSTR_NOTE_EMBED_H
 #define GNOSTR_NOTE_EMBED_H
 
+#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_NOTE_EMBED (gnostr_note_embed_get_type())
 
-G_DECLARE_FINAL_TYPE(GnostrNoteEmbed, gnostr_note_embed, GNOSTR, NOTE_EMBED, GtkWidget)
+NOSTR_GTK_API G_DECLARE_FINAL_TYPE(GnostrNoteEmbed, gnostr_note_embed, GNOSTR, NOTE_EMBED, GtkWidget)
 
 /**
  * Signals:
@@ -37,7 +38,7 @@ typedef struct _GnostrNoteEmbed GnostrNoteEmbed;
  *
  * Returns: (transfer full): a new #GnostrNoteEmbed
  */
-GnostrNoteEmbed *gnostr_note_embed_new(void);
+NOSTR_GTK_API GnostrNoteEmbed *gnostr_note_embed_new(void);
 
 /**
  * gnostr_note_embed_set_nostr_uri:
@@ -46,7 +47,7 @@ GnostrNoteEmbed *gnostr_note_embed_new(void);
  *
  * Sets the nostr URI to parse and display. Triggers async loading.
  */
-void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri);
+NOSTR_GTK_API void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri);
 
 /**
  * gnostr_note_embed_set_event_id:
@@ -56,7 +57,7 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri);
  *
  * Directly set an event ID to display.
  */
-void gnostr_note_embed_set_event_id(GnostrNoteEmbed *self,
+NOSTR_GTK_API void gnostr_note_embed_set_event_id(GnostrNoteEmbed *self,
                                      const char *event_id_hex,
                                      const char * const *relay_hints);
 
@@ -68,7 +69,7 @@ void gnostr_note_embed_set_event_id(GnostrNoteEmbed *self,
  *
  * Set a profile/pubkey to display as a profile embed.
  */
-void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
+NOSTR_GTK_API void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
                                    const char *pubkey_hex,
                                    const char * const *relay_hints);
 
@@ -79,7 +80,7 @@ void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
  *
  * Manually set loading state.
  */
-void gnostr_note_embed_set_loading(GnostrNoteEmbed *self, gboolean loading);
+NOSTR_GTK_API void gnostr_note_embed_set_loading(GnostrNoteEmbed *self, gboolean loading);
 
 /**
  * gnostr_note_embed_set_error:
@@ -88,7 +89,7 @@ void gnostr_note_embed_set_loading(GnostrNoteEmbed *self, gboolean loading);
  *
  * Show error state with optional message.
  */
-void gnostr_note_embed_set_error(GnostrNoteEmbed *self, const char *error_message);
+NOSTR_GTK_API void gnostr_note_embed_set_error(GnostrNoteEmbed *self, const char *error_message);
 
 /**
  * gnostr_note_embed_set_content:
@@ -101,7 +102,7 @@ void gnostr_note_embed_set_error(GnostrNoteEmbed *self, const char *error_messag
  *
  * Manually populate the embed with content (called after fetch completes).
  */
-void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
+NOSTR_GTK_API void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
                                     const char *author_display,
                                     const char *author_handle,
                                     const char *content,
@@ -119,7 +120,7 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
  *
  * Populate embed with profile data (for npub/nprofile references).
  */
-void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
+NOSTR_GTK_API void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
                                     const char *display_name,
                                     const char *handle,
                                     const char *about,
@@ -132,7 +133,7 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
  *
  * Returns: (transfer none) (nullable): the event ID or pubkey hex being displayed
  */
-const char *gnostr_note_embed_get_target_id(GnostrNoteEmbed *self);
+NOSTR_GTK_API const char *gnostr_note_embed_get_target_id(GnostrNoteEmbed *self);
 
 /**
  * gnostr_note_embed_is_profile:
@@ -140,7 +141,7 @@ const char *gnostr_note_embed_get_target_id(GnostrNoteEmbed *self);
  *
  * Returns: TRUE if this embed is a profile, FALSE if it's an event
  */
-gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self);
+NOSTR_GTK_API gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self);
 
 /**
  * gnostr_note_embed_set_cancellable:
@@ -152,7 +153,7 @@ gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self);
  * disposed, it cancels this cancellable, stopping all async
  * operations and preventing use-after-free in callbacks.
  */
-void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable);
+NOSTR_GTK_API void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable);
 
 /**
  * gnostr_note_embed_prepare_for_unbind:
@@ -166,7 +167,7 @@ void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *canc
  * the parent starts its own cleanup. This prevents crashes where async
  * callbacks try to access widget memory during disposal.
  */
-void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self);
+NOSTR_GTK_API void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self);
 
 G_END_DECLS
 

@@ -9,13 +9,14 @@
 #ifndef MARMOT_GOBJECT_MESSAGE_H
 #define MARMOT_GOBJECT_MESSAGE_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 #include "marmot-gobject-enums.h"
 
 G_BEGIN_DECLS
 
 #define MARMOT_GOBJECT_TYPE_MESSAGE (marmot_gobject_message_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectMessage, marmot_gobject_message, MARMOT_GOBJECT, MESSAGE, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectMessage, marmot_gobject_message, MARMOT_GOBJECT, MESSAGE, GObject)
 
 /**
  * MarmotGobjectMessage:
@@ -51,14 +52,14 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectMessage, marmot_gobject_message, MARMOT_GOBJEC
  *
  * Returns: (transfer full): a new #MarmotGobjectMessage
  */
-MarmotGobjectMessage *marmot_gobject_message_new_from_data(const gchar *event_id_hex,
+MARMOT_GOBJECT_API MarmotGobjectMessage *marmot_gobject_message_new_from_data(const gchar *event_id_hex,
                                                             const gchar *pubkey_hex,
                                                             const gchar *content,
                                                             guint kind,
                                                             gint64 created_at,
                                                             const gchar *mls_group_id_hex);
 
-MarmotGobjectMessage *marmot_gobject_message_new_from_data_full(const gchar *event_id_hex,
+MARMOT_GOBJECT_API MarmotGobjectMessage *marmot_gobject_message_new_from_data_full(const gchar *event_id_hex,
                                                                  const gchar *pubkey_hex,
                                                                  const gchar *content,
                                                                  guint kind,
@@ -71,16 +72,16 @@ MarmotGobjectMessage *marmot_gobject_message_new_from_data_full(const gchar *eve
 
 /* ── Property accessors ──────────────────────────────────────────── */
 
-const gchar *marmot_gobject_message_get_event_id(MarmotGobjectMessage *self);
-const gchar *marmot_gobject_message_get_pubkey(MarmotGobjectMessage *self);
-const gchar *marmot_gobject_message_get_content(MarmotGobjectMessage *self);
-guint        marmot_gobject_message_get_kind(MarmotGobjectMessage *self);
-gint64       marmot_gobject_message_get_created_at(MarmotGobjectMessage *self);
-gint64       marmot_gobject_message_get_processed_at(MarmotGobjectMessage *self);
-const gchar *marmot_gobject_message_get_mls_group_id(MarmotGobjectMessage *self);
-guint64      marmot_gobject_message_get_epoch(MarmotGobjectMessage *self);
-MarmotGobjectMessageState marmot_gobject_message_get_state(MarmotGobjectMessage *self);
-const gchar *marmot_gobject_message_get_event_json(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_message_get_event_id(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_message_get_pubkey(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_message_get_content(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API guint        marmot_gobject_message_get_kind(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API gint64       marmot_gobject_message_get_created_at(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API gint64       marmot_gobject_message_get_processed_at(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_message_get_mls_group_id(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API guint64      marmot_gobject_message_get_epoch(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API MarmotGobjectMessageState marmot_gobject_message_get_state(MarmotGobjectMessage *self);
+MARMOT_GOBJECT_API const gchar *marmot_gobject_message_get_event_json(MarmotGobjectMessage *self);
 
 G_END_DECLS
 

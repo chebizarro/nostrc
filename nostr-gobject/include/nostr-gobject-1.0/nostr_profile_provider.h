@@ -1,6 +1,7 @@
 #ifndef GNOSTR_PROFILE_PROVIDER_H
 #define GNOSTR_PROFILE_PROVIDER_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <glib-object.h>
 
@@ -39,10 +40,10 @@ typedef struct {
  * Parameters:
  *   cap: Maximum number of profiles to keep in LRU cache (0 = use env/default)
  */
-void gnostr_profile_provider_init(guint cap);
+NOSTR_GOBJECT_API void gnostr_profile_provider_init(guint cap);
 
 /* Shutdown and free all resources. Safe to call multiple times. */
-void gnostr_profile_provider_shutdown(void);
+NOSTR_GOBJECT_API void gnostr_profile_provider_shutdown(void);
 
 /* Get profile metadata for a pubkey (hex string).
  *
@@ -57,7 +58,7 @@ void gnostr_profile_provider_shutdown(void);
  *
  * This function is synchronous and fast (< 1ms typical).
  */
-GnostrProfileMeta *gnostr_profile_provider_get(const char *pubkey_hex);
+NOSTR_GOBJECT_API GnostrProfileMeta *gnostr_profile_provider_get(const char *pubkey_hex);
 
 /* Batch get profiles for multiple pubkeys.
  * More efficient than calling get() in a loop.
@@ -70,7 +71,7 @@ GnostrProfileMeta *gnostr_profile_provider_get(const char *pubkey_hex);
  *
  * Returns: 0 on success, -1 on error
  */
-int gnostr_profile_provider_get_batch(
+NOSTR_GOBJECT_API int gnostr_profile_provider_get_batch(
   const char **pubkeys,
   guint count,
   GnostrProfileMeta ***out_metas,
@@ -86,7 +87,7 @@ int gnostr_profile_provider_get_batch(
  *
  * Returns: 0 on success, -1 on error
  */
-int gnostr_profile_provider_update(const char *pubkey_hex, const char *profile_json);
+NOSTR_GOBJECT_API int gnostr_profile_provider_update(const char *pubkey_hex, const char *profile_json);
 
 /* Update a profile only if the incoming event is not older than the cached one.
  * This is the conflict-resolution entry point for kind-0 metadata events.
@@ -99,12 +100,12 @@ int gnostr_profile_provider_update(const char *pubkey_hex, const char *profile_j
  * Returns: TRUE if the profile was applied, FALSE if it was rejected as stale
  *          or could not be parsed.
  */
-gboolean gnostr_profile_provider_update_if_newer(const char *pubkey_hex,
+NOSTR_GOBJECT_API gboolean gnostr_profile_provider_update_if_newer(const char *pubkey_hex,
                                                  const char *profile_json,
                                                  gint64      created_at);
 
 /* Free a profile metadata struct */
-void gnostr_profile_meta_free(GnostrProfileMeta *meta);
+NOSTR_GOBJECT_API void gnostr_profile_meta_free(GnostrProfileMeta *meta);
 
 /* Get cache statistics for monitoring/logging */
 typedef struct {
@@ -116,8 +117,8 @@ typedef struct {
   guint64 db_misses;     /* DB misses (need relay fetch) */
 } GnostrProfileProviderStats;
 
-void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *stats);
-void gnostr_profile_provider_log_stats(void);
+NOSTR_GOBJECT_API void gnostr_profile_provider_get_stats(GnostrProfileProviderStats *stats);
+NOSTR_GOBJECT_API void gnostr_profile_provider_log_stats(void);
 
 /* Profile update watcher: get notified when a specific pubkey's profile is updated.
  * Callback is dispatched on the GLib main thread via g_idle_add.
@@ -133,11 +134,11 @@ typedef void (*GnostrProfileWatchCallback)(const char *pubkey_hex,
                                            const GnostrProfileMeta *meta,
                                            gpointer user_data);
 
-guint gnostr_profile_provider_watch(const char *pubkey_hex,
+NOSTR_GOBJECT_API guint gnostr_profile_provider_watch(const char *pubkey_hex,
                                     GnostrProfileWatchCallback callback,
                                     gpointer user_data);
 
-void gnostr_profile_provider_unwatch(guint watch_id);
+NOSTR_GOBJECT_API void gnostr_profile_provider_unwatch(guint watch_id);
 
 /**
  * GnostrFollowListProvider:
@@ -161,13 +162,13 @@ typedef gchar** (*GnostrFollowListProvider)(const gchar *pubkey_hex);
  * Call this once during app init, e.g.:
  *   gnostr_profile_provider_set_follow_list_provider(gnostr_follow_list_get_pubkeys_cached);
  */
-void gnostr_profile_provider_set_follow_list_provider(GnostrFollowListProvider provider);
+NOSTR_GOBJECT_API void gnostr_profile_provider_set_follow_list_provider(GnostrFollowListProvider provider);
 
 /* Pre-warm the LRU cache from NDB for a user and their follow list.
  * Runs asynchronously in a GTask worker thread.
  * Call after login when user_pubkey_hex is known.
  * If a follow-list provider has been set, it will also pre-warm follow-list profiles. */
-void gnostr_profile_provider_prewarm_async(const char *user_pubkey_hex);
+NOSTR_GOBJECT_API void gnostr_profile_provider_prewarm_async(const char *user_pubkey_hex);
 
 /* Pre-warm the LRU cache for a batch of pubkeys on a background
  * GTask thread. Called from timeline model after processing a batch of notes
@@ -179,7 +180,7 @@ void gnostr_profile_provider_prewarm_async(const char *user_pubkey_hex);
  * The array is copied internally; caller may free it after this call returns.
  * Duplicate pubkeys and pubkeys already in cache are skipped efficiently.
  */
-void gnostr_profile_provider_prefetch_batch_async(const char **pubkeys_hex);
+NOSTR_GOBJECT_API void gnostr_profile_provider_prefetch_batch_async(const char **pubkeys_hex);
 
 #ifdef __cplusplus
 }

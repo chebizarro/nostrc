@@ -11,6 +11,7 @@
 #define NOSTR_RELAY_TEST_HOOKS_H
 
 #include <glib.h>
+#include "nostr-gobject-export.h"
 
 G_BEGIN_DECLS
 
@@ -30,10 +31,10 @@ typedef enum {
 typedef void (*GNostrRelayTestHook)(GNostrRelayTestPoint point, gpointer hook_data);
 
 /* Installs @hook (NULL removes it) for every relay in the process. */
-void gnostr_relay_test_set_hook(GNostrRelayTestHook hook, gpointer hook_data);
+NOSTR_GOBJECT_API void gnostr_relay_test_set_hook(GNostrRelayTestHook hook, gpointer hook_data);
 
 /* Number of core-callback data blocks currently alive in the process. */
-gint gnostr_relay_test_live_callback_data(void);
+NOSTR_GOBJECT_API gint gnostr_relay_test_live_callback_data(void);
 
 G_END_DECLS
 

@@ -21,6 +21,7 @@
 #ifndef GNOSTR_NIP10_THREAD_MANAGER_H
 #define GNOSTR_NIP10_THREAD_MANAGER_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <stdbool.h>
 
@@ -70,7 +71,7 @@ typedef struct {
  *
  * Returns: TRUE on success, FALSE if parsing failed
  */
-gboolean gnostr_nip10_parse_thread(const char *event_json,
+NOSTR_GOBJECT_API gboolean gnostr_nip10_parse_thread(const char *event_json,
                                     GnostrNip10ThreadInfo *info);
 
 /**
@@ -83,7 +84,7 @@ gboolean gnostr_nip10_parse_thread(const char *event_json,
  *
  * Returns: TRUE if found in cache, FALSE if not cached
  */
-gboolean gnostr_nip10_lookup_cached(const char *event_id,
+NOSTR_GOBJECT_API gboolean gnostr_nip10_lookup_cached(const char *event_id,
                                      GnostrNip10ThreadInfo *info);
 
 /**
@@ -93,14 +94,14 @@ gboolean gnostr_nip10_lookup_cached(const char *event_id,
  * After this call, any GnostrNip10ThreadInfo string pointers
  * from previous parse/lookup calls are invalid.
  */
-void gnostr_nip10_cache_clear(void);
+NOSTR_GOBJECT_API void gnostr_nip10_cache_clear(void);
 
 /**
  * gnostr_nip10_cache_size:
  *
  * Returns: the number of entries in the cache
  */
-guint gnostr_nip10_cache_size(void);
+NOSTR_GOBJECT_API guint gnostr_nip10_cache_size(void);
 
 /**
  * gnostr_nip10_is_thread_reply:
@@ -111,7 +112,7 @@ guint gnostr_nip10_cache_size(void);
  *
  * Returns: TRUE if the event is a thread reply
  */
-gboolean gnostr_nip10_is_thread_reply(const char *event_json);
+NOSTR_GOBJECT_API gboolean gnostr_nip10_is_thread_reply(const char *event_json);
 
 /**
  * gnostr_nip10_get_thread_root:
@@ -123,7 +124,7 @@ gboolean gnostr_nip10_is_thread_reply(const char *event_json);
  * Returns: (transfer none) (nullable): the root event ID, or NULL.
  *          String is cache-owned, copy if needed.
  */
-const char *gnostr_nip10_get_thread_root(const char *event_json);
+NOSTR_GOBJECT_API const char *gnostr_nip10_get_thread_root(const char *event_json);
 
 G_END_DECLS
 

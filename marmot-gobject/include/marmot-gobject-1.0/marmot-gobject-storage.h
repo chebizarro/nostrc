@@ -14,6 +14,7 @@
 #ifndef MARMOT_GOBJECT_STORAGE_H
 #define MARMOT_GOBJECT_STORAGE_H
 
+#include "marmot-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 
@@ -24,7 +25,7 @@ G_BEGIN_DECLS
  * ══════════════════════════════════════════════════════════════════════════ */
 
 #define MARMOT_GOBJECT_TYPE_STORAGE (marmot_gobject_storage_get_type())
-G_DECLARE_INTERFACE(MarmotGobjectStorage, marmot_gobject_storage, MARMOT_GOBJECT, STORAGE, GObject)
+MARMOT_GOBJECT_API G_DECLARE_INTERFACE(MarmotGobjectStorage, marmot_gobject_storage, MARMOT_GOBJECT, STORAGE, GObject)
 
 /**
  * MarmotGobjectStorageInterface:
@@ -78,7 +79,7 @@ struct _MarmotGobjectStorageInterface {
  *
  * Returns: (transfer none): the underlying C MarmotStorage pointer
  */
-gpointer marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self);
+MARMOT_GOBJECT_API gpointer marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self);
 
 /**
  * marmot_gobject_storage_steal_raw_storage:
@@ -89,7 +90,7 @@ gpointer marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self);
  *
  * Returns: (transfer full): the underlying C MarmotStorage pointer
  */
-gpointer marmot_gobject_storage_steal_raw_storage(MarmotGobjectStorage *self);
+MARMOT_GOBJECT_API gpointer marmot_gobject_storage_steal_raw_storage(MarmotGobjectStorage *self);
 
 /**
  * marmot_gobject_storage_clear_raw_storage:
@@ -98,14 +99,14 @@ gpointer marmot_gobject_storage_steal_raw_storage(MarmotGobjectStorage *self);
  * Clear the internal storage pointer after ownership has been transferred
  * to a MarmotGobjectClient. Prevents double-free in the finalizer.
  */
-void marmot_gobject_storage_clear_raw_storage(MarmotGobjectStorage *self);
+MARMOT_GOBJECT_API void marmot_gobject_storage_clear_raw_storage(MarmotGobjectStorage *self);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MarmotGobjectMemoryStorage — in-memory implementation
  * ══════════════════════════════════════════════════════════════════════════ */
 
 #define MARMOT_GOBJECT_TYPE_MEMORY_STORAGE (marmot_gobject_memory_storage_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectMemoryStorage, marmot_gobject_memory_storage, MARMOT_GOBJECT, MEMORY_STORAGE, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectMemoryStorage, marmot_gobject_memory_storage, MARMOT_GOBJECT, MEMORY_STORAGE, GObject)
 
 /**
  * marmot_gobject_memory_storage_new:
@@ -115,14 +116,14 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectMemoryStorage, marmot_gobject_memory_storage, 
  *
  * Returns: (transfer full): a new #MarmotGobjectMemoryStorage
  */
-MarmotGobjectMemoryStorage *marmot_gobject_memory_storage_new(void);
+MARMOT_GOBJECT_API MarmotGobjectMemoryStorage *marmot_gobject_memory_storage_new(void);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MarmotGobjectSqliteStorage — SQLite implementation
  * ══════════════════════════════════════════════════════════════════════════ */
 
 #define MARMOT_GOBJECT_TYPE_SQLITE_STORAGE (marmot_gobject_sqlite_storage_get_type())
-G_DECLARE_FINAL_TYPE(MarmotGobjectSqliteStorage, marmot_gobject_sqlite_storage, MARMOT_GOBJECT, SQLITE_STORAGE, GObject)
+MARMOT_GOBJECT_API G_DECLARE_FINAL_TYPE(MarmotGobjectSqliteStorage, marmot_gobject_sqlite_storage, MARMOT_GOBJECT, SQLITE_STORAGE, GObject)
 
 /**
  * marmot_gobject_sqlite_storage_new:
@@ -134,7 +135,7 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectSqliteStorage, marmot_gobject_sqlite_storage, 
  *
  * Returns: (transfer full) (nullable): a new #MarmotGobjectSqliteStorage, or NULL on error
  */
-MarmotGobjectSqliteStorage *marmot_gobject_sqlite_storage_new(const gchar *path,
+MARMOT_GOBJECT_API MarmotGobjectSqliteStorage *marmot_gobject_sqlite_storage_new(const gchar *path,
                                                                 const gchar *encryption_key,
                                                                 GError **error);
 

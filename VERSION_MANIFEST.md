@@ -14,10 +14,10 @@ files already declare a version.
 | libnostr | `libnostr/` | 2.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.5.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
-| nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
+| nostr-gobject | `nostr-gobject/` | 3.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
-| marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
+| marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
@@ -137,6 +137,48 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase C: nostr-gtk MAJOR 1.2.0 -> 2.0.0 (SONAME 2 for
+  `libnostr-gtk-1.0` and `libnostr-gtk-portable-1.0`). Both DSOs are compiled
+  hidden-by-default with `NOSTR_GTK_API` / `NOSTR_GTK_PORTABLE_API` and
+  installed generated export headers; installed functions and GTypes stay
+  exported, while private-header helpers and template-internal types leave the
+  ELF export table. `nostr_gtk_media_image_cache_size()`, already exported for
+  telemetry compatibility, is now declared in `nostr-note-card-row.h`. When
+  nostr-gobject is static on ELF, the shared portable DSO takes it, the
+  NIP-19/34 codecs and libnostr from the executable, as Groundhog builds and
+  libnostr-json already do, instead of embedding hidden second copies (GType
+  registry, libnostr state); it can no longer be dlopen()ed by a process that
+  does not supply them. gnostr stays 0.2.0 (no
+  bump): it uses the declared binding-context and cache-size functions instead
+  of a private header and local externs, with no behavior change; the Groundhog
+  RPM file list follows portable SONAME 2. No tags or release-column changes.
+
+- nostrc-er4fz.10 phase C: marmot-gobject PATCH 1.5.0 -> 1.5.1 (SONAME
+  stays 1). It is compiled hidden-by-default with `MARMOT_GOBJECT_API` and an
+  installed generated `marmot-gobject-export.h`, but every symbol it exported
+  is declared API, so its ELF export set is unchanged: no ABI break. The
+  Marmot-1.0 GIR now finds the libmarmot headers and scans a loadable wrapper in
+  static builds, and its Meson build compiles against its own public headers
+  (nostrc-6s6bt): packaging/build corrections.
+
+- nostrc-hbysr: nostr-gobject's Meson build binds the renamed CMake core
+  artifacts (`libnostr.a`, `libnostr-json`, `libnostrgo.a`) and its archive
+  closure by explicit path in the selected tree (`-Dcmake_build_dir`), failing
+  visibly instead of resolving pre-rename names or system libraries. On Linux a
+  shared build follows the CMake executable-owned core policy. Build correction
+  folded into the unreleased nostr-gobject 3.0.0 above; no further bump.
+
+- nostrc-er4fz.10 phase C: nostr-gobject MAJOR 2.5.0 -> 3.0.0 (SONAME 3).
+  The library is compiled hidden-by-default. Declared functions, GTypes,
+  enum/flags type functions, error quarks and the generated signer proxy are
+  exported through `NOSTR_GOBJECT_API` from the installed generated
+  `nostr-gobject-export.h`; test seams stay limited to GNOSTR_TESTING builds.
+  Internal helpers and embedded NIP/nostrdb/LMDB/flatcc archive symbols leave
+  the ELF export table: an ABI break with unchanged declared signatures. No
+  consumer bump: gnostr's isolated tests and Grotto's Meson build add the
+  generated header path, with no shipped behavior change; the Groundhog and
+  Grotto RPM file lists follow SONAME 3. No tags or release-column changes.
 
 - nostrc-er4fz.10 phase B2 infrastructure: no independent component bump
   for the CMake visibility helper or NIP generators. OBJECT libraries use

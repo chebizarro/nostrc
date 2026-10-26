@@ -11,6 +11,7 @@
 #ifndef GNOSTR_SUBSCRIPTION_REGISTRY_H
 #define GNOSTR_SUBSCRIPTION_REGISTRY_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -85,7 +86,7 @@ typedef void (*NostrSubscriptionStateCallback)(GNostrSubscriptionRegistry *regis
 /* --- GObject Type Definition --- */
 
 #define GNOSTR_TYPE_SUBSCRIPTION_REGISTRY (gnostr_subscription_registry_get_type())
-G_DECLARE_DERIVABLE_TYPE(GNostrSubscriptionRegistry, gnostr_subscription_registry,
+NOSTR_GOBJECT_API G_DECLARE_DERIVABLE_TYPE(GNostrSubscriptionRegistry, gnostr_subscription_registry,
                          GNOSTR, SUBSCRIPTION_REGISTRY, GObject)
 
 /**
@@ -125,7 +126,7 @@ struct _GNostrSubscriptionRegistryClass {
  * Returns: (transfer none): The default #GNostrSubscriptionRegistry instance.
  *          Do not unref this instance.
  */
-GNostrSubscriptionRegistry *gnostr_subscription_registry_get_default(void);
+NOSTR_GOBJECT_API GNostrSubscriptionRegistry *gnostr_subscription_registry_get_default(void);
 
 /* --- Registration API --- */
 
@@ -140,7 +141,7 @@ GNostrSubscriptionRegistry *gnostr_subscription_registry_get_default(void);
  * Returns: (transfer full): A newly allocated subscription ID string.
  *          Free with g_free(). Returns %NULL on error.
  */
-gchar *gnostr_subscription_registry_register(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API gchar *gnostr_subscription_registry_register(GNostrSubscriptionRegistry *registry,
                                             GNostrSubscription *subscription);
 
 /**
@@ -155,7 +156,7 @@ gchar *gnostr_subscription_registry_register(GNostrSubscriptionRegistry *registr
  * Returns: (transfer full): A newly allocated subscription ID string.
  *          Free with g_free(). Returns %NULL on error.
  */
-gchar *gnostr_subscription_registry_register_with_group(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API gchar *gnostr_subscription_registry_register_with_group(GNostrSubscriptionRegistry *registry,
                                                        GNostrSubscription *subscription,
                                                        const gchar *group_name);
 
@@ -170,7 +171,7 @@ gchar *gnostr_subscription_registry_register_with_group(GNostrSubscriptionRegist
  * Returns: %TRUE if the subscription was found and unregistered,
  *          %FALSE if not found
  */
-gboolean gnostr_subscription_registry_unregister(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API gboolean gnostr_subscription_registry_unregister(GNostrSubscriptionRegistry *registry,
                                                  const gchar *sub_id);
 
 /* --- Lookup API --- */
@@ -185,7 +186,7 @@ gboolean gnostr_subscription_registry_unregister(GNostrSubscriptionRegistry *reg
  * Returns: (transfer none) (nullable): The #GNostrSubscription, or %NULL
  *          if not found. Do not unref.
  */
-GNostrSubscription *gnostr_subscription_registry_get_by_id(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API GNostrSubscription *gnostr_subscription_registry_get_by_id(GNostrSubscriptionRegistry *registry,
                                                           const gchar *sub_id);
 
 /**
@@ -196,7 +197,7 @@ GNostrSubscription *gnostr_subscription_registry_get_by_id(GNostrSubscriptionReg
  *
  * Returns: The count of active subscriptions
  */
-guint gnostr_subscription_registry_get_active_count(GNostrSubscriptionRegistry *registry);
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_get_active_count(GNostrSubscriptionRegistry *registry);
 
 /**
  * gnostr_subscription_registry_get_total_count:
@@ -206,7 +207,7 @@ guint gnostr_subscription_registry_get_active_count(GNostrSubscriptionRegistry *
  *
  * Returns: The total subscription count
  */
-guint gnostr_subscription_registry_get_total_count(GNostrSubscriptionRegistry *registry);
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_get_total_count(GNostrSubscriptionRegistry *registry);
 
 /* --- EOSE Handling --- */
 
@@ -219,7 +220,7 @@ guint gnostr_subscription_registry_get_total_count(GNostrSubscriptionRegistry *r
  * (End of Stored Events). For ephemeral subscriptions, this will
  * trigger automatic cleanup after the notification is processed.
  */
-void gnostr_subscription_registry_notify_eose(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_notify_eose(GNostrSubscriptionRegistry *registry,
                                               const gchar *sub_id);
 
 /* --- Relay Limits --- */
@@ -232,7 +233,7 @@ void gnostr_subscription_registry_notify_eose(GNostrSubscriptionRegistry *regist
  * Sets the maximum number of concurrent subscriptions allowed per relay.
  * When the limit is reached, new subscription attempts will be queued.
  */
-void gnostr_subscription_registry_set_max_per_relay(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_set_max_per_relay(GNostrSubscriptionRegistry *registry,
                                                     guint max_subscriptions);
 
 /**
@@ -243,7 +244,7 @@ void gnostr_subscription_registry_set_max_per_relay(GNostrSubscriptionRegistry *
  *
  * Returns: The maximum subscriptions per relay (0 means unlimited)
  */
-guint gnostr_subscription_registry_get_max_per_relay(GNostrSubscriptionRegistry *registry);
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_get_max_per_relay(GNostrSubscriptionRegistry *registry);
 
 /**
  * gnostr_subscription_registry_get_relay_subscription_count:
@@ -254,7 +255,7 @@ guint gnostr_subscription_registry_get_max_per_relay(GNostrSubscriptionRegistry 
  *
  * Returns: The subscription count for the relay
  */
-guint gnostr_subscription_registry_get_relay_subscription_count(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_get_relay_subscription_count(GNostrSubscriptionRegistry *registry,
                                                                 const gchar *relay_url);
 
 /* --- State Change Notifications --- */
@@ -270,7 +271,7 @@ guint gnostr_subscription_registry_get_relay_subscription_count(GNostrSubscripti
  *
  * Returns: A callback ID that can be used to remove the callback
  */
-guint gnostr_subscription_registry_add_state_callback(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_add_state_callback(GNostrSubscriptionRegistry *registry,
                                                       NostrSubscriptionStateCallback callback,
                                                       gpointer user_data,
                                                       GDestroyNotify destroy_notify);
@@ -282,7 +283,7 @@ guint gnostr_subscription_registry_add_state_callback(GNostrSubscriptionRegistry
  *
  * Removes a previously registered state change callback.
  */
-void gnostr_subscription_registry_remove_state_callback(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_remove_state_callback(GNostrSubscriptionRegistry *registry,
                                                         guint callback_id);
 
 /* --- Group Operations --- */
@@ -298,7 +299,7 @@ void gnostr_subscription_registry_remove_state_callback(GNostrSubscriptionRegist
  * Returns: (transfer none) (nullable): The created group, or %NULL if
  *          a group with that name already exists
  */
-NostrSubscriptionGroup *gnostr_subscription_registry_create_group(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API NostrSubscriptionGroup *gnostr_subscription_registry_create_group(GNostrSubscriptionRegistry *registry,
                                                                   const gchar *group_name);
 
 /**
@@ -311,7 +312,7 @@ NostrSubscriptionGroup *gnostr_subscription_registry_create_group(GNostrSubscrip
  * Returns: (transfer none) (nullable): The #NostrSubscriptionGroup,
  *          or %NULL if not found
  */
-NostrSubscriptionGroup *gnostr_subscription_registry_get_group(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API NostrSubscriptionGroup *gnostr_subscription_registry_get_group(GNostrSubscriptionRegistry *registry,
                                                                const gchar *group_name);
 
 /**
@@ -324,7 +325,7 @@ NostrSubscriptionGroup *gnostr_subscription_registry_get_group(GNostrSubscriptio
  *
  * Returns: The number of subscriptions that were closed
  */
-guint gnostr_subscription_registry_close_group(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_close_group(GNostrSubscriptionRegistry *registry,
                                                const gchar *group_name);
 
 /**
@@ -337,7 +338,7 @@ guint gnostr_subscription_registry_close_group(GNostrSubscriptionRegistry *regis
  *
  * Returns: %TRUE if successful, %FALSE if subscription or group not found
  */
-gboolean gnostr_subscription_registry_add_to_group(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API gboolean gnostr_subscription_registry_add_to_group(GNostrSubscriptionRegistry *registry,
                                                    const gchar *sub_id,
                                                    const gchar *group_name);
 
@@ -351,7 +352,7 @@ gboolean gnostr_subscription_registry_add_to_group(GNostrSubscriptionRegistry *r
  *
  * Returns: %TRUE if successful, %FALSE if not found in group
  */
-gboolean gnostr_subscription_registry_remove_from_group(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API gboolean gnostr_subscription_registry_remove_from_group(GNostrSubscriptionRegistry *registry,
                                                         const gchar *sub_id,
                                                         const gchar *group_name);
 
@@ -377,7 +378,7 @@ typedef void (*GNostrSubscriptionRegistryForeachFunc)(const gchar *sub_id,
  *
  * Iterates over all registered subscriptions.
  */
-void gnostr_subscription_registry_foreach(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_foreach(GNostrSubscriptionRegistry *registry,
                                           GNostrSubscriptionRegistryForeachFunc func,
                                           gpointer user_data);
 
@@ -389,7 +390,7 @@ void gnostr_subscription_registry_foreach(GNostrSubscriptionRegistry *registry,
  *
  * Iterates over only active (non-closed) subscriptions.
  */
-void gnostr_subscription_registry_foreach_active(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_foreach_active(GNostrSubscriptionRegistry *registry,
                                                  GNostrSubscriptionRegistryForeachFunc func,
                                                  gpointer user_data);
 
@@ -428,7 +429,7 @@ typedef struct {
  *
  * Retrieves current statistics for the subscription registry.
  */
-void gnostr_subscription_registry_get_stats(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_get_stats(GNostrSubscriptionRegistry *registry,
                                             GNostrSubscriptionRegistryStats *stats);
 
 /* --- Health Monitoring --- */
@@ -442,7 +443,7 @@ void gnostr_subscription_registry_get_stats(GNostrSubscriptionRegistry *registry
  * Only the first call per subscription updates the time-to-first-event
  * metric; subsequent calls are no-ops.
  */
-void gnostr_subscription_registry_notify_event(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_notify_event(GNostrSubscriptionRegistry *registry,
                                                const gchar *sub_id);
 
 /**
@@ -459,7 +460,7 @@ void gnostr_subscription_registry_notify_event(GNostrSubscriptionRegistry *regis
  * Only one monitor can be active at a time. Calling this while a monitor
  * is already running replaces it.
  */
-void gnostr_subscription_registry_start_health_monitor(GNostrSubscriptionRegistry *registry,
+NOSTR_GOBJECT_API void gnostr_subscription_registry_start_health_monitor(GNostrSubscriptionRegistry *registry,
                                                        guint check_interval_ms,
                                                        guint stuck_timeout_ms);
 
@@ -469,7 +470,7 @@ void gnostr_subscription_registry_start_health_monitor(GNostrSubscriptionRegistr
  *
  * Stops the periodic health monitor if one is running.
  */
-void gnostr_subscription_registry_stop_health_monitor(GNostrSubscriptionRegistry *registry);
+NOSTR_GOBJECT_API void gnostr_subscription_registry_stop_health_monitor(GNostrSubscriptionRegistry *registry);
 
 /* --- Cleanup --- */
 
@@ -481,7 +482,7 @@ void gnostr_subscription_registry_stop_health_monitor(GNostrSubscriptionRegistry
  *
  * Returns: The number of subscriptions that were closed
  */
-guint gnostr_subscription_registry_close_all(GNostrSubscriptionRegistry *registry);
+NOSTR_GOBJECT_API guint gnostr_subscription_registry_close_all(GNostrSubscriptionRegistry *registry);
 
 G_END_DECLS
 

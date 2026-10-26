@@ -1,13 +1,14 @@
 #ifndef NOSTR_GOBJECT_NOSTR_ERROR_H
 #define NOSTR_GOBJECT_NOSTR_ERROR_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 
 G_BEGIN_DECLS
 
 #define NOSTR_ERROR (nostr_error_quark())
 
-GQuark nostr_error_quark(void);
+NOSTR_GOBJECT_API GQuark nostr_error_quark(void);
 
 /**
  * NostrError:

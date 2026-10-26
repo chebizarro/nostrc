@@ -1,3 +1,5 @@
+option('cmake_build_dir', type: 'string', value: '',
+  description: 'Pre-built CMake tree for the libmarmot fallback (default: ../build)')
 option('introspection', type: 'boolean', value: true,
   description: 'Generate GObject Introspection data (GIR)')
 option('vapi', type: 'boolean', value: true,

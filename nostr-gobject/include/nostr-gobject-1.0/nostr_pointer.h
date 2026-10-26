@@ -1,6 +1,7 @@
 #ifndef GNOSTR_POINTER_H
 #define GNOSTR_POINTER_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -14,7 +15,7 @@ G_BEGIN_DECLS
  * Wraps the core NostrPointer tagged union and provides bech32 parse/encode.
  */
 #define GNOSTR_TYPE_POINTER (gnostr_pointer_get_type())
-G_DECLARE_FINAL_TYPE(GNostrPointer, gnostr_pointer, GNOSTR, POINTER, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrPointer, gnostr_pointer, GNOSTR, POINTER, GObject)
 
 /**
  * gnostr_pointer_new_from_bech32:
@@ -25,7 +26,7 @@ G_DECLARE_FINAL_TYPE(GNostrPointer, gnostr_pointer, GNOSTR, POINTER, GObject)
  *
  * Returns: (transfer full) (nullable): a new #GNostrPointer, or %NULL on error
  */
-GNostrPointer *gnostr_pointer_new_from_bech32(const gchar *bech32, GError **error);
+NOSTR_GOBJECT_API GNostrPointer *gnostr_pointer_new_from_bech32(const gchar *bech32, GError **error);
 
 /**
  * gnostr_pointer_to_bech32:
@@ -36,7 +37,7 @@ GNostrPointer *gnostr_pointer_new_from_bech32(const gchar *bech32, GError **erro
  *
  * Returns: (transfer full) (nullable): bech32 string, or %NULL on error
  */
-gchar *gnostr_pointer_to_bech32(GNostrPointer *self, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_pointer_to_bech32(GNostrPointer *self, GError **error);
 
 /**
  * gnostr_pointer_get_kind_name:
@@ -46,7 +47,7 @@ gchar *gnostr_pointer_to_bech32(GNostrPointer *self, GError **error);
  *
  * Returns: (transfer none): kind string
  */
-const gchar *gnostr_pointer_get_kind_name(GNostrPointer *self);
+NOSTR_GOBJECT_API const gchar *gnostr_pointer_get_kind_name(GNostrPointer *self);
 
 G_END_DECLS
 

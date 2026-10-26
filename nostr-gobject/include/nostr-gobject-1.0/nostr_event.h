@@ -1,6 +1,7 @@
 #ifndef GNOSTR_EVENT_H
 #define GNOSTR_EVENT_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-error.h"
 
@@ -9,7 +10,7 @@ G_BEGIN_DECLS
 /* Define GNostrEvent GObject wrapper */
 /* Prefixed with G to avoid clashing with core NostrEvent struct */
 #define GNOSTR_TYPE_EVENT (gnostr_event_get_type())
-G_DECLARE_FINAL_TYPE(GNostrEvent, gnostr_event, GNOSTR, EVENT, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrEvent, gnostr_event, GNOSTR, EVENT, GObject)
 
 /**
  * GNostrEvent:
@@ -42,7 +43,7 @@ G_DECLARE_FINAL_TYPE(GNostrEvent, gnostr_event, GNOSTR, EVENT, GObject)
  *
  * Returns: (transfer full): a new #GNostrEvent
  */
-GNostrEvent *gnostr_event_new(void);
+NOSTR_GOBJECT_API GNostrEvent *gnostr_event_new(void);
 
 /**
  * gnostr_event_new_from_json:
@@ -53,7 +54,7 @@ GNostrEvent *gnostr_event_new(void);
  *
  * Returns: (transfer full) (nullable): a new #GNostrEvent, or %NULL on error
  */
-GNostrEvent *gnostr_event_new_from_json(const gchar *json, GError **error);
+NOSTR_GOBJECT_API GNostrEvent *gnostr_event_new_from_json(const gchar *json, GError **error);
 
 /**
  * gnostr_event_to_json:
@@ -63,7 +64,7 @@ GNostrEvent *gnostr_event_new_from_json(const gchar *json, GError **error);
  *
  * Returns: (transfer full): a newly allocated JSON string
  */
-gchar *gnostr_event_to_json(GNostrEvent *self);
+NOSTR_GOBJECT_API gchar *gnostr_event_to_json(GNostrEvent *self);
 
 /**
  * gnostr_event_sign:
@@ -77,7 +78,7 @@ gchar *gnostr_event_to_json(GNostrEvent *self);
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_event_sign(GNostrEvent *self, const gchar *privkey, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_event_sign(GNostrEvent *self, const gchar *privkey, GError **error);
 
 /**
  * gnostr_event_verify:
@@ -89,7 +90,7 @@ gboolean gnostr_event_sign(GNostrEvent *self, const gchar *privkey, GError **err
  *
  * Returns: %TRUE if signature is valid, %FALSE otherwise
  */
-gboolean gnostr_event_verify(GNostrEvent *self, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_event_verify(GNostrEvent *self, GError **error);
 
 /* Property accessors */
 
@@ -101,7 +102,7 @@ gboolean gnostr_event_verify(GNostrEvent *self, GError **error);
  *
  * Returns: (transfer none) (nullable): the event ID
  */
-const gchar *gnostr_event_get_id(GNostrEvent *self);
+NOSTR_GOBJECT_API const gchar *gnostr_event_get_id(GNostrEvent *self);
 
 /**
  * gnostr_event_get_pubkey:
@@ -111,7 +112,7 @@ const gchar *gnostr_event_get_id(GNostrEvent *self);
  *
  * Returns: (transfer none) (nullable): the public key
  */
-const gchar *gnostr_event_get_pubkey(GNostrEvent *self);
+NOSTR_GOBJECT_API const gchar *gnostr_event_get_pubkey(GNostrEvent *self);
 
 /**
  * gnostr_event_get_created_at:
@@ -121,7 +122,7 @@ const gchar *gnostr_event_get_pubkey(GNostrEvent *self);
  *
  * Returns: Unix timestamp
  */
-gint64 gnostr_event_get_created_at(GNostrEvent *self);
+NOSTR_GOBJECT_API gint64 gnostr_event_get_created_at(GNostrEvent *self);
 
 /**
  * gnostr_event_set_created_at:
@@ -130,7 +131,7 @@ gint64 gnostr_event_get_created_at(GNostrEvent *self);
  *
  * Sets the creation timestamp.
  */
-void gnostr_event_set_created_at(GNostrEvent *self, gint64 created_at);
+NOSTR_GOBJECT_API void gnostr_event_set_created_at(GNostrEvent *self, gint64 created_at);
 
 /**
  * gnostr_event_get_kind:
@@ -140,7 +141,7 @@ void gnostr_event_set_created_at(GNostrEvent *self, gint64 created_at);
  *
  * Returns: the event kind
  */
-guint gnostr_event_get_kind(GNostrEvent *self);
+NOSTR_GOBJECT_API guint gnostr_event_get_kind(GNostrEvent *self);
 
 /**
  * gnostr_event_set_kind:
@@ -149,7 +150,7 @@ guint gnostr_event_get_kind(GNostrEvent *self);
  *
  * Sets the event kind.
  */
-void gnostr_event_set_kind(GNostrEvent *self, guint kind);
+NOSTR_GOBJECT_API void gnostr_event_set_kind(GNostrEvent *self, guint kind);
 
 /**
  * gnostr_event_get_content:
@@ -159,7 +160,7 @@ void gnostr_event_set_kind(GNostrEvent *self, guint kind);
  *
  * Returns: (transfer none) (nullable): the content string
  */
-const gchar *gnostr_event_get_content(GNostrEvent *self);
+NOSTR_GOBJECT_API const gchar *gnostr_event_get_content(GNostrEvent *self);
 
 /**
  * gnostr_event_set_content:
@@ -168,7 +169,7 @@ const gchar *gnostr_event_get_content(GNostrEvent *self);
  *
  * Sets the event content.
  */
-void gnostr_event_set_content(GNostrEvent *self, const gchar *content);
+NOSTR_GOBJECT_API void gnostr_event_set_content(GNostrEvent *self, const gchar *content);
 
 /**
  * gnostr_event_get_sig:
@@ -178,7 +179,7 @@ void gnostr_event_set_content(GNostrEvent *self, const gchar *content);
  *
  * Returns: (transfer none) (nullable): the signature
  */
-const gchar *gnostr_event_get_sig(GNostrEvent *self);
+NOSTR_GOBJECT_API const gchar *gnostr_event_get_sig(GNostrEvent *self);
 
 /**
  * gnostr_event_get_tags:
@@ -189,7 +190,7 @@ const gchar *gnostr_event_get_sig(GNostrEvent *self);
  *
  * Returns: (transfer none) (nullable) (type gpointer): internal tags pointer
  */
-gpointer gnostr_event_get_tags(GNostrEvent *self);
+NOSTR_GOBJECT_API gpointer gnostr_event_get_tags(GNostrEvent *self);
 
 /**
  * gnostr_event_set_tags:
@@ -198,7 +199,7 @@ gpointer gnostr_event_get_tags(GNostrEvent *self);
  *
  * Sets the event tags. Takes ownership of the provided tags.
  */
-void gnostr_event_set_tags(GNostrEvent *self, gpointer tags);
+NOSTR_GOBJECT_API void gnostr_event_set_tags(GNostrEvent *self, gpointer tags);
 
 /* Note: G_DECLARE_FINAL_TYPE already defines autoptr cleanup for GObject subclasses */
 

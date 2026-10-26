@@ -11,6 +11,7 @@
 #ifndef GN_NIP34_ISSUE_H
 #define GN_NIP34_ISSUE_H
 
+#include "nostr-gtk-portable-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -35,7 +36,7 @@ typedef struct {
   gchar *related_commits; /* full commit object IDs, body text only */
   gchar *attachment_urls; /* manual web references; never fetched */
 } GnNip34IssueFieldsSnapshot;
-void gn_nip34_issue_fields_snapshot_free(GnNip34IssueFieldsSnapshot *snapshot);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_fields_snapshot_free(GnNip34IssueFieldsSnapshot *snapshot);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnNip34IssueFieldsSnapshot, gn_nip34_issue_fields_snapshot_free)
 
 /* ---- Target repository (kind 30617 announcement address) ---- */
@@ -48,19 +49,19 @@ typedef struct {
 } GnIssueTarget;
 
 #define GN_TYPE_ISSUE_TARGET (gn_issue_target_get_type())
-GType gn_issue_target_get_type(void);
-GnIssueTarget *gn_issue_target_new(const gchar *owner_hex, const gchar *repo_id,
+NOSTR_GTK_PORTABLE_API GType gn_issue_target_get_type(void);
+NOSTR_GTK_PORTABLE_API GnIssueTarget *gn_issue_target_new(const gchar *owner_hex, const gchar *repo_id,
                                    const gchar *const *maintainers,
                                    const gchar *const *relays);
-GnIssueTarget *gn_issue_target_copy(const GnIssueTarget *target);
-void gn_issue_target_free(GnIssueTarget *target);
-gboolean gn_issue_target_equal(const GnIssueTarget *a, const GnIssueTarget *b);
+NOSTR_GTK_PORTABLE_API GnIssueTarget *gn_issue_target_copy(const GnIssueTarget *target);
+NOSTR_GTK_PORTABLE_API void gn_issue_target_free(GnIssueTarget *target);
+NOSTR_GTK_PORTABLE_API gboolean gn_issue_target_equal(const GnIssueTarget *a, const GnIssueTarget *b);
 /* "30617:<owner_hex>:<repo_id>" */
-gchar *gn_issue_target_get_address(const GnIssueTarget *target);
+NOSTR_GTK_PORTABLE_API gchar *gn_issue_target_get_address(const GnIssueTarget *target);
 /* Parses kind-30617 announcements (compact event JSON). Only events authored
  * by hint->owner_hex with d tag hint->repo_id count; the newest created_at
  * wins. Returns NULL when none match. n_events < 0: events is NULL-terminated. */
-GnIssueTarget *gn_issue_target_from_announcements(const GnIssueTarget *hint,
+NOSTR_GTK_PORTABLE_API GnIssueTarget *gn_issue_target_from_announcements(const GnIssueTarget *hint,
                                                   const gchar *const *events,
                                                   gssize n_events);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnIssueTarget, gn_issue_target_free)
@@ -93,31 +94,31 @@ typedef struct {
 } GnIssueDraft;
 
 #define GN_TYPE_ISSUE_DRAFT (gn_issue_draft_get_type())
-GType gn_issue_draft_get_type(void);
-GnIssueDraft *gn_issue_draft_new(const GnIssueDraftInput *input, GError **error);
-GnIssueDraft *gn_issue_draft_copy(const GnIssueDraft *draft);
-void gn_issue_draft_free(GnIssueDraft *draft);
-gboolean gn_issue_draft_equal(const GnIssueDraft *a, const GnIssueDraft *b);
+NOSTR_GTK_PORTABLE_API GType gn_issue_draft_get_type(void);
+NOSTR_GTK_PORTABLE_API GnIssueDraft *gn_issue_draft_new(const GnIssueDraftInput *input, GError **error);
+NOSTR_GTK_PORTABLE_API GnIssueDraft *gn_issue_draft_copy(const GnIssueDraft *draft);
+NOSTR_GTK_PORTABLE_API void gn_issue_draft_free(GnIssueDraft *draft);
+NOSTR_GTK_PORTABLE_API gboolean gn_issue_draft_equal(const GnIssueDraft *a, const GnIssueDraft *b);
 /* Unsigned kind-1621 event from nip34_create_issue(): a, p (owner and
  * maintainers), subject, alt, t and NIP-32 l tags. pubkey is nullable. */
-NostrEvent *gn_issue_draft_build_event(const GnIssueDraft *draft,
+NOSTR_GTK_PORTABLE_API NostrEvent *gn_issue_draft_build_event(const GnIssueDraft *draft,
                                        const GnIssueTarget *target,
                                        const gchar *pubkey);
-gchar *gn_issue_draft_to_unsigned_json(const GnIssueDraft *draft,
+NOSTR_GTK_PORTABLE_API gchar *gn_issue_draft_to_unsigned_json(const GnIssueDraft *draft,
                                        const GnIssueTarget *target,
                                        const gchar *pubkey);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnIssueDraft, gn_issue_draft_free)
 
 /* Unsigned kind-1630 (open) status for a published issue. p tags: owner,
  * maintainers and pubkey (nullable), de-duplicated. */
-NostrEvent *gn_issue_build_open_status(const gchar *issue_id,
+NOSTR_GTK_PORTABLE_API NostrEvent *gn_issue_build_open_status(const gchar *issue_id,
                                        const GnIssueTarget *target,
                                        const gchar *pubkey);
 
 /* Default relay rule for issue publication: a wss:// URL with a host and no
  * user name or password. Returns the trimmed URL, or NULL with
  * G_IO_ERROR_INVALID_DATA. */
-gchar *gn_issue_normalize_relay_url(const gchar *url, GError **error);
+NOSTR_GTK_PORTABLE_API gchar *gn_issue_normalize_relay_url(const gchar *url, GError **error);
 
 G_END_DECLS
 #endif /* GN_NIP34_ISSUE_H */

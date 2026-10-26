@@ -11,6 +11,7 @@
 #ifndef NOSTR_GTK_ERROR_H
 #define NOSTR_GTK_ERROR_H
 
+#include "nostr-gtk-portable-export.h"
 #include <glib.h>
 
 G_BEGIN_DECLS
@@ -24,7 +25,7 @@ G_BEGIN_DECLS
  */
 #define NOSTR_GTK_ERROR (nostr_gtk_error_quark())
 
-GQuark nostr_gtk_error_quark(void);
+NOSTR_GTK_PORTABLE_API GQuark nostr_gtk_error_quark(void);
 
 /**
  * NostrGtkError:

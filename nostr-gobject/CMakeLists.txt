@@ -13,8 +13,8 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 
 # ── Version metadata ─────────────────────────────────────────────────
-set(NOSTR_GOBJECT_MAJOR_VERSION 2)
-set(NOSTR_GOBJECT_MINOR_VERSION 5)
+set(NOSTR_GOBJECT_MAJOR_VERSION 3)
+set(NOSTR_GOBJECT_MINOR_VERSION 0)
 set(NOSTR_GOBJECT_MICRO_VERSION 0)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
@@ -67,6 +67,8 @@ add_custom_command(
   COMMAND ${GDBUS_CODEGEN}
           --generate-c-code ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy
           --c-namespace Nostr
+          --symbol-decorator NOSTR_GOBJECT_API
+          --symbol-decorator-header nostr-gobject-export.h
           ${SIGNER_DBUS_XML}
   DEPENDS ${SIGNER_DBUS_XML}
   COMMENT "Generating D-Bus signer proxy from org.nostr.Signer.xml"
@@ -173,6 +175,10 @@ if(NOSTR_GOBJECT_BUILD_SHARED)
 else()
   add_library(nostr_gobject ${NOSTR_GOBJECT_SOURCES})
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(nostr_gobject NOSTR_GOBJECT_API
+  nostr-gobject-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0")
 
 # Enable main-thread NDB transaction violation detection for test builds.
 # This adds lightweight instrumentation to storage_ndb_begin_query() that
@@ -377,6 +383,7 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           --pkg glib-2.0 --pkg gobject-2.0 --pkg gio-2.0
           -I ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0
           -I ${CMAKE_CURRENT_BINARY_DIR}
+          -I ${CMAKE_CURRENT_BINARY_DIR}/include
           -I ${CMAKE_SOURCE_DIR}/libnostr/include
           -I ${CMAKE_BINARY_DIR}/libnostr/generated
           -I ${CMAKE_BINARY_DIR}/libnostr/include

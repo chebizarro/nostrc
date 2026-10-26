@@ -1,6 +1,7 @@
 #ifndef GNOSTR_NDB_SUB_DISPATCHER_H
 #define GNOSTR_NDB_SUB_DISPATCHER_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <stdint.h>
 
@@ -15,19 +16,19 @@ typedef void (*GNostrNdbSubBatchFn)(
 
 /* Initialize the dispatcher and register callback with storage_ndb.
  * MUST be called before storage_ndb_init() for notifications to work. */
-void gn_ndb_dispatcher_init(void);
+NOSTR_GOBJECT_API void gn_ndb_dispatcher_init(void);
 
-uint64_t gn_ndb_subscribe(
+NOSTR_GOBJECT_API uint64_t gn_ndb_subscribe(
   const char *filter_json,
   GNostrNdbSubBatchFn cb,
   gpointer user_data,
   GDestroyNotify destroy
 );
 
-void gn_ndb_unsubscribe(uint64_t subid);
+NOSTR_GOBJECT_API void gn_ndb_unsubscribe(uint64_t subid);
 
 /* nostrc-8mb8.2: Return the number of active NDB subscriptions (diagnostics). */
-guint gn_ndb_get_active_subscription_count(void);
+NOSTR_GOBJECT_API guint gn_ndb_get_active_subscription_count(void);
 
 G_END_DECLS
 

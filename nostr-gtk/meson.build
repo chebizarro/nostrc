@@ -1,5 +1,5 @@
 project('nostr-gtk', 'c',
-  version: '1.2.0',
+  version: '2.0.0',
   license: 'GPL-3.0-or-later',
   meson_version: '>= 1.2.0',
   default_options: [
@@ -9,6 +9,17 @@ project('nostr-gtk', 'c',
   ])
 
 cc = meson.get_compiler('c')
+foreach export : [['NOSTR_GTK_API', 'nostr_gtk', 'nostr-gtk-export.h'],
+                  ['NOSTR_GTK_PORTABLE_API', 'nostr_gtk_portable', 'nostr-gtk-portable-export.h']]
+  export_conf = configuration_data()
+  export_conf.set('API', export[0])
+  export_conf.set('STATIC', get_option('default_library') == 'static' ? 1 : 0)
+  export_conf.set('STATIC_DEFINE', export[1].to_upper() + '_STATIC_DEFINE')
+  export_conf.set('EXPORTS', export[1] + '_EXPORTS')
+  configure_file(input: '../cmake/meson-export.h.in',
+    output: export[2], configuration: export_conf,
+    install_dir: get_option('includedir') / 'nostr-gtk-1.0')
+endforeach
 
 # ── Dependencies ─────────────────────────────────────────────────────
 glib_dep    = dependency('glib-2.0',    version: '>= 2.70')
@@ -21,7 +32,10 @@ soup3_dep   = dependency('libsoup-3.0', required: false)
 libxml2_dep = dependency('libxml-2.0') # shared Open Graph parser (nostrc-8xfib.3)
 
 # nostr-gobject-1.0 (sibling library, pre-built)
-cmake_build_dir = meson.current_source_dir() / '..' / 'build'
+cmake_build_dir = get_option('cmake_build_dir')
+if cmake_build_dir == ''
+  cmake_build_dir = meson.current_source_dir() / '..' / 'build'
+endif
 
 nostr_gobject_wrapper = cc.find_library('nostr_gobject_shared',
   dirs: [cmake_build_dir / 'nostr-gobject'],
@@ -32,7 +46,7 @@ if not (get_option('introspection') and nostr_gobject_wrapper.found())
     dirs: [cmake_build_dir / 'nostr-gobject'],
     required: true)
 endif
-nostr_gobject_inc = include_directories('../nostr-gobject/include')
+nostr_gobject_inc = include_directories('../nostr-gobject/include', cmake_build_dir / 'nostr-gobject/include')
 nostr_gobject_dep = declare_dependency(
   dependencies: nostr_gobject_lib,
   include_directories: nostr_gobject_inc)
@@ -92,6 +106,7 @@ nostr_gtk_core_sources = files(
   'src/nostr-gtk-init.c',
   'src/gnostr-composer.c',
   'src/gnostr-card-visibility-policy.c',
+  'src/gnostr-nip05.c',
   'src/note-card-binding-ctx.c',
   'src/note-card-data.c',
   'src/gn-timeline-tabs.c',
@@ -163,6 +178,7 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/gnostr-note-embed.h',
   'include/nostr-gtk-1.0/gnostr-profile-pane.h',
   'include/nostr-gtk-1.0/gnostr-card-visibility-policy.h',
+  'include/nostr-gtk-1.0/gnostr-nip05.h',
   'include/nostr-gtk-1.0/nostr-note-card-row.h',
   'include/nostr-gtk-1.0/gn-timeline-tabs.h',
   'include/nostr-gtk-1.0/gnostr-timeline-view.h',
@@ -192,17 +208,29 @@ nostr_gtk_inc = include_directories('include/nostr-gtk-1.0')
 nostr_gtk_pub_inc = include_directories('include')
 
 # Repository library headers used by the implementation.
-nostr_gtk_repo_inc = include_directories(
+nostr_gtk_repo_inc = [include_directories(
   '../libnostr/include',
-  '../libnostr/generated',
+  cmake_build_dir / 'libnostr/generated',
+  cmake_build_dir / 'libnostr/include',
+  cmake_build_dir / 'libjson/include',
   '../libgo/include',
+  cmake_build_dir / 'libgo/include',
   '../third_party/nostrdb/src',
   '../third_party/nostrdb/ccan',
   '../nips/nip19/include',
   '../nips/nip34/include',
   '../nips/nip10/include',
   '../nips/nip25/include',
-)
+)]
+
+# NIP export headers are generated only for NIPs enabled in the CMake tree.
+fs = import('fs')
+foreach nip : ['nip19', 'nip34', 'nip10', 'nip25']
+  generated = cmake_build_dir / 'nips' / nip / 'include'
+  if fs.is_dir(generated)
+    nostr_gtk_repo_inc += [include_directories(generated)]
+  endif
+endforeach
 
 # Transitional: apps/gnostr private headers, visible to the coupled sources only.
 nostr_gtk_app_inc = include_directories(
@@ -257,8 +285,10 @@ nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
                  json_glib_dep, libxml2_dep, nostr_gobject_dep, nip19_lib, nip34_lib,
                  nostrdb_storage_lib, nostrdb_vendored_lib, nostrdb_lib,
                  nostr_lib],
-  link_args: nostr_gtk_link_args,
-  c_args: ['-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
+  version: meson.project_version(), soversion: '2',
+  gnu_symbol_visibility: 'hidden',
+  link_args: nostr_gtk_link_args + cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
+  c_args: ['-Dnostr_gtk_portable_EXPORTS', '-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
            '-DNOSTR_GTK_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir')),
            '-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6',
            '-DGTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
@@ -266,7 +296,7 @@ nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
   install: true)
 nostr_gtk_portable_dep = declare_dependency(
   link_with: nostr_gtk_portable_lib,
-  include_directories: nostr_gtk_pub_inc,
+  include_directories: [nostr_gtk_pub_inc, include_directories('.')],
   dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep])
 
 nostr_gtk_gnostr_coupled = static_library('nostr-gtk-gnostr-coupled',
@@ -274,23 +304,27 @@ nostr_gtk_gnostr_coupled = static_library('nostr-gtk-gnostr-coupled',
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc,
                         nostr_gtk_app_inc],
   dependencies: nostr_gtk_deps,
-  c_args: nostr_gtk_compile_args,
+  gnu_symbol_visibility: 'hidden',
+  c_args: nostr_gtk_compile_args + ['-Dnostr_gtk_EXPORTS'],
   pic: true,
   install: false)
 
 nostr_gtk_lib = library('nostr-gtk-1.0',
   nostr_gtk_core_sources + nostr_gtk_resources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
-  link_whole: nostr_gtk_gnostr_coupled,
+  # These are our public widget definitions, not embedded dependency archives.
+  objects: nostr_gtk_gnostr_coupled.extract_all_objects(recursive: false),
   dependencies: nostr_gtk_deps + [nostr_gtk_portable_dep],
-  c_args: nostr_gtk_compile_args,
-  link_args: nostr_gtk_link_args,
+  version: meson.project_version(), soversion: '2',
+  gnu_symbol_visibility: 'hidden',
+  c_args: nostr_gtk_compile_args + ['-Dnostr_gtk_EXPORTS'],
+  link_args: nostr_gtk_link_args + cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────
 nostr_gtk_dep = declare_dependency(
   link_with: nostr_gtk_lib,
-  include_directories: nostr_gtk_pub_inc,
+  include_directories: [nostr_gtk_pub_inc, include_directories('.')],
   dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep, nostr_gtk_portable_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────

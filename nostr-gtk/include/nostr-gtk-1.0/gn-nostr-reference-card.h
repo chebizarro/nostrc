@@ -12,6 +12,7 @@
 #ifndef GN_NOSTR_REFERENCE_CARD_H
 #define GN_NOSTR_REFERENCE_CARD_H
 
+#include "nostr-gtk-portable-export.h"
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-nostr-reference-resolver.h>
 
@@ -32,40 +33,40 @@ typedef enum {
 } GnNostrReferenceCardState;
 
 #define GN_TYPE_NOSTR_REFERENCE_CARD (gn_nostr_reference_card_get_type())
-G_DECLARE_FINAL_TYPE(GnNostrReferenceCard, gn_nostr_reference_card, GN, NOSTR_REFERENCE_CARD, GtkBox)
+NOSTR_GTK_PORTABLE_API G_DECLARE_FINAL_TYPE(GnNostrReferenceCard, gn_nostr_reference_card, GN, NOSTR_REFERENCE_CARD, GtkBox)
 
-GtkWidget *gn_nostr_reference_card_new(void);
+NOSTR_GTK_PORTABLE_API GtkWidget *gn_nostr_reference_card_new(void);
 
 /* The resolver used for local lookup, author names and fetching (may be NULL:
  * the card then stays inert unless an embedded original verified). */
-void gn_nostr_reference_card_set_resolver(GnNostrReferenceCard *self,
+NOSTR_GTK_PORTABLE_API void gn_nostr_reference_card_set_resolver(GnNostrReferenceCard *self,
                                           GnNostrReferenceResolver *resolver);
 /* Points the card at @target (copied). @verified_json is an embedded original
  * (a kind-6 content), shown only if it verifies and matches. NULL clears. */
-void gn_nostr_reference_card_set_reference(GnNostrReferenceCard *self,
+NOSTR_GTK_PORTABLE_API void gn_nostr_reference_card_set_reference(GnNostrReferenceCard *self,
                                            const GnNostrReference *target,
                                            GnNostrReferenceCardRole role,
                                            const gchar *verified_json);
 /* set_reference() from a parsed repost/quote descriptor. */
-void gn_nostr_reference_card_set_descriptor(GnNostrReferenceCard *self,
+NOSTR_GTK_PORTABLE_API void gn_nostr_reference_card_set_descriptor(GnNostrReferenceCard *self,
                                             const GnNostrRepostDescriptor *descriptor);
 /* An application-side cached preview (e.g. gnostr's timeline view model):
  * shows @author_name/@content as RESOLVED without a lookup. */
-void gn_nostr_reference_card_set_preview(GnNostrReferenceCard *self,
+NOSTR_GTK_PORTABLE_API void gn_nostr_reference_card_set_preview(GnNostrReferenceCard *self,
                                          const gchar *author_name,
                                          const gchar *content);
 /* Explicit fetch through the resolver. FALSE when nothing was started
  * (no reference, already resolved/fetching, or the resolver cannot fetch). */
-gboolean gn_nostr_reference_card_fetch(GnNostrReferenceCard *self);
+NOSTR_GTK_PORTABLE_API gboolean gn_nostr_reference_card_fetch(GnNostrReferenceCard *self);
 
-GnNostrReferenceCardState gn_nostr_reference_card_get_state(GnNostrReferenceCard *self);
-const GnNostrReference *gn_nostr_reference_card_get_reference(GnNostrReferenceCard *self);
+NOSTR_GTK_PORTABLE_API GnNostrReferenceCardState gn_nostr_reference_card_get_state(GnNostrReferenceCard *self);
+NOSTR_GTK_PORTABLE_API const GnNostrReference *gn_nostr_reference_card_get_reference(GnNostrReferenceCard *self);
 /* The verified note, when RESOLVED from an event (not a preview). */
-const GnNostrResolvedNote *gn_nostr_reference_card_get_note(GnNostrReferenceCard *self);
+NOSTR_GTK_PORTABLE_API const GnNostrResolvedNote *gn_nostr_reference_card_get_note(GnNostrReferenceCard *self);
 
 /* The translated one-line description of an unresolved reference, e.g.
  * "Quoted Nostr note: 0123456789ab". */
-gchar *gn_nostr_reference_dup_summary(const GnNostrReference *reference,
+NOSTR_GTK_PORTABLE_API gchar *gn_nostr_reference_dup_summary(const GnNostrReference *reference,
                                       GnNostrReferenceCardRole role);
 
 G_END_DECLS

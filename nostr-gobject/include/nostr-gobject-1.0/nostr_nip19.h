@@ -1,6 +1,7 @@
 #ifndef GNOSTR_NIP19_H
 #define GNOSTR_NIP19_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-error.h"
 
@@ -31,7 +32,7 @@ typedef enum {
   GNOSTR_BECH32_NRELAY
 } GNostrBech32Type;
 
-GType gnostr_bech32_type_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GType gnostr_bech32_type_get_type(void) G_GNUC_CONST;
 #define GNOSTR_TYPE_BECH32_TYPE (gnostr_bech32_type_get_type())
 
 /**
@@ -57,7 +58,7 @@ GType gnostr_bech32_type_get_type(void) G_GNUC_CONST;
  * Since: 0.1
  */
 #define GNOSTR_TYPE_NIP19 (gnostr_nip19_get_type())
-G_DECLARE_FINAL_TYPE(GNostrNip19, gnostr_nip19, GNOSTR, NIP19, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrNip19, gnostr_nip19, GNOSTR, NIP19, GObject)
 
 /* ── Decode constructor ──────────────────────────────────────────── */
 
@@ -71,7 +72,7 @@ G_DECLARE_FINAL_TYPE(GNostrNip19, gnostr_nip19, GNOSTR, NIP19, GObject)
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_decode(const gchar *bech32, GError **error);
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_decode(const gchar *bech32, GError **error);
 
 /* ── Encode constructors ─────────────────────────────────────────── */
 
@@ -84,7 +85,7 @@ GNostrNip19 *gnostr_nip19_decode(const gchar *bech32, GError **error);
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_npub(const gchar *pubkey_hex, GError **error);
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_npub(const gchar *pubkey_hex, GError **error);
 
 /**
  * gnostr_nip19_encode_nsec:
@@ -95,7 +96,7 @@ GNostrNip19 *gnostr_nip19_encode_npub(const gchar *pubkey_hex, GError **error);
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_nsec(const gchar *seckey_hex, GError **error);
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_nsec(const gchar *seckey_hex, GError **error);
 
 /**
  * gnostr_nip19_encode_note:
@@ -106,7 +107,7 @@ GNostrNip19 *gnostr_nip19_encode_nsec(const gchar *seckey_hex, GError **error);
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_note(const gchar *event_id_hex, GError **error);
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_note(const gchar *event_id_hex, GError **error);
 
 /**
  * gnostr_nip19_encode_nprofile:
@@ -118,7 +119,7 @@ GNostrNip19 *gnostr_nip19_encode_note(const gchar *event_id_hex, GError **error)
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_nprofile(const gchar *pubkey_hex,
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_nprofile(const gchar *pubkey_hex,
                                            const gchar *const *relays,
                                            GError **error);
 
@@ -134,7 +135,7 @@ GNostrNip19 *gnostr_nip19_encode_nprofile(const gchar *pubkey_hex,
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_nevent(const gchar *event_id_hex,
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_nevent(const gchar *event_id_hex,
                                          const gchar *const *relays,
                                          const gchar *author_hex,
                                          gint kind,
@@ -152,7 +153,7 @@ GNostrNip19 *gnostr_nip19_encode_nevent(const gchar *event_id_hex,
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_naddr(const gchar *identifier,
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_naddr(const gchar *identifier,
                                         const gchar *author_hex,
                                         gint kind,
                                         const gchar *const *relays,
@@ -167,7 +168,7 @@ GNostrNip19 *gnostr_nip19_encode_naddr(const gchar *identifier,
  *
  * Returns: (transfer full) (nullable): a new #GNostrNip19, or %NULL on error
  */
-GNostrNip19 *gnostr_nip19_encode_nrelay(const gchar *const *relays,
+NOSTR_GOBJECT_API GNostrNip19 *gnostr_nip19_encode_nrelay(const gchar *const *relays,
                                          GError **error);
 
 /* ── Inspection ──────────────────────────────────────────────────── */
@@ -181,7 +182,7 @@ GNostrNip19 *gnostr_nip19_encode_nrelay(const gchar *const *relays,
  *
  * Returns: the #GNostrBech32Type, or %GNOSTR_BECH32_UNKNOWN on error
  */
-GNostrBech32Type gnostr_nip19_inspect(const gchar *bech32);
+NOSTR_GOBJECT_API GNostrBech32Type gnostr_nip19_inspect(const gchar *bech32);
 
 /* ── Property accessors ──────────────────────────────────────────── */
 
@@ -191,7 +192,7 @@ GNostrBech32Type gnostr_nip19_inspect(const gchar *bech32);
  *
  * Returns: the #GNostrBech32Type of this entity
  */
-GNostrBech32Type gnostr_nip19_get_entity_type(GNostrNip19 *self);
+NOSTR_GOBJECT_API GNostrBech32Type gnostr_nip19_get_entity_type(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_bech32:
@@ -199,7 +200,7 @@ GNostrBech32Type gnostr_nip19_get_entity_type(GNostrNip19 *self);
  *
  * Returns: (transfer none): the bech32-encoded string
  */
-const gchar *gnostr_nip19_get_bech32(GNostrNip19 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_nip19_get_bech32(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_pubkey:
@@ -209,7 +210,7 @@ const gchar *gnostr_nip19_get_bech32(GNostrNip19 *self);
  *
  * Returns: (transfer none) (nullable): public key hex, or %NULL if not applicable
  */
-const gchar *gnostr_nip19_get_pubkey(GNostrNip19 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_nip19_get_pubkey(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_event_id:
@@ -219,7 +220,7 @@ const gchar *gnostr_nip19_get_pubkey(GNostrNip19 *self);
  *
  * Returns: (transfer none) (nullable): event ID hex, or %NULL if not applicable
  */
-const gchar *gnostr_nip19_get_event_id(GNostrNip19 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_nip19_get_event_id(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_author:
@@ -229,7 +230,7 @@ const gchar *gnostr_nip19_get_event_id(GNostrNip19 *self);
  *
  * Returns: (transfer none) (nullable): author hex, or %NULL if not applicable
  */
-const gchar *gnostr_nip19_get_author(GNostrNip19 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_nip19_get_author(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_kind:
@@ -239,7 +240,7 @@ const gchar *gnostr_nip19_get_author(GNostrNip19 *self);
  *
  * Returns: the event kind, or -1 if not applicable/unset
  */
-gint gnostr_nip19_get_kind(GNostrNip19 *self);
+NOSTR_GOBJECT_API gint gnostr_nip19_get_kind(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_identifier:
@@ -249,7 +250,7 @@ gint gnostr_nip19_get_kind(GNostrNip19 *self);
  *
  * Returns: (transfer none) (nullable): identifier string, or %NULL if not applicable
  */
-const gchar *gnostr_nip19_get_identifier(GNostrNip19 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_nip19_get_identifier(GNostrNip19 *self);
 
 /**
  * gnostr_nip19_get_relays:
@@ -259,7 +260,7 @@ const gchar *gnostr_nip19_get_identifier(GNostrNip19 *self);
  *
  * Returns: (transfer none) (nullable) (array zero-terminated=1): relay URLs, or %NULL
  */
-const gchar *const *gnostr_nip19_get_relays(GNostrNip19 *self);
+NOSTR_GOBJECT_API const gchar *const *gnostr_nip19_get_relays(GNostrNip19 *self);
 
 G_END_DECLS
 

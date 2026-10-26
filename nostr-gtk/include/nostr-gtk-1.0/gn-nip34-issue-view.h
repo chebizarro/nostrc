@@ -23,6 +23,7 @@
 #ifndef GN_NIP34_ISSUE_VIEW_H
 #define GN_NIP34_ISSUE_VIEW_H
 
+#include "nostr-gtk-portable-export.h"
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-nip34-issue.h>
 #include <nostr-gtk-1.0/gn-nip34-issue-iface.h>
@@ -31,7 +32,7 @@
 G_BEGIN_DECLS
 
 #define GN_TYPE_NIP34_ISSUE_VIEW (gn_nip34_issue_view_get_type())
-G_DECLARE_FINAL_TYPE(GnNip34IssueView, gn_nip34_issue_view, GN, NIP34_ISSUE_VIEW, GtkBox)
+NOSTR_GTK_PORTABLE_API G_DECLARE_FINAL_TYPE(GnNip34IssueView, gn_nip34_issue_view, GN, NIP34_ISSUE_VIEW, GtkBox)
 
 typedef enum {
   GN_ISSUE_DIAGNOSTICS_NONE = 0,
@@ -45,51 +46,51 @@ typedef gchar *(*GnIssueDiagnosticsFunc)(gpointer user_data);
 
 /* target and publisher are required; resolver and uploader may be NULL (no
  * lookup; manual attachment URLs only). */
-GnNip34IssueView *gn_nip34_issue_view_new(const GnIssueTarget *target,
+NOSTR_GTK_PORTABLE_API GnNip34IssueView *gn_nip34_issue_view_new(const GnIssueTarget *target,
                                           GnIssuePublisher *publisher,
                                           GnIssueRepoResolver *resolver,
                                           GnIssueUploader *uploader);
 
 /* The author shown in the preview. Changing it invalidates a pending review. */
-void gn_nip34_issue_view_set_pubkey(GnNip34IssueView *self, const gchar *pubkey_hex);
-const gchar *gn_nip34_issue_view_get_pubkey(GnNip34IssueView *self);
-const GnIssueTarget *gn_nip34_issue_view_get_target(GnNip34IssueView *self);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_pubkey(GnNip34IssueView *self, const gchar *pubkey_hex);
+NOSTR_GTK_PORTABLE_API const gchar *gn_nip34_issue_view_get_pubkey(GnNip34IssueView *self);
+NOSTR_GTK_PORTABLE_API const GnIssueTarget *gn_nip34_issue_view_get_target(GnNip34IssueView *self);
 /* The embedded structured-fields widget (e.g. to prefill labels). */
-GnNip34IssueFields *gn_nip34_issue_view_get_fields(GnNip34IssueView *self);
-void gn_nip34_issue_view_set_intro(GnNip34IssueView *self, const gchar *text);
+NOSTR_GTK_PORTABLE_API GnNip34IssueFields *gn_nip34_issue_view_get_fields(GnNip34IssueView *self);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_intro(GnNip34IssueView *self, const gchar *text);
 /* Labels always published first (not editable), e.g. "bug". */
-void gn_nip34_issue_view_set_required_labels(GnNip34IssueView *self, const gchar *const *labels);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_required_labels(GnNip34IssueView *self, const gchar *const *labels);
 /* Prefills the editable "Publish to Relays" row. */
-void gn_nip34_issue_view_set_relays(GnNip34IssueView *self, const gchar *const *relays);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_relays(GnNip34IssueView *self, const gchar *const *relays);
 /* Without a func the diagnostics checkbox is hidden. */
-void gn_nip34_issue_view_set_diagnostics(GnNip34IssueView *self, const gchar *heading,
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_diagnostics(GnNip34IssueView *self, const gchar *heading,
                                          const gchar *check_label, const gchar *description,
                                          GnIssueDiagnosticsFlags flags,
                                          GnIssueDiagnosticsFunc func, gpointer user_data,
                                          GDestroyNotify destroy);
 /* Candidate crash reports (GFile items), offered unchecked. Ignored without
  * an uploader. */
-void gn_nip34_issue_view_set_crash_logs(GnNip34IssueView *self, GListModel *files);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_crash_logs(GnNip34IssueView *self, GListModel *files);
 /* Adds a file to the attachment list (as the "Attach Files" button does).
  * FALSE without an uploader or over GN_ISSUE_ATTACHMENT_MAX_BYTES. Nothing
  * is uploaded until the user consents. */
-gboolean gn_nip34_issue_view_add_attachment(GnNip34IssueView *self, GFile *file);
+NOSTR_GTK_PORTABLE_API gboolean gn_nip34_issue_view_add_attachment(GnNip34IssueView *self, GFile *file);
 /* Starts the resolver now (no-op without one). Hosts call this on an explicit
  * user action, or on open when their privacy model allows it. */
-void gn_nip34_issue_view_lookup_repository(GnNip34IssueView *self);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_lookup_repository(GnNip34IssueView *self);
 /* With a heading, the Look Up Repository button first asks for consent
  * (heading and body, e.g. naming the relays that will be asked) and looks
  * up only if the user accepts. NULL heading: the button looks up at once. */
-void gn_nip34_issue_view_set_lookup_consent(GnNip34IssueView *self, const gchar *heading,
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_set_lookup_consent(GnNip34IssueView *self, const gchar *heading,
                                             const gchar *body);
 /* Cancels in-flight work, drops any review and locks the form with message
  * (e.g. the account changed). */
-void gn_nip34_issue_view_invalidate(GnNip34IssueView *self, const gchar *message);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_invalidate(GnNip34IssueView *self, const gchar *message);
 
 /* Wraps the view in a dialog presented over parent; returns the container. */
-GtkWidget *gn_nip34_issue_view_present(GnNip34IssueView *self, GtkWidget *parent);
+NOSTR_GTK_PORTABLE_API GtkWidget *gn_nip34_issue_view_present(GnNip34IssueView *self, GtkWidget *parent);
 /* Closes the container created by gn_nip34_issue_view_present(). */
-void gn_nip34_issue_view_close(GnNip34IssueView *self);
+NOSTR_GTK_PORTABLE_API void gn_nip34_issue_view_close(GnNip34IssueView *self);
 
 G_END_DECLS
 #endif /* GN_NIP34_ISSUE_VIEW_H */

@@ -19,19 +19,7 @@
 #include "gnostr-testkit.h"
 #include <nostr-gobject-1.0/nostr_profile_service.h>
 
-/* Private queue primitives implemented in nostr_profile_service.c.  They are
- * deliberately absent from the installed header: this test exercises the
- * production queue logic without expanding the public service API. */
-void gnostr_profile_service_private_fetch_batches_append(
-    GPtrArray **fetch_batches,
-    guint *fetch_batch_pos,
-    GPtrArray *pubkeys);
-GPtrArray *gnostr_profile_service_private_fetch_batches_pop(
-    GPtrArray *fetch_batches,
-    guint *fetch_batch_pos);
-void gnostr_profile_service_private_fetch_batches_clear(
-    GPtrArray **fetch_batches,
-    guint *fetch_batch_pos);
+#include "../src/nostr_profile_service_test_hooks.h"
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 

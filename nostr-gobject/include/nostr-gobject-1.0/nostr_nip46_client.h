@@ -6,6 +6,7 @@
 #ifndef NOSTR_GOBJECT_NOSTR_NIP46_CLIENT_H
 #define NOSTR_GOBJECT_NOSTR_NIP46_CLIENT_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "nostr-enums.h"
@@ -17,7 +18,7 @@ G_BEGIN_DECLS
 typedef struct NostrNip46Session NostrNip46Session;
 
 #define GNOSTR_TYPE_NIP46_CLIENT (gnostr_nip46_client_get_type())
-G_DECLARE_FINAL_TYPE(GNostrNip46Client, gnostr_nip46_client, GNOSTR, NIP46_CLIENT, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrNip46Client, gnostr_nip46_client, GNOSTR, NIP46_CLIENT, GObject)
 
 /**
  * gnostr_nip46_client_new:
@@ -26,7 +27,7 @@ G_DECLARE_FINAL_TYPE(GNostrNip46Client, gnostr_nip46_client, GNOSTR, NIP46_CLIEN
  *
  * Returns: (transfer full): a new #GNostrNip46Client
  */
-GNostrNip46Client *gnostr_nip46_client_new(void);
+NOSTR_GOBJECT_API GNostrNip46Client *gnostr_nip46_client_new(void);
 
 /**
  * gnostr_nip46_client_connect_to_bunker:
@@ -40,7 +41,7 @@ GNostrNip46Client *gnostr_nip46_client_new(void);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_nip46_client_connect_to_bunker(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_connect_to_bunker(GNostrNip46Client *self,
                                                 const gchar *bunker_uri,
                                                 const gchar *perms,
                                                 GError **error);
@@ -55,7 +56,7 @@ gboolean gnostr_nip46_client_connect_to_bunker(GNostrNip46Client *self,
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_nip46_client_start(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_start(GNostrNip46Client *self,
                                     GError **error);
 
 /**
@@ -67,12 +68,12 @@ gboolean gnostr_nip46_client_start(GNostrNip46Client *self,
  *
  * Asynchronously starts the persistent relay connection.
  */
-void gnostr_nip46_client_start_async(GNostrNip46Client *self,
+NOSTR_GOBJECT_API void gnostr_nip46_client_start_async(GNostrNip46Client *self,
                                       GCancellable *cancellable,
                                       GAsyncReadyCallback callback,
                                       gpointer user_data);
 
-gboolean gnostr_nip46_client_start_finish(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_start_finish(GNostrNip46Client *self,
                                            GAsyncResult *result,
                                            GError **error);
 
@@ -82,47 +83,47 @@ gboolean gnostr_nip46_client_start_finish(GNostrNip46Client *self,
  *
  * Stops the persistent relay connection. Safe to call multiple times.
  */
-void gnostr_nip46_client_stop(GNostrNip46Client *self);
+NOSTR_GOBJECT_API void gnostr_nip46_client_stop(GNostrNip46Client *self);
 
 /* ── RPC Methods (synchronous) ─────────────────────────────────── */
 
-gboolean gnostr_nip46_client_connect_rpc(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_connect_rpc(GNostrNip46Client *self,
                                           const gchar *connect_secret,
                                           const gchar *perms,
                                           gchar **out_result,
                                           GError **error);
 
-gboolean gnostr_nip46_client_get_public_key_rpc(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_get_public_key_rpc(GNostrNip46Client *self,
                                                   gchar **out_pubkey_hex,
                                                   GError **error);
 
-gboolean gnostr_nip46_client_sign_event(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_sign_event(GNostrNip46Client *self,
                                          const gchar *event_json,
                                          gchar **out_signed_json,
                                          GError **error);
 
-gboolean gnostr_nip46_client_ping(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_ping(GNostrNip46Client *self,
                                    GError **error);
 
-gboolean gnostr_nip46_client_nip04_encrypt(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_nip04_encrypt(GNostrNip46Client *self,
                                             const gchar *peer_pubkey_hex,
                                             const gchar *plaintext,
                                             gchar **out_ciphertext,
                                             GError **error);
 
-gboolean gnostr_nip46_client_nip04_decrypt(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_nip04_decrypt(GNostrNip46Client *self,
                                             const gchar *peer_pubkey_hex,
                                             const gchar *ciphertext,
                                             gchar **out_plaintext,
                                             GError **error);
 
-gboolean gnostr_nip46_client_nip44_encrypt(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_nip44_encrypt(GNostrNip46Client *self,
                                             const gchar *peer_pubkey_hex,
                                             const gchar *plaintext,
                                             gchar **out_ciphertext,
                                             GError **error);
 
-gboolean gnostr_nip46_client_nip44_decrypt(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_client_nip44_decrypt(GNostrNip46Client *self,
                                             const gchar *peer_pubkey_hex,
                                             const gchar *ciphertext,
                                             gchar **out_plaintext,
@@ -130,43 +131,43 @@ gboolean gnostr_nip46_client_nip44_decrypt(GNostrNip46Client *self,
 
 /* ── RPC Methods (async with GTask) ───────────────────────────── */
 
-void gnostr_nip46_client_connect_rpc_async(GNostrNip46Client *self,
+NOSTR_GOBJECT_API void gnostr_nip46_client_connect_rpc_async(GNostrNip46Client *self,
                                             const gchar *connect_secret,
                                             const gchar *perms,
                                             GCancellable *cancellable,
                                             GAsyncReadyCallback callback,
                                             gpointer user_data);
-gchar *gnostr_nip46_client_connect_rpc_finish(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gchar *gnostr_nip46_client_connect_rpc_finish(GNostrNip46Client *self,
                                                GAsyncResult *result,
                                                GError **error);
 
-void gnostr_nip46_client_get_public_key_rpc_async(GNostrNip46Client *self,
+NOSTR_GOBJECT_API void gnostr_nip46_client_get_public_key_rpc_async(GNostrNip46Client *self,
                                                     GCancellable *cancellable,
                                                     GAsyncReadyCallback callback,
                                                     gpointer user_data);
-gchar *gnostr_nip46_client_get_public_key_rpc_finish(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gchar *gnostr_nip46_client_get_public_key_rpc_finish(GNostrNip46Client *self,
                                                        GAsyncResult *result,
                                                        GError **error);
 
-void gnostr_nip46_client_sign_event_async(GNostrNip46Client *self,
+NOSTR_GOBJECT_API void gnostr_nip46_client_sign_event_async(GNostrNip46Client *self,
                                            const gchar *event_json,
                                            GCancellable *cancellable,
                                            GAsyncReadyCallback callback,
                                            gpointer user_data);
-gchar *gnostr_nip46_client_sign_event_finish(GNostrNip46Client *self,
+NOSTR_GOBJECT_API gchar *gnostr_nip46_client_sign_event_finish(GNostrNip46Client *self,
                                               GAsyncResult *result,
                                               GError **error);
 
 /* ── Configuration ─────────────────────────────────────────────── */
 
-void     gnostr_nip46_client_set_timeout(GNostrNip46Client *self, guint timeout_ms);
-guint    gnostr_nip46_client_get_timeout(GNostrNip46Client *self);
+NOSTR_GOBJECT_API void     gnostr_nip46_client_set_timeout(GNostrNip46Client *self, guint timeout_ms);
+NOSTR_GOBJECT_API guint    gnostr_nip46_client_get_timeout(GNostrNip46Client *self);
 
 /* ── Property Accessors ───────────────────────────────────────── */
 
-GNostrNip46State   gnostr_nip46_client_get_state(GNostrNip46Client *self);
-const gchar       *gnostr_nip46_client_get_bunker_uri(GNostrNip46Client *self);
-const gchar       *gnostr_nip46_client_get_remote_pubkey(GNostrNip46Client *self);
+NOSTR_GOBJECT_API GNostrNip46State   gnostr_nip46_client_get_state(GNostrNip46Client *self);
+NOSTR_GOBJECT_API const gchar       *gnostr_nip46_client_get_bunker_uri(GNostrNip46Client *self);
+NOSTR_GOBJECT_API const gchar       *gnostr_nip46_client_get_remote_pubkey(GNostrNip46Client *self);
 
 /**
  * gnostr_nip46_client_get_session:
@@ -176,7 +177,7 @@ const gchar       *gnostr_nip46_client_get_remote_pubkey(GNostrNip46Client *self
  *
  * Returns: (transfer none) (nullable): the core session pointer
  */
-NostrNip46Session *gnostr_nip46_client_get_session(GNostrNip46Client *self);
+NOSTR_GOBJECT_API NostrNip46Session *gnostr_nip46_client_get_session(GNostrNip46Client *self);
 
 G_END_DECLS
 #endif /* NOSTR_GOBJECT_NOSTR_NIP46_CLIENT_H */

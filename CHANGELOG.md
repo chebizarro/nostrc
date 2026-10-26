@@ -5,12 +5,32 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- marmot-gobject 1.5.1 builds hidden-by-default with `MARMOT_GOBJECT_API`
+  annotations (unchanged export set). Marmot-1.0 GIR/typelib generation finds
+  the libmarmot headers and, in static builds, scans a loadable wrapper library.
+- nostr-gobject's Meson build links the real `libnostr.a`, `libnostr-json`
+  and `libnostrgo.a` artifacts and archive closure of the selected CMake tree
+  (`-Dcmake_build_dir`), and fails visibly when one is missing, instead of
+  requesting pre-rename names or falling back to system libraries.
 - Static bud02, libblossom, libporthome, libvault and libvault-marmot retain
   default visibility on public API definitions, allowing Groundhog's shared
   GObject layer to resolve those APIs from executable-supplied archives.
   Shared-library export sets and Windows static annotations are unchanged.
 
 ### Breaking library ABI changes
+- nostr-gtk 2.0.0 hides implementation symbols in `libnostr-gtk-1.0.so.2` and
+  `libnostr-gtk-portable-1.0.so.2`; rebuild dependent binaries. Installed
+  functions and GTypes remain exported through `NOSTR_GTK_API` and
+  `NOSTR_GTK_PORTABLE_API`, and `nostr_gtk_media_image_cache_size()` is now
+  declared in `nostr-note-card-row.h`. In static-core ELF builds the portable
+  DSO binds nostr-gobject, its NIP codecs and libnostr from the executable (as
+  in Groundhog builds) instead of embedding private copies, so it cannot be
+  loaded standalone by a process that does not provide them.
+- nostr-gobject 3.0.0 hides implementation and embedded-archive symbols
+  (SONAME `libnostr-gobject-1.0.so.3`); rebuild dependent binaries. Declared
+  functions, GTypes, enum/flags types, error quarks and the signer proxy remain
+  exported through `NOSTR_GOBJECT_API`; installed headers include the generated
+  `nostr-gobject-export.h`.
 - NIP-19, NIP-34, NIP-46 and NIP-59 are now 0.2.0; NIP-55L is 0.8.0;
   Communikeys is 3.0.0. All NIP library targets now compile hidden-by-default
   and export declared public APIs through package-owned generated headers.

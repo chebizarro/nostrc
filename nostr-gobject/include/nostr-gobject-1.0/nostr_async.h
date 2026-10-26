@@ -1,6 +1,7 @@
 #ifndef NOSTR_ASYNC_H
 #define NOSTR_ASYNC_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "nostr_relay.h"
@@ -28,7 +29,7 @@ G_BEGIN_DECLS
  *
  * Deprecated: Use gnostr_relay_connect_async() instead.
  */
-void nostr_relay_connect_async(GNostrRelay *self,
+NOSTR_GOBJECT_API void nostr_relay_connect_async(GNostrRelay *self,
                                GCancellable *cancellable,
                                GAsyncReadyCallback callback,
                                gpointer user_data);
@@ -45,7 +46,7 @@ void nostr_relay_connect_async(GNostrRelay *self,
  *
  * Deprecated: Use gnostr_relay_connect_finish() instead.
  */
-gboolean nostr_relay_connect_finish(GNostrRelay *self,
+NOSTR_GOBJECT_API gboolean nostr_relay_connect_finish(GNostrRelay *self,
                                     GAsyncResult *result,
                                     GError **error);
 
@@ -59,7 +60,7 @@ gboolean nostr_relay_connect_finish(GNostrRelay *self,
  *
  * Asynchronously publishes an event to the relay.
  */
-void nostr_relay_publish_async(GNostrRelay *self,
+NOSTR_GOBJECT_API void nostr_relay_publish_async(GNostrRelay *self,
                                NostrEvent *event,
                                GCancellable *cancellable,
                                GAsyncReadyCallback callback,
@@ -75,7 +76,7 @@ void nostr_relay_publish_async(GNostrRelay *self,
  *
  * Returns: %TRUE if successful, %FALSE otherwise.
  */
-gboolean nostr_relay_publish_finish(GNostrRelay *self,
+NOSTR_GOBJECT_API gboolean nostr_relay_publish_finish(GNostrRelay *self,
                                     GAsyncResult *result,
                                     GError **error);
 
@@ -91,7 +92,7 @@ gboolean nostr_relay_publish_finish(GNostrRelay *self,
  *
  * Deprecated: Use subscription-based API instead.
  */
-void nostr_relay_query_sync_async(GNostrRelay *self,
+NOSTR_GOBJECT_API void nostr_relay_query_sync_async(GNostrRelay *self,
                                   NostrFilter *filter,
                                   GCancellable *cancellable,
                                   GAsyncReadyCallback callback,
@@ -109,7 +110,7 @@ void nostr_relay_query_sync_async(GNostrRelay *self,
  *
  * Deprecated: Use subscription-based API instead.
  */
-GPtrArray *nostr_relay_query_sync_finish(GNostrRelay *self,
+NOSTR_GOBJECT_API GPtrArray *nostr_relay_query_sync_finish(GNostrRelay *self,
                                          GAsyncResult *result,
                                          GError **error);
 

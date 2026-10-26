@@ -1,5 +1,5 @@
 project('marmot-gobject', 'c',
-  version: '1.5.0',
+  version: '1.5.1',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [
@@ -10,6 +10,14 @@ project('marmot-gobject', 'c',
 )
 
 cc = meson.get_compiler('c')
+export_conf = configuration_data()
+export_conf.set('API', 'MARMOT_GOBJECT_API')
+export_conf.set('STATIC', get_option('default_library') == 'static' ? 1 : 0)
+export_conf.set('STATIC_DEFINE', 'MARMOT_GOBJECT_STATIC_DEFINE')
+export_conf.set('EXPORTS', 'marmot_gobject_EXPORTS')
+configure_file(input: '../cmake/meson-export.h.in',
+  output: 'marmot-gobject-export.h', configuration: export_conf,
+  install_dir: get_option('includedir') / 'marmot-gobject-1.0')
 
 # ── GLib / GObject / GIO ─────────────────────────────────────────────
 glib_dep    = dependency('glib-2.0',    version: '>= 2.70')
@@ -19,7 +27,10 @@ gio_dep     = dependency('gio-2.0',     version: '>= 2.70')
 # ── libmarmot ────────────────────────────────────────────────────────
 # When built as part of the nostrc tree, the parent project provides
 # marmot_dep via declare_dependency(). Otherwise, fall back to pkg-config.
-cmake_build_dir = meson.current_source_dir() / '..' / 'build'
+cmake_build_dir = get_option('cmake_build_dir')
+if cmake_build_dir == ''
+  cmake_build_dir = meson.current_source_dir() / '..' / 'build'
+endif
 
 if not is_variable('marmot_dep')
   # Try pkg-config first
@@ -101,17 +112,20 @@ marmot_gobject_deps = [
 # ── Build the library ────────────────────────────────────────────────
 marmot_gobject_lib = library('marmot-gobject-1.0',
   marmot_gobject_sources,
-  include_directories: [marmot_gobject_inc],
+  include_directories: [marmot_gobject_inc, marmot_gobject_pub_inc],
   dependencies: marmot_gobject_deps,
   install: true,
   version: meson.project_version(),
+  gnu_symbol_visibility: 'hidden',
+  c_args: ['-Dmarmot_gobject_EXPORTS'],
+  link_args: cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
   soversion: version_parts[0],
 )
 
 # ── Declare dependency for consumers / subprojects ───────────────────
 marmot_gobject_dep = declare_dependency(
   link_with: marmot_gobject_lib,
-  include_directories: marmot_gobject_pub_inc,
+  include_directories: [marmot_gobject_pub_inc, include_directories('.')],
   dependencies: [glib_dep, gobject_dep, gio_dep, marmot_dep],
 )
 
@@ -160,7 +174,7 @@ if get_option('tests')
     'tests/test_marmot_gobject.c',
     dependencies: [glib_dep, gobject_dep, gio_dep, marmot_dep],
     link_with: marmot_gobject_lib,
-    include_directories: marmot_gobject_pub_inc,
+    include_directories: [marmot_gobject_pub_inc, include_directories('.')],
   )
   test('marmot-gobject:all', test_marmot_gobject, env: test_env, timeout: 120)
 endif

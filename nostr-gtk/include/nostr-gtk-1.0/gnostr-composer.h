@@ -15,46 +15,47 @@
 #ifndef NOSTR_GTK_COMPOSER_H
 #define NOSTR_GTK_COMPOSER_H
 
+#include "nostr-gtk-export.h"
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
 #define NOSTR_GTK_TYPE_COMPOSER (nostr_gtk_composer_get_type())
 
-G_DECLARE_FINAL_TYPE(NostrGtkComposer, nostr_gtk_composer, NOSTR_GTK, COMPOSER, GtkWidget)
+NOSTR_GTK_API G_DECLARE_FINAL_TYPE(NostrGtkComposer, nostr_gtk_composer, NOSTR_GTK, COMPOSER, GtkWidget)
 
-GtkWidget *nostr_gtk_composer_new(void);
+NOSTR_GTK_API GtkWidget *nostr_gtk_composer_new(void);
 
 /* Clear the composer text */
-void nostr_gtk_composer_clear(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear(NostrGtkComposer *self);
 
 /* Reply context for NIP-10 threading */
-void nostr_gtk_composer_set_reply_context(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_set_reply_context(NostrGtkComposer *self,
                                        const char *reply_to_id,
                                        const char *root_id,
                                        const char *reply_to_pubkey,
                                        const char *reply_to_display_name);
-void nostr_gtk_composer_clear_reply_context(NostrGtkComposer *self);
-gboolean nostr_gtk_composer_is_reply(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_reply_to_id(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_root_id(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_reply_to_pubkey(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_reply_context(NostrGtkComposer *self);
+NOSTR_GTK_API gboolean nostr_gtk_composer_is_reply(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_reply_to_id(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_root_id(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_reply_to_pubkey(NostrGtkComposer *self);
 
 /* Quote context for NIP-18 quote posts (kind 1 with q-tag) */
-void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_set_quote_context(NostrGtkComposer *self,
                                        const char *quote_id,
                                        const char *quote_pubkey,
                                        const char *nostr_uri,
                                        const char *quoted_author_display_name);
-void nostr_gtk_composer_clear_quote_context(NostrGtkComposer *self);
-gboolean nostr_gtk_composer_is_quote(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_quote_id(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_quote_pubkey(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_quote_nostr_uri(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_quote_context(NostrGtkComposer *self);
+NOSTR_GTK_API gboolean nostr_gtk_composer_is_quote(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_quote_id(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_quote_pubkey(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_quote_nostr_uri(NostrGtkComposer *self);
 
 /* Media upload state */
-gboolean nostr_gtk_composer_is_uploading(NostrGtkComposer *self);
-void nostr_gtk_composer_cancel_upload(NostrGtkComposer *self);
+NOSTR_GTK_API gboolean nostr_gtk_composer_is_uploading(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_cancel_upload(NostrGtkComposer *self);
 
 /* Media metadata for NIP-92 imeta tags */
 typedef struct {
@@ -69,43 +70,43 @@ typedef struct {
  * Returns a NULL-terminated array of NostrGtkComposerMedia pointers.
  * The array and its contents are owned by the composer; do not free.
  */
-NostrGtkComposerMedia **nostr_gtk_composer_get_uploaded_media(NostrGtkComposer *self);
+NOSTR_GTK_API NostrGtkComposerMedia **nostr_gtk_composer_get_uploaded_media(NostrGtkComposer *self);
 
 /**
  * Get the count of uploaded media items.
  */
-gsize nostr_gtk_composer_get_uploaded_media_count(NostrGtkComposer *self);
+NOSTR_GTK_API gsize nostr_gtk_composer_get_uploaded_media_count(NostrGtkComposer *self);
 
 /**
  * Clear all uploaded media metadata.
  * Called when composer is cleared after successful post.
  */
-void nostr_gtk_composer_clear_uploaded_media(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_uploaded_media(NostrGtkComposer *self);
 
 /* NIP-14: Subject tag support */
-const char *nostr_gtk_composer_get_subject(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_subject(NostrGtkComposer *self);
 
 /* NIP-40: Expiration timestamp support */
-void nostr_gtk_composer_set_expiration(NostrGtkComposer *self, gint64 expiration_secs);
-gint64 nostr_gtk_composer_get_expiration(NostrGtkComposer *self);
-void nostr_gtk_composer_clear_expiration(NostrGtkComposer *self);
-gboolean nostr_gtk_composer_has_expiration(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_set_expiration(NostrGtkComposer *self, gint64 expiration_secs);
+NOSTR_GTK_API gint64 nostr_gtk_composer_get_expiration(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_expiration(NostrGtkComposer *self);
+NOSTR_GTK_API gboolean nostr_gtk_composer_has_expiration(NostrGtkComposer *self);
 
 /* NIP-36: Content warning / sensitive content support */
-gboolean nostr_gtk_composer_is_sensitive(NostrGtkComposer *self);
-void nostr_gtk_composer_set_sensitive(NostrGtkComposer *self, gboolean sensitive);
+NOSTR_GTK_API gboolean nostr_gtk_composer_is_sensitive(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_set_sensitive(NostrGtkComposer *self, gboolean sensitive);
 
 /* NIP-22: Comment context for kind 1111 events */
-void nostr_gtk_composer_set_comment_context(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_set_comment_context(NostrGtkComposer *self,
                                          const char *root_id,
                                          int root_kind,
                                          const char *root_pubkey,
                                          const char *display_name);
-void nostr_gtk_composer_clear_comment_context(NostrGtkComposer *self);
-gboolean nostr_gtk_composer_is_comment(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_comment_root_id(NostrGtkComposer *self);
-int nostr_gtk_composer_get_comment_root_kind(NostrGtkComposer *self);
-const char *nostr_gtk_composer_get_comment_root_pubkey(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_comment_context(NostrGtkComposer *self);
+NOSTR_GTK_API gboolean nostr_gtk_composer_is_comment(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_comment_root_id(NostrGtkComposer *self);
+NOSTR_GTK_API int nostr_gtk_composer_get_comment_root_kind(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_comment_root_pubkey(NostrGtkComposer *self);
 
 /* ---- Media upload (decoupled via signals) ---- */
 
@@ -120,7 +121,7 @@ const char *nostr_gtk_composer_get_comment_root_pubkey(NostrGtkComposer *self);
  * Called by the upload-requested signal handler when the upload succeeds.
  * Inserts the URL into the text and stores media metadata for NIP-92.
  */
-void nostr_gtk_composer_upload_complete(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_upload_complete(NostrGtkComposer *self,
                                      const char *url,
                                      const char *sha256,
                                      const char *mime_type,
@@ -134,7 +135,7 @@ void nostr_gtk_composer_upload_complete(NostrGtkComposer *self,
  * Called by the upload-requested signal handler when the upload fails.
  * Hides the upload progress and emits a toast-requested signal.
  */
-void nostr_gtk_composer_upload_failed(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_upload_failed(NostrGtkComposer *self,
                                    const char *message);
 
 /* ---- NIP-37: Drafts (decoupled via signals) ---- */
@@ -169,12 +170,12 @@ typedef struct {
  * Load a draft into the composer. Clears existing content and restores
  * the draft state. The info struct is borrowed; the caller retains ownership.
  */
-void nostr_gtk_composer_load_draft(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_load_draft(NostrGtkComposer *self,
                                 const NostrGtkComposerDraftInfo *info);
 
-const char *nostr_gtk_composer_get_current_draft_d_tag(NostrGtkComposer *self);
-void nostr_gtk_composer_clear_draft_context(NostrGtkComposer *self);
-gboolean nostr_gtk_composer_has_draft_loaded(NostrGtkComposer *self);
+NOSTR_GTK_API const char *nostr_gtk_composer_get_current_draft_d_tag(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_draft_context(NostrGtkComposer *self);
+NOSTR_GTK_API gboolean nostr_gtk_composer_has_draft_loaded(NostrGtkComposer *self);
 
 /**
  * nostr_gtk_composer_add_draft_row:
@@ -186,7 +187,7 @@ gboolean nostr_gtk_composer_has_draft_loaded(NostrGtkComposer *self);
  * Add a draft entry to the drafts popover list.
  * Called by the load-drafts-requested signal handler.
  */
-void nostr_gtk_composer_add_draft_row(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_add_draft_row(NostrGtkComposer *self,
                                    const char *d_tag,
                                    const char *preview_text,
                                    gint64 updated_at);
@@ -197,7 +198,7 @@ void nostr_gtk_composer_add_draft_row(NostrGtkComposer *self,
  *
  * Clear all draft entries from the drafts popover list.
  */
-void nostr_gtk_composer_clear_draft_rows(NostrGtkComposer *self);
+NOSTR_GTK_API void nostr_gtk_composer_clear_draft_rows(NostrGtkComposer *self);
 
 /**
  * nostr_gtk_composer_draft_save_complete:
@@ -208,7 +209,7 @@ void nostr_gtk_composer_clear_draft_rows(NostrGtkComposer *self);
  *
  * Called by the save-draft-requested signal handler when done.
  */
-void nostr_gtk_composer_draft_save_complete(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_draft_save_complete(NostrGtkComposer *self,
                                          gboolean success,
                                          const char *error_message,
                                          const char *d_tag);
@@ -221,7 +222,7 @@ void nostr_gtk_composer_draft_save_complete(NostrGtkComposer *self,
  *
  * Called by the draft-delete-requested signal handler when done.
  */
-void nostr_gtk_composer_draft_delete_complete(NostrGtkComposer *self,
+NOSTR_GTK_API void nostr_gtk_composer_draft_delete_complete(NostrGtkComposer *self,
                                            const char *d_tag,
                                            gboolean success);
 
@@ -229,7 +230,7 @@ void nostr_gtk_composer_draft_delete_complete(NostrGtkComposer *self,
  * Get the current text content from the composer.
  * Returns a newly allocated string that must be freed with g_free().
  */
-char *nostr_gtk_composer_get_text(NostrGtkComposer *self);
+NOSTR_GTK_API char *nostr_gtk_composer_get_text(NostrGtkComposer *self);
 
 /*
  * Signals (connect from the application to provide services):

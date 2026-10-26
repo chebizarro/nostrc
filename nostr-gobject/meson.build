@@ -1,5 +1,5 @@
 project('nostr-gobject', 'c',
-  version: '2.5.0',
+  version: '3.0.0',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [
@@ -9,6 +9,14 @@ project('nostr-gobject', 'c',
   ])
 
 cc = meson.get_compiler('c')
+export_conf = configuration_data()
+export_conf.set('API', 'NOSTR_GOBJECT_API')
+export_conf.set('STATIC', get_option('default_library') == 'static' ? 1 : 0)
+export_conf.set('STATIC_DEFINE', 'NOSTR_GOBJECT_STATIC_DEFINE')
+export_conf.set('EXPORTS', 'nostr_gobject_EXPORTS')
+configure_file(input: '../cmake/meson-export.h.in',
+  output: 'nostr-gobject-export.h', configuration: export_conf,
+  install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 fs = import('fs')
 
 # ── GLib / GObject / GIO ─────────────────────────────────────────────
@@ -19,12 +27,25 @@ json_glib_dep = dependency('json-glib-1.0', version: '>= 1.6', required: false)
 
 # ── Sibling project paths (relative to nostr-gobject/) ─────────────────────
 # CMake build output directory (must be built first)
-cmake_build_dir = fs.parent(meson.current_source_dir()) / 'build'
+cmake_build_dir = get_option('cmake_build_dir')
+if cmake_build_dir == ''
+  cmake_build_dir = fs.parent(meson.current_source_dir()) / 'build'
+endif
+# Bind the core to the real artifacts of this CMake tree (libnostr.a,
+# libnostr-json, libnostrgo.a). find_library() would silently fall back to a
+# similarly named system library when the tree lacks them.
+json_suffix = host_machine.system() == 'darwin' ? '.dylib' : '.so'
+core_artifact = cmake_build_dir / 'libnostr' / 'libnostr.a'
+json_artifact = cmake_build_dir / 'libjson' / ('libnostr-json' + json_suffix)
+go_artifact = cmake_build_dir / 'libgo' / 'libnostrgo.a'
+foreach artifact : [core_artifact, json_artifact, go_artifact]
+  if not fs.is_file(artifact)
+    error('Required CMake artifact missing: ' + artifact + '; build the CMake static core first')
+  endif
+endforeach
 
 # ── libnostr (pre-built by CMake) ────────────────────────────────────
-libnostr_static = cc.find_library('nostr',
-  dirs: [cmake_build_dir / 'libnostr'],
-  static: true)
+libnostr_static = declare_dependency(link_args: [core_artifact])
 libnostr_inc = include_directories(
   '../libnostr/include',
   '../libnostr/generated',
@@ -37,9 +58,7 @@ libnostr_dep = declare_dependency(
 
 # ── libnostr_json (Jansson backend, pre-built by CMake) ──────────────
 jansson_dep = dependency('jansson')
-libnostr_json_shared = cc.find_library('nostr_json',
-  dirs: [cmake_build_dir / 'libjson'],
-  static: false)
+libnostr_json_shared = declare_dependency(link_args: [json_artifact])
 libnostr_json_inc = include_directories(
   '../libjson/include',
 )
@@ -48,11 +67,9 @@ libnostr_json_dep = declare_dependency(
   include_directories: libnostr_json_inc)
 
 # ── libgo (pre-built by CMake) ───────────────────────────────────────
-# liblibgo.a has channels, contexts, select, etc.
+# libnostrgo.a has channels, contexts, select, etc.
 # libgo_fiber.a has the fiber/coroutine runtime
-libgo_static = cc.find_library('libgo',
-  dirs: [cmake_build_dir / 'libgo'],
-  static: true)
+libgo_static = declare_dependency(link_args: [go_artifact])
 libgo_fiber_static = cc.find_library('go_fiber',
   dirs: [cmake_build_dir / 'libgo'],
   static: true,
@@ -168,6 +185,8 @@ gnome = import('gnome')
 signer_proxy = gnome.gdbus_codegen('signer_proxy',
   sources: files('../nips/nip55l/dbus/org.nostr.Signer.xml'),
   namespace: 'Nostr',
+  extra_args: ['--symbol-decorator', 'NOSTR_GOBJECT_API',
+               '--symbol-decorator-header', 'nostr-gobject-export.h'],
   install_header: true,
   install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 
@@ -215,6 +234,8 @@ nostr_gobject_sources = files(
   'src/gnostr-relays.c',
   'src/gnostr-mute-list.c',
   'src/gnostr-sync-service.c',
+  'src/gnostr-signer-bridge.c',
+  'src/gnostr-app-bridge.c',
 )
 
 # Header files (public API)
@@ -262,6 +283,8 @@ nostr_gobject_headers = files(
   'include/nostr-gobject-1.0/gnostr-relays.h',
   'include/nostr-gobject-1.0/gnostr-mute-list.h',
   'include/nostr-gobject-1.0/gnostr-sync-service.h',
+  'include/nostr-gobject-1.0/gnostr-signer-bridge.h',
+  'include/nostr-gobject-1.0/gnostr-app-bridge.h',
 )
 
 # ── All include directories for compilation ──────────────────────────
@@ -278,8 +301,24 @@ nostr_gobject_ndb_inc = include_directories(
 )
 
 # Collect all dependencies
+# Match CMake's actual archive closure without forcing system crypto/HTTP
+# dependencies to static linkage too.
 blossom_dep = dependency('blossom', version: '>= 0.2.0')
 vault_dep = dependency('vault', version: '>= 0.1.0')
+bud02_dep = dependency('bud02')
+curl_dep = dependency('libcurl')
+storage_artifacts = []
+foreach component : [['components/nostrdb', 'nostrdb_storage'],
+                     ['libnostr', 'nostrdb'],
+                     ['components/nostrdb', 'nostrdb_vendored'],
+                     ['nips/nip59', 'nostr_nip59_core']]
+  artifact = cmake_build_dir / component[0] / ('lib' + component[1] + '.a')
+  if not fs.is_file(artifact)
+    error('Required CMake storage/vault artifact missing: ' + artifact)
+  endif
+  storage_artifacts += artifact
+endforeach
+storage_archive_dep = declare_dependency(link_args: storage_artifacts)
 nostr_gobject_deps = [
   blossom_dep,
   vault_dep,
@@ -287,6 +326,9 @@ nostr_gobject_deps = [
   gobject_dep,
   gio_dep,
   libnostr_dep,
+  storage_archive_dep,
+  bud02_dep,
+  curl_dep,
   libnostr_json_dep,
   libgo_dep,
   nip04_dep,
@@ -309,28 +351,82 @@ if libsodium_dep.found()
   nostr_gobject_deps += libsodium_dep
 endif
 
+# Exact archive closure shared by the final consumer, pkg-config and GIR.
+core_archives = [core_artifact, go_artifact] + storage_artifacts
+foreach component : [['libgo', 'go_fiber'], ['nips/nip04', 'nip04'],
+                     ['nips/nip06', 'nip06'], ['nips/nip19', 'nip19'],
+                     ['nips/nip44', 'nostr_nip44_core'],
+                     ['nips/nip46', 'nostr_nip46_core'],
+                     ['nips/nip49', 'nostr_nip49_core'],
+                     ['nips/nip49', 'nostr_nip49_glib']]
+  artifact = cmake_build_dir / component[0] / ('lib' + component[1] + '.a')
+  if fs.is_file(artifact)
+    core_archives += artifact
+  endif
+endforeach
+
 # ── Build the library ────────────────────────────────────────────────
 # NIP-46 headers use `#include "nostr/nip46/..."` path style
 nip46_inc = include_directories('../nips/nip46/include')
 
+nostr_gobject_c_args = ['-Dnostr_gobject_EXPORTS']
+# On ELF a shared library follows NOSTRC_ARCHIVES_FROM_EXECUTABLE in the root
+# CMake build: one static core per process, supplied by the final executable,
+# not a hidden second copy inside this DSO. A static library also leaves the
+# closure to its consumer; Mach-O and DLL builds embed the core, as in CMake.
+exe_owned_core = (get_option('default_library') != 'static' and
+  host_machine.system() not in ['darwin', 'windows', 'cygwin'])
+consumer_closure = exe_owned_core or get_option('default_library') == 'static'
+nostr_gobject_link_deps = nostr_gobject_deps
+nostr_gobject_link_options = []
+if exe_owned_core
+  nostr_gobject_link_deps = []
+  foreach dep : nostr_gobject_deps
+    nostr_gobject_link_deps += dep.partial_dependency(compile_args: true, includes: true)
+  endforeach
+  nostr_gobject_link_deps += [glib_dep, gobject_dep, gio_dep]
+  nostr_gobject_link_options = ['b_lundef=false']
+endif
 nostr_gobject_lib = library('nostr-gobject-1.0',
   nostr_gobject_sources + signer_proxy,
-  include_directories: [nostr_gobject_inc, nip46_inc, nostr_gobject_ndb_inc],
-  dependencies: nostr_gobject_deps,
+  include_directories: [nostr_gobject_inc, nostr_gobject_pub_inc, nip46_inc, nostr_gobject_ndb_inc],
+  dependencies: nostr_gobject_link_deps,
+  override_options: nostr_gobject_link_options,
   version: meson.project_version(),
-  soversion: '2',
+  soversion: '3',
+  gnu_symbol_visibility: 'hidden',
+  c_args: nostr_gobject_c_args,
+  link_args: cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────
+consumer_deps = nostr_gobject_deps
+if not consumer_closure
+  # The DSO embeds the core; consumers need only its compile interface.
+  consumer_deps = [glib_dep, gobject_dep, gio_dep, vault_dep]
+  foreach dep : nostr_gobject_deps
+    consumer_deps += dep.partial_dependency(compile_args: true, includes: true)
+  endforeach
+endif
 nostr_gobject_dep = declare_dependency(
   link_with: nostr_gobject_lib,
-  include_directories: nostr_gobject_pub_inc,
-  dependencies: [glib_dep, gobject_dep, gio_dep, vault_dep])
+  include_directories: [nostr_gobject_pub_inc, include_directories('.')],
+  dependencies: consumer_deps)
 
 # ── GObject Introspection ────────────────────────────────────────────
 if get_option('introspection')
+  gir_env = environment()
+  if exe_owned_core
+    # Meson's GIR adapter drops absolute archive link arguments. Supply the
+    # same real executable-owned closure to the scanner's strict final link.
+    gir_env.prepend('LDFLAGS', ' '.join(['-Wl,--start-group'] + core_archives +
+      [json_artifact, '-lvault', '-lporthome', '-lblossom', '-lbud02', '-Wl,--end-group']), separator: ' ')
+    gir_env.prepend('LD_LIBRARY_PATH', cmake_build_dir / 'libjson')
+  endif
   nostr_gobject_gir = gnome.generate_gir(nostr_gobject_lib,
     sources: nostr_gobject_sources + nostr_gobject_headers,
+    dependencies: nostr_gobject_deps,
+    env: gir_env,
     namespace: 'GNostr',
     nsversion: '1.0',
     symbol_prefix: ['gnostr', 'gn'],
@@ -352,7 +448,11 @@ pkg = import('pkgconfig')
 pkg.generate(nostr_gobject_lib,
   name: 'nostr-gobject-1.0',
   description: 'GObject wrapper for libnostr — Nostr protocol library',
-  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'blossom >= 0.2.0', 'vault >= 0.1.0'],
+  libraries: consumer_closure ? core_archives + [json_artifact, nsync_lib] : [],
+  requires: [glib_dep, gobject_dep, gio_dep, blossom_dep, vault_dep, bud02_dep,
+             curl_dep, secp256k1_dep, openssl_dep, libwebsockets_dep] +
+            (json_glib_dep.found() ? [json_glib_dep] : []) +
+            (libsodium_dep.found() ? [libsodium_dep] : []),
   requires_private: ['openssl', 'libsecp256k1'])
 
 # ── Header installation ──────────────────────────────────────────────
@@ -363,19 +463,18 @@ if get_option('tests')
   test_env = environment()
   test_env.set('G_DEBUG', 'fatal-warnings,gc-friendly')
   test_env.set('G_SLICE', 'always-malloc')
+  test_env.prepend('LD_LIBRARY_PATH', cmake_build_dir / 'libjson')
 
   test_nostr_event = executable('test_nostr_event',
     'tests/test_nostr_event.c',
-    dependencies: [glib_dep, gobject_dep],
-    link_with: nostr_gobject_lib,
+    dependencies: nostr_gobject_dep,
     include_directories: nostr_gobject_pub_inc)
 
   test('nostr_event', test_nostr_event, env: test_env)
 
   test_nip19 = executable('test_nip19',
     'tests/test_nip19.c',
-    dependencies: [glib_dep, gobject_dep],
-    link_with: nostr_gobject_lib,
+    dependencies: nostr_gobject_dep,
     include_directories: nostr_gobject_pub_inc)
 
   test('nip19', test_nip19, env: test_env)
@@ -434,7 +533,6 @@ endif
 if get_option('examples')
   connect_publish = executable('connect_publish',
     'examples/connect_publish.c',
-    dependencies: [glib_dep, gobject_dep],
-    link_with: nostr_gobject_lib,
+    dependencies: nostr_gobject_dep,
     include_directories: nostr_gobject_pub_inc)
 endif

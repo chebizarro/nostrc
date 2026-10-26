@@ -7,23 +7,24 @@
  * GnOgPreviewProvider that fetches through its own transport and policy
  * (Groundhog: GhNetHttp, consent, network mode; gnostr: its media service and
  * caches) and hands back parsed metadata and decoded paintables. */
+#include "nostr-gtk-portable-export.h"
 #include <gtk/gtk.h>
 G_BEGIN_DECLS
 
 typedef struct _GnOgMetadata GnOgMetadata;
 #define GN_TYPE_OG_METADATA (gn_og_metadata_get_type())
-GType gn_og_metadata_get_type(void) G_GNUC_CONST;
+NOSTR_GTK_PORTABLE_API GType gn_og_metadata_get_type(void) G_GNUC_CONST;
 /* All strings are copied; any may be NULL. */
-GnOgMetadata *gn_og_metadata_new(const char *source_url, const char *title,
+NOSTR_GTK_PORTABLE_API GnOgMetadata *gn_og_metadata_new(const char *source_url, const char *title,
                                  const char *description, const char *site_name,
                                  const char *image_url);
-GnOgMetadata *gn_og_metadata_ref(GnOgMetadata *metadata);
-void gn_og_metadata_unref(GnOgMetadata *metadata);
-const char *gn_og_metadata_get_source_url(const GnOgMetadata *metadata);
-const char *gn_og_metadata_get_title(const GnOgMetadata *metadata);
-const char *gn_og_metadata_get_description(const GnOgMetadata *metadata);
-const char *gn_og_metadata_get_site_name(const GnOgMetadata *metadata);
-const char *gn_og_metadata_get_image_url(const GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API GnOgMetadata *gn_og_metadata_ref(GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API void gn_og_metadata_unref(GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API const char *gn_og_metadata_get_source_url(const GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API const char *gn_og_metadata_get_title(const GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API const char *gn_og_metadata_get_description(const GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API const char *gn_og_metadata_get_site_name(const GnOgMetadata *metadata);
+NOSTR_GTK_PORTABLE_API const char *gn_og_metadata_get_image_url(const GnOgMetadata *metadata);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnOgMetadata, gn_og_metadata_unref)
 
 /* Returns TRUE to accept an absolute og:image / twitter:image address. */
@@ -43,12 +44,12 @@ typedef gboolean (*GnOgImagePolicy)(const char *image_url, gpointer user_data);
  * characters. Fails with G_IO_ERROR_INVALID_DATA when the head has neither a
  * title nor a description.
  */
-GnOgMetadata *gn_og_metadata_parse_html(GBytes *head_prefix, const char *source_url,
+NOSTR_GTK_PORTABLE_API GnOgMetadata *gn_og_metadata_parse_html(GBytes *head_prefix, const char *source_url,
                                         GnOgImagePolicy accept_image, gpointer user_data,
                                         GError **error);
 
 #define GN_TYPE_OG_PREVIEW_PROVIDER (gn_og_preview_provider_get_type())
-G_DECLARE_INTERFACE(GnOgPreviewProvider, gn_og_preview_provider, GN, OG_PREVIEW_PROVIDER, GObject)
+NOSTR_GTK_PORTABLE_API G_DECLARE_INTERFACE(GnOgPreviewProvider, gn_og_preview_provider, GN, OG_PREVIEW_PROVIDER, GObject)
 struct _GnOgPreviewProviderInterface {
   GTypeInterface parent_iface;
   void (*load_metadata_async)(GnOgPreviewProvider *self, const char *url,
@@ -64,20 +65,20 @@ struct _GnOgPreviewProviderInterface {
                                      GError **error);
   gpointer padding[8];
 };
-void gn_og_preview_provider_load_metadata_async(GnOgPreviewProvider *self, const char *url,
+NOSTR_GTK_PORTABLE_API void gn_og_preview_provider_load_metadata_async(GnOgPreviewProvider *self, const char *url,
                                                 GCancellable *cancellable,
                                                 GAsyncReadyCallback callback,
                                                 gpointer user_data);
-GnOgMetadata *gn_og_preview_provider_load_metadata_finish(GnOgPreviewProvider *self,
+NOSTR_GTK_PORTABLE_API GnOgMetadata *gn_og_preview_provider_load_metadata_finish(GnOgPreviewProvider *self,
                                                           GAsyncResult *result,
                                                           GError **error);
-gboolean gn_og_preview_provider_can_load_image(GnOgPreviewProvider *self);
-void gn_og_preview_provider_load_image_async(GnOgPreviewProvider *self, const char *image_url,
+NOSTR_GTK_PORTABLE_API gboolean gn_og_preview_provider_can_load_image(GnOgPreviewProvider *self);
+NOSTR_GTK_PORTABLE_API void gn_og_preview_provider_load_image_async(GnOgPreviewProvider *self, const char *image_url,
                                              int width_hint, int height_hint,
                                              GCancellable *cancellable,
                                              GAsyncReadyCallback callback,
                                              gpointer user_data);
-GdkPaintable *gn_og_preview_provider_load_image_finish(GnOgPreviewProvider *self,
+NOSTR_GTK_PORTABLE_API GdkPaintable *gn_og_preview_provider_load_image_finish(GnOgPreviewProvider *self,
                                                        GAsyncResult *result,
                                                        GError **error);
 G_END_DECLS

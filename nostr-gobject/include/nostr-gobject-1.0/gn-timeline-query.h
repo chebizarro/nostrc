@@ -10,6 +10,7 @@
 #ifndef GNOSTR_TIMELINE_QUERY_H
 #define GNOSTR_TIMELINE_QUERY_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <stdint.h>
 
@@ -75,7 +76,7 @@ struct _GNostrTimelineQuery {
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_new_global(void);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_new_global(void);
 
 /**
  * gnostr_timeline_query_new_for_author:
@@ -85,7 +86,7 @@ GNostrTimelineQuery *gnostr_timeline_query_new_global(void);
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_new_for_author(const char *pubkey);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_new_for_author(const char *pubkey);
 
 /**
  * gnostr_timeline_query_new_for_authors:
@@ -96,7 +97,7 @@ GNostrTimelineQuery *gnostr_timeline_query_new_for_author(const char *pubkey);
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_new_for_authors(const char **pubkeys, gsize n);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_new_for_authors(const char **pubkeys, gsize n);
 
 /**
  * gnostr_timeline_query_new_for_search:
@@ -106,7 +107,7 @@ GNostrTimelineQuery *gnostr_timeline_query_new_for_authors(const char **pubkeys,
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_new_for_search(const char *search_query);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_new_for_search(const char *search_query);
 
 /**
  * gnostr_timeline_query_new_for_hashtag:
@@ -116,7 +117,7 @@ GNostrTimelineQuery *gnostr_timeline_query_new_for_search(const char *search_que
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_new_for_hashtag(const char *hashtag);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_new_for_hashtag(const char *hashtag);
 
 /**
  * gnostr_timeline_query_new_thread:
@@ -126,7 +127,7 @@ GNostrTimelineQuery *gnostr_timeline_query_new_for_hashtag(const char *hashtag);
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_new_thread(const char *root_event_id);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_new_thread(const char *root_event_id);
 
 /* ============== Builder Pattern ============== */
 
@@ -137,11 +138,11 @@ GNostrTimelineQuery *gnostr_timeline_query_new_thread(const char *root_event_id)
  *
  * Returns: (transfer full): A new builder, free with gnostr_timeline_query_builder_free()
  */
-GNostrTimelineQueryBuilder *gnostr_timeline_query_builder_new(void);
+NOSTR_GOBJECT_API GNostrTimelineQueryBuilder *gnostr_timeline_query_builder_new(void);
 
-void gnostr_timeline_query_builder_add_kind(GNostrTimelineQueryBuilder *builder, gint kind);
-void gnostr_timeline_query_builder_add_author(GNostrTimelineQueryBuilder *builder, const char *pubkey);
-void gnostr_timeline_query_builder_add_event_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_add_kind(GNostrTimelineQueryBuilder *builder, gint kind);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_add_author(GNostrTimelineQueryBuilder *builder, const char *pubkey);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_add_event_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
 
 /**
  * gnostr_timeline_query_builder_add_id:
@@ -153,14 +154,14 @@ void gnostr_timeline_query_builder_add_event_id(GNostrTimelineQueryBuilder *buil
  * emits the NIP-01 top-level "ids" field which matches events whose
  * own ID equals the given value. Used for bookmark-style feeds.
  */
-void gnostr_timeline_query_builder_add_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
-void gnostr_timeline_query_builder_add_p_tag(GNostrTimelineQueryBuilder *builder, const char *pubkey);
-void gnostr_timeline_query_builder_set_since(GNostrTimelineQueryBuilder *builder, gint64 since);
-void gnostr_timeline_query_builder_set_until(GNostrTimelineQueryBuilder *builder, gint64 until);
-void gnostr_timeline_query_builder_set_limit(GNostrTimelineQueryBuilder *builder, guint limit);
-void gnostr_timeline_query_builder_set_search(GNostrTimelineQueryBuilder *builder, const char *search);
-void gnostr_timeline_query_builder_set_include_replies(GNostrTimelineQueryBuilder *builder, gboolean include);
-void gnostr_timeline_query_builder_set_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_add_id(GNostrTimelineQueryBuilder *builder, const char *event_id);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_add_p_tag(GNostrTimelineQueryBuilder *builder, const char *pubkey);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_set_since(GNostrTimelineQueryBuilder *builder, gint64 since);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_set_until(GNostrTimelineQueryBuilder *builder, gint64 until);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_set_limit(GNostrTimelineQueryBuilder *builder, guint limit);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_set_search(GNostrTimelineQueryBuilder *builder, const char *search);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_set_include_replies(GNostrTimelineQueryBuilder *builder, gboolean include);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_set_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag);
 
 /**
  * gnostr_timeline_query_builder_add_hashtag:
@@ -175,7 +176,7 @@ void gnostr_timeline_query_builder_set_hashtag(GNostrTimelineQueryBuilder *build
  * gnostr_timeline_query_builder_set_hashtag(); the two APIs are mutually
  * exclusive so callers get consistent JSON regardless of order.
  */
-void gnostr_timeline_query_builder_add_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_add_hashtag(GNostrTimelineQueryBuilder *builder, const char *hashtag);
 
 /**
  * gnostr_timeline_query_builder_build:
@@ -185,9 +186,9 @@ void gnostr_timeline_query_builder_add_hashtag(GNostrTimelineQueryBuilder *build
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_builder_build(GNostrTimelineQueryBuilder *builder);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_builder_build(GNostrTimelineQueryBuilder *builder);
 
-void gnostr_timeline_query_builder_free(GNostrTimelineQueryBuilder *builder);
+NOSTR_GOBJECT_API void gnostr_timeline_query_builder_free(GNostrTimelineQueryBuilder *builder);
 
 /* ============== Query Operations ============== */
 
@@ -199,7 +200,7 @@ void gnostr_timeline_query_builder_free(GNostrTimelineQueryBuilder *builder);
  *
  * Returns: (transfer none): JSON string (owned by query, do not free)
  */
-const char *gnostr_timeline_query_to_json(GNostrTimelineQuery *query);
+NOSTR_GOBJECT_API const char *gnostr_timeline_query_to_json(GNostrTimelineQuery *query);
 
 /**
  * gnostr_timeline_query_to_json_with_until:
@@ -210,7 +211,7 @@ const char *gnostr_timeline_query_to_json(GNostrTimelineQuery *query);
  *
  * Returns: (transfer full): JSON string, caller must g_free()
  */
-char *gnostr_timeline_query_to_json_with_until(GNostrTimelineQuery *query, gint64 until);
+NOSTR_GOBJECT_API char *gnostr_timeline_query_to_json_with_until(GNostrTimelineQuery *query, gint64 until);
 
 /**
  * gnostr_timeline_query_hash:
@@ -220,7 +221,7 @@ char *gnostr_timeline_query_to_json_with_until(GNostrTimelineQuery *query, gint6
  *
  * Returns: Hash value
  */
-guint gnostr_timeline_query_hash(GNostrTimelineQuery *query);
+NOSTR_GOBJECT_API guint gnostr_timeline_query_hash(GNostrTimelineQuery *query);
 
 /**
  * gnostr_timeline_query_equal:
@@ -231,7 +232,7 @@ guint gnostr_timeline_query_hash(GNostrTimelineQuery *query);
  *
  * Returns: TRUE if equal
  */
-gboolean gnostr_timeline_query_equal(GNostrTimelineQuery *a, GNostrTimelineQuery *b);
+NOSTR_GOBJECT_API gboolean gnostr_timeline_query_equal(GNostrTimelineQuery *a, GNostrTimelineQuery *b);
 
 /**
  * gnostr_timeline_query_copy:
@@ -241,7 +242,7 @@ gboolean gnostr_timeline_query_equal(GNostrTimelineQuery *a, GNostrTimelineQuery
  *
  * Returns: (transfer full): A new query, free with gnostr_timeline_query_free()
  */
-GNostrTimelineQuery *gnostr_timeline_query_copy(GNostrTimelineQuery *query);
+NOSTR_GOBJECT_API GNostrTimelineQuery *gnostr_timeline_query_copy(GNostrTimelineQuery *query);
 
 /**
  * gnostr_timeline_query_free:
@@ -249,7 +250,7 @@ GNostrTimelineQuery *gnostr_timeline_query_copy(GNostrTimelineQuery *query);
  *
  * Free a query and all its resources.
  */
-void gnostr_timeline_query_free(GNostrTimelineQuery *query);
+NOSTR_GOBJECT_API void gnostr_timeline_query_free(GNostrTimelineQuery *query);
 
 G_END_DECLS
 

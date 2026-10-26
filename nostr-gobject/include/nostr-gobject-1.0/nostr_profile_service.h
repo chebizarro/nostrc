@@ -17,6 +17,7 @@
 #ifndef GNOSTR_PROFILE_SERVICE_H
 #define GNOSTR_PROFILE_SERVICE_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <glib-object.h>
 #include <gio/gio.h>
@@ -44,7 +45,7 @@ typedef void (*GnostrProfileServiceCallback)(const char *pubkey_hex,
  *
  * @return The singleton service instance (never NULL after first call)
  */
-gpointer gnostr_profile_service_get_default(void);
+NOSTR_GOBJECT_API gpointer gnostr_profile_service_get_default(void);
 
 /* Request profile data for a pubkey.
  * The callback will be invoked on the main thread when the profile is available.
@@ -59,7 +60,7 @@ gpointer gnostr_profile_service_get_default(void);
  * @param callback    Callback to invoke when profile is ready (may be NULL)
  * @param user_data   User data for callback
  */
-void gnostr_profile_service_request(gpointer service,
+NOSTR_GOBJECT_API void gnostr_profile_service_request(gpointer service,
                                      const char *pubkey_hex,
                                      GnostrProfileServiceCallback callback,
                                      gpointer user_data);
@@ -76,7 +77,7 @@ void gnostr_profile_service_request(gpointer service,
  * @param callback         Callback to invoke when profile is ready
  * @param user_data        User data for callback
  */
-void gnostr_profile_service_request_with_hints(
+NOSTR_GOBJECT_API void gnostr_profile_service_request_with_hints(
                                      gpointer service,
                                      const char *pubkey_hex,
                                      const char *const *hint_relays,
@@ -92,7 +93,7 @@ void gnostr_profile_service_request_with_hints(
  * @param user_data   The user_data to match for cancellation
  * @return Number of callbacks cancelled
  */
-guint gnostr_profile_service_cancel_for_user_data(gpointer service, gpointer user_data);
+NOSTR_GOBJECT_API guint gnostr_profile_service_cancel_for_user_data(gpointer service, gpointer user_data);
 
 /* Set the relay URLs to use for fetching profiles.
  * Must be called before any requests will actually fetch from network.
@@ -102,7 +103,7 @@ guint gnostr_profile_service_cancel_for_user_data(gpointer service, gpointer use
  * @param urls       Array of relay URL strings
  * @param url_count  Number of URLs in array
  */
-void gnostr_profile_service_set_relays(gpointer service,
+NOSTR_GOBJECT_API void gnostr_profile_service_set_relays(gpointer service,
                                         const char **urls,
                                         size_t url_count);
 
@@ -112,7 +113,7 @@ void gnostr_profile_service_set_relays(gpointer service,
  * @param service     The profile service instance
  * @param debounce_ms Debounce delay in milliseconds
  */
-void gnostr_profile_service_set_debounce(gpointer service, guint debounce_ms);
+NOSTR_GOBJECT_API void gnostr_profile_service_set_debounce(gpointer service, guint debounce_ms);
 
 /* Get the simple pool used by the service for testing/debugging.
  * Returns the internal GNostrPool instance.
@@ -120,7 +121,7 @@ void gnostr_profile_service_set_debounce(gpointer service, guint debounce_ms);
  * @param service  The profile service instance
  * @return The GNostrPool instance (do not unref)
  */
-gpointer gnostr_profile_service_get_pool(gpointer service);
+NOSTR_GOBJECT_API gpointer gnostr_profile_service_get_pool(gpointer service);
 
 /* Set an external simple pool to use instead of creating one internally.
  * Useful for sharing a pool with the main window.
@@ -128,7 +129,7 @@ gpointer gnostr_profile_service_get_pool(gpointer service);
  * @param service  The profile service instance
  * @param pool     The GNostrPool to use (service takes a ref)
  */
-void gnostr_profile_service_set_pool(gpointer service, gpointer pool);
+NOSTR_GOBJECT_API void gnostr_profile_service_set_pool(gpointer service, gpointer pool);
 
 /**
  * GnostrRelayUrlProvider:
@@ -149,7 +150,7 @@ typedef void (*GnostrRelayUrlProvider)(GPtrArray *out);
  * Call this once during app init, e.g.:
  *   gnostr_profile_service_set_relay_provider(gnostr_load_relays_into);
  */
-void gnostr_profile_service_set_relay_provider(GnostrRelayUrlProvider provider);
+NOSTR_GOBJECT_API void gnostr_profile_service_set_relay_provider(GnostrRelayUrlProvider provider);
 
 /* Service statistics for monitoring */
 typedef struct {
@@ -167,7 +168,7 @@ typedef struct {
  * @param service  The profile service instance
  * @param stats    Output struct for statistics
  */
-void gnostr_profile_service_get_stats(gpointer service, GnostrProfileServiceStats *stats);
+NOSTR_GOBJECT_API void gnostr_profile_service_get_stats(gpointer service, GnostrProfileServiceStats *stats);
 
 /* ---- GTask-based Async API (R3: GIR-friendly) ---- */
 
@@ -183,7 +184,7 @@ void gnostr_profile_service_get_stats(gpointer service, GnostrProfileServiceStat
  * Returns profile metadata via GTask. Use
  * gnostr_profile_service_request_gtask_finish() in the callback.
  */
-void gnostr_profile_service_request_gtask_async(gpointer service,
+NOSTR_GOBJECT_API void gnostr_profile_service_request_gtask_async(gpointer service,
                                                  const char *pubkey_hex,
                                                  GCancellable *cancellable,
                                                  GAsyncReadyCallback callback,
@@ -200,7 +201,7 @@ void gnostr_profile_service_request_gtask_async(gpointer service,
  * Returns: (transfer full) (nullable): a profile metadata copy, or %NULL if
  *          not found. Free it with gnostr_profile_meta_free().
  */
-GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
+NOSTR_GOBJECT_API GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
     gpointer service,
     GAsyncResult *result,
     GError **error);
@@ -209,7 +210,7 @@ GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
  * Safe to call multiple times. After this call, gnostr_profile_service_get_default()
  * will create a new instance.
  */
-void gnostr_profile_service_shutdown(void);
+NOSTR_GOBJECT_API void gnostr_profile_service_shutdown(void);
 
 #ifdef __cplusplus
 }

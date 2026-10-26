@@ -14,6 +14,7 @@
 #ifndef NOSTR_QUERY_BATCHER_H
 #define NOSTR_QUERY_BATCHER_H
 
+#include "nostr-gobject-export.h"
 #include <glib.h>
 #include <gio/gio.h>
 #include "nostr-filter.h"
@@ -83,7 +84,7 @@ struct _NostrQueryBatcher {
  *
  * Returns: (transfer full): A new NostrQueryBatcher, free with nostr_query_batcher_free()
  */
-NostrQueryBatcher *nostr_query_batcher_new(GNostrSimplePool *pool);
+NOSTR_GOBJECT_API NostrQueryBatcher *nostr_query_batcher_new(GNostrSimplePool *pool);
 
 /*
  * nostr_query_batcher_free:
@@ -91,7 +92,7 @@ NostrQueryBatcher *nostr_query_batcher_new(GNostrSimplePool *pool);
  *
  * Frees the batcher. Any pending requests are completed with empty results.
  */
-void nostr_query_batcher_free(NostrQueryBatcher *batcher);
+NOSTR_GOBJECT_API void nostr_query_batcher_free(NostrQueryBatcher *batcher);
 
 /*
  * nostr_query_batcher_submit:
@@ -109,7 +110,7 @@ void nostr_query_batcher_free(NostrQueryBatcher *batcher);
  * The callback receives a GAsyncResult that can be passed to
  * gnostr_simple_pool_query_single_finish() to get the results.
  */
-void nostr_query_batcher_submit(NostrQueryBatcher *batcher,
+NOSTR_GOBJECT_API void nostr_query_batcher_submit(NostrQueryBatcher *batcher,
                                 const char *relay_url,
                                 const NostrFilter *filter,
                                 GCancellable *cancellable,
@@ -125,7 +126,7 @@ void nostr_query_batcher_submit(NostrQueryBatcher *batcher,
  * are batched together. Smaller windows reduce latency but batch fewer
  * requests; larger windows batch more but add latency.
  */
-void nostr_query_batcher_set_window_ms(NostrQueryBatcher *batcher, guint window_ms);
+NOSTR_GOBJECT_API void nostr_query_batcher_set_window_ms(NostrQueryBatcher *batcher, guint window_ms);
 
 /*
  * nostr_query_batcher_get_window_ms:
@@ -133,7 +134,7 @@ void nostr_query_batcher_set_window_ms(NostrQueryBatcher *batcher, guint window_
  *
  * Returns: The current batch window in milliseconds
  */
-guint nostr_query_batcher_get_window_ms(NostrQueryBatcher *batcher);
+NOSTR_GOBJECT_API guint nostr_query_batcher_get_window_ms(NostrQueryBatcher *batcher);
 
 /*
  * nostr_query_batcher_flush:
@@ -142,7 +143,7 @@ guint nostr_query_batcher_get_window_ms(NostrQueryBatcher *batcher);
  * Immediately flushes all pending batches. Useful for testing or when
  * you need immediate results without waiting for the batch window.
  */
-void nostr_query_batcher_flush(NostrQueryBatcher *batcher);
+NOSTR_GOBJECT_API void nostr_query_batcher_flush(NostrQueryBatcher *batcher);
 
 /*
  * nostr_query_batcher_get_pending_count:
@@ -150,7 +151,7 @@ void nostr_query_batcher_flush(NostrQueryBatcher *batcher);
  *
  * Returns: Number of pending requests across all batches
  */
-guint nostr_query_batcher_get_pending_count(NostrQueryBatcher *batcher);
+NOSTR_GOBJECT_API guint nostr_query_batcher_get_pending_count(NostrQueryBatcher *batcher);
 
 /*
  * Metrics
@@ -162,7 +163,7 @@ typedef struct {
     gdouble avg_requests_per_batch;
 } NostrBatcherMetrics;
 
-void nostr_query_batcher_get_metrics(NostrQueryBatcher *batcher, NostrBatcherMetrics *out);
+NOSTR_GOBJECT_API void nostr_query_batcher_get_metrics(NostrQueryBatcher *batcher, NostrBatcherMetrics *out);
 
 G_END_DECLS
 
