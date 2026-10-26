@@ -334,6 +334,10 @@ files already declare a version.
   to that header, with unchanged API and wire/storage formats: no bump from
   unreleased 0.2.2. Boundary tooling, CI and tests need no component bump.
 
+- nostrc-hrfis: relayd fails closed on NIP-42 challenge RNG failure using
+  OpenSSL RAND_bytes. PATCH-class security correction; relayd is unversioned
+  (no authoritative component version source), so no numeric bump is invented.
+
 - nostrc-hl30i.9 (SV-9): relayd adds opt-in VSP-01 service allowlist configuration,
   protected-kind REQ/COUNT/EVENT authorization and NIP-11 vault/auth markers,
   plus NIP-42 validation and correlated OK replies. This is MINOR-class additive

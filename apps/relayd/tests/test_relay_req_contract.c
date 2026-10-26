@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <openssl/rand.h>
 
 #include "ws_test_client.h"
 
@@ -231,11 +232,12 @@ static void *server_main(void *arg) {
   return NULL;
 }
 
-static int server_start(Server *s, NostrStorage *storage, const char *dir,
+static int server_start_config(Server *s, NostrStorage *storage, const char *dir,
                         int max_subs, const RelaydAsyncStorageOps *async_ops,
-                        unsigned int ack_timeout_ms) {
+                        unsigned int ack_timeout_ms, const RelaydConfig *cfg) {
   memset(s, 0, sizeof *s);
   if (relayd_config_load(NULL, &s->cfg) != 0) return -1;
+  if (cfg) s->cfg = *cfg;
   s->cfg.max_subs = max_subs;
   s->cfg.rate_ops_per_sec = 10000;
   s->cfg.rate_burst = 10000;
@@ -265,6 +267,13 @@ static int server_start(Server *s, NostrStorage *storage, const char *dir,
   return pthread_create(&s->thread, NULL, server_main, s);
 }
 
+static int server_start(Server *s, NostrStorage *storage, const char *dir,
+                        int max_subs, const RelaydAsyncStorageOps *async_ops,
+                        unsigned int ack_timeout_ms) {
+  return server_start_config(s, storage, dir, max_subs, async_ops,
+                             ack_timeout_ms, NULL);
+}
+
 static void server_stop(Server *s) {
   s->stop = 1; /* observed within LOOP_WAKE_US (1 s) */
   pthread_join(s->thread, NULL);
@@ -280,6 +289,56 @@ static int connect_client(Server *s) {
 }
 
 /* ---- scenarios ---------------------------------------------------------- */
+
+/* OpenSSL's test-only RAND method injects a partial output plus failure.
+ * No production fault switch or weak RNG fallback is exposed. */
+static const RAND_METHOD *saved_rand;
+static int fail_challenge_rng;
+static int test_rand_bytes(unsigned char *buf, int n) {
+  if (fail_challenge_rng && n == 16) {
+    memset(buf, 0x42, n / 2);
+    return 0;
+  }
+  return saved_rand->bytes(buf, n);
+}
+
+static void run_rng_failure(const char *dir) {
+  fprintf(stderr, "== challenge RNG failure\n");
+  saved_rand = RAND_get_rand_method();
+  RAND_METHOD method = *saved_rand;
+  method.bytes = test_rand_bytes;
+  CHECK(RAND_set_rand_method(&method) == 1, "install RNG fault");
+  RelaydConfig cfg;
+  CHECK(relayd_config_load(NULL, &cfg) == 0, "load config");
+  snprintf(cfg.auth, sizeof cfg.auth, "%s", "required");
+  fail_challenge_rng = 1;
+  Server s;
+  CHECK(server_start_config(&s, NULL, dir, 8, NULL, 0, &cfg) == 0,
+        "server start");
+  long long upgrade_ms = -1;
+  int fd = ws_open(s.sock_path, &upgrade_ms);
+  if (fd >= 0) {
+    char *reply = ws_recv(fd);
+    CHECK(reply == NULL, "RNG failure must close, never issue AUTH");
+    free(reply);
+    close(fd);
+  }
+  server_stop(&s);
+  fail_challenge_rng = 0;
+  CHECK(RAND_set_rand_method(saved_rand) == 1, "restore RNG");
+  /* A healthy RNG must still issue a full challenge on the real path. */
+  CHECK(server_start_config(&s, NULL, dir, 8, NULL, 0, &cfg) == 0,
+        "server start healthy RNG");
+  fd = connect_client(&s);
+  if (fd >= 0) {
+    char *reply = ws_recv(fd);
+    CHECK(reply && strncmp(reply, "[\"AUTH\",\"", 9) == 0 && strlen(reply) == 43,
+          "healthy RNG issues 128-bit challenge");
+    free(reply);
+    close(fd);
+  }
+  server_stop(&s);
+}
 
 static void run_storage_less(const char *dir) {
   fprintf(stderr, "== no storage\n");
@@ -571,6 +630,7 @@ int main(void) {
   nostr_json_init();
   char dir[] = "/tmp/relay-req-contract-XXXXXX";
   if (!mkdtemp(dir)) { perror("mkdtemp"); return 1; }
+  run_rng_failure(dir);
   run_storage_less(dir);
   run_with_storage(dir);
   run_async_commit(dir);

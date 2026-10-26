@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include <libwebsockets.h>
+#include <openssl/rand.h>
 
 #include "metrics.h"
 #include "nip11.h"
@@ -98,19 +99,12 @@ typedef struct {
   char uri[256];
 } HttpState;
 
-/* Secure nonce generator (unchanged from the pre-refactor code path). */
-static void gen_nonce(char *out_hex, size_t out_sz) {
-  if (!out_hex || out_sz < 33) return; /* need room for 16-byte hex + NUL */
+/* Never issue a NIP-42 challenge unless all its bytes are cryptographic. */
+static int gen_nonce(char *out_hex, size_t out_sz) {
+  if (!out_hex || out_sz < 33) return -1;
+  out_hex[0] = '\0';
   unsigned char buf[16];
-  int fd = open("/dev/urandom", O_RDONLY);
-  ssize_t r = -1;
-  if (fd >= 0) { r = read(fd, buf, sizeof(buf)); close(fd); }
-  if (r != (ssize_t)sizeof(buf)) {
-    /* Fallback to time-based if urandom not available */
-    unsigned long t = (unsigned long)time(NULL);
-    for (size_t i = 0; i < sizeof(buf); i++)
-      buf[i] = (t >> ((i % sizeof(unsigned long)) * 8)) & 0xFF;
-  }
+  if (RAND_bytes(buf, sizeof(buf)) != 1) return -1;
   static const char *hex = "0123456789abcdef";
   size_t j = 0;
   for (size_t i = 0; i < sizeof(buf) && j + 2 < out_sz; i++) {
@@ -118,6 +112,7 @@ static void gen_nonce(char *out_hex, size_t out_sz) {
     out_hex[j++] = hex[buf[i] & 0xF];
   }
   out_hex[j] = '\0';
+  return 0;
 }
 
 static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
@@ -287,7 +282,10 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         if (!lws_get_peer_simple(wsi, cs->peer_ip, sizeof(cs->peer_ip)))
           snprintf(cs->peer_ip, sizeof(cs->peer_ip), "%s", "unknown");
         if (ctx && strcmp(ctx->cfg.auth, "off") != 0) {
-          gen_nonce(cs->auth_chal, sizeof(cs->auth_chal));
+          if (gen_nonce(cs->auth_chal, sizeof(cs->auth_chal)) != 0) {
+            fprintf(stderr, "relayd: challenge RNG unavailable, closing\n");
+            return -1;
+          }
           cs->need_auth_chal = (cs->auth_chal[0] != '\0');
           lws_callback_on_writable(wsi);
         }
