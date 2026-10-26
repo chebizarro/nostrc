@@ -1,15 +1,15 @@
 include_guard(GLOBAL)
 include(GNUInstallDirs)
 
-# nostrc_library_visibility(target macro header install_directory)
-# `header` is relative to the target's generated include directory. Keep macro
-# names library-specific: importing one DLL must not export another DLL's API.
-function(nostrc_library_visibility target macro header install_directory)
+# Generate the library-owned API annotations. `header` is relative to the
+# generated include directory. This can also serve libraries which already own
+# their visibility and installation policy.
+function(nostrc_generate_export_header target macro header)
   # GenerateExportHeader keeps its template path in directory-scoped variables.
   include(GenerateExportHeader)
   get_target_property(_type ${target} TYPE)
   if(NOT _type MATCHES "^(STATIC|SHARED|MODULE)_LIBRARY$")
-    message(FATAL_ERROR "nostrc_library_visibility requires a library: ${target}")
+    message(FATAL_ERROR "nostrc_generate_export_header requires a library: ${target}")
   endif()
   string(TOUPPER "${target}" _prefix)
   set(_static_define "${_prefix}_STATIC_DEFINE")
@@ -32,6 +32,16 @@ function(nostrc_library_visibility target macro header install_directory)
     STATIC_DEFINE ${_static_define}
     EXPORT_FILE_NAME "${_include}/${header}"
     CUSTOM_CONTENT_FROM_VARIABLE _extra)
+endfunction()
+
+# nostrc_library_visibility(target macro header install_directory)
+# Keep macro names library-specific: importing one DLL must not export another
+# DLL's API. Existing libraries may use just the generator above to preserve
+# their shared archive-link policy.
+function(nostrc_library_visibility target macro header install_directory)
+  nostrc_generate_export_header(${target} ${macro} ${header})
+  get_target_property(_type ${target} TYPE)
+  set(_include "${CMAKE_CURRENT_BINARY_DIR}/include")
   set_target_properties(${target} PROPERTIES
     C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES WINDOWS_EXPORT_ALL_SYMBOLS NO)

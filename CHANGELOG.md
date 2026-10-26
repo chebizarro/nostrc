@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Static bud02, libblossom, libporthome, libvault and libvault-marmot retain
+  default visibility on public API definitions, allowing Groundhog's shared
+  GObject layer to resolve those APIs from executable-supplied archives.
+  Shared-library export sets and Windows static annotations are unchanged.
+
 ### Breaking library ABI changes
 - libnostr 2.0.0 and libnostr-json 2.0.0 export their declared public APIs
   instead of incidental implementation and embedded-archive symbols. Their

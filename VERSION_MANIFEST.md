@@ -28,22 +28,34 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.5.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.5.2 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
-| libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
+| libvault-marmot | `libvault-marmot/` | 0.1.1 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.5.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
-| libblossom | `libblossom/` | 0.3.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| libvault | `libvault/` | 0.5.1 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| libblossom | `libblossom/` | 0.3.1 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
-| bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
+| bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.2 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-hlw04: PATCH build/link correction for bud02 0.1.0 -> 0.1.1,
+  libblossom 0.3.0 -> 0.3.1, libporthome 0.5.1 -> 0.5.2, libvault
+  0.5.0 -> 0.5.1 and libvault-marmot 0.1.0 -> 0.1.1. Their existing public
+  APIs must remain default-visible in static archives when an executable
+  supplies definitions to a shared consumer (NOSTRC_ARCHIVES_FROM_EXECUTABLE).
+  Reuse the common export-header generator without changing their shared
+  archive-link policy or exported API. No new functionality or removed ABI.
+  libgo/libnostr/libjson retain the phase-A versions: helper refactoring does
+  not alter their artifacts. Downstream applications and GObject libraries
+  receive a dependency build correction, with no independent surface change
+  and no bump. No release tags or release-column changes.
 
 - nostrc-83pab: relayd separates async storage reservations from publisher ACK
   deadlines, sends NOTICE/close (not false OK) on unknown outcomes, reconciles
