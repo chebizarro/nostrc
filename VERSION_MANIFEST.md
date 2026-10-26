@@ -49,6 +49,13 @@ files already declare a version.
   wrap-key test on its auth-runtime prerequisite; test registration only,
   with no shipped artifact or public contract change. No release tags.
 
+- nostrc-9okpj: no bump for vaultctl (0.3.1), libblossom (0.3.0),
+  libporthome (0.5.1), libvault (0.5.0), libvault-marmot (0.1.0) or bud02
+  (0.1.0). Correct build-option defaults to enable shared-vault targets only
+  when their prerequisites are enabled; explicit requests retain configure-time
+  dependency errors. Build-default fix only; no shipped artifact, API, CLI,
+  storage or wire-format changes. No release tags.
+
 - nostrc-er4fz.8: nostr-homed remains 0.5.0 (no bump). Remove the internal,
   non-installed nh_porthome_blossom adapter and use libblossom's existing pool
   API directly. Preserve the local-harness insecure opt-in at constructor call
