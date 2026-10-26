@@ -1,45 +1,46 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef GN_VAULT_H
 #define GN_VAULT_H
+#include "nostr-gobject-export.h"
 #include <gio/gio.h>
 #include <vault/vault.h>
 G_BEGIN_DECLS
 
 #define GN_TYPE_VAULT (gn_vault_get_type())
-G_DECLARE_FINAL_TYPE(GnVault, gn_vault, GN, VAULT, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GnVault, gn_vault, GN, VAULT, GObject)
 
 /* GN_VAULT_ERROR codes are the negated libvault/porthome status, preserving
  * every lower-layer distinction (including EPOCH, AUTH, AGAIN and BUDGET).
  * Cancellation before dispatch uses G_IO_ERROR_CANCELLED instead. */
 #define GN_VAULT_ERROR (gn_vault_error_quark())
-GQuark gn_vault_error_quark(void);
+NOSTR_GOBJECT_API GQuark gn_vault_error_quark(void);
 
 /* Ref-counted boxed owners. Native views must not be freed or replaced. Only
  * a libvault re-seal task may mutate a proposal's node under its usual contract.
  * Grant disposal uses libvault's secret-wiping destructor, not a JSON GVariant. */
 typedef struct _GnVaultGrant GnVaultGrant;
 #define GN_TYPE_VAULT_GRANT (gn_vault_grant_get_type())
-GType gn_vault_grant_get_type(void) G_GNUC_CONST;
-GnVaultGrant *gn_vault_grant_ref(GnVaultGrant *grant);
-void gn_vault_grant_unref(GnVaultGrant *grant);
+NOSTR_GOBJECT_API GType gn_vault_grant_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GnVaultGrant *gn_vault_grant_ref(GnVaultGrant *grant);
+NOSTR_GOBJECT_API void gn_vault_grant_unref(GnVaultGrant *grant);
 /**
  * gn_vault_grant_peek: (skip)
  * Returns: (transfer none): grant metadata and key ring, valid until unref
  */
-const vault_grant *gn_vault_grant_peek(const GnVaultGrant *grant);
+NOSTR_GOBJECT_API const vault_grant *gn_vault_grant_peek(const GnVaultGrant *grant);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnVaultGrant, gn_vault_grant_unref)
 
 typedef struct _GnVaultRevocation GnVaultRevocation;
 #define GN_TYPE_VAULT_REVOCATION (gn_vault_revocation_get_type())
-GType gn_vault_revocation_get_type(void) G_GNUC_CONST;
-GnVaultRevocation *gn_vault_revocation_ref(GnVaultRevocation *revocation);
-void gn_vault_revocation_unref(GnVaultRevocation *revocation);
+NOSTR_GOBJECT_API GType gn_vault_revocation_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GnVaultRevocation *gn_vault_revocation_ref(GnVaultRevocation *revocation);
+NOSTR_GOBJECT_API void gn_vault_revocation_unref(GnVaultRevocation *revocation);
 /**
  * gn_vault_revocation_peek: (skip)
  * Returns: (transfer none): atomic proposal; caller owns re-sealing ancestors,
  *   delivering the new ring and signed publication, as specified by libvault
  */
-const vault_revoke_result *gn_vault_revocation_peek(const GnVaultRevocation *revocation);
+NOSTR_GOBJECT_API const vault_revoke_result *gn_vault_revocation_peek(const GnVaultRevocation *revocation);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnVaultRevocation, gn_vault_revocation_unref)
 
 /**
@@ -62,34 +63,34 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnVaultRevocation, gn_vault_revocation_unref)
  * hidden by a late cancellation. No operation retries or publishes implicitly.
  * Returns: (transfer full): a new adapter
  */
-GnVault *gn_vault_new(void);
+NOSTR_GOBJECT_API GnVault *gn_vault_new(void);
 
 /**
  * gn_vault_share_async: (skip)
  * Builds and delivers a grant from caller-supplied metadata/ring through any
  * carrier. Does not create a vault tree/head or sign/publish a bare rumor.
  */
-void gn_vault_share_async(GnVault *self, const vault_grant_carrier *carrier,
+NOSTR_GOBJECT_API void gn_vault_share_async(GnVault *self, const vault_grant_carrier *carrier,
     GBytes *recipient, const vault_grant *grant, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data);
-gboolean gn_vault_share_finish(GnVault *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API gboolean gn_vault_share_finish(GnVault *self, GAsyncResult *result, GError **error);
 /**
  * gn_vault_accept_async: (skip)
  * libvault verifies the authenticated carrier sender against the grant owner.
  */
-void gn_vault_accept_async(GnVault *self, const vault_grant_carrier *carrier,
+NOSTR_GOBJECT_API void gn_vault_accept_async(GnVault *self, const vault_grant_carrier *carrier,
     GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 /**
  * gn_vault_accept_finish:
  * Returns: (transfer full) (nullable): an owned, secret-wiping grant
  */
-GnVaultGrant *gn_vault_accept_finish(GnVault *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API GnVaultGrant *gn_vault_accept_finish(GnVault *self, GAsyncResult *result, GError **error);
 
 /**
  * gn_vault_fold_async: (skip)
  * Folds verified records under caller-supplied trusted owner metadata.
  */
-void gn_vault_fold_async(GnVault *self, const porthome_vault_info *anchor,
+NOSTR_GOBJECT_API void gn_vault_fold_async(GnVault *self, const porthome_vault_info *anchor,
     const vault_record *const *records, gsize count, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data);
 /**
@@ -105,13 +106,13 @@ void gn_vault_fold_async(GnVault *self, const porthome_vault_info *anchor,
  * No view is fabricated on CONFLICT/INCOMPLETE. Indices refer to input order.
  * Returns: TRUE on VAULT_OK; FALSE with the exact error and any partial result
  */
-gboolean gn_vault_fold_finish(GnVault *self, GAsyncResult *result, GVariant **fold, GError **error);
+NOSTR_GOBJECT_API gboolean gn_vault_fold_finish(GnVault *self, GAsyncResult *result, GVariant **fold, GError **error);
 
 /**
  * gn_vault_revoke_async: (skip)
  * Calls libvault's atomic proposal operation. Exactly one parent/head is needed.
  */
-void gn_vault_revoke_async(GnVault *self, GBytes *actor, GBytes *member,
+NOSTR_GOBJECT_API void gn_vault_revoke_async(GnVault *self, GBytes *actor, GBytes *member,
     const porthome_dir_node *node, const vault_ring *ring,
     const porthome_node_entry *parent, const porthome_head *root_head,
     guint64 written_at, GCancellable *cancellable,
@@ -120,14 +121,14 @@ void gn_vault_revoke_async(GnVault *self, GBytes *actor, GBytes *member,
  * gn_vault_revoke_finish:
  * Returns: (transfer full) (nullable): an owned proposal, not published authority
  */
-GnVaultRevocation *gn_vault_revoke_finish(GnVault *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API GnVaultRevocation *gn_vault_revoke_finish(GnVault *self, GAsyncResult *result, GError **error);
 
 /**
  * gn_vault_reseal_async: (skip)
  * Runs an existing task with the exact caller-supplied bandwidth budget.
  * Node/ring/task ownership and terminal I/O failure rules remain libvault's.
  */
-void gn_vault_reseal_async(GnVault *self, vault_reseal_task *task,
+NOSTR_GOBJECT_API void gn_vault_reseal_async(GnVault *self, vault_reseal_task *task,
     guint64 bandwidth_budget, const vault_blob_io *io, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data);
 /**
@@ -141,7 +142,7 @@ void gn_vault_reseal_async(GnVault *self, vault_reseal_task *task,
  * Returns: TRUE on VAULT_OK; FALSE with exact error and progress, including on
  *   BUDGET/IO. Cancellation before dispatch has no progress result.
  */
-gboolean gn_vault_reseal_finish(GnVault *self, GAsyncResult *result,
+NOSTR_GOBJECT_API gboolean gn_vault_reseal_finish(GnVault *self, GAsyncResult *result,
     GVariant **progress, GError **error);
 G_END_DECLS
 #endif

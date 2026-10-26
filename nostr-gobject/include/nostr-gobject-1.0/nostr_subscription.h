@@ -1,6 +1,7 @@
 #ifndef NOSTR_GSUBSCRIPTION_H
 #define NOSTR_GSUBSCRIPTION_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-enums.h"
 #include "nostr_relay.h"
@@ -21,7 +22,7 @@ typedef struct NostrFilters NostrFilters;
 
 /* Define GNostrSubscription GObject (G-prefixed to avoid clashing with core) */
 #define GNOSTR_TYPE_SUBSCRIPTION (gnostr_subscription_get_type())
-G_DECLARE_FINAL_TYPE(GNostrSubscription, gnostr_subscription, GNOSTR, SUBSCRIPTION, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrSubscription, gnostr_subscription, GNOSTR, SUBSCRIPTION, GObject)
 
 /**
  * GNostrSubscription:
@@ -81,7 +82,7 @@ enum {
  *
  * Since: 1.0
  */
-GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
+NOSTR_GOBJECT_API GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
 
 /**
  * gnostr_subscription_fire:
@@ -95,7 +96,7 @@ GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *fi
  *
  * Since: 1.0
  */
-gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
 
 /**
  * gnostr_subscription_close:
@@ -108,7 +109,7 @@ gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
  *
  * Since: 1.0
  */
-void gnostr_subscription_close(GNostrSubscription *self);
+NOSTR_GOBJECT_API void gnostr_subscription_close(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_set_lossless:
@@ -140,7 +141,7 @@ void gnostr_subscription_close(GNostrSubscription *self);
  *
  * Since: 2.1
  */
-void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossless);
+NOSTR_GOBJECT_API void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossless);
 
 /**
  * gnostr_subscription_get_lossless:
@@ -151,7 +152,7 @@ void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossles
  *
  * Since: 2.1
  */
-gboolean gnostr_subscription_get_lossless(GNostrSubscription *self);
+NOSTR_GOBJECT_API gboolean gnostr_subscription_get_lossless(GNostrSubscription *self);
 
 /**
  * GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS:
@@ -215,7 +216,7 @@ gboolean gnostr_subscription_get_lossless(GNostrSubscription *self);
  *
  * Since: 2.2
  */
-void gnostr_subscription_set_backlog_limit(GNostrSubscription *self,
+NOSTR_GOBJECT_API void gnostr_subscription_set_backlog_limit(GNostrSubscription *self,
                                            guint max_events, guint64 max_bytes);
 
 /**
@@ -228,7 +229,7 @@ void gnostr_subscription_set_backlog_limit(GNostrSubscription *self,
  *
  * Since: 2.2
  */
-void gnostr_subscription_get_backlog_limit(GNostrSubscription *self,
+NOSTR_GOBJECT_API void gnostr_subscription_get_backlog_limit(GNostrSubscription *self,
                                            guint *max_events, guint64 *max_bytes);
 
 /**
@@ -240,7 +241,7 @@ void gnostr_subscription_get_backlog_limit(GNostrSubscription *self,
  *
  * Since: 2.2
  */
-gboolean gnostr_subscription_get_overflowed(GNostrSubscription *self);
+NOSTR_GOBJECT_API gboolean gnostr_subscription_get_overflowed(GNostrSubscription *self);
 
 /* --- Property Accessors --- */
 
@@ -254,7 +255,7 @@ gboolean gnostr_subscription_get_overflowed(GNostrSubscription *self);
  *
  * Since: 1.0
  */
-const gchar *gnostr_subscription_get_id(GNostrSubscription *self);
+NOSTR_GOBJECT_API const gchar *gnostr_subscription_get_id(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_active:
@@ -266,7 +267,7 @@ const gchar *gnostr_subscription_get_id(GNostrSubscription *self);
  *
  * Since: 1.0
  */
-gboolean gnostr_subscription_get_active(GNostrSubscription *self);
+NOSTR_GOBJECT_API gboolean gnostr_subscription_get_active(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_state:
@@ -278,7 +279,7 @@ gboolean gnostr_subscription_get_active(GNostrSubscription *self);
  *
  * Since: 1.0
  */
-GNostrSubscriptionState gnostr_subscription_get_state(GNostrSubscription *self);
+NOSTR_GOBJECT_API GNostrSubscriptionState gnostr_subscription_get_state(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_relay:
@@ -290,7 +291,7 @@ GNostrSubscriptionState gnostr_subscription_get_state(GNostrSubscription *self);
  *
  * Since: 1.0
  */
-GNostrRelay *gnostr_subscription_get_relay(GNostrSubscription *self);
+NOSTR_GOBJECT_API GNostrRelay *gnostr_subscription_get_relay(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_event_count:
@@ -302,7 +303,7 @@ GNostrRelay *gnostr_subscription_get_relay(GNostrSubscription *self);
  *
  * Since: 1.0
  */
-guint gnostr_subscription_get_event_count(GNostrSubscription *self);
+NOSTR_GOBJECT_API guint gnostr_subscription_get_event_count(GNostrSubscription *self);
 
 /**
  * gnostr_subscription_get_core_subscription:
@@ -315,7 +316,7 @@ guint gnostr_subscription_get_event_count(GNostrSubscription *self);
  *
  * Since: 1.0
  */
-NostrSubscription *gnostr_subscription_get_core_subscription(GNostrSubscription *self);
+NOSTR_GOBJECT_API NostrSubscription *gnostr_subscription_get_core_subscription(GNostrSubscription *self);
 
 G_END_DECLS
 

@@ -1,6 +1,7 @@
 #ifndef NOSTR_GOBJECT_NOSTR_ENUMS_H
 #define NOSTR_GOBJECT_NOSTR_ENUMS_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -22,7 +23,7 @@ typedef enum {
   GNOSTR_RELAY_STATE_ERROR
 } GNostrRelayState;
 
-GType gnostr_relay_state_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GType gnostr_relay_state_get_type(void) G_GNUC_CONST;
 #define GNOSTR_TYPE_RELAY_STATE (gnostr_relay_state_get_type())
 
 /**
@@ -66,7 +67,7 @@ typedef enum {
   GNOSTR_SUBSCRIPTION_STATE_ERROR
 } GNostrSubscriptionState;
 
-GType gnostr_subscription_state_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GType gnostr_subscription_state_get_type(void) G_GNUC_CONST;
 #define GNOSTR_TYPE_SUBSCRIPTION_STATE (gnostr_subscription_state_get_type())
 
 /**
@@ -85,7 +86,7 @@ typedef enum {
   GNOSTR_NIP46_STATE_STOPPING
 } GNostrNip46State;
 
-GType gnostr_nip46_state_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GType gnostr_nip46_state_get_type(void) G_GNUC_CONST;
 #define GNOSTR_TYPE_NIP46_STATE (gnostr_nip46_state_get_type())
 
 G_END_DECLS

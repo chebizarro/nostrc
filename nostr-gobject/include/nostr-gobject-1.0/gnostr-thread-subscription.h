@@ -13,12 +13,13 @@
 #ifndef GNOSTR_THREAD_SUBSCRIPTION_H
 #define GNOSTR_THREAD_SUBSCRIPTION_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_THREAD_SUBSCRIPTION (gnostr_thread_subscription_get_type())
-G_DECLARE_FINAL_TYPE(GNostrThreadSubscription, gnostr_thread_subscription,
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrThreadSubscription, gnostr_thread_subscription,
                      GNOSTR, THREAD_SUBSCRIPTION, GObject)
 
 /**
@@ -49,7 +50,7 @@ G_DECLARE_FINAL_TYPE(GNostrThreadSubscription, gnostr_thread_subscription,
  *
  * Returns: (transfer full): a new #GNostrThreadSubscription
  */
-GNostrThreadSubscription *gnostr_thread_subscription_new(const char *root_event_id);
+NOSTR_GOBJECT_API GNostrThreadSubscription *gnostr_thread_subscription_new(const char *root_event_id);
 
 /**
  * gnostr_thread_subscription_start:
@@ -61,7 +62,7 @@ GNostrThreadSubscription *gnostr_thread_subscription_new(const char *root_event_
  *
  * Calling this on an already-active subscription is a no-op.
  */
-void gnostr_thread_subscription_start(GNostrThreadSubscription *self);
+NOSTR_GOBJECT_API void gnostr_thread_subscription_start(GNostrThreadSubscription *self);
 
 /**
  * gnostr_thread_subscription_stop:
@@ -72,7 +73,7 @@ void gnostr_thread_subscription_start(GNostrThreadSubscription *self);
  *
  * Calling this on an inactive subscription is a no-op.
  */
-void gnostr_thread_subscription_stop(GNostrThreadSubscription *self);
+NOSTR_GOBJECT_API void gnostr_thread_subscription_stop(GNostrThreadSubscription *self);
 
 /**
  * gnostr_thread_subscription_add_monitored_id:
@@ -83,7 +84,7 @@ void gnostr_thread_subscription_stop(GNostrThreadSubscription *self);
  * This is useful for mid-thread focus events that may have their own
  * reply subtree not directly referencing the root.
  */
-void gnostr_thread_subscription_add_monitored_id(GNostrThreadSubscription *self,
+NOSTR_GOBJECT_API void gnostr_thread_subscription_add_monitored_id(GNostrThreadSubscription *self,
                                                   const char *event_id);
 
 /**
@@ -92,7 +93,7 @@ void gnostr_thread_subscription_add_monitored_id(GNostrThreadSubscription *self,
  *
  * Returns: (transfer none): the hex event ID of the thread root
  */
-const char *gnostr_thread_subscription_get_root_id(GNostrThreadSubscription *self);
+NOSTR_GOBJECT_API const char *gnostr_thread_subscription_get_root_id(GNostrThreadSubscription *self);
 
 /**
  * gnostr_thread_subscription_is_active:
@@ -100,7 +101,7 @@ const char *gnostr_thread_subscription_get_root_id(GNostrThreadSubscription *sel
  *
  * Returns: %TRUE if the subscription is currently active
  */
-gboolean gnostr_thread_subscription_is_active(GNostrThreadSubscription *self);
+NOSTR_GOBJECT_API gboolean gnostr_thread_subscription_is_active(GNostrThreadSubscription *self);
 
 /**
  * gnostr_thread_subscription_get_seen_count:
@@ -108,7 +109,7 @@ gboolean gnostr_thread_subscription_is_active(GNostrThreadSubscription *self);
  *
  * Returns: the number of unique events seen by this subscription
  */
-guint gnostr_thread_subscription_get_seen_count(GNostrThreadSubscription *self);
+NOSTR_GOBJECT_API guint gnostr_thread_subscription_get_seen_count(GNostrThreadSubscription *self);
 
 G_END_DECLS
 

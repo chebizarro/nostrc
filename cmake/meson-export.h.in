@@ -1,0 +1,20 @@
+/* Meson counterpart of NostrcVisibility.cmake's generated API header. */
+#ifndef @API@_H
+#define @API@_H
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+# if @STATIC@ || defined(@STATIC_DEFINE@)
+#  define @API@
+# elif defined(@EXPORTS@)
+#  define @API@ __declspec(dllexport)
+# else
+#  define @API@ __declspec(dllimport)
+# endif
+#elif defined(__GNUC__) || defined(__clang__)
+/* Static API must also survive linking into an executable used by a DSO. */
+# define @API@ __attribute__((visibility("default")))
+#else
+# define @API@
+#endif
+
+#endif

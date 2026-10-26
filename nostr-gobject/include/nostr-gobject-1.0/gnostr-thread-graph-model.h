@@ -12,12 +12,13 @@
 #ifndef GNOSTR_THREAD_GRAPH_MODEL_H
 #define GNOSTR_THREAD_GRAPH_MODEL_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_THREAD_GRAPH_MODEL (gnostr_thread_graph_model_get_type())
-G_DECLARE_FINAL_TYPE(GNostrThreadGraphModel, gnostr_thread_graph_model,
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrThreadGraphModel, gnostr_thread_graph_model,
                      GNOSTR, THREAD_GRAPH_MODEL, GObject)
 
 /**
@@ -57,7 +58,7 @@ typedef struct {
  *
  * Returns: (transfer full): a new #GNostrThreadGraphModel
  */
-GNostrThreadGraphModel *gnostr_thread_graph_model_new(const char *root_event_id);
+NOSTR_GOBJECT_API GNostrThreadGraphModel *gnostr_thread_graph_model_new(const char *root_event_id);
 
 /**
  * gnostr_thread_graph_model_add_event_json:
@@ -70,7 +71,7 @@ GNostrThreadGraphModel *gnostr_thread_graph_model_new(const char *root_event_id)
  *
  * Returns: %TRUE if the event was new and added, %FALSE if duplicate or error
  */
-gboolean gnostr_thread_graph_model_add_event_json(GNostrThreadGraphModel *self,
+NOSTR_GOBJECT_API gboolean gnostr_thread_graph_model_add_event_json(GNostrThreadGraphModel *self,
                                                     const char *event_json);
 
 /**
@@ -80,7 +81,7 @@ gboolean gnostr_thread_graph_model_add_event_json(GNostrThreadGraphModel *self,
  *
  * Returns: (transfer none) (nullable): the graph node, or %NULL if not found
  */
-const GnostrThreadGraphNode *gnostr_thread_graph_model_get_node(
+NOSTR_GOBJECT_API const GnostrThreadGraphNode *gnostr_thread_graph_model_get_node(
     GNostrThreadGraphModel *self, const char *event_id);
 
 /**
@@ -89,7 +90,7 @@ const GnostrThreadGraphNode *gnostr_thread_graph_model_get_node(
  *
  * Returns: (transfer none): the root event ID
  */
-const char *gnostr_thread_graph_model_get_root_id(GNostrThreadGraphModel *self);
+NOSTR_GOBJECT_API const char *gnostr_thread_graph_model_get_root_id(GNostrThreadGraphModel *self);
 
 /**
  * gnostr_thread_graph_model_get_node_count:
@@ -97,7 +98,7 @@ const char *gnostr_thread_graph_model_get_root_id(GNostrThreadGraphModel *self);
  *
  * Returns: the total number of nodes in the graph
  */
-guint gnostr_thread_graph_model_get_node_count(GNostrThreadGraphModel *self);
+NOSTR_GOBJECT_API guint gnostr_thread_graph_model_get_node_count(GNostrThreadGraphModel *self);
 
 /**
  * gnostr_thread_graph_model_get_reply_count:
@@ -105,7 +106,7 @@ guint gnostr_thread_graph_model_get_node_count(GNostrThreadGraphModel *self);
  *
  * Returns: the number of kind:1 reply nodes
  */
-guint gnostr_thread_graph_model_get_reply_count(GNostrThreadGraphModel *self);
+NOSTR_GOBJECT_API guint gnostr_thread_graph_model_get_reply_count(GNostrThreadGraphModel *self);
 
 /**
  * gnostr_thread_graph_model_get_children:
@@ -114,7 +115,7 @@ guint gnostr_thread_graph_model_get_reply_count(GNostrThreadGraphModel *self);
  *
  * Returns: (transfer none) (nullable): GPtrArray of child event ID strings
  */
-GPtrArray *gnostr_thread_graph_model_get_children(GNostrThreadGraphModel *self,
+NOSTR_GOBJECT_API GPtrArray *gnostr_thread_graph_model_get_children(GNostrThreadGraphModel *self,
                                                    const char *event_id);
 
 /**
@@ -127,7 +128,7 @@ GPtrArray *gnostr_thread_graph_model_get_children(GNostrThreadGraphModel *self,
  * Returns: (transfer full) (element-type utf8): GPtrArray of event ID strings.
  *          Free with g_ptr_array_unref().
  */
-GPtrArray *gnostr_thread_graph_model_get_render_order(GNostrThreadGraphModel *self);
+NOSTR_GOBJECT_API GPtrArray *gnostr_thread_graph_model_get_render_order(GNostrThreadGraphModel *self);
 
 /**
  * gnostr_thread_graph_model_clear:
@@ -135,7 +136,7 @@ GPtrArray *gnostr_thread_graph_model_get_render_order(GNostrThreadGraphModel *se
  *
  * Removes all nodes from the graph.
  */
-void gnostr_thread_graph_model_clear(GNostrThreadGraphModel *self);
+NOSTR_GOBJECT_API void gnostr_thread_graph_model_clear(GNostrThreadGraphModel *self);
 
 /**
  * Signals:

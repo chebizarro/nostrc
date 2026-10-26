@@ -1,6 +1,7 @@
 #ifndef GNOSTR_JSON_H
 #define GNOSTR_JSON_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-error.h"
 
@@ -30,7 +31,7 @@ G_BEGIN_DECLS
  * ========================================================================= */
 
 #define GNOSTR_TYPE_JSON_BUILDER (gnostr_json_builder_get_type())
-G_DECLARE_FINAL_TYPE(GNostrJsonBuilder, gnostr_json_builder, GNOSTR, JSON_BUILDER, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrJsonBuilder, gnostr_json_builder, GNOSTR, JSON_BUILDER, GObject)
 
 /**
  * gnostr_json_builder_new:
@@ -39,7 +40,7 @@ G_DECLARE_FINAL_TYPE(GNostrJsonBuilder, gnostr_json_builder, GNOSTR, JSON_BUILDE
  *
  * Returns: (transfer full): a new #GNostrJsonBuilder
  */
-GNostrJsonBuilder *gnostr_json_builder_new(void);
+NOSTR_GOBJECT_API GNostrJsonBuilder *gnostr_json_builder_new(void);
 
 /**
  * gnostr_json_builder_begin_object:
@@ -49,7 +50,7 @@ GNostrJsonBuilder *gnostr_json_builder_new(void);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_begin_object(GNostrJsonBuilder *self);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_begin_object(GNostrJsonBuilder *self);
 
 /**
  * gnostr_json_builder_end_object:
@@ -59,7 +60,7 @@ gboolean gnostr_json_builder_begin_object(GNostrJsonBuilder *self);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_end_object(GNostrJsonBuilder *self);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_end_object(GNostrJsonBuilder *self);
 
 /**
  * gnostr_json_builder_begin_array:
@@ -69,7 +70,7 @@ gboolean gnostr_json_builder_end_object(GNostrJsonBuilder *self);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_begin_array(GNostrJsonBuilder *self);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_begin_array(GNostrJsonBuilder *self);
 
 /**
  * gnostr_json_builder_end_array:
@@ -79,7 +80,7 @@ gboolean gnostr_json_builder_begin_array(GNostrJsonBuilder *self);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_end_array(GNostrJsonBuilder *self);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_end_array(GNostrJsonBuilder *self);
 
 /**
  * gnostr_json_builder_set_key:
@@ -90,7 +91,7 @@ gboolean gnostr_json_builder_end_array(GNostrJsonBuilder *self);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_set_key(GNostrJsonBuilder *self, const gchar *key);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_set_key(GNostrJsonBuilder *self, const gchar *key);
 
 /**
  * gnostr_json_builder_add_string:
@@ -101,7 +102,7 @@ gboolean gnostr_json_builder_set_key(GNostrJsonBuilder *self, const gchar *key);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_string(GNostrJsonBuilder *self, const gchar *value);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_string(GNostrJsonBuilder *self, const gchar *value);
 
 /**
  * gnostr_json_builder_add_int:
@@ -112,7 +113,7 @@ gboolean gnostr_json_builder_add_string(GNostrJsonBuilder *self, const gchar *va
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_int(GNostrJsonBuilder *self, gint value);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_int(GNostrJsonBuilder *self, gint value);
 
 /**
  * gnostr_json_builder_add_int64:
@@ -123,7 +124,7 @@ gboolean gnostr_json_builder_add_int(GNostrJsonBuilder *self, gint value);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_int64(GNostrJsonBuilder *self, gint64 value);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_int64(GNostrJsonBuilder *self, gint64 value);
 
 /**
  * gnostr_json_builder_add_double:
@@ -134,7 +135,7 @@ gboolean gnostr_json_builder_add_int64(GNostrJsonBuilder *self, gint64 value);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_double(GNostrJsonBuilder *self, gdouble value);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_double(GNostrJsonBuilder *self, gdouble value);
 
 /**
  * gnostr_json_builder_add_boolean:
@@ -145,7 +146,7 @@ gboolean gnostr_json_builder_add_double(GNostrJsonBuilder *self, gdouble value);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_boolean(GNostrJsonBuilder *self, gboolean value);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_boolean(GNostrJsonBuilder *self, gboolean value);
 
 /**
  * gnostr_json_builder_add_null:
@@ -155,7 +156,7 @@ gboolean gnostr_json_builder_add_boolean(GNostrJsonBuilder *self, gboolean value
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_null(GNostrJsonBuilder *self);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_null(GNostrJsonBuilder *self);
 
 /**
  * gnostr_json_builder_add_raw:
@@ -166,7 +167,7 @@ gboolean gnostr_json_builder_add_null(GNostrJsonBuilder *self);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_json_builder_add_raw(GNostrJsonBuilder *self, const gchar *raw_json);
+NOSTR_GOBJECT_API gboolean gnostr_json_builder_add_raw(GNostrJsonBuilder *self, const gchar *raw_json);
 
 /**
  * gnostr_json_builder_finish:
@@ -177,7 +178,7 @@ gboolean gnostr_json_builder_add_raw(GNostrJsonBuilder *self, const gchar *raw_j
  *
  * Returns: (transfer full) (nullable): a newly allocated JSON string, or %NULL on error
  */
-gchar *gnostr_json_builder_finish(GNostrJsonBuilder *self);
+NOSTR_GOBJECT_API gchar *gnostr_json_builder_finish(GNostrJsonBuilder *self);
 
 /* =========================================================================
  * JSON Parsing Utilities
@@ -197,7 +198,7 @@ gchar *gnostr_json_builder_finish(GNostrJsonBuilder *self);
  *
  * Returns: (transfer full) (nullable): the string value, or %NULL on error
  */
-gchar *gnostr_json_get_string(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_get_string(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_int:
@@ -210,7 +211,7 @@ gchar *gnostr_json_get_string(const gchar *json, const gchar *key, GError **erro
  *
  * Returns: the integer value, or 0 on error
  */
-gint gnostr_json_get_int(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gint gnostr_json_get_int(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_int64:
@@ -222,7 +223,7 @@ gint gnostr_json_get_int(const gchar *json, const gchar *key, GError **error);
  *
  * Returns: the int64 value, or 0 on error
  */
-gint64 gnostr_json_get_int64(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gint64 gnostr_json_get_int64(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_double:
@@ -234,7 +235,7 @@ gint64 gnostr_json_get_int64(const gchar *json, const gchar *key, GError **error
  *
  * Returns: the double value, or 0.0 on error
  */
-gdouble gnostr_json_get_double(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gdouble gnostr_json_get_double(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_boolean:
@@ -247,7 +248,7 @@ gdouble gnostr_json_get_double(const gchar *json, const gchar *key, GError **err
  *
  * Returns: the boolean value, or %FALSE on error
  */
-gboolean gnostr_json_get_boolean(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_json_get_boolean(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_string_array:
@@ -260,7 +261,7 @@ gboolean gnostr_json_get_boolean(const gchar *json, const gchar *key, GError **e
  * Returns: (transfer full) (nullable): a newly allocated %NULL-terminated
  *   string array, or %NULL on error. Free with g_strfreev().
  */
-GStrv gnostr_json_get_string_array(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API GStrv gnostr_json_get_string_array(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_raw:
@@ -274,7 +275,7 @@ GStrv gnostr_json_get_string_array(const gchar *json, const gchar *key, GError *
  *
  * Returns: (transfer full) (nullable): the raw JSON fragment, or %NULL on error
  */
-gchar *gnostr_json_get_raw(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_get_raw(const gchar *json, const gchar *key, GError **error);
 
 /* ---- Deep Path Access ---- */
 
@@ -289,7 +290,7 @@ gchar *gnostr_json_get_raw(const gchar *json, const gchar *key, GError **error);
  *
  * Returns: (transfer full) (nullable): the string value, or %NULL on error
  */
-gchar *gnostr_json_get_string_path(const gchar *json, const gchar *path, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_get_string_path(const gchar *json, const gchar *path, GError **error);
 
 /**
  * gnostr_json_get_int_path:
@@ -299,7 +300,7 @@ gchar *gnostr_json_get_string_path(const gchar *json, const gchar *path, GError 
  *
  * Returns: the integer value, or 0 on error
  */
-gint gnostr_json_get_int_path(const gchar *json, const gchar *path, GError **error);
+NOSTR_GOBJECT_API gint gnostr_json_get_int_path(const gchar *json, const gchar *path, GError **error);
 
 /**
  * gnostr_json_get_int64_path:
@@ -309,7 +310,7 @@ gint gnostr_json_get_int_path(const gchar *json, const gchar *path, GError **err
  *
  * Returns: the int64 value, or 0 on error
  */
-gint64 gnostr_json_get_int64_path(const gchar *json, const gchar *path, GError **error);
+NOSTR_GOBJECT_API gint64 gnostr_json_get_int64_path(const gchar *json, const gchar *path, GError **error);
 
 /**
  * gnostr_json_get_double_path:
@@ -319,7 +320,7 @@ gint64 gnostr_json_get_int64_path(const gchar *json, const gchar *path, GError *
  *
  * Returns: the double value, or 0.0 on error
  */
-gdouble gnostr_json_get_double_path(const gchar *json, const gchar *path, GError **error);
+NOSTR_GOBJECT_API gdouble gnostr_json_get_double_path(const gchar *json, const gchar *path, GError **error);
 
 /**
  * gnostr_json_get_boolean_path:
@@ -329,7 +330,7 @@ gdouble gnostr_json_get_double_path(const gchar *json, const gchar *path, GError
  *
  * Returns: the boolean value, or %FALSE on error
  */
-gboolean gnostr_json_get_boolean_path(const gchar *json, const gchar *path, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_json_get_boolean_path(const gchar *json, const gchar *path, GError **error);
 
 /**
  * gnostr_json_get_raw_path:
@@ -339,7 +340,7 @@ gboolean gnostr_json_get_boolean_path(const gchar *json, const gchar *path, GErr
  *
  * Returns: (transfer full) (nullable): the raw JSON fragment, or %NULL on error
  */
-gchar *gnostr_json_get_raw_path(const gchar *json, const gchar *path, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_get_raw_path(const gchar *json, const gchar *path, GError **error);
 
 /* ---- Array Validation ---- */
 
@@ -351,7 +352,7 @@ gchar *gnostr_json_get_raw_path(const gchar *json, const gchar *path, GError **e
  *
  * Returns: %TRUE if the string is a JSON array
  */
-gboolean gnostr_json_is_array_str(const gchar *json);
+NOSTR_GOBJECT_API gboolean gnostr_json_is_array_str(const gchar *json);
 
 /**
  * gnostr_json_is_object_str:
@@ -361,7 +362,7 @@ gboolean gnostr_json_is_array_str(const gchar *json);
  *
  * Returns: %TRUE if the string is a JSON object
  */
-gboolean gnostr_json_is_object_str(const gchar *json);
+NOSTR_GOBJECT_API gboolean gnostr_json_is_object_str(const gchar *json);
 
 /**
  * gnostr_json_has_key:
@@ -372,7 +373,7 @@ gboolean gnostr_json_is_object_str(const gchar *json);
  *
  * Returns: %TRUE if the key exists
  */
-gboolean gnostr_json_has_key(const gchar *json, const gchar *key);
+NOSTR_GOBJECT_API gboolean gnostr_json_has_key(const gchar *json, const gchar *key);
 
 /* ---- Array Access ---- */
 
@@ -387,7 +388,7 @@ gboolean gnostr_json_has_key(const gchar *json, const gchar *key);
  *
  * Returns: the array length, or -1 on error
  */
-gint gnostr_json_get_array_length(const gchar *json, const gchar *key, GError **error);
+NOSTR_GOBJECT_API gint gnostr_json_get_array_length(const gchar *json, const gchar *key, GError **error);
 
 /**
  * gnostr_json_get_array_string:
@@ -401,7 +402,7 @@ gint gnostr_json_get_array_length(const gchar *json, const gchar *key, GError **
  *
  * Returns: (transfer full) (nullable): the string value, or %NULL on error
  */
-gchar *gnostr_json_get_array_string(const gchar *json, const gchar *key, gint index, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_get_array_string(const gchar *json, const gchar *key, gint index, GError **error);
 
 /* ---- Nested Object Access ---- */
 
@@ -416,7 +417,7 @@ gchar *gnostr_json_get_array_string(const gchar *json, const gchar *key, gint in
  *
  * Returns: (transfer full) (nullable): the string value, or %NULL on error
  */
-gchar *gnostr_json_get_string_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_get_string_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
 
 /**
  * gnostr_json_get_int_at:
@@ -429,7 +430,7 @@ gchar *gnostr_json_get_string_at(const gchar *json, const gchar *object_key, con
  *
  * Returns: the integer value, or 0 on error
  */
-gint gnostr_json_get_int_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+NOSTR_GOBJECT_API gint gnostr_json_get_int_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
 
 /**
  * gnostr_json_get_int64_at:
@@ -442,7 +443,7 @@ gint gnostr_json_get_int_at(const gchar *json, const gchar *object_key, const gc
  *
  * Returns: the int64 value, or 0 on error
  */
-gint64 gnostr_json_get_int64_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+NOSTR_GOBJECT_API gint64 gnostr_json_get_int64_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
 
 /**
  * gnostr_json_get_bool_at:
@@ -455,7 +456,7 @@ gint64 gnostr_json_get_int64_at(const gchar *json, const gchar *object_key, cons
  *
  * Returns: the boolean value, or %FALSE on error
  */
-gboolean gnostr_json_get_bool_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_json_get_bool_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
 
 /**
  * gnostr_json_get_string_array_at:
@@ -469,7 +470,7 @@ gboolean gnostr_json_get_bool_at(const gchar *json, const gchar *object_key, con
  * Returns: (transfer full) (nullable): a %NULL-terminated string array, or %NULL on error.
  *   Free with g_strfreev().
  */
-GStrv gnostr_json_get_string_array_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
+NOSTR_GOBJECT_API GStrv gnostr_json_get_string_array_at(const gchar *json, const gchar *object_key, const gchar *entry_key, GError **error);
 
 /* ---- Array Iteration ---- */
 
@@ -494,7 +495,7 @@ typedef gboolean (*GNostrJsonArrayIterCb)(gsize index, const gchar *element_json
  *
  * Iterates over elements of a JSON array at a top-level key.
  */
-void gnostr_json_array_foreach(const gchar *json, const gchar *key, GNostrJsonArrayIterCb callback, gpointer user_data);
+NOSTR_GOBJECT_API void gnostr_json_array_foreach(const gchar *json, const gchar *key, GNostrJsonArrayIterCb callback, gpointer user_data);
 
 /**
  * gnostr_json_array_foreach_root:
@@ -504,7 +505,7 @@ void gnostr_json_array_foreach(const gchar *json, const gchar *key, GNostrJsonAr
  *
  * Iterates over elements of a root-level JSON array.
  */
-void gnostr_json_array_foreach_root(const gchar *json, GNostrJsonArrayIterCb callback, gpointer user_data);
+NOSTR_GOBJECT_API void gnostr_json_array_foreach_root(const gchar *json, GNostrJsonArrayIterCb callback, gpointer user_data);
 
 /* ---- Type Introspection ---- */
 
@@ -541,7 +542,7 @@ typedef enum {
  *
  * Returns: the value type, or %GNOSTR_JSON_TYPE_INVALID on error
  */
-GNostrJsonType gnostr_json_get_value_type(const gchar *json, const gchar *key);
+NOSTR_GOBJECT_API GNostrJsonType gnostr_json_get_value_type(const gchar *json, const gchar *key);
 
 /* ---- Convenience Builders ---- */
 
@@ -554,7 +555,7 @@ GNostrJsonType gnostr_json_get_value_type(const gchar *json, const gchar *key);
  *
  * Returns: (transfer full) (nullable): a newly allocated JSON string
  */
-gchar *gnostr_json_build_string_array(const gchar *first, ...);
+NOSTR_GOBJECT_API gchar *gnostr_json_build_string_array(const gchar *first, ...);
 
 /* ---- Validation & Transformation ---- */
 
@@ -566,7 +567,7 @@ gchar *gnostr_json_build_string_array(const gchar *first, ...);
  *
  * Returns: %TRUE if the string is valid JSON
  */
-gboolean gnostr_json_is_valid(const gchar *json);
+NOSTR_GOBJECT_API gboolean gnostr_json_is_valid(const gchar *json);
 
 /**
  * gnostr_json_prettify:
@@ -578,7 +579,7 @@ gboolean gnostr_json_is_valid(const gchar *json);
  * Returns: (transfer full) (nullable): a newly allocated pretty-printed string,
  *   or %NULL on error
  */
-gchar *gnostr_json_prettify(const gchar *json, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_prettify(const gchar *json, GError **error);
 
 /**
  * gnostr_json_compact_string:
@@ -590,7 +591,7 @@ gchar *gnostr_json_prettify(const gchar *json, GError **error);
  * Returns: (transfer full) (nullable): a newly allocated compact string,
  *   or %NULL on error
  */
-gchar *gnostr_json_compact_string(const gchar *json, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_compact_string(const gchar *json, GError **error);
 
 /**
  * gnostr_json_merge:
@@ -603,7 +604,7 @@ gchar *gnostr_json_compact_string(const gchar *json, GError **error);
  * Returns: (transfer full) (nullable): a newly allocated merged JSON string,
  *   or %NULL on error
  */
-gchar *gnostr_json_merge(const gchar *base, const gchar *overlay, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_json_merge(const gchar *base, const gchar *overlay, GError **error);
 
 G_END_DECLS
 

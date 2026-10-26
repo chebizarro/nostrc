@@ -8,6 +8,7 @@
 #ifndef GNOSTR_MUTE_LIST_H
 #define GNOSTR_MUTE_LIST_H
 
+#include "nostr-gobject-export.h"
 #include <gio/gio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -27,14 +28,14 @@ typedef struct _GNostrMuteList GNostrMuteList;
  *
  * Returns: (transfer none): the shared mute list instance
  */
-GNostrMuteList *gnostr_mute_list_get_default(void);
+NOSTR_GOBJECT_API GNostrMuteList *gnostr_mute_list_get_default(void);
 
 /**
  * gnostr_mute_list_shutdown:
  *
  * Releases the singleton instance. Call at app shutdown.
  */
-void gnostr_mute_list_shutdown(void);
+NOSTR_GOBJECT_API void gnostr_mute_list_shutdown(void);
 
 /* ---- Loading ---- */
 
@@ -48,7 +49,7 @@ void gnostr_mute_list_shutdown(void);
  *
  * Returns: TRUE on success
  */
-gboolean gnostr_mute_list_load_from_json(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_load_from_json(GNostrMuteList *self,
                                           const char *event_json);
 
 /**
@@ -80,7 +81,7 @@ typedef void (*GNostrMuteListFetchCallback)(GNostrMuteList *self,
                                              gboolean success,
                                              gpointer user_data);
 
-void gnostr_mute_list_fetch_async(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_fetch_async(GNostrMuteList *self,
                                    const char *pubkey_hex,
                                    const char * const *relays,
                                    GNostrMuteListFetchCallback callback,
@@ -98,7 +99,7 @@ void gnostr_mute_list_fetch_async(GNostrMuteList *self,
  * Fetches the user's mute list from relays asynchronously with
  * the specified merge strategy.
  */
-void gnostr_mute_list_fetch_with_strategy_async(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_fetch_with_strategy_async(GNostrMuteList *self,
                                                  const char *pubkey_hex,
                                                  const char * const *relays,
                                                  GNostrMuteListMergeStrategy strategy,
@@ -113,7 +114,7 @@ void gnostr_mute_list_fetch_with_strategy_async(GNostrMuteList *self,
  *
  * Returns: timestamp or 0 if never loaded
  */
-gint64 gnostr_mute_list_get_last_event_time(GNostrMuteList *self);
+NOSTR_GOBJECT_API gint64 gnostr_mute_list_get_last_event_time(GNostrMuteList *self);
 
 /* ---- Query Functions ---- */
 
@@ -126,7 +127,7 @@ gint64 gnostr_mute_list_get_last_event_time(GNostrMuteList *self);
  *
  * Returns: TRUE if muted
  */
-gboolean gnostr_mute_list_is_pubkey_muted(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_is_pubkey_muted(GNostrMuteList *self,
                                            const char *pubkey_hex);
 
 /**
@@ -138,7 +139,7 @@ gboolean gnostr_mute_list_is_pubkey_muted(GNostrMuteList *self,
  *
  * Returns: TRUE if muted
  */
-gboolean gnostr_mute_list_is_event_muted(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_is_event_muted(GNostrMuteList *self,
                                           const char *event_id_hex);
 
 /**
@@ -150,7 +151,7 @@ gboolean gnostr_mute_list_is_event_muted(GNostrMuteList *self,
  *
  * Returns: TRUE if muted
  */
-gboolean gnostr_mute_list_is_hashtag_muted(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_is_hashtag_muted(GNostrMuteList *self,
                                             const char *hashtag);
 
 /**
@@ -162,7 +163,7 @@ gboolean gnostr_mute_list_is_hashtag_muted(GNostrMuteList *self,
  *
  * Returns: TRUE if content contains muted word
  */
-gboolean gnostr_mute_list_contains_muted_word(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_contains_muted_word(GNostrMuteList *self,
                                                const char *content);
 
 /**
@@ -174,7 +175,7 @@ gboolean gnostr_mute_list_contains_muted_word(GNostrMuteList *self,
  *
  * Returns: TRUE if event should be hidden
  */
-gboolean gnostr_mute_list_should_hide_event(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_should_hide_event(GNostrMuteList *self,
                                              const char *event_json);
 
 /* ---- Modification Functions ---- */
@@ -188,7 +189,7 @@ gboolean gnostr_mute_list_should_hide_event(GNostrMuteList *self,
  * Adds a pubkey to the mute list (locally).
  * Call gnostr_mute_list_save_async() to persist to relays.
  */
-void gnostr_mute_list_add_pubkey(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_add_pubkey(GNostrMuteList *self,
                                   const char *pubkey_hex,
                                   gboolean is_private);
 
@@ -199,7 +200,7 @@ void gnostr_mute_list_add_pubkey(GNostrMuteList *self,
  *
  * Removes a pubkey from the mute list.
  */
-void gnostr_mute_list_remove_pubkey(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_remove_pubkey(GNostrMuteList *self,
                                      const char *pubkey_hex);
 
 /**
@@ -210,7 +211,7 @@ void gnostr_mute_list_remove_pubkey(GNostrMuteList *self,
  *
  * Adds a word to the mute list.
  */
-void gnostr_mute_list_add_word(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_add_word(GNostrMuteList *self,
                                 const char *word,
                                 gboolean is_private);
 
@@ -221,7 +222,7 @@ void gnostr_mute_list_add_word(GNostrMuteList *self,
  *
  * Removes a word from the mute list.
  */
-void gnostr_mute_list_remove_word(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_remove_word(GNostrMuteList *self,
                                    const char *word);
 
 /**
@@ -232,7 +233,7 @@ void gnostr_mute_list_remove_word(GNostrMuteList *self,
  *
  * Adds a hashtag to the mute list.
  */
-void gnostr_mute_list_add_hashtag(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_add_hashtag(GNostrMuteList *self,
                                    const char *hashtag,
                                    gboolean is_private);
 
@@ -243,7 +244,7 @@ void gnostr_mute_list_add_hashtag(GNostrMuteList *self,
  *
  * Removes a hashtag from the mute list.
  */
-void gnostr_mute_list_remove_hashtag(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_remove_hashtag(GNostrMuteList *self,
                                       const char *hashtag);
 
 /**
@@ -254,7 +255,7 @@ void gnostr_mute_list_remove_hashtag(GNostrMuteList *self,
  *
  * Adds an event to the mute list.
  */
-void gnostr_mute_list_add_event(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_add_event(GNostrMuteList *self,
                                  const char *event_id_hex,
                                  gboolean is_private);
 
@@ -265,7 +266,7 @@ void gnostr_mute_list_add_event(GNostrMuteList *self,
  *
  * Removes an event from the mute list.
  */
-void gnostr_mute_list_remove_event(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_remove_event(GNostrMuteList *self,
                                     const char *event_id_hex);
 
 /* ---- Persistence ---- */
@@ -283,7 +284,7 @@ typedef void (*GNostrMuteListSaveCallback)(GNostrMuteList *self,
                                             const char *error_msg,
                                             gpointer user_data);
 
-void gnostr_mute_list_save_async(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_save_async(GNostrMuteList *self,
                                   GNostrMuteListSaveCallback callback,
                                   gpointer user_data);
 
@@ -298,7 +299,7 @@ void gnostr_mute_list_save_async(GNostrMuteList *self,
  *
  * Returns: (transfer container): array of pubkey hex strings (do not free strings)
  */
-const char **gnostr_mute_list_get_pubkeys(GNostrMuteList *self, size_t *count);
+NOSTR_GOBJECT_API const char **gnostr_mute_list_get_pubkeys(GNostrMuteList *self, size_t *count);
 
 /**
  * gnostr_mute_list_get_words:
@@ -309,7 +310,7 @@ const char **gnostr_mute_list_get_pubkeys(GNostrMuteList *self, size_t *count);
  *
  * Returns: (transfer container): array of word strings (do not free strings)
  */
-const char **gnostr_mute_list_get_words(GNostrMuteList *self, size_t *count);
+NOSTR_GOBJECT_API const char **gnostr_mute_list_get_words(GNostrMuteList *self, size_t *count);
 
 /**
  * gnostr_mute_list_get_hashtags:
@@ -320,7 +321,7 @@ const char **gnostr_mute_list_get_words(GNostrMuteList *self, size_t *count);
  *
  * Returns: (transfer container): array of hashtag strings (do not free strings)
  */
-const char **gnostr_mute_list_get_hashtags(GNostrMuteList *self, size_t *count);
+NOSTR_GOBJECT_API const char **gnostr_mute_list_get_hashtags(GNostrMuteList *self, size_t *count);
 
 /**
  * gnostr_mute_list_get_events:
@@ -331,7 +332,7 @@ const char **gnostr_mute_list_get_hashtags(GNostrMuteList *self, size_t *count);
  *
  * Returns: (transfer container): array of event ID hex strings (do not free strings)
  */
-const char **gnostr_mute_list_get_events(GNostrMuteList *self, size_t *count);
+NOSTR_GOBJECT_API const char **gnostr_mute_list_get_events(GNostrMuteList *self, size_t *count);
 
 /**
  * gnostr_mute_list_is_dirty:
@@ -339,7 +340,7 @@ const char **gnostr_mute_list_get_events(GNostrMuteList *self, size_t *count);
  *
  * Returns: TRUE if there are unsaved changes
  */
-gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self);
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self);
 
 /* ---- GTask-based Async API (R3) ---- */
 
@@ -355,7 +356,7 @@ gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self);
  * GTask-based async version of gnostr_mute_list_fetch_async.
  * Uses standard GAsyncReadyCallback pattern for GIR introspection.
  */
-void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *self,
                                          const char *pubkey_hex,
                                          const char * const *relays,
                                          GCancellable *cancellable,
@@ -372,7 +373,7 @@ void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *self,
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *self,
                                               GAsyncResult *result,
                                               GError **error);
 
@@ -385,7 +386,7 @@ gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *self,
  *
  * GTask-based async version of gnostr_mute_list_save_async.
  */
-void gnostr_mute_list_save_gtask_async(GNostrMuteList *self,
+NOSTR_GOBJECT_API void gnostr_mute_list_save_gtask_async(GNostrMuteList *self,
                                         GCancellable *cancellable,
                                         GAsyncReadyCallback callback,
                                         gpointer user_data);
@@ -400,7 +401,7 @@ void gnostr_mute_list_save_gtask_async(GNostrMuteList *self,
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *self,
+NOSTR_GOBJECT_API gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *self,
                                              GAsyncResult *result,
                                              GError **error);
 

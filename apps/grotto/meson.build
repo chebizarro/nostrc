@@ -51,7 +51,8 @@ if cmake_build_dir == ''
 endif
 nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
   dirs: [cmake_build_dir / 'nostr-gobject'])
-nostr_gobject_inc = include_directories('../../nostr-gobject/include')
+nostr_gobject_inc = include_directories('../../nostr-gobject/include',
+  cmake_build_dir / 'nostr-gobject/include')
 # The GUI uses Control1; only the CMake-owned daemon hosts the bunker/gate.
 nip55l_core_lib = cc.find_library('nostr_nip55l_core', dirs: [cmake_build_dir / 'nips/nip55l'])
 nostr_gobject_dep = declare_dependency(

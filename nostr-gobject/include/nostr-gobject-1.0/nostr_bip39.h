@@ -1,13 +1,14 @@
 #ifndef GNOSTR_BIP39_H
 #define GNOSTR_BIP39_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-error.h"
 
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_BIP39 (gnostr_bip39_get_type())
-G_DECLARE_FINAL_TYPE(GNostrBip39, gnostr_bip39, GNOSTR, BIP39, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrBip39, gnostr_bip39, GNOSTR, BIP39, GObject)
 
 /**
  * GNostrBip39:
@@ -34,7 +35,7 @@ G_DECLARE_FINAL_TYPE(GNostrBip39, gnostr_bip39, GNOSTR, BIP39, GObject)
  *
  * Returns: (transfer full): a new #GNostrBip39
  */
-GNostrBip39 *gnostr_bip39_new(void);
+NOSTR_GOBJECT_API GNostrBip39 *gnostr_bip39_new(void);
 
 /**
  * gnostr_bip39_generate:
@@ -48,7 +49,7 @@ GNostrBip39 *gnostr_bip39_new(void);
  * Returns: (transfer none) (nullable): the generated mnemonic string
  *   (owned by @self), or %NULL on error
  */
-const gchar *gnostr_bip39_generate(GNostrBip39 *self,
+NOSTR_GOBJECT_API const gchar *gnostr_bip39_generate(GNostrBip39 *self,
                                     gint word_count,
                                     GError **error);
 
@@ -63,7 +64,7 @@ const gchar *gnostr_bip39_generate(GNostrBip39 *self,
  *
  * Returns: %TRUE if the mnemonic is valid and was imported, %FALSE on error
  */
-gboolean gnostr_bip39_set_mnemonic(GNostrBip39 *self,
+NOSTR_GOBJECT_API gboolean gnostr_bip39_set_mnemonic(GNostrBip39 *self,
                                     const gchar *mnemonic,
                                     GError **error);
 
@@ -76,7 +77,7 @@ gboolean gnostr_bip39_set_mnemonic(GNostrBip39 *self,
  *
  * Returns: %TRUE if valid, %FALSE otherwise
  */
-gboolean gnostr_bip39_validate(const gchar *mnemonic);
+NOSTR_GOBJECT_API gboolean gnostr_bip39_validate(const gchar *mnemonic);
 
 /**
  * gnostr_bip39_to_seed:
@@ -91,7 +92,7 @@ gboolean gnostr_bip39_validate(const gchar *mnemonic);
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_bip39_to_seed(GNostrBip39 *self,
+NOSTR_GOBJECT_API gboolean gnostr_bip39_to_seed(GNostrBip39 *self,
                                const gchar *passphrase,
                                guint8 **out_seed,
                                GError **error);
@@ -108,7 +109,7 @@ gboolean gnostr_bip39_to_seed(GNostrBip39 *self,
  *
  * Returns: (transfer full) (nullable): a new #GNostrKeys, or %NULL on error
  */
-GObject *gnostr_bip39_to_keys(GNostrBip39 *self,
+NOSTR_GOBJECT_API GObject *gnostr_bip39_to_keys(GNostrBip39 *self,
                                const gchar *passphrase,
                                GError **error);
 
@@ -120,7 +121,7 @@ GObject *gnostr_bip39_to_keys(GNostrBip39 *self,
  *
  * Returns: (transfer none) (nullable): the mnemonic string, or %NULL if not set
  */
-const gchar *gnostr_bip39_get_mnemonic(GNostrBip39 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_bip39_get_mnemonic(GNostrBip39 *self);
 
 /**
  * gnostr_bip39_get_word_count:
@@ -130,7 +131,7 @@ const gchar *gnostr_bip39_get_mnemonic(GNostrBip39 *self);
  *
  * Returns: the number of words, or 0 if no mnemonic is set
  */
-gint gnostr_bip39_get_word_count(GNostrBip39 *self);
+NOSTR_GOBJECT_API gint gnostr_bip39_get_word_count(GNostrBip39 *self);
 
 /**
  * gnostr_bip39_get_is_valid:
@@ -140,7 +141,7 @@ gint gnostr_bip39_get_word_count(GNostrBip39 *self);
  *
  * Returns: %TRUE if valid, %FALSE otherwise
  */
-gboolean gnostr_bip39_get_is_valid(GNostrBip39 *self);
+NOSTR_GOBJECT_API gboolean gnostr_bip39_get_is_valid(GNostrBip39 *self);
 
 G_END_DECLS
 

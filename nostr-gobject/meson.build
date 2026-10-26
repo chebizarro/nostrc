@@ -1,5 +1,5 @@
 project('nostr-gobject', 'c',
-  version: '2.5.0',
+  version: '3.0.0',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [
@@ -9,6 +9,14 @@ project('nostr-gobject', 'c',
   ])
 
 cc = meson.get_compiler('c')
+export_conf = configuration_data()
+export_conf.set('API', 'NOSTR_GOBJECT_API')
+export_conf.set('STATIC', get_option('default_library') == 'static' ? 1 : 0)
+export_conf.set('STATIC_DEFINE', 'NOSTR_GOBJECT_STATIC_DEFINE')
+export_conf.set('EXPORTS', 'nostr_gobject_EXPORTS')
+configure_file(input: '../cmake/meson-export.h.in',
+  output: 'nostr-gobject-export.h', configuration: export_conf,
+  install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 fs = import('fs')
 
 # ── GLib / GObject / GIO ─────────────────────────────────────────────
@@ -168,6 +176,8 @@ gnome = import('gnome')
 signer_proxy = gnome.gdbus_codegen('signer_proxy',
   sources: files('../nips/nip55l/dbus/org.nostr.Signer.xml'),
   namespace: 'Nostr',
+  extra_args: ['--symbol-decorator', 'NOSTR_GOBJECT_API',
+               '--symbol-decorator-header', 'nostr-gobject-export.h'],
   install_header: true,
   install_dir: get_option('includedir') / 'nostr-gobject-1.0')
 
@@ -318,13 +328,16 @@ nostr_gobject_lib = library('nostr-gobject-1.0',
   include_directories: [nostr_gobject_inc, nip46_inc, nostr_gobject_ndb_inc],
   dependencies: nostr_gobject_deps,
   version: meson.project_version(),
-  soversion: '2',
+  soversion: '3',
+  gnu_symbol_visibility: 'hidden',
+  c_args: ['-Dnostr_gobject_EXPORTS'],
+  link_args: cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL'),
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────
 nostr_gobject_dep = declare_dependency(
   link_with: nostr_gobject_lib,
-  include_directories: nostr_gobject_pub_inc,
+  include_directories: [nostr_gobject_pub_inc, include_directories('.')],
   dependencies: [glib_dep, gobject_dep, gio_dep, vault_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────

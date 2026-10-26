@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file.
   Shared-library export sets and Windows static annotations are unchanged.
 
 ### Breaking library ABI changes
+- nostr-gobject 3.0.0 hides implementation and embedded-archive symbols
+  (SONAME `libnostr-gobject-1.0.so.3`); rebuild dependent binaries. Declared
+  functions, GTypes, enum/flags types, error quarks and the signer proxy remain
+  exported through `NOSTR_GOBJECT_API`; installed headers include the generated
+  `nostr-gobject-export.h`.
 - NIP-19, NIP-34, NIP-46 and NIP-59 are now 0.2.0; NIP-55L is 0.8.0;
   Communikeys is 3.0.0. All NIP library targets now compile hidden-by-default
   and export declared public APIs through package-owned generated headers.

@@ -12,6 +12,7 @@
 #ifndef GNOSTR_EVENT_BUS_H
 #define GNOSTR_EVENT_BUS_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 
 G_BEGIN_DECLS
@@ -56,7 +57,7 @@ typedef void (*GNostrEventBusCallback)(const gchar *topic,
 /* --- GObject Type Definition --- */
 
 #define GNOSTR_TYPE_EVENT_BUS (gnostr_event_bus_get_type())
-G_DECLARE_DERIVABLE_TYPE(GNostrEventBus, gnostr_event_bus, GNOSTR, EVENT_BUS, GObject)
+NOSTR_GOBJECT_API G_DECLARE_DERIVABLE_TYPE(GNostrEventBus, gnostr_event_bus, GNOSTR, EVENT_BUS, GObject)
 
 /**
  * GNostrEventBusClass:
@@ -131,7 +132,7 @@ struct _GNostrEventBusHandle {
  * Returns: (transfer none): The default #GNostrEventBus instance.
  *          Do not unref this instance.
  */
-GNostrEventBus *gnostr_event_bus_get_default(void);
+NOSTR_GOBJECT_API GNostrEventBus *gnostr_event_bus_get_default(void);
 
 /* --- Subscription API --- */
 
@@ -155,7 +156,7 @@ GNostrEventBus *gnostr_event_bus_get_default(void);
  *          with gnostr_event_bus_unsubscribe() to cancel the subscription.
  *          Returns %NULL on error.
  */
-GNostrEventBusHandle *gnostr_event_bus_subscribe(GNostrEventBus *bus,
+NOSTR_GOBJECT_API GNostrEventBusHandle *gnostr_event_bus_subscribe(GNostrEventBus *bus,
                                                const gchar *topic_pattern,
                                                GNostrEventBusCallback callback,
                                                gpointer user_data);
@@ -173,7 +174,7 @@ GNostrEventBusHandle *gnostr_event_bus_subscribe(GNostrEventBus *bus,
  *
  * Returns: (transfer none): A subscription handle, or %NULL on error
  */
-GNostrEventBusHandle *gnostr_event_bus_subscribe_full(GNostrEventBus *bus,
+NOSTR_GOBJECT_API GNostrEventBusHandle *gnostr_event_bus_subscribe_full(GNostrEventBus *bus,
                                                     const gchar *topic_pattern,
                                                     GNostrEventBusCallback callback,
                                                     gpointer user_data,
@@ -199,7 +200,7 @@ GNostrEventBusHandle *gnostr_event_bus_subscribe_full(GNostrEventBus *bus,
  *
  * Returns: (transfer none): A subscription handle, or %NULL on error
  */
-GNostrEventBusHandle *gnostr_event_bus_subscribe_filtered(GNostrEventBus *bus,
+NOSTR_GOBJECT_API GNostrEventBusHandle *gnostr_event_bus_subscribe_filtered(GNostrEventBus *bus,
                                                         const gchar *topic_pattern,
                                                         GNostrEventBusFilterFunc filter_func,
                                                         GNostrEventBusCallback callback,
@@ -220,7 +221,7 @@ GNostrEventBusHandle *gnostr_event_bus_subscribe_filtered(GNostrEventBus *bus,
  *
  * Passing %NULL for @handle is a no-op.
  */
-void gnostr_event_bus_unsubscribe(GNostrEventBus *bus,
+NOSTR_GOBJECT_API void gnostr_event_bus_unsubscribe(GNostrEventBus *bus,
                                  GNostrEventBusHandle *handle);
 
 /* --- Emit API --- */
@@ -240,7 +241,7 @@ void gnostr_event_bus_unsubscribe(GNostrEventBus *bus,
  *
  * Thread-safe. Callbacks are invoked on the calling thread.
  */
-void gnostr_event_bus_emit(GNostrEventBus *bus,
+NOSTR_GOBJECT_API void gnostr_event_bus_emit(GNostrEventBus *bus,
                           const gchar *topic,
                           gpointer event_data);
 
@@ -260,7 +261,7 @@ void gnostr_event_bus_emit(GNostrEventBus *bus,
  *
  * Thread-safe. Callbacks are invoked on the calling thread.
  */
-void gnostr_event_bus_emit_batch(GNostrEventBus *bus,
+NOSTR_GOBJECT_API void gnostr_event_bus_emit_batch(GNostrEventBus *bus,
                                 const gchar *topic,
                                 gpointer const *events_array,
                                 gsize count);
@@ -287,7 +288,7 @@ void gnostr_event_bus_emit_batch(GNostrEventBus *bus,
  *
  * Returns: %TRUE if the topic matches the pattern
  */
-gboolean gnostr_event_bus_topic_matches(const gchar *pattern,
+NOSTR_GOBJECT_API gboolean gnostr_event_bus_topic_matches(const gchar *pattern,
                                        const gchar *topic);
 
 /**
@@ -300,7 +301,7 @@ gboolean gnostr_event_bus_topic_matches(const gchar *pattern,
  * Returns: (transfer full): A newly allocated topic string like
  *          "event::kind::1". Free with g_free().
  */
-gchar *gnostr_event_bus_format_event_topic(gint kind);
+NOSTR_GOBJECT_API gchar *gnostr_event_bus_format_event_topic(gint kind);
 
 /**
  * gnostr_event_bus_format_eose_topic:
@@ -311,7 +312,7 @@ gchar *gnostr_event_bus_format_event_topic(gint kind);
  * Returns: (transfer full): A newly allocated topic string like
  *          "eose::sub123". Free with g_free().
  */
-gchar *gnostr_event_bus_format_eose_topic(const gchar *subscription_id);
+NOSTR_GOBJECT_API gchar *gnostr_event_bus_format_eose_topic(const gchar *subscription_id);
 
 /**
  * gnostr_event_bus_format_ok_topic:
@@ -322,7 +323,7 @@ gchar *gnostr_event_bus_format_eose_topic(const gchar *subscription_id);
  * Returns: (transfer full): A newly allocated topic string like
  *          "ok::abc123...". Free with g_free().
  */
-gchar *gnostr_event_bus_format_ok_topic(const gchar *event_id);
+NOSTR_GOBJECT_API gchar *gnostr_event_bus_format_ok_topic(const gchar *event_id);
 
 /* --- Statistics --- */
 
@@ -371,7 +372,7 @@ typedef struct {
  * percentiles are computed from an internal histogram with
  * exponential bin boundaries (1 us base, 1.5x growth factor).
  */
-void gnostr_event_bus_get_stats(GNostrEventBus *bus,
+NOSTR_GOBJECT_API void gnostr_event_bus_get_stats(GNostrEventBus *bus,
                                GNostrEventBusStats *stats);
 
 /**
@@ -381,7 +382,7 @@ void gnostr_event_bus_get_stats(GNostrEventBus *bus,
  * Resets all counters and the latency histogram to zero.
  * Active subscriptions are not affected.
  */
-void gnostr_event_bus_reset_stats(GNostrEventBus *bus);
+NOSTR_GOBJECT_API void gnostr_event_bus_reset_stats(GNostrEventBus *bus);
 
 G_END_DECLS
 

@@ -1,6 +1,7 @@
 #ifndef GNOSTR_KEYS_H
 #define GNOSTR_KEYS_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-error.h"
 
@@ -12,7 +13,7 @@ typedef struct _GNostrEvent GNostrEvent;
 /* Define GNostrKeys GObject wrapper */
 /* Prefixed with G to avoid clashing with core NostrKeys functions */
 #define GNOSTR_TYPE_KEYS (gnostr_keys_get_type())
-G_DECLARE_FINAL_TYPE(GNostrKeys, gnostr_keys, GNOSTR, KEYS, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrKeys, gnostr_keys, GNOSTR, KEYS, GObject)
 
 /**
  * GNostrKeys:
@@ -48,7 +49,7 @@ G_DECLARE_FINAL_TYPE(GNostrKeys, gnostr_keys, GNOSTR, KEYS, GObject)
  *
  * Returns: (transfer full): a new #GNostrKeys with a generated keypair
  */
-GNostrKeys *gnostr_keys_new(void);
+NOSTR_GOBJECT_API GNostrKeys *gnostr_keys_new(void);
 
 /**
  * gnostr_keys_new_from_hex:
@@ -59,7 +60,7 @@ GNostrKeys *gnostr_keys_new(void);
  *
  * Returns: (transfer full) (nullable): a new #GNostrKeys, or %NULL on error
  */
-GNostrKeys *gnostr_keys_new_from_hex(const gchar *privkey_hex, GError **error);
+NOSTR_GOBJECT_API GNostrKeys *gnostr_keys_new_from_hex(const gchar *privkey_hex, GError **error);
 
 /**
  * gnostr_keys_new_from_nsec:
@@ -70,7 +71,7 @@ GNostrKeys *gnostr_keys_new_from_hex(const gchar *privkey_hex, GError **error);
  *
  * Returns: (transfer full) (nullable): a new #GNostrKeys, or %NULL on error
  */
-GNostrKeys *gnostr_keys_new_from_nsec(const gchar *nsec, GError **error);
+NOSTR_GOBJECT_API GNostrKeys *gnostr_keys_new_from_nsec(const gchar *nsec, GError **error);
 
 /**
  * gnostr_keys_new_from_mnemonic:
@@ -83,7 +84,7 @@ GNostrKeys *gnostr_keys_new_from_nsec(const gchar *nsec, GError **error);
  *
  * Returns: (transfer full) (nullable): a new #GNostrKeys, or %NULL on error
  */
-GNostrKeys *gnostr_keys_new_from_mnemonic(const gchar *mnemonic,
+NOSTR_GOBJECT_API GNostrKeys *gnostr_keys_new_from_mnemonic(const gchar *mnemonic,
                                            const gchar *passphrase,
                                            GError **error);
 
@@ -97,7 +98,7 @@ GNostrKeys *gnostr_keys_new_from_mnemonic(const gchar *mnemonic,
  *
  * Returns: (transfer full) (nullable): a new #GNostrKeys, or %NULL on error
  */
-GNostrKeys *gnostr_keys_new_pubkey_only(const gchar *pubkey_hex, GError **error);
+NOSTR_GOBJECT_API GNostrKeys *gnostr_keys_new_pubkey_only(const gchar *pubkey_hex, GError **error);
 
 /* Property accessors */
 
@@ -109,7 +110,7 @@ GNostrKeys *gnostr_keys_new_pubkey_only(const gchar *pubkey_hex, GError **error)
  *
  * Returns: (transfer none) (nullable): the public key as a 64-character hex string
  */
-const gchar *gnostr_keys_get_pubkey(GNostrKeys *self);
+NOSTR_GOBJECT_API const gchar *gnostr_keys_get_pubkey(GNostrKeys *self);
 
 /**
  * gnostr_keys_get_npub:
@@ -119,7 +120,7 @@ const gchar *gnostr_keys_get_pubkey(GNostrKeys *self);
  *
  * Returns: (transfer full) (nullable): the public key as npub string, free with g_free()
  */
-gchar *gnostr_keys_get_npub(GNostrKeys *self);
+NOSTR_GOBJECT_API gchar *gnostr_keys_get_npub(GNostrKeys *self);
 
 /**
  * gnostr_keys_has_private_key:
@@ -129,7 +130,7 @@ gchar *gnostr_keys_get_npub(GNostrKeys *self);
  *
  * Returns: %TRUE if a private key is available, %FALSE otherwise
  */
-gboolean gnostr_keys_has_private_key(GNostrKeys *self);
+NOSTR_GOBJECT_API gboolean gnostr_keys_has_private_key(GNostrKeys *self);
 
 /* Signing operations */
 
@@ -145,7 +146,7 @@ gboolean gnostr_keys_has_private_key(GNostrKeys *self);
  *
  * Returns: (transfer full) (nullable): the signature as a 128-character hex string
  */
-gchar *gnostr_keys_sign(GNostrKeys *self, const gchar *message, GError **error);
+NOSTR_GOBJECT_API gchar *gnostr_keys_sign(GNostrKeys *self, const gchar *message, GError **error);
 
 /**
  * gnostr_keys_verify:
@@ -158,7 +159,7 @@ gchar *gnostr_keys_sign(GNostrKeys *self, const gchar *message, GError **error);
  *
  * Returns: %TRUE if signature is valid, %FALSE otherwise
  */
-gboolean gnostr_keys_verify(GNostrKeys *self, const gchar *message, const gchar *signature, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_keys_verify(GNostrKeys *self, const gchar *message, const gchar *signature, GError **error);
 
 /**
  * gnostr_keys_sign_event:
@@ -171,7 +172,7 @@ gboolean gnostr_keys_verify(GNostrKeys *self, const gchar *message, const gchar 
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_keys_sign_event(GNostrKeys *self, GNostrEvent *event, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_keys_sign_event(GNostrKeys *self, GNostrEvent *event, GError **error);
 
 /* NIP-04 Encryption/Decryption */
 
@@ -188,7 +189,7 @@ gboolean gnostr_keys_sign_event(GNostrKeys *self, GNostrEvent *event, GError **e
  *
  * Returns: (transfer full) (nullable): the encrypted content in NIP-04 format
  */
-gchar *gnostr_keys_nip04_encrypt(GNostrKeys *self,
+NOSTR_GOBJECT_API gchar *gnostr_keys_nip04_encrypt(GNostrKeys *self,
                                   const gchar *plaintext,
                                   const gchar *recipient_pubkey,
                                   GError **error);
@@ -206,7 +207,7 @@ gchar *gnostr_keys_nip04_encrypt(GNostrKeys *self,
  *
  * Returns: (transfer full) (nullable): the decrypted plaintext
  */
-gchar *gnostr_keys_nip04_decrypt(GNostrKeys *self,
+NOSTR_GOBJECT_API gchar *gnostr_keys_nip04_decrypt(GNostrKeys *self,
                                   const gchar *ciphertext,
                                   const gchar *sender_pubkey,
                                   GError **error);
@@ -226,7 +227,7 @@ gchar *gnostr_keys_nip04_decrypt(GNostrKeys *self,
  *
  * Returns: (transfer full) (nullable): the encrypted content in NIP-44 base64 format
  */
-gchar *gnostr_keys_nip44_encrypt(GNostrKeys *self,
+NOSTR_GOBJECT_API gchar *gnostr_keys_nip44_encrypt(GNostrKeys *self,
                                   const gchar *plaintext,
                                   const gchar *recipient_pubkey,
                                   GError **error);
@@ -244,7 +245,7 @@ gchar *gnostr_keys_nip44_encrypt(GNostrKeys *self,
  *
  * Returns: (transfer full) (nullable): the decrypted plaintext
  */
-gchar *gnostr_keys_nip44_decrypt(GNostrKeys *self,
+NOSTR_GOBJECT_API gchar *gnostr_keys_nip44_decrypt(GNostrKeys *self,
                                   const gchar *ciphertext,
                                   const gchar *sender_pubkey,
                                   GError **error);
@@ -259,7 +260,7 @@ gchar *gnostr_keys_nip44_decrypt(GNostrKeys *self,
  *
  * Returns: %TRUE if valid, %FALSE otherwise
  */
-gboolean gnostr_keys_is_valid_pubkey(const gchar *pubkey_hex);
+NOSTR_GOBJECT_API gboolean gnostr_keys_is_valid_pubkey(const gchar *pubkey_hex);
 
 /**
  * gnostr_keys_generate_new:
@@ -271,7 +272,7 @@ gboolean gnostr_keys_is_valid_pubkey(const gchar *pubkey_hex);
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean gnostr_keys_generate_new(GNostrKeys *self, GError **error);
+NOSTR_GOBJECT_API gboolean gnostr_keys_generate_new(GNostrKeys *self, GError **error);
 
 G_END_DECLS
 

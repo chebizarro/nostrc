@@ -6,6 +6,7 @@
  */
 
 #include "nostr_profile_service.h"
+#include "nostr_profile_service_test_hooks.h"
 #include "storage_ndb.h"
 #include "nostr_profile_provider.h"
 #include "nostr_pool.h"

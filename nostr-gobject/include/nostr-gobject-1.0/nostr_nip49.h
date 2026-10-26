@@ -1,13 +1,14 @@
 #ifndef GNOSTR_NIP49_H
 #define GNOSTR_NIP49_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include "nostr-error.h"
 
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_NIP49 (gnostr_nip49_get_type())
-G_DECLARE_FINAL_TYPE(GNostrNip49, gnostr_nip49, GNOSTR, NIP49, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrNip49, gnostr_nip49, GNOSTR, NIP49, GObject)
 
 /**
  * GNostrNip49SecurityLevel:
@@ -49,7 +50,7 @@ typedef enum {
  *
  * Returns: (transfer full): a new #GNostrNip49
  */
-GNostrNip49 *gnostr_nip49_new(void);
+NOSTR_GOBJECT_API GNostrNip49 *gnostr_nip49_new(void);
 
 /**
  * gnostr_nip49_encrypt:
@@ -65,7 +66,7 @@ GNostrNip49 *gnostr_nip49_new(void);
  *
  * Returns: (transfer full) (nullable): the ncryptsec string, or %NULL on error
  */
-gchar *gnostr_nip49_encrypt(GNostrNip49 *self,
+NOSTR_GOBJECT_API gchar *gnostr_nip49_encrypt(GNostrNip49 *self,
                              const gchar *privkey_hex,
                              const gchar *password,
                              GNostrNip49SecurityLevel security,
@@ -85,7 +86,7 @@ gchar *gnostr_nip49_encrypt(GNostrNip49 *self,
  * Returns: (transfer full) (nullable): the private key as 64 hex characters, or %NULL on error.
  *   The caller should securely wipe and free the returned string when done.
  */
-gchar *gnostr_nip49_decrypt(GNostrNip49 *self,
+NOSTR_GOBJECT_API gchar *gnostr_nip49_decrypt(GNostrNip49 *self,
                              const gchar *ncryptsec,
                              const gchar *password,
                              GError **error);
@@ -102,7 +103,7 @@ gchar *gnostr_nip49_decrypt(GNostrNip49 *self,
  *
  * Returns: (transfer full) (nullable): a new #GNostrKeys with the decrypted key, or %NULL on error
  */
-GObject *gnostr_nip49_decrypt_to_keys(GNostrNip49 *self,
+NOSTR_GOBJECT_API GObject *gnostr_nip49_decrypt_to_keys(GNostrNip49 *self,
                                        const gchar *ncryptsec,
                                        const gchar *password,
                                        GError **error);
@@ -115,7 +116,7 @@ GObject *gnostr_nip49_decrypt_to_keys(GNostrNip49 *self,
  *
  * Returns: (transfer none) (nullable): the ncryptsec string, or %NULL if not set
  */
-const gchar *gnostr_nip49_get_ncryptsec(GNostrNip49 *self);
+NOSTR_GOBJECT_API const gchar *gnostr_nip49_get_ncryptsec(GNostrNip49 *self);
 
 /**
  * gnostr_nip49_get_security_level:
@@ -125,7 +126,7 @@ const gchar *gnostr_nip49_get_ncryptsec(GNostrNip49 *self);
  *
  * Returns: the #GNostrNip49SecurityLevel
  */
-GNostrNip49SecurityLevel gnostr_nip49_get_security_level(GNostrNip49 *self);
+NOSTR_GOBJECT_API GNostrNip49SecurityLevel gnostr_nip49_get_security_level(GNostrNip49 *self);
 
 /**
  * gnostr_nip49_get_log_n:
@@ -135,7 +136,7 @@ GNostrNip49SecurityLevel gnostr_nip49_get_security_level(GNostrNip49 *self);
  *
  * Returns: the log_n value
  */
-guint8 gnostr_nip49_get_log_n(GNostrNip49 *self);
+NOSTR_GOBJECT_API guint8 gnostr_nip49_get_log_n(GNostrNip49 *self);
 
 G_END_DECLS
 

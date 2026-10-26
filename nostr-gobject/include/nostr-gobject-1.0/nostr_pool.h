@@ -1,6 +1,7 @@
 #ifndef NOSTR_POOL_H
 #define NOSTR_POOL_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "nostr_relay.h"
@@ -17,7 +18,7 @@ typedef struct _GNostrSubscription GNostrSubscription;
 
 /* Define GNostrPool GObject */
 #define GNOSTR_TYPE_POOL (gnostr_pool_get_type())
-G_DECLARE_FINAL_TYPE(GNostrPool, gnostr_pool, GNOSTR, POOL, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrPool, gnostr_pool, GNOSTR, POOL, GObject)
 
 /**
  * GNostrPool:
@@ -47,7 +48,7 @@ G_DECLARE_FINAL_TYPE(GNostrPool, gnostr_pool, GNOSTR, POOL, GObject)
  *
  * Returns: (transfer full): a new #GNostrPool
  */
-GNostrPool *gnostr_pool_new(void);
+NOSTR_GOBJECT_API GNostrPool *gnostr_pool_new(void);
 
 /* --- Relay Management --- */
 
@@ -62,7 +63,7 @@ GNostrPool *gnostr_pool_new(void);
  *
  * Returns: (transfer none): the #GNostrRelay for this URL
  */
-GNostrRelay *gnostr_pool_add_relay(GNostrPool *self, const gchar *url);
+NOSTR_GOBJECT_API GNostrRelay *gnostr_pool_add_relay(GNostrPool *self, const gchar *url);
 
 /**
  * gnostr_pool_add_relay_object:
@@ -75,7 +76,7 @@ GNostrRelay *gnostr_pool_add_relay(GNostrPool *self, const gchar *url);
  *
  * Returns: %TRUE if the relay was added, %FALSE if already present
  */
-gboolean gnostr_pool_add_relay_object(GNostrPool *self, GNostrRelay *relay);
+NOSTR_GOBJECT_API gboolean gnostr_pool_add_relay_object(GNostrPool *self, GNostrRelay *relay);
 
 /**
  * gnostr_pool_remove_relay:
@@ -87,7 +88,7 @@ gboolean gnostr_pool_add_relay_object(GNostrPool *self, GNostrRelay *relay);
  *
  * Returns: %TRUE if the relay was found and removed, %FALSE otherwise
  */
-gboolean gnostr_pool_remove_relay(GNostrPool *self, const gchar *url);
+NOSTR_GOBJECT_API gboolean gnostr_pool_remove_relay(GNostrPool *self, const gchar *url);
 
 /**
  * gnostr_pool_get_relay:
@@ -98,7 +99,7 @@ gboolean gnostr_pool_remove_relay(GNostrPool *self, const gchar *url);
  *
  * Returns: (transfer none) (nullable): the #GNostrRelay, or %NULL if not found
  */
-GNostrRelay *gnostr_pool_get_relay(GNostrPool *self, const gchar *url);
+NOSTR_GOBJECT_API GNostrRelay *gnostr_pool_get_relay(GNostrPool *self, const gchar *url);
 
 /**
  * gnostr_pool_get_relays:
@@ -109,7 +110,7 @@ GNostrRelay *gnostr_pool_get_relay(GNostrPool *self, const gchar *url);
  *
  * Returns: (transfer none): a #GListStore of #GNostrRelay objects
  */
-GListStore *gnostr_pool_get_relays(GNostrPool *self);
+NOSTR_GOBJECT_API GListStore *gnostr_pool_get_relays(GNostrPool *self);
 
 /**
  * gnostr_pool_get_relay_count:
@@ -117,7 +118,7 @@ GListStore *gnostr_pool_get_relays(GNostrPool *self);
  *
  * Returns: the number of relays in the pool
  */
-guint gnostr_pool_get_relay_count(GNostrPool *self);
+NOSTR_GOBJECT_API guint gnostr_pool_get_relay_count(GNostrPool *self);
 
 /**
  * gnostr_pool_sync_relays:
@@ -128,7 +129,7 @@ guint gnostr_pool_get_relay_count(GNostrPool *self);
  * Synchronizes the pool relay set with the given URL list.
  * Adds new relays and removes relays not in the list.
  */
-void gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_count);
+NOSTR_GOBJECT_API void gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_count);
 
 /* --- Async Query API --- */
 
@@ -143,7 +144,7 @@ void gnostr_pool_sync_relays(GNostrPool *self, const gchar **urls, gsize url_cou
  * Asynchronously queries all connected relays with the given filters.
  * Results are collected until EOSE from all relays or timeout.
  */
-void gnostr_pool_query_async(GNostrPool      *self,
+NOSTR_GOBJECT_API void gnostr_pool_query_async(GNostrPool      *self,
                              NostrFilters     *filters,
                              GCancellable     *cancellable,
                              GAsyncReadyCallback callback,
@@ -164,7 +165,7 @@ void gnostr_pool_query_async(GNostrPool      *self,
  * on the worker thread against the shared relay registry, preserving connection
  * reuse without blocking GTK on search setup.
  */
-void gnostr_pool_query_urls_async(GNostrPool      *self,
+NOSTR_GOBJECT_API void gnostr_pool_query_urls_async(GNostrPool      *self,
                                   const gchar    **urls,
                                   gsize            url_count,
                                   NostrFilters     *filters,
@@ -183,7 +184,7 @@ void gnostr_pool_query_urls_async(GNostrPool      *self,
  * Returns: (element-type utf8) (transfer full) (nullable): a #GPtrArray
  *   of event JSON strings, or %NULL on error. Free with g_ptr_array_unref().
  */
-GPtrArray *gnostr_pool_query_finish(GNostrPool    *self,
+NOSTR_GOBJECT_API GPtrArray *gnostr_pool_query_finish(GNostrPool    *self,
                                     GAsyncResult  *result,
                                     GError       **error);
 
@@ -198,7 +199,7 @@ GPtrArray *gnostr_pool_query_finish(GNostrPool    *self,
  *
  * Asynchronously connects to all relays in the pool.
  */
-void gnostr_pool_connect_all_async(GNostrPool         *self,
+NOSTR_GOBJECT_API void gnostr_pool_connect_all_async(GNostrPool         *self,
                                    GCancellable       *cancellable,
                                    GAsyncReadyCallback callback,
                                    gpointer            user_data);
@@ -213,7 +214,7 @@ void gnostr_pool_connect_all_async(GNostrPool         *self,
  *
  * Returns: %TRUE if all relays connected, %FALSE if any failed
  */
-gboolean gnostr_pool_connect_all_finish(GNostrPool   *self,
+NOSTR_GOBJECT_API gboolean gnostr_pool_connect_all_finish(GNostrPool   *self,
                                         GAsyncResult *result,
                                         GError      **error);
 
@@ -223,7 +224,7 @@ gboolean gnostr_pool_connect_all_finish(GNostrPool   *self,
  *
  * Disconnects all relays in the pool.
  */
-void gnostr_pool_disconnect_all(GNostrPool *self);
+NOSTR_GOBJECT_API void gnostr_pool_disconnect_all(GNostrPool *self);
 
 /* --- Subscription API (nostrc-wjlt) --- */
 
@@ -251,7 +252,7 @@ void gnostr_pool_disconnect_all(GNostrPool *self);
  *
  * Since: 1.0
  */
-GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
+NOSTR_GOBJECT_API GNostrSubscription *gnostr_pool_subscribe(GNostrPool *self,
                                            NostrFilters *filters,
                                            GError **error);
 
@@ -321,7 +322,7 @@ typedef void (*GNostrPoolMultiSubEoseFunc)(GNostrPoolMultiSub *multi_sub,
  *
  * Since: 1.0
  */
-GNostrPoolMultiSub *gnostr_pool_subscribe_multi(GNostrPool                   *self,
+NOSTR_GOBJECT_API GNostrPoolMultiSub *gnostr_pool_subscribe_multi(GNostrPool                   *self,
                                                  NostrFilters                 *filters,
                                                  GNostrPoolMultiSubEventFunc   event_func,
                                                  GNostrPoolMultiSubEoseFunc    eose_func,
@@ -338,7 +339,7 @@ GNostrPoolMultiSub *gnostr_pool_subscribe_multi(GNostrPool                   *se
  *
  * Since: 1.0
  */
-void gnostr_pool_multi_sub_close(GNostrPoolMultiSub *multi_sub);
+NOSTR_GOBJECT_API void gnostr_pool_multi_sub_close(GNostrPoolMultiSub *multi_sub);
 
 /**
  * gnostr_pool_multi_sub_get_relay_count:
@@ -348,7 +349,7 @@ void gnostr_pool_multi_sub_close(GNostrPoolMultiSub *multi_sub);
  *
  * Since: 1.0
  */
-guint gnostr_pool_multi_sub_get_relay_count(GNostrPoolMultiSub *multi_sub);
+NOSTR_GOBJECT_API guint gnostr_pool_multi_sub_get_relay_count(GNostrPoolMultiSub *multi_sub);
 
 /* --- Cache Query API --- */
 
@@ -388,7 +389,7 @@ typedef GPtrArray *(*GNostrPoolCacheQueryFunc)(NostrFilters *filters, gpointer u
  *
  * Since: 1.0
  */
-void gnostr_pool_set_cache_query(GNostrPool                *self,
+NOSTR_GOBJECT_API void gnostr_pool_set_cache_query(GNostrPool                *self,
                                   GNostrPoolCacheQueryFunc   query_func,
                                   gpointer                  user_data,
                                   GDestroyNotify             destroy);
@@ -428,7 +429,7 @@ typedef void (*GNostrPoolEventSinkFunc)(GPtrArray *jsons, gpointer user_data);
  *
  * Since: 1.0
  */
-void gnostr_pool_set_event_sink(GNostrPool              *self,
+NOSTR_GOBJECT_API void gnostr_pool_set_event_sink(GNostrPool              *self,
                                  GNostrPoolEventSinkFunc  sink_func,
                                  gpointer                 user_data,
                                  GDestroyNotify           destroy);
@@ -456,7 +457,7 @@ void gnostr_pool_set_event_sink(GNostrPool              *self,
  *
  * Since: 1.0
  */
-void gnostr_pool_set_auth_handler(GNostrPool              *self,
+NOSTR_GOBJECT_API void gnostr_pool_set_auth_handler(GNostrPool              *self,
                                    GNostrRelayAuthSignFunc   sign_func,
                                    gpointer                 user_data,
                                    GDestroyNotify            destroy);

@@ -25,6 +25,12 @@ else()
   find_package(NOSTR_GTK 1.0.0 REQUIRED CONFIG)
 endif()
 
+# Isolated tests compile app helpers (or GObject sources) without linking the
+# full runtime, but still need its public generated-header compile interface.
+if(TARGET nostr_gobject)
+  include_directories($<TARGET_PROPERTY:nostr_gobject,INTERFACE_INCLUDE_DIRECTORIES>)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
@@ -752,6 +758,7 @@ if (BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/src/gnostr-app-bridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/src/gnostr-identity.c)
   target_compile_features(gnostr-test-keystore PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-keystore PRIVATE NOSTR_GOBJECT_STATIC_DEFINE)
   target_include_directories(gnostr-test-keystore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/include
@@ -783,6 +790,7 @@ if (BUILD_TESTING)
     src/util/keystore_stub.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/src/gnostr-app-bridge.c)
   target_compile_features(gnostr-test-profile-guard PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-profile-guard PRIVATE NOSTR_GOBJECT_STATIC_DEFINE)
   target_include_directories(gnostr-test-profile-guard PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests/common

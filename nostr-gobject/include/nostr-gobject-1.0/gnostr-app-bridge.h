@@ -15,6 +15,7 @@
 #ifndef GNOSTR_APP_BRIDGE_H
 #define GNOSTR_APP_BRIDGE_H
 
+#include "nostr-gobject-export.h"
 #include <gio/gio.h>
 
 G_BEGIN_DECLS
@@ -70,7 +71,7 @@ typedef enum {
 } GnostrKeystoreError;
 
 #define GNOSTR_KEYSTORE_ERROR (gnostr_app_bridge_keystore_error_quark())
-GQuark gnostr_app_bridge_keystore_error_quark(void);
+NOSTR_GOBJECT_API GQuark gnostr_app_bridge_keystore_error_quark(void);
 
 /**
  * GnostrRelayPublishDoneCallback:
@@ -151,30 +152,30 @@ typedef struct {
  *
  * Installs the higher-layer app implementations. The vtable is copied.
  */
-void gnostr_app_bridge_install(const GnostrAppBridge *vtable);
+NOSTR_GOBJECT_API void gnostr_app_bridge_install(const GnostrAppBridge *vtable);
 
 /* Convenience call-throughs used by nostr-gobject internals. */
-void gnostr_app_bridge_publish_to_relays_async(NostrEvent *event,
+NOSTR_GOBJECT_API void gnostr_app_bridge_publish_to_relays_async(NostrEvent *event,
                                                 GPtrArray *relay_urls,
                                                 GnostrRelayPublishDoneCallback callback,
                                                 gpointer user_data);
 
-GnostrRelayInfo *gnostr_app_bridge_relay_info_cache_get(const gchar *relay_url);
-void gnostr_app_bridge_relay_info_free(GnostrRelayInfo *info);
-GnostrRelayValidationResult *
+NOSTR_GOBJECT_API GnostrRelayInfo *gnostr_app_bridge_relay_info_cache_get(const gchar *relay_url);
+NOSTR_GOBJECT_API void gnostr_app_bridge_relay_info_free(GnostrRelayInfo *info);
+NOSTR_GOBJECT_API GnostrRelayValidationResult *
 gnostr_app_bridge_relay_info_validate_event(GnostrRelayInfo *info,
                                              const char *content,
                                              gint content_len,
                                              gint tag_count,
                                              gint64 created_at,
                                              gssize serialized_len);
-GnostrRelayValidationResult *
+NOSTR_GOBJECT_API GnostrRelayValidationResult *
 gnostr_app_bridge_relay_info_validate_for_publishing(GnostrRelayInfo *info);
-gboolean gnostr_app_bridge_relay_validation_result_is_valid(const GnostrRelayValidationResult *result);
-gchar *gnostr_app_bridge_relay_validation_result_format_errors(const GnostrRelayValidationResult *result);
-void gnostr_app_bridge_relay_validation_result_free(GnostrRelayValidationResult *result);
+NOSTR_GOBJECT_API gboolean gnostr_app_bridge_relay_validation_result_is_valid(const GnostrRelayValidationResult *result);
+NOSTR_GOBJECT_API gchar *gnostr_app_bridge_relay_validation_result_format_errors(const GnostrRelayValidationResult *result);
+NOSTR_GOBJECT_API void gnostr_app_bridge_relay_validation_result_free(GnostrRelayValidationResult *result);
 
-void gnostr_app_bridge_neg_sync_kinds_for_authors_async(const char *relay_url,
+NOSTR_GOBJECT_API void gnostr_app_bridge_neg_sync_kinds_for_authors_async(const char *relay_url,
                                                         const int *kinds,
                                                         size_t kind_count,
                                                         const char * const *authors,
@@ -182,15 +183,15 @@ void gnostr_app_bridge_neg_sync_kinds_for_authors_async(const char *relay_url,
                                                         GCancellable *cancellable,
                                                         GAsyncReadyCallback callback,
                                                         gpointer user_data);
-gboolean gnostr_app_bridge_neg_sync_kinds_finish(GAsyncResult *result,
+NOSTR_GOBJECT_API gboolean gnostr_app_bridge_neg_sync_kinds_finish(GAsyncResult *result,
                                                   GnostrNegSyncStats *stats_out,
                                                   GError **error);
 
 /* Identity metadata call-throughs. Semantics mirror the app-side shim. */
-gboolean gnostr_app_bridge_keystore_available(void);
-gboolean gnostr_app_bridge_keystore_has_key(const char *npub);
-GList   *gnostr_app_bridge_keystore_list_keys(GError **error);
-void     gnostr_app_bridge_key_info_free(GnostrKeyInfo *info);
+NOSTR_GOBJECT_API gboolean gnostr_app_bridge_keystore_available(void);
+NOSTR_GOBJECT_API gboolean gnostr_app_bridge_keystore_has_key(const char *npub);
+NOSTR_GOBJECT_API GList   *gnostr_app_bridge_keystore_list_keys(GError **error);
+NOSTR_GOBJECT_API void     gnostr_app_bridge_key_info_free(GnostrKeyInfo *info);
 
 G_END_DECLS
 

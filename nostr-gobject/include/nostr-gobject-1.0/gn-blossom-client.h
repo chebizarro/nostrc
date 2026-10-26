@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef GN_BLOSSOM_CLIENT_H
 #define GN_BLOSSOM_CLIENT_H
+#include "nostr-gobject-export.h"
 #include <gio/gio.h>
 G_BEGIN_DECLS
 
 #define GN_TYPE_BLOSSOM_CLIENT (gn_blossom_client_get_type())
-G_DECLARE_FINAL_TYPE(GnBlossomClient, gn_blossom_client, GN, BLOSSOM_CLIENT, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GnBlossomClient, gn_blossom_client, GN, BLOSSOM_CLIENT, GObject)
 
 typedef enum {
   GN_BLOSSOM_NETWORK_DEFAULT = 0,
@@ -22,7 +23,7 @@ typedef enum {
   GN_BLOSSOM_ERROR_BAD_RESPONSE
 } GnBlossomError;
 #define GN_BLOSSOM_ERROR (gn_blossom_error_quark())
-GQuark gn_blossom_error_quark(void);
+NOSTR_GOBJECT_API GQuark gn_blossom_error_quark(void);
 
 /**
  * gn_blossom_client_new:
@@ -33,7 +34,7 @@ GQuark gn_blossom_error_quark(void);
  * handle on a GTask worker; no libcurl work runs on the main context.
  * Returns: (transfer full): a new client
  */
-GnBlossomClient *gn_blossom_client_new(const gchar *endpoint);
+NOSTR_GOBJECT_API GnBlossomClient *gn_blossom_client_new(const gchar *endpoint);
 /**
  * gn_blossom_client_set_network:
  * @self: a client
@@ -47,7 +48,7 @@ GnBlossomClient *gn_blossom_client_new(const gchar *endpoint);
  * disables session IDs and tickets (HTTPS requires OpenSSL-backed libcurl).
  * Changes affect future operations only: cancel active operations on revocation.
  */
-void gn_blossom_client_set_network(GnBlossomClient *self, GProxyResolver *resolver,
+NOSTR_GOBJECT_API void gn_blossom_client_set_network(GnBlossomClient *self, GProxyResolver *resolver,
                                     GnBlossomNetworkFlags flags);
 /**
  * gn_blossom_client_set_limits:
@@ -56,7 +57,7 @@ void gn_blossom_client_set_network(GnBlossomClient *self, GProxyResolver *resolv
  * @timeout_seconds: request timeout (0 selects 30 seconds)
  * @user_agent: (nullable): User-Agent; empty string suppresses it
  */
-void gn_blossom_client_set_limits(GnBlossomClient *self, gsize max_bytes,
+NOSTR_GOBJECT_API void gn_blossom_client_set_limits(GnBlossomClient *self, gsize max_bytes,
                                  guint timeout_seconds, const gchar *user_agent);
 /**
  * gn_blossom_client_upload_async:
@@ -69,7 +70,7 @@ void gn_blossom_client_set_limits(GnBlossomClient *self, gsize max_bytes,
  * @callback: (scope async): completion callback
  * @user_data: (closure): callback data
  */
-void gn_blossom_client_upload_async(GnBlossomClient *self, GBytes *bytes,
+NOSTR_GOBJECT_API void gn_blossom_client_upload_async(GnBlossomClient *self, GBytes *bytes,
     const gchar *sha256, const gchar *content_type, const gchar *signed_event,
     GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 /**
@@ -80,7 +81,7 @@ void gn_blossom_client_upload_async(GnBlossomClient *self, GBytes *bytes,
  * Returns: (transfer full): descriptor URL, or an empty string if absent.
  *   The URL is untrusted server data; consumers decide how to use it.
  */
-gchar *gn_blossom_client_upload_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API gchar *gn_blossom_client_upload_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
 /**
  * gn_blossom_client_download_async:
  * @self: a client
@@ -93,7 +94,7 @@ gchar *gn_blossom_client_upload_finish(GnBlossomClient *self, GAsyncResult *resu
  * Public unauthenticated GET. Limits apply during reception; success requires
  * hash verification. The endpoint is not used to reconstruct the supplied URL.
  */
-void gn_blossom_client_download_async(GnBlossomClient *self, const gchar *url,
+NOSTR_GOBJECT_API void gn_blossom_client_download_async(GnBlossomClient *self, const gchar *url,
     const gchar *sha256, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 /**
  * gn_blossom_client_download_finish:
@@ -102,7 +103,7 @@ void gn_blossom_client_download_async(GnBlossomClient *self, const gchar *url,
  * @error: return location for an error
  * Returns: (transfer full): verified wire bytes
  */
-GBytes *gn_blossom_client_download_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API GBytes *gn_blossom_client_download_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
 /**
  * gn_blossom_client_list_async:
  * @self: a client
@@ -114,7 +115,7 @@ GBytes *gn_blossom_client_download_finish(GnBlossomClient *self, GAsyncResult *r
  * Public unauthenticated BUD-01 listing. Response bytes are bounded by the
  * configured limit. The caller parses the JSON and treats descriptors as untrusted.
  */
-void gn_blossom_client_list_async(GnBlossomClient *self, const gchar *pubkey,
+NOSTR_GOBJECT_API void gn_blossom_client_list_async(GnBlossomClient *self, const gchar *pubkey,
     GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 /**
  * gn_blossom_client_list_finish:
@@ -123,7 +124,7 @@ void gn_blossom_client_list_async(GnBlossomClient *self, const gchar *pubkey,
  * @error: return location for an error
  * Returns: (transfer full): bounded listing JSON bytes
  */
-GBytes *gn_blossom_client_list_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API GBytes *gn_blossom_client_list_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
 /**
  * gn_blossom_client_delete_async:
  * @self: a client
@@ -133,7 +134,7 @@ GBytes *gn_blossom_client_list_finish(GnBlossomClient *self, GAsyncResult *resul
  * @callback: (scope async): completion callback
  * @user_data: (closure): callback data
  */
-void gn_blossom_client_delete_async(GnBlossomClient *self, const gchar *sha256,
+NOSTR_GOBJECT_API void gn_blossom_client_delete_async(GnBlossomClient *self, const gchar *sha256,
     const gchar *signed_event, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 /**
  * gn_blossom_client_delete_finish:
@@ -142,6 +143,6 @@ void gn_blossom_client_delete_async(GnBlossomClient *self, const gchar *sha256,
  * @error: return location for an error
  * Returns: whether the server accepted deletion
  */
-gboolean gn_blossom_client_delete_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
+NOSTR_GOBJECT_API gboolean gn_blossom_client_delete_finish(GnBlossomClient *self, GAsyncResult *result, GError **error);
 G_END_DECLS
 #endif

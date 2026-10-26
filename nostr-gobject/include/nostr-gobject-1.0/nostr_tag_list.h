@@ -1,6 +1,7 @@
 #ifndef GNOSTR_TAG_LIST_H
 #define GNOSTR_TAG_LIST_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 
@@ -26,7 +27,7 @@ typedef struct {
 
 #define GNOSTR_TYPE_TAG (gnostr_tag_get_type())
 
-GType gnostr_tag_get_type(void) G_GNUC_CONST;
+NOSTR_GOBJECT_API GType gnostr_tag_get_type(void) G_GNUC_CONST;
 
 /**
  * gnostr_tag_new:
@@ -37,7 +38,7 @@ GType gnostr_tag_get_type(void) G_GNUC_CONST;
  *
  * Returns: (transfer full): A new #GNostrTag
  */
-GNostrTag *gnostr_tag_new(const gchar *key, const gchar * const *values);
+NOSTR_GOBJECT_API GNostrTag *gnostr_tag_new(const gchar *key, const gchar * const *values);
 
 /**
  * gnostr_tag_copy:
@@ -47,7 +48,7 @@ GNostrTag *gnostr_tag_new(const gchar *key, const gchar * const *values);
  *
  * Returns: (transfer full) (nullable): A new #GNostrTag, or %NULL if @tag is %NULL
  */
-GNostrTag *gnostr_tag_copy(const GNostrTag *tag);
+NOSTR_GOBJECT_API GNostrTag *gnostr_tag_copy(const GNostrTag *tag);
 
 /**
  * gnostr_tag_free:
@@ -55,7 +56,7 @@ GNostrTag *gnostr_tag_copy(const GNostrTag *tag);
  *
  * Frees a GNostrTag and all its contents.
  */
-void gnostr_tag_free(GNostrTag *tag);
+NOSTR_GOBJECT_API void gnostr_tag_free(GNostrTag *tag);
 
 /**
  * gnostr_tag_get_key:
@@ -63,7 +64,7 @@ void gnostr_tag_free(GNostrTag *tag);
  *
  * Returns: (transfer none) (nullable): The tag key
  */
-const gchar *gnostr_tag_get_key(const GNostrTag *tag);
+NOSTR_GOBJECT_API const gchar *gnostr_tag_get_key(const GNostrTag *tag);
 
 /**
  * gnostr_tag_get_values:
@@ -71,7 +72,7 @@ const gchar *gnostr_tag_get_key(const GNostrTag *tag);
  *
  * Returns: (transfer none) (nullable) (array zero-terminated=1): The values array
  */
-const gchar * const *gnostr_tag_get_values(const GNostrTag *tag);
+NOSTR_GOBJECT_API const gchar * const *gnostr_tag_get_values(const GNostrTag *tag);
 
 /**
  * gnostr_tag_get_n_values:
@@ -79,7 +80,7 @@ const gchar * const *gnostr_tag_get_values(const GNostrTag *tag);
  *
  * Returns: The number of values
  */
-guint gnostr_tag_get_n_values(const GNostrTag *tag);
+NOSTR_GOBJECT_API guint gnostr_tag_get_n_values(const GNostrTag *tag);
 
 /**
  * gnostr_tag_get_value:
@@ -88,7 +89,7 @@ guint gnostr_tag_get_n_values(const GNostrTag *tag);
  *
  * Returns: (transfer none) (nullable): The value at @index, or %NULL if out of bounds
  */
-const gchar *gnostr_tag_get_value(const GNostrTag *tag, guint index);
+NOSTR_GOBJECT_API const gchar *gnostr_tag_get_value(const GNostrTag *tag, guint index);
 
 /**
  * GNostrTagList:
@@ -97,14 +98,14 @@ const gchar *gnostr_tag_get_value(const GNostrTag *tag, guint index);
  * G-prefixed to avoid collision with core libnostr NostrTagList.
  */
 #define GNOSTR_TYPE_TAG_LIST (gnostr_tag_list_get_type())
-G_DECLARE_FINAL_TYPE(GNostrTagList, gnostr_tag_list, GNOSTR, TAG_LIST, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrTagList, gnostr_tag_list, GNOSTR, TAG_LIST, GObject)
 
-GNostrTagList *gnostr_tag_list_new(void);
-void           gnostr_tag_list_append(GNostrTagList *list, GNostrTag *tag);
-GNostrTag     *gnostr_tag_list_get(GNostrTagList *list, guint index);
-void           gnostr_tag_list_remove(GNostrTagList *list, guint index);
-GPtrArray     *gnostr_tag_list_find_by_key(GNostrTagList *list, const gchar *key);
-guint          gnostr_tag_list_get_length(GNostrTagList *list);
+NOSTR_GOBJECT_API GNostrTagList *gnostr_tag_list_new(void);
+NOSTR_GOBJECT_API void           gnostr_tag_list_append(GNostrTagList *list, GNostrTag *tag);
+NOSTR_GOBJECT_API GNostrTag     *gnostr_tag_list_get(GNostrTagList *list, guint index);
+NOSTR_GOBJECT_API void           gnostr_tag_list_remove(GNostrTagList *list, guint index);
+NOSTR_GOBJECT_API GPtrArray     *gnostr_tag_list_find_by_key(GNostrTagList *list, const gchar *key);
+NOSTR_GOBJECT_API guint          gnostr_tag_list_get_length(GNostrTagList *list);
 
 G_END_DECLS
 

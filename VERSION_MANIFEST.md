@@ -14,7 +14,7 @@ files already declare a version.
 | libnostr | `libnostr/` | 2.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.5.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 3.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
@@ -137,6 +137,17 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-er4fz.10 phase C: nostr-gobject MAJOR 2.5.0 -> 3.0.0 (SONAME 3).
+  The library is compiled hidden-by-default. Declared functions, GTypes,
+  enum/flags type functions, error quarks and the generated signer proxy are
+  exported through `NOSTR_GOBJECT_API` from the installed generated
+  `nostr-gobject-export.h`; test seams stay limited to GNOSTR_TESTING builds.
+  Internal helpers and embedded NIP/nostrdb/LMDB/flatcc archive symbols leave
+  the ELF export table: an ABI break with unchanged declared signatures. No
+  consumer bump: gnostr's isolated tests and Grotto's Meson build add the
+  generated header path, with no shipped behavior change; the Groundhog and
+  Grotto RPM file lists follow SONAME 3. No tags or release-column changes.
 
 - nostrc-er4fz.10 phase B2 infrastructure: no independent component bump
   for the CMake visibility helper or NIP generators. OBJECT libraries use

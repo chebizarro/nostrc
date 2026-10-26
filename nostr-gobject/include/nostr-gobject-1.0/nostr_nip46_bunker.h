@@ -6,6 +6,7 @@
 #ifndef NOSTR_GOBJECT_NOSTR_NIP46_BUNKER_H
 #define NOSTR_GOBJECT_NOSTR_NIP46_BUNKER_H
 
+#include "nostr-gobject-export.h"
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "nostr-error.h"
@@ -16,7 +17,7 @@ G_BEGIN_DECLS
 typedef struct NostrNip46Session NostrNip46Session;
 
 #define GNOSTR_TYPE_NIP46_BUNKER (gnostr_nip46_bunker_get_type())
-G_DECLARE_FINAL_TYPE(GNostrNip46Bunker, gnostr_nip46_bunker, GNOSTR, NIP46_BUNKER, GObject)
+NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrNip46Bunker, gnostr_nip46_bunker, GNOSTR, NIP46_BUNKER, GObject)
 
 /**
  * gnostr_nip46_bunker_new:
@@ -28,7 +29,7 @@ G_DECLARE_FINAL_TYPE(GNostrNip46Bunker, gnostr_nip46_bunker, GNOSTR, NIP46_BUNKE
  *
  * Returns: (transfer full): a new #GNostrNip46Bunker
  */
-GNostrNip46Bunker *gnostr_nip46_bunker_new(void);
+NOSTR_GOBJECT_API GNostrNip46Bunker *gnostr_nip46_bunker_new(void);
 
 /* Opt-in async path, installed before listen. "request" carries a borrowed
  * NostrNip46BunkerRequest* (see core nip46_bunker.h); retain it for deferred
@@ -36,9 +37,9 @@ GNostrNip46Bunker *gnostr_nip46_bunker_new(void);
  * Both run on the construction thread's GMainContext. No legacy crypto/ACL
  * callback is consulted when requests are enabled. Stop invalidates queued
  * deliveries and deferred completions, and releases the relay subscriptions. */
-gboolean gnostr_nip46_bunker_enable_requests(GNostrNip46Bunker *self);
-gboolean gnostr_nip46_bunker_set_transport_key(GNostrNip46Bunker *self, const guint8 key[32], GError **error);
-void gnostr_nip46_bunker_stop(GNostrNip46Bunker *self);
+NOSTR_GOBJECT_API gboolean gnostr_nip46_bunker_enable_requests(GNostrNip46Bunker *self);
+NOSTR_GOBJECT_API gboolean gnostr_nip46_bunker_set_transport_key(GNostrNip46Bunker *self, const guint8 key[32], GError **error);
+NOSTR_GOBJECT_API void gnostr_nip46_bunker_stop(GNostrNip46Bunker *self);
 
 /**
  * gnostr_nip46_bunker_listen:
@@ -51,7 +52,7 @@ void gnostr_nip46_bunker_stop(GNostrNip46Bunker *self);
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_nip46_bunker_listen(GNostrNip46Bunker *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_bunker_listen(GNostrNip46Bunker *self,
                                      const gchar *const *relays,
                                      gsize n_relays,
                                      GError **error);
@@ -67,14 +68,14 @@ gboolean gnostr_nip46_bunker_listen(GNostrNip46Bunker *self,
  *
  * Asynchronously starts listening for NIP-46 requests.
  */
-void gnostr_nip46_bunker_listen_async(GNostrNip46Bunker *self,
+NOSTR_GOBJECT_API void gnostr_nip46_bunker_listen_async(GNostrNip46Bunker *self,
                                        const gchar *const *relays,
                                        gsize n_relays,
                                        GCancellable *cancellable,
                                        GAsyncReadyCallback callback,
                                        gpointer user_data);
 
-gboolean gnostr_nip46_bunker_listen_finish(GNostrNip46Bunker *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_bunker_listen_finish(GNostrNip46Bunker *self,
                                             GAsyncResult *result,
                                             GError **error);
 
@@ -92,7 +93,7 @@ gboolean gnostr_nip46_bunker_listen_finish(GNostrNip46Bunker *self,
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_nip46_bunker_issue_uri(GNostrNip46Bunker *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_bunker_issue_uri(GNostrNip46Bunker *self,
                                         const gchar *signer_pubkey_hex,
                                         const gchar *const *relays,
                                         gsize n_relays,
@@ -113,7 +114,7 @@ gboolean gnostr_nip46_bunker_issue_uri(GNostrNip46Bunker *self,
  *
  * Returns: %TRUE on success
  */
-gboolean gnostr_nip46_bunker_handle_cipher(GNostrNip46Bunker *self,
+NOSTR_GOBJECT_API gboolean gnostr_nip46_bunker_handle_cipher(GNostrNip46Bunker *self,
                                             const gchar *client_pubkey_hex,
                                             const gchar *ciphertext,
                                             gchar **out_cipher_reply,
@@ -127,7 +128,7 @@ gboolean gnostr_nip46_bunker_handle_cipher(GNostrNip46Bunker *self,
  *
  * Returns: (transfer none) (nullable): the core session pointer
  */
-NostrNip46Session *gnostr_nip46_bunker_get_session(GNostrNip46Bunker *self);
+NOSTR_GOBJECT_API NostrNip46Session *gnostr_nip46_bunker_get_session(GNostrNip46Bunker *self);
 
 G_END_DECLS
 #endif /* NOSTR_GOBJECT_NOSTR_NIP46_BUNKER_H */
