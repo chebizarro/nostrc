@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 # nip-cas0010: NIP-CAS-0010 OTLP-over-Nostr transport primitives.
 #
 # Producer/consumer for OTLP payloads carried as ephemeral kinds 24900-24902.
@@ -22,6 +24,8 @@ add_library(nostr_nip_cas0010_core OBJECT
     src/otel_consumer.c
     src/otel_replay.c
 )
+nostrc_library_visibility(nostr_nip_cas0010_core NOSTR_NIP_CAS0010_API
+  nostr/nip_cas0010/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip_cas0010")
 
 target_include_directories(nostr_nip_cas0010_core
     PUBLIC

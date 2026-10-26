@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP59_H
 #define NOSTR_NIP59_H
 
+#include <nostr/nip59/export.h>
+
 /**
  * NIP-59: Gift Wrap
  *
@@ -45,7 +47,7 @@ extern "C" {
  *
  * Returns: NIP59_OK on success, negative error code on failure
  */
-int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out);
+NOSTR_NIP59_API int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out);
 
 /**
  * nostr_nip59_randomize_timestamp:
@@ -63,7 +65,7 @@ int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out);
  * Returns: NIP59_OK; NIP59_ERR_INVALID_ARG if @out_time is NULL or
  * @base_time is below the window; NIP59_ERR_RANDOMNESS if the CSPRNG fails.
  */
-int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds,
+NOSTR_NIP59_API int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds,
                                     int64_t *out_time);
 
 /**
@@ -87,7 +89,7 @@ int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds,
  * Returns: (transfer full) (nullable): gift wrap event ready to publish, or
  * NULL on error, including when no randomness is available for the timestamp
  */
-NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
+NOSTR_NIP59_API NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
                               const char *recipient_pubkey_hex,
                               const char *ephemeral_sk_hex);
 
@@ -102,7 +104,7 @@ NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
  *
  * Returns: (transfer full) (nullable): gift wrap event, or NULL on error
  */
-NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
+NOSTR_NIP59_API NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
                                        const char *recipient_pubkey_hex,
                                        const uint8_t ephemeral_sk_bin[32]);
 
@@ -122,7 +124,7 @@ NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
  *
  * Returns: (transfer full) (nullable): inner event, or NULL on error
  */
-NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
+NOSTR_NIP59_API NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
                                 const char *recipient_sk_hex);
 
 /**
@@ -134,7 +136,7 @@ NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
  *
  * Returns: (transfer full) (nullable): inner event, or NULL on error
  */
-NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
+NOSTR_NIP59_API NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
                                          const uint8_t recipient_sk_bin[32]);
 
 /**
@@ -149,7 +151,7 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
  *
  * Returns: true if structurally valid
  */
-bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap);
+NOSTR_NIP59_API bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap);
 
 /**
  * nostr_nip59_get_recipient:
@@ -159,7 +161,7 @@ bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap);
  *
  * Returns: (transfer full) (nullable): recipient pubkey hex, or NULL if not found
  */
-char *nostr_nip59_get_recipient(NostrEvent *gift_wrap);
+NOSTR_NIP59_API char *nostr_nip59_get_recipient(NostrEvent *gift_wrap);
 
 /**
  * nostr_nip59_is_gift_wrap:
@@ -169,7 +171,7 @@ char *nostr_nip59_get_recipient(NostrEvent *gift_wrap);
  *
  * Returns: true if event is kind 1059
  */
-bool nostr_nip59_is_gift_wrap(NostrEvent *event);
+NOSTR_NIP59_API bool nostr_nip59_is_gift_wrap(NostrEvent *event);
 
 #ifdef __cplusplus
 }

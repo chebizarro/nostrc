@@ -1,11 +1,15 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip_communikeys C)
 
-# Communikeys V2 (NIP-CAS-0007). The V2 changeover is a deliberate ABI break
-# from the never-adopted V1 (kind 10222) surface: major version 2.
-set(NIP_COMMUNIKEYS_VERSION_MAJOR 2)
-set(NIP_COMMUNIKEYS_VERSION 2.0.0)
+# Communikeys V2 (NIP-CAS-0007) wire format. ABI major 3 establishes the
+# explicit public export boundary; it does not change the wire version.
+set(NIP_COMMUNIKEYS_VERSION_MAJOR 3)
+set(NIP_COMMUNIKEYS_VERSION 3.0.0)
 
 add_library(nip_communikeys src/nip_communikeys.c)
+nostrc_library_visibility(nip_communikeys NOSTR_NIP_COMMUNIKEYS_API
+  nostr/nip_communikeys/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip_communikeys")
 target_include_directories(nip_communikeys
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

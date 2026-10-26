@@ -18,6 +18,8 @@
 #ifndef NOSTR_NIP34_H
 #define NOSTR_NIP34_H
 
+#include <nostr/nip34/export.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -100,7 +102,7 @@ typedef struct {
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  *          Caller must free with nostr_event_free().
  */
-NostrEvent *nip34_create_repo_announcement(const char *repo_id,
+NOSTR_NIP34_API NostrEvent *nip34_create_repo_announcement(const char *repo_id,
                                            const char *name,
                                            const char *desc,
                                            const char *const *clone_urls,
@@ -117,10 +119,10 @@ NostrEvent *nip34_create_repo_announcement(const char *repo_id,
  *
  * Returns: NIP34_OK on success
  */
-nip34_result_t nip34_parse_repository(const NostrEvent *event,
+NOSTR_NIP34_API nip34_result_t nip34_parse_repository(const NostrEvent *event,
                                       nip34_repository_t **out);
 
-void nip34_repository_free(nip34_repository_t *repo);
+NOSTR_NIP34_API void nip34_repository_free(nip34_repository_t *repo);
 
 /* =========================================================================
  * Repository State (kind 30618) — parsing and creation
@@ -157,7 +159,7 @@ typedef struct {
  *
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  */
-NostrEvent *nip34_create_repo_state(const char *repo_id,
+NOSTR_NIP34_API NostrEvent *nip34_create_repo_state(const char *repo_id,
                                     const nip34_ref_t *refs,
                                     size_t ref_count,
                                     const char *head);
@@ -168,10 +170,10 @@ NostrEvent *nip34_create_repo_state(const char *repo_id,
  *
  * Returns: NIP34_OK on success
  */
-nip34_result_t nip34_parse_repo_state(const NostrEvent *event,
+NOSTR_NIP34_API nip34_result_t nip34_parse_repo_state(const NostrEvent *event,
                                       nip34_repo_state_t **out);
 
-void nip34_repo_state_free(nip34_repo_state_t *state);
+NOSTR_NIP34_API void nip34_repo_state_free(nip34_repo_state_t *state);
 
 /* =========================================================================
  * Patch (kind 1617)
@@ -202,16 +204,16 @@ typedef struct {
  *
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  */
-NostrEvent *nip34_create_patch(const char *repo_addr,
+NOSTR_NIP34_API NostrEvent *nip34_create_patch(const char *repo_addr,
                                const char *content,
                                const char *commit_id,
                                const char *parent_id,
                                const char *subject);
 
-nip34_result_t nip34_parse_patch(const NostrEvent *event,
+NOSTR_NIP34_API nip34_result_t nip34_parse_patch(const NostrEvent *event,
                                  nip34_patch_t **out);
 
-void nip34_patch_free(nip34_patch_t *patch);
+NOSTR_NIP34_API void nip34_patch_free(nip34_patch_t *patch);
 
 /* =========================================================================
  * Issue (kind 1621)
@@ -237,7 +239,7 @@ void nip34_patch_free(nip34_patch_t *patch);
  *
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  */
-NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
+NOSTR_NIP34_API NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
                                const char *repo_id,
                                const char *subject,
                                const char *content,
@@ -267,7 +269,7 @@ typedef enum {
  *
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  */
-NostrEvent *nip34_create_status(const char *target_event_id,
+NOSTR_NIP34_API NostrEvent *nip34_create_status(const char *target_event_id,
                                 nip34_status_kind_t status,
                                 const char *content,
                                 const char *repo_addr,
@@ -277,7 +279,7 @@ NostrEvent *nip34_create_status(const char *target_event_id,
  * Helpers
  * ========================================================================= */
 
-const char *nip34_strerror(nip34_result_t result);
+NOSTR_NIP34_API const char *nip34_strerror(nip34_result_t result);
 
 #ifdef __cplusplus
 }

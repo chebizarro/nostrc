@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip13)
 
@@ -9,6 +11,8 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip13 ${SOURCES})
+nostrc_library_visibility(nip13 NOSTR_NIP13_API
+  nostr/nip13/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip13")
 target_link_libraries(nip13 nostr)
 
 # Add tests if available

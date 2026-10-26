@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP_CAS0010_OTEL_H
 #define NOSTR_NIP_CAS0010_OTEL_H
 
+#include <nostr/nip_cas0010/export.h>
+
 /*
  * NIP-CAS-0010 — OTLP-over-Nostr transport primitives.
  *
@@ -99,7 +101,7 @@ typedef enum {
 } NostrOtelError;
 
 /** Returns: (transfer none): static human-readable description of @code. */
-const char *nostr_otel_strerror(int code);
+NOSTR_NIP_CAS0010_API const char *nostr_otel_strerror(int code);
 
 /* --------------------------------------------------------------- signals */
 
@@ -111,13 +113,13 @@ typedef enum {
 } NostrOtelSignal;
 
 /** Returns: the NIP-CAS-0010 kind for @signal, or 0 when unknown. */
-int nostr_otel_signal_kind(NostrOtelSignal signal);
+NOSTR_NIP_CAS0010_API int nostr_otel_signal_kind(NostrOtelSignal signal);
 /** Returns: the signal for @kind, or NOSTR_OTEL_SIGNAL_NONE when unknown. */
-NostrOtelSignal nostr_otel_signal_for_kind(int kind);
+NOSTR_NIP_CAS0010_API NostrOtelSignal nostr_otel_signal_for_kind(int kind);
 /** Returns: (transfer none) (nullable): the `domain` tag value for @signal. */
-const char *nostr_otel_signal_domain(NostrOtelSignal signal);
+NOSTR_NIP_CAS0010_API const char *nostr_otel_signal_domain(NostrOtelSignal signal);
 /** Returns: (transfer none) (nullable): the `schema` tag value for @signal. */
-const char *nostr_otel_signal_schema(NostrOtelSignal signal);
+NOSTR_NIP_CAS0010_API const char *nostr_otel_signal_schema(NostrOtelSignal signal);
 
 /* -------------------------------------------------------------- encoding */
 
@@ -139,12 +141,12 @@ typedef struct {
 } NostrOtelEncoding;
 
 /** Returns: (transfer none) (nullable): the wire token for @format. */
-const char *nostr_otel_format_string(NostrOtelFormat format);
+NOSTR_NIP_CAS0010_API const char *nostr_otel_format_string(NostrOtelFormat format);
 /** Returns: (transfer none) (nullable): the wire token for @compression. */
-const char *nostr_otel_compression_string(NostrOtelCompression compression);
+NOSTR_NIP_CAS0010_API const char *nostr_otel_compression_string(NostrOtelCompression compression);
 
 /** Returns: whether this build can produce and consume zstd bodies. */
-bool nostr_otel_zstd_available(void);
+NOSTR_NIP_CAS0010_API bool nostr_otel_zstd_available(void);
 
 /**
  * nostr_otel_parse_encoding:
@@ -157,7 +159,7 @@ bool nostr_otel_zstd_available(void);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_parse_encoding(const NostrTags *tags, NostrOtelEncoding *out);
+NOSTR_NIP_CAS0010_API int nostr_otel_parse_encoding(const NostrTags *tags, NostrOtelEncoding *out);
 
 /* ---------------------------------------------------------------- base64 */
 
@@ -169,7 +171,7 @@ int nostr_otel_parse_encoding(const NostrTags *tags, NostrOtelEncoding *out);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError. Caller frees *@out.
  */
-int nostr_otel_base64_encode(const uint8_t *data, size_t len, char **out);
+NOSTR_NIP_CAS0010_API int nostr_otel_base64_encode(const uint8_t *data, size_t len, char **out);
 
 /**
  * nostr_otel_base64_decode:
@@ -179,7 +181,7 @@ int nostr_otel_base64_encode(const uint8_t *data, size_t len, char **out);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError. Caller frees *@out.
  */
-int nostr_otel_base64_decode(const char *text, uint8_t **out, size_t *out_len);
+NOSTR_NIP_CAS0010_API int nostr_otel_base64_decode(const char *text, uint8_t **out, size_t *out_len);
 
 /* ------------------------------------------------------- body encode/decode */
 
@@ -194,7 +196,7 @@ int nostr_otel_base64_decode(const char *text, uint8_t **out, size_t *out_len);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError. Caller frees *@out_content.
  */
-int nostr_otel_encode_body(const uint8_t *body, size_t len,
+NOSTR_NIP_CAS0010_API int nostr_otel_encode_body(const uint8_t *body, size_t len,
                            NostrOtelCompression requested, size_t threshold,
                            char **out_content, NostrOtelCompression *out_used);
 
@@ -208,7 +210,7 @@ int nostr_otel_encode_body(const uint8_t *body, size_t len,
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError. Caller frees *@out_body.
  */
-int nostr_otel_decode_body(const char *content, NostrOtelEncoding enc,
+NOSTR_NIP_CAS0010_API int nostr_otel_decode_body(const char *content, NostrOtelEncoding enc,
                            size_t max_decoded, uint8_t **out_body, size_t *out_len);
 
 /* ---------------------------------------------------------------- signer */
@@ -246,13 +248,13 @@ typedef struct {
 typedef struct NostrOtelLocalSigner NostrOtelLocalSigner;
 
 /** Returns: (transfer full) (nullable): signer holding a copy of @privkey_hex. */
-NostrOtelLocalSigner *nostr_otel_local_signer_new(const char *privkey_hex);
+NOSTR_NIP_CAS0010_API NostrOtelLocalSigner *nostr_otel_local_signer_new(const char *privkey_hex);
 /** @signer: (transfer full) (nullable): signer to free; wipes the key copy. */
-void nostr_otel_local_signer_free(NostrOtelLocalSigner *signer);
+NOSTR_NIP_CAS0010_API void nostr_otel_local_signer_free(NostrOtelLocalSigner *signer);
 /** Fills @out with the callback/user-data pair for @signer. */
-int nostr_otel_local_signer_bind(NostrOtelLocalSigner *signer, NostrOtelSigner *out);
+NOSTR_NIP_CAS0010_API int nostr_otel_local_signer_bind(NostrOtelLocalSigner *signer, NostrOtelSigner *out);
 /** Returns: (transfer none) (nullable): the signer's x-only public key hex. */
-const char *nostr_otel_local_signer_pubkey(const NostrOtelLocalSigner *signer);
+NOSTR_NIP_CAS0010_API const char *nostr_otel_local_signer_pubkey(const NostrOtelLocalSigner *signer);
 
 #endif /* NOSTR_OTEL_ENABLE_TEST_SIGNER */
 
@@ -293,9 +295,9 @@ typedef struct NostrOtelProducer NostrOtelProducer;
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_producer_new(const NostrOtelProducerConfig *cfg, NostrOtelProducer **out);
+NOSTR_NIP_CAS0010_API int nostr_otel_producer_new(const NostrOtelProducerConfig *cfg, NostrOtelProducer **out);
 /** @producer: (transfer full) (nullable) */
-void nostr_otel_producer_free(NostrOtelProducer *producer);
+NOSTR_NIP_CAS0010_API void nostr_otel_producer_free(NostrOtelProducer *producer);
 
 /**
  * nostr_otel_producer_build_event:
@@ -312,7 +314,7 @@ void nostr_otel_producer_free(NostrOtelProducer *producer);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_producer_build_event(NostrOtelProducer *producer, NostrOtelSignal signal,
+NOSTR_NIP_CAS0010_API int nostr_otel_producer_build_event(NostrOtelProducer *producer, NostrOtelSignal signal,
                                     const uint8_t *body, size_t len, NostrEvent **out_event);
 
 /**
@@ -335,7 +337,7 @@ int nostr_otel_producer_build_event(NostrOtelProducer *producer, NostrOtelSignal
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_producer_publish(NostrOtelProducer *producer, NostrOtelSignal signal,
+NOSTR_NIP_CAS0010_API int nostr_otel_producer_publish(NostrOtelProducer *producer, NostrOtelSignal signal,
                                 const NostrOtelPayload *payloads, size_t count,
                                 size_t *out_event_count);
 
@@ -346,7 +348,7 @@ int nostr_otel_producer_publish(NostrOtelProducer *producer, NostrOtelSignal sig
  * NostrSimplePool passed as @user_data, using nostr_relay_publish().
  * Returns 0 when at least one relay accepted the write.
  */
-int nostr_otel_publish_via_pool(NostrEvent *event, void *user_data);
+NOSTR_NIP_CAS0010_API int nostr_otel_publish_via_pool(NostrEvent *event, void *user_data);
 
 /* -------------------------------------------------------------- consumer */
 
@@ -420,9 +422,9 @@ typedef struct NostrOtelConsumer NostrOtelConsumer;
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_consumer_new(const NostrOtelConsumerConfig *cfg, NostrOtelConsumer **out);
+NOSTR_NIP_CAS0010_API int nostr_otel_consumer_new(const NostrOtelConsumerConfig *cfg, NostrOtelConsumer **out);
 /** @consumer: (transfer full) (nullable) */
-void nostr_otel_consumer_free(NostrOtelConsumer *consumer);
+NOSTR_NIP_CAS0010_API void nostr_otel_consumer_free(NostrOtelConsumer *consumer);
 
 /**
  * nostr_otel_consumer_filters:
@@ -431,7 +433,7 @@ void nostr_otel_consumer_free(NostrOtelConsumer *consumer);
  * Returns: (transfer full) (nullable): filters matching the configured kinds.
  * Caller frees with nostr_filters_free().
  */
-NostrFilters *nostr_otel_consumer_filters(const NostrOtelConsumer *consumer);
+NOSTR_NIP_CAS0010_API NostrFilters *nostr_otel_consumer_filters(const NostrOtelConsumer *consumer);
 
 /**
  * nostr_otel_consumer_process:
@@ -451,7 +453,7 @@ NostrFilters *nostr_otel_consumer_filters(const NostrOtelConsumer *consumer);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_consumer_process(NostrOtelConsumer *consumer, NostrEvent *event);
+NOSTR_NIP_CAS0010_API int nostr_otel_consumer_process(NostrOtelConsumer *consumer, NostrEvent *event);
 
 /**
  * nostr_otel_consumer_subscribe:
@@ -467,7 +469,7 @@ int nostr_otel_consumer_process(NostrOtelConsumer *consumer, NostrEvent *event);
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
-int nostr_otel_consumer_subscribe(NostrOtelConsumer *consumer, NostrSimplePool *pool,
+NOSTR_NIP_CAS0010_API int nostr_otel_consumer_subscribe(NostrOtelConsumer *consumer, NostrSimplePool *pool,
                                   const char **urls, size_t url_count, bool async);
 
 #ifdef __cplusplus

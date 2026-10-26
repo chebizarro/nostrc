@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP_COMMUNIKEYS_H
 #define NOSTR_NIP_COMMUNIKEYS_H
 
+#include <nostr/nip_communikeys/export.h>
+
 /*
  * Communikeys V2 (NIP-CAS-0007).
  *
@@ -75,8 +77,8 @@ typedef enum {
     NOSTR_COMMUNIKEYS_ERR_BAD_METADATA
 } nostr_communikeys_status_t;
 
-const char *nostr_communikeys_status_string(nostr_communikeys_status_t status);
-bool nostr_communikeys_is_lower_hex_32(const char *value);
+NOSTR_NIP_COMMUNIKEYS_API const char *nostr_communikeys_status_string(nostr_communikeys_status_t status);
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_is_lower_hex_32(const char *value);
 
 /*
  * Branch identity: the tuple (kind=32222, ownerPubkey, communityId).
@@ -89,11 +91,11 @@ typedef struct {
 } nostr_communikeys_branch_t;
 
 /* Parses "32222:<owner>:<communityId>". */
-bool nostr_communikeys_branch_parse(const char *address,
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_branch_parse(const char *address,
                                     nostr_communikeys_branch_t *out);
 /* Formats "32222:<owner>:<communityId>"; caller frees. */
-char *nostr_communikeys_branch_format(const nostr_communikeys_branch_t *branch);
-bool nostr_communikeys_branch_equal(const nostr_communikeys_branch_t *a,
+NOSTR_NIP_COMMUNIKEYS_API char *nostr_communikeys_branch_format(const nostr_communikeys_branch_t *branch);
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_branch_equal(const nostr_communikeys_branch_t *a,
                                     const nostr_communikeys_branch_t *b);
 
 typedef struct {
@@ -103,11 +105,11 @@ typedef struct {
     char *relay;
 } nostr_communikeys_coordinate_t;
 
-bool nostr_communikeys_coordinate_parse(const char *value,
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_coordinate_parse(const char *value,
                                         const char *relay,
                                         nostr_communikeys_coordinate_t *out);
-char *nostr_communikeys_coordinate_format(const nostr_communikeys_coordinate_t *coordinate);
-void nostr_communikeys_coordinate_clear(nostr_communikeys_coordinate_t *coordinate);
+NOSTR_NIP_COMMUNIKEYS_API char *nostr_communikeys_coordinate_format(const nostr_communikeys_coordinate_t *coordinate);
+NOSTR_NIP_COMMUNIKEYS_API void nostr_communikeys_coordinate_clear(nostr_communikeys_coordinate_t *coordinate);
 
 /*
  * Section-scoped addressable identifier: "<communityId>-<purpose>[.<shard>]".
@@ -117,7 +119,7 @@ void nostr_communikeys_coordinate_clear(nostr_communikeys_coordinate_t *coordina
  * On success *out_purpose (caller frees) and *out_shard (1 when unsharded)
  * are set.
  */
-bool nostr_communikeys_section_identifier_parse(const char *d,
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_section_identifier_parse(const char *d,
                                                 const char *community_id,
                                                 char **out_purpose,
                                                 int *out_shard);
@@ -206,21 +208,21 @@ typedef struct {
     nostr_communikeys_status_t validation_status;
 } nostr_communikeys_definition_t;
 
-void nostr_communikeys_definition_clear(nostr_communikeys_definition_t *definition);
+NOSTR_NIP_COMMUNIKEYS_API void nostr_communikeys_definition_clear(nostr_communikeys_definition_t *definition);
 
 /* Parses a kind-32222 event defensively. Returns false only for a wrong kind,
  * invalid arguments, or allocation failure. Inspect out->valid before use. */
-bool nostr_communikeys_definition_parse(const NostrEvent *event,
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_definition_parse(const NostrEvent *event,
                                         nostr_communikeys_definition_t *out);
-nostr_communikeys_status_t
+NOSTR_NIP_COMMUNIKEYS_API nostr_communikeys_status_t
 nostr_communikeys_definition_validate_event(const NostrEvent *event);
 
 /* Strict writer: returns NULL unless the model satisfies all definition rules. */
-NostrEvent *
+NOSTR_NIP_COMMUNIKEYS_API NostrEvent *
 nostr_communikeys_definition_to_event(const nostr_communikeys_definition_t *definition,
                                       int64_t created_at);
 
-const nostr_communikeys_section_t *
+NOSTR_NIP_COMMUNIKEYS_API const nostr_communikeys_section_t *
 nostr_communikeys_definition_find_section(const nostr_communikeys_definition_t *definition,
                                           int kind,
                                           const char *subtype);
@@ -258,10 +260,10 @@ typedef struct {
     size_t targets_len; /* 1..NOSTR_COMMUNIKEYS_MAX_TARGETS adjacent pairs */
 } nostr_communikeys_targeted_publication_t;
 
-void nostr_communikeys_targeted_publication_clear(
+NOSTR_NIP_COMMUNIKEYS_API void nostr_communikeys_targeted_publication_clear(
     nostr_communikeys_targeted_publication_t *publication);
 
-nostr_communikeys_status_t
+NOSTR_NIP_COMMUNIKEYS_API nostr_communikeys_status_t
 nostr_communikeys_targeted_publication_parse(
     const NostrEvent *event,
     nostr_communikeys_targeted_publication_t *out);
@@ -271,12 +273,12 @@ nostr_communikeys_targeted_publication_parse(
  * NOT compared for sourced wrappers (curator wrappers are valid). For a
  * sourceless wrapper the original must carry `h` equal to the wrapper `d` and
  * share the wrapper author. */
-nostr_communikeys_status_t
+NOSTR_NIP_COMMUNIKEYS_API nostr_communikeys_status_t
 nostr_communikeys_targeted_publication_validate(
     const NostrEvent *event,
     const NostrEvent *original);
 
-NostrEvent *
+NOSTR_NIP_COMMUNIKEYS_API NostrEvent *
 nostr_communikeys_targeted_publication_to_event(
     const nostr_communikeys_targeted_publication_t *publication,
     int64_t created_at);
@@ -286,9 +288,9 @@ nostr_communikeys_targeted_publication_to_event(
  * event author, person `p` target, or profile lookup, and it does not by
  * itself identify a branch — branch selection requires an explicit definition
  * address or admitting-branch context. */
-nostr_communikeys_status_t
+NOSTR_NIP_COMMUNIKEYS_API nostr_communikeys_status_t
 nostr_communikeys_exclusive_validate(const NostrEvent *event, char community_id[65]);
-bool nostr_communikeys_exclusive_add_h(NostrEvent *event, const char *community_id);
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_exclusive_add_h(NostrEvent *event, const char *community_id);
 
 /*
  * Canonical pointer: NIP-19 naddr(kind 32222, owner, communityId, hints).
@@ -302,11 +304,11 @@ typedef struct {
     size_t relays_len;
 } nostr_communikeys_pointer_t;
 
-void nostr_communikeys_pointer_clear(nostr_communikeys_pointer_t *pointer);
-nostr_communikeys_status_t
+NOSTR_NIP_COMMUNIKEYS_API void nostr_communikeys_pointer_clear(nostr_communikeys_pointer_t *pointer);
+NOSTR_NIP_COMMUNIKEYS_API nostr_communikeys_status_t
 nostr_communikeys_pointer_parse(const char *naddr,
                                 nostr_communikeys_pointer_t *out);
-char *nostr_communikeys_pointer_format(const nostr_communikeys_pointer_t *pointer);
+NOSTR_NIP_COMMUNIKEYS_API char *nostr_communikeys_pointer_format(const nostr_communikeys_pointer_t *pointer);
 
 typedef struct {
     char *publisher;
@@ -315,13 +317,13 @@ typedef struct {
     size_t members_len;
 } nostr_communikeys_profile_list_t;
 
-void nostr_communikeys_profile_list_clear(nostr_communikeys_profile_list_t *list);
-nostr_communikeys_status_t
+NOSTR_NIP_COMMUNIKEYS_API void nostr_communikeys_profile_list_clear(nostr_communikeys_profile_list_t *list);
+NOSTR_NIP_COMMUNIKEYS_API nostr_communikeys_status_t
 nostr_communikeys_profile_list_parse(const NostrEvent *event,
                                      const char *expected_publisher,
                                      const char *expected_identifier,
                                      nostr_communikeys_profile_list_t *out);
-bool nostr_communikeys_profile_list_contains(
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_profile_list_contains(
     const nostr_communikeys_profile_list_t *list,
     const char *pubkey);
 
@@ -339,7 +341,7 @@ bool nostr_communikeys_profile_list_contains(
  * lowest id) contributes. A NULL/empty set means no p-tag grants, which is
  * valid (a grant-free section) rather than an error.
  */
-bool nostr_communikeys_author_can_publish(
+NOSTR_NIP_COMMUNIKEYS_API bool nostr_communikeys_author_can_publish(
     const nostr_communikeys_definition_t *definition,
     int kind,
     const char *subtype,

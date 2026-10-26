@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip04)
 
 # Include the header files
@@ -16,6 +18,8 @@ find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 
 # Create the library
 add_library(nip04 STATIC ${SOURCES})
+nostrc_library_visibility(nip04 NOSTR_NIP04_API
+  nostr/nip04/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip04")
 target_link_libraries(nip04 PUBLIC nostr OpenSSL::Crypto ${SECP256K1_LIB})
 
 # Option: disable legacy ?iv= decrypt fallback at compile time

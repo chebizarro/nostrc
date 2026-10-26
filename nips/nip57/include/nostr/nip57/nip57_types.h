@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP57_TYPES_H
 #define NOSTR_NIP57_TYPES_H
 
+#include <nostr/nip57/export.h>
+
 /**
  * NIP-57: Lightning Zaps - Type Definitions
  *
@@ -100,7 +102,7 @@ typedef struct {
  *
  * Frees a zap request and all its contents.
  */
-void nostr_nip57_zap_request_free(NostrZapRequest *req);
+NOSTR_NIP57_API void nostr_nip57_zap_request_free(NostrZapRequest *req);
 
 /**
  * nostr_nip57_zap_receipt_free:
@@ -108,7 +110,7 @@ void nostr_nip57_zap_request_free(NostrZapRequest *req);
  *
  * Frees a zap receipt and all its contents.
  */
-void nostr_nip57_zap_receipt_free(NostrZapReceipt *receipt);
+NOSTR_NIP57_API void nostr_nip57_zap_receipt_free(NostrZapReceipt *receipt);
 
 /**
  * nostr_nip57_lnurl_pay_info_free:
@@ -116,7 +118,7 @@ void nostr_nip57_zap_receipt_free(NostrZapReceipt *receipt);
  *
  * Frees LNURL pay info and all its contents.
  */
-void nostr_nip57_lnurl_pay_info_free(NostrLnurlPayInfo *info);
+NOSTR_NIP57_API void nostr_nip57_lnurl_pay_info_free(NostrLnurlPayInfo *info);
 
 /**
  * nostr_nip57_zap_split_config_free:
@@ -124,7 +126,7 @@ void nostr_nip57_lnurl_pay_info_free(NostrLnurlPayInfo *info);
  *
  * Frees a zap split configuration and all its contents.
  */
-void nostr_nip57_zap_split_config_free(NostrZapSplitConfig *config);
+NOSTR_NIP57_API void nostr_nip57_zap_split_config_free(NostrZapSplitConfig *config);
 
 #ifdef __cplusplus
 }

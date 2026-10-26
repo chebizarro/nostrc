@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP02_NOSTR_NIP02_NIP02_H
 #define NIPS_NIP02_NOSTR_NIP02_NIP02_H
 
+#include <nostr/nip02/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,7 +34,7 @@ typedef struct {
  *
  * Returns: 0 on success, -errno on error.
  */
-int nostr_nip02_build_follow_list(NostrEvent *ev,
+NOSTR_NIP02_API int nostr_nip02_build_follow_list(NostrEvent *ev,
                                   const unsigned char author_pk[32],
                                   const NostrFollowList *list,
                                   uint32_t created_at);
@@ -44,12 +46,12 @@ int nostr_nip02_build_follow_list(NostrEvent *ev,
  *
  * Returns: 0 on success, -ENOENT if kind!=3, or -errno on error.
  */
-int  nostr_nip02_parse_follow_list(const NostrEvent *ev, NostrFollowList *out);
+NOSTR_NIP02_API int  nostr_nip02_parse_follow_list(const NostrEvent *ev, NostrFollowList *out);
 /**
  * nostr_nip02_free_follow_list:
  * @list: (inout) (transfer full): list to free; safe on NULL/empty
  */
-void nostr_nip02_free_follow_list(NostrFollowList *list);
+NOSTR_NIP02_API void nostr_nip02_free_follow_list(NostrFollowList *list);
 
 /**
  * nostr_nip02_append:
@@ -62,7 +64,7 @@ void nostr_nip02_free_follow_list(NostrFollowList *list);
  *
  * Returns: >=0 number of new entries appended; -errno on error.
  */
-int nostr_nip02_append(NostrEvent *ev, const NostrFollowEntry *add, size_t add_n);
+NOSTR_NIP02_API int nostr_nip02_append(NostrEvent *ev, const NostrFollowEntry *add, size_t add_n);
 
 #ifdef __cplusplus
 }

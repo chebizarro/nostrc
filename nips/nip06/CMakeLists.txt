@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip06)
 
@@ -9,6 +11,8 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library using internal libnostr crypto
 add_library(nip06 ${SOURCES})
+nostrc_library_visibility(nip06 NOSTR_NIP06_API
+  nostr/nip06/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip06")
 target_link_libraries(nip06 PRIVATE nostr)
 
 # Add tests if available

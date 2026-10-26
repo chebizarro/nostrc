@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP60_NOSTR_NIP60_NIP60_H
 #define NIPS_NIP60_NOSTR_NIP60_NIP60_H
 
+#include <nostr/nip60/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,13 +68,13 @@ typedef struct {
 /* ---- Kind checking ---- */
 
 /** Check if kind is a wallet metadata event */
-bool nostr_nip60_is_wallet_kind(int kind);
+NOSTR_NIP60_API bool nostr_nip60_is_wallet_kind(int kind);
 
 /** Check if kind is a token event */
-bool nostr_nip60_is_token_kind(int kind);
+NOSTR_NIP60_API bool nostr_nip60_is_token_kind(int kind);
 
 /** Check if kind is a history event */
-bool nostr_nip60_is_history_kind(int kind);
+NOSTR_NIP60_API bool nostr_nip60_is_history_kind(int kind);
 
 /* ---- Direction ---- */
 
@@ -80,10 +82,10 @@ bool nostr_nip60_is_history_kind(int kind);
  * Parse direction string ("in"/"out") to enum.
  * Returns -1 on invalid input.
  */
-int nostr_nip60_direction_parse(const char *str);
+NOSTR_NIP60_API int nostr_nip60_direction_parse(const char *str);
 
 /** Convert direction enum to string. */
-const char *nostr_nip60_direction_string(NostrNip60Direction dir);
+NOSTR_NIP60_API const char *nostr_nip60_direction_string(NostrNip60Direction dir);
 
 /* ---- Unit ---- */
 
@@ -91,13 +93,13 @@ const char *nostr_nip60_direction_string(NostrNip60Direction dir);
  * Parse unit string to enum.
  * Returns NOSTR_NIP60_UNIT_UNKNOWN for unrecognized units.
  */
-NostrNip60Unit nostr_nip60_unit_parse(const char *str);
+NOSTR_NIP60_API NostrNip60Unit nostr_nip60_unit_parse(const char *str);
 
 /** Convert unit enum to string. Returns NULL for UNKNOWN. */
-const char *nostr_nip60_unit_string(NostrNip60Unit unit);
+NOSTR_NIP60_API const char *nostr_nip60_unit_string(NostrNip60Unit unit);
 
 /** Check if a unit string is valid/known. */
-bool nostr_nip60_unit_is_valid(const char *str);
+NOSTR_NIP60_API bool nostr_nip60_unit_is_valid(const char *str);
 
 /* ---- Amount formatting ---- */
 
@@ -109,7 +111,7 @@ bool nostr_nip60_unit_is_valid(const char *str);
  * Examples: "1000 sat", "0.50 usd"
  * Caller must free() the result.
  */
-char *nostr_nip60_format_amount(uint64_t amount, const char *unit);
+NOSTR_NIP60_API char *nostr_nip60_format_amount(uint64_t amount, const char *unit);
 
 /* ---- Token event helpers ---- */
 
@@ -117,14 +119,14 @@ char *nostr_nip60_format_amount(uint64_t amount, const char *unit);
  * Parse token event tags. Returns 0 on success.
  * The event must be kind 7375.
  */
-int nostr_nip60_parse_token(const NostrEvent *ev, NostrNip60Token *out);
+NOSTR_NIP60_API int nostr_nip60_parse_token(const NostrEvent *ev, NostrNip60Token *out);
 
 /**
  * Create a token event (kind 7375).
  * Content should be the NIP-44 encrypted JSON with proofs.
  * Sets kind and adds mint tag if provided.
  */
-int nostr_nip60_create_token(NostrEvent *ev,
+NOSTR_NIP60_API int nostr_nip60_create_token(NostrEvent *ev,
                               const char *encrypted_content,
                               const char *mint_url);
 
@@ -137,7 +139,7 @@ int nostr_nip60_create_token(NostrEvent *ev,
  *
  * Returns 0 on success, -EINVAL on bad input.
  */
-int nostr_nip60_parse_history_tags(const char *tags_json,
+NOSTR_NIP60_API int nostr_nip60_parse_history_tags(const char *tags_json,
                                     NostrNip60HistoryEntry *out);
 
 /**
@@ -145,7 +147,7 @@ int nostr_nip60_parse_history_tags(const char *tags_json,
  * Caller encrypts the result with NIP-44 before setting as event content.
  * Caller must free() the result.
  */
-char *nostr_nip60_build_history_content(NostrNip60Direction direction,
+NOSTR_NIP60_API char *nostr_nip60_build_history_content(NostrNip60Direction direction,
                                          uint64_t amount,
                                          const char *unit);
 
@@ -154,7 +156,7 @@ char *nostr_nip60_build_history_content(NostrNip60Direction direction,
  * Content should be NIP-44 encrypted output from
  * nostr_nip60_build_history_content().
  */
-int nostr_nip60_create_history(NostrEvent *ev,
+NOSTR_NIP60_API int nostr_nip60_create_history(NostrEvent *ev,
                                 const char *encrypted_content);
 
 /* ---- Wallet metadata helpers ---- */
@@ -171,7 +173,7 @@ int nostr_nip60_create_history(NostrEvent *ev,
  * Caller must free() each mint string.
  * Returns 0 on success.
  */
-int nostr_nip60_parse_wallet_mints(const char *tags_json,
+NOSTR_NIP60_API int nostr_nip60_parse_wallet_mints(const char *tags_json,
                                     char **mints,
                                     size_t max_mints,
                                     size_t *out_count);
@@ -181,14 +183,14 @@ int nostr_nip60_parse_wallet_mints(const char *tags_json,
  * Caller encrypts with NIP-44 before setting as event content.
  * Caller must free().
  */
-char *nostr_nip60_build_wallet_content(const char **mint_urls,
+NOSTR_NIP60_API char *nostr_nip60_build_wallet_content(const char **mint_urls,
                                         size_t n_mints);
 
 /**
  * Create a wallet metadata event (kind 17375).
  * Content should be NIP-44 encrypted wallet metadata.
  */
-int nostr_nip60_create_wallet(NostrEvent *ev,
+NOSTR_NIP60_API int nostr_nip60_create_wallet(NostrEvent *ev,
                                const char *encrypted_content);
 
 #ifdef __cplusplus

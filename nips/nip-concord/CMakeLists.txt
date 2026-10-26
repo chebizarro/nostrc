@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 # nip-concord: Concord protocol C library
 # Concord is an adopted external standard (github.com/concord-protocol/concord)
 # NIP-CAS-0008: Concord Adoption — Encrypted Community Backup Plane
@@ -21,6 +23,8 @@ add_library(nip_concord STATIC
   src/concord_invite.c
   src/concord_rekey.c
 )
+nostrc_library_visibility(nip_concord NOSTR_NIP_CONCORD_API
+  nostr/nip_concord/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip_concord")
 
 target_include_directories(nip_concord PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

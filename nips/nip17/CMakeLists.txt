@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip17)
 
 # Seal and gift-wrap timestamps come from OpenSSL's CSPRNG (RAND_bytes).
@@ -7,6 +9,8 @@ find_package(OpenSSL REQUIRED)
 add_library(nostr_nip17_core OBJECT
     src/nip17.c
 )
+nostrc_library_visibility(nostr_nip17_core NOSTR_NIP17_API
+  nostr/nip17/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip17")
 
 target_include_directories(nostr_nip17_core
     PUBLIC

@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP61_NOSTR_NIP61_NIP61_H
 #define NIPS_NIP61_NOSTR_NIP61_NIP61_H
 
+#include <nostr/nip61/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -84,7 +86,7 @@ typedef struct {
  *
  * Returns 0 on success, -EINVAL on bad input.
  */
-int nostr_nip61_parse_prefs(const NostrEvent *ev,
+NOSTR_NIP61_API int nostr_nip61_parse_prefs(const NostrEvent *ev,
                              NostrNip61Mint *mints, size_t max_mints,
                              const char **relays, size_t max_relays,
                              NostrNip61Prefs *out);
@@ -92,7 +94,7 @@ int nostr_nip61_parse_prefs(const NostrEvent *ev,
 /**
  * Create a nutzap preferences event (kind 10019).
  */
-int nostr_nip61_create_prefs(NostrEvent *ev,
+NOSTR_NIP61_API int nostr_nip61_create_prefs(NostrEvent *ev,
                               const NostrNip61Mint *mints, size_t mint_count,
                               const char **relays, size_t relay_count,
                               bool require_p2pk);
@@ -100,7 +102,7 @@ int nostr_nip61_create_prefs(NostrEvent *ev,
 /**
  * Check if preferences accept a given mint URL.
  */
-bool nostr_nip61_prefs_accepts_mint(const NostrNip61Prefs *prefs,
+NOSTR_NIP61_API bool nostr_nip61_prefs_accepts_mint(const NostrNip61Prefs *prefs,
                                      const char *mint_url);
 
 /* ---- Nutzap event (kind 9321) ---- */
@@ -111,13 +113,13 @@ bool nostr_nip61_prefs_accepts_mint(const NostrNip61Prefs *prefs,
  *
  * Returns 0 on success, -EINVAL on bad input or missing required fields.
  */
-int nostr_nip61_parse_nutzap(const NostrEvent *ev,
+NOSTR_NIP61_API int nostr_nip61_parse_nutzap(const NostrEvent *ev,
                               NostrNip61Nutzap *out);
 
 /**
  * Create a nutzap event (kind 9321).
  */
-int nostr_nip61_create_nutzap(NostrEvent *ev,
+NOSTR_NIP61_API int nostr_nip61_create_nutzap(NostrEvent *ev,
                                const char *proofs_json,
                                const char *mint_url,
                                const char *recipient_pubkey,
@@ -128,19 +130,19 @@ int nostr_nip61_create_nutzap(NostrEvent *ev,
 /* ---- Utilities ---- */
 
 /** Validate a mint URL (must be https:// or localhost). */
-bool nostr_nip61_is_valid_mint_url(const char *url);
+NOSTR_NIP61_API bool nostr_nip61_is_valid_mint_url(const char *url);
 
 /**
  * Calculate total amount from a Cashu proofs JSON array.
  * Scans for "amount":<number> patterns in the JSON.
  * Returns total, or 0 on error.
  */
-int64_t nostr_nip61_proofs_total_amount(const char *proofs_json);
+NOSTR_NIP61_API int64_t nostr_nip61_proofs_total_amount(const char *proofs_json);
 
 /**
  * Count the number of proofs in a JSON proofs array.
  */
-size_t nostr_nip61_proofs_count(const char *proofs_json);
+NOSTR_NIP61_API size_t nostr_nip61_proofs_count(const char *proofs_json);
 
 #ifdef __cplusplus
 }

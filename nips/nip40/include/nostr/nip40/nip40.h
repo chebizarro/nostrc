@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP40_NOSTR_NIP40_NIP40_H
 #define NIPS_NIP40_NOSTR_NIP40_NIP40_H
 
+#include <nostr/nip40/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,7 +31,7 @@ extern "C" {
  *
  * Returns: 0 on success, -ENOENT if no expiration tag, -EINVAL on error
  */
-int nostr_nip40_get_expiration(const NostrEvent *ev, int64_t *out_timestamp);
+NOSTR_NIP40_API int nostr_nip40_get_expiration(const NostrEvent *ev, int64_t *out_timestamp);
 
 /**
  * nostr_nip40_is_expired:
@@ -40,7 +42,7 @@ int nostr_nip40_get_expiration(const NostrEvent *ev, int64_t *out_timestamp);
  *
  * Returns: true if the event has expired, false otherwise
  */
-bool nostr_nip40_is_expired(const NostrEvent *ev);
+NOSTR_NIP40_API bool nostr_nip40_is_expired(const NostrEvent *ev);
 
 /**
  * nostr_nip40_is_expired_at:
@@ -52,7 +54,7 @@ bool nostr_nip40_is_expired(const NostrEvent *ev);
  *
  * Returns: true if the event has expired at time @now, false otherwise
  */
-bool nostr_nip40_is_expired_at(const NostrEvent *ev, int64_t now);
+NOSTR_NIP40_API bool nostr_nip40_is_expired_at(const NostrEvent *ev, int64_t now);
 
 /**
  * nostr_nip40_set_expiration:
@@ -63,7 +65,7 @@ bool nostr_nip40_is_expired_at(const NostrEvent *ev, int64_t now);
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip40_set_expiration(NostrEvent *ev, int64_t timestamp);
+NOSTR_NIP40_API int nostr_nip40_set_expiration(NostrEvent *ev, int64_t timestamp);
 
 /**
  * nostr_nip40_set_expiration_in:
@@ -74,7 +76,7 @@ int nostr_nip40_set_expiration(NostrEvent *ev, int64_t timestamp);
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip40_set_expiration_in(NostrEvent *ev, int64_t seconds_from_now);
+NOSTR_NIP40_API int nostr_nip40_set_expiration_in(NostrEvent *ev, int64_t seconds_from_now);
 
 /**
  * nostr_nip40_should_relay_accept:
@@ -86,7 +88,7 @@ int nostr_nip40_set_expiration_in(NostrEvent *ev, int64_t seconds_from_now);
  *
  * Returns: true if the relay should accept the event, false if expired
  */
-bool nostr_nip40_should_relay_accept(const NostrEvent *ev);
+NOSTR_NIP40_API bool nostr_nip40_should_relay_accept(const NostrEvent *ev);
 
 #ifdef __cplusplus
 }

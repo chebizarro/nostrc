@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP31_NOSTR_NIP31_NIP31_H
 #define NIPS_NIP31_NOSTR_NIP31_NIP31_H
 
+#include <nostr/nip31/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,7 +25,7 @@ extern "C" {
  *
  * Returns: 0 on success, negative errno-style value on failure.
  */
-int  nostr_nip31_set_alt(NostrEvent *ev, const char *alt);
+NOSTR_NIP31_API int  nostr_nip31_set_alt(NostrEvent *ev, const char *alt);
 
 /**
  * nostr_nip31_get_alt:
@@ -35,7 +37,7 @@ int  nostr_nip31_set_alt(NostrEvent *ev, const char *alt);
  *
  * Returns: 0 on success; -ENOENT if not present; other negative on error.
  */
-int  nostr_nip31_get_alt(const NostrEvent *ev, char **out_alt); /* malloc'd */
+NOSTR_NIP31_API int  nostr_nip31_get_alt(const NostrEvent *ev, char **out_alt); /* malloc'd */
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP29_H
 #define NOSTR_NIP29_H
 
+#include <nostr/nip29/export.h>
+
 #include "nostr-event.h"
 #include "nostr-timestamp.h"
 #include <stdbool.h>
@@ -108,10 +110,10 @@ typedef struct {
     nostr_timestamp_t last_pins_update;
 } nostr_group_t;
 
-bool nostr_group_address_parse(const char *raw, nostr_group_address_t *out);
-bool nostr_group_address_is_valid(const nostr_group_address_t *address);
-char *nostr_group_address_to_string(const nostr_group_address_t *address);
-void nostr_group_address_clear(nostr_group_address_t *address);
+NOSTR_NIP29_API bool nostr_group_address_parse(const char *raw, nostr_group_address_t *out);
+NOSTR_NIP29_API bool nostr_group_address_is_valid(const nostr_group_address_t *address);
+NOSTR_NIP29_API char *nostr_group_address_to_string(const nostr_group_address_t *address);
+NOSTR_NIP29_API void nostr_group_address_clear(nostr_group_address_t *address);
 
 /*
  * Parse a user-supplied group reference: a NIP-29 `naddr1...` (optionally
@@ -121,39 +123,39 @@ void nostr_group_address_clear(nostr_group_address_t *address);
  * On success *out_invite_code (if non-NULL) receives a malloc'd code, or
  * NULL when the reference carries none.
  */
-bool nostr_group_reference_parse(const char *raw, nostr_group_address_t *out,
+NOSTR_NIP29_API bool nostr_group_reference_parse(const char *raw, nostr_group_address_t *out,
                                  char **out_invite_code);
 
-nostr_group_t *nostr_new_group(const char *gadstr);
-void nostr_free_group(nostr_group_t *group);
+NOSTR_NIP29_API nostr_group_t *nostr_new_group(const char *gadstr);
+NOSTR_NIP29_API void nostr_free_group(nostr_group_t *group);
 
-nostr_event_t *nostr_group_to_metadata_event(const nostr_group_t *group);
-nostr_event_t *nostr_group_to_admins_event(const nostr_group_t *group);
-nostr_event_t *nostr_group_to_members_event(const nostr_group_t *group);
-nostr_event_t *nostr_group_to_roles_event(const nostr_group_t *group);
-nostr_event_t *nostr_group_to_pins_event(const nostr_group_t *group);
+NOSTR_NIP29_API nostr_event_t *nostr_group_to_metadata_event(const nostr_group_t *group);
+NOSTR_NIP29_API nostr_event_t *nostr_group_to_admins_event(const nostr_group_t *group);
+NOSTR_NIP29_API nostr_event_t *nostr_group_to_members_event(const nostr_group_t *group);
+NOSTR_NIP29_API nostr_event_t *nostr_group_to_roles_event(const nostr_group_t *group);
+NOSTR_NIP29_API nostr_event_t *nostr_group_to_pins_event(const nostr_group_t *group);
 
-bool nostr_group_merge_in_metadata_event(nostr_group_t *group, const nostr_event_t *event);
-bool nostr_group_merge_in_admins_event(nostr_group_t *group, const nostr_event_t *event);
-bool nostr_group_merge_in_members_event(nostr_group_t *group, const nostr_event_t *event);
-bool nostr_group_merge_in_roles_event(nostr_group_t *group, const nostr_event_t *event);
-bool nostr_group_merge_in_pins_event(nostr_group_t *group, const nostr_event_t *event);
+NOSTR_NIP29_API bool nostr_group_merge_in_metadata_event(nostr_group_t *group, const nostr_event_t *event);
+NOSTR_NIP29_API bool nostr_group_merge_in_admins_event(nostr_group_t *group, const nostr_event_t *event);
+NOSTR_NIP29_API bool nostr_group_merge_in_members_event(nostr_group_t *group, const nostr_event_t *event);
+NOSTR_NIP29_API bool nostr_group_merge_in_roles_event(nostr_group_t *group, const nostr_event_t *event);
+NOSTR_NIP29_API bool nostr_group_merge_in_pins_event(nostr_group_t *group, const nostr_event_t *event);
 
-bool nostr_group_is_root(const nostr_group_t *group);
-bool nostr_group_pin_is_valid(nostr_group_pin_type_t type, const char *value);
+NOSTR_NIP29_API bool nostr_group_is_root(const nostr_group_t *group);
+NOSTR_NIP29_API bool nostr_group_pin_is_valid(nostr_group_pin_type_t type, const char *value);
 
-nostr_group_admin_t *nostr_group_get_admin(const nostr_group_t *group, const char *pubkey);
-nostr_group_member_t *nostr_group_get_member(const nostr_group_t *group, const char *pubkey);
-nostr_group_role_t *nostr_group_get_role(const nostr_group_t *group, const char *name);
+NOSTR_NIP29_API nostr_group_admin_t *nostr_group_get_admin(const nostr_group_t *group, const char *pubkey);
+NOSTR_NIP29_API nostr_group_member_t *nostr_group_get_member(const nostr_group_t *group, const char *pubkey);
+NOSTR_NIP29_API nostr_group_role_t *nostr_group_get_role(const nostr_group_t *group, const char *name);
 
-nostr_group_admin_t *nostr_group_add_admin(nostr_group_t *group, const char *pubkey);
-bool nostr_group_admin_add_role(nostr_group_admin_t *admin, const char *role);
-nostr_group_member_t *nostr_group_add_member(nostr_group_t *group, const char *pubkey, const char *label);
-nostr_group_role_t *nostr_group_add_role(nostr_group_t *group, const char *name, const char *description);
-nostr_group_pin_t *nostr_group_add_pin(nostr_group_t *group, nostr_group_pin_type_t type, const char *value);
+NOSTR_NIP29_API nostr_group_admin_t *nostr_group_add_admin(nostr_group_t *group, const char *pubkey);
+NOSTR_NIP29_API bool nostr_group_admin_add_role(nostr_group_admin_t *admin, const char *role);
+NOSTR_NIP29_API nostr_group_member_t *nostr_group_add_member(nostr_group_t *group, const char *pubkey, const char *label);
+NOSTR_NIP29_API nostr_group_role_t *nostr_group_add_role(nostr_group_t *group, const char *name, const char *description);
+NOSTR_NIP29_API nostr_group_pin_t *nostr_group_add_pin(nostr_group_t *group, nostr_group_pin_type_t type, const char *value);
 
-const char *nostr_permission_to_string(nostr_permission_t perm);
-nostr_permission_t nostr_permission_from_string(const char *str);
+NOSTR_NIP29_API const char *nostr_permission_to_string(nostr_permission_t perm);
+NOSTR_NIP29_API nostr_permission_t nostr_permission_from_string(const char *str);
 
 #ifdef __cplusplus
 }

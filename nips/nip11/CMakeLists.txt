@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip11)
 
@@ -15,6 +17,8 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip11 ${SOURCES})
+nostrc_library_visibility(nip11 NOSTR_NIP11_API
+  nostr/nip11/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip11")
 target_link_libraries(nip11 PUBLIC nostr nostr_json CURL::libcurl)
 
 # Example (if present)

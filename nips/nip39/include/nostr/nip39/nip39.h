@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP39_NOSTR_NIP39_NIP39_H
 #define NIPS_NIP39_NOSTR_NIP39_NIP39_H
 
+#include <nostr/nip39/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -60,7 +62,7 @@ typedef struct {
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip39_parse(const NostrEvent *ev, NostrNip39Identity *entries,
+NOSTR_NIP39_API int nostr_nip39_parse(const NostrEvent *ev, NostrNip39Identity *entries,
                        size_t max_entries, size_t *out_count);
 
 /**
@@ -71,7 +73,7 @@ int nostr_nip39_parse(const NostrEvent *ev, NostrNip39Identity *entries,
  *
  * Returns: number of identity entries
  */
-size_t nostr_nip39_count(const NostrEvent *ev);
+NOSTR_NIP39_API size_t nostr_nip39_count(const NostrEvent *ev);
 
 /**
  * nostr_nip39_platform_from_string:
@@ -81,7 +83,7 @@ size_t nostr_nip39_count(const NostrEvent *ev);
  *
  * Returns: platform enum value, or UNKNOWN if unrecognized
  */
-NostrNip39Platform nostr_nip39_platform_from_string(const char *str);
+NOSTR_NIP39_API NostrNip39Platform nostr_nip39_platform_from_string(const char *str);
 
 /**
  * nostr_nip39_platform_to_string:
@@ -89,7 +91,7 @@ NostrNip39Platform nostr_nip39_platform_from_string(const char *str);
  *
  * Returns: (transfer none): static string for the platform, or "unknown"
  */
-const char *nostr_nip39_platform_to_string(NostrNip39Platform platform);
+NOSTR_NIP39_API const char *nostr_nip39_platform_to_string(NostrNip39Platform platform);
 
 /**
  * nostr_nip39_detect_platform:
@@ -100,7 +102,7 @@ const char *nostr_nip39_platform_to_string(NostrNip39Platform platform);
  *
  * Returns: detected platform enum
  */
-NostrNip39Platform nostr_nip39_detect_platform(const char *value);
+NOSTR_NIP39_API NostrNip39Platform nostr_nip39_detect_platform(const char *value);
 
 /**
  * nostr_nip39_build_tag:
@@ -112,7 +114,7 @@ NostrNip39Platform nostr_nip39_detect_platform(const char *value);
  *
  * Returns: (transfer full) (nullable): new NostrTag, caller frees
  */
-NostrTag *nostr_nip39_build_tag(const char *platform, const char *identity,
+NOSTR_NIP39_API NostrTag *nostr_nip39_build_tag(const char *platform, const char *identity,
                                  const char *proof_url);
 
 /**
@@ -126,7 +128,7 @@ NostrTag *nostr_nip39_build_tag(const char *platform, const char *identity,
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip39_add(NostrEvent *ev, const char *platform,
+NOSTR_NIP39_API int nostr_nip39_add(NostrEvent *ev, const char *platform,
                      const char *identity, const char *proof_url);
 
 /**
@@ -139,7 +141,7 @@ int nostr_nip39_add(NostrEvent *ev, const char *platform,
  *
  * Returns: true if found, false otherwise
  */
-bool nostr_nip39_find(const NostrEvent *ev, const char *platform,
+NOSTR_NIP39_API bool nostr_nip39_find(const NostrEvent *ev, const char *platform,
                        NostrNip39Identity *out);
 
 #ifdef __cplusplus

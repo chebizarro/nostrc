@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP28_NOSTR_NIP28_NIP28_H
 #define NIPS_NIP28_NOSTR_NIP28_NIP28_H
 
+#include <nostr/nip28/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,7 +51,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if no "e" tag
  */
-int nostr_nip28_parse_channel_ref(const NostrEvent *ev,
+NOSTR_NIP28_API int nostr_nip28_parse_channel_ref(const NostrEvent *ev,
                                    NostrNip28ChannelRef *out);
 
 /* ============== Message Reference (kind 42) ============== */
@@ -75,7 +77,7 @@ typedef struct {
  *
  * Returns: 0 on success, -EINVAL on bad input, -ENOENT if no root e tag
  */
-int nostr_nip28_parse_message_ref(const NostrEvent *ev,
+NOSTR_NIP28_API int nostr_nip28_parse_message_ref(const NostrEvent *ev,
                                    NostrNip28MessageRef *out);
 
 /* ============== Hide/Mute References (kinds 43/44) ============== */
@@ -87,7 +89,7 @@ int nostr_nip28_parse_message_ref(const NostrEvent *ev,
  * Returns: (transfer none) (nullable): borrowed pointer to the hidden
  *          message event ID from the "e" tag, or NULL
  */
-const char *nostr_nip28_get_hidden_message_id(const NostrEvent *ev);
+NOSTR_NIP28_API const char *nostr_nip28_get_hidden_message_id(const NostrEvent *ev);
 
 /**
  * nostr_nip28_get_muted_pubkey:
@@ -96,7 +98,7 @@ const char *nostr_nip28_get_hidden_message_id(const NostrEvent *ev);
  * Returns: (transfer none) (nullable): borrowed pointer to the muted
  *          user's pubkey from the "p" tag, or NULL
  */
-const char *nostr_nip28_get_muted_pubkey(const NostrEvent *ev);
+NOSTR_NIP28_API const char *nostr_nip28_get_muted_pubkey(const NostrEvent *ev);
 
 /* ============== Event Creation ============== */
 
@@ -109,7 +111,7 @@ const char *nostr_nip28_get_muted_pubkey(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip28_create_channel(NostrEvent *ev, const char *metadata_json);
+NOSTR_NIP28_API int nostr_nip28_create_channel(NostrEvent *ev, const char *metadata_json);
 
 /**
  * nostr_nip28_create_channel_metadata:
@@ -122,7 +124,7 @@ int nostr_nip28_create_channel(NostrEvent *ev, const char *metadata_json);
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip28_create_channel_metadata(NostrEvent *ev,
+NOSTR_NIP28_API int nostr_nip28_create_channel_metadata(NostrEvent *ev,
                                          const char *channel_id,
                                          const char *relay,
                                          const char *metadata_json);
@@ -139,7 +141,7 @@ int nostr_nip28_create_channel_metadata(NostrEvent *ev,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip28_create_message(NostrEvent *ev, const char *channel_id,
+NOSTR_NIP28_API int nostr_nip28_create_message(NostrEvent *ev, const char *channel_id,
                                 const char *relay, const char *content,
                                 const char *reply_to);
 
@@ -153,7 +155,7 @@ int nostr_nip28_create_message(NostrEvent *ev, const char *channel_id,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip28_create_hide_message(NostrEvent *ev,
+NOSTR_NIP28_API int nostr_nip28_create_hide_message(NostrEvent *ev,
                                      const char *message_id,
                                      const char *reason);
 
@@ -167,7 +169,7 @@ int nostr_nip28_create_hide_message(NostrEvent *ev,
  *
  * Returns: 0 on success, negative errno on error
  */
-int nostr_nip28_create_mute_user(NostrEvent *ev, const char *pubkey,
+NOSTR_NIP28_API int nostr_nip28_create_mute_user(NostrEvent *ev, const char *pubkey,
                                   const char *reason);
 
 /* ============== Validation ============== */
@@ -178,7 +180,7 @@ int nostr_nip28_create_mute_user(NostrEvent *ev, const char *pubkey,
  *
  * Returns: true if the event kind is one of 40-44
  */
-bool nostr_nip28_is_channel_event(const NostrEvent *ev);
+NOSTR_NIP28_API bool nostr_nip28_is_channel_event(const NostrEvent *ev);
 
 #ifdef __cplusplus
 }

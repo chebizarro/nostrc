@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP73_NOSTR_NIP73_NIP73_H
 #define NIPS_NIP73_NOSTR_NIP73_NIP73_H
 
+#include <nostr/nip73/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -61,7 +63,7 @@ typedef struct {
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip73_parse(const NostrEvent *ev, NostrNip73Entry *entries,
+NOSTR_NIP73_API int nostr_nip73_parse(const NostrEvent *ev, NostrNip73Entry *entries,
                        size_t max_entries, size_t *out_count);
 
 /**
@@ -72,7 +74,7 @@ int nostr_nip73_parse(const NostrEvent *ev, NostrNip73Entry *entries,
  *
  * Returns: number of external content entries
  */
-size_t nostr_nip73_count(const NostrEvent *ev);
+NOSTR_NIP73_API size_t nostr_nip73_count(const NostrEvent *ev);
 
 /**
  * nostr_nip73_detect_type:
@@ -82,7 +84,7 @@ size_t nostr_nip73_count(const NostrEvent *ev);
  *
  * Returns: detected type enum
  */
-NostrNip73Type nostr_nip73_detect_type(const char *value);
+NOSTR_NIP73_API NostrNip73Type nostr_nip73_detect_type(const char *value);
 
 /**
  * nostr_nip73_build_tag:
@@ -93,7 +95,7 @@ NostrNip73Type nostr_nip73_detect_type(const char *value);
  *
  * Returns: (transfer full) (nullable): new NostrTag, caller frees
  */
-NostrTag *nostr_nip73_build_tag(const char *type_prefix, const char *identifier);
+NOSTR_NIP73_API NostrTag *nostr_nip73_build_tag(const char *type_prefix, const char *identifier);
 
 /**
  * nostr_nip73_build_url_tag:
@@ -103,7 +105,7 @@ NostrTag *nostr_nip73_build_tag(const char *type_prefix, const char *identifier)
  *
  * Returns: (transfer full) (nullable): new NostrTag, caller frees
  */
-NostrTag *nostr_nip73_build_url_tag(const char *url);
+NOSTR_NIP73_API NostrTag *nostr_nip73_build_url_tag(const char *url);
 
 /**
  * nostr_nip73_add:
@@ -115,7 +117,7 @@ NostrTag *nostr_nip73_build_url_tag(const char *url);
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip73_add(NostrEvent *ev, const char *type_prefix,
+NOSTR_NIP73_API int nostr_nip73_add(NostrEvent *ev, const char *type_prefix,
                      const char *identifier);
 
 /**
@@ -124,7 +126,7 @@ int nostr_nip73_add(NostrEvent *ev, const char *type_prefix,
  *
  * Returns: true if this is media content (video, music)
  */
-bool nostr_nip73_is_media_type(NostrNip73Type type);
+NOSTR_NIP73_API bool nostr_nip73_is_media_type(NostrNip73Type type);
 
 /**
  * nostr_nip73_is_reference_type:
@@ -132,7 +134,7 @@ bool nostr_nip73_is_media_type(NostrNip73Type type);
  *
  * Returns: true if this is reference content (books, papers)
  */
-bool nostr_nip73_is_reference_type(NostrNip73Type type);
+NOSTR_NIP73_API bool nostr_nip73_is_reference_type(NostrNip73Type type);
 
 /**
  * nostr_nip73_type_to_string:
@@ -140,7 +142,7 @@ bool nostr_nip73_is_reference_type(NostrNip73Type type);
  *
  * Returns: static string for the type prefix (e.g. "isbn"), or "unknown"
  */
-const char *nostr_nip73_type_to_string(NostrNip73Type type);
+NOSTR_NIP73_API const char *nostr_nip73_type_to_string(NostrNip73Type type);
 
 /**
  * nostr_nip73_type_from_string:
@@ -148,7 +150,7 @@ const char *nostr_nip73_type_to_string(NostrNip73Type type);
  *
  * Returns: content type enum
  */
-NostrNip73Type nostr_nip73_type_from_string(const char *type_str);
+NOSTR_NIP73_API NostrNip73Type nostr_nip73_type_from_string(const char *type_str);
 
 #ifdef __cplusplus
 }

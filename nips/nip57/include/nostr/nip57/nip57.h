@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP57_H
 #define NOSTR_NIP57_H
 
+#include <nostr/nip57/export.h>
+
 /**
  * NIP-57: Lightning Zaps
  *
@@ -46,7 +48,7 @@ extern "C" {
  *
  * Returns: (transfer full) (nullable): signed zap request event, or NULL on error
  */
-NostrEvent *nostr_nip57_create_zap_request(const char *sender_sk_hex,
+NOSTR_NIP57_API NostrEvent *nostr_nip57_create_zap_request(const char *sender_sk_hex,
                                             const char *recipient_pubkey_hex,
                                             const char **relays,
                                             uint64_t amount_msats,
@@ -64,7 +66,7 @@ NostrEvent *nostr_nip57_create_zap_request(const char *sender_sk_hex,
  *
  * Returns: (transfer full) (nullable): parsed zap request, or NULL on error
  */
-NostrZapRequest *nostr_nip57_parse_zap_request(NostrEvent *event);
+NOSTR_NIP57_API NostrZapRequest *nostr_nip57_parse_zap_request(NostrEvent *event);
 
 /**
  * nostr_nip57_validate_zap_request:
@@ -79,7 +81,7 @@ NostrZapRequest *nostr_nip57_parse_zap_request(NostrEvent *event);
  *
  * Returns: true if valid, false otherwise
  */
-bool nostr_nip57_validate_zap_request(NostrEvent *event);
+NOSTR_NIP57_API bool nostr_nip57_validate_zap_request(NostrEvent *event);
 
 /**
  * nostr_nip57_zap_request_to_json:
@@ -90,7 +92,7 @@ bool nostr_nip57_validate_zap_request(NostrEvent *event);
  *
  * Returns: (transfer full) (nullable): JSON string or NULL on error
  */
-char *nostr_nip57_zap_request_to_json(NostrEvent *event);
+NOSTR_NIP57_API char *nostr_nip57_zap_request_to_json(NostrEvent *event);
 
 /**
  * nostr_nip57_build_callback_url:
@@ -104,7 +106,7 @@ char *nostr_nip57_zap_request_to_json(NostrEvent *event);
  *
  * Returns: (transfer full) (nullable): complete URL or NULL on error
  */
-char *nostr_nip57_build_callback_url(const char *callback,
+NOSTR_NIP57_API char *nostr_nip57_build_callback_url(const char *callback,
                                       uint64_t amount_msats,
                                       const char *zap_request_json,
                                       const char *lnurl);
@@ -121,7 +123,7 @@ char *nostr_nip57_build_callback_url(const char *callback,
  *
  * Returns: (transfer full) (nullable): parsed zap receipt, or NULL on error
  */
-NostrZapReceipt *nostr_nip57_parse_zap_receipt(NostrEvent *event);
+NOSTR_NIP57_API NostrZapReceipt *nostr_nip57_parse_zap_receipt(NostrEvent *event);
 
 /**
  * nostr_nip57_validate_zap_receipt:
@@ -137,7 +139,7 @@ NostrZapReceipt *nostr_nip57_parse_zap_receipt(NostrEvent *event);
  *
  * Returns: true if valid, false otherwise
  */
-bool nostr_nip57_validate_zap_receipt(NostrEvent *receipt_event,
+NOSTR_NIP57_API bool nostr_nip57_validate_zap_receipt(NostrEvent *receipt_event,
                                        const char *expected_provider_pubkey);
 
 /**
@@ -150,7 +152,7 @@ bool nostr_nip57_validate_zap_receipt(NostrEvent *receipt_event,
  *
  * Returns: true if valid, false otherwise
  */
-bool nostr_nip57_validate_zap_receipt_full(NostrEvent *receipt_event,
+NOSTR_NIP57_API bool nostr_nip57_validate_zap_receipt_full(NostrEvent *receipt_event,
                                             const char *expected_provider_pubkey,
                                             const char *expected_recipient_lnurl);
 
@@ -162,7 +164,7 @@ bool nostr_nip57_validate_zap_receipt_full(NostrEvent *receipt_event,
  *
  * Returns: amount in millisats, or 0 on error
  */
-uint64_t nostr_nip57_get_zap_amount(const NostrZapReceipt *receipt);
+NOSTR_NIP57_API uint64_t nostr_nip57_get_zap_amount(const NostrZapReceipt *receipt);
 
 /**
  * nostr_nip57_get_zap_amount_from_event:
@@ -172,7 +174,7 @@ uint64_t nostr_nip57_get_zap_amount(const NostrZapReceipt *receipt);
  *
  * Returns: amount in millisats, or 0 on error
  */
-uint64_t nostr_nip57_get_zap_amount_from_event(NostrEvent *receipt_event);
+NOSTR_NIP57_API uint64_t nostr_nip57_get_zap_amount_from_event(NostrEvent *receipt_event);
 
 /**
  * nostr_nip57_extract_zap_request_from_receipt:
@@ -183,7 +185,7 @@ uint64_t nostr_nip57_get_zap_amount_from_event(NostrEvent *receipt_event);
  *
  * Returns: (transfer full) (nullable): parsed zap request, or NULL on error
  */
-NostrZapRequest *nostr_nip57_extract_zap_request_from_receipt(NostrEvent *receipt_event);
+NOSTR_NIP57_API NostrZapRequest *nostr_nip57_extract_zap_request_from_receipt(NostrEvent *receipt_event);
 
 /* ============================================================================
  * BOLT11 Invoice Parsing Helpers
@@ -197,7 +199,7 @@ NostrZapRequest *nostr_nip57_extract_zap_request_from_receipt(NostrEvent *receip
  *
  * Returns: amount in millisats, or 0 on error/no amount
  */
-uint64_t nostr_nip57_parse_bolt11_amount(const char *bolt11);
+NOSTR_NIP57_API uint64_t nostr_nip57_parse_bolt11_amount(const char *bolt11);
 
 /**
  * nostr_nip57_get_bolt11_description_hash:
@@ -215,7 +217,7 @@ uint64_t nostr_nip57_parse_bolt11_amount(const char *bolt11);
  * Returns: 0 on success, -EINVAL if bolt11 is invalid or NULL, -ENOENT if the
  *          invoice has a plain description instead of a description hash
  */
-int nostr_nip57_get_bolt11_description_hash(const char *bolt11, uint8_t *hash_out);
+NOSTR_NIP57_API int nostr_nip57_get_bolt11_description_hash(const char *bolt11, uint8_t *hash_out);
 
 /* ============================================================================
  * Zap Split Configuration Functions
@@ -230,7 +232,7 @@ int nostr_nip57_get_bolt11_description_hash(const char *bolt11, uint8_t *hash_ou
  *
  * Returns: (transfer full) (nullable): split configuration, or NULL if none/error
  */
-NostrZapSplitConfig *nostr_nip57_parse_zap_splits(NostrEvent *event);
+NOSTR_NIP57_API NostrZapSplitConfig *nostr_nip57_parse_zap_splits(NostrEvent *event);
 
 /**
  * nostr_nip57_calculate_split_amount:
@@ -242,7 +244,7 @@ NostrZapSplitConfig *nostr_nip57_parse_zap_splits(NostrEvent *event);
  *
  * Returns: amount in millisats for the recipient
  */
-uint64_t nostr_nip57_calculate_split_amount(const NostrZapSplitConfig *config,
+NOSTR_NIP57_API uint64_t nostr_nip57_calculate_split_amount(const NostrZapSplitConfig *config,
                                              size_t recipient_index,
                                              uint64_t total_msats);
 
@@ -260,7 +262,7 @@ uint64_t nostr_nip57_calculate_split_amount(const NostrZapSplitConfig *config,
  *
  * Returns: (transfer full) (nullable): parsed info, or NULL on error
  */
-NostrLnurlPayInfo *nostr_nip57_parse_lnurl_pay_response(const char *json);
+NOSTR_NIP57_API NostrLnurlPayInfo *nostr_nip57_parse_lnurl_pay_response(const char *json);
 
 /**
  * nostr_nip57_lud16_to_lnurl_url:
@@ -271,7 +273,7 @@ NostrLnurlPayInfo *nostr_nip57_parse_lnurl_pay_response(const char *json);
  *
  * Returns: (transfer full) (nullable): URL string or NULL on error
  */
-char *nostr_nip57_lud16_to_lnurl_url(const char *lud16);
+NOSTR_NIP57_API char *nostr_nip57_lud16_to_lnurl_url(const char *lud16);
 
 /**
  * nostr_nip57_encode_lnurl:
@@ -282,7 +284,7 @@ char *nostr_nip57_lud16_to_lnurl_url(const char *lud16);
  *
  * Returns: (transfer full) (nullable): bech32 lnurl or NULL on error
  */
-char *nostr_nip57_encode_lnurl(const char *url);
+NOSTR_NIP57_API char *nostr_nip57_encode_lnurl(const char *url);
 
 /**
  * nostr_nip57_decode_lnurl:
@@ -293,7 +295,7 @@ char *nostr_nip57_encode_lnurl(const char *url);
  *
  * Returns: (transfer full) (nullable): URL string or NULL on error
  */
-char *nostr_nip57_decode_lnurl(const char *lnurl);
+NOSTR_NIP57_API char *nostr_nip57_decode_lnurl(const char *lnurl);
 
 #ifdef __cplusplus
 }

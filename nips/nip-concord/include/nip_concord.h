@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP_CONCORD_H
 #define NOSTR_NIP_CONCORD_H
 
+#include <nostr/nip_concord/export.h>
+
 /*
  * nip-concord: Concord protocol core (NIP-CAS-0008).
  *
@@ -192,43 +194,43 @@ typedef enum {
     NOSTR_CONCORD_ERR_CONTROL_PAIR
 } nostr_concord_status_t;
 
-const char *nostr_concord_status_string(nostr_concord_status_t status);
+NOSTR_NIP_CONCORD_API const char *nostr_concord_status_string(nostr_concord_status_t status);
 
 /* ------------------------------------------------------------------ *
  * Encoding helpers (CORD-01 "Encoding": hex is lowercase, 64 chars)
  * ------------------------------------------------------------------ */
 
-bool nostr_concord_is_lower_hex_32(const char *value);
+NOSTR_NIP_CONCORD_API bool nostr_concord_is_lower_hex_32(const char *value);
 /* Decodes exactly 64 lowercase hex chars into 32 bytes. */
-bool nostr_concord_hex_decode_32(const char *hex, uint8_t out[32]);
+NOSTR_NIP_CONCORD_API bool nostr_concord_hex_decode_32(const char *hex, uint8_t out[32]);
 /* Writes 64 lowercase hex chars plus a NUL. */
-void nostr_concord_hex_encode_32(const uint8_t in[32], char out[65]);
+NOSTR_NIP_CONCORD_API void nostr_concord_hex_encode_32(const uint8_t in[32], char out[65]);
 
 /* base64url, no padding. Caller frees with free(). */
-char *nostr_concord_b64url_encode(const uint8_t *data, size_t len);
+NOSTR_NIP_CONCORD_API char *nostr_concord_b64url_encode(const uint8_t *data, size_t len);
 /* Returns NULL on any non-canonical input (padding, stray chars). */
-uint8_t *nostr_concord_b64url_decode(const char *text, size_t *out_len);
+NOSTR_NIP_CONCORD_API uint8_t *nostr_concord_b64url_decode(const char *text, size_t *out_len);
 
 /* ------------------------------------------------------------------ *
  * Derivations (CORD-02 Appendix A, frozen)
  * ------------------------------------------------------------------ */
 
 /* A.4: community_id = sha256("concord/community" || owner_xonly || owner_salt) */
-nostr_concord_status_t nostr_concord_derive_community_id(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_derive_community_id(
     const uint8_t owner_xonly[32],
     const uint8_t owner_salt[32],
     uint8_t community_id_out[32]);
 
 /* Recomputes the id from the bundle's owner proof and compares in constant
  * time. CORD-05 §1: a bundle failing this is refused. */
-bool nostr_concord_verify_community_id(const uint8_t community_id[32],
+NOSTR_NIP_CONCORD_API bool nostr_concord_verify_community_id(const uint8_t community_id[32],
                                        const uint8_t owner_xonly[32],
                                        const uint8_t owner_salt[32]);
 
 /* A.1: HKDF-SHA256(ikm=secret, salt=empty,
  *                  info=utf8(label) || 0x00 || id[32] || epoch_be[8]).
  * Pass has_epoch=false for the labels that omit the epoch entirely. */
-nostr_concord_status_t nostr_concord_hkdf(const char *label,
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_hkdf(const char *label,
                                           const uint8_t *secret,
                                           size_t secret_len,
                                           const uint8_t id[32],
@@ -248,7 +250,7 @@ typedef struct {
  * concord/recipient-pseudonym feeds a 64-byte concatenation, so the length is
  * explicit. `id` is the raw 32-byte value (never hex); pass all-zeroes where a
  * label has no meaningful id. */
-nostr_concord_status_t nostr_concord_group_key(const char *label,
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_group_key(const char *label,
                                                const uint8_t *secret,
                                                size_t secret_len,
                                                const uint8_t id[32],
@@ -256,11 +258,11 @@ nostr_concord_status_t nostr_concord_group_key(const char *label,
                                                uint64_t epoch,
                                                nostr_concord_group_key_t *out);
 
-void nostr_concord_group_key_clear(nostr_concord_group_key_t *key);
+NOSTR_NIP_CONCORD_API void nostr_concord_group_key_clear(nostr_concord_group_key_t *key);
 
 /* CORD-03 §1: a channel's plane, from the community_root (public channel) or
  * the channel's own independent key (private channel). */
-nostr_concord_status_t nostr_concord_channel_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_channel_key(
     const uint8_t channel_secret[32],
     const uint8_t channel_id[32],
     uint64_t epoch,
@@ -269,7 +271,7 @@ nostr_concord_status_t nostr_concord_channel_key(
 /* CORD-02 §5: the Control Plane read key (its conv_key decrypts the wraps).
  * On pre-split epochs this derivation was the whole plane — its pk the address
  * and wrap signer too — so the sk/pk stay available for reading those. */
-nostr_concord_status_t nostr_concord_control_read_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_control_read_key(
     const uint8_t community_root[32],
     const uint8_t community_id[32],
     uint64_t epoch,
@@ -277,14 +279,14 @@ nostr_concord_status_t nostr_concord_control_read_key(
 
 /* CORD-02 §5: the Control Plane signer. Its pk is the address; its sk is
  * staff-only. Members hold the pk from their invite and never derive it. */
-nostr_concord_status_t nostr_concord_control_signer_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_control_signer_key(
     const uint8_t control_root[32],
     const uint8_t community_id[32],
     uint64_t epoch,
     nostr_concord_group_key_t *out);
 
 /* CORD-02 §5: the Guestbook Plane (member-writable). */
-nostr_concord_status_t nostr_concord_guestbook_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_guestbook_key(
     const uint8_t community_root[32],
     const uint8_t community_id[32],
     uint64_t epoch,
@@ -293,7 +295,7 @@ nostr_concord_status_t nostr_concord_guestbook_key(
 /* CORD-02 §9: the dissolution tombstone address. Derives from the
  * community_id alone — no secret, no epoch — so every member past or present
  * resolves the same coordinate. */
-nostr_concord_status_t nostr_concord_dissolved_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_dissolved_key(
     const uint8_t community_id[32],
     nostr_concord_group_key_t *out);
 
@@ -304,8 +306,8 @@ nostr_concord_status_t nostr_concord_dissolved_key(
 /* §1: a rotation names the key it replaces by a 32-byte scope id — a Channel
  * id, or all-zeroes for a base rotation, which no Channel id can collide
  * with. */
-void nostr_concord_base_scope_id(uint8_t out[32]);
-bool nostr_concord_scope_is_base(const uint8_t scope_id[32]);
+NOSTR_NIP_CONCORD_API void nostr_concord_base_scope_id(uint8_t out[32]);
+NOSTR_NIP_CONCORD_API bool nostr_concord_scope_is_base(const uint8_t scope_id[32]);
 
 /* §2: the address a rotation is published at, precomputable by every current
  * keyholder. Both derive from the *prior* community_root at the *new* epoch:
@@ -314,13 +316,13 @@ bool nostr_concord_scope_is_base(const uint8_t scope_id[32]);
  *
  * A Public Channel has no independent rekey — its key comes from the
  * community_root, so it rotates only when the base does (CORD-03). */
-nostr_concord_status_t nostr_concord_channel_rekey_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_channel_rekey_key(
     const uint8_t prior_community_root[32],
     const uint8_t channel_id[32],
     uint64_t new_epoch,
     nostr_concord_group_key_t *out);
 
-nostr_concord_status_t nostr_concord_base_rekey_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_base_rekey_key(
     const uint8_t prior_community_root[32],
     const uint8_t community_id[32],
     uint64_t new_epoch,
@@ -331,7 +333,7 @@ nostr_concord_status_t nostr_concord_base_rekey_key(
  * bunker account computes its locator without touching a private key. The
  * derivation is not a secret: it is unreachable to an outsider because the
  * locator list itself lives inside the encrypted event. */
-nostr_concord_status_t nostr_concord_rekey_locator(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_rekey_locator(
     const uint8_t rotator_xonly[32],
     const uint8_t recipient_xonly[32],
     const uint8_t scope_id[32],
@@ -343,7 +345,7 @@ nostr_concord_status_t nostr_concord_rekey_locator(
  * event's `prevcommit`; a match proves the rotation extends this very key.
  * It is a convergence check, never a secrecy mechanism — post-removal secrecy
  * rests entirely on a removed member receiving no blob. */
-nostr_concord_status_t nostr_concord_epoch_commitment(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_epoch_commitment(
     uint64_t prev_epoch,
     const uint8_t prev_key[32],
     uint8_t commitment_out[32]);
@@ -378,13 +380,13 @@ typedef struct {
     bool has_control_root;
 } nostr_concord_rekey_blob_t;
 
-void nostr_concord_rekey_blob_clear(nostr_concord_rekey_blob_t *blob);
+NOSTR_NIP_CONCORD_API void nostr_concord_rekey_blob_clear(nostr_concord_rekey_blob_t *blob);
 
 /* Serializes @blob into the plaintext a Rotator wraps under its pairwise key
  * with the recipient. Refuses a blob whose form and populated fields
  * disagree, so a caller cannot mint a 136-byte staff blob with no
  * control_root in it. */
-nostr_concord_status_t nostr_concord_rekey_blob_pack(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_rekey_blob_pack(
     const nostr_concord_rekey_blob_t *blob,
     uint8_t *out,
     size_t out_cap,
@@ -400,7 +402,7 @@ nostr_concord_status_t nostr_concord_rekey_blob_pack(
  * derive @new_control_root to exactly @new_control_pk, so a recipient refuses
  * a plane split from its own readers rather than adopting it. Pass a real
  * community_id always; it is the id every recipient already holds. */
-nostr_concord_status_t nostr_concord_rekey_blob_parse(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_rekey_blob_parse(
     const uint8_t *plaintext,
     size_t len,
     const uint8_t community_id[32],
@@ -424,7 +426,7 @@ nostr_concord_status_t nostr_concord_rekey_blob_parse(
  * collide. Pass `prev = NULL` on a first edition. `content` is the rumor's
  * content bytes, hashed verbatim and never re-serialized, so a compaction's
  * re-wrap preserves the hash. */
-nostr_concord_status_t nostr_concord_edition_hash(const uint8_t entity_id[32],
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_edition_hash(const uint8_t entity_id[32],
                                                   uint64_t version,
                                                   const uint8_t *prev,
                                                   const uint8_t *content,
@@ -435,19 +437,19 @@ nostr_concord_status_t nostr_concord_edition_hash(const uint8_t entity_id[32],
  * community_id and never to a key or an epoch, so they survive every
  * Refounding and a fresh joiner holding only the newest root derives the
  * same ones. */
-nostr_concord_status_t nostr_concord_grant_locator(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_grant_locator(
     const uint8_t community_id[32],
     const uint8_t member_xonly[32],
     uint8_t eid_out[32]);
 
-nostr_concord_status_t nostr_concord_banlist_locator(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_banlist_locator(
     const uint8_t community_id[32],
     uint8_t eid_out[32]);
 
 /* CORD-05 §5: a creator's invite Registry coordinate. Bound to the creator as
  * well as the Community, so each creator owns exactly their own list of live
  * link coordinates and nobody can forge entries into anyone else's. */
-nostr_concord_status_t nostr_concord_invite_registry_locator(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_invite_registry_locator(
     const uint8_t community_id[32],
     const uint8_t creator_xonly[32],
     uint8_t eid_out[32]);
@@ -456,7 +458,7 @@ nostr_concord_status_t nostr_concord_invite_registry_locator(
  * a JSON number is a 64-bit float in JavaScript and silently corrupts past
  * 2^53. A reader accepts either form; this parses the string one. Rejects a
  * leading sign, leading zeros, and anything that overflows a u64. */
-bool nostr_concord_parse_permissions(const char *decimal, uint64_t *out);
+NOSTR_NIP_CONCORD_API bool nostr_concord_parse_permissions(const char *decimal, uint64_t *out);
 
 /* ------------------------------------------------------------------ *
  * Invites (CORD-05)
@@ -464,7 +466,7 @@ bool nostr_concord_parse_permissions(const char *decimal, uint64_t *out);
 
 /* §2: bundle_key = hkdf(token, "concord/invite-key"). The result is used
  * directly as a NIP-44 conversation key — it is not a group_key. */
-nostr_concord_status_t nostr_concord_invite_key(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_invite_key(
     const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
     uint8_t bundle_key_out[32]);
 
@@ -483,11 +485,11 @@ typedef struct {
 /* Decodes `[version][flags][relays?][token:16]` from base64url without
  * padding. Rejects versions below CONCORD_INVITE_FRAGMENT_VERSION rather than
  * decoding them against the wrong dictionary generation. */
-nostr_concord_status_t nostr_concord_invite_fragment_parse(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_invite_fragment_parse(
     const char *fragment,
     nostr_concord_invite_fragment_t *out);
 
-void nostr_concord_invite_fragment_clear(
+NOSTR_NIP_CONCORD_API void nostr_concord_invite_fragment_clear(
     nostr_concord_invite_fragment_t *fragment);
 
 /* §3: the inverse. Encodes `[version][flags][relays?][token:16]` at the
@@ -501,7 +503,7 @@ void nostr_concord_invite_fragment_clear(
  * unlock token is ever written down outside the creator's Invite List.
  *
  * Caller frees with free(). */
-nostr_concord_status_t nostr_concord_invite_fragment_encode(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_invite_fragment_encode(
     const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
     const char *const *relays,
     size_t n_relays,
@@ -510,20 +512,20 @@ nostr_concord_status_t nostr_concord_invite_fragment_encode(
 
 /* The stock relay dictionary (CORD-05 §3), 1-based: id 1..4. Returns NULL for
  * an id outside the current generation. */
-const char *nostr_concord_relay_dictionary_lookup(uint8_t id);
+NOSTR_NIP_CONCORD_API const char *nostr_concord_relay_dictionary_lookup(uint8_t id);
 /* The four stock primaries selected by the fragment's stock-set flag. */
-const char *const *nostr_concord_stock_relays(size_t *n_relays);
+NOSTR_NIP_CONCORD_API const char *const *nostr_concord_stock_relays(size_t *n_relays);
 
 /* §2: decrypts the kind-33301 bundle content with the token-derived key.
  * Returns the bundle JSON, NUL-terminated; caller frees with free(). */
-nostr_concord_status_t nostr_concord_invite_bundle_decrypt(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_invite_bundle_decrypt(
     const char *content_base64,
     const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
     char **bundle_json_out);
 
 /* §2: encrypts a bundle JSON document under the token-derived key, producing
  * the kind-33301 content. Caller frees with free(). */
-nostr_concord_status_t nostr_concord_invite_bundle_encrypt(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_invite_bundle_encrypt(
     const char *bundle_json,
     const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
     char **content_base64_out);
@@ -535,12 +537,12 @@ nostr_concord_status_t nostr_concord_invite_bundle_encrypt(
 /* Encrypts/decrypts one nesting layer under a plane's conversation key. Both
  * enforce CONCORD_MAX_NIP44_PLAINTEXT themselves: NIP-44 libraries are lenient,
  * and a lenient publisher mints events a strict reader cannot decrypt. */
-nostr_concord_status_t nostr_concord_stream_seal(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_stream_seal(
     const uint8_t conv_key[32],
     const char *plaintext,
     char **base64_out);
 
-nostr_concord_status_t nostr_concord_stream_open(
+NOSTR_NIP_CONCORD_API nostr_concord_status_t nostr_concord_stream_open(
     const uint8_t conv_key[32],
     const char *base64_payload,
     char **plaintext_out);
@@ -548,10 +550,10 @@ nostr_concord_status_t nostr_concord_stream_open(
 /* CORD-02 §5: the ordering basis. created_at seconds and an ["ms", 0..999]
  * tag; the true time is created_at * 1000 + ms. Returns false when ms is out
  * of range — such an entry is malformed and dropped, not interpreted. */
-bool nostr_concord_order_key(int64_t created_at, int ms, int64_t *out_ms_time);
+NOSTR_NIP_CONCORD_API bool nostr_concord_order_key(int64_t created_at, int ms, int64_t *out_ms_time);
 
 /* Strict ["ms", …] tag parse: 0..999, decimal, no leading zeros. */
-bool nostr_concord_parse_ms(const char *value, int *out);
+NOSTR_NIP_CONCORD_API bool nostr_concord_parse_ms(const char *value, int *out);
 
 #ifdef __cplusplus
 }

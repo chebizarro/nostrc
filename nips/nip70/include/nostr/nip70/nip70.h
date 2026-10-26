@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP70_NOSTR_NIP70_NIP70_H
 #define NIPS_NIP70_NOSTR_NIP70_NIP70_H
 
+#include <nostr/nip70/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,7 +31,7 @@ extern "C" {
  *
  * Returns: true if the event is protected, false otherwise
  */
-bool nostr_nip70_is_protected(const NostrEvent *ev);
+NOSTR_NIP70_API bool nostr_nip70_is_protected(const NostrEvent *ev);
 
 /**
  * nostr_nip70_has_embedded_protected:
@@ -41,7 +43,7 @@ bool nostr_nip70_is_protected(const NostrEvent *ev);
  *
  * Returns: true if the event is a repost containing a protected event
  */
-bool nostr_nip70_has_embedded_protected(const NostrEvent *ev);
+NOSTR_NIP70_API bool nostr_nip70_has_embedded_protected(const NostrEvent *ev);
 
 /**
  * nostr_nip70_add_protection:
@@ -52,7 +54,7 @@ bool nostr_nip70_has_embedded_protected(const NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip70_add_protection(NostrEvent *ev);
+NOSTR_NIP70_API int nostr_nip70_add_protection(NostrEvent *ev);
 
 /**
  * nostr_nip70_remove_protection:
@@ -63,7 +65,7 @@ int nostr_nip70_add_protection(NostrEvent *ev);
  *
  * Returns: 0 on success, negative errno-style value on failure
  */
-int nostr_nip70_remove_protection(NostrEvent *ev);
+NOSTR_NIP70_API int nostr_nip70_remove_protection(NostrEvent *ev);
 
 /**
  * nostr_nip70_can_rebroadcast:
@@ -74,7 +76,7 @@ int nostr_nip70_remove_protection(NostrEvent *ev);
  *
  * Returns: true if the event can be rebroadcast, false if protected
  */
-bool nostr_nip70_can_rebroadcast(const NostrEvent *ev);
+NOSTR_NIP70_API bool nostr_nip70_can_rebroadcast(const NostrEvent *ev);
 
 #ifdef __cplusplus
 }

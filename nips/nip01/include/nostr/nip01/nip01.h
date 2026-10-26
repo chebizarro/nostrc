@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP01_NOSTR_NIP01_NIP01_H
 #define NIPS_NIP01_NOSTR_NIP01_NIP01_H
 
+#include <nostr/nip01/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,7 +25,7 @@ extern "C" {
  *
  * Returns: 0 on success, negative errno on error.
  */
-int nostr_nip01_add_e_tag(NostrEvent *ev,
+NOSTR_NIP01_API int nostr_nip01_add_e_tag(NostrEvent *ev,
                           const unsigned char event_id[32],
                           const char *relay_opt,
                           const unsigned char *author_pk /* optional */);
@@ -38,7 +40,7 @@ int nostr_nip01_add_e_tag(NostrEvent *ev,
  *
  * Returns: 0 on success, negative errno on error.
  */
-int nostr_nip01_add_p_tag(NostrEvent *ev,
+NOSTR_NIP01_API int nostr_nip01_add_p_tag(NostrEvent *ev,
                           const unsigned char pubkey[32],
                           const char *relay_opt);
 
@@ -54,7 +56,7 @@ int nostr_nip01_add_p_tag(NostrEvent *ev,
  *
  * Returns: 0 on success, negative errno on error.
  */
-int nostr_nip01_add_a_tag(NostrEvent *ev,
+NOSTR_NIP01_API int nostr_nip01_add_a_tag(NostrEvent *ev,
                           uint32_t kind,
                           const unsigned char pubkey[32],
                           const char *d_tag_opt,
@@ -70,24 +72,24 @@ int nostr_nip01_add_a_tag(NostrEvent *ev,
  *
  * Returns: 0 on success, -ENOENT if absent, or -errno on error.
  */
-int  nostr_nip01_get_alt(const NostrEvent *ev, char **out_alt);
+NOSTR_NIP01_API int  nostr_nip01_get_alt(const NostrEvent *ev, char **out_alt);
 /**
  * nostr_nip01_is_replaceable:
  * @kind: kind code
  *
  * Returns: %true if replaceable (k=0,3 or 10000..19999).
  */
-bool nostr_nip01_is_replaceable(int kind);
+NOSTR_NIP01_API bool nostr_nip01_is_replaceable(int kind);
 /**
  * nostr_nip01_is_addressable:
  * Returns: %true if addressable (30000..39999).
  */
-bool nostr_nip01_is_addressable(int kind);
+NOSTR_NIP01_API bool nostr_nip01_is_addressable(int kind);
 /**
  * nostr_nip01_is_ephemeral:
  * Returns: %true if ephemeral (20000..29999).
  */
-bool nostr_nip01_is_ephemeral(int kind);
+NOSTR_NIP01_API bool nostr_nip01_is_ephemeral(int kind);
 
 /* --- Filters (typed builders) --- */
 /**
@@ -107,32 +109,32 @@ typedef struct {
  *
  * Returns: 0 on success, -errno on failure.
  */
-int  nostr_nip01_filter_builder_init(NostrFilterBuilder *fb);
+NOSTR_NIP01_API int  nostr_nip01_filter_builder_init(NostrFilterBuilder *fb);
 /**
  * nostr_nip01_filter_builder_dispose:
  * @fb: (inout): builder
  *
  * Releases internal resources. Safe to call with NULL.
  */
-void nostr_nip01_filter_builder_dispose(NostrFilterBuilder *fb);
+NOSTR_NIP01_API void nostr_nip01_filter_builder_dispose(NostrFilterBuilder *fb);
 
 /**
  * nostr_nip01_filter_by_ids:
  * @ids: (array length=n) (element-type guint8[32])
  */
-int  nostr_nip01_filter_by_ids(NostrFilterBuilder *fb, const unsigned char (*ids)[32], size_t n);
+NOSTR_NIP01_API int  nostr_nip01_filter_by_ids(NostrFilterBuilder *fb, const unsigned char (*ids)[32], size_t n);
 /**
  * nostr_nip01_filter_by_authors:
  * @pubkeys: (array length=n) (element-type guint8[32])
  */
-int  nostr_nip01_filter_by_authors(NostrFilterBuilder *fb, const unsigned char (*pubkeys)[32], size_t n);
-int  nostr_nip01_filter_by_kinds(NostrFilterBuilder *fb, const int *kinds, size_t n);
-int  nostr_nip01_filter_by_tag_e(NostrFilterBuilder *fb, const unsigned char (*ids)[32], size_t n);
-int  nostr_nip01_filter_by_tag_p(NostrFilterBuilder *fb, const unsigned char (*pubkeys)[32], size_t n);
-int  nostr_nip01_filter_by_tag_a(NostrFilterBuilder *fb, const char **a_refs, size_t n);
-int  nostr_nip01_filter_since(NostrFilterBuilder *fb, uint32_t since);
-int  nostr_nip01_filter_until(NostrFilterBuilder *fb, uint32_t until);
-int  nostr_nip01_filter_limit(NostrFilterBuilder *fb, int limit);
+NOSTR_NIP01_API int  nostr_nip01_filter_by_authors(NostrFilterBuilder *fb, const unsigned char (*pubkeys)[32], size_t n);
+NOSTR_NIP01_API int  nostr_nip01_filter_by_kinds(NostrFilterBuilder *fb, const int *kinds, size_t n);
+NOSTR_NIP01_API int  nostr_nip01_filter_by_tag_e(NostrFilterBuilder *fb, const unsigned char (*ids)[32], size_t n);
+NOSTR_NIP01_API int  nostr_nip01_filter_by_tag_p(NostrFilterBuilder *fb, const unsigned char (*pubkeys)[32], size_t n);
+NOSTR_NIP01_API int  nostr_nip01_filter_by_tag_a(NostrFilterBuilder *fb, const char **a_refs, size_t n);
+NOSTR_NIP01_API int  nostr_nip01_filter_since(NostrFilterBuilder *fb, uint32_t since);
+NOSTR_NIP01_API int  nostr_nip01_filter_until(NostrFilterBuilder *fb, uint32_t until);
+NOSTR_NIP01_API int  nostr_nip01_filter_limit(NostrFilterBuilder *fb, int limit);
 
 /**
  * nostr_nip01_filter_build:
@@ -150,7 +152,7 @@ int  nostr_nip01_filter_limit(NostrFilterBuilder *fb, int limit);
  *
  * Returns: 0 on success, -errno on failure.
  */
-int  nostr_nip01_filter_build(NostrFilterBuilder *fb, NostrFilter *out);
+NOSTR_NIP01_API int  nostr_nip01_filter_build(NostrFilterBuilder *fb, NostrFilter *out);
 
 #ifdef __cplusplus
 }

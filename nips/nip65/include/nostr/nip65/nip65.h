@@ -16,6 +16,8 @@
 #ifndef NIPS_NIP65_NOSTR_NIP65_NIP65_H
 #define NIPS_NIP65_NOSTR_NIP65_NIP65_H
 
+#include <nostr/nip65/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -72,7 +74,7 @@ typedef struct {
  *
  * Returns: (transfer full) (nullable): new relay entry, or NULL on error
  */
-NostrRelayEntry *nostr_nip65_entry_new(const char *url,
+NOSTR_NIP65_API NostrRelayEntry *nostr_nip65_entry_new(const char *url,
                                        NostrRelayPermission permission);
 
 /**
@@ -81,7 +83,7 @@ NostrRelayEntry *nostr_nip65_entry_new(const char *url,
  *
  * Frees a relay entry and its associated URL string.
  */
-void nostr_nip65_entry_free(NostrRelayEntry *entry);
+NOSTR_NIP65_API void nostr_nip65_entry_free(NostrRelayEntry *entry);
 
 /**
  * nostr_nip65_entry_copy:
@@ -91,7 +93,7 @@ void nostr_nip65_entry_free(NostrRelayEntry *entry);
  *
  * Returns: (transfer full) (nullable): copied entry, or NULL on error
  */
-NostrRelayEntry *nostr_nip65_entry_copy(const NostrRelayEntry *entry);
+NOSTR_NIP65_API NostrRelayEntry *nostr_nip65_entry_copy(const NostrRelayEntry *entry);
 
 /**
  * nostr_nip65_entry_is_readable:
@@ -101,7 +103,7 @@ NostrRelayEntry *nostr_nip65_entry_copy(const NostrRelayEntry *entry);
  *
  * Returns: true if READ or READWRITE permission
  */
-bool nostr_nip65_entry_is_readable(const NostrRelayEntry *entry);
+NOSTR_NIP65_API bool nostr_nip65_entry_is_readable(const NostrRelayEntry *entry);
 
 /**
  * nostr_nip65_entry_is_writable:
@@ -111,7 +113,7 @@ bool nostr_nip65_entry_is_readable(const NostrRelayEntry *entry);
  *
  * Returns: true if WRITE or READWRITE permission
  */
-bool nostr_nip65_entry_is_writable(const NostrRelayEntry *entry);
+NOSTR_NIP65_API bool nostr_nip65_entry_is_writable(const NostrRelayEntry *entry);
 
 /* --------------------------------------------------------------------------
  * Relay List Functions
@@ -124,7 +126,7 @@ bool nostr_nip65_entry_is_writable(const NostrRelayEntry *entry);
  *
  * Returns: (transfer full): new empty relay list
  */
-NostrRelayList *nostr_nip65_list_new(void);
+NOSTR_NIP65_API NostrRelayList *nostr_nip65_list_new(void);
 
 /**
  * nostr_nip65_list_free:
@@ -132,7 +134,7 @@ NostrRelayList *nostr_nip65_list_new(void);
  *
  * Frees a relay list and all its entries.
  */
-void nostr_nip65_list_free(NostrRelayList *list);
+NOSTR_NIP65_API void nostr_nip65_list_free(NostrRelayList *list);
 
 /**
  * nostr_nip65_list_copy:
@@ -142,7 +144,7 @@ void nostr_nip65_list_free(NostrRelayList *list);
  *
  * Returns: (transfer full) (nullable): copied list, or NULL on error
  */
-NostrRelayList *nostr_nip65_list_copy(const NostrRelayList *list);
+NOSTR_NIP65_API NostrRelayList *nostr_nip65_list_copy(const NostrRelayList *list);
 
 /**
  * nostr_nip65_add_relay:
@@ -156,7 +158,7 @@ NostrRelayList *nostr_nip65_list_copy(const NostrRelayList *list);
  * Returns: 0 on success, -EINVAL on invalid arguments, -ENOMEM on allocation failure,
  *          -ENOSPC if relay count would exceed NOSTR_NIP65_MAX_RELAYS
  */
-int nostr_nip65_add_relay(NostrRelayList *list,
+NOSTR_NIP65_API int nostr_nip65_add_relay(NostrRelayList *list,
                           const char *url,
                           NostrRelayPermission permission);
 
@@ -169,7 +171,7 @@ int nostr_nip65_add_relay(NostrRelayList *list,
  *
  * Returns: 0 on success, -ENOENT if not found
  */
-int nostr_nip65_remove_relay(NostrRelayList *list, const char *url);
+NOSTR_NIP65_API int nostr_nip65_remove_relay(NostrRelayList *list, const char *url);
 
 /**
  * nostr_nip65_find_relay:
@@ -180,7 +182,7 @@ int nostr_nip65_remove_relay(NostrRelayList *list, const char *url);
  *
  * Returns: (transfer none) (nullable): pointer to entry, or NULL if not found
  */
-NostrRelayEntry *nostr_nip65_find_relay(const NostrRelayList *list,
+NOSTR_NIP65_API NostrRelayEntry *nostr_nip65_find_relay(const NostrRelayList *list,
                                         const char *url);
 
 /**
@@ -192,7 +194,7 @@ NostrRelayEntry *nostr_nip65_find_relay(const NostrRelayList *list,
  *
  * Returns: (transfer full) (array length=out_count): NULL-terminated array of URL strings
  */
-char **nostr_nip65_get_read_relays(const NostrRelayList *list, size_t *out_count);
+NOSTR_NIP65_API char **nostr_nip65_get_read_relays(const NostrRelayList *list, size_t *out_count);
 
 /**
  * nostr_nip65_get_write_relays:
@@ -203,7 +205,7 @@ char **nostr_nip65_get_read_relays(const NostrRelayList *list, size_t *out_count
  *
  * Returns: (transfer full) (array length=out_count): NULL-terminated array of URL strings
  */
-char **nostr_nip65_get_write_relays(const NostrRelayList *list, size_t *out_count);
+NOSTR_NIP65_API char **nostr_nip65_get_write_relays(const NostrRelayList *list, size_t *out_count);
 
 /* --------------------------------------------------------------------------
  * Event Building and Parsing
@@ -221,7 +223,7 @@ char **nostr_nip65_get_write_relays(const NostrRelayList *list, size_t *out_coun
  *
  * Returns: 0 on success, -errno on error
  */
-int nostr_nip65_create_relay_list(NostrEvent *ev,
+NOSTR_NIP65_API int nostr_nip65_create_relay_list(NostrEvent *ev,
                                   const unsigned char author_pk[32],
                                   const NostrRelayList *list,
                                   uint32_t created_at);
@@ -235,7 +237,7 @@ int nostr_nip65_create_relay_list(NostrEvent *ev,
  *
  * Returns: 0 on success, -ENOENT if kind!=10002, -EINVAL on invalid args
  */
-int nostr_nip65_parse_relay_list(const NostrEvent *ev, NostrRelayList **out);
+NOSTR_NIP65_API int nostr_nip65_parse_relay_list(const NostrEvent *ev, NostrRelayList **out);
 
 /**
  * nostr_nip65_update_relay_list:
@@ -247,7 +249,7 @@ int nostr_nip65_parse_relay_list(const NostrEvent *ev, NostrRelayList **out);
  *
  * Returns: 0 on success, -errno on error
  */
-int nostr_nip65_update_relay_list(NostrEvent *ev, const NostrRelayList *list);
+NOSTR_NIP65_API int nostr_nip65_update_relay_list(NostrEvent *ev, const NostrRelayList *list);
 
 /* --------------------------------------------------------------------------
  * Utility Functions
@@ -264,7 +266,7 @@ int nostr_nip65_update_relay_list(NostrEvent *ev, const NostrRelayList *list);
  *
  * Returns: (transfer full) (nullable): normalized URL, or NULL if invalid
  */
-char *nostr_nip65_normalize_url(const char *url);
+NOSTR_NIP65_API char *nostr_nip65_normalize_url(const char *url);
 
 /**
  * nostr_nip65_is_valid_relay_url:
@@ -274,7 +276,7 @@ char *nostr_nip65_normalize_url(const char *url);
  *
  * Returns: true if valid, false otherwise
  */
-bool nostr_nip65_is_valid_relay_url(const char *url);
+NOSTR_NIP65_API bool nostr_nip65_is_valid_relay_url(const char *url);
 
 /**
  * nostr_nip65_permission_to_string:
@@ -284,7 +286,7 @@ bool nostr_nip65_is_valid_relay_url(const char *url);
  *
  * Returns: (transfer none): "read", "write", or NULL for READWRITE
  */
-const char *nostr_nip65_permission_to_string(NostrRelayPermission permission);
+NOSTR_NIP65_API const char *nostr_nip65_permission_to_string(NostrRelayPermission permission);
 
 /**
  * nostr_nip65_permission_from_string:
@@ -294,7 +296,7 @@ const char *nostr_nip65_permission_to_string(NostrRelayPermission permission);
  *
  * Returns: permission enum value (READWRITE if NULL or unrecognized)
  */
-NostrRelayPermission nostr_nip65_permission_from_string(const char *str);
+NOSTR_NIP65_API NostrRelayPermission nostr_nip65_permission_from_string(const char *str);
 
 /**
  * nostr_nip65_free_string_array:
@@ -303,7 +305,7 @@ NostrRelayPermission nostr_nip65_permission_from_string(const char *str);
  * Frees a string array returned by nostr_nip65_get_read_relays() or
  * nostr_nip65_get_write_relays().
  */
-void nostr_nip65_free_string_array(char **arr);
+NOSTR_NIP65_API void nostr_nip65_free_string_array(char **arr);
 
 #ifdef __cplusplus
 }

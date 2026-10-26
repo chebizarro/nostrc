@@ -1,6 +1,8 @@
 #ifndef NIP86_H
 #define NIP86_H
 
+#include <nostr/nip86/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,18 +16,18 @@ extern "C" {
  * http_status: out parameter set to HTTP status (200 on success, 401 unauthorized, 400 bad request, 500 internal)
  * Returns: malloc'd JSON string {"result":...,"error":null|"msg"}
  */
-char *nostr_nip86_process_request(void *app_ctx, const char *auth, const char *body, const char *method, const char *url, int *http_status);
+NOSTR_NIP86_API char *nostr_nip86_process_request(void *app_ctx, const char *auth, const char *body, const char *method, const char *url, int *http_status);
 
 /* Policy state getters (module-local storage) */
-int nostr_nip86_is_pubkey_banned(const char *hex32);
-int nostr_nip86_has_allowlist(void);
-int nostr_nip86_is_pubkey_allowed(const char *hex32);
-int nostr_nip86_has_allowed_kinds(void);
-int nostr_nip86_is_kind_allowed(int kind);
-int nostr_nip86_is_ip_blocked(const char *ip);
+NOSTR_NIP86_API int nostr_nip86_is_pubkey_banned(const char *hex32);
+NOSTR_NIP86_API int nostr_nip86_has_allowlist(void);
+NOSTR_NIP86_API int nostr_nip86_is_pubkey_allowed(const char *hex32);
+NOSTR_NIP86_API int nostr_nip86_has_allowed_kinds(void);
+NOSTR_NIP86_API int nostr_nip86_is_kind_allowed(int kind);
+NOSTR_NIP86_API int nostr_nip86_is_ip_blocked(const char *ip);
 
 /* Load policy from disk (relay_policy.json or NOSTR_RELAY_POLICY). Returns 0 on success or if no file. */
-int nostr_nip86_load_policy(void);
+NOSTR_NIP86_API int nostr_nip86_load_policy(void);
 
 #ifdef __cplusplus
 }

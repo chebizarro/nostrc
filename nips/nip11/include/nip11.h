@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP11_H
 #define NOSTR_NIP11_H
 
+#include <nostr/nip11/export.h>
+
 #include <stdbool.h>
 
 typedef struct {
@@ -63,12 +65,12 @@ typedef struct RelayInformationDocument {
     char *icon;
 } RelayInformationDocument;
 
-RelayInformationDocument* nostr_nip11_fetch_info(const char *url);
-RelayInformationDocument* nostr_nip11_parse_info(const char *json);
+NOSTR_NIP11_API RelayInformationDocument* nostr_nip11_fetch_info(const char *url);
+NOSTR_NIP11_API RelayInformationDocument* nostr_nip11_parse_info(const char *json);
 
-void nostr_nip11_free_info(RelayInformationDocument *info);
+NOSTR_NIP11_API void nostr_nip11_free_info(RelayInformationDocument *info);
 
 /* Build a NIP-11 JSON document from the provided RelayInformationDocument. */
-char *nostr_nip11_build_info_json(const RelayInformationDocument *info);
+NOSTR_NIP11_API char *nostr_nip11_build_info_json(const RelayInformationDocument *info);
 
 #endif // NOSTR_NIP11_H

@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP25_NOSTR_NIP25_NIP25_H
 #define NIPS_NIP25_NOSTR_NIP25_NIP25_H
 
+#include <nostr/nip25/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -94,7 +96,7 @@ typedef struct {
  *
  * Returns: (transfer full) (nullable): new reaction event or NULL on error
  */
-NostrEvent *nostr_nip25_create_reaction(
+NOSTR_NIP25_API NostrEvent *nostr_nip25_create_reaction(
     const unsigned char reacted_event_id[32],
     const unsigned char *reacted_author_pubkey,
     int reacted_kind,
@@ -115,7 +117,7 @@ NostrEvent *nostr_nip25_create_reaction(
  *
  * Returns: (transfer full) (nullable): new reaction event or NULL on error
  */
-NostrEvent *nostr_nip25_create_reaction_hex(
+NOSTR_NIP25_API NostrEvent *nostr_nip25_create_reaction_hex(
     const char *reacted_event_id_hex,
     const char *reacted_author_pubkey_hex,
     int reacted_kind,
@@ -133,7 +135,7 @@ NostrEvent *nostr_nip25_create_reaction_hex(
  *
  * Returns: 0 on success, -1 if event is not a valid reaction
  */
-int nostr_nip25_parse_reaction(const NostrEvent *ev, NostrReaction *out);
+NOSTR_NIP25_API int nostr_nip25_parse_reaction(const NostrEvent *ev, NostrReaction *out);
 
 /**
  * nostr_nip25_get_reaction_type:
@@ -143,7 +145,7 @@ int nostr_nip25_parse_reaction(const NostrEvent *ev, NostrReaction *out);
  *
  * Returns: the reaction type
  */
-NostrReactionType nostr_nip25_get_reaction_type(const char *content);
+NOSTR_NIP25_API NostrReactionType nostr_nip25_get_reaction_type(const char *content);
 
 /**
  * nostr_nip25_is_like:
@@ -153,7 +155,7 @@ NostrReactionType nostr_nip25_get_reaction_type(const char *content);
  *
  * Returns: true if the event is a like reaction
  */
-bool nostr_nip25_is_like(const NostrEvent *ev);
+NOSTR_NIP25_API bool nostr_nip25_is_like(const NostrEvent *ev);
 
 /**
  * nostr_nip25_is_dislike:
@@ -163,7 +165,7 @@ bool nostr_nip25_is_like(const NostrEvent *ev);
  *
  * Returns: true if the event is a dislike reaction
  */
-bool nostr_nip25_is_dislike(const NostrEvent *ev);
+NOSTR_NIP25_API bool nostr_nip25_is_dislike(const NostrEvent *ev);
 
 /**
  * nostr_nip25_is_reaction:
@@ -173,7 +175,7 @@ bool nostr_nip25_is_dislike(const NostrEvent *ev);
  *
  * Returns: true if the event is a reaction event
  */
-bool nostr_nip25_is_reaction(const NostrEvent *ev);
+NOSTR_NIP25_API bool nostr_nip25_is_reaction(const NostrEvent *ev);
 
 /**
  * nostr_nip25_get_reacted_event_id:
@@ -184,7 +186,7 @@ bool nostr_nip25_is_reaction(const NostrEvent *ev);
  *
  * Returns: true if event ID was found and extracted
  */
-bool nostr_nip25_get_reacted_event_id(const NostrEvent *ev, unsigned char out_id[32]);
+NOSTR_NIP25_API bool nostr_nip25_get_reacted_event_id(const NostrEvent *ev, unsigned char out_id[32]);
 
 /**
  * nostr_nip25_get_reacted_event_id_hex:
@@ -194,7 +196,7 @@ bool nostr_nip25_get_reacted_event_id(const NostrEvent *ev, unsigned char out_id
  *
  * Returns: (transfer full) (nullable): newly allocated hex string or NULL
  */
-char *nostr_nip25_get_reacted_event_id_hex(const NostrEvent *ev);
+NOSTR_NIP25_API char *nostr_nip25_get_reacted_event_id_hex(const NostrEvent *ev);
 
 /**
  * nostr_nip25_aggregate_reactions:
@@ -206,7 +208,7 @@ char *nostr_nip25_get_reacted_event_id_hex(const NostrEvent *ev);
  *
  * Returns: 0 on success
  */
-int nostr_nip25_aggregate_reactions(
+NOSTR_NIP25_API int nostr_nip25_aggregate_reactions(
     const NostrEvent **reactions,
     size_t count,
     NostrReactionStats *out_stats

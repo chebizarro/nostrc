@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip57)
 
 # Vendored nostrdb path (matches libnostr configuration)
@@ -7,6 +9,8 @@ set(LIBNOSTR_NDB_VENDOR_PATH "${CMAKE_SOURCE_DIR}/third_party/nostrdb" CACHE PAT
 add_library(nostr_nip57_core OBJECT
     src/nip57.c
 )
+nostrc_library_visibility(nostr_nip57_core NOSTR_NIP57_API
+  nostr/nip57/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip57")
 
 target_include_directories(nostr_nip57_core
     PUBLIC

@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP27_NOSTR_NIP27_NIP27_H
 #define NIPS_NIP27_NOSTR_NIP27_NIP27_H
 
+#include <nostr/nip27/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -65,7 +67,7 @@ typedef struct {
  *
  * Returns: 0 on success, negative errno-style value on error
  */
-int nostr_nip27_parse(const char *content, NostrNip27Block *blocks,
+NOSTR_NIP27_API int nostr_nip27_parse(const char *content, NostrNip27Block *blocks,
                        size_t max_blocks, size_t *out_count);
 
 /**
@@ -76,7 +78,7 @@ int nostr_nip27_parse(const char *content, NostrNip27Block *blocks,
  *
  * Returns: number of valid mentions found
  */
-size_t nostr_nip27_count_mentions(const char *content);
+NOSTR_NIP27_API size_t nostr_nip27_count_mentions(const char *content);
 
 /**
  * Callback for reference replacement.
@@ -107,7 +109,7 @@ typedef bool (*NostrNip27Formatter)(const char *bech32,
  * Returns: (transfer full) (nullable): new string with replacements,
  *   caller frees with free(). NULL on error.
  */
-char *nostr_nip27_replace(const char *content,
+NOSTR_NIP27_API char *nostr_nip27_replace(const char *content,
                            NostrNip27Formatter formatter,
                            void *user_data);
 

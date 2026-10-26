@@ -1,7 +1,11 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip70)
 
 add_library(nip70 OBJECT
     src/nip70.c)
+nostrc_library_visibility(nip70 NOSTR_NIP70_API
+  nostr/nip70/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip70")
 
 target_include_directories(nip70
     PUBLIC

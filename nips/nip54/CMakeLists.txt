@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 
 project(nip54)
 
@@ -9,6 +11,8 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip54 ${SOURCES})
+nostrc_library_visibility(nip54 NOSTR_NIP54_API
+  nostr/nip54/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip54")
 target_link_libraries(nip54 nostr)
 
 # Add tests if available

@@ -1,6 +1,8 @@
 #ifndef NIPS_NIPB0_NOSTR_NIPB0_NIPB0_H
 #define NIPS_NIPB0_NOSTR_NIPB0_NIPB0_H
 
+#include <nostr/nipb0/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,37 +65,37 @@ typedef struct {
  * Build upload URL: <server>/upload
  * Caller must free().
  */
-char *nostr_blossom_url_upload(const char *server);
+NOSTR_NIPB0_API char *nostr_blossom_url_upload(const char *server);
 
 /**
  * Build download URL: <server>/<hash>
  * Caller must free().
  */
-char *nostr_blossom_url_download(const char *server, const char *hash);
+NOSTR_NIPB0_API char *nostr_blossom_url_download(const char *server, const char *hash);
 
 /**
  * Build check (HEAD) URL: <server>/<hash>
  * Same as download URL. Caller must free().
  */
-char *nostr_blossom_url_check(const char *server, const char *hash);
+NOSTR_NIPB0_API char *nostr_blossom_url_check(const char *server, const char *hash);
 
 /**
  * Build list URL: <server>/list/<pubkey_hex>
  * Caller must free().
  */
-char *nostr_blossom_url_list(const char *server, const char *pubkey_hex);
+NOSTR_NIPB0_API char *nostr_blossom_url_list(const char *server, const char *pubkey_hex);
 
 /**
  * Build delete URL: <server>/<hash>
  * Same as download URL. Caller must free().
  */
-char *nostr_blossom_url_delete(const char *server, const char *hash);
+NOSTR_NIPB0_API char *nostr_blossom_url_delete(const char *server, const char *hash);
 
 /**
  * Build mirror URL: <server>/mirror
  * Caller must free().
  */
-char *nostr_blossom_url_mirror(const char *server);
+NOSTR_NIPB0_API char *nostr_blossom_url_mirror(const char *server);
 
 /* ---- Auth event creation ---- */
 
@@ -112,7 +114,7 @@ char *nostr_blossom_url_mirror(const char *server);
  * Returns: (transfer full) (nullable): new event, or NULL on error.
  *          Caller must free with nostr_event_free().
  */
-NostrEvent *nostr_blossom_create_auth(NostrBlossomOp op,
+NOSTR_NIPB0_API NostrEvent *nostr_blossom_create_auth(NostrBlossomOp op,
                                        const char *hash,
                                        int expiration_secs);
 
@@ -124,7 +126,7 @@ NostrEvent *nostr_blossom_create_auth(NostrBlossomOp op,
  *
  * Returns: 0 on success, -EINVAL on bad input
  */
-int nostr_blossom_parse_descriptor(const char *json,
+NOSTR_NIPB0_API int nostr_blossom_parse_descriptor(const char *json,
                                     NostrBlossomBlobDescriptor *out);
 
 /**
@@ -134,7 +136,7 @@ int nostr_blossom_parse_descriptor(const char *json,
  *
  * Returns: 0 on success, -EINVAL on bad input
  */
-int nostr_blossom_parse_descriptor_list(const char *json,
+NOSTR_NIPB0_API int nostr_blossom_parse_descriptor_list(const char *json,
                                          NostrBlossomBlobDescriptor *out,
                                          size_t max_entries,
                                          size_t *out_count);
@@ -143,7 +145,7 @@ int nostr_blossom_parse_descriptor_list(const char *json,
  * Free heap-allocated strings in a blob descriptor.
  * Does NOT free the struct itself.
  */
-void nostr_blossom_descriptor_free(NostrBlossomBlobDescriptor *desc);
+NOSTR_NIPB0_API void nostr_blossom_descriptor_free(NostrBlossomBlobDescriptor *desc);
 
 /* ---- Utilities ---- */
 
@@ -151,7 +153,7 @@ void nostr_blossom_descriptor_free(NostrBlossomBlobDescriptor *desc);
  * Build mirror request body JSON: {"url":"<remote_url>"}
  * Caller must free().
  */
-char *nostr_blossom_mirror_body(const char *remote_url);
+NOSTR_NIPB0_API char *nostr_blossom_mirror_body(const char *remote_url);
 
 /**
  * Extract hash from a blob URL.
@@ -159,7 +161,7 @@ char *nostr_blossom_mirror_body(const char *remote_url);
  * e.g. "https://cdn.example.com/abc123.png" → "abc123"
  * Caller must free().
  */
-char *nostr_blossom_extract_hash(const char *url);
+NOSTR_NIPB0_API char *nostr_blossom_extract_hash(const char *url);
 
 #ifdef __cplusplus
 }

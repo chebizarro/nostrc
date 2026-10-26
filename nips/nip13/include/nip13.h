@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP13_H
 #define NOSTR_NIP13_H
 
+#include <nostr/nip13/export.h>
+
 #include "nostr-event.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,7 +23,7 @@ extern "C" {
  *
  * Returns: number of leading zero bits, or -1 on invalid input
  */
-int nip13_difficulty(const char *event_id);
+NOSTR_NIP13_API int nip13_difficulty(const char *event_id);
 
 /**
  * nip13_check:
@@ -32,7 +34,7 @@ int nip13_difficulty(const char *event_id);
  *
  * Returns: 0 if sufficient, NIP13_ERR_DIFFICULTY_TOO_LOW if not, -1 on error
  */
-int nip13_check(const char *event_id, int min_difficulty);
+NOSTR_NIP13_API int nip13_check(const char *event_id, int min_difficulty);
 
 /**
  * nip13_generate:
@@ -46,7 +48,7 @@ int nip13_check(const char *event_id, int min_difficulty);
  *
  * Returns: 0 on success, NIP13_ERR_GENERATE_TIMEOUT on timeout, -1 on error
  */
-int nip13_generate(NostrEvent *event, int target_difficulty, time_t timeout);
+NOSTR_NIP13_API int nip13_generate(NostrEvent *event, int target_difficulty, time_t timeout);
 
 #ifdef __cplusplus
 }
