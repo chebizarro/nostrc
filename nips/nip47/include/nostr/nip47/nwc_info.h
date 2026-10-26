@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP47_NOSTR_NIP47_NWC_INFO_H
 #define NIPS_NIP47_NOSTR_NIP47_NWC_INFO_H
 
+#include <nostr/nip47/export.h>
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -29,7 +31,7 @@ extern "C" {
  * @out_event_json: result JSON string (caller frees)
  * Returns 0 on success, -1 on invalid input.
  */
-int nostr_nwc_info_build(const char *pubkey,
+NOSTR_NIP47_API int nostr_nwc_info_build(const char *pubkey,
                          long long created_at,
                          const char **methods,
                          size_t methods_count,
@@ -47,7 +49,7 @@ int nostr_nwc_info_build(const char *pubkey,
  * Returned arrays are heap-allocated; caller must free each string and the
  * array itself. Every out-parameter is optional.
  */
-int nostr_nwc_info_parse(const char *event_json,
+NOSTR_NIP47_API int nostr_nwc_info_parse(const char *event_json,
                          char ***out_methods,
                          size_t *out_methods_count,
                          char ***out_encryptions,

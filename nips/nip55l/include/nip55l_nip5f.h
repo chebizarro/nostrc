@@ -15,19 +15,21 @@
 #ifndef NIP55L_NIP5F_H
 #define NIP55L_NIP5F_H
 
+#include <nostr/nip55l/service-export.h>
+
 #include <glib.h>
 
 G_BEGIN_DECLS
 
-gboolean nip55l_nip5f_start(const gchar *socket_path, GError **error);
-void     nip55l_nip5f_stop(void);
+NOSTR_NIP55L_SERVICE_API gboolean nip55l_nip5f_start(const gchar *socket_path, GError **error);
+NOSTR_NIP55L_SERVICE_API void     nip55l_nip5f_stop(void);
 
 /* Serve a connection a transport accepted and authenticated itself (the
  * grotto-daemon TCP lane, after its token check, handshake done).
  * No kernel credentials: the caller is unidentified, so it is prompted every
  * time and nothing is remembered for it. Takes ownership of @fd when it
  * returns TRUE. */
-gboolean nip55l_nip5f_serve_unidentified(int fd);
+NOSTR_NIP55L_SERVICE_API gboolean nip55l_nip5f_serve_unidentified(int fd);
 
 G_END_DECLS
 

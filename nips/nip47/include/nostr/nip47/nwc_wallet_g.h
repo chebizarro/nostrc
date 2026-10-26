@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_G_H
 #define NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_G_H
 
+#include <nostr/nip47/glib-export.h>
+
 #include <glib.h>
 #include "nwc_wallet.h"
 
@@ -28,7 +30,7 @@ G_BEGIN_DECLS
  *
  * Returns: (transfer full): A new session handle, or %NULL on error
  */
-gpointer nostr_nwc_wallet_session_init_g(const gchar *client_pub_hex,
+NOSTR_NIP47_GLIB_API gpointer nostr_nwc_wallet_session_init_g(const gchar *client_pub_hex,
                                          const gchar **wallet_supported, gsize wallet_n,
                                          const gchar **client_supported, gsize client_n,
                                          GError **error);
@@ -39,7 +41,7 @@ gpointer nostr_nwc_wallet_session_init_g(const gchar *client_pub_hex,
  *
  * Frees all resources associated with the session.
  */
-void nostr_nwc_wallet_session_free_g(gpointer session);
+NOSTR_NIP47_GLIB_API void nostr_nwc_wallet_session_free_g(gpointer session);
 
 /* Response Building */
 
@@ -56,7 +58,7 @@ void nostr_nwc_wallet_session_free_g(gpointer session);
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean nostr_nwc_wallet_build_response_g(gpointer session,
+NOSTR_NIP47_GLIB_API gboolean nostr_nwc_wallet_build_response_g(gpointer session,
                                            const gchar *req_event_id,
                                            const gchar *result_type,
                                            const gchar *result_json,
@@ -76,7 +78,7 @@ gboolean nostr_nwc_wallet_build_response_g(gpointer session,
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean nostr_nwc_wallet_build_error_response_g(gpointer session,
+NOSTR_NIP47_GLIB_API gboolean nostr_nwc_wallet_build_error_response_g(gpointer session,
                                                   const gchar *req_event_id,
                                                   const gchar *error_code,
                                                   const gchar *error_message,
@@ -98,7 +100,7 @@ gboolean nostr_nwc_wallet_build_error_response_g(gpointer session,
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean nostr_nwc_wallet_encrypt_g(gpointer session,
+NOSTR_NIP47_GLIB_API gboolean nostr_nwc_wallet_encrypt_g(gpointer session,
                                     const gchar *wallet_sk_hex,
                                     const gchar *client_pub_hex,
                                     const gchar *plaintext,
@@ -118,7 +120,7 @@ gboolean nostr_nwc_wallet_encrypt_g(gpointer session,
  *
  * Returns: %TRUE on success, %FALSE on error
  */
-gboolean nostr_nwc_wallet_decrypt_g(gpointer session,
+NOSTR_NIP47_GLIB_API gboolean nostr_nwc_wallet_decrypt_g(gpointer session,
                                     const gchar *wallet_sk_hex,
                                     const gchar *client_pub_hex,
                                     const gchar *ciphertext,
@@ -135,7 +137,7 @@ gboolean nostr_nwc_wallet_decrypt_g(gpointer session,
  *
  * Returns: "nip44_v2" or "nip04", or %NULL if session is invalid
  */
-const gchar *nostr_nwc_wallet_get_encryption_g(gpointer session);
+NOSTR_NIP47_GLIB_API const gchar *nostr_nwc_wallet_get_encryption_g(gpointer session);
 
 /**
  * nostr_nwc_wallet_get_client_pub_g:
@@ -145,7 +147,7 @@ const gchar *nostr_nwc_wallet_get_encryption_g(gpointer session);
  *
  * Returns: The client public key in hex, or %NULL if session is invalid
  */
-const gchar *nostr_nwc_wallet_get_client_pub_g(gpointer session);
+NOSTR_NIP47_GLIB_API const gchar *nostr_nwc_wallet_get_client_pub_g(gpointer session);
 
 G_END_DECLS
 #endif /* NIPS_NIP47_NOSTR_NIP47_NWC_WALLET_G_H */

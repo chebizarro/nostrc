@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 cmake_minimum_required(VERSION 3.16)
 project(nip77)
 
@@ -15,6 +17,8 @@ add_library(nostr_nip77 STATIC
   src/neg_message.c
   src/neg_session.c
 )
+nostrc_library_visibility(nostr_nip77 NOSTR_NIP77_API
+  nostr/nip77/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip77")
 
 target_compile_features(nostr_nip77 PUBLIC c_std_99)
 target_compile_definitions(nostr_nip77 PRIVATE NIP77_BUILD=1)
@@ -49,6 +53,8 @@ if(WITH_NIP77_GLIB AND NOSTR_HAVE_GLIB)
   add_library(nostr_nip77_glib STATIC
     src/negentropy-glib.c
   )
+  nostrc_library_visibility(nostr_nip77_glib NOSTR_NIP77_GLIB_API
+    nostr/nip77/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip77")
   target_link_libraries(nostr_nip77_glib PUBLIC nostr_nip77)
   target_include_directories(nostr_nip77_glib PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -62,6 +68,8 @@ if(WITH_NIP77_NOSTRDB)
     add_library(nostr_nip77_ndb STATIC
       backends/nostrdb/nostr-negentropy-ndb.c
     )
+    nostrc_library_visibility(nostr_nip77_ndb NOSTR_NIP77_NDB_API
+      nostr/nip77/ndb-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip77")
     target_compile_definitions(nostr_nip77_ndb PRIVATE NIP77_HAVE_NOSTRDB)
     target_link_libraries(nostr_nip77_ndb PRIVATE nostr_nip77 nostrdb)
     # Inherit nostrdb's public include directories so we can include <nostrdb.h>

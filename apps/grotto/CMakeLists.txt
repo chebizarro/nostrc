@@ -347,7 +347,7 @@ if (UNIX AND NOT APPLE)
 endif()
 
 # The daemon and bunker require the real approval gate and Unix socket transport.
-if(TARGET nostr_nip55l_glib AND TARGET nostr_nip5f_core)
+if(TARGET nostr_nip55l_service AND TARGET nostr_nip5f_core)
 option(ENABLE_TCP_IPC "Enable TCP IPC backend in grotto-daemon" OFF)
 
 # Control1 embeds this exact canonical XML; updates trigger reconfiguration.
@@ -368,7 +368,7 @@ add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_cli
     src/key-migration-event.c daemon/session-lock.c)
 target_include_directories(grotto_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/daemon
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib ${CMAKE_SOURCE_DIR})
-target_link_libraries(grotto_control_core PUBLIC nostr_nip55l_glib grotto_bunker_core)
+target_link_libraries(grotto_control_core PUBLIC nostr_nip55l_service grotto_bunker_core)
 target_compile_options(grotto_control_core PRIVATE -Wall -Wextra -Werror)
 if (TARGET nostr_nip49_glib)
   target_compile_definitions(grotto_control_core PRIVATE GROTTO_HAVE_NIP49_EXPORT=1)
@@ -383,7 +383,7 @@ target_compile_definitions(grotto-daemon PRIVATE
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 target_include_directories(grotto-daemon PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
-target_link_libraries(grotto-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core nip04 PkgConfig::GLIB ${NSYNC_LIB})
+target_link_libraries(grotto-daemon PRIVATE nostr_nip55l_service nostr_nip5f_core nip04 PkgConfig::GLIB ${NSYNC_LIB})
 
 # NIP-46 bunker mode (--bunker). bunker_service.c and its GTK-free closure
 # (settings, accounts, secret store, sessions, rate limiter, history) build
@@ -401,7 +401,7 @@ target_include_directories(grotto_bunker_core
           ${CMAKE_SOURCE_DIR}/nips/nip19/include ${CMAKE_SOURCE_DIR}/libnostr/include
           ${CMAKE_SOURCE_DIR}/nostr-gobject/include ${CMAKE_SOURCE_DIR})
 target_link_libraries(grotto_bunker_core PUBLIC
-  PkgConfig::GLIB PkgConfig::JSON_GLIB nostr_gobject nostr_nip55l_core nostr_nip55l_glib)
+  PkgConfig::GLIB PkgConfig::JSON_GLIB nostr_gobject nostr_nip55l_core nostr_nip55l_service)
 target_include_directories(grotto_bunker_core PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
 if (TARGET nostr_nip46_core)
   target_link_libraries(grotto_bunker_core PUBLIC nostr_nip46_core)

@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 cmake_minimum_required(VERSION 3.22)
 project(nip44)
 
@@ -13,6 +15,8 @@ set(NIP44_CORE_SRC
 )
 
 add_library(nostr_nip44_core STATIC ${NIP44_CORE_SRC})
+nostrc_library_visibility(nostr_nip44_core NOSTR_NIP44_API
+  nostr/nip44/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip44")
 target_include_directories(nostr_nip44_core PUBLIC ${NIP44_INC})
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
@@ -24,6 +28,8 @@ pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
 if (GLIB_FOUND)
   set(NIP44_GLIB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip44_g.c)
   add_library(nostr_nip44_glib ${NIP44_GLIB_SRC})
+  nostrc_library_visibility(nostr_nip44_glib NOSTR_NIP44_GLIB_API
+    nostr/nip44/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip44")
   target_include_directories(nostr_nip44_glib PUBLIC ${NIP44_INC})
   target_link_libraries(nostr_nip44_glib PUBLIC nostr nostr_nip44_core PkgConfig::GLIB)
 endif()

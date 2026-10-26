@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 project(nip47)
 
 set(NIP47_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -11,6 +13,8 @@ set(NIP47_CORE_SRC
 )
 
 add_library(nostr_nip47_core ${NIP47_CORE_SRC})
+nostrc_library_visibility(nostr_nip47_core NOSTR_NIP47_API
+  nostr/nip47/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip47")
 target_include_directories(nostr_nip47_core PUBLIC ${NIP47_INC})
 # Link to core nostr primitives, JSON interface, and encryption helpers
 target_include_directories(nostr_nip47_core PUBLIC
@@ -22,6 +26,8 @@ target_link_libraries(nostr_nip47_core PUBLIC nostr nostr_json nostr_nip44_core 
 # so headless builds don't need libglib2.0-dev)
 if (NOSTR_WITH_GLIB AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nwc_client_g.c)
   add_library(nostr_nip47_glib ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nwc_client_g.c ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nwc_wallet_g.c)
+  nostrc_library_visibility(nostr_nip47_glib NOSTR_NIP47_GLIB_API
+    nostr/nip47/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip47")
   target_include_directories(nostr_nip47_glib PUBLIC ${NIP47_INC})
   if (TARGET nostr_glib)
     target_link_libraries(nostr_nip47_glib PUBLIC nostr_glib nostr_nip47_core)

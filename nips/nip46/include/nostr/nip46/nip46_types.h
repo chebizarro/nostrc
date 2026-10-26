@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP46_TYPES_H
 #define NOSTR_NIP46_TYPES_H
 
+#include <nostr/nip46/export.h>
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -50,37 +52,37 @@ typedef enum {
  *   ... use ref ...
  *   nostr_nip46_session_unref(ref);
  */
-void nostr_nip46_session_free(NostrNip46Session *s);
-NostrNip46Session *nostr_nip46_session_ref(NostrNip46Session *s);
-void nostr_nip46_session_unref(NostrNip46Session *s);
+NOSTR_NIP46_API void nostr_nip46_session_free(NostrNip46Session *s);
+NOSTR_NIP46_API NostrNip46Session *nostr_nip46_session_ref(NostrNip46Session *s);
+NOSTR_NIP46_API void nostr_nip46_session_unref(NostrNip46Session *s);
 
 /* Introspection for tests and simple clients (returned strings/arrays are malloc'd) */
-int  nostr_nip46_session_get_remote_pubkey(const NostrNip46Session *s, char **out_hex);
-int  nostr_nip46_session_get_client_pubkey(const NostrNip46Session *s, char **out_hex);
+NOSTR_NIP46_API int  nostr_nip46_session_get_remote_pubkey(const NostrNip46Session *s, char **out_hex);
+NOSTR_NIP46_API int  nostr_nip46_session_get_client_pubkey(const NostrNip46Session *s, char **out_hex);
 /* Transport private key and URI authorization token are intentionally distinct.
  * Both returned values are malloc-owned by the caller. */
-int  nostr_nip46_session_get_secret(const NostrNip46Session *s, char **out_secret);
-int  nostr_nip46_session_get_connect_token(const NostrNip46Session *s, char **out_token);
-int  nostr_nip46_session_get_relays(const NostrNip46Session *s, char ***out_relays, size_t *out_n);
-int  nostr_nip46_session_set_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays);
-int  nostr_nip46_session_take_last_reply_json(NostrNip46Session *s, char **out_json);
+NOSTR_NIP46_API int  nostr_nip46_session_get_secret(const NostrNip46Session *s, char **out_secret);
+NOSTR_NIP46_API int  nostr_nip46_session_get_connect_token(const NostrNip46Session *s, char **out_token);
+NOSTR_NIP46_API int  nostr_nip46_session_get_relays(const NostrNip46Session *s, char ***out_relays, size_t *out_n);
+NOSTR_NIP46_API int  nostr_nip46_session_set_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays);
+NOSTR_NIP46_API int  nostr_nip46_session_take_last_reply_json(NostrNip46Session *s, char **out_json);
 
 /* Configure/query the negotiated transport for this peer session. The setter
  * rejects unknown values. Call it before starting transport or processing
  * peer ciphertext. */
-int nostr_nip46_session_set_transport_mode(
+NOSTR_NIP46_API int nostr_nip46_session_set_transport_mode(
     NostrNip46Session *s, NostrNip46TransportMode mode);
-NostrNip46TransportMode nostr_nip46_session_get_transport_mode(
+NOSTR_NIP46_API NostrNip46TransportMode nostr_nip46_session_get_transport_mode(
     const NostrNip46Session *s);
-const char *nostr_nip46_transport_mode_name(NostrNip46TransportMode mode);
+NOSTR_NIP46_API const char *nostr_nip46_transport_mode_name(NostrNip46TransportMode mode);
 
 /* Unified local transport crypto. Both persistent RPC and bunker request/reply
  * paths use these helpers, so request and response always share the session's
  * configured mode. Returned strings are malloc-allocated. */
-int nostr_nip46_transport_encrypt(
+NOSTR_NIP46_API int nostr_nip46_transport_encrypt(
     NostrNip46Session *s, const char *peer_pubkey_hex,
     const char *plaintext, char **out_ciphertext);
-int nostr_nip46_transport_decrypt(
+NOSTR_NIP46_API int nostr_nip46_transport_decrypt(
     NostrNip46Session *s, const char *peer_pubkey_hex,
     const char *ciphertext, char **out_plaintext);
 

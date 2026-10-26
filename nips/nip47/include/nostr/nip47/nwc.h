@@ -1,6 +1,8 @@
 #ifndef NIPS_NIP47_NOSTR_NIP47_NWC_H
 #define NIPS_NIP47_NOSTR_NIP47_NWC_H
 
+#include <nostr/nip47/export.h>
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -36,9 +38,9 @@ typedef struct {
   char   *lud16;              /* optional */
 } NostrNwcConnection;
 
-int nostr_nwc_uri_parse(const char *uri, NostrNwcConnection *out);
-int nostr_nwc_uri_build(const NostrNwcConnection *in, char **out_uri);
-void nostr_nwc_connection_clear(NostrNwcConnection *c);
+NOSTR_NIP47_API int nostr_nwc_uri_parse(const char *uri, NostrNwcConnection *out);
+NOSTR_NIP47_API int nostr_nwc_uri_build(const NostrNwcConnection *in, char **out_uri);
+NOSTR_NIP47_API void nostr_nwc_connection_clear(NostrNwcConnection *c);
 
 #ifdef __cplusplus
 }

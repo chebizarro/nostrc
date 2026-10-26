@@ -1,6 +1,8 @@
 #ifndef NOSTR_NIP46_URI_H
 #define NOSTR_NIP46_URI_H
 
+#include <nostr/nip46/export.h>
+
 #include <stddef.h>
 #ifdef __cplusplus
 extern "C" {
@@ -22,8 +24,8 @@ typedef struct {
     char *name; char *url; char *image; /* optional */
 } NostrNip46ConnectURI;
 
-int nostr_nip46_uri_parse_bunker(const char *uri, NostrNip46BunkerURI *out);
-int nostr_nip46_uri_parse_connect(const char *uri, NostrNip46ConnectURI *out);
+NOSTR_NIP46_API int nostr_nip46_uri_parse_bunker(const char *uri, NostrNip46BunkerURI *out);
+NOSTR_NIP46_API int nostr_nip46_uri_parse_connect(const char *uri, NostrNip46ConnectURI *out);
 
 /* nostrc-z1fb Phase 1: build a nostrconnect:// URI from a caller-populated
  * NostrNip46ConnectURI. Percent-encodes every value (relay URLs, secret,
@@ -34,10 +36,10 @@ int nostr_nip46_uri_parse_connect(const char *uri, NostrNip46ConnectURI *out);
  * The URI is NEVER logged automatically because it embeds the connect
  * secret; treat it as sensitive at every callsite.
  * Returns 0 on success, -1 on error. */
-int nostr_nip46_uri_build_connect(const NostrNip46ConnectURI *in, char **out_uri);
+NOSTR_NIP46_API int nostr_nip46_uri_build_connect(const NostrNip46ConnectURI *in, char **out_uri);
 
-void nostr_nip46_uri_bunker_free(NostrNip46BunkerURI *u);
-void nostr_nip46_uri_connect_free(NostrNip46ConnectURI *u);
+NOSTR_NIP46_API void nostr_nip46_uri_bunker_free(NostrNip46BunkerURI *u);
+NOSTR_NIP46_API void nostr_nip46_uri_connect_free(NostrNip46ConnectURI *u);
 
 #ifdef __cplusplus
 }

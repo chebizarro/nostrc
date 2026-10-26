@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 cmake_minimum_required(VERSION 3.22)
 
 set(NIP5F_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -17,6 +19,8 @@ set(NIP5F_GLIB_SRC
 )
 
 add_library(nostr_nip5f_core ${NIP5F_CORE_SRC})
+nostrc_library_visibility(nostr_nip5f_core NOSTR_NIP5F_API
+  nostr/nip5f/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip5f")
 target_include_directories(nostr_nip5f_core PUBLIC ${NIP5F_INC}
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_BINARY_DIR}/libnostr/generated
@@ -38,6 +42,8 @@ endif()
 
 if (GIO_FOUND)
   add_library(nostr_nip5f_glib ${NIP5F_GLIB_SRC})
+  nostrc_library_visibility(nostr_nip5f_glib NOSTR_NIP5F_GLIB_API
+    nostr/nip5f/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip5f")
   target_include_directories(nostr_nip5f_glib PUBLIC ${NIP5F_INC})
   # Add include directories from pkg-config
   if (GIO_INCLUDE_DIRS)

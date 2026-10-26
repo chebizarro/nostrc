@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+
 cmake_minimum_required(VERSION 3.22)
 
 set(NIP55L_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -14,6 +16,8 @@ set(NIP55L_CORE_SRC
 )
 
 add_library(nostr_nip55l_core ${NIP55L_CORE_SRC})
+nostrc_library_visibility(nostr_nip55l_core NOSTR_NIP55L_API
+  nostr/nip55l/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip55l")
 
 # nostrc-o8mx: real SONAMEs for the shared build (libnostr_nip55l_core.so.0
 # -> .so.0.4.0, same for _glib), like libnip19/libnip34 (nostrc-4c0o). The
@@ -141,49 +145,67 @@ if (GIO_FOUND AND ENABLE_NIP55L)
     COMMAND ${GDBUS_CODEGEN}
             --interface-prefix org.nostr.
             --c-namespace Nostr
+            --symbol-decorator NOSTR_NIP55L_GLIB_API
+            --symbol-decorator-header nostr/nip55l/glib-export.h
             --generate-c-code ${GENERATED_DIR}/signer_dbus
             ${DBUS_XML}
     DEPENDS ${DBUS_XML}
     VERBATIM)
 
-  add_library(nostr_nip55l_glib
+  # D-Bus bindings are the GLib library's public surface. The approval gate,
+  # caller resolver and permission evaluator stay private to daemon consumers.
+  add_library(nostr_nip55l_glib ${GENERATED_DBUS_C})
+  nostrc_library_visibility(nostr_nip55l_glib NOSTR_NIP55L_GLIB_API
+    nostr/nip55l/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip55l")
+  target_link_libraries(nostr_nip55l_glib PUBLIC nostr_nip55l_core PkgConfig::GIO)
+  target_compile_options(nostr_nip55l_glib PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_include_directories(nostr_nip55l_glib PUBLIC
+    $<BUILD_INTERFACE:${GENERATED_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip55l>)
+  set_target_properties(nostr_nip55l_glib PROPERTIES
+    VERSION ${NIP55L_VERSION} SOVERSION ${NIP55L_SOVERSION})
+  install(FILES ${GENERATED_DBUS_H} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip55l)
+
+  add_library(nostr_nip55l_service STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_service_g.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_approval_service.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_permissions.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_caller.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_nip5f.c
-    ${GENERATED_DBUS_C}
   )
+  nostrc_library_visibility(nostr_nip55l_service NOSTR_NIP55L_SERVICE_API
+    nostr/nip55l/service-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip55l")
+  target_link_libraries(nostr_nip55l_service PUBLIC nostr_nip55l_glib)
   # The NIP-5F socket, gated like the D-Bus methods (nostrc-q23h).
   if (TARGET nostr_nip5f_core)
-    target_link_libraries(nostr_nip55l_glib PRIVATE nostr_nip5f_core)
-    target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_HAVE_NIP5F)
+    target_link_libraries(nostr_nip55l_service PRIVATE nostr_nip5f_core)
+    target_compile_definitions(nostr_nip55l_service PRIVATE NIP55L_HAVE_NIP5F)
   endif()
   # Generated gdbus code may trip -Wpedantic in some GCC versions; don't fail build on it
   if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(${GENERATED_DBUS_C} PROPERTIES COMPILE_OPTIONS "-Wno-error=pedantic")
   endif()
-  target_include_directories(nostr_nip55l_glib
+  target_include_directories(nostr_nip55l_service
     PUBLIC
       ${NIP55L_INC}
       ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
       ${GENERATED_DIR}
   )
-  set_target_properties(nostr_nip55l_glib PROPERTIES
+  set_target_properties(nostr_nip55l_service PROPERTIES
     VERSION ${NIP55L_VERSION} SOVERSION ${NIP55L_SOVERSION})
   # Fail-fast hygiene for GLib signer target
-  target_compile_options(nostr_nip55l_glib PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC})
-  target_compile_definitions(nostr_nip55l_glib PRIVATE -DNIP55L_HAVE_GIO)
-  target_link_libraries(nostr_nip55l_glib PUBLIC nostr_nip55l_core PkgConfig::GIO)
+  target_compile_options(nostr_nip55l_service PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_include_directories(nostr_nip55l_service PUBLIC ${NIP55L_INC})
+  target_compile_definitions(nostr_nip55l_service PRIVATE -DNIP55L_HAVE_GIO)
+  target_link_libraries(nostr_nip55l_service PUBLIC nostr_nip55l_core PkgConfig::GIO)
 
   # --- Caller identity and trust (nip55l 0.4.0: nostrc-phk4, nostrc-1e31) ---
   # ProcessFD from GetConnectionCredentials (pidfd) needs GUnixFDList.
   pkg_check_modules(NIP55L_GIOUNIX QUIET IMPORTED_TARGET gio-unix-2.0)
   if (NIP55L_GIOUNIX_FOUND)
-    target_link_libraries(nostr_nip55l_glib PRIVATE PkgConfig::NIP55L_GIOUNIX)
-    target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_HAVE_GIO_UNIX)
+    target_link_libraries(nostr_nip55l_service PRIVATE PkgConfig::NIP55L_GIOUNIX)
+    target_compile_definitions(nostr_nip55l_service PRIVATE NIP55L_HAVE_GIO_UNIX)
   endif()
   include(GNUInstallDirs)
   # Executables that may name the web origin they act for (the browser
@@ -210,7 +232,7 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   set(NIP55L_DEFAULT_GRANTS
       "get_public_key,get_relays@${_nip55l_readers}+nip44_decrypt@${_nip55l_bin}/nostr-homectl"
       CACHE STRING "Built-in grants for first-party headless services")
-  target_compile_definitions(nostr_nip55l_glib PRIVATE
+  target_compile_definitions(nostr_nip55l_service PRIVATE
     "NIP55L_ORIGIN_BRIDGE_PATHS=\"${NIP55L_ORIGIN_BRIDGE_PATHS}\""
     "NIP55L_APPROVER_PATHS=\"${NIP55L_APPROVAL_UI_PATHS}\""
     "NIP55L_APPROVER_FLATPAK_ID=\"${NIP55L_APPROVAL_UI_FLATPAK_ID}\""
@@ -224,11 +246,11 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   endif()
   option(NIP55L_TEST_TRUST_ENV "Honour NOSTR_SIGNER_TEST_* trust overrides (test builds)" ${NIP55L_TEST_TRUST_ENV})
   if (NIP55L_TEST_TRUST_ENV)
-    target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_TEST_TRUST_ENV=1)
+    target_compile_definitions(nostr_nip55l_service PRIVATE NIP55L_TEST_TRUST_ENV=1)
     target_compile_definitions(nostr_nip55l_core PRIVATE NIP55L_TEST_TRUST_ENV=1)
   endif()
   # Ensure NIP-04 secure functions are available to executables linking the GLib target
-  target_link_libraries(nostr_nip55l_glib PUBLIC nip04)
+  target_link_libraries(nostr_nip55l_service PUBLIC nip04)
 
   # The interface definition, for clients' gdbus-codegen / introspection.
   # This file is the only copy in the tree (nostrc-56id).
@@ -241,13 +263,15 @@ if (GIO_FOUND AND ENABLE_NIP55L)
     DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/grotto/private/nip55l)
 
   add_executable(nostr-signer-daemon ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/daemon_main.c)
-  target_link_libraries(nostr-signer-daemon PRIVATE nostr_nip55l_glib PkgConfig::GIO)
+  target_link_libraries(nostr-signer-daemon PRIVATE nostr_nip55l_service PkgConfig::GIO)
 
   # CLI tool
   add_executable(nostr-signer-cli ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/signer_cli.c)
   target_link_libraries(nostr-signer-cli PRIVATE PkgConfig::GIO)
 
   install(TARGETS nostr_nip55l_glib nostr-signer-daemon nostr-signer-cli)
+  install(TARGETS nostr_nip55l_service
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/grotto/private/nip55l)
 
   # D-Bus activation for org.nostr.Signer is owned by apps/grotto
   # (its daemon exports this same GLib service). Installing a second
@@ -326,7 +350,7 @@ if (BUILD_TESTING)
     target_include_directories(test_nip55l_keychain_migration PRIVATE
       $<TARGET_PROPERTY:nostr_nip55l_core,INCLUDE_DIRECTORIES>)
     target_compile_definitions(test_nip55l_keychain_migration PRIVATE
-      NIP55L_HAVE_KEYCHAIN NIP55L_KEYCHAIN_TEST_HOOKS)
+      NOSTR_NIP55L_CORE_STATIC_DEFINE NIP55L_HAVE_KEYCHAIN NIP55L_KEYCHAIN_TEST_HOOKS)
     target_link_libraries(test_nip55l_keychain_migration PRIVATE
       nostr nip04 nip06 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
       ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
@@ -359,7 +383,7 @@ if (BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_dbus_contract.c)
     include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestBus.cmake)
     target_link_libraries(test_nip55l_dbus_contract PRIVATE
-      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO nostr_nip55l_glib nostrc-test-bus)
+      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO nostr_nip55l_service nostrc-test-bus)
     # signer_caller.h: the test derives its own principal the daemon's way.
     target_include_directories(test_nip55l_dbus_contract PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/glib)
@@ -385,6 +409,7 @@ if (BUILD_TESTING)
     target_link_libraries(test_nip55l_cache_concurrency PRIVATE
       nostr nip04 nip06 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
       PkgConfig::GIO Threads::Threads)
+    target_compile_definitions(test_nip55l_cache_concurrency PRIVATE NOSTR_NIP55L_CORE_STATIC_DEFINE)
     target_compile_options(test_nip55l_cache_concurrency PRIVATE -Wall -Wextra -Werror)
     add_test(NAME nip55l_cache_concurrency COMMAND test_nip55l_cache_concurrency)
     set_tests_properties(nip55l_cache_concurrency PROPERTIES
@@ -392,14 +417,14 @@ if (BUILD_TESTING)
 
     add_executable(test_nip55l_approval_service
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_approval_service.c)
-    target_link_libraries(test_nip55l_approval_service PRIVATE nostr_nip55l_glib)
+    target_link_libraries(test_nip55l_approval_service PRIVATE nostr_nip55l_service)
     target_include_directories(test_nip55l_approval_service PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/glib)
     target_compile_options(test_nip55l_approval_service PRIVATE -Wall -Wextra -Werror)
     if (NIP55L_TEST_TRUST_ENV)
       target_compile_definitions(test_nip55l_approval_service PRIVATE NIP55L_TEST_TRUST_ENV)
     endif()
     add_executable(test_signer_permissions ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_permissions.c)
-    target_link_libraries(test_signer_permissions PRIVATE nostr_nip55l_glib)
+    target_link_libraries(test_signer_permissions PRIVATE nostr_nip55l_service)
     target_include_directories(test_signer_permissions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/glib)
     target_compile_options(test_signer_permissions PRIVATE -Wall -Wextra -Werror)
     if (NIP55L_TEST_TRUST_ENV)
