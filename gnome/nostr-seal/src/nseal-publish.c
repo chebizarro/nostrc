@@ -11,7 +11,10 @@
 #include <unistd.h>
 
 #ifdef NSEAL_HAVE_PUBLISH
-#include "ns-blossom.h"
+#include <nostr-gobject-1.0/gn-blossom-client.h>
+#include <nostr/bud02/auth.h>
+#include "nostr-event.h"
+#include "ns-kind.h"
 #include "ns-config.h"
 #include "ns-event.h"
 #include "ns-net.h"
@@ -78,6 +81,75 @@ static const char *upstream_name(NostrPublishUpstream u) {
   case NOSTR_PUBLISH_UPSTREAM_DIRECT_ONLY: return "direct_only";
   default: return "session_relay_or_direct";
   }
+}
+
+static void upload_done(GObject *source G_GNUC_UNUSED, GAsyncResult *result, gpointer data) {
+  *(GAsyncResult **)data = g_object_ref(result);
+}
+
+gboolean nseal_publish_upload(const char *const *servers, NostrPublishSigner *signer,
+                              const char *pubkey, GBytes *bytes, const char *hash,
+                              gboolean loopback_http, char **out_url, GError **error) {
+  if (!servers || !servers[0]) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_NO_SERVERS, "no Blossom servers configured");
+    return FALSE;
+  }
+  /* CLI and GTK worker callers drive only this upload's private context. */
+  g_autoptr(GMainContext) context = g_main_context_new();
+  g_main_context_push_thread_default(context);
+  g_autoptr(GString) failures = g_string_new(NULL);
+  gboolean ok = FALSE;
+  for (guint i = 0; servers[i] && !ok; i++) {
+    if (!ns_net_blossom_server_ok(servers[i], loopback_http)) {
+      g_string_append_printf(failures, "\n  %s: refused (https:// only)", servers[i]);
+      continue;
+    }
+    NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+    if (!event) {
+      g_string_append_printf(failures, "\n  %s: cannot create upload auth", servers[i]);
+      continue;
+    }
+    nostr_event_set_pubkey(event, pubkey);
+    char expected_id[65];
+    gboolean valid = nostr_event_compute_id(event, expected_id) == NOSTR_EVENT_VALIDATION_OK;
+    char *raw = nostr_event_serialize_compact(event);
+    g_autoptr(GError) local = NULL;
+    g_autofree char *signed_json = nostr_publish_signer_sign_event_json(signer, raw, NULL, &local);
+    free(raw);
+    nostr_event_free(event);
+    NostrEvent *signed_event = nostr_event_new();
+    nostr_bud02_validate_options_t auth_opts = { .expected_sha256 = hash, .expected_pubkey = pubkey };
+    valid = valid && signed_json &&
+      nostr_event_deserialize_signed(signed_event, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+      g_strcmp0(nostr_event_get_id(signed_event), expected_id) == 0 &&
+      nostr_bud02_validate_auth_event(signed_event, NOSTR_BUD02_ACTION_UPLOAD, &auth_opts) == NOSTR_BUD02_OK;
+    nostr_event_free(signed_event);
+    if (!valid) {
+      g_string_append_printf(failures, "\n  %s: upload signing failed: %s", servers[i],
+                             local ? local->message : "signer returned a different or invalid event");
+      continue;
+    }
+    g_autoptr(GnBlossomClient) client = gn_blossom_client_new(servers[i]);
+    gn_blossom_client_set_network(client, NULL, loopback_http ? GN_BLOSSOM_NETWORK_LOCAL_TEST
+                                                            : GN_BLOSSOM_NETWORK_DEFAULT);
+    gn_blossom_client_set_limits(client, 0, 120, "nostr-share/" NS_VERSION);
+    GAsyncResult *result = NULL;
+    gn_blossom_client_upload_async(client, bytes, hash, NSEAL_MIME_TYPE, signed_json, NULL,
+                                   upload_done, &result);
+    while (!result) g_main_context_iteration(context, TRUE);
+    g_autofree char *url = gn_blossom_client_upload_finish(client, result, &local);
+    g_object_unref(result);
+    if (!url) {
+      g_string_append_printf(failures, "\n  %s: %s", servers[i], local ? local->message : "upload failed");
+      continue;
+    }
+    *out_url = g_str_has_prefix(url, "https://") ? g_strdup(url)
+                                               : ns_blossom_blob_url(servers[i], hash, NSEAL_MIME_TYPE);
+    ok = TRUE;
+  }
+  g_main_context_pop_thread_default(context);
+  if (!ok) g_set_error(error, NS_ERROR, NS_ERROR_UPLOAD, "Blossom upload failed:%s", failures->str);
+  return ok;
 }
 
 gboolean nseal_publish_file(const char *path, const NsealPublishOptions *opts, GError **error) {
@@ -214,13 +286,11 @@ gboolean nseal_publish_file(const char *path, const NsealPublishOptions *opts, G
   {
     g_printerr("uploading %" G_GSIZE_FORMAT " bytes (approve the Blossom auth in your signer)…\n",
                len);
-    g_autofree char *server = NULL;
     /* Account-signed BUD-02 auth; sealed blobs are already ciphertext so a
      * throwaway key buys nothing here.  Plaintext http:// Blossom servers
      * (even loopback) are refused: the URL ends up in a public kind-1063. */
-    if (!ns_blossom_upload((const char *const *)servers, signer, pubkey_hex,
-                           NS_BLOSSOM_AUTH_ACCOUNT, FALSE, NSEAL_MIME_TYPE,
-                           bytes, sha, &url, &server, NULL, error))
+    if (!nseal_publish_upload((const char *const *)servers, signer, pubkey_hex,
+                              bytes, sha, FALSE, &url, error))
       goto out;
     g_printerr("uploaded → %s\n", url);
 

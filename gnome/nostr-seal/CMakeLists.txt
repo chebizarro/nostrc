@@ -12,8 +12,8 @@
 #     nip49 shared library is unversioned and not shipped). NIP-19 links the
 #     shared libnip19.so.0 from libnostr-nips0 (nostrc-9rvm).
 #   * --publish (nostrc-hby8) reuses nostr-share's upload path
-#     (nostr-share-core: Blossom via libhanami, NIP-65/BUD-03 discovery,
-#     libnostr-publish) when ENABLE_NOSTR_SHARE is on; otherwise the
+#     (nostr-share-core: NIP-65/BUD-03 discovery, libnostr-publish) with
+#     GnBlossomClient + BUD-02 when ENABLE_NOSTR_SHARE is on; otherwise the
 #     command reports that it was built without publishing.
 cmake_minimum_required(VERSION 3.20)
 
@@ -66,7 +66,7 @@ set_property(TARGET nostr_seal_core PROPERTY POSITION_INDEPENDENT_CODE ON)
 # directory) can still provide nostr-share-core here.
 if(ENABLE_NOSTR_SHARE)
   target_compile_definitions(nostr_seal_core PUBLIC NSEAL_HAVE_PUBLISH=1)
-  target_link_libraries(nostr_seal_core PUBLIC nostr-share-core)
+  target_link_libraries(nostr_seal_core PUBLIC nostr-share-core nostr_gobject nostrc::bud02)
   message(STATUS "nostr-seal: --publish enabled (nostr-share-core)")
 else()
   message(STATUS "nostr-seal: --publish disabled (needs ENABLE_NOSTR_SHARE)")
@@ -110,6 +110,9 @@ if(BUILD_TESTING)
   target_compile_definitions(test-nostr-seal-publish PRIVATE
     "NSEAL_CLI_PATH=\"$<TARGET_FILE:nostr-seal>\"")
   add_dependencies(test-nostr-seal-publish nostr-seal)
+  if(ENABLE_NOSTR_SHARE)
+    target_sources(test-nostr-seal-publish PRIVATE tests/test-nseal-upload.c)
+  endif()
   add_test(NAME nostr_seal_publish COMMAND test-nostr-seal-publish)
   set_tests_properties(nostr_seal_publish PROPERTIES LABELS "nostr-seal" TIMEOUT 60)
 

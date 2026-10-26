@@ -5,6 +5,7 @@
 #include <glib/gstdio.h>
 #ifdef NSEAL_HAVE_PUBLISH
 #include <json-glib/json-glib.h>
+void nseal_test_add_upload_cases(void);
 #endif
 #include <string.h>
 
@@ -148,6 +149,7 @@ int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
 #ifdef NSEAL_HAVE_PUBLISH
   g_assert_true(nseal_publish_available());
+  nseal_test_add_upload_cases();
   g_test_add_func("/nseal/publish/event-shape", test_event_shape);
   g_test_add_func("/nseal/publish/cli-dry-run", test_cli_dry_run);
 #else
