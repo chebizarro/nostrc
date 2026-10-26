@@ -10,6 +10,7 @@ project('marmot-gobject', 'c',
 )
 
 cc = meson.get_compiler('c')
+fs = import('fs')
 export_conf = configuration_data()
 export_conf.set('API', 'MARMOT_GOBJECT_API')
 export_conf.set('STATIC', get_option('default_library') == 'static' ? 1 : 0)
@@ -25,31 +26,35 @@ gobject_dep = dependency('gobject-2.0', version: '>= 2.70')
 gio_dep     = dependency('gio-2.0',     version: '>= 2.70')
 
 # ── libmarmot ────────────────────────────────────────────────────────
-# When built as part of the nostrc tree, the parent project provides
-# marmot_dep via declare_dependency(). Otherwise, fall back to pkg-config.
+# When built as part of the nostrc tree, the parent provides marmot_dep.
+# Standalone Meson builds bind to the selected CMake tree, never a system
+# libmarmot with the same name. Its build-tree pkg-config export contains
+# exact target artifact paths and the CMake target's static link closure.
 cmake_build_dir = get_option('cmake_build_dir')
 if cmake_build_dir == ''
   cmake_build_dir = meson.current_source_dir() / '..' / 'build'
 endif
 
 if not is_variable('marmot_dep')
-  # Try pkg-config first
-  marmot_dep = dependency('marmot', required: false)
-
-  if not marmot_dep.found()
-    # Fall back to pre-built static from CMake build dir
-    libmarmot_static = cc.find_library('marmot',
-      dirs: [cmake_build_dir / 'libmarmot'],
-      static: true,
-      required: true)
-    libmarmot_inc = include_directories(
-      '../libmarmot/include',
-      cmake_build_dir / 'libmarmot' / 'include',
-    )
-    marmot_dep = declare_dependency(
-      dependencies: libmarmot_static,
-      include_directories: libmarmot_inc)
+  marmot_static = cmake_build_dir / 'libmarmot/libmarmot.a'
+  marmot_shared = cmake_build_dir / 'libmarmot' / (
+    host_machine.system() == 'darwin' ? 'libmarmot.dylib' : 'libmarmot.so')
+  if not fs.is_file(marmot_static) and not fs.is_file(marmot_shared)
+    error('Required CMake libmarmot artifact missing in ' + (cmake_build_dir / 'libmarmot'))
   endif
+
+  marmot_link_export = cmake_build_dir / 'libmarmot/marmot-build-tree.pc'
+  if not fs.is_file(marmot_link_export)
+    error('Required CMake libmarmot link export missing: ' + marmot_link_export)
+  endif
+  pkg_config = find_program('pkg-config')
+  marmot_link_args = run_command(pkg_config, '--libs', '--static',
+    marmot_link_export, check: true).stdout().strip().split()
+  marmot_dep = declare_dependency(
+    link_args: marmot_link_args,
+    include_directories: include_directories(
+      '../libmarmot/include',
+      cmake_build_dir / 'libmarmot/include'))
 endif
 
 # ── Version header ───────────────────────────────────────────────────
@@ -175,7 +180,9 @@ if get_option('tests')
     'tests/test_marmot_gobject.c',
     dependencies: [glib_dep, gobject_dep, gio_dep, marmot_dep],
     link_with: marmot_gobject_lib,
-    include_directories: [marmot_gobject_pub_inc, include_directories('.')],
+    include_directories: [marmot_gobject_pub_inc, include_directories('.'),
+      include_directories('../libnostr/include', cmake_build_dir / 'libnostr/include'),
+      include_directories('../libgo/include', cmake_build_dir / 'libgo/include')],
   )
   test('marmot-gobject:all', test_marmot_gobject, env: test_env, timeout: 120)
 endif

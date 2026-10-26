@@ -215,12 +215,23 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   static builds, and its Meson build compiles against its own public headers
   (nostrc-6s6bt): packaging/build corrections.
 
+- nostrc-goodv: marmot-gobject's Meson recipe consumes the CMake build tree's
+  exact libmarmot link closure and adds the test's libnostr/libgo include paths.
+  This PATCH-class build correction is folded into unreleased 1.5.1; no further
+  bump. libmarmot's build-tree-only link export does not alter its installed
+  artifact or public contract, so unreleased 0.14.0 receives no further bump.
+
 - nostrc-hbysr: nostr-gobject's Meson build binds the renamed CMake core
   artifacts (`libnostr.a`, `libnostr-json`, `libnostrgo.a`) and its archive
   closure by explicit path in the selected tree (`-Dcmake_build_dir`), failing
   visibly instead of resolving pre-rename names or system libraries. On Linux a
   shared build follows the CMake executable-owned core policy. Build correction
   folded into the unreleased nostr-gobject 3.0.0 above; no further bump.
+
+- nostrc-dwwq5: nostr-gobject's Meson recipe now requires the CMake NIP-11
+  archive and compiles the declared relay NIP-11 API, matching its CMake build.
+  This PATCH-class build correction is folded into unreleased 3.0.0; no further
+  version bump or release-column change.
 
 - nostrc-er4fz.10 phase C: nostr-gobject MAJOR 2.5.0 -> 3.0.0 (SONAME 3).
   The library is compiled hidden-by-default. Declared functions, GTypes,

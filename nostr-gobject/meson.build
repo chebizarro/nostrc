@@ -98,6 +98,15 @@ nip06_dep = declare_dependency(
   dependencies: nip06_static,
   include_directories: include_directories('../nips/nip06/include', cmake_build_dir / 'nips/nip06/include'))
 
+# The installed relay header declares the NIP-11 API unconditionally.
+nip11_artifact = cmake_build_dir / 'nips/nip11/libnip11.a'
+if not fs.is_file(nip11_artifact)
+  error('Required CMake NIP-11 artifact missing: ' + nip11_artifact)
+endif
+nip11_dep = declare_dependency(
+  link_args: [nip11_artifact],
+  include_directories: include_directories('../nips/nip11/include', cmake_build_dir / 'nips/nip11/include'))
+
 nip19_static = cc.find_library('nip19',
   dirs: [cmake_build_dir / 'nips' / 'nip19'],
   static: true)
@@ -333,6 +342,7 @@ nostr_gobject_deps = [
   libgo_dep,
   nip04_dep,
   nip06_dep,
+  nip11_dep,
   nip19_dep,
   nip44_dep,
   nip46_dep,
@@ -352,7 +362,7 @@ if libsodium_dep.found()
 endif
 
 # Exact archive closure shared by the final consumer, pkg-config and GIR.
-core_archives = [core_artifact, go_artifact] + storage_artifacts
+core_archives = [core_artifact, go_artifact, nip11_artifact] + storage_artifacts
 foreach component : [['libgo', 'go_fiber'], ['nips/nip04', 'nip04'],
                      ['nips/nip06', 'nip06'], ['nips/nip19', 'nip19'],
                      ['nips/nip44', 'nostr_nip44_core'],
@@ -369,7 +379,7 @@ endforeach
 # NIP-46 headers use `#include "nostr/nip46/..."` path style
 nip46_inc = include_directories('../nips/nip46/include')
 
-nostr_gobject_c_args = ['-Dnostr_gobject_EXPORTS']
+nostr_gobject_c_args = ['-Dnostr_gobject_EXPORTS', '-DENABLE_NIP11']
 # On ELF a shared library follows NOSTRC_ARCHIVES_FROM_EXECUTABLE in the root
 # CMake build: one static core per process, supplied by the final executable,
 # not a hidden second copy inside this DSO. A static library also leaves the
