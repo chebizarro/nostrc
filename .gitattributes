@@ -2,3 +2,6 @@
 # conflicts on the JSONL cache (bd re-exports authoritative content after merge).
 .beads/issues.jsonl merge=union
 .beads/interactions.jsonl merge=union
+
+# Unified-diff context has a space prefix before tabs and on blank lines.
+third_party/patches/nostrdb/*.patch whitespace=-blank-at-eol,-space-before-tab

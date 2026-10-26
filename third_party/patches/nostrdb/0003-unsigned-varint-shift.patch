@@ -1,0 +1,11 @@
+--- a/src/cursor.h
++++ b/src/cursor.h
+@@ -311,7 +311,7 @@
+ 		ok = cursor_pull_byte(cursor, &b);
+ 		if (!ok) return 0;
+ 
+-		*n |= ((int64_t)b & 0x7F) << (i * 7);
++		*n |= ((uint64_t)b & 0x7F) << (i * 7);
+ 
+ 		if ((b & 0x80) == 0) {
+ 			return i + 1; // Successfully read i+1 bytes

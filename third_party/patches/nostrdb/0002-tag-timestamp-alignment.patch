@@ -1,0 +1,22 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -462,8 +462,8 @@
+ 	if ((cmp = mdb_cmp_memn(&va, &vb)))
+ 		return cmp;
+ 
+-	ts_a = *(uint64_t*)((unsigned char *)va.mv_data + va.mv_size);
+-	ts_b = *(uint64_t*)((unsigned char *)vb.mv_data + vb.mv_size);
++	memcpy(&ts_a, (unsigned char *)va.mv_data + va.mv_size, sizeof(ts_a));
++	memcpy(&ts_b, (unsigned char *)vb.mv_data + vb.mv_size, sizeof(ts_b));
+ 
+ 	if (ts_a < ts_b)
+ 		return -1;
+@@ -4754,7 +4754,7 @@
+ 			if (memcmp((unsigned char *)k.mv_data+1, tag, k.mv_size-9))
+ 				break;
+ 
+-			note_id = *(uint64_t*)v.mv_data;
++			memcpy(&note_id, v.mv_data, sizeof(note_id));
+ 
+ 			if (!(note = ndb_get_note_by_key(txn, note_id, &note_size)))
+ 				goto next;

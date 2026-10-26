@@ -11,7 +11,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.1.4 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 1.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.5.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -53,6 +53,16 @@ files already declare a version.
   relayd remains unversioned (`apps/relayd/CMakeLists.txt` has no authoritative
   numeric version), so no numeric bump is invented. libnostr, libgo, libjson and
   vendored nostrdb APIs/artifacts are unchanged: no component bumps.
+
+- nostrc-wktgk: libnostr PATCH 1.1.3 -> 1.1.4 for shipped vendored
+  nostrdb/LMDB undefined-behavior corrections. Empty-value copies, unaligned
+  index loads and full-width varint shifts are corrected without API,
+  ABI, storage-format or wire-format changes. `components/nostrdb` and relayd
+  also carry the corrected vendor code, but are unversioned internal adapter
+  and application targets with no independent numeric version source. libgo,
+  libjson and the other independently versioned components have no direct
+  changes (no bump); downstream consumers receive this dependency correction
+  when rebuilt. No release tags or release-column changes.
 
 - nostrc-clqf4: nostr-homed remains 0.5.0 (no bump). Gate the NIP-46
   wrap-key test on its auth-runtime prerequisite; test registration only,
