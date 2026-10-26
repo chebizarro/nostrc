@@ -11,6 +11,8 @@
 #ifndef MARMOT_MEMBERS_H
 #define MARMOT_MEMBERS_H
 
+#include "marmot-export.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -70,7 +72,7 @@ typedef struct {
  *
  * Returns: MARMOT_OK, or MARMOT_ERR_GROUP_NOT_FOUND
  */
-MarmotError marmot_get_group_member_identities(Marmot *m,
+MARMOT_API MarmotError marmot_get_group_member_identities(Marmot *m,
                                                 const MarmotGroupId *mls_group_id,
                                                 MarmotMemberIdentity **out_members,
                                                 size_t *out_count);
@@ -84,7 +86,7 @@ MarmotError marmot_get_group_member_identities(Marmot *m,
  *
  * Returns: MARMOT_OK, or MARMOT_ERR_INVALID_ARG
  */
-MarmotError marmot_set_allow_unproven_members(Marmot *m, bool allow);
+MARMOT_API MarmotError marmot_set_allow_unproven_members(Marmot *m, bool allow);
 
 /**
  * marmot_key_package_event_matches_member:
@@ -111,7 +113,7 @@ MarmotError marmot_set_allow_unproven_members(Marmot *m, bool allow);
  * the account, another device); an error for an event that is no valid
  * KeyPackage of its author (*out_matches false).
  */
-MarmotError marmot_key_package_event_matches_member(const char *event_json,
+MARMOT_API MarmotError marmot_key_package_event_matches_member(const char *event_json,
                                                      const MarmotMemberIdentity *member,
                                                      bool *out_matches);
 

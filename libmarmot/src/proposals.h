@@ -10,6 +10,8 @@
 #ifndef MARMOT_PROPOSALS_H
 #define MARMOT_PROPOSALS_H
 
+#include "marmot-internal-visibility.h"
+
 #include "marmot-internal.h"
 #include "mls/mls_group.h"
 #include <stdbool.h>
@@ -57,24 +59,24 @@ typedef struct {
     size_t                ac_count;
 } MarmotProposalSet;
 
-void marmot_proposals_clear(MarmotProposalSet *set);
+MARMOT_TEST_API void marmot_proposals_clear(MarmotProposalSet *set);
 
 /** All of a group's stored proposals (none: an empty set). */
-MarmotError marmot_proposals_load(Marmot *m, const uint8_t *gid, size_t gid_len,
+MARMOT_TEST_API MarmotError marmot_proposals_load(Marmot *m, const uint8_t *gid, size_t gid_len,
                                   MarmotProposalSet *out);
 
 /** The stored proposals with set->acs/ac_lens/ac_count viewing those of
  *  `epoch` (what a Commit of that epoch may reference). */
-MarmotError marmot_proposals_load_epoch(Marmot *m, const uint8_t *gid, size_t gid_len,
+MARMOT_TEST_API MarmotError marmot_proposals_load_epoch(Marmot *m, const uint8_t *gid, size_t gid_len,
                                         uint64_t epoch, MarmotProposalSet *out);
 
 /** Drop proposals of epochs before `keep_from` (a Commit made them stale;
  *  the retained parent's epoch is kept for a competing Commit).  Best
  *  effort: a failure leaves records that the epoch checks ignore. */
-void marmot_proposals_prune(Marmot *m, const uint8_t *gid, size_t gid_len, uint64_t keep_from);
+MARMOT_TEST_API void marmot_proposals_prune(Marmot *m, const uint8_t *gid, size_t gid_len, uint64_t keep_from);
 
 /** Forget a group's proposals and leave request (removal final, left). */
-void marmot_proposals_forget(Marmot *m, const uint8_t *gid, size_t gid_len);
+MARMOT_TEST_API void marmot_proposals_forget(Marmot *m, const uint8_t *gid, size_t gid_len);
 
 /**
  * A standalone Proposal MLSMessage `msg` for `group` (routed: of this group
@@ -83,7 +85,7 @@ void marmot_proposals_forget(Marmot *m, const uint8_t *gid, size_t gid_len);
  * success fills `result` (MARMOT_RESULT_PROPOSAL, or OWN_MESSAGE for our
  * own echo).  Errors as marmot_process_message(); nothing is stored then.
  */
-MarmotError marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group,
+MARMOT_TEST_API MarmotError marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group,
                                             const uint8_t *msg, size_t msg_len,
                                             const char *event_id_hex,
                                             MarmotMessageResult *result);
@@ -96,30 +98,30 @@ MarmotError marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group,
  * MARMOT_ERR_EXTENSION_FORMAT when the policy cannot be read (callers fail
  * closed).
  */
-MarmotError marmot_policy_is_admin(const MlsGroup *g, const uint8_t account[32], bool *out);
+MARMOT_TEST_API MarmotError marmot_policy_is_admin(const MlsGroup *g, const uint8_t account[32], bool *out);
 
 /** Whether `g` is an adopted-profile group (g->profile is not legacy; its
  *  GroupContext carries an app_data_dictionary): there only SelfRemove may
  *  be a non-admin's standalone proposal (protocol-core/group-messaging.md).
  *  Until adopted Commits are processed (nostrc-qp24.5.1.3) libmarmot keeps,
  *  sends and commits no proposal in such a group: MARMOT_ERR_UNSUPPORTED. */
-bool marmot_policy_is_adopted(const MlsGroup *g);
+MARMOT_TEST_API bool marmot_policy_is_adopted(const MlsGroup *g);
 
 /** MARMOT_ERR_LEAVING while our leave request for the group stands. */
-MarmotError marmot_leaving_gate(Marmot *m, const MarmotGroupId *gid);
+MARMOT_TEST_API MarmotError marmot_leaving_gate(Marmot *m, const MarmotGroupId *gid);
 
 /** The proposals of `cur`'s epoch marmot_commit_pending_proposals() commits
  *  (one per leaving member), as indices into `set`'s items.  *out (caller
  *  frees) may be empty. */
-MarmotError marmot_proposals_select(const MlsGroup *cur, const MarmotProposalSet *set,
+MARMOT_TEST_API MarmotError marmot_proposals_select(const MlsGroup *cur, const MarmotProposalSet *set,
                                     size_t **out, size_t *out_count);
 
 /** Whether stored proposal `p` is one marmot_proposals_select() may pick on
  *  `cur` (before the one-per-leaver choice). */
-bool marmot_proposal_committable(const MlsGroup *cur, const MarmotStoredProposal *p);
+MARMOT_TEST_API bool marmot_proposal_committable(const MlsGroup *cur, const MarmotStoredProposal *p);
 
 /* The public operations (groups.c holds the Commit producer). */
-MarmotError marmot_self_remove_impl(Marmot *m, const MarmotGroupId *gid, char **out_event_json);
+MARMOT_TEST_API MarmotError marmot_self_remove_impl(Marmot *m, const MarmotGroupId *gid, char **out_event_json);
 
 #ifdef __cplusplus
 }

@@ -10,6 +10,8 @@
 #ifndef MLS_KEY_SCHEDULE_H
 #define MLS_KEY_SCHEDULE_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -60,7 +62,7 @@ typedef struct {
  * @param out               Output epoch secrets
  * @return 0 on success
  */
-int mls_key_schedule_derive(const uint8_t *init_secret_prev,
+MARMOT_TEST_API int mls_key_schedule_derive(const uint8_t *init_secret_prev,
                              const uint8_t commit_secret[MLS_HASH_LEN],
                              const uint8_t *group_context, size_t group_context_len,
                              const uint8_t *psk_secret,
@@ -91,7 +93,7 @@ typedef struct {
  * This implements the PSK extraction chain used as input to the epoch key
  * schedule.  With psk_count == 0, out is the all-zero KDF.Nh vector.
  */
-int mls_psk_secret_compute(const MlsPskInput *psks, size_t psk_count,
+MARMOT_TEST_API int mls_psk_secret_compute(const MlsPskInput *psks, size_t psk_count,
                            uint8_t out[MLS_HASH_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -184,12 +186,12 @@ typedef struct {
  * @param n_leaves          Number of leaves (= number of group members)
  * @return 0 on success
  */
-int mls_secret_tree_init(MlsSecretTree *st,
+MARMOT_TEST_API int mls_secret_tree_init(MlsSecretTree *st,
                           const uint8_t encryption_secret[MLS_HASH_LEN],
                           uint32_t n_leaves);
 
 /** Free secret tree resources. */
-void mls_secret_tree_free(MlsSecretTree *st);
+MARMOT_TEST_API void mls_secret_tree_free(MlsSecretTree *st);
 
 /**
  * Derive message keys for a sender at the given generation.
@@ -203,7 +205,7 @@ void mls_secret_tree_free(MlsSecretTree *st);
  * @param out          Output message keys
  * @return 0 on success
  */
-int mls_secret_tree_derive_keys(MlsSecretTree *st, uint32_t leaf_index,
+MARMOT_TEST_API int mls_secret_tree_derive_keys(MlsSecretTree *st, uint32_t leaf_index,
                                  bool is_handshake, MlsMessageKeys *out);
 
 /**
@@ -221,7 +223,7 @@ int mls_secret_tree_derive_keys(MlsSecretTree *st, uint32_t leaf_index,
  * @param out                 Output message keys
  * @return 0 on success
  */
-int mls_secret_tree_get_keys_for_generation(MlsSecretTree *st, uint32_t leaf_index,
+MARMOT_TEST_API int mls_secret_tree_get_keys_for_generation(MlsSecretTree *st, uint32_t leaf_index,
                                              bool is_handshake, uint32_t generation,
                                              uint32_t max_forward_distance,
                                              MlsMessageKeys *out);
@@ -231,7 +233,7 @@ int mls_secret_tree_get_keys_for_generation(MlsSecretTree *st, uint32_t leaf_ind
  * every key and secret passed (none is cached).  Used to put the own sender
  * past generations a legacy state may have used.  0 on success.
  */
-int mls_secret_tree_skip(MlsSecretTree *st, uint32_t leaf_index, uint32_t generations);
+MARMOT_TEST_API int mls_secret_tree_skip(MlsSecretTree *st, uint32_t leaf_index, uint32_t generations);
 
 /**
  * A copy of one sender's ratchet state, to undo a key derivation whose
@@ -246,10 +248,10 @@ typedef struct {
     MlsSenderRatchet ratchet;
 } MlsSenderSnapshot;
 
-int  mls_secret_tree_sender_save(const MlsSecretTree *st, uint32_t leaf_index,
+MARMOT_TEST_API int  mls_secret_tree_sender_save(const MlsSecretTree *st, uint32_t leaf_index,
                                  MlsSenderSnapshot *out);
-void mls_secret_tree_sender_restore(MlsSecretTree *st, MlsSenderSnapshot *snap);
-void mls_secret_tree_sender_discard(MlsSenderSnapshot *snap);
+MARMOT_TEST_API void mls_secret_tree_sender_restore(MlsSecretTree *st, MlsSenderSnapshot *snap);
+MARMOT_TEST_API void mls_secret_tree_sender_discard(MlsSenderSnapshot *snap);
 
 /**
  * Persisted form of a secret tree (MlsGroup serial format 3, nostrc-ai04):
@@ -270,7 +272,7 @@ void mls_secret_tree_sender_discard(MlsSenderSnapshot *snap);
  * Commit can derive the whole next epoch again; since 0.10.0 only until the
  * parent is retired.  See the format notes in mls_group.c, nostrc-yuj2.)
  */
-int mls_secret_tree_serialize(const MlsSecretTree *st, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_secret_tree_serialize(const MlsSecretTree *st, MlsTlsBuf *buf);
 
 /**
  * Read a secret tree written by mls_secret_tree_serialize() for a group of
@@ -278,7 +280,7 @@ int mls_secret_tree_serialize(const MlsSecretTree *st, MlsTlsBuf *buf);
  * another leaf count, an unknown leaf kind, a skipped key outside its
  * chain's out-of-order window or given twice.
  */
-int mls_secret_tree_deserialize(MlsTlsReader *reader, uint32_t n_leaves,
+MARMOT_TEST_API int mls_secret_tree_deserialize(MlsTlsReader *reader, uint32_t n_leaves,
                                 MlsSecretTree *st);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -294,7 +296,7 @@ int mls_secret_tree_deserialize(MlsTlsReader *reader, uint32_t n_leaves,
  *
  * Marmot uses this for NIP-44 conversation keys (MIP-03).
  */
-int mls_exporter(const uint8_t exporter_secret[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_exporter(const uint8_t exporter_secret[MLS_HASH_LEN],
                  const char *label,
                  const uint8_t *context, size_t context_len,
                  uint8_t *out, size_t out_len);
@@ -305,7 +307,7 @@ int mls_exporter(const uint8_t exporter_secret[MLS_HASH_LEN],
  * Same as mls_exporter but accepts a raw binary label with explicit length,
  * needed for RFC 9420 test vector validation where labels are arbitrary bytes.
  */
-int mls_exporter_raw(const uint8_t exporter_secret[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_exporter_raw(const uint8_t exporter_secret[MLS_HASH_LEN],
                      const uint8_t *label, size_t label_len,
                      const uint8_t *context, size_t context_len,
                      uint8_t *out, size_t out_len);
@@ -328,7 +330,7 @@ int mls_exporter_raw(const uint8_t exporter_secret[MLS_HASH_LEN],
  * @param out_len           Output length
  * @return 0 on success
  */
-int mls_group_context_serialize(const uint8_t *group_id, size_t group_id_len,
+MARMOT_TEST_API int mls_group_context_serialize(const uint8_t *group_id, size_t group_id_len,
                                  uint64_t epoch,
                                  const uint8_t tree_hash[MLS_HASH_LEN],
                                  const uint8_t confirmed_transcript_hash[MLS_HASH_LEN],

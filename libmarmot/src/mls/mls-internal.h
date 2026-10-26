@@ -10,6 +10,8 @@
 #ifndef MLS_INTERNAL_H
 #define MLS_INTERNAL_H
 
+#include "marmot-internal-visibility.h"
+
 #include <marmot/marmot-types.h>
 #include <marmot/marmot-error.h>
 #include <stdbool.h>
@@ -53,32 +55,32 @@ typedef struct {
 } MlsHpkeContext;
 
 /** X25519 DH. out must be MLS_KEM_SECRET_LEN bytes. */
-int mls_crypto_dh(uint8_t out[MLS_KEM_SECRET_LEN],
+MARMOT_TEST_API int mls_crypto_dh(uint8_t out[MLS_KEM_SECRET_LEN],
                   const uint8_t sk[MLS_KEM_SK_LEN],
                   const uint8_t pk[MLS_KEM_PK_LEN]);
 
 /** Generate a random X25519 keypair for DHKEM. */
-int mls_crypto_kem_keygen(uint8_t sk[MLS_KEM_SK_LEN],
+MARMOT_TEST_API int mls_crypto_kem_keygen(uint8_t sk[MLS_KEM_SK_LEN],
                            uint8_t pk[MLS_KEM_PK_LEN]);
 
 /** RFC 9180 §7.1.3 DHKEM DeriveKeyPair(ikm) for X25519/HKDF-SHA256. */
-int mls_crypto_kem_derive_keypair(const uint8_t *ikm, size_t ikm_len,
+MARMOT_TEST_API int mls_crypto_kem_derive_keypair(const uint8_t *ikm, size_t ikm_len,
                                    uint8_t sk[MLS_KEM_SK_LEN],
                                    uint8_t pk[MLS_KEM_PK_LEN]);
 
 /** DHKEM Encap: produce (shared_secret, enc) for recipient pk. */
-int mls_crypto_kem_encap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+MARMOT_TEST_API int mls_crypto_kem_encap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                           uint8_t enc[MLS_KEM_ENC_LEN],
                           const uint8_t pk[MLS_KEM_PK_LEN]);
 
 /** Deterministic DHKEM Encap using DeriveKeyPair(ikmE); intended for vectors. */
-int mls_crypto_kem_encap_derand(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+MARMOT_TEST_API int mls_crypto_kem_encap_derand(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                                  uint8_t enc[MLS_KEM_ENC_LEN],
                                  const uint8_t pk[MLS_KEM_PK_LEN],
                                  const uint8_t *ikm_e, size_t ikm_e_len);
 
 /** DHKEM Decap: recover shared_secret from enc using sk. */
-int mls_crypto_kem_decap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+MARMOT_TEST_API int mls_crypto_kem_decap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                           const uint8_t enc[MLS_KEM_ENC_LEN],
                           const uint8_t sk[MLS_KEM_SK_LEN],
                           const uint8_t pk[MLS_KEM_PK_LEN]);
@@ -87,25 +89,25 @@ int mls_crypto_kem_decap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
  * RFC 9180 §5.1 base-mode HPKE KeySchedule for
  * DHKEM(X25519,HKDF-SHA256)+HKDF-SHA256+AES-128-GCM.
  */
-int mls_crypto_hpke_key_schedule_base(MlsHpkeContext *ctx,
+MARMOT_TEST_API int mls_crypto_hpke_key_schedule_base(MlsHpkeContext *ctx,
                                        const uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                                        const uint8_t *info, size_t info_len);
 
 /** Base-mode SetupS: encap to pkR and derive sender context. */
-int mls_crypto_hpke_setup_base_s(uint8_t enc[MLS_KEM_ENC_LEN],
+MARMOT_TEST_API int mls_crypto_hpke_setup_base_s(uint8_t enc[MLS_KEM_ENC_LEN],
                                   MlsHpkeContext *ctx,
                                   const uint8_t pk_r[MLS_KEM_PK_LEN],
                                   const uint8_t *info, size_t info_len);
 
 /** Base-mode SetupR: decap enc with skR/pkR and derive recipient context. */
-int mls_crypto_hpke_setup_base_r(MlsHpkeContext *ctx,
+MARMOT_TEST_API int mls_crypto_hpke_setup_base_r(MlsHpkeContext *ctx,
                                   const uint8_t enc[MLS_KEM_ENC_LEN],
                                   const uint8_t sk_r[MLS_KEM_SK_LEN],
                                   const uint8_t pk_r[MLS_KEM_PK_LEN],
                                   const uint8_t *info, size_t info_len);
 
 /** Single-shot base-mode HPKE Seal; ct must hold pt_len + MLS_AEAD_TAG_LEN. */
-int mls_crypto_hpke_seal_base(uint8_t enc[MLS_KEM_ENC_LEN],
+MARMOT_TEST_API int mls_crypto_hpke_seal_base(uint8_t enc[MLS_KEM_ENC_LEN],
                                uint8_t *ct, size_t *ct_len,
                                const uint8_t pk_r[MLS_KEM_PK_LEN],
                                const uint8_t *info, size_t info_len,
@@ -113,7 +115,7 @@ int mls_crypto_hpke_seal_base(uint8_t enc[MLS_KEM_ENC_LEN],
                                const uint8_t *pt, size_t pt_len);
 
 /** Single-shot base-mode HPKE Open; pt must hold ct_len - MLS_AEAD_TAG_LEN. */
-int mls_crypto_hpke_open_base(uint8_t *pt, size_t *pt_len,
+MARMOT_TEST_API int mls_crypto_hpke_open_base(uint8_t *pt, size_t *pt_len,
                                const uint8_t enc[MLS_KEM_ENC_LEN],
                                const uint8_t sk_r[MLS_KEM_SK_LEN],
                                const uint8_t pk_r[MLS_KEM_PK_LEN],
@@ -124,23 +126,23 @@ int mls_crypto_hpke_open_base(uint8_t *pt, size_t *pt_len,
 /* ── HKDF (SHA-256) ──────────────────────────────────────────────────── */
 
 /** HKDF-Extract: PRK = HMAC-SHA256(salt, ikm). */
-int mls_crypto_hkdf_extract(uint8_t prk[MLS_KDF_EXTRACT_LEN],
+MARMOT_TEST_API int mls_crypto_hkdf_extract(uint8_t prk[MLS_KDF_EXTRACT_LEN],
                              const uint8_t *salt, size_t salt_len,
                              const uint8_t *ikm, size_t ikm_len);
 
 /** HKDF-Expand: derive out_len bytes from PRK + info. */
-int mls_crypto_hkdf_expand(uint8_t *out, size_t out_len,
+MARMOT_TEST_API int mls_crypto_hkdf_expand(uint8_t *out, size_t out_len,
                             const uint8_t prk[MLS_KDF_EXTRACT_LEN],
                             const uint8_t *info, size_t info_len);
 
 /** HKDF-Expand-Label (MLS §5.1): derive from secret using label + context. */
-int mls_crypto_expand_with_label(uint8_t *out, size_t out_len,
+MARMOT_TEST_API int mls_crypto_expand_with_label(uint8_t *out, size_t out_len,
                                   const uint8_t secret[MLS_HASH_LEN],
                                   const char *label,
                                   const uint8_t *context, size_t ctx_len);
 
 /** Derive-Secret (MLS §5.1): shorthand for expand_with_label with empty context. */
-int mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
                               const uint8_t secret[MLS_HASH_LEN],
                               const char *label);
 
@@ -148,33 +150,33 @@ int mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
  * DeriveTreeSecret (MLS §9.1): ExpandWithLabel with a uint32 generation
  * encoded as a four-byte big-endian context.
  */
-int mls_crypto_derive_tree_secret(uint8_t *out, size_t out_len,
+MARMOT_TEST_API int mls_crypto_derive_tree_secret(uint8_t *out, size_t out_len,
                                    const uint8_t secret[MLS_HASH_LEN],
                                    const char *label,
                                    uint32_t generation);
 
 /** ExpandWithLabel with raw binary label (explicit length, no strlen). */
-int mls_crypto_expand_with_label_raw(uint8_t *out, size_t out_len,
+MARMOT_TEST_API int mls_crypto_expand_with_label_raw(uint8_t *out, size_t out_len,
                                       const uint8_t secret[MLS_HASH_LEN],
                                       const uint8_t *label, size_t label_len,
                                       const uint8_t *context, size_t ctx_len);
 
 /** DeriveSecret with raw binary label. */
-int mls_crypto_derive_secret_raw(uint8_t out[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_crypto_derive_secret_raw(uint8_t out[MLS_HASH_LEN],
                                   const uint8_t secret[MLS_HASH_LEN],
                                   const uint8_t *label, size_t label_len);
 
 /* ── AEAD (AES-128-GCM) ─────────────────────────────────────────────── */
 
 /** Encrypt. out must have room for pt_len + MLS_AEAD_TAG_LEN bytes. */
-int mls_crypto_aead_encrypt(uint8_t *out, size_t *out_len,
+MARMOT_TEST_API int mls_crypto_aead_encrypt(uint8_t *out, size_t *out_len,
                              const uint8_t key[MLS_AEAD_KEY_LEN],
                              const uint8_t nonce[MLS_AEAD_NONCE_LEN],
                              const uint8_t *pt, size_t pt_len,
                              const uint8_t *aad, size_t aad_len);
 
 /** Decrypt. out must have room for ct_len - MLS_AEAD_TAG_LEN bytes. */
-int mls_crypto_aead_decrypt(uint8_t *out, size_t *out_len,
+MARMOT_TEST_API int mls_crypto_aead_decrypt(uint8_t *out, size_t *out_len,
                              const uint8_t key[MLS_AEAD_KEY_LEN],
                              const uint8_t nonce[MLS_AEAD_NONCE_LEN],
                              const uint8_t *ct, size_t ct_len,
@@ -183,31 +185,31 @@ int mls_crypto_aead_decrypt(uint8_t *out, size_t *out_len,
 /* ── Hash (SHA-256) ──────────────────────────────────────────────────── */
 
 /** SHA-256 hash. */
-int mls_crypto_hash(uint8_t out[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_crypto_hash(uint8_t out[MLS_HASH_LEN],
                     const uint8_t *data, size_t len);
 
 /* ── Signing (Ed25519) ───────────────────────────────────────────────── */
 
 /** Generate Ed25519 keypair. sk is 64 bytes (libsodium format). */
-int mls_crypto_sign_keygen(uint8_t sk[MLS_SIG_SK_LEN],
+MARMOT_TEST_API int mls_crypto_sign_keygen(uint8_t sk[MLS_SIG_SK_LEN],
                             uint8_t pk[MLS_SIG_PK_LEN]);
 
 /** Sign message. sig is 64 bytes. */
-int mls_crypto_sign(uint8_t sig[MLS_SIG_LEN],
+MARMOT_TEST_API int mls_crypto_sign(uint8_t sig[MLS_SIG_LEN],
                     const uint8_t sk[MLS_SIG_SK_LEN],
                     const uint8_t *msg, size_t msg_len);
 
 /** Verify signature. Returns 0 on valid signature. */
-int mls_crypto_verify(const uint8_t sig[MLS_SIG_LEN],
+MARMOT_TEST_API int mls_crypto_verify(const uint8_t sig[MLS_SIG_LEN],
                       const uint8_t pk[MLS_SIG_PK_LEN],
                       const uint8_t *msg, size_t msg_len);
 
 /** RFC 9420 SignWithLabel/VerifyWithLabel helpers. */
-int mls_crypto_sign_with_label(uint8_t sig[MLS_SIG_LEN],
+MARMOT_TEST_API int mls_crypto_sign_with_label(uint8_t sig[MLS_SIG_LEN],
                                const uint8_t sk[MLS_SIG_SK_LEN],
                                const char *label,
                                const uint8_t *content, size_t content_len);
-int mls_crypto_verify_with_label(const uint8_t sig[MLS_SIG_LEN],
+MARMOT_TEST_API int mls_crypto_verify_with_label(const uint8_t sig[MLS_SIG_LEN],
                                  const uint8_t pk[MLS_SIG_PK_LEN],
                                  const char *label,
                                  const uint8_t *content, size_t content_len);
@@ -215,12 +217,12 @@ int mls_crypto_verify_with_label(const uint8_t sig[MLS_SIG_LEN],
 /* ── Random ──────────────────────────────────────────────────────────── */
 
 /** Fill buffer with cryptographically secure random bytes. */
-void mls_crypto_random(uint8_t *out, size_t len);
+MARMOT_TEST_API void mls_crypto_random(uint8_t *out, size_t len);
 
 /* ── Ref Hash (MLS §5.3.1) ──────────────────────────────────────────── */
 
 /** Compute RefHash(label, value) = H(label_len || label || value). */
-int mls_crypto_ref_hash(uint8_t out[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_crypto_ref_hash(uint8_t out[MLS_HASH_LEN],
                         const char *label,
                         const uint8_t *value, size_t value_len);
 
@@ -242,25 +244,25 @@ typedef struct {
 } MlsTlsBuf;
 
 /** Initialize a buffer with initial capacity. */
-int mls_tls_buf_init(MlsTlsBuf *buf, size_t initial_cap);
+MARMOT_TEST_API int mls_tls_buf_init(MlsTlsBuf *buf, size_t initial_cap);
 
 /** Free buffer resources. */
-void mls_tls_buf_free(MlsTlsBuf *buf);
+MARMOT_TEST_API void mls_tls_buf_free(MlsTlsBuf *buf);
 
 /** Append raw bytes. */
-int mls_tls_buf_append(MlsTlsBuf *buf, const uint8_t *data, size_t len);
+MARMOT_TEST_API int mls_tls_buf_append(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
 /** Write uint8_t. */
-int mls_tls_write_u8(MlsTlsBuf *buf, uint8_t val);
+MARMOT_TEST_API int mls_tls_write_u8(MlsTlsBuf *buf, uint8_t val);
 
 /** Write uint16_t (big-endian). */
-int mls_tls_write_u16(MlsTlsBuf *buf, uint16_t val);
+MARMOT_TEST_API int mls_tls_write_u16(MlsTlsBuf *buf, uint16_t val);
 
 /** Write uint32_t (big-endian). */
-int mls_tls_write_u32(MlsTlsBuf *buf, uint32_t val);
+MARMOT_TEST_API int mls_tls_write_u32(MlsTlsBuf *buf, uint32_t val);
 
 /** Write uint64_t (big-endian). */
-int mls_tls_write_u64(MlsTlsBuf *buf, uint64_t val);
+MARMOT_TEST_API int mls_tls_write_u64(MlsTlsBuf *buf, uint64_t val);
 
 /**
  * Write a QUIC-style variable-length integer (RFC 9000 §16).
@@ -268,16 +270,16 @@ int mls_tls_write_u64(MlsTlsBuf *buf, uint64_t val);
  * Encoding: 0..63 → 1 byte, 64..16383 → 2 bytes, 16384..2^30-1 → 4 bytes.
  * Used by tls_codec VLBytes for opaque<V> length prefixes.
  */
-int mls_tls_write_vli(MlsTlsBuf *buf, size_t val);
+MARMOT_TEST_API int mls_tls_write_vli(MlsTlsBuf *buf, size_t val);
 
 /** Write variable-length opaque data with VLI length prefix (max 255). */
-int mls_tls_write_opaque8(MlsTlsBuf *buf, const uint8_t *data, size_t len);
+MARMOT_TEST_API int mls_tls_write_opaque8(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
 /** Write variable-length opaque data with VLI length prefix (max 65535). */
-int mls_tls_write_opaque16(MlsTlsBuf *buf, const uint8_t *data, size_t len);
+MARMOT_TEST_API int mls_tls_write_opaque16(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
 /** Write variable-length opaque data with VLI length prefix. */
-int mls_tls_write_opaque32(MlsTlsBuf *buf, const uint8_t *data, size_t len);
+MARMOT_TEST_API int mls_tls_write_opaque32(MlsTlsBuf *buf, const uint8_t *data, size_t len);
 
 /**
  * MlsTlsReader:
@@ -291,42 +293,42 @@ typedef struct {
 } MlsTlsReader;
 
 /** Initialize a reader. */
-void mls_tls_reader_init(MlsTlsReader *r, const uint8_t *data, size_t len);
+MARMOT_TEST_API void mls_tls_reader_init(MlsTlsReader *r, const uint8_t *data, size_t len);
 
 /** Read uint8_t. */
-int mls_tls_read_u8(MlsTlsReader *r, uint8_t *out);
+MARMOT_TEST_API int mls_tls_read_u8(MlsTlsReader *r, uint8_t *out);
 
 /** Read uint16_t (big-endian). */
-int mls_tls_read_u16(MlsTlsReader *r, uint16_t *out);
+MARMOT_TEST_API int mls_tls_read_u16(MlsTlsReader *r, uint16_t *out);
 
 /** Read uint32_t (big-endian). */
-int mls_tls_read_u32(MlsTlsReader *r, uint32_t *out);
+MARMOT_TEST_API int mls_tls_read_u32(MlsTlsReader *r, uint32_t *out);
 
 /** Read uint64_t (big-endian). */
-int mls_tls_read_u64(MlsTlsReader *r, uint64_t *out);
+MARMOT_TEST_API int mls_tls_read_u64(MlsTlsReader *r, uint64_t *out);
 
 /**
  * Read a QUIC-style variable-length integer (RFC 9000 §16).
  */
-int mls_tls_read_vli(MlsTlsReader *r, size_t *out);
+MARMOT_TEST_API int mls_tls_read_vli(MlsTlsReader *r, size_t *out);
 
 /** Read opaque data with VLI length prefix (max 255). Caller frees *out. */
-int mls_tls_read_opaque8(MlsTlsReader *r, uint8_t **out, size_t *out_len);
+MARMOT_TEST_API int mls_tls_read_opaque8(MlsTlsReader *r, uint8_t **out, size_t *out_len);
 
 /** Read opaque data with VLI length prefix (max 65535). Caller frees *out. */
-int mls_tls_read_opaque16(MlsTlsReader *r, uint8_t **out, size_t *out_len);
+MARMOT_TEST_API int mls_tls_read_opaque16(MlsTlsReader *r, uint8_t **out, size_t *out_len);
 
 /** Read opaque data with VLI length prefix. Caller frees *out. */
-int mls_tls_read_opaque32(MlsTlsReader *r, uint8_t **out, size_t *out_len);
+MARMOT_TEST_API int mls_tls_read_opaque32(MlsTlsReader *r, uint8_t **out, size_t *out_len);
 
 /** Read exact N bytes (no length prefix). */
-int mls_tls_read_fixed(MlsTlsReader *r, uint8_t *out, size_t n);
+MARMOT_TEST_API int mls_tls_read_fixed(MlsTlsReader *r, uint8_t *out, size_t n);
 
 /** Check if reader has been fully consumed. */
-bool mls_tls_reader_done(const MlsTlsReader *r);
+MARMOT_TEST_API bool mls_tls_reader_done(const MlsTlsReader *r);
 
 /** Bytes remaining in reader. */
-size_t mls_tls_reader_remaining(const MlsTlsReader *r);
+MARMOT_TEST_API size_t mls_tls_reader_remaining(const MlsTlsReader *r);
 
 #ifdef __cplusplus
 }

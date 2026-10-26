@@ -510,6 +510,14 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
 
+### 0.14.0 (unreleased): hidden-by-default shared-library ABI
+
+The shared library now exports its declared `marmot_*` public API and hides
+implementation symbols. This is a breaking change for clients that linked
+undocumented symbols; rebuild against the public headers and the 0.14 ABI.
+The installed export header supplies `MARMOT_API` for shared and static builds.
+
+
 ### 0.12.0 (unreleased): one KeyPackage slot per profile; the adopted producer on (nostrc-lf62)
 
 **New API and build default** (MINOR for 0.x; folded into 0.12.0).

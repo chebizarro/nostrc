@@ -11,6 +11,8 @@
 #ifndef HANAMI_INDEX_H
 #define HANAMI_INDEX_H
 
+#include "hanami-export.h"
+
 #include "hanami-types.h"
 #include <porthome/index.h>
 #include <git2/oid.h>
@@ -36,7 +38,7 @@ typedef struct hanami_index hanami_index_t;
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_index_open(hanami_index_t **out,
+HANAMI_API hanami_error_t hanami_index_open(hanami_index_t **out,
                                  const char *path,
                                  const char *backend);
 
@@ -44,12 +46,12 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
  * hanami_index_close:
  * @idx: (transfer full) (nullable): index to close and free
  */
-void hanami_index_close(hanami_index_t *idx);
+HANAMI_API void hanami_index_close(hanami_index_t *idx);
 
 /* Borrowed storage-agnostic view; valid until hanami_index_close().
  * Does not seal objects: legacy raw-mode hashes remain raw addresses with
  * key id zero. Sealed ODB/ref-state behavior belongs to R7. */
-porthome_index *hanami_index_porthome(hanami_index_t *idx);
+HANAMI_API porthome_index *hanami_index_porthome(hanami_index_t *idx);
 
 /* =========================================================================
  * CRUD operations
@@ -64,7 +66,7 @@ porthome_index *hanami_index_porthome(hanami_index_t *idx);
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_index_put(hanami_index_t *idx,
+HANAMI_API hanami_error_t hanami_index_put(hanami_index_t *idx,
                                 const hanami_index_entry_t *entry);
 
 /**
@@ -77,7 +79,7 @@ hanami_error_t hanami_index_put(hanami_index_t *idx,
  *
  * Returns: HANAMI_OK if found, HANAMI_ERR_NOT_FOUND if absent
  */
-hanami_error_t hanami_index_get_by_oid(hanami_index_t *idx,
+HANAMI_API hanami_error_t hanami_index_get_by_oid(hanami_index_t *idx,
                                        const char *git_oid_hex,
                                        hanami_index_entry_t *out);
 
@@ -91,7 +93,7 @@ hanami_error_t hanami_index_get_by_oid(hanami_index_t *idx,
  *
  * Returns: HANAMI_OK if found, HANAMI_ERR_NOT_FOUND if absent
  */
-hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
+HANAMI_API hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
                                            const char *blossom_hash_hex,
                                            hanami_index_entry_t *out);
 
@@ -102,7 +104,7 @@ hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
  *
  * Returns: true if the OID is in the index
  */
-bool hanami_index_exists(hanami_index_t *idx, const char *git_oid_hex);
+HANAMI_API bool hanami_index_exists(hanami_index_t *idx, const char *git_oid_hex);
 
 /**
  * hanami_index_delete:
@@ -111,7 +113,7 @@ bool hanami_index_exists(hanami_index_t *idx, const char *git_oid_hex);
  *
  * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND if absent
  */
-hanami_error_t hanami_index_delete(hanami_index_t *idx,
+HANAMI_API hanami_error_t hanami_index_delete(hanami_index_t *idx,
                                    const char *git_oid_hex);
 
 /**
@@ -120,7 +122,7 @@ hanami_error_t hanami_index_delete(hanami_index_t *idx,
  *
  * Returns: number of entries in the index
  */
-size_t hanami_index_count(hanami_index_t *idx);
+HANAMI_API size_t hanami_index_count(hanami_index_t *idx);
 
 /* =========================================================================
  * Hash computation helpers
@@ -136,7 +138,7 @@ size_t hanami_index_count(hanami_index_t *idx);
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_hash_blossom(const void *data, size_t len,
+HANAMI_API hanami_error_t hanami_hash_blossom(const void *data, size_t len,
                                    char out_hex[65]);
 
 /**
@@ -150,7 +152,7 @@ hanami_error_t hanami_hash_blossom(const void *data, size_t len,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_hash_git_sha1(const void *data, size_t len,
+HANAMI_API hanami_error_t hanami_hash_git_sha1(const void *data, size_t len,
                                     git_object_t type,
                                     char out_hex[41]);
 
@@ -165,7 +167,7 @@ hanami_error_t hanami_hash_git_sha1(const void *data, size_t len,
  *
  * Returns: HANAMI_OK on success
  */
-hanami_error_t hanami_hash_git_sha256(const void *data, size_t len,
+HANAMI_API hanami_error_t hanami_hash_git_sha256(const void *data, size_t len,
                                       git_object_t type,
                                       char out_hex[65]);
 

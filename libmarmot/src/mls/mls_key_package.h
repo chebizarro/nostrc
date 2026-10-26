@@ -11,6 +11,8 @@
 #ifndef MLS_KEY_PACKAGE_H
 #define MLS_KEY_PACKAGE_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include "mls_tree.h"
 #include <stdbool.h>
@@ -71,10 +73,10 @@ typedef struct {
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Free internal resources of a KeyPackage (but not the struct itself). */
-void mls_key_package_clear(MlsKeyPackage *kp);
+MARMOT_TEST_API void mls_key_package_clear(MlsKeyPackage *kp);
 
 /** Free internal resources of a KeyPackagePrivate. */
-void mls_key_package_private_clear(MlsKeyPackagePrivate *priv);
+MARMOT_TEST_API void mls_key_package_private_clear(MlsKeyPackagePrivate *priv);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Creation
@@ -100,7 +102,7 @@ void mls_key_package_private_clear(MlsKeyPackagePrivate *priv);
 #define MLS_KP_LIFETIME_SKEW_S 3600
 #define MLS_KP_LIFETIME_MAX_S  7261200
 
-int mls_key_package_create(MlsKeyPackage *kp,
+MARMOT_TEST_API int mls_key_package_create(MlsKeyPackage *kp,
                             MlsKeyPackagePrivate *priv_out,
                             const uint8_t *credential_identity,
                             size_t credential_identity_len,
@@ -112,7 +114,7 @@ int mls_key_package_create(MlsKeyPackage *kp,
  * caller can adjust the LeafNode (capabilities, extensions that depend on
  * kp->leaf_node.signature_key) before mls_key_package_sign().
  */
-int mls_key_package_create_unsigned(MlsKeyPackage *kp,
+MARMOT_TEST_API int mls_key_package_create_unsigned(MlsKeyPackage *kp,
                                      MlsKeyPackagePrivate *priv_out,
                                      const uint8_t *credential_identity,
                                      size_t credential_identity_len,
@@ -120,17 +122,17 @@ int mls_key_package_create_unsigned(MlsKeyPackage *kp,
                                      size_t extensions_len);
 
 /** Sign the LeafNode (LeafNodeTBS) and then the KeyPackage (KeyPackageTBS). */
-int mls_key_package_sign(MlsKeyPackage *kp, const MlsKeyPackagePrivate *priv);
+MARMOT_TEST_API int mls_key_package_sign(MlsKeyPackage *kp, const MlsKeyPackagePrivate *priv);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Serialization (TLS format)
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize a KeyPackage to TLS wire format. */
-int mls_key_package_serialize(const MlsKeyPackage *kp, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_key_package_serialize(const MlsKeyPackage *kp, MlsTlsBuf *buf);
 
 /** Deserialize a KeyPackage from TLS wire format. */
-int mls_key_package_deserialize(MlsTlsReader *reader, MlsKeyPackage *kp);
+MARMOT_TEST_API int mls_key_package_deserialize(MlsTlsReader *reader, MlsKeyPackage *kp);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * KeyPackageTBS serialization (for signing/verification)
@@ -145,7 +147,7 @@ int mls_key_package_deserialize(MlsTlsReader *reader, MlsKeyPackage *kp);
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize KeyPackageTBS (everything except the signature). */
-int mls_key_package_tbs_serialize(const MlsKeyPackage *kp, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_key_package_tbs_serialize(const MlsKeyPackage *kp, MlsTlsBuf *buf);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Validation
@@ -162,7 +164,7 @@ int mls_key_package_tbs_serialize(const MlsKeyPackage *kp, MlsTlsBuf *buf);
  *
  * @return 0 if valid, error code otherwise
  */
-int mls_key_package_validate(const MlsKeyPackage *kp);
+MARMOT_TEST_API int mls_key_package_validate(const MlsKeyPackage *kp);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * KeyPackageRef (RFC 9420 §5.3.1)
@@ -178,7 +180,7 @@ int mls_key_package_validate(const MlsKeyPackage *kp);
  * @param out  Output hash (MLS_HASH_LEN bytes)
  * @return 0 on success
  */
-int mls_key_package_ref(const MlsKeyPackage *kp, uint8_t out[MLS_HASH_LEN]);
+MARMOT_TEST_API int mls_key_package_ref(const MlsKeyPackage *kp, uint8_t out[MLS_HASH_LEN]);
 
 #ifdef __cplusplus
 }

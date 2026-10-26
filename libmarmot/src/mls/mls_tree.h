@@ -10,6 +10,8 @@
 #ifndef MLS_TREE_H
 #define MLS_TREE_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -28,32 +30,32 @@ extern "C" {
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Level of node x. Leaves are level 0. */
-uint32_t mls_tree_level(uint32_t x);
+MARMOT_TEST_API uint32_t mls_tree_level(uint32_t x);
 
 /** Total nodes needed for n leaves: 2*(n-1)+1 for n>0, 0 for n=0. */
-uint32_t mls_tree_node_width(uint32_t n);
+MARMOT_TEST_API uint32_t mls_tree_node_width(uint32_t n);
 
 /** Root node index for tree with n leaves. */
-uint32_t mls_tree_root(uint32_t n);
+MARMOT_TEST_API uint32_t mls_tree_root(uint32_t n);
 
 /** Left child of intermediate node x. */
-uint32_t mls_tree_left(uint32_t x);
+MARMOT_TEST_API uint32_t mls_tree_left(uint32_t x);
 
 /** Right child of intermediate node x. */
-uint32_t mls_tree_right(uint32_t x);
+MARMOT_TEST_API uint32_t mls_tree_right(uint32_t x);
 
 /** Parent of node x in tree with n leaves. */
-uint32_t mls_tree_parent(uint32_t x, uint32_t n);
+MARMOT_TEST_API uint32_t mls_tree_parent(uint32_t x, uint32_t n);
 
 /** Sibling of node x in tree with n leaves. */
-uint32_t mls_tree_sibling(uint32_t x, uint32_t n);
+MARMOT_TEST_API uint32_t mls_tree_sibling(uint32_t x, uint32_t n);
 
 /**
  * Direct path from node x to root (exclusive of x, inclusive of root).
  * Returns 0 on success and writes count to path_len; returns -1 if the
  * provided capacity is too small.
  */
-int mls_tree_direct_path(uint32_t x, uint32_t n,
+MARMOT_TEST_API int mls_tree_direct_path(uint32_t x, uint32_t n,
                          uint32_t *path, uint32_t max_len,
                          uint32_t *path_len);
 
@@ -62,13 +64,13 @@ int mls_tree_direct_path(uint32_t x, uint32_t n,
  * lowest node whose subtree contains both (x itself when y is below x).
  * Returns UINT32_MAX when either node is outside the tree.
  */
-uint32_t mls_tree_common_ancestor(uint32_t x, uint32_t y, uint32_t n);
+MARMOT_TEST_API uint32_t mls_tree_common_ancestor(uint32_t x, uint32_t y, uint32_t n);
 
 /**
  * Copath of node x: siblings of nodes on the direct path.
  * Returns 0 on success and writes count to copath_len; returns -1 on overflow.
  */
-int mls_tree_copath(uint32_t x, uint32_t n,
+MARMOT_TEST_API int mls_tree_copath(uint32_t x, uint32_t n,
                     uint32_t *copath, uint32_t max_len,
                     uint32_t *copath_len);
 
@@ -187,23 +189,23 @@ typedef struct {
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Create a new ratchet tree with the given number of leaves (all blank). */
-int mls_tree_new(MlsRatchetTree *tree, uint32_t n_leaves);
+MARMOT_TEST_API int mls_tree_new(MlsRatchetTree *tree, uint32_t n_leaves);
 
 /** Free a ratchet tree's internal storage. */
-void mls_tree_free(MlsRatchetTree *tree);
+MARMOT_TEST_API void mls_tree_free(MlsRatchetTree *tree);
 
 /** Extend the tree to accommodate a new leaf at the right edge. Returns the
  *  new leaf's node index. */
-int mls_tree_add_leaf(MlsRatchetTree *tree, uint32_t *out_leaf_node_idx);
+MARMOT_TEST_API int mls_tree_add_leaf(MlsRatchetTree *tree, uint32_t *out_leaf_node_idx);
 
 /** Blank a node (free its contents, set to BLANK). */
-void mls_tree_blank_node(MlsNode *node);
+MARMOT_TEST_API void mls_tree_blank_node(MlsNode *node);
 
 /** Deep-copy a leaf node into dst. */
-int mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src);
+MARMOT_TEST_API int mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src);
 
 /** Free leaf node internals (but not the struct itself). */
-void mls_leaf_node_clear(MlsLeafNode *node);
+MARMOT_TEST_API void mls_leaf_node_clear(MlsLeafNode *node);
 
 /*
  * Marmot MLS capabilities (nostrc-prqu.10), RFC 9420 §7.2. Every leaf
@@ -231,13 +233,13 @@ void mls_leaf_node_clear(MlsLeafNode *node);
 extern const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT];
 #define MLS_MARMOT_CAP_PROPOSAL_COUNT 1
 extern const uint16_t MLS_MARMOT_CAP_PROPOSALS[MLS_MARMOT_CAP_PROPOSAL_COUNT];
-int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
+MARMOT_TEST_API int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
 #ifdef MARMOT_TEST_HOOKS
 /* Tests only (nostrc-zbmb), and only in builds with tests
  * (MARMOT_TEST_HOOKS): when true, the legacy capabilities above list no
  * proposal type -- a libmarmot 0.11.0 or pre-#236 MDK leaf, without
  * SelfRemove -- so a test can publish such a KeyPackage. */
-extern bool mls_test_leaf_without_self_remove;
+extern MARMOT_TEST_API bool mls_test_leaf_without_self_remove;
 #endif
 
 /*
@@ -259,10 +261,10 @@ extern bool mls_test_leaf_without_self_remove;
 #define MLS_ADOPTED_CAP_PROPOSAL_COUNT  2
 extern const uint16_t MLS_ADOPTED_CAP_EXTENSIONS[MLS_ADOPTED_CAP_EXTENSION_COUNT];
 extern const uint16_t MLS_ADOPTED_CAP_PROPOSALS[MLS_ADOPTED_CAP_PROPOSAL_COUNT];
-int mls_leaf_node_set_adopted_capabilities(MlsLeafNode *node);
+MARMOT_TEST_API int mls_leaf_node_set_adopted_capabilities(MlsLeafNode *node);
 
 /** Free parent node internals. */
-void mls_parent_node_clear(MlsParentNode *node);
+MARMOT_TEST_API void mls_parent_node_clear(MlsParentNode *node);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * LeafNode signatures (RFC 9420 §7.2)
@@ -275,18 +277,18 @@ void mls_parent_node_clear(MlsParentNode *node);
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize LeafNodeTBS into buf. */
-int mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
+MARMOT_TEST_API int mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
                                 const uint8_t *group_id, size_t group_id_len,
                                 uint32_t leaf_index, MlsTlsBuf *buf);
 
 /** Sign node with SignWithLabel("LeafNodeTBS") and set node->signature. */
-int mls_leaf_node_sign(MlsLeafNode *node,
+MARMOT_TEST_API int mls_leaf_node_sign(MlsLeafNode *node,
                        const uint8_t signature_key_private[MLS_SIG_SK_LEN],
                        const uint8_t *group_id, size_t group_id_len,
                        uint32_t leaf_index);
 
 /** Verify node's signature against its own signature_key.  0 when valid. */
-int mls_leaf_node_verify_signature(const MlsLeafNode *node,
+MARMOT_TEST_API int mls_leaf_node_verify_signature(const MlsLeafNode *node,
                                    const uint8_t *group_id, size_t group_id_len,
                                    uint32_t leaf_index);
 
@@ -304,7 +306,7 @@ int mls_leaf_node_verify_signature(const MlsLeafNode *node,
  * @param out_len   Number of entries written
  * @return 0 on success
  */
-int mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
+MARMOT_TEST_API int mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
                         uint32_t *out, uint32_t max_len,
                         uint32_t *out_len);
 
@@ -324,7 +326,7 @@ int mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
  * @param out_len   Number of entries written
  * @return 0 on success
  */
-int mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
+MARMOT_TEST_API int mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
                                   uint32_t *out, uint32_t max_len,
                                   uint32_t *out_len);
 
@@ -340,7 +342,7 @@ int mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
  * @param out       Output hash (MLS_HASH_LEN bytes)
  * @return 0 on success
  */
-int mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
+MARMOT_TEST_API int mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
                   uint8_t out[MLS_HASH_LEN]);
 
 /* The leaf count of @tree's canonical form (RFC 9420 section 7.7: a blank
@@ -348,23 +350,23 @@ int mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
  * and GroupContext tree_hash use this view).  The live tree keeps its width
  * and leaf-index space; the secret tree has the canonical tree's structure
  * (section 9), as OpenMLS sizes it.  0 for an empty tree. */
-uint32_t mls_tree_canonical_leaves(const MlsRatchetTree *tree);
+MARMOT_TEST_API uint32_t mls_tree_canonical_leaves(const MlsRatchetTree *tree);
 
 /**
  * Compute the tree hash of the root (the overall tree hash).
  */
-int mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN]);
+MARMOT_TEST_API int mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * TLS serialization for whole ratchet trees
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize a RatchetTree to MLS TLS format (RatchetTree nodes<V>).  Caller frees *out_data. */
-int mls_ratchet_tree_serialize(const MlsRatchetTree *tree,
+MARMOT_TEST_API int mls_ratchet_tree_serialize(const MlsRatchetTree *tree,
                                uint8_t **out_data, size_t *out_len);
 
 /** Deserialize a RatchetTree from MLS TLS format (RatchetTree nodes<V>). */
-int mls_ratchet_tree_deserialize(const uint8_t *data, size_t len,
+MARMOT_TEST_API int mls_ratchet_tree_deserialize(const uint8_t *data, size_t len,
                                  MlsRatchetTree *tree);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -383,11 +385,11 @@ int mls_ratchet_tree_deserialize(const uint8_t *data, size_t len,
  * @param out               Output hash (MLS_HASH_LEN bytes)
  * @return 0 on success
  */
-int mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
+MARMOT_TEST_API int mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
                          uint32_t original_child, uint8_t out[MLS_HASH_LEN]);
 
 /** Verify all non-root parent_hash fields in a received tree. */
-int mls_tree_verify_parent_hashes(const MlsRatchetTree *tree);
+MARMOT_TEST_API int mls_tree_verify_parent_hashes(const MlsRatchetTree *tree);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Path secret derivation helpers (RFC 9420 §7.4)
@@ -404,7 +406,7 @@ int mls_tree_verify_parent_hashes(const MlsRatchetTree *tree);
  * @param node_pk_out   Output HPKE public key (MLS_KEM_PK_LEN)
  * @return 0 on success
  */
-int mls_tree_derive_node_keypair(const uint8_t path_secret[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_tree_derive_node_keypair(const uint8_t path_secret[MLS_HASH_LEN],
                                   uint8_t node_sk_out[MLS_KEM_SK_LEN],
                                   uint8_t node_pk_out[MLS_KEM_PK_LEN]);
 
@@ -417,7 +419,7 @@ int mls_tree_derive_node_keypair(const uint8_t path_secret[MLS_HASH_LEN],
  * @param next_out  Output next path secret (MLS_HASH_LEN)
  * @return 0 on success
  */
-int mls_tree_derive_next_path_secret(const uint8_t current[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_tree_derive_next_path_secret(const uint8_t current[MLS_HASH_LEN],
                                       uint8_t next_out[MLS_HASH_LEN]);
 
 /**
@@ -427,7 +429,7 @@ int mls_tree_derive_next_path_secret(const uint8_t current[MLS_HASH_LEN],
  * @param node_idx  Node index
  * @return pointer to MLS_KEM_PK_LEN bytes, or NULL if node is blank
  */
-const uint8_t *mls_tree_node_encryption_key(const MlsRatchetTree *tree,
+MARMOT_TEST_API const uint8_t *mls_tree_node_encryption_key(const MlsRatchetTree *tree,
                                              uint32_t node_idx);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -435,16 +437,16 @@ const uint8_t *mls_tree_node_encryption_key(const MlsRatchetTree *tree,
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize a LeafNode to TLS format. */
-int mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf);
 
 /** Serialize a ParentNode to TLS format. */
-int mls_parent_node_serialize(const MlsParentNode *node, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_parent_node_serialize(const MlsParentNode *node, MlsTlsBuf *buf);
 
 /** Deserialize a LeafNode from TLS format. */
-int mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node);
+MARMOT_TEST_API int mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node);
 
 /** Deserialize a ParentNode from TLS format. */
-int mls_parent_node_deserialize(MlsTlsReader *reader, MlsParentNode *node);
+MARMOT_TEST_API int mls_parent_node_deserialize(MlsTlsReader *reader, MlsParentNode *node);
 
 #ifdef __cplusplus
 }

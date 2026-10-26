@@ -10,6 +10,8 @@
 #ifndef MLS_FRAMING_H
 #define MLS_FRAMING_H
 
+#include "marmot-internal-visibility.h"
+
 #include "mls-internal.h"
 #include "mls_key_schedule.h"
 #include <stdbool.h>
@@ -92,7 +94,7 @@ typedef struct {
  * @param out_len             Output length
  * @return 0 on success
  */
-int mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
                              const MlsSenderDataAAD *aad,
                              const uint8_t *ciphertext_sample, size_t sample_len,
                              const MlsSenderData *sender_data,
@@ -101,7 +103,7 @@ int mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
 /**
  * Decrypt sender data (see mls_sender_data_encrypt()).
  */
-int mls_sender_data_decrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_sender_data_decrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
                              const MlsSenderDataAAD *aad,
                              const uint8_t *ciphertext_sample, size_t sample_len,
                              const uint8_t *encrypted, size_t encrypted_len,
@@ -133,7 +135,7 @@ typedef struct {
 } MlsPrivateMessage;
 
 /** Free a PrivateMessage's heap data. */
-void mls_private_message_clear(MlsPrivateMessage *msg);
+MARMOT_TEST_API void mls_private_message_clear(MlsPrivateMessage *msg);
 
 /**
  * Encrypt a PrivateMessage.
@@ -153,7 +155,7 @@ void mls_private_message_clear(MlsPrivateMessage *msg);
  * @param out                 Output PrivateMessage (caller must clear)
  * @return 0 on success
  */
-int mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
+MARMOT_TEST_API int mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
                                  uint64_t epoch,
                                  uint8_t content_type,
                                  const uint8_t *authenticated_data, size_t aad_len,
@@ -176,7 +178,7 @@ int mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
  * @param out_sender          Output sender data (leaf_index, generation)
  * @return 0 on success
  */
-int mls_private_message_decrypt(const MlsPrivateMessage *msg,
+MARMOT_TEST_API int mls_private_message_decrypt(const MlsPrivateMessage *msg,
                                  const uint8_t sender_data_secret[MLS_HASH_LEN],
                                  MlsSecretTree *st,
                                  uint32_t max_forward_distance,
@@ -190,7 +192,7 @@ int mls_private_message_decrypt(const MlsPrivateMessage *msg,
  * ratchet state.  This is used by group decryption after a single sender-data
  * decrypt/parse pass.
  */
-int mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
+MARMOT_TEST_API int mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
                                                   const MlsSenderData *sender_data,
                                                   MlsSecretTree *st,
                                                   uint32_t max_forward_distance,
@@ -203,10 +205,10 @@ int mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Serialize a PrivateMessage to TLS wire format. */
-int mls_private_message_serialize(const MlsPrivateMessage *msg, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_private_message_serialize(const MlsPrivateMessage *msg, MlsTlsBuf *buf);
 
 /** Deserialize a PrivateMessage from TLS wire format. */
-int mls_private_message_deserialize(MlsTlsReader *reader, MlsPrivateMessage *msg);
+MARMOT_TEST_API int mls_private_message_deserialize(MlsTlsReader *reader, MlsPrivateMessage *msg);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Content AAD (RFC 9420 §6.3.2)
@@ -219,7 +221,7 @@ int mls_private_message_deserialize(MlsTlsReader *reader, MlsPrivateMessage *msg
  * Build the content AAD for a PrivateMessage.
  * Caller frees *out.
  */
-int mls_build_content_aad(const uint8_t *group_id, size_t group_id_len,
+MARMOT_TEST_API int mls_build_content_aad(const uint8_t *group_id, size_t group_id_len,
                            uint64_t epoch, uint8_t content_type,
                            const uint8_t *authenticated_data, size_t aad_len,
                            uint8_t **out, size_t *out_len);
@@ -232,7 +234,7 @@ int mls_build_content_aad(const uint8_t *group_id, size_t group_id_len,
  * ──────────────────────────────────────────────────────────────────────── */
 
 /** Apply reuse guard to a nonce: XOR the first 4 bytes. */
-void mls_apply_reuse_guard(uint8_t nonce[MLS_AEAD_NONCE_LEN],
+MARMOT_TEST_API void mls_apply_reuse_guard(uint8_t nonce[MLS_AEAD_NONCE_LEN],
                            const uint8_t reuse_guard[4]);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -282,13 +284,13 @@ typedef struct {
 } MlsFramedContent;
 
 /** Free a FramedContent's heap data. */
-void mls_framed_content_clear(MlsFramedContent *fc);
+MARMOT_TEST_API void mls_framed_content_clear(MlsFramedContent *fc);
 
 /** Serialize FramedContent to TLS wire format. */
-int mls_framed_content_serialize(const MlsFramedContent *fc, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_framed_content_serialize(const MlsFramedContent *fc, MlsTlsBuf *buf);
 
 /** Deserialize FramedContent from TLS wire format. */
-int mls_framed_content_deserialize(MlsTlsReader *reader, MlsFramedContent *fc);
+MARMOT_TEST_API int mls_framed_content_deserialize(MlsTlsReader *reader, MlsFramedContent *fc);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * FramedContentTBS (RFC 9420 §6.1)
@@ -317,7 +319,7 @@ int mls_framed_content_deserialize(MlsTlsReader *reader, MlsFramedContent *fc);
  * @param out_len            Output length
  * @return 0 on success
  */
-int mls_framed_content_tbs_serialize(const MlsFramedContent *fc,
+MARMOT_TEST_API int mls_framed_content_tbs_serialize(const MlsFramedContent *fc,
                                       uint16_t wire_format,
                                       const uint8_t *group_context, size_t group_context_len,
                                       uint8_t **out, size_t *out_len);
@@ -356,7 +358,7 @@ typedef struct {
  * @param auth               Output auth data
  * @return 0 on success
  */
-int mls_framed_content_sign(const MlsFramedContent *fc,
+MARMOT_TEST_API int mls_framed_content_sign(const MlsFramedContent *fc,
                              uint16_t wire_format,
                              const uint8_t *group_context, size_t group_context_len,
                              const uint8_t signature_key[MLS_SIG_SK_LEN],
@@ -373,7 +375,7 @@ int mls_framed_content_sign(const MlsFramedContent *fc,
  * @param verification_key   Ed25519 public key
  * @return 0 on valid signature
  */
-int mls_framed_content_verify(const MlsFramedContent *fc,
+MARMOT_TEST_API int mls_framed_content_verify(const MlsFramedContent *fc,
                                const MlsFramedContentAuthData *auth,
                                uint16_t wire_format,
                                const uint8_t *group_context, size_t group_context_len,
@@ -400,7 +402,7 @@ int mls_framed_content_verify(const MlsFramedContent *fc,
  * Encode and sign the PrivateMessageContent of an application message.
  * *out (caller wipes and frees) is the plaintext for the PrivateMessage AEAD.
  */
-int mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
+MARMOT_TEST_API int mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
                                    uint64_t epoch, uint32_t sender_leaf,
                                    const uint8_t *authenticated_data, size_t aad_len,
                                    const uint8_t *application_data, size_t app_len,
@@ -425,11 +427,11 @@ int mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
  * the caller owns both (e.g. as an MlsPublicMessage's content and auth, freed
  * by mls_public_message_clear()); on failure nothing is left to free.
  */
-int mls_handshake_content_decode(const MlsPrivateMessage *msg, uint32_t sender_leaf,
+MARMOT_TEST_API int mls_handshake_content_decode(const MlsPrivateMessage *msg, uint32_t sender_leaf,
                                  const uint8_t *content, size_t content_len,
                                  MlsFramedContent *out_fc, MlsFramedContentAuthData *out_auth);
 
-int mls_application_content_decode(const uint8_t *group_id, size_t group_id_len,
+MARMOT_TEST_API int mls_application_content_decode(const uint8_t *group_id, size_t group_id_len,
                                    uint64_t epoch, uint32_t sender_leaf,
                                    const uint8_t *authenticated_data, size_t aad_len,
                                    const uint8_t *content, size_t content_len,
@@ -459,13 +461,13 @@ typedef struct {
 } MlsPublicMessage;
 
 /** Free a PublicMessage's heap data. */
-void mls_public_message_clear(MlsPublicMessage *msg);
+MARMOT_TEST_API void mls_public_message_clear(MlsPublicMessage *msg);
 
 /** Serialize a PublicMessage to TLS wire format. */
-int mls_public_message_serialize(const MlsPublicMessage *msg, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_public_message_serialize(const MlsPublicMessage *msg, MlsTlsBuf *buf);
 
 /** Deserialize a PublicMessage from TLS wire format. */
-int mls_public_message_deserialize(MlsTlsReader *reader, MlsPublicMessage *msg);
+MARMOT_TEST_API int mls_public_message_deserialize(MlsTlsReader *reader, MlsPublicMessage *msg);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * AuthenticatedContent (RFC 9420 §6.1)
@@ -484,7 +486,7 @@ int mls_public_message_deserialize(MlsTlsReader *reader, MlsPublicMessage *msg);
 /** Serialize an AuthenticatedContent; `content`/`auth` are a FramedContent
  *  and its auth data (e.g. an MlsPublicMessage's, or a decrypted
  *  PrivateMessage's from mls_handshake_content_decode()). */
-int mls_authenticated_content_serialize(uint16_t wire_format,
+MARMOT_TEST_API int mls_authenticated_content_serialize(uint16_t wire_format,
                                         const MlsFramedContent *content,
                                         const MlsFramedContentAuthData *auth,
                                         MlsTlsBuf *buf);
@@ -492,12 +494,12 @@ int mls_authenticated_content_serialize(uint16_t wire_format,
 /** Deserialize an AuthenticatedContent (strict: the reader must end there is
  *  the caller's check).  On success the caller frees *content and *auth
  *  (mls_framed_content_clear(), mls_framed_content_auth_data_clear()). */
-int mls_authenticated_content_deserialize(MlsTlsReader *reader, uint16_t *wire_format,
+MARMOT_TEST_API int mls_authenticated_content_deserialize(MlsTlsReader *reader, uint16_t *wire_format,
                                           MlsFramedContent *content,
                                           MlsFramedContentAuthData *auth);
 
 /** Free an auth data's heap parts. */
-void mls_framed_content_auth_data_clear(MlsFramedContentAuthData *auth);
+MARMOT_TEST_API void mls_framed_content_auth_data_clear(MlsFramedContentAuthData *auth);
 
 /**
  * Compute the membership tag for a PublicMessage.
@@ -510,14 +512,14 @@ void mls_framed_content_auth_data_clear(MlsFramedContentAuthData *auth);
  * @param group_context_len Length of group_context
  * @return 0 on success (fills msg->membership_tag)
  */
-int mls_public_message_compute_membership_tag(MlsPublicMessage *msg,
+MARMOT_TEST_API int mls_public_message_compute_membership_tag(MlsPublicMessage *msg,
                                                const uint8_t membership_key[MLS_HASH_LEN],
                                                const uint8_t *group_context, size_t group_context_len);
 
 /**
  * Verify the membership tag on a PublicMessage.
  */
-int mls_public_message_verify_membership_tag(const MlsPublicMessage *msg,
+MARMOT_TEST_API int mls_public_message_verify_membership_tag(const MlsPublicMessage *msg,
                                               const uint8_t membership_key[MLS_HASH_LEN],
                                               const uint8_t *group_context, size_t group_context_len);
 
@@ -535,7 +537,7 @@ int mls_public_message_verify_membership_tag(const MlsPublicMessage *msg,
  * @param out               Output tag
  * @return 0 on success
  */
-int mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
+MARMOT_TEST_API int mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
                                   const uint8_t confirmed_transcript_hash[MLS_HASH_LEN],
                                   uint8_t out[MLS_HASH_LEN]);
 
@@ -570,13 +572,13 @@ typedef struct {
 } MlsMLSMessage;
 
 /** Free an MLSMessage's heap data. */
-void mls_message_clear(MlsMLSMessage *msg);
+MARMOT_TEST_API void mls_message_clear(MlsMLSMessage *msg);
 
 /** Serialize an MLSMessage to TLS wire format. */
-int mls_message_serialize(const MlsMLSMessage *msg, MlsTlsBuf *buf);
+MARMOT_TEST_API int mls_message_serialize(const MlsMLSMessage *msg, MlsTlsBuf *buf);
 
 /** Deserialize an MLSMessage from TLS wire format. */
-int mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg);
+MARMOT_TEST_API int mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,16 @@
+#ifndef MARMOT_EXPORT_H
+#define MARMOT_EXPORT_H
+
+#if defined(_WIN32) && !defined(MARMOT_STATIC_DEFINE)
+# if defined(MARMOT_BUILDING_DLL)
+#  define MARMOT_API __declspec(dllexport)
+# else
+#  define MARMOT_API __declspec(dllimport)
+# endif
+#elif defined(__GNUC__) || defined(__clang__)
+# define MARMOT_API __attribute__((visibility("default")))
+#else
+# define MARMOT_API
+#endif
+
+#endif /* MARMOT_EXPORT_H */

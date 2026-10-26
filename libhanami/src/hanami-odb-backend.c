@@ -13,7 +13,6 @@
 #include <git2/odb.h>
 #include <git2/oid.h>
 #include <git2/errors.h>
-#include <git2/sys/errors.h>
 #include <git2/sys/odb_backend.h>
 #include <stdio.h>
 #include <stdlib.h>

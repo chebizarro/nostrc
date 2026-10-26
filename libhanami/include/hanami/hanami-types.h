@@ -9,6 +9,8 @@
 #ifndef HANAMI_TYPES_H
 #define HANAMI_TYPES_H
 
+#include "hanami-export.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -46,7 +48,7 @@ typedef blossom_error_t hanami_error_t;
  *
  * Returns: (transfer none): human-readable error message (static string)
  */
-const char *hanami_strerror(hanami_error_t err);
+HANAMI_API const char *hanami_strerror(hanami_error_t err);
 
 /* =========================================================================
  * OID ↔ Blossom hash index entry

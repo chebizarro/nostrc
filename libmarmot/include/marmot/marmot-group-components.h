@@ -31,6 +31,8 @@
 #ifndef MARMOT_GROUP_COMPONENTS_H
 #define MARMOT_GROUP_COMPONENTS_H
 
+#include "marmot-export.h"
+
 #include "marmot-error.h"
 #include "marmot-types.h"
 #include "marmot-media.h"
@@ -85,17 +87,17 @@ typedef struct {
  * replay_ttl_secs <= 300, padding_bucket_bytes <= 4096.
  * MARMOT_ERR_EXTENSION_FORMAT otherwise.
  */
-MarmotError marmot_agent_text_stream_policy_decode(const uint8_t *data, size_t len,
+MARMOT_API MarmotError marmot_agent_text_stream_policy_decode(const uint8_t *data, size_t len,
                                                    MarmotAgentTextStreamPolicy *out);
 
 /** The 12 state bytes of a valid policy (MARMOT_ERR_INVALID_INPUT otherwise). */
-MarmotError marmot_agent_text_stream_policy_encode(const MarmotAgentTextStreamPolicy *policy,
+MARMOT_API MarmotError marmot_agent_text_stream_policy_encode(const MarmotAgentTextStreamPolicy *policy,
                                                    uint8_t out[MARMOT_AGENT_STREAM_STATE_LEN]);
 
 /** MDK's AgentTextStreamQuicPolicyV1::user_to_agent_default(), which every
  *  White Noise group carries: requires receive, allows receive|send,
  *  4096-byte frames, no replay, no padding. */
-MarmotAgentTextStreamPolicy marmot_agent_text_stream_policy_user_to_agent_default(void);
+MARMOT_API MarmotAgentTextStreamPolicy marmot_agent_text_stream_policy_user_to_agent_default(void);
 
 /* ── 0x800b marmot.group.encrypted-media.v2 ────────────────────────────── */
 
@@ -146,7 +148,7 @@ typedef struct {
  * verifiable subset is accepted unverified.  Every other violation is
  * MARMOT_ERR_MEDIA_INVALID_REFERENCE too.
  */
-MarmotError marmot_group_media_policy_decode(const uint8_t *data, size_t len,
+MARMOT_API MarmotError marmot_group_media_policy_decode(const uint8_t *data, size_t len,
                                              MarmotGroupMediaPolicy *out);
 
 /**
@@ -156,10 +158,10 @@ MarmotError marmot_group_media_policy_decode(const uint8_t *data, size_t len,
  * URL it cannot verify is MARMOT_ERR_INVALID_INPUT, as is an unverified
  * endpoint) and deduplicated.  *out is malloc'd.
  */
-MarmotError marmot_group_media_policy_encode(const MarmotGroupMediaPolicy *policy,
+MARMOT_API MarmotError marmot_group_media_policy_encode(const MarmotGroupMediaPolicy *policy,
                                              uint8_t **out, size_t *out_len);
 
-void marmot_group_media_policy_clear(MarmotGroupMediaPolicy *policy);
+MARMOT_API void marmot_group_media_policy_clear(MarmotGroupMediaPolicy *policy);
 
 /* ── Read side: the components of a joined adopted group (nostrc-m6tp) ── */
 
@@ -210,10 +212,10 @@ typedef struct {
  * marmot_update_group_avatar_url() below; name, description, admins and
  * relays: marmot_update_group_metadata().
  */
-MarmotError marmot_get_group_components(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_get_group_components(Marmot *m, const MarmotGroupId *mls_group_id,
                                         MarmotGroupComponents *out);
 
-void marmot_group_components_clear(MarmotGroupComponents *components);
+MARMOT_API void marmot_group_components_clear(MarmotGroupComponents *components);
 
 /* ── Write side: the group image and URL avatar (nostrc-m6tp) ──────────── */
 
@@ -248,7 +250,7 @@ void marmot_group_components_clear(MarmotGroupComponents *components);
  *   MARMOT_ERR_OWN_COMMIT_PENDING and the other errors of
  *   marmot_update_group_metadata()
  */
-MarmotError marmot_update_group_blossom_image(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_update_group_blossom_image(Marmot *m, const MarmotGroupId *mls_group_id,
                                               const MarmotGroupBlossomImage *image,
                                               char **out_commit_json);
 
@@ -265,7 +267,7 @@ MarmotError marmot_update_group_blossom_image(Marmot *m, const MarmotGroupId *ml
  *
  * Returns: as marmot_update_group_blossom_image()
  */
-MarmotError marmot_update_group_avatar_url(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_update_group_avatar_url(Marmot *m, const MarmotGroupId *mls_group_id,
                                            const MarmotGroupAvatarUrl *avatar,
                                            char **out_commit_json);
 
@@ -286,7 +288,7 @@ MarmotError marmot_update_group_avatar_url(Marmot *m, const MarmotGroupId *mls_g
  * Returns: as marmot_update_group_blossom_image(); the encoder's error for
  *   an invalid policy
  */
-MarmotError marmot_update_group_media_policy(Marmot *m, const MarmotGroupId *mls_group_id,
+MARMOT_API MarmotError marmot_update_group_media_policy(Marmot *m, const MarmotGroupId *mls_group_id,
                                              const MarmotGroupMediaPolicy *policy,
                                              char **out_commit_json);
 
