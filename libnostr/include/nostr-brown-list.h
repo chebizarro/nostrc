@@ -16,6 +16,8 @@
 #ifndef __NOSTR_BROWN_LIST_H__
 #define __NOSTR_BROWN_LIST_H__
 
+#include "nostr-export.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -100,7 +102,7 @@ typedef struct NostrBrownListIterator {
  *
  * Returns: (transfer full): Newly allocated brown list, or NULL on error
  */
-NostrBrownList *nostr_brown_list_new(void);
+NOSTR_API NostrBrownList *nostr_brown_list_new(void);
 
 /**
  * nostr_brown_list_new_with_config:
@@ -111,7 +113,7 @@ NostrBrownList *nostr_brown_list_new(void);
  *
  * Returns: (transfer full): Newly allocated brown list, or NULL on error
  */
-NostrBrownList *nostr_brown_list_new_with_config(int threshold, int timeout_seconds);
+NOSTR_API NostrBrownList *nostr_brown_list_new_with_config(int threshold, int timeout_seconds);
 
 /**
  * nostr_brown_list_free:
@@ -119,7 +121,7 @@ NostrBrownList *nostr_brown_list_new_with_config(int threshold, int timeout_seco
  *
  * Free a brown list and all associated resources.
  */
-void nostr_brown_list_free(NostrBrownList *list);
+NOSTR_API void nostr_brown_list_free(NostrBrownList *list);
 
 /* ========================================================================
  * Configuration
@@ -132,7 +134,7 @@ void nostr_brown_list_free(NostrBrownList *list);
  *
  * Set the failure threshold. Takes effect for future failures.
  */
-void nostr_brown_list_set_threshold(NostrBrownList *list, int threshold);
+NOSTR_API void nostr_brown_list_set_threshold(NostrBrownList *list, int threshold);
 
 /**
  * nostr_brown_list_get_threshold:
@@ -140,7 +142,7 @@ void nostr_brown_list_set_threshold(NostrBrownList *list, int threshold);
  *
  * Returns: Current failure threshold
  */
-int nostr_brown_list_get_threshold(NostrBrownList *list);
+NOSTR_API int nostr_brown_list_get_threshold(NostrBrownList *list);
 
 /**
  * nostr_brown_list_set_timeout:
@@ -149,7 +151,7 @@ int nostr_brown_list_get_threshold(NostrBrownList *list);
  *
  * Set the brown-list timeout. Takes effect for future brown-listings.
  */
-void nostr_brown_list_set_timeout(NostrBrownList *list, int timeout_seconds);
+NOSTR_API void nostr_brown_list_set_timeout(NostrBrownList *list, int timeout_seconds);
 
 /**
  * nostr_brown_list_get_timeout:
@@ -157,7 +159,7 @@ void nostr_brown_list_set_timeout(NostrBrownList *list, int timeout_seconds);
  *
  * Returns: Current timeout in seconds
  */
-int nostr_brown_list_get_timeout(NostrBrownList *list);
+NOSTR_API int nostr_brown_list_get_timeout(NostrBrownList *list);
 
 /* ========================================================================
  * Recording failures and successes
@@ -174,7 +176,7 @@ int nostr_brown_list_get_timeout(NostrBrownList *list);
  *
  * Returns: true if relay is now brown-listed, false otherwise
  */
-bool nostr_brown_list_record_failure(NostrBrownList *list, const char *url);
+NOSTR_API bool nostr_brown_list_record_failure(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_record_success:
@@ -184,7 +186,7 @@ bool nostr_brown_list_record_failure(NostrBrownList *list, const char *url);
  * Record a successful connection. Resets failure count and removes
  * from brown list if present.
  */
-void nostr_brown_list_record_success(NostrBrownList *list, const char *url);
+NOSTR_API void nostr_brown_list_record_success(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_update_connected_count:
@@ -194,7 +196,7 @@ void nostr_brown_list_record_success(NostrBrownList *list, const char *url);
  * Update the count of connected relays. Used to determine if network
  * is healthy (at least one relay connected) before brown-listing.
  */
-void nostr_brown_list_update_connected_count(NostrBrownList *list, int connected);
+NOSTR_API void nostr_brown_list_update_connected_count(NostrBrownList *list, int connected);
 
 /* ========================================================================
  * Querying brown list status
@@ -210,7 +212,7 @@ void nostr_brown_list_update_connected_count(NostrBrownList *list, int connected
  *
  * Returns: true if relay is brown-listed and not expired
  */
-bool nostr_brown_list_is_browned(NostrBrownList *list, const char *url);
+NOSTR_API bool nostr_brown_list_is_browned(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_should_skip:
@@ -222,7 +224,7 @@ bool nostr_brown_list_is_browned(NostrBrownList *list, const char *url);
  *
  * Returns: true if relay should be skipped
  */
-bool nostr_brown_list_should_skip(NostrBrownList *list, const char *url);
+NOSTR_API bool nostr_brown_list_should_skip(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_get_failure_count:
@@ -233,7 +235,7 @@ bool nostr_brown_list_should_skip(NostrBrownList *list, const char *url);
  *
  * Returns: Number of consecutive failures, or 0 if not tracked
  */
-int nostr_brown_list_get_failure_count(NostrBrownList *list, const char *url);
+NOSTR_API int nostr_brown_list_get_failure_count(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_get_time_remaining:
@@ -244,7 +246,7 @@ int nostr_brown_list_get_failure_count(NostrBrownList *list, const char *url);
  *
  * Returns: Seconds remaining, or 0 if not brown-listed or expired
  */
-int nostr_brown_list_get_time_remaining(NostrBrownList *list, const char *url);
+NOSTR_API int nostr_brown_list_get_time_remaining(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_get_stats:
@@ -253,7 +255,7 @@ int nostr_brown_list_get_time_remaining(NostrBrownList *list, const char *url);
  *
  * Get statistics about the brown list.
  */
-void nostr_brown_list_get_stats(NostrBrownList *list, NostrBrownListStats *stats);
+NOSTR_API void nostr_brown_list_get_stats(NostrBrownList *list, NostrBrownListStats *stats);
 
 /* ========================================================================
  * Manual management
@@ -269,7 +271,7 @@ void nostr_brown_list_get_stats(NostrBrownList *list, NostrBrownListStats *stats
  *
  * Returns: true if relay was found and cleared
  */
-bool nostr_brown_list_clear_relay(NostrBrownList *list, const char *url);
+NOSTR_API bool nostr_brown_list_clear_relay(NostrBrownList *list, const char *url);
 
 /**
  * nostr_brown_list_clear_all:
@@ -277,7 +279,7 @@ bool nostr_brown_list_clear_relay(NostrBrownList *list, const char *url);
  *
  * Clear all entries from the brown list.
  */
-void nostr_brown_list_clear_all(NostrBrownList *list);
+NOSTR_API void nostr_brown_list_clear_all(NostrBrownList *list);
 
 /**
  * nostr_brown_list_expire_stale:
@@ -289,7 +291,7 @@ void nostr_brown_list_clear_all(NostrBrownList *list);
  *
  * Returns: Number of entries expired
  */
-int nostr_brown_list_expire_stale(NostrBrownList *list);
+NOSTR_API int nostr_brown_list_expire_stale(NostrBrownList *list);
 
 /* ========================================================================
  * Iteration
@@ -304,7 +306,7 @@ int nostr_brown_list_expire_stale(NostrBrownList *list);
  *
  * Returns: (transfer full): New iterator, or NULL on error
  */
-NostrBrownListIterator *nostr_brown_list_iterator_new(NostrBrownList *list, bool only_browned);
+NOSTR_API NostrBrownListIterator *nostr_brown_list_iterator_new(NostrBrownList *list, bool only_browned);
 
 /**
  * nostr_brown_list_iterator_next:
@@ -317,7 +319,7 @@ NostrBrownListIterator *nostr_brown_list_iterator_new(NostrBrownList *list, bool
  *
  * Returns: true if an entry was returned, false if iteration complete
  */
-bool nostr_brown_list_iterator_next(NostrBrownListIterator *iter,
+NOSTR_API bool nostr_brown_list_iterator_next(NostrBrownListIterator *iter,
                                      const char **url,
                                      int *failure_count,
                                      int *time_remaining);
@@ -326,7 +328,7 @@ bool nostr_brown_list_iterator_next(NostrBrownListIterator *iter,
  * nostr_brown_list_iterator_free:
  * @iter: (transfer full): Iterator to free
  */
-void nostr_brown_list_iterator_free(NostrBrownListIterator *iter);
+NOSTR_API void nostr_brown_list_iterator_free(NostrBrownListIterator *iter);
 
 /* ========================================================================
  * Persistence (optional)
@@ -342,7 +344,7 @@ void nostr_brown_list_iterator_free(NostrBrownListIterator *iter);
  *
  * Returns: true if path was set successfully
  */
-bool nostr_brown_list_set_storage_path(NostrBrownList *list, const char *path);
+NOSTR_API bool nostr_brown_list_set_storage_path(NostrBrownList *list, const char *path);
 
 /**
  * nostr_brown_list_save:
@@ -352,7 +354,7 @@ bool nostr_brown_list_set_storage_path(NostrBrownList *list, const char *path);
  *
  * Returns: true on success, false on error
  */
-bool nostr_brown_list_save(NostrBrownList *list);
+NOSTR_API bool nostr_brown_list_save(NostrBrownList *list);
 
 /**
  * nostr_brown_list_load:
@@ -362,7 +364,7 @@ bool nostr_brown_list_save(NostrBrownList *list);
  *
  * Returns: true on success, false on error
  */
-bool nostr_brown_list_load(NostrBrownList *list);
+NOSTR_API bool nostr_brown_list_load(NostrBrownList *list);
 
 #ifdef __cplusplus
 }

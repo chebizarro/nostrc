@@ -1,6 +1,8 @@
 #ifndef __NOSTR_UTILS_H__
 #define __NOSTR_UTILS_H__
 
+#include "nostr-export.h"
+
 /* GLib-friendly transitional header for utils */
 
 #include <stddef.h>
@@ -24,7 +26,7 @@ extern "C" {
  *
  * Returns: hash value
  */
-uint64_t nostr_memhash(const char *data, size_t len);
+NOSTR_API uint64_t nostr_memhash(const char *data, size_t len);
 
 /**
  * nostr_named_lock:
@@ -32,7 +34,7 @@ uint64_t nostr_memhash(const char *data, size_t len);
  * @critical_section: function to run while holding lock
  * @arg: user data passed to @critical_section
  */
-void nostr_named_lock(const char *name, void (*critical_section)(void *), void *arg);
+NOSTR_API void nostr_named_lock(const char *name, void (*critical_section)(void *), void *arg);
 
 /**
  * nostr_similar:
@@ -43,7 +45,7 @@ void nostr_named_lock(const char *name, void (*critical_section)(void *), void *
  *
  * Returns: %TRUE if similar
  */
-bool nostr_similar(const int *a, size_t a_len, const int *b, size_t b_len);
+NOSTR_API bool nostr_similar(const int *a, size_t a_len, const int *b, size_t b_len);
 
 /**
  * nostr_escape_string:
@@ -51,7 +53,7 @@ bool nostr_similar(const int *a, size_t a_len, const int *b, size_t b_len);
  *
  * Returns: (transfer full): newly-allocated escaped string
  */
-char *nostr_escape_string(const char *s);
+NOSTR_API char *nostr_escape_string(const char *s);
 
 /**
  * nostr_pointer_values_equal:
@@ -61,7 +63,7 @@ char *nostr_escape_string(const char *s);
  *
  * Returns: %TRUE if equal
  */
-bool nostr_pointer_values_equal(const void *a, const void *b, size_t size);
+NOSTR_API bool nostr_pointer_values_equal(const void *a, const void *b, size_t size);
 
 /**
  * nostr_normalize_url:
@@ -69,7 +71,7 @@ bool nostr_pointer_values_equal(const void *a, const void *b, size_t size);
  *
  * Returns: (transfer full): normalized URL or %NULL
  */
-char *nostr_normalize_url(const char *in);
+NOSTR_API char *nostr_normalize_url(const char *in);
 
 /**
  * nostr_normalize_ok_message:
@@ -78,7 +80,7 @@ char *nostr_normalize_url(const char *in);
  *
  * Returns: (transfer full): normalized message or %NULL
  */
-char *nostr_normalize_ok_message(const char *reason, const char *prefix);
+NOSTR_API char *nostr_normalize_ok_message(const char *reason, const char *prefix);
 
 /**
  * nostr_hex2bin:
@@ -88,7 +90,7 @@ char *nostr_normalize_ok_message(const char *reason, const char *prefix);
  *
  * Returns: %TRUE on success
  */
-bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
+NOSTR_API bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
 
 /**
  * nostr_bin2hex:
@@ -97,7 +99,7 @@ bool nostr_hex2bin(unsigned char *bin, const char *hex, size_t bin_len);
  *
  * Returns: (transfer full): newly-allocated lowercase hex string or NULL
  */
-char *nostr_bin2hex(const unsigned char *bin, size_t len);
+NOSTR_API char *nostr_bin2hex(const unsigned char *bin, size_t len);
 
 /**
  * nostr_sub_id_to_serial:
@@ -105,7 +107,7 @@ char *nostr_bin2hex(const unsigned char *bin, size_t len);
  *
  * Returns: serial number or -1 on error
  */
-int64_t nostr_sub_id_to_serial(const char *sub_id);
+NOSTR_API int64_t nostr_sub_id_to_serial(const char *sub_id);
 
 #ifdef __cplusplus
 }

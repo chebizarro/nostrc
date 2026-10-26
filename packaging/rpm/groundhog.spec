@@ -156,7 +156,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %license LICENSE gnome/groundhog/data/icons/COPYING
 %{_bindir}/groundhog
 %dir %{_libdir}/groundhog
-%{_libdir}/groundhog/libnostr-json.so.1
+%{_libdir}/groundhog/libnostr-json.so.2
 %{_libdir}/groundhog/libnostr-gobject-1.0.so.2*
 %{_libdir}/groundhog/libnostr-gtk-portable-1.0.so.1*
 %{_datadir}/applications/org.nostr.Groundhog.desktop
@@ -170,7 +170,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_bindir}/grotto
 %{_bindir}/grotto-daemon
 %dir %{_libdir}/grotto
-%{_libdir}/grotto/libnostr-json.so.1
+%{_libdir}/grotto/libnostr-json.so.2
 %{_libdir}/grotto/libnostr-gobject-1.0.so.2*
 %{_datadir}/applications/org.nostr.Grotto.desktop
 %{_datadir}/dbus-1/services/org.nostr.Grotto.service

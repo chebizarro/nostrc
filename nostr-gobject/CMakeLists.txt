@@ -379,6 +379,9 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           -I ${CMAKE_CURRENT_BINARY_DIR}
           -I ${CMAKE_SOURCE_DIR}/libnostr/include
           -I ${CMAKE_BINARY_DIR}/libnostr/generated
+          -I ${CMAKE_BINARY_DIR}/libnostr/include
+          -I ${CMAKE_BINARY_DIR}/libjson/include
+          -I ${CMAKE_BINARY_DIR}/libgo/include
           -I ${CMAKE_SOURCE_DIR}/libgo/include
           ${_vault_gir_includes}
           -I ${CMAKE_SOURCE_DIR}/libvault/include

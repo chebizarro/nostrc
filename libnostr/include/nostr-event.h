@@ -1,6 +1,8 @@
 #ifndef __NOSTR_EVENT_H__
 #define __NOSTR_EVENT_H__
 
+#include "nostr-export.h"
+
 /* Transitional header: exposes GLib-friendly libnostr naming for events.
  * Avoids including internal headers; wrapper source bridges to internals. */
 
@@ -55,13 +57,13 @@ extern "C" {
  *
  * Returns: (transfer full) (nullable): new event
  */
-NostrEvent *nostr_event_new(void);
+NOSTR_API NostrEvent *nostr_event_new(void);
 
 /**
  * nostr_event_free:
  * @event: (transfer full) (nullable): event to free
  */
-void nostr_event_free(NostrEvent *event);
+NOSTR_API void nostr_event_free(NostrEvent *event);
 
 /**
  * nostr_event_copy:
@@ -69,11 +71,11 @@ void nostr_event_free(NostrEvent *event);
  *
  * Returns: (transfer full) (nullable): deep copy of @event
  */
-NostrEvent *nostr_event_copy(const NostrEvent *event);
+NOSTR_API NostrEvent *nostr_event_copy(const NostrEvent *event);
 
 #ifdef __GI_SCANNER__
 #include <glib-object.h>
-GType nostr_event_get_type(void);
+NOSTR_API GType nostr_event_get_type(void);
 #define NOSTR_TYPE_EVENT (nostr_event_get_type())
 #endif
 
@@ -84,7 +86,7 @@ GType nostr_event_get_type(void);
  *
  * Computes the NIP-01 SHA-256 id without consulting @event->id.
  */
-NostrEventValidationStatus nostr_event_compute_id(const NostrEvent *event,
+NOSTR_API NostrEventValidationStatus nostr_event_compute_id(const NostrEvent *event,
                                                    char canonical_id_out[65]);
 
 /**
@@ -94,7 +96,7 @@ NostrEventValidationStatus nostr_event_compute_id(const NostrEvent *event,
  *
  * Computes the canonical id and requires the declared id to encode the same hash.
  */
-NostrEventValidationStatus nostr_event_validate_id(const NostrEvent *event,
+NOSTR_API NostrEventValidationStatus nostr_event_validate_id(const NostrEvent *event,
                                                     char canonical_id_out[65]);
 
 /**
@@ -105,10 +107,10 @@ NostrEventValidationStatus nostr_event_validate_id(const NostrEvent *event,
  * Strictly validates required signed fields, binds the declared id to the
  * canonical NIP-01 hash, and verifies the Schnorr signature against that hash.
  */
-NostrEventValidationStatus nostr_event_validate(const NostrEvent *event,
+NOSTR_API NostrEventValidationStatus nostr_event_validate(const NostrEvent *event,
                                                  char canonical_id_out[65]);
 
-const char *nostr_event_validation_status_string(NostrEventValidationStatus status);
+NOSTR_API const char *nostr_event_validation_status_string(NostrEventValidationStatus status);
 
 /**
  * nostr_event_get_id:
@@ -117,7 +119,7 @@ const char *nostr_event_validation_status_string(NostrEventValidationStatus stat
  * Recomputes the canonical NIP-01 id. It never trusts or caches @event->id.
  * Returns: (transfer full) (nullable): newly allocated lowercase hex id
  */
-char *nostr_event_get_id(NostrEvent *event);
+NOSTR_API char *nostr_event_get_id(NostrEvent *event);
 
 /**
  * nostr_event_check_signature:
@@ -125,7 +127,7 @@ char *nostr_event_get_id(NostrEvent *event);
  *
  * Returns: whether the declared id is canonical and the signature verifies
  */
-bool nostr_event_check_signature(NostrEvent *event);
+NOSTR_API bool nostr_event_check_signature(NostrEvent *event);
 
 /**
  * nostr_event_sign:
@@ -134,7 +136,7 @@ bool nostr_event_check_signature(NostrEvent *event);
  *
  * Returns: 0 on success
  */
-int nostr_event_sign(NostrEvent *event, const char *private_key);
+NOSTR_API int nostr_event_sign(NostrEvent *event, const char *private_key);
 
 /**
  * nostr_event_sign_secure:
@@ -144,7 +146,7 @@ int nostr_event_sign(NostrEvent *event, const char *private_key);
  * Signs the event using the provided secret key stored in secure memory.
  * Returns: 0 on success
  */
-int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk);
+NOSTR_API int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk);
 
 /**
  * nostr_event_is_regular:
@@ -152,7 +154,7 @@ int nostr_event_sign_secure(NostrEvent *event, const nostr_secure_buf *sk);
  *
  * Returns: whether event is regular
  */
-bool nostr_event_is_regular(NostrEvent *event);
+NOSTR_API bool nostr_event_is_regular(NostrEvent *event);
 
 /* Accessors for public struct members (for GObject properties later) */
 /**
@@ -161,13 +163,13 @@ bool nostr_event_is_regular(NostrEvent *event);
  *
  * Returns: (transfer none) (nullable): internal pubkey string
  */
-const char *nostr_event_get_pubkey(const NostrEvent *event);
+NOSTR_API const char *nostr_event_get_pubkey(const NostrEvent *event);
 /**
  * nostr_event_set_pubkey:
  * @event: (nullable): event (no-op if NULL)
  * @pubkey: (nullable): hex pubkey; duplicated internally
  */
-void nostr_event_set_pubkey(NostrEvent *event, const char *pubkey);
+NOSTR_API void nostr_event_set_pubkey(NostrEvent *event, const char *pubkey);
 
 /**
  * nostr_event_get_created_at:
@@ -175,13 +177,13 @@ void nostr_event_set_pubkey(NostrEvent *event, const char *pubkey);
  *
  * Returns: created_at timestamp
  */
-int64_t nostr_event_get_created_at(const NostrEvent *event);
+NOSTR_API int64_t nostr_event_get_created_at(const NostrEvent *event);
 /**
  * nostr_event_set_created_at:
  * @event: (nullable): event
  * @created_at: timestamp
  */
-void nostr_event_set_created_at(NostrEvent *event, int64_t created_at);
+NOSTR_API void nostr_event_set_created_at(NostrEvent *event, int64_t created_at);
 
 /**
  * nostr_event_get_kind:
@@ -189,13 +191,13 @@ void nostr_event_set_created_at(NostrEvent *event, int64_t created_at);
  *
  * Returns: kind integer
  */
-int nostr_event_get_kind(const NostrEvent *event);
+NOSTR_API int nostr_event_get_kind(const NostrEvent *event);
 /**
  * nostr_event_set_kind:
  * @event: (nullable): event
  * @kind: kind integer
  */
-void nostr_event_set_kind(NostrEvent *event, int kind);
+NOSTR_API void nostr_event_set_kind(NostrEvent *event, int kind);
 
 /**
  * nostr_event_get_tags:
@@ -203,7 +205,7 @@ void nostr_event_set_kind(NostrEvent *event, int kind);
  *
  * Returns: (transfer none) (nullable) (type gpointer): owned tags pointer
  */
-void *nostr_event_get_tags(const NostrEvent *event);
+NOSTR_API void *nostr_event_get_tags(const NostrEvent *event);
 /**
  * nostr_event_set_tags:
  * @event: (nullable): event (no-op if NULL)
@@ -211,7 +213,7 @@ void *nostr_event_get_tags(const NostrEvent *event);
  *
  * Ownership: takes full ownership of @tags.
  */
-void nostr_event_set_tags(NostrEvent *event, void *tags);
+NOSTR_API void nostr_event_set_tags(NostrEvent *event, void *tags);
 
 /**
  * nostr_event_get_content:
@@ -219,13 +221,13 @@ void nostr_event_set_tags(NostrEvent *event, void *tags);
  *
  * Returns: (transfer none) (nullable)
  */
-const char *nostr_event_get_content(const NostrEvent *event);
+NOSTR_API const char *nostr_event_get_content(const NostrEvent *event);
 /**
  * nostr_event_set_content:
  * @event: (nullable): event (no-op if NULL)
  * @content: (nullable): utf8; duplicated internally
  */
-void nostr_event_set_content(NostrEvent *event, const char *content);
+NOSTR_API void nostr_event_set_content(NostrEvent *event, const char *content);
 
 /**
  * nostr_event_get_sig:
@@ -233,13 +235,13 @@ void nostr_event_set_content(NostrEvent *event, const char *content);
  *
  * Returns: (transfer none) (nullable)
  */
-const char *nostr_event_get_sig(const NostrEvent *event);
+NOSTR_API const char *nostr_event_get_sig(const NostrEvent *event);
 /**
  * nostr_event_set_sig:
  * @event: (nullable): event (no-op if NULL)
  * @sig: (nullable): hex signature; duplicated internally
  */
-void nostr_event_set_sig(NostrEvent *event, const char *sig);
+NOSTR_API void nostr_event_set_sig(NostrEvent *event, const char *sig);
 
 /* No further remapping here to prevent recursive macro definitions. */
 
@@ -247,28 +249,28 @@ void nostr_event_set_sig(NostrEvent *event, const char *sig);
  * Returns a newly-allocated compact JSON object string representing the event.
  * Only includes fields that are set (id, pubkey, created_at, kind, tags, content, sig).
  */
-char *nostr_event_serialize_compact(const NostrEvent *event);
+NOSTR_API char *nostr_event_serialize_compact(const NostrEvent *event);
 
 /* Fast-path JSON deserialization from a compact object string.
  * Returns 1 on success, 0 on parse error. Populates provided @event.
  * If @err_out is non-NULL, receives structured error info on failure.
  */
 typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
-int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
+NOSTR_API int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
                                      NostrJsonErrorInfo *err_out);
 
 /* Strict structural parser for signed event JSON. Unlike the permissive
  * compact parser above, this requires id, pubkey, created_at, kind, tags,
  * content, and sig to be present. Cryptographic validation remains a separate
  * nostr_event_validate() step so envelope parsing and admission stay distinct. */
-NostrEventValidationStatus nostr_event_deserialize_signed(
+NOSTR_API NostrEventValidationStatus nostr_event_deserialize_signed(
     NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out);
 
 /* Strict structural parser for unsigned NIP-01-shaped events such as NIP-17
  * rumors. Requires pubkey, created_at, kind, tags, and content; permits an id
  * but rejects sig. If id is present, validate it separately with
  * nostr_event_validate_id(). */
-NostrEventValidationStatus nostr_event_deserialize_unsigned(
+NOSTR_API NostrEventValidationStatus nostr_event_deserialize_unsigned(
     NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out);
 
 /* ========================================================================
@@ -300,7 +302,7 @@ typedef enum {
  *
  * Returns: priority level
  */
-NostrEventPriority nostr_event_get_priority(const NostrEvent *event, const char *user_pubkey);
+NOSTR_API NostrEventPriority nostr_event_get_priority(const NostrEvent *event, const char *user_pubkey);
 
 #ifdef __cplusplus
 }

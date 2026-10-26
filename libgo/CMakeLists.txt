@@ -27,7 +27,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 1 3)
+declare_component_version(LIBGO 0 2 0)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -96,6 +96,10 @@ enable_testing()
 # (kept for one release to avoid touching ~250 consumer references at once).
 add_library(nostrgo ${LIBGO_SOURCES})
 add_library(libgo ALIAS nostrgo)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(nostrgo LIBGO_API libgo-export.h "${CMAKE_INSTALL_INCLUDEDIR}")
+# libgo supplies weak metric hooks without depending on the upper-layer DLL.
+target_compile_definitions(nostrgo PRIVATE NOSTR_METRICS_API=LIBGO_API)
 
 set(LIBGO_PUBLIC_VERSION_HEADER
   "${CMAKE_CURRENT_BINARY_DIR}/generated/libgo/libgo-version.h")
@@ -578,6 +582,7 @@ endif()
 
 add_library(go_fiber STATIC ${GOF_COMMON_SOURCES})
 target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC})
+nostrc_library_visibility(go_fiber GO_FIBER_API libgo/fiber-export.h "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
 if(GOF_PORTABLE_CONTEXT)
   target_compile_definitions(go_fiber PUBLIC GOF_PORTABLE_CONTEXT=1)
 else()

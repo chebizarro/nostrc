@@ -14,6 +14,7 @@ project('grotto', 'c',
 )
 
 cc = meson.get_compiler('c')
+fs = import('fs')
 
 # Application identifiers
 app_id = 'org.nostr.Grotto'
@@ -46,7 +47,7 @@ libsecret_dep = dependency('libsecret-1', required: false)
 # ── nostr-gobject (pre-built by CMake) ────────────────────────────────
 cmake_build_dir = get_option('cmake_build_dir')
 if cmake_build_dir == ''
-  cmake_build_dir = meson.current_source_dir() / '..' / '..' / 'build'
+  cmake_build_dir = fs.parent(fs.parent(meson.current_source_dir())) / 'build'
 endif
 nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
   dirs: [cmake_build_dir / 'nostr-gobject'])
@@ -112,8 +113,12 @@ endif
 
 # Include directories for NIP libraries
 root_inc = include_directories('../../')
-libnostr_inc = include_directories('../../libnostr/include')
-libgo_inc = include_directories('../../libgo/include')
+libnostr_inc = include_directories(
+  '../../libnostr/include',
+  cmake_build_dir / 'libnostr/include',
+  cmake_build_dir / 'libjson/include',
+)
+libgo_inc = include_directories('../../libgo/include', cmake_build_dir / 'libgo/include')
 nips_inc = include_directories(
   '../../nips/nip01/include',
   '../../nips/nip02/include',

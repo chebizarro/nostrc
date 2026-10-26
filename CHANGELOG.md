@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Static bud02, libblossom, libporthome, libvault and libvault-marmot retain
+  default visibility on public API definitions, allowing Groundhog's shared
+  GObject layer to resolve those APIs from executable-supplied archives.
+  Shared-library export sets and Windows static annotations are unchanged.
+
+### Breaking library ABI changes
+- libnostr 2.0.0 and libnostr-json 2.0.0 export their declared public APIs
+  instead of incidental implementation and embedded-archive symbols. Their
+  shared-library ABI majors change from 1 to 2; rebuild dependent binaries.
+- libgo 0.2.0 makes the same incompatible visibility change under pre-1.0
+  versioning (SONAME remains 0). Rebuild consumers that depended on internal
+  symbols; use the declarations in the installed public headers instead.
+  The fiber runtime's weak interposition hooks remain supported in-tree.
+- Public function signatures remain compatible. Consumers compiling these
+  headers need the accompanying generated export headers from the same build
+  or development package. libjson's helper API uses its own DLL import/export
+  macro even where declarations remain in the legacy core `json.h` and
+  `nostr-event-extra.h` headers.
+- nostrdb-enabled consumers can use the now-declared cache-maintenance APIs
+  `ln_ndb_invalidate_txn_cache_ext()` and `ln_ndb_force_close_txn_cache()`;
+  the latter is shutdown-only and invalidates active queries on that thread.
+
 ## [0.4.0] - 2025-08-10
 ### Added
 - NIP-47 (Nostr Wallet Connect) envelope helpers and negotiation:

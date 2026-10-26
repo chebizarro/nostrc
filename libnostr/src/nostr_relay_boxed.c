@@ -13,6 +13,7 @@ static void nostr_relay_free_boxed(NostrRelay *relay) {
     if (relay) nostr_relay_unref(relay);
 }
 
+NOSTR_API GType nostr_relay_get_type(void);
 G_DEFINE_BOXED_TYPE(NostrRelay, nostr_relay, nostr_relay_copy, nostr_relay_free_boxed)
 
 #endif /* NOSTR_HAVE_GLIB */

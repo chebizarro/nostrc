@@ -9,6 +9,7 @@ project('nostr-gobject', 'c',
   ])
 
 cc = meson.get_compiler('c')
+fs = import('fs')
 
 # ── GLib / GObject / GIO ─────────────────────────────────────────────
 glib_dep = dependency('glib-2.0', version: '>= 2.70')
@@ -18,7 +19,7 @@ json_glib_dep = dependency('json-glib-1.0', version: '>= 1.6', required: false)
 
 # ── Sibling project paths (relative to nostr-gobject/) ─────────────────────
 # CMake build output directory (must be built first)
-cmake_build_dir = meson.current_source_dir() / '..' / 'build'
+cmake_build_dir = fs.parent(meson.current_source_dir()) / 'build'
 
 # ── libnostr (pre-built by CMake) ────────────────────────────────────
 libnostr_static = cc.find_library('nostr',
@@ -27,6 +28,8 @@ libnostr_static = cc.find_library('nostr',
 libnostr_inc = include_directories(
   '../libnostr/include',
   '../libnostr/generated',
+  cmake_build_dir / 'libnostr/include',
+  cmake_build_dir / 'libjson/include',
 )
 libnostr_dep = declare_dependency(
   dependencies: libnostr_static,
@@ -54,7 +57,7 @@ libgo_fiber_static = cc.find_library('go_fiber',
   dirs: [cmake_build_dir / 'libgo'],
   static: true,
   required: false)
-libgo_inc = include_directories('../libgo/include')
+libgo_inc = include_directories('../libgo/include', cmake_build_dir / 'libgo/include')
 libgo_deps = [libgo_static]
 if libgo_fiber_static.found()
   libgo_deps += libgo_fiber_static

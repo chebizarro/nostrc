@@ -1,6 +1,8 @@
 #ifndef NOSTR_LOG_H
 #define NOSTR_LOG_H
 
+#include "nostr-export.h"
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -16,7 +18,7 @@ typedef enum {
 
 /* Simple global rate-limited logger to avoid log-based DoS.
  * Implementation uses a coarse per-process window. */
-void nostr_rl_log(NostrLogLevel lvl, const char *tag, const char *fmt, ...);
+NOSTR_API void nostr_rl_log(NostrLogLevel lvl, const char *tag, const char *fmt, ...);
 
 /* Secure logging helper: never prints secret values; callers should format
  * messages without embedding sensitive bytes. This alias goes through the

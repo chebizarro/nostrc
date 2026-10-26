@@ -17,17 +17,14 @@ target_include_directories(bud02
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(bud02 PUBLIC nostr PRIVATE OpenSSL::Crypto)
 
-# Only the public codec API is visible from shared builds.
-include(GenerateExportHeader)
-generate_export_header(bud02 EXPORT_MACRO_NAME NOSTR_BUD02_API
-  EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/include/nostr/bud02/export.h")
+# Shared builds expose only the codec API; static consumers also need that API
+# visible when an executable supplies archive definitions to a DSO.
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+nostrc_generate_export_header(bud02 NOSTR_BUD02_API nostr/bud02/export.h)
 target_include_directories(bud02 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
-if(NOT BUILD_SHARED_LIBS)
-  target_compile_definitions(bud02 PUBLIC BUD02_STATIC_DEFINE)
-endif()
 set_target_properties(bud02 PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(bud02 0 1 0)
+declare_component_version(bud02 0 1 1)
 set_target_properties(bud02 PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/nostr/bud02")
 apply_versioning(bud02)

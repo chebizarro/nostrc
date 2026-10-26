@@ -3098,7 +3098,7 @@ if (TARGET test-groundhog-outbox AND GROUNDHOG_EXPIRY_SOURCES AND TARGET groundh
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(test-groundhog-multi-send PRIVATE groundhog-account-relays
     groundhog-auth-policy groundhog-conversations groundhog-store-testhooks nostr_nip17_core
-    nostr_nip59_core nostrc-test-bus)
+    nostr_nip59_core nostrc::bud02 nostrc-test-bus)
   if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_link_libraries(test-groundhog-multi-send PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_compile_definitions(test-groundhog-multi-send PRIVATE GROUNDHOG_TEST_WIRE=1)
@@ -3261,7 +3261,7 @@ if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-convers
       target_link_libraries(test-groundhog-mls-files PRIVATE groundhog-store-testhooks marmot
         groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
         groundhog-account-relays groundhog-net nostr_nip17_core nostr_nip59_core
-        nostrc-test-bus OpenSSL::Crypto PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+        nostrc::bud02 nostrc-test-bus OpenSSL::Crypto PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       target_compile_options(test-groundhog-mls-files PRIVATE -Wall -Wextra -Werror)
       target_compile_definitions(test-groundhog-mls-files PRIVATE GH_MLS_TEST_HOOKS=1
         ${GROUNDHOG_MLS_SERVICE_DEFS})

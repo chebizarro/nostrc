@@ -61,6 +61,49 @@ signet_add_test_executable(test_nostr_auth)               # challenge store
 signet_add_test_executable(test_capability)               # policy registry
 signet_add_test_executable(test_relay_pool_protocol)      # NPA-11
 signet_add_test_executable(test_relay_pool_ok_lifetime)   # nostrc-tw7f
+# This white-box control-frame injection is not part of the installed ABI.
+# Use one core implementation: the ordinary signet_core link interface would
+# also load the production core DSO through libjson/nip19/nip11. Compile those
+# same codec sources into this test and use only Signet's archive and imported
+# external dependencies. Meson's in-tree route already uses static archives.
+if(BUILD_SHARED_LIBS)
+  set(_whitebox test_relay_pool_ok_lifetime)
+  set_property(TARGET ${_whitebox} PROPERTY LINK_LIBRARIES "")
+  # libjson's imported Jansson target is directory-scoped; resolve it here too.
+  pkg_check_modules(SIGNET_WHITEBOX_JANSSON REQUIRED IMPORTED_TARGET jansson)
+  target_link_libraries(${_whitebox} PRIVATE PkgConfig::SIGNET_WHITEBOX_JANSSON)
+  target_link_libraries(${_whitebox} PRIVATE
+    $<TARGET_FILE:signet_core> $<TARGET_FILE:nip04> $<TARGET_FILE:nostr_nip44_core>
+    nostr_internal_test)
+  add_dependencies(${_whitebox} signet_core nip04 nostr_nip44_core)
+  target_include_directories(${_whitebox} PRIVATE
+    $<TARGET_PROPERTY:signet_core,INCLUDE_DIRECTORIES>)
+  target_compile_definitions(${_whitebox} PRIVATE NOSTR_JSON_STATIC_DEFINE
+    $<TARGET_PROPERTY:signet_core,COMPILE_DEFINITIONS>)
+  foreach(_codec IN ITEMS nostr_json nip19 nip11)
+    get_target_property(_codec_dir ${_codec} SOURCE_DIR)
+    get_target_property(_codec_sources ${_codec} SOURCES)
+    foreach(_source IN LISTS _codec_sources)
+      if(NOT IS_ABSOLUTE "${_source}")
+        set(_source "${_codec_dir}/${_source}")
+      endif()
+      target_sources(${_whitebox} PRIVATE "${_source}")
+    endforeach()
+    target_include_directories(${_whitebox} PRIVATE
+      $<TARGET_PROPERTY:${_codec},INCLUDE_DIRECTORIES>)
+  endforeach()
+  foreach(_library IN ITEMS signet_core nostr_json nip11)
+    get_target_property(_links ${_library} LINK_LIBRARIES)
+    foreach(_dep IN LISTS _links)
+      if(TARGET ${_dep})
+        get_target_property(_imported ${_dep} IMPORTED)
+        if(_imported)
+          target_link_libraries(${_whitebox} PRIVATE ${_dep})
+        endif()
+      endif()
+    endforeach()
+  endforeach()
+endif()
 # relay_pool_private.h, and libnostr's relay-private.h for its control-frame
 # hook (nostr_relay_dispatch_control_envelope).
 target_include_directories(test_relay_pool_ok_lifetime PRIVATE

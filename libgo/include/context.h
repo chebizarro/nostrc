@@ -1,6 +1,8 @@
 #ifndef CONTEXT_H
 #define CONTEXT_H
 
+#include "libgo-export.h"
+
 #include <time.h>
 #include <nsync.h>
 #include <stdbool.h>
@@ -32,19 +34,19 @@ typedef struct GoContext {
 /* A new root context (refcount 1). Release it with go_context_unref() once
  * no context derived from it (go_context_with_cancel) is still in use: a
  * child reads its parent. */
-GoContext *go_context_background(void);
+LIBGO_API GoContext *go_context_background(void);
 
 // GoContext wrapper functions
-void go_context_init(GoContext *ctx, int timeout_seconds);
-int go_context_is_canceled(const void *ctx);  // Wrapper for vtable->is_canceled
-void go_context_wait(GoContext *ctx);         // Wrapper for vtable->wait
-void go_context_free(GoContext *ctx);         // Wrapper for vtable->free (prefer unref)
-GoChannel *go_context_done(GoContext *ctx);   // Wrapper for vtable->done
-Error *go_context_err(GoContext *ctx);   // Wrapper for vtable->err
+LIBGO_API void go_context_init(GoContext *ctx, int timeout_seconds);
+LIBGO_API int go_context_is_canceled(const void *ctx);  // Wrapper for vtable->is_canceled
+LIBGO_API void go_context_wait(GoContext *ctx);         // Wrapper for vtable->wait
+LIBGO_API void go_context_free(GoContext *ctx);         // Wrapper for vtable->free (prefer unref)
+LIBGO_API GoChannel *go_context_done(GoContext *ctx);   // Wrapper for vtable->done
+LIBGO_API Error *go_context_err(GoContext *ctx);   // Wrapper for vtable->err
 
 // Reference counting for safe context lifecycle management
-GoContext *go_context_ref(GoContext *ctx);    // Increment refcount, returns ctx
-void go_context_unref(GoContext *ctx);        // Decrement refcount, free when 0
+LIBGO_API GoContext *go_context_ref(GoContext *ctx);    // Increment refcount, returns ctx
+LIBGO_API void go_context_unref(GoContext *ctx);        // Decrement refcount, free when 0
 
 // Deadline context
 typedef struct {
@@ -52,7 +54,7 @@ typedef struct {
     struct timespec deadline;
 } GoDeadlineContext;
 
-GoContext *go_with_deadline(GoContext *parent, struct timespec deadline);
+LIBGO_API GoContext *go_with_deadline(GoContext *parent, struct timespec deadline);
 
 // Value context
 typedef struct {
@@ -62,7 +64,7 @@ typedef struct {
     int kv_count;
 } GoValueContext;
 
-char *go_value_context_get_value(GoValueContext *ctx, const char *key);
+LIBGO_API char *go_value_context_get_value(GoValueContext *ctx, const char *key);
 
 // Hierarchical context
 typedef struct {
@@ -70,7 +72,7 @@ typedef struct {
     GoContext *parent;
 } GoHierarchicalContext;
 
-bool go_hierarchical_context_is_canceled(GoHierarchicalContext *ctx);
+LIBGO_API bool go_hierarchical_context_is_canceled(GoHierarchicalContext *ctx);
 
 typedef void (*CancelFunc)(GoContext *ctx);
 
@@ -79,6 +81,6 @@ typedef struct {
     CancelFunc cancel;
 } CancelContextResult;
 
-CancelContextResult go_context_with_cancel(GoContext *parent);
+LIBGO_API CancelContextResult go_context_with_cancel(GoContext *parent);
 
 #endif // CONTEXT_H

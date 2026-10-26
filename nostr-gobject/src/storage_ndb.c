@@ -244,7 +244,6 @@ void storage_ndb_shutdown(void)
      * efficiency, but at shutdown we must forcefully end them. This call
      * affects only the calling thread (main thread in our case). */
 #ifdef LIBNOSTR_WITH_NOSTRDB
-    extern void ln_ndb_force_close_txn_cache(void);
     ln_ndb_force_close_txn_cache();
 #endif
 
@@ -1007,7 +1006,6 @@ void storage_ndb_invalidate_txn_cache(void)
    * This function is defined in libnostr's ndb_backend.c when LIBNOSTR_WITH_NOSTRDB=ON.
    * When the backend isn't compiled in, we provide a local no-op stub. */
 #ifdef LIBNOSTR_WITH_NOSTRDB
-  extern void ln_ndb_invalidate_txn_cache_ext(void);
   ln_ndb_invalidate_txn_cache_ext();
 #else
   /* No-op: libnostr ndb backend not compiled in */

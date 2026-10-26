@@ -1,6 +1,8 @@
 #ifndef GO_TICKER_H
 #define GO_TICKER_H
 
+#include "libgo-export.h"
+
 #include "channel.h"
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -15,7 +17,7 @@ typedef struct Ticker {
     nsync_mu mutex;
 } Ticker;
 
-Ticker *create_ticker(size_t interval_ms);
-void stop_ticker(Ticker *ticker);
+LIBGO_API Ticker *create_ticker(size_t interval_ms);
+LIBGO_API void stop_ticker(Ticker *ticker);
 
 #endif // GO_TICKER_H

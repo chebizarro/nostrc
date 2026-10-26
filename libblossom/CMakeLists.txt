@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(libblossom C)
 include(GNUInstallDirs)
-include(GenerateExportHeader)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
 include(CMakePackageConfigHelpers)
 if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
@@ -25,13 +25,9 @@ target_include_directories(blossom
   PRIVATE src)
 target_link_libraries(blossom PRIVATE nostrc::bud02 CURL::libcurl OpenSSL::SSL OpenSSL::Crypto
   Threads::Threads PkgConfig::BLOSSOM_JSON)
-generate_export_header(blossom EXPORT_MACRO_NAME BLOSSOM_API
-  EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/include/blossom/export.h")
-if(NOT BUILD_SHARED_LIBS)
-  target_compile_definitions(blossom PUBLIC BLOSSOM_STATIC_DEFINE)
-endif()
+nostrc_generate_export_header(blossom BLOSSOM_API blossom/export.h)
 set_target_properties(blossom PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(blossom 0 3 0)
+declare_component_version(blossom 0 3 1)
 set_target_properties(blossom PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/blossom")
 apply_versioning(blossom)

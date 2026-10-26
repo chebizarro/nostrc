@@ -10,6 +10,8 @@
 #ifndef NOSTR_JSON_PARSE_H
 #define NOSTR_JSON_PARSE_H
 
+#include "nostr-export.h"
+
 #include <stdint.h>
 #include <stddef.h>
 
@@ -22,14 +24,14 @@ extern "C" {
  * @param c ASCII character ('0'-'9', 'a'-'f', 'A'-'F')
  * @return Integer value 0-15, or -1 if not a valid hex digit.
  */
-int nostr_json_hexval(char c);
+NOSTR_API int nostr_json_hexval(char c);
 
 /**
  * Skip JSON whitespace characters (space, tab, newline, carriage return).
  * @param p Pointer into JSON text.
  * @return Pointer to the first non-whitespace character.
  */
-const char *nostr_json_skip_ws(const char *p);
+NOSTR_API const char *nostr_json_skip_ws(const char *p);
 
 /**
  * Encode a Unicode code point as UTF-8.
@@ -37,7 +39,7 @@ const char *nostr_json_skip_ws(const char *p);
  * @param out Output buffer (must have room for at least 4 bytes).
  * @return Number of bytes written (1-4).
  */
-int nostr_json_utf8_encode(uint32_t cp, char *out);
+NOSTR_API int nostr_json_utf8_encode(uint32_t cp, char *out);
 
 /**
  * Parse a JSON string value with full unescape support.
@@ -52,7 +54,7 @@ int nostr_json_utf8_encode(uint32_t cp, char *out);
  * @return Newly allocated (malloc) unescaped string, or NULL on error.
  *         Caller must free() the result.
  */
-char *nostr_json_parse_string(const char **pp);
+NOSTR_API char *nostr_json_parse_string(const char **pp);
 
 /**
  * Parse a simple JSON integer (optional leading '-', decimal digits only).
@@ -63,7 +65,7 @@ char *nostr_json_parse_string(const char **pp);
  * @param out Receives the parsed value.
  * @return 1 on success, 0 on failure (no digits found).
  */
-int nostr_json_parse_int64(const char **pp, long long *out);
+NOSTR_API int nostr_json_parse_int64(const char **pp, long long *out);
 
 /* nostrc-737: Structured error codes for compact JSON parsers */
 
@@ -116,7 +118,7 @@ typedef struct NostrJsonErrorInfo {
 } NostrJsonErrorInfo;
 
 /** Return a static human-readable string for an error code. */
-const char *nostr_json_error_string(int code);
+NOSTR_API const char *nostr_json_error_string(int code);
 
 #ifdef __cplusplus
 }

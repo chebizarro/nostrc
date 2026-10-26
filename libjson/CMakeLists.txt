@@ -13,7 +13,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR_JSON 1 0 1)
+declare_component_version(NOSTR_JSON 2 0 0)
 
 # Specify the C standard
 set(CMAKE_C_STANDARD 11)
@@ -45,6 +45,8 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # The in-tree CMake target name stays `nostr_json`; OUTPUT_NAME rewrites the
 # on-disk artifact to `libnostr-json.so.<SOVERSION>` (D-4).
 add_library(nostr_json SHARED src/json.c)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
+nostrc_library_visibility(nostr_json NOSTR_JSON_API nostr-json-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
 set_target_properties(nostr_json PROPERTIES OUTPUT_NAME nostr-json)
 
 # Bridge component version vars to the differently-cased target name so the
@@ -121,6 +123,18 @@ function(nostrc_link_json_core)
       $<TARGET_PROPERTY:nostr,INTERFACE_COMPILE_DEFINITIONS>)
   else()
     target_link_libraries(nostr_json PRIVATE libnostr)
+    if(APPLE AND _nj_nostr_type STREQUAL "STATIC_LIBRARY")
+      # The supported Mach-O fallback embeds core archives, but those APIs
+      # belong to libnostr/libgo, not the provider's exported surface.
+      foreach(_archive IN ITEMS nostr libgo nostrdb)
+        if(TARGET ${_archive})
+          get_target_property(_archive_type ${_archive} TYPE)
+          if(_archive_type STREQUAL "STATIC_LIBRARY")
+            target_link_options(nostr_json PRIVATE "LINKER:-load_hidden,$<TARGET_FILE:${_archive}>")
+          endif()
+        endif()
+      endforeach()
+    endif()
   endif()
 endfunction()
 

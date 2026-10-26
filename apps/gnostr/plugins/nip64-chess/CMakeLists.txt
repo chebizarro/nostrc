@@ -37,6 +37,13 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     ${PROJECT_ROOT}/nips/nip46/include
     ${CMAKE_BINARY_DIR}/apps/gnostr/generated
 )
+# The plugin resolves core calls in the host, but still needs the core's
+# generated public headers and DLL/static import declarations when compiling.
+target_include_directories(${PLUGIN_NAME} PRIVATE
+    $<TARGET_PROPERTY:nostr,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_definitions(${PLUGIN_NAME} PRIVATE
+    $<TARGET_PROPERTY:nostr,INTERFACE_COMPILE_DEFINITIONS>)
+
 # nsync headers (cache var set by libnostr's find_path)
 if(NOT NSYNC_INCLUDE_DIR)
   find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)

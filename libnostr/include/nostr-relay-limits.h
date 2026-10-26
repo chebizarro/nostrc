@@ -1,6 +1,8 @@
 #ifndef NOSTR_RELAY_LIMITS_H
 #define NOSTR_RELAY_LIMITS_H
 
+#include "nostr-export.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -20,8 +22,8 @@ typedef struct {
 } NostrRelayLimits;
 
 /* Reason strings for CLOSED/OK */
-const char *nostr_limits_reason_rl_exceeded(void);
-const char *nostr_limits_reason_invalid_filter(void);
+NOSTR_API const char *nostr_limits_reason_rl_exceeded(void);
+NOSTR_API const char *nostr_limits_reason_invalid_filter(void);
 
 #ifdef __cplusplus
 }

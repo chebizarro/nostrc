@@ -11,9 +11,9 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.1.4 | Unreleased | — | `libnostr/CMakeLists.txt` |
-| libjson (libnostr-json) | `libjson/` | 1.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
-| libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
+| libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.5.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32: PATCH-class resource/build-output correction folded into the existing unreleased 1.2.0 wave (no component tags published); both authoritative sources remain 1.2.0 |
 | libmarmot | `libmarmot/` | 0.13.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
@@ -28,22 +28,39 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.1.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.4.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.5.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.5.2 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
-| libvault-marmot | `libvault-marmot/` | 0.1.0 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
+| libvault-marmot | `libvault-marmot/` | 0.1.1 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.5.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
-| libblossom | `libblossom/` | 0.3.0 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| libvault | `libvault/` | 0.5.1 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| libblossom | `libblossom/` | 0.3.1 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.1.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
-| bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.0 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
+| bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.2 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
+
+- nostrc-ctisj: Groundhog stays 0.12.0 (no bump). The multi-send and MLS-files
+  test executables compile the Blossom adapter directly and must declare its
+  bud02 dependency. Test-only usage requirements; no shipped artifact, public
+  contract or application behavior changes. No tags or release-column changes.
+
+- nostrc-hlw04: PATCH build/link correction for bud02 0.1.0 -> 0.1.1,
+  libblossom 0.3.0 -> 0.3.1, libporthome 0.5.1 -> 0.5.2, libvault
+  0.5.0 -> 0.5.1 and libvault-marmot 0.1.0 -> 0.1.1. Their existing public
+  APIs must remain default-visible in static archives when an executable
+  supplies definitions to a shared consumer (NOSTRC_ARCHIVES_FROM_EXECUTABLE).
+  Reuse the common export-header generator without changing their shared
+  archive-link policy or exported API. No new functionality or removed ABI.
+  libgo/libnostr/libjson retain the phase-A versions: helper refactoring does
+  not alter their artifacts. Downstream applications and GObject libraries
+  receive a dependency build correction, with no independent surface change
+  and no bump. No release tags or release-column changes.
 
 - nostrc-83pab: relayd separates async storage reservations from publisher ACK
   deadlines, sends NOTICE/close (not false OK) on unknown outcomes, reconciles
@@ -67,6 +84,34 @@ files already declare a version.
   libjson and the other independently versioned components have no direct
   changes (no bump); downstream consumers receive this dependency correction
   when rebuilt. No release tags or release-column changes.
+- nostrc-er4fz.10 phase A: libnostr MAJOR 1.1.4 -> 2.0.0 and libjson
+  MAJOR 1.0.1 -> 2.0.0; libgo MINOR 0.1.3 -> 0.2.0 (pre-1.0 breaking
+  change). Hidden-by-default compilation and explicit library-owned exports
+  remove accidentally visible implementation symbols, including embedded
+  archive exports on ELF. This is an ABI break even though declared public
+  function signatures are unchanged. Public static-archive symbols retain
+  default visibility for the supported ELF executable-to-DSO binding route.
+  libjson remains an always-shared provider; its helper declarations in the
+  legacy core json.h and nostr-event-extra.h use libjson's DLL export/import
+  macro, not libnostr's.
+  libgo retains the weak metrics and fiber interposition hooks required by
+  its runtime consumers. Private libnostr test hooks are not shipped exports.
+  The new CMake helper is internal infrastructure, with no independent version.
+  bud02, libblossom, libporthome, libvault and libvault-marmot remain unchanged
+  (no bump): retain their existing generated-header/static-export behavior
+  rather than changing it as part of this helper introduction. gnostr and
+  nostr-gobject have no bump: internal build/scanner header-search paths
+  consume generated core headers, and the storage adapter uses declared cache
+  APIs instead of ad-hoc externs; their shipped APIs and behavior are unchanged.
+  Signet remains 0.7.0 (no bump): its private-hook test links one static core
+  and the real JSON/NIP codec sources without a second core DSO; its Meson
+  header paths track generated core headers. Grotto's Meson header paths do
+  the same (no application API or behavior change). Debian runtime names and RPM file lists follow ABI major 2;
+  libnostr-json2 replaces/breaks libnostr-json1 because of their common legacy
+  compatibility symlink. Development package lists include generated headers.
+  Groundhog/Grotto bundle file lists follow libjson's new SONAME; no independent
+  application API or behavior changes, so no application version bump. Other
+  consumers are rebuilt, not modified. No tags or release columns are changed.
 
 - nostrc-clqf4: nostr-homed remains 0.5.0 (no bump). Gate the NIP-46
   wrap-key test on its auth-runtime prerequisite; test registration only,

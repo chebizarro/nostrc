@@ -1,6 +1,8 @@
 #ifndef __NOSTR_CONNECTION_H__
 #define __NOSTR_CONNECTION_H__
 
+#include "nostr-export.h"
+
 /* Public header exposing GI-friendly names for Connection. */
 
 #include <stdbool.h>
@@ -22,10 +24,10 @@ typedef struct _NostrConnection {
 } NostrConnection;
 
 /* Canonical API */
-NostrConnection *nostr_connection_new(const char *url);
-void nostr_connection_close(NostrConnection *conn);
-void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err);
-void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err);
+NOSTR_API NostrConnection *nostr_connection_new(const char *url);
+NOSTR_API void nostr_connection_close(NostrConnection *conn);
+NOSTR_API void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err);
+NOSTR_API void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err);
 
 /* Accessors (GLib-friendly) */
 /**
@@ -34,7 +36,7 @@ void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *
  *
  * Returns: (transfer none) (nullable): internal send channel owned by connection
  */
-GoChannel *nostr_connection_get_send_channel(const NostrConnection *conn);
+NOSTR_API GoChannel *nostr_connection_get_send_channel(const NostrConnection *conn);
 
 /**
  * nostr_connection_get_recv_channel:
@@ -42,7 +44,7 @@ GoChannel *nostr_connection_get_send_channel(const NostrConnection *conn);
  *
  * Returns: (transfer none) (nullable): internal receive channel owned by connection
  */
-GoChannel *nostr_connection_get_recv_channel(const NostrConnection *conn);
+NOSTR_API GoChannel *nostr_connection_get_recv_channel(const NostrConnection *conn);
 
 /**
  * nostr_connection_is_running:
@@ -50,7 +52,7 @@ GoChannel *nostr_connection_get_recv_channel(const NostrConnection *conn);
  *
  * Returns: whether the background service thread is running (false in test mode)
  */
-bool nostr_connection_is_running(const NostrConnection *conn);
+NOSTR_API bool nostr_connection_is_running(const NostrConnection *conn);
 
 #ifdef __cplusplus
 }

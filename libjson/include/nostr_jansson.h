@@ -1,13 +1,15 @@
 #ifndef NOSTR_JANSSON_H
 #define NOSTR_JANSSON_H
 
+#include "nostr-json-export.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "nostr.h"
 
-extern NostrJsonInterface *jansson_impl;
+NOSTR_JSON_API extern NostrJsonInterface *jansson_impl;
 
 #ifdef __cplusplus
 }

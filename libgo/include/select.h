@@ -1,6 +1,8 @@
 #ifndef GO_SELECT_H_H
 #define GO_SELECT_H_H
 
+#include "libgo-export.h"
+
 #include "channel.h"
 #include <nsync.h>
 #include <stdint.h>
@@ -57,32 +59,32 @@ typedef struct GoSelectWaiterNode {
 
 /* Create a new heap-allocated select waiter (refcount=1).
  * Preferred over go_select_waiter_init for safe lifecycle management. */
-GoSelectWaiter *go_select_waiter_create(void);
+LIBGO_API GoSelectWaiter *go_select_waiter_create(void);
 
 /* Increment waiter reference count. Returns w for chaining. */
-GoSelectWaiter *go_select_waiter_ref(GoSelectWaiter *w);
+LIBGO_API GoSelectWaiter *go_select_waiter_ref(GoSelectWaiter *w);
 
 /* Decrement waiter reference count. Frees when it hits zero. */
-void go_select_waiter_unref(GoSelectWaiter *w);
+LIBGO_API void go_select_waiter_unref(GoSelectWaiter *w);
 
 /* Initialize a select waiter in-place (sets refcount=1).
  * Legacy API — prefer go_select_waiter_create() for heap allocation. */
-void go_select_waiter_init(GoSelectWaiter *w);
+LIBGO_API void go_select_waiter_init(GoSelectWaiter *w);
 
 /* Register a waiter with a channel (channel will signal when ready).
  * The registration node takes a ref on the waiter. */
-void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w);
+LIBGO_API void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w);
 
 /* Unregister a waiter from a channel.
  * Drops the node's ref on the waiter. */
-void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w);
+LIBGO_API void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w);
 
 /**
  * Signal all select waiters registered on a channel.
  * Called internally from channel send/recv/close paths.
  * Must be called while holding chan->mutex.
  */
-void go_channel_signal_select_waiters(GoChannel *chan);
+LIBGO_API void go_channel_signal_select_waiters(GoChannel *chan);
 
 /**
  * Clean up all select waiter registrations on a channel.
@@ -91,15 +93,15 @@ void go_channel_signal_select_waiters(GoChannel *chan);
  * Used during channel destruction (go_channel_unref) to prevent
  * leaked nodes with dangling waiter pointers.
  */
-void go_channel_cleanup_select_waiters(GoChannel *chan);
+LIBGO_API void go_channel_cleanup_select_waiters(GoChannel *chan);
 
 /* Standard select: blocks until one case is ready.
  * Takes refs on all valid channels for the duration of the call. */
-int go_select(GoSelectCase *cases, size_t num_cases);
+LIBGO_API int go_select(GoSelectCase *cases, size_t num_cases);
 
 /* Select with timeout: returns after timeout_ms if no case is ready.
  * Takes refs on all valid channels for the duration of the call.
  * Returns: GoSelectResult with selected_case=-1 if timeout occurred */
-GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t timeout_ms);
+LIBGO_API GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases, uint64_t timeout_ms);
 
 #endif // GO_SELECT_H_H

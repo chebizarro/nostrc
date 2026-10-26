@@ -1,6 +1,8 @@
 #ifndef NOSTR_RETENTION_H
 #define NOSTR_RETENTION_H
 
+#include "nostr-export.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -13,7 +15,7 @@ typedef struct {
 } NostrRetentionPolicy;
 
 /* Apply a retention policy hint; actual deletion is storage-driver-specific. */
-int nostr_retention_apply(const NostrRetentionPolicy *policy);
+NOSTR_API int nostr_retention_apply(const NostrRetentionPolicy *policy);
 
 #ifdef __cplusplus
 }

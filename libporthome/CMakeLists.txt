@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(libporthome C)
 include(GNUInstallDirs)
-include(GenerateExportHeader)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcVisibility.cmake")
 include(CMakePackageConfigHelpers)
 if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
@@ -35,13 +35,9 @@ target_include_directories(porthome
          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE src)
 target_link_libraries(porthome PRIVATE nostrc::blossom nostr nostr_nip44_core OpenSSL::Crypto)
-generate_export_header(porthome EXPORT_MACRO_NAME PORTHOME_API
-  EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/include/porthome/export.h")
-if(NOT BUILD_SHARED_LIBS)
-  target_compile_definitions(porthome PUBLIC PORTHOME_STATIC_DEFINE)
-endif()
+nostrc_generate_export_header(porthome PORTHOME_API porthome/export.h)
 set_target_properties(porthome PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(porthome 0 5 1)
+declare_component_version(porthome 0 5 2)
 set_target_properties(porthome PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/porthome")
 apply_versioning(porthome)

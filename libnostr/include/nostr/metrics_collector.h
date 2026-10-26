@@ -1,6 +1,8 @@
 #ifndef LIBNOSTR_NOSTR_METRICS_COLLECTOR_H
 #define LIBNOSTR_NOSTR_METRICS_COLLECTOR_H
 
+#include "nostr-export.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -64,13 +66,13 @@ typedef struct {
 } NostrMetricsSnapshot;
 
 /* Free a snapshot's internal arrays (not the struct itself if stack-allocated) */
-void nostr_metrics_snapshot_free(NostrMetricsSnapshot *snap);
+NOSTR_API void nostr_metrics_snapshot_free(NostrMetricsSnapshot *snap);
 
 /*
  * Take an immediate snapshot of all registered metrics.
  * Caller must call nostr_metrics_snapshot_free() when done.
  */
-void nostr_metrics_snapshot_collect(NostrMetricsSnapshot *snap);
+NOSTR_API void nostr_metrics_snapshot_collect(NostrMetricsSnapshot *snap);
 
 /*
  * Start the background collector thread.
@@ -80,20 +82,20 @@ void nostr_metrics_snapshot_collect(NostrMetricsSnapshot *snap);
  * Call nostr_metrics_collector_stop() to shut down.
  * Only one collector can run at a time; repeated calls are no-ops.
  */
-void nostr_metrics_collector_start(uint32_t interval_ms, const char *export_path);
+NOSTR_API void nostr_metrics_collector_start(uint32_t interval_ms, const char *export_path);
 
 /* Stop the background collector thread. Safe to call if not started. */
-void nostr_metrics_collector_stop(void);
+NOSTR_API void nostr_metrics_collector_stop(void);
 
 /* Returns true if the collector is currently running */
-bool nostr_metrics_collector_running(void);
+NOSTR_API bool nostr_metrics_collector_running(void);
 
 /*
  * Get the most recent snapshot from the collector.
  * Returns false if no snapshot is available (collector not started).
  * The snapshot is a copy — caller must call nostr_metrics_snapshot_free().
  */
-bool nostr_metrics_collector_latest(NostrMetricsSnapshot *snap);
+NOSTR_API bool nostr_metrics_collector_latest(NostrMetricsSnapshot *snap);
 
 #ifdef __cplusplus
 }

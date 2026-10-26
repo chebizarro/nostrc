@@ -1,6 +1,11 @@
 #ifndef LIBNOSTR_NOSTR_METRICS_H
 #define LIBNOSTR_NOSTR_METRICS_H
 
+#ifndef NOSTR_METRICS_API
+#include "nostr-export.h"
+#define NOSTR_METRICS_API NOSTR_API
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,7 +26,7 @@ extern "C" {
  */
 
 /* Monotonic clock in nanoseconds */
-uint64_t nostr_now_ns(void);
+NOSTR_METRICS_API uint64_t nostr_now_ns(void);
 
 /* Opaque histogram handle used with timers */
 typedef struct nostr_metric_histogram nostr_metric_histogram;
@@ -31,27 +36,27 @@ typedef struct nostr_metric_timer {
 } nostr_metric_timer;
 
 /* Lookup or create a histogram by name */
-nostr_metric_histogram *nostr_metric_histogram_get(const char *name);
+NOSTR_METRICS_API nostr_metric_histogram *nostr_metric_histogram_get(const char *name);
 
 /* Record an explicit value into a histogram (in nanoseconds) */
-void nostr_metric_histogram_record(nostr_metric_histogram *h, uint64_t value_ns);
+NOSTR_METRICS_API void nostr_metric_histogram_record(nostr_metric_histogram *h, uint64_t value_ns);
 
 /* Start/stop a timer and record duration into histogram */
-void nostr_metric_timer_start(nostr_metric_timer *t);
-void nostr_metric_timer_stop(nostr_metric_timer *t, nostr_metric_histogram *h);
+NOSTR_METRICS_API void nostr_metric_timer_start(nostr_metric_timer *t);
+NOSTR_METRICS_API void nostr_metric_timer_stop(nostr_metric_timer *t, nostr_metric_histogram *h);
 
 /* Counters: add delta to named counter */
-void nostr_metric_counter_add(const char *name, uint64_t delta);
+NOSTR_METRICS_API void nostr_metric_counter_add(const char *name, uint64_t delta);
 
 /* Gauges: set a named gauge to a specific value */
-void nostr_metric_gauge_set(const char *name, int64_t value);
+NOSTR_METRICS_API void nostr_metric_gauge_set(const char *name, int64_t value);
 
 /* Gauges: increment/decrement a named gauge by delta */
-void nostr_metric_gauge_inc(const char *name);
-void nostr_metric_gauge_dec(const char *name);
+NOSTR_METRICS_API void nostr_metric_gauge_inc(const char *name);
+NOSTR_METRICS_API void nostr_metric_gauge_dec(const char *name);
 
 /* Dump all metrics to stdout as a single JSON object per call */
-void nostr_metrics_dump(void);
+NOSTR_METRICS_API void nostr_metrics_dump(void);
 
 /*
  * Prometheus text exposition format export.
@@ -59,7 +64,7 @@ void nostr_metrics_dump(void);
  * Returns the number of bytes written (excluding null terminator),
  * or the required buffer size if buf is NULL or too small.
  */
-size_t nostr_metrics_prometheus(char *buf, size_t buf_size);
+NOSTR_METRICS_API size_t nostr_metrics_prometheus(char *buf, size_t buf_size);
 
 #ifdef __cplusplus
 }

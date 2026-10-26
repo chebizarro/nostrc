@@ -1,6 +1,8 @@
 #ifndef NOSTR_STORAGE_H
 #define NOSTR_STORAGE_H
 
+#include "nostr-export.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -51,8 +53,8 @@ struct NostrStorage { NostrStorageVTable *vt; void *impl; };
 /* Minimal registry so apps can choose driver at runtime if they linked multiple */
 typedef NostrStorage* (*NostrStorageFactory)(void);
 
-int nostr_storage_register(const char *name, NostrStorageFactory make);
-NostrStorage* nostr_storage_create(const char *name);
+NOSTR_API int nostr_storage_register(const char *name, NostrStorageFactory make);
+NOSTR_API NostrStorage* nostr_storage_create(const char *name);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,8 @@
 #ifndef __NOSTR_SUBSCRIPTION_H__
 #define __NOSTR_SUBSCRIPTION_H__
 
+#include "nostr-export.h"
+
 /* Canonical Nostr subscription API (GLib-friendly C interface). */
 
 #include <stdbool.h>
@@ -31,16 +33,16 @@ typedef struct NostrSubscription {
 /* nostr_subscription_new: create a subscription on @relay. It is registered
  * for EVENT/EOSE/CLOSED dispatch the first time nostr_subscription_fire() runs
  * (nostr_relay_prepare_subscription() registers it immediately). */
-NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
-void               nostr_subscription_free(NostrSubscription *sub);
+NOSTR_API NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
+NOSTR_API void               nostr_subscription_free(NostrSubscription *sub);
 /* Opt in before firing when the consumer owns deduplication and must reply to
  * redelivered RPC envelopes. Default false preserves cursor-boundary dedup. */
-void nostr_subscription_set_duplicate_delivery(NostrSubscription *sub, bool enabled);
+NOSTR_API void nostr_subscription_set_duplicate_delivery(NostrSubscription *sub, bool enabled);
 /* Opt-in bounded recovery for RPC consumers which enforce freshness and own
  * durable deduplication. No received event advances a recovery watermark;
  * reconnect uses now-seconds instead. Set before firing; zero restores normal
  * enqueue-derived cursors. This does not filter delivery or alter admission. */
-void nostr_subscription_set_recovery_window(NostrSubscription *sub, unsigned seconds);
+NOSTR_API void nostr_subscription_set_recovery_window(NostrSubscription *sub, unsigned seconds);
 
 /**
  * nostr_subscription_ref:
@@ -53,7 +55,7 @@ void nostr_subscription_set_recovery_window(NostrSubscription *sub, unsigned sec
  *
  * Returns: @sub (for convenience chaining)
  */
-NostrSubscription *nostr_subscription_ref(NostrSubscription *sub);
+NOSTR_API NostrSubscription *nostr_subscription_ref(NostrSubscription *sub);
 
 /**
  * nostr_subscription_unref:
@@ -63,14 +65,14 @@ NostrSubscription *nostr_subscription_ref(NostrSubscription *sub);
  * zero, the subscription is freed. This is the counterpart to
  * nostr_subscription_ref().
  */
-void               nostr_subscription_unref(NostrSubscription *sub);
+NOSTR_API void               nostr_subscription_unref(NostrSubscription *sub);
 /* Returns newly allocated copy of ID (caller frees). */
-char              *nostr_subscription_get_id(NostrSubscription *sub);
-void               nostr_subscription_unsubscribe(NostrSubscription *sub);
-void               nostr_subscription_close(NostrSubscription *sub, Error **err);
-void               nostr_subscription_wait(NostrSubscription *sub);
-bool               nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters, Error **err);
-bool               nostr_subscription_fire(NostrSubscription *sub, Error **err);
+NOSTR_API char              *nostr_subscription_get_id(NostrSubscription *sub);
+NOSTR_API void               nostr_subscription_unsubscribe(NostrSubscription *sub);
+NOSTR_API void               nostr_subscription_close(NostrSubscription *sub, Error **err);
+NOSTR_API void               nostr_subscription_wait(NostrSubscription *sub);
+NOSTR_API bool               nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters, Error **err);
+NOSTR_API bool               nostr_subscription_fire(NostrSubscription *sub, Error **err);
 
 /* Async cleanup API - non-blocking subscription cleanup with timeout */
 typedef struct AsyncCleanupHandle AsyncCleanupHandle;
@@ -85,7 +87,7 @@ typedef struct AsyncCleanupHandle AsyncCleanupHandle;
  *
  * Returns: (transfer full): handle to track cleanup progress, or NULL on error
  */
-AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64_t timeout_ms);
+NOSTR_API AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64_t timeout_ms);
 
 /**
  * nostr_subscription_cleanup_wait:
@@ -96,7 +98,7 @@ AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64
  *
  * Returns: true if cleanup completed successfully, false if still in progress or timed out
  */
-bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeout_ms);
+NOSTR_API bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeout_ms);
 
 /**
  * nostr_subscription_cleanup_abandon:
@@ -105,7 +107,7 @@ bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeou
  * Abandon cleanup attempt and leak the subscription. Frees the handle.
  * Use when timeout has expired and you want to stop waiting.
  */
-void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle);
+NOSTR_API void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle);
 
 /**
  * nostr_subscription_cleanup_is_complete:
@@ -115,7 +117,7 @@ void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle);
  *
  * Returns: true if cleanup finished (success or timeout), false if still in progress
  */
-bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle);
+NOSTR_API bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle);
 
 /**
  * nostr_subscription_cleanup_timed_out:
@@ -125,7 +127,7 @@ bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle);
  *
  * Returns: true if cleanup timed out and subscription was leaked
  */
-bool nostr_subscription_cleanup_timed_out(AsyncCleanupHandle *handle);
+NOSTR_API bool nostr_subscription_cleanup_timed_out(AsyncCleanupHandle *handle);
 
 /* Accessors for public fields/state (for future GObject properties) */
 
@@ -136,7 +138,7 @@ bool nostr_subscription_cleanup_timed_out(AsyncCleanupHandle *handle);
  *
  * Returns: (transfer none) (nullable): internal ID string
  */
-const char *nostr_subscription_get_id_const(const NostrSubscription *sub);
+NOSTR_API const char *nostr_subscription_get_id_const(const NostrSubscription *sub);
 
 /* Associations */
 /**
@@ -145,14 +147,14 @@ const char *nostr_subscription_get_id_const(const NostrSubscription *sub);
  *
  * Returns: (transfer none) (nullable): associated relay
  */
-NostrRelay   *nostr_subscription_get_relay(const NostrSubscription *sub);
+NOSTR_API NostrRelay   *nostr_subscription_get_relay(const NostrSubscription *sub);
 /**
  * nostr_subscription_get_filters:
  * @sub: (nullable): subscription
  *
  * Returns: (transfer none) (nullable): associated filters
  */
-NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub);
+NOSTR_API NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub);
 /**
  * nostr_subscription_set_filters:
  * @sub: (nullable): subscription (no-op if NULL)
@@ -160,7 +162,7 @@ NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub);
  *
  * Ownership: takes full ownership of @filters.
  */
-void          nostr_subscription_set_filters(NostrSubscription *sub, NostrFilters *filters);
+NOSTR_API void          nostr_subscription_set_filters(NostrSubscription *sub, NostrFilters *filters);
 
 /* Channels (transfer none): producer owns them */
 /**
@@ -169,7 +171,7 @@ void          nostr_subscription_set_filters(NostrSubscription *sub, NostrFilter
  *
  * Returns: (transfer none) (nullable): events channel owned by subscription
  */
-GoChannel    *nostr_subscription_get_events_channel(const NostrSubscription *sub);
+NOSTR_API GoChannel    *nostr_subscription_get_events_channel(const NostrSubscription *sub);
 /**
  * nostr_subscription_get_eose_channel:
  * @sub: (nullable): subscription
@@ -179,14 +181,14 @@ GoChannel    *nostr_subscription_get_events_channel(const NostrSubscription *sub
  *
  * Returns: (transfer none) (nullable): EOSE notification channel
  */
-GoChannel    *nostr_subscription_get_eose_channel(const NostrSubscription *sub);
+NOSTR_API GoChannel    *nostr_subscription_get_eose_channel(const NostrSubscription *sub);
 /**
  * nostr_subscription_get_closed_channel:
  * @sub: (nullable): subscription
  *
  * Returns: (transfer none) (nullable): CLOSED reason channel; carries (const char*)
  */
-GoChannel    *nostr_subscription_get_closed_channel(const NostrSubscription *sub);
+NOSTR_API GoChannel    *nostr_subscription_get_closed_channel(const NostrSubscription *sub);
 
 /* Context */
 /**
@@ -195,7 +197,7 @@ GoChannel    *nostr_subscription_get_closed_channel(const NostrSubscription *sub
  *
  * Returns: (transfer none) (nullable): cancellation context for lifecycle
  */
-GoContext    *nostr_subscription_get_context(const NostrSubscription *sub);
+NOSTR_API GoContext    *nostr_subscription_get_context(const NostrSubscription *sub);
 
 /* Lifecycle flags */
 /**
@@ -204,7 +206,7 @@ GoContext    *nostr_subscription_get_context(const NostrSubscription *sub);
  *
  * Returns: whether subscription is currently live
  */
-bool          nostr_subscription_is_live(const NostrSubscription *sub);
+NOSTR_API bool          nostr_subscription_is_live(const NostrSubscription *sub);
 /**
  * nostr_subscription_is_eosed:
  * @sub: (nullable): subscription
@@ -212,14 +214,14 @@ bool          nostr_subscription_is_live(const NostrSubscription *sub);
  * Returns: whether EOSE has been observed for the current REQ; reconnect
  * resets this to false until that REQ's EOSE arrives.
  */
-bool          nostr_subscription_is_eosed(const NostrSubscription *sub);
+NOSTR_API bool          nostr_subscription_is_eosed(const NostrSubscription *sub);
 /**
  * nostr_subscription_is_closed:
  * @sub: (nullable): subscription
  *
  * Returns: whether CLOSED was observed and emitted
  */
-bool          nostr_subscription_is_closed(const NostrSubscription *sub);
+NOSTR_API bool          nostr_subscription_is_closed(const NostrSubscription *sub);
 
 /**
  * nostr_subscription_get_last_seen_created_at:
@@ -231,19 +233,19 @@ bool          nostr_subscription_is_closed(const NostrSubscription *sub);
  *
  * Returns: Unix timestamp, or 0 if no event has been seen.
  */
-int64_t       nostr_subscription_get_last_seen_created_at(const NostrSubscription *sub);
+NOSTR_API int64_t       nostr_subscription_get_last_seen_created_at(const NostrSubscription *sub);
 
 /* Instrumentation: counters */
 /**
  * nostr_subscription_events_enqueued:
  * Returns total number of events successfully enqueued into the subscription's event channel.
  */
-unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *sub);
+NOSTR_API unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *sub);
 /**
  * nostr_subscription_events_dropped:
  * Returns total number of events dropped at dispatch due to queue full/closed or not-live.
  */
-unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub);
+NOSTR_API unsigned long long nostr_subscription_events_dropped(const NostrSubscription *sub);
 
 /* ========================================================================
  * Queue Health Metrics API (nostrc-sjv)
@@ -276,7 +278,7 @@ typedef struct {
  * Updates dequeue counters and latency metrics. The enqueue_time_us parameter
  * allows precise wait-time calculation if the caller tracks when events were queued.
  */
-void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqueue_time_us);
+NOSTR_API void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqueue_time_us);
 
 /**
  * nostr_subscription_get_queue_metrics:
@@ -291,7 +293,7 @@ void nostr_subscription_mark_event_consumed(NostrSubscription *sub, int64_t enqu
  * - Queue utilization: current_depth / queue_capacity (target: < 80%)
  * - Avg latency: total_wait_time_us / events_dequeued (target: < 100ms)
  */
-void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQueueMetrics *out);
+NOSTR_API void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQueueMetrics *out);
 
 /* ========================================================================
  * Producer-side Rate Limiting (nostrc-7u2)
@@ -308,7 +310,7 @@ void nostr_subscription_get_queue_metrics(const NostrSubscription *sub, NostrQue
  *
  * Returns: utilization percentage, or 0 if sub is NULL
  */
-uint32_t nostr_subscription_get_queue_utilization(const NostrSubscription *sub);
+NOSTR_API uint32_t nostr_subscription_get_queue_utilization(const NostrSubscription *sub);
 
 /**
  * nostr_subscription_should_throttle:
@@ -319,7 +321,7 @@ uint32_t nostr_subscription_get_queue_utilization(const NostrSubscription *sub);
  *
  * Returns: true if producer should pause/slow down
  */
-bool nostr_subscription_should_throttle(const NostrSubscription *sub);
+NOSTR_API bool nostr_subscription_should_throttle(const NostrSubscription *sub);
 
 /**
  * nostr_subscription_get_throttle_delay_us:
@@ -333,7 +335,7 @@ bool nostr_subscription_should_throttle(const NostrSubscription *sub);
  *
  * Returns: delay in microseconds, or 0 if no throttling needed
  */
-uint64_t nostr_subscription_get_throttle_delay_us(const NostrSubscription *sub);
+NOSTR_API uint64_t nostr_subscription_get_throttle_delay_us(const NostrSubscription *sub);
 
 #ifdef __cplusplus
 }
