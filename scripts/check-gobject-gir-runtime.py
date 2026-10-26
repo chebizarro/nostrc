@@ -4,12 +4,19 @@
 This is NOT proof of standalone /usr/bin/python3 loading the executable-owned
 runtime. Prerequisites: built Groundhog GNostr GIR, C compiler, python3-embed
 pkg-config/development files and PyGObject for the embedded Python version.
+
+One libnostr per process: the core state (nostr_named_mutex_pool) must be
+defined exactly once across the host and every build-tree library the process
+maps. That copy is the static archive linked into the host, or the single
+libnostr.so of a BUILD_SHARED_LIBS=ON tree; any second (even hidden) copy fails.
 """
 import argparse
+import json
 import os
 import pathlib
 import shlex
 import subprocess
+import sys
 import tempfile
 
 
@@ -36,19 +43,12 @@ def main():
                         str(source / "nostr-gobject/tests/gir_python_host.c"),
                         "-Wl,--export-dynamic", "-Wl,--no-undefined", *libs,
                         "-o", str(host)], check=True)
-        def definitions(binary):
-            output = subprocess.check_output(["nm", "--defined-only", str(binary)], text=True)
-            return [line.split()[-1] for line in output.splitlines() if line.split()]
-
-        assert definitions(host).count("nostr_named_mutex_pool") == 1
-        for dso in (runtime / "libnostr-gobject-1.0.so",
-                    build / "libjson" / args.configuration / "libnostr-json.so"):
-            assert "nostr_named_mutex_pool" not in definitions(dso), dso
         env = os.environ.copy()
         env["GI_TYPELIB_PATH"] = str(typelib.parent)
         env["G_DEBUG"] = "fatal-warnings"
-        subprocess.run([str(host), "-c", """
+        result = subprocess.run([str(host), "-c", """
 import gi
+import json
 from pathlib import Path
 
 gi.require_version('GNostr', '1.0')
@@ -63,7 +63,31 @@ maps = Path('/proc/self/maps').read_text().splitlines()
 gobject_libraries = {line.split()[-1] for line in maps if 'libnostr-gobject-1.0.so' in line}
 assert len(gobject_libraries) == 1, gobject_libraries
 print('GNostr PyGObject Event roundtrip passed; one GObject DSO')
-"""], env=env, check=True)
+mapped = sorted({line.split()[-1] for line in maps if line.split()[-1].startswith('/')})
+print('MAPPED ' + json.dumps(mapped))
+"""], env=env, capture_output=True, text=True)
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        result.check_returncode()
+        mapped = json.loads(result.stdout.rsplit("MAPPED ", 1)[1])
+
+        def defines_core(binary):
+            # Include local (hidden) symbols; fall back to the dynamic table
+            # for a stripped library.
+            for flags in (["--defined-only"], ["-D", "--defined-only"]):
+                output = subprocess.run(["nm", *flags, str(binary)],
+                                        capture_output=True, text=True).stdout
+                names = [line.split()[-1] for line in output.splitlines() if line.split()]
+                if names:
+                    return names.count("nostr_named_mutex_pool")
+            return 0
+
+        candidates = [host] + [pathlib.Path(path) for path in mapped
+                               if pathlib.Path(path).resolve().is_relative_to(build)]
+        owners = {str(path): count for path in candidates
+                  if (count := defines_core(path))}
+        assert sum(owners.values()) == 1, owners
+        print(f"one libnostr copy: {next(iter(owners))}")
 
 
 if __name__ == "__main__":
