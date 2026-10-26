@@ -338,6 +338,39 @@ else()
   message(STATUS "nip_concord target not found — skipping Concord plugin (enable ENABLE_NIP_CONCORD=ON)")
 endif()
 
+# Each libpeas module exposes only the entry point that libpeas resolves.
+# GType registration and host callbacks are internal to the loaded module.
+include("${CMAKE_SOURCE_DIR}/cmake/NostrcVisibility.cmake")
+foreach(_plugin IN ITEMS
+    nip47-nwc nip98-httpauth nip17-dms nip55-androidsigner
+    nip49-keyencrypt nip77-negentropy nip57-zaps nip34-git
+    nip64-chess nip99-marketplace mls-groups nip29-groups
+    communikeys-communities concord-communities)
+  if(TARGET ${_plugin})
+    nostrc_library_visibility(${_plugin} GNOSTR_PLUGIN_ENTRY
+      "gnostr/${_plugin}-export.h" "" NO_INSTALL)
+    list(APPEND _gnostr_plugin_targets ${_plugin})
+    list(APPEND _gnostr_plugin_dirs
+      "${CMAKE_BINARY_DIR}/apps/gnostr/plugins/${_plugin}")
+  endif()
+endforeach()
+
+if(BUILD_TESTING)
+  set_source_files_properties(src/main_app.c PROPERTIES
+    COMPILE_DEFINITIONS GNOSTR_PLUGIN_LOAD_TEST=1)
+  add_dependencies(${APP_CLIENT_BIN} ${_gnostr_plugin_targets})
+  add_test(NAME gnostr-plugin-load
+    COMMAND $<TARGET_FILE:${APP_CLIENT_BIN}> --test-plugin-load ${_gnostr_plugin_dirs})
+  set_tests_properties(gnostr-plugin-load PROPERTIES TIMEOUT 60
+    LABELS "gnostr;plugin;integration")
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(gnostr-plugin-load OWNER gnostr
+      TARGETS ${APP_CLIENT_BIN} ${_gnostr_plugin_targets}
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
+      REQUIRES display private_bus EXPECTED pass)
+  endif()
+endif()
+
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
   # nip47-nwc disabled

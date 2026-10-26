@@ -3729,6 +3729,17 @@ if (TARGET groundhog-account AND TARGET groundhog-nip46-session AND
   endif()
 endif()
 
+# Groundhog's local libraries are static convenience archives linked into the
+# app and its tests, not separately installed shared APIs.
+include("${CMAKE_SOURCE_DIR}/cmake/NostrcVisibility.cmake")
+get_property(_groundhog_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_groundhog_target IN LISTS _groundhog_targets)
+  get_target_property(_groundhog_type ${_groundhog_target} TYPE)
+  if(_groundhog_type STREQUAL "STATIC_LIBRARY")
+    nostrc_internal_visibility(${_groundhog_target})
+  endif()
+endforeach()
+
 # --- test isolation (nostrc-ttvxv) ---
 # A test-key account once got a store under the developer's real
 # ~/.local/share/groundhog and an item in the login Keychain. Every Groundhog

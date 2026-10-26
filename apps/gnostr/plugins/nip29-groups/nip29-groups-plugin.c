@@ -2,6 +2,7 @@
  * nip29-groups-plugin.c - NIP-29 relay groups plugin
  */
 
+#include "gnostr/nip29-groups-export.h"
 #include "nip29-groups-plugin.h"
 #include "gn-nip29-group-service.h"
 #include "ui/gn-nip29-groups-panel.h"
@@ -187,7 +188,7 @@ gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface)
   iface->create_panel_widget = nip29_groups_create_panel_widget;
 }
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

@@ -61,6 +61,9 @@ add_library(nmh_core STATIC
   nm_provider_nip07.c
   nm_provider_webln.c
   nm_webln.c)
+# Browser loads the installed executable, not this private archive.
+include("${CMAKE_SOURCE_DIR}/cmake/NostrcVisibility.cmake")
+nostrc_internal_visibility(nmh_core)
 target_include_directories(nmh_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(nmh_core PUBLIC c_std_11)
 target_compile_options(nmh_core PRIVATE ${NMH_WARN})

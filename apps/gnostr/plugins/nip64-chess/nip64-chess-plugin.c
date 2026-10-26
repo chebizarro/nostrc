@@ -10,6 +10,7 @@
  * Copyright (C) 2026 Gnostr Contributors
  */
 
+#include "gnostr/nip64-chess-export.h"
 #include "nip64-chess-plugin.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
@@ -463,7 +464,7 @@ nip64_chess_plugin_request_games(Nip64ChessPlugin *self)
  * Plugin entry point for libpeas
  * ============================================================================ */
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

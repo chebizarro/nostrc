@@ -795,6 +795,15 @@ if(APPLE)
   endif()
 endif()
 
+# These archives are linked into the signer and daemon; neither is an
+# independently installed shared API.
+include("${CMAKE_SOURCE_DIR}/cmake/NostrcVisibility.cmake")
+foreach(_grotto_archive IN ITEMS grotto_control_core grotto_bunker_core)
+  if(TARGET ${_grotto_archive})
+    nostrc_internal_visibility(${_grotto_archive})
+  endif()
+endforeach()
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

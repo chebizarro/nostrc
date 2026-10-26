@@ -8,6 +8,7 @@
  * Copyright (C) 2026 Gnostr Contributors
  */
 
+#include "gnostr/nip49-keyencrypt-export.h"
 #include "nip49-keyencrypt-plugin.h"
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
@@ -155,7 +156,7 @@ gnostr_plugin_iface_init(GnostrPluginInterface *iface)
  * Plugin registration for libpeas
  * ============================================================================ */
 
-G_MODULE_EXPORT void
+GNOSTR_PLUGIN_ENTRY void
 peas_register_types(PeasObjectModule *module)
 {
   peas_object_module_register_extension_type(module,

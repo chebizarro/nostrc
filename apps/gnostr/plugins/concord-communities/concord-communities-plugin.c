@@ -1,3 +1,4 @@
+#include "gnostr/concord-communities-export.h"
 #include "concord-communities-plugin.h"
 #include "gn-concord-community-service.h"
 #include "ui/gn-concord-communities-panel.h"
@@ -126,7 +127,7 @@ static void ui_iface_init(GnostrUIExtensionInterface *iface) {
   iface->create_panel_widget = create_panel;
 }
 
-G_MODULE_EXPORT void peas_register_types(PeasObjectModule *module) {
+GNOSTR_PLUGIN_ENTRY void peas_register_types(PeasObjectModule *module) {
   peas_object_module_register_extension_type(
     module, GNOSTR_TYPE_PLUGIN, CONCORD_TYPE_COMMUNITIES_PLUGIN);
   peas_object_module_register_extension_type(
