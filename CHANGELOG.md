@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- nostr-gobject's build-tree link contract (`nostr-gobject-build-tree.pc`)
+  records the run path of every shared library it lists, so contract-linked
+  executables (including the GNostr and GNostrGtk scanner probes) start in a
+  `BUILD_SHARED_LIBS=ON` Groundhog build instead of failing to find
+  `libblossom.so.0`.
 - marmot-gobject 1.5.1 builds hidden-by-default with `MARMOT_GOBJECT_API`
   annotations (unchanged export set). Marmot-1.0 GIR/typelib generation finds
   the libmarmot headers and, in static builds, scans a loadable wrapper library.

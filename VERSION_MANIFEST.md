@@ -60,6 +60,10 @@ files already declare a version.
   the GIR scanner; preserve the one-core ELF model. Static scanner wrappers and
   their non-loadable installed metadata are now consistently build-tree-only.
   No header/ABI or wire/storage change. CMake and Meson versions agree.
+- nostrc-hd8a4: with `BUILD_SHARED_LIBS=ON` the build-tree contract also
+  records the run path of each shared library it lists (libblossom, libvault,
+  NIP codecs), so contract-linked executables such as the GIR probes start.
+  PATCH-class build correction folded into the unreleased 3.0.1; no further bump.
 - **Grotto Preview 0.1.0 → 0.1.1 (PATCH):** fix the alternate Meson frontend's
   Groundhog linkage using that contract; add focused executable/consumer tests.
   Update the manifest's authoritative and duplicate package versions together.
