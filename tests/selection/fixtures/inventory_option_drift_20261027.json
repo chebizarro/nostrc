@@ -1,0 +1,163 @@
+{
+  "base": "17f67593e324064b0b891b5f2398d7251ce56824",
+  "records": [
+    {
+      "field": "nodes",
+      "ident": "groundhog.default_build",
+      "items": [
+        {
+          "index": 101,
+          "value": "nip65"
+        },
+        {
+          "index": 102,
+          "value": "nip65.test_inputs"
+        }
+      ],
+      "origin": "73e8bc7fc",
+      "section": "checks"
+    },
+    {
+      "field": "configure_args",
+      "ident": "core.linux",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    },
+    {
+      "field": "configure_args",
+      "ident": "core.linux.asan",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    },
+    {
+      "field": "configure_args",
+      "ident": "grotto.linux",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    },
+    {
+      "field": "configure_args",
+      "ident": "grotto.linux.asan_ubsan",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    },
+    {
+      "field": "configure_args",
+      "ident": "groundhog.linux",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    },
+    {
+      "field": "configure_args",
+      "ident": "groundhog.mdk011",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    },
+    {
+      "field": "configure_args",
+      "ident": "groundhog.mdk08",
+      "items": [
+        {
+          "index": 0,
+          "value": "-DBUILD_LIBVAULT=ON"
+        },
+        {
+          "index": 1,
+          "value": "-DENABLE_NIP42=ON"
+        },
+        {
+          "index": 2,
+          "value": "-DENABLE_NIP11=ON"
+        }
+      ],
+      "origin": "8d5c8d9b5",
+      "section": "profiles"
+    }
+  ],
+  "schema_version": 1,
+  "scope": "Exact inverse of two post-17f67593e inventory edits that the older W11/groundhog/post-1640 projection layers cannot see: nip65 nodes on groundhog.default_build and the three vaultctl-prerequisite configure options prepended to seven profiles. Historical views only, never admission; no source bytes, qualifier, runtime or review binding is changed."
+}
