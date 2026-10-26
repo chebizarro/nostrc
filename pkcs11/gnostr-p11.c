@@ -16,7 +16,8 @@ CK_RV gnostr_p11_get_function_list(CK_FUNCTION_LIST_PTR_PTR list){
   *list = &function_list; return CKR_OK;
 }
 
-/* p11-kit entry point */
+/* p11-kit entry point: the module's only exported symbol (pkcs11/CMakeLists.txt). */
+__attribute__((visibility("default")))
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR list){
   return gnostr_p11_get_function_list(list);
 }

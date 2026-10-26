@@ -11,6 +11,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* glibc resolves only the _nss_nostr_* entry points; everything else stays
+ * hidden (nostrc_module_visibility in CMakeLists.txt pins the exact set). */
+#define NH_NSS_ENTRY __attribute__((visibility("default")))
+
 #ifndef NH_NSS_CONFIG_PATH
 #define NH_NSS_CONFIG_PATH "/etc/nss_nostr.conf"
 #endif
@@ -105,11 +109,11 @@ static enum nss_status passwd_lookup(const char *name, uid_t uid, int by_name,
   }
   return status(result, errnop);
 }
-enum nss_status _nss_nostr_getpwnam_r(const char *name, struct passwd *pwd,
+NH_NSS_ENTRY enum nss_status _nss_nostr_getpwnam_r(const char *name, struct passwd *pwd,
     char *buffer, size_t buflen, int *errnop) {
   return passwd_lookup(name, 0, 1, pwd, buffer, buflen, errnop);
 }
-enum nss_status _nss_nostr_getpwuid_r(uid_t uid, struct passwd *pwd,
+NH_NSS_ENTRY enum nss_status _nss_nostr_getpwuid_r(uid_t uid, struct passwd *pwd,
     char *buffer, size_t buflen, int *errnop) {
   return passwd_lookup(NULL, uid, 0, pwd, buffer, buflen, errnop);
 }
@@ -137,15 +141,15 @@ static enum nss_status group_lookup(const char *name, gid_t gid, int by_name,
   grp->gr_mem[0] = NULL;
   return NSS_STATUS_SUCCESS;
 }
-enum nss_status _nss_nostr_getgrnam_r(const char *name, struct group *grp,
+NH_NSS_ENTRY enum nss_status _nss_nostr_getgrnam_r(const char *name, struct group *grp,
     char *buffer, size_t buflen, int *errnop) {
   return group_lookup(name, 0, 1, grp, buffer, buflen, errnop);
 }
-enum nss_status _nss_nostr_getgrgid_r(gid_t gid, struct group *grp,
+NH_NSS_ENTRY enum nss_status _nss_nostr_getgrgid_r(gid_t gid, struct group *grp,
     char *buffer, size_t buflen, int *errnop) {
   return group_lookup(NULL, gid, 0, grp, buffer, buflen, errnop);
 }
-enum nss_status _nss_nostr_initgroups_dyn(const char *user, gid_t group,
+NH_NSS_ENTRY enum nss_status _nss_nostr_initgroups_dyn(const char *user, gid_t group,
     long *start, long *size, gid_t **groupsp, long limit, int *errnop) {
   char buffer[NH_IDENTITY_READER_BUF_MAX];
   struct passwd pwd;

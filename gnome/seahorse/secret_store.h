@@ -19,6 +19,8 @@
 #include <glib.h>
 #include <libsecret/secret.h>
 
+#include "seahorse/gnostr-secret-export.h"
+
 G_BEGIN_DECLS
 
 #define GNOSTR_SECRET_SCHEMA_NAME                   "org.gnostr.Signer/identity"
@@ -54,24 +56,24 @@ G_BEGIN_DECLS
  *   hardware_slot   token-specific locator (optional, hardware only)
  *   fingerprint     first 8 hex chars of the pubkey (optional)
  *   created_at      ISO-8601 timestamp (optional) */
-extern const SecretSchema gnostr_secret_schema;
+GNOSTR_SECRET_API extern const SecretSchema gnostr_secret_schema;
 
 /* Legacy: apps/grotto/src/secret-storage.c (removed)
  * {application,label,npub,key_type,created_at}. Secret is 64-hex. */
-extern const SecretSchema gnostr_secret_legacy_signer_key_schema;
+GNOSTR_SECRET_API extern const SecretSchema gnostr_secret_legacy_signer_key_schema;
 
 /* Legacy: this library's former org.gnostr.Key
  * {type,npub,uid,curve,origin,hardware_slot}. Secret is hex/nsec, or a
  * hardware reference when origin == "hardware". */
-extern const SecretSchema gnostr_secret_legacy_helper_schema;
+GNOSTR_SECRET_API extern const SecretSchema gnostr_secret_legacy_helper_schema;
 
 /* Legacy: apps/gnostr/src/util/keystore_libsecret.c (retired by nostrc-e5nz:
  * the gnostr client no longer holds private keys) {npub,application}.
  * Secret is nsec1 text; item label "GNostr: <label or npub>". */
-extern const SecretSchema gnostr_secret_legacy_client_schema;
+GNOSTR_SECRET_API extern const SecretSchema gnostr_secret_legacy_client_schema;
 
 /* Per-keyring marker recording that a migration pass completed. {name} */
-extern const SecretSchema gnostr_secret_migration_schema;
+GNOSTR_SECRET_API extern const SecretSchema gnostr_secret_migration_schema;
 
 /* Description of one identity item. All pointers are borrowed. npub is
  * required; everything else is optional (NULL or "" = unset). key_id
@@ -93,15 +95,15 @@ typedef struct {
  * "Nostr key: <npub prefix>…" when uid is NULL/empty. The full npub is kept
  * in the item attributes; the label abbreviates it so Seahorse's list stays
  * readable. Returns NULL when npub is NULL/empty. Free with g_free(). */
-gchar *gnostr_secret_store_build_label(const gchar *uid, const gchar *npub);
+GNOSTR_SECRET_API gchar *gnostr_secret_store_build_label(const gchar *uid, const gchar *npub);
 
 /* Attribute table (static keys, g_free'd values) for id under
  * gnostr_secret_schema. Only set attributes are included; key_id, npub,
  * curve, origin and hardware are always present. NULL if npub is unset. */
-GHashTable *gnostr_secret_identity_to_attributes(const GnostrSecretIdentity *id);
+GNOSTR_SECRET_API GHashTable *gnostr_secret_identity_to_attributes(const GnostrSecretIdentity *id);
 
 /* Legacy org.gnostr.Signer/key "key_type" → unified "origin". */
-const gchar *gnostr_secret_origin_from_key_type(const gchar *key_type);
+GNOSTR_SECRET_API const gchar *gnostr_secret_origin_from_key_type(const gchar *key_type);
 
 typedef enum {
   GNOSTR_SECRET_LEGACY_SIGNER_KEY, /* org.gnostr.Signer/key */
@@ -118,7 +120,7 @@ typedef enum {
  * signer daemon could use, and org.gnostr.NostrKey items whose application
  * attribute is not exactly org.gnostr.Client. org.gnostr.NostrKey items map to
  * label GNOSTR_SECRET_LEGACY_CLIENT_IMPORT_LABEL. */
-gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
+GNOSTR_SECRET_API gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
                                           GHashTable *legacy_attrs,
                                           GnostrSecretIdentity *out,
                                           const gchar **why_not);
@@ -127,30 +129,30 @@ gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
  * StoreKey convention). TRUE for org.gnostr.Signer/key and org.gnostr.Key,
  * whose labels named the identity; FALSE for org.gnostr.NostrKey, whose
  * fixed import label would give every imported key the same selector. */
-gboolean gnostr_secret_legacy_label_is_selector(GnostrSecretLegacyKind kind);
+GNOSTR_SECRET_API gboolean gnostr_secret_legacy_label_is_selector(GnostrSecretLegacyKind kind);
 
 /* Store secret under gnostr_secret_schema in the default collection, then
  * delete any other software item for the same {key_id, npub} whose
  * attribute set differs (e.g. one written before a schema attribute was
  * added), so a software identity is always exactly one item. origin=hardware
  * items are never pruned. */
-gboolean gnostr_secret_store_save(const GnostrSecretIdentity *id,
+GNOSTR_SECRET_API gboolean gnostr_secret_store_save(const GnostrSecretIdentity *id,
                                   const gchar *secret,
                                   GError **error);
 
 /* Convenience: software key with an optional friendly uid. */
-gboolean gnostr_secret_store_save_software_key(const gchar *npub,
+GNOSTR_SECRET_API gboolean gnostr_secret_store_save_software_key(const gchar *npub,
                                                 const gchar *uid,
                                                 const gchar *secret, /* hex or nsec */
                                                 GError **error);
 
 /* All identity items: "npub|label" → attribute table (transfer full). */
-GHashTable *gnostr_secret_store_find_all(GError **error);
+GNOSTR_SECRET_API GHashTable *gnostr_secret_store_find_all(GError **error);
 
 /* Delete identity items matching npub and/or label (the former helper's
  * "uid"). At least one must be non-empty. Returns TRUE if every matched item
  * was deleted. */
-gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
+GNOSTR_SECRET_API gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
                                                 const gchar *label,
                                                 GError **error);
 
@@ -174,7 +176,7 @@ gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
  * this schema. */
 #define GNOSTR_SECRET_WALLET_SCHEMA_NAME "org.gnostr.WalletConnection"
 
-extern const SecretSchema gnostr_secret_wallet_schema;
+GNOSTR_SECRET_API extern const SecretSchema gnostr_secret_wallet_schema;
 
 typedef struct {
   const gchar *wallet_pubkey;
@@ -187,21 +189,21 @@ typedef struct {
 /* Seahorse label: "Nostr Wallet Connect: <lud16> (<wallet pubkey prefix>…)",
  * or "Nostr Wallet Connect: <wallet pubkey prefix>…" without lud16. NULL when
  * wallet_pubkey is NULL/empty. Free with g_free(). */
-gchar *gnostr_secret_wallet_build_label(const gchar *lud16,
+GNOSTR_SECRET_API gchar *gnostr_secret_wallet_build_label(const gchar *lud16,
                                         const gchar *wallet_pubkey);
 
 /* Store nwc_uri as the one wallet pairing, then delete every other item under
  * gnostr_secret_wallet_schema. wallet_pubkey is required. Blocking. */
-gboolean gnostr_secret_wallet_save(const GnostrSecretWallet *wallet,
+GNOSTR_SECRET_API gboolean gnostr_secret_wallet_save(const GnostrSecretWallet *wallet,
                                    const gchar *nwc_uri,
                                    GError **error);
 
 /* The stored pairing URI, or NULL (error unset) when there is none. Blocking;
  * may trigger a keyring unlock prompt. Free with secret_password_free(). */
-gchar *gnostr_secret_wallet_lookup(GError **error);
+GNOSTR_SECRET_API gchar *gnostr_secret_wallet_lookup(GError **error);
 
 /* Delete every wallet pairing item. TRUE when nothing is left. Blocking. */
-gboolean gnostr_secret_wallet_delete_all(GError **error);
+GNOSTR_SECRET_API gboolean gnostr_secret_wallet_delete_all(GError **error);
 
 G_END_DECLS
 

@@ -47,6 +47,10 @@
 #include <errno.h>
 #include <unistd.h>
 
+/* Linux-PAM resolves only the pam_sm_* entry points; everything else stays
+ * hidden (nostrc_module_visibility in CMakeLists.txt pins the exact set). */
+#define NH_PAM_ENTRY __attribute__((visibility("default")))
+
 #ifndef NH_PAM_DEFAULT_SOCKET
 #define NH_PAM_DEFAULT_SOCKET "/run/nostr-auth/auth.sock"
 #endif
@@ -343,7 +347,7 @@ static void qr_display_cb(void *ctx, const nh_auth_display *display) {
   render_qr_info(c->pamh, display, c->text_console);
 }
 
-int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
+NH_PAM_ENTRY int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
   (void)flags;
   const char *user = NULL;
@@ -509,7 +513,7 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   return PAM_MAXTRIES;
 }
 
-int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {
+NH_PAM_ENTRY int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {
   (void)pamh; (void)flags; (void)argc; (void)argv;
   return PAM_SUCCESS;
 }
@@ -530,7 +534,7 @@ static uint32_t porthome_wait_ms(int argc, const char **argv) {
   return NH_PAM_PORTHOME_WAIT_MS_DEFAULT;
 }
 
-int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
+NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
   (void)flags;
   const char *user = NULL;
@@ -750,7 +754,7 @@ static void smb_teardown_start(pam_handle_t *pamh, const char *user) {
   }
 }
 
-int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
+NH_PAM_ENTRY int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
                          const char **argv) {
   (void)flags; (void)argc; (void)argv;
   /* Plan §4.1 A4: kick per-user SMB mount teardown via the user
@@ -764,7 +768,7 @@ int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
   return PAM_SUCCESS;
 }
 
-int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
+NH_PAM_ENTRY int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
                      const char **argv) {
   (void)flags;
   const char *user = NULL;

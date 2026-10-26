@@ -126,5 +126,62 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/interface.txt" "${{_defs}}")
                              "FIXTURE_CORE_STATIC_DEFINE")
 
 
+    def test_loadable_module_exports_exact_entry_points(self):
+        # PAM/NSS/PKCS#11-style modules: export exactly the loader entry points,
+        # hide the module's own helpers and anything from linked archives, and
+        # fail the build when an entry point is hidden or undefined.
+        cases = (
+            ("exact", "ENTRY", "entry_one entry_two", None),
+            ("hidden", "", "entry_one entry_two", "Missing"),
+            ("undefined", "ENTRY", "entry_one entry_two entry_three", None),
+        )
+        for name, annotation, symbols, message in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory(prefix="nostrc-module-") as tmp:
+                src = pathlib.Path(tmp)
+                # A sibling directory includes the helper first; include_guard
+                # must not leave the module's directory without its state.
+                (src / "CMakeLists.txt").write_text('''
+cmake_minimum_required(VERSION 3.22)
+project(module_fixture C)
+add_subdirectory(library)
+add_subdirectory(module)
+''')
+                (src / "library").mkdir()
+                (src / "library/CMakeLists.txt").write_text(f'''
+include("{ROOT}/cmake/NostrcVisibility.cmake")
+add_library(helpers STATIC ../helpers.c)
+set_target_properties(helpers PROPERTIES POSITION_INDEPENDENT_CODE ON)
+''')
+                (src / "module").mkdir()
+                (src / "module/CMakeLists.txt").write_text(f'''
+include("{ROOT}/cmake/NostrcVisibility.cmake")
+add_library(plugin MODULE ../plugin.c)
+target_link_libraries(plugin PRIVATE helpers)
+nostrc_module_visibility(plugin SYMBOLS {symbols})
+''')
+                (src / "helpers.c").write_text("int archive_helper(void) { return 2; }\n")
+                (src / "plugin.c").write_text(
+                    '#define ENTRY __attribute__((visibility("default")))\n'
+                    "int archive_helper(void);\n"
+                    "int module_helper(void) { return archive_helper(); }\n"
+                    f"ENTRY int entry_one(void) {{ return module_helper(); }}\n"
+                    f"{annotation} int entry_two(void) {{ return 1; }}\n")
+                build = src / "build"
+                run("cmake", "-S", str(src), "-B", str(build))
+                result = subprocess.run(["cmake", "--build", str(build)], text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                if name != "exact":
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    if message:
+                        self.assertIn(message, result.stdout)
+                    continue
+                self.assertEqual(result.returncode, 0, result.stdout)
+                if platform.system() == "Linux":
+                    module = next(build.glob("module/*plugin*.so"))
+                    symbols = run("nm", "-D", "--defined-only", str(module))
+                    names = sorted(line.split()[-1] for line in symbols.splitlines())
+                    self.assertEqual(names, ["entry_one", "entry_two"])
+
+
 if __name__ == "__main__":
     unittest.main()

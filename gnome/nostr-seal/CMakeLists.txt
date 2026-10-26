@@ -43,6 +43,12 @@ add_library(nostr_seal_nips STATIC
   ${_ns_root}/nips/nip49/src/core/nip49_bech.c)
 target_include_directories(nostr_seal_nips PUBLIC
   ${_ns_root}/nips/nip49/include)
+# This archive owns its copy of the NIP-49 sources, so it also generates the
+# nostr/nip49/export.h their public header includes.
+include("${_ns_root}/cmake/NostrcVisibility.cmake")
+nostrc_generate_export_header(nostr_seal_nips NOSTR_NIP49_API nostr/nip49/export.h)
+target_include_directories(nostr_seal_nips PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
 if(NSEAL_SODIUM_INC)
   target_include_directories(nostr_seal_nips PUBLIC ${NSEAL_SODIUM_INC})
 endif()
@@ -134,7 +140,8 @@ if(BUILD_TESTING)
   if(TARGET nostr-signer-daemon)
     add_executable(test-nostr-seal-signer tests/test-nseal-signer.c)
     target_compile_options(test-nostr-seal-signer PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(test-nostr-seal-signer PRIVATE nostr_seal_core nostr_nip55l_glib nostrc-test-bus)
+    # The daemon-private SignerPermissions store lives in nostr_nip55l_service.
+    target_link_libraries(test-nostr-seal-signer PRIVATE nostr_seal_core nostr_nip55l_service nostrc-test-bus)
     target_include_directories(test-nostr-seal-signer PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
     target_compile_definitions(test-nostr-seal-signer PRIVATE
       "NSEAL_DAEMON_PATH=\"$<TARGET_FILE:nostr-signer-daemon>\""

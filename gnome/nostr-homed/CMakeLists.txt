@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.5.0 LANGUAGES C)
+project(nostr_homed VERSION 0.5.1 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -301,6 +301,12 @@ if(NOSTR_HOMED_ENABLE_NSS)
   set_target_properties(nss_nostr PROPERTIES
     PREFIX "libnss_" OUTPUT_NAME "nostr" SUFFIX ".so.2")
   target_link_libraries(nss_nostr PRIVATE nostr_identity_core)
+  # Export only the glibc NSS entry points (include/nss_nostr.h); the identity
+  # core linked into the module stays private.
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+  nostrc_module_visibility(nss_nostr SYMBOLS
+    _nss_nostr_getpwnam_r _nss_nostr_getpwuid_r
+    _nss_nostr_getgrnam_r _nss_nostr_getgrgid_r _nss_nostr_initgroups_dyn)
   # glibc's NSS loader dlopen()s libnss_nostr.so.2 by bare name and searches
   # ONLY the standard runtime library path -- on multiarch Debian/Ubuntu that is
   # /usr/lib/<triplet> (e.g. /usr/lib/x86_64-linux-gnu), NOT the PAM security/
@@ -627,6 +633,12 @@ if(NOSTR_HOMED_ENABLE_PAM)
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
   target_link_libraries(pam_nostr PRIVATE
     nostr_auth_runtime ${PAM_LIBRARY})
+  # Export only the pam_sm_* entry points Linux-PAM resolves; the auth client,
+  # QR renderer and secure-memory helpers linked into the module stay private.
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+  nostrc_module_visibility(pam_nostr SYMBOLS
+    pam_sm_authenticate pam_sm_setcred pam_sm_acct_mgmt
+    pam_sm_open_session pam_sm_close_session)
 
   if(NOSTR_HOMED_BUILD_TESTS)
     add_executable(test_qr_render tests/unit/test_qr_render.c
