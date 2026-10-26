@@ -4,8 +4,8 @@
  * Uploads the .nsealed blob to the user's Blossom servers and publishes a
  * NIP-94 kind-1063 file-metadata event p-tagging every NIP-44 recipient in
  * the file's own header (so the tags cannot drift from who can open it).
- * Reuses nostr-share's upload path (nostr-share-core: BUD-03 server list,
- * hanami Blossom client, kind-24242 auth through org.nostr.Signer) and
+ * Reuses nostr-share's BUD-03 discovery, GnBlossomClient for transport,
+ * BUD-02 for kind-24242 auth through org.nostr.Signer, and
  * libnostr-publish (NostrPublisher + transport factory); signing goes
  * through org.nostr.Signer as org.nostr.Seal. Target relays come from
  * nostr_publish_policy_select_targets() with seal.conf's upstream_mode.
@@ -17,6 +17,9 @@
 #define NSEAL_PUBLISH_H
 
 #include "nostr-seal.h"
+#ifdef NSEAL_HAVE_PUBLISH
+#include <nostr-publish/nostr-publish.h>
+#endif
 
 G_BEGIN_DECLS
 
@@ -36,6 +39,14 @@ char *nseal_publish_event_json(const char *pubkey_hex, gint64 created_at, const 
                                const char *const *recipients_hex, gboolean pretty);
 
 gboolean nseal_publish_file(const char *path, const NsealPublishOptions *opts, GError **error);
+
+#ifdef NSEAL_HAVE_PUBLISH
+/* Private upload engine. Production passes FALSE for loopback_http; TRUE is
+ * only for an isolated loopback fixture, never a user-configurable policy. */
+gboolean nseal_publish_upload(const char *const *servers, NostrPublishSigner *signer,
+                              const char *pubkey, GBytes *bytes, const char *hash,
+                              gboolean loopback_http, char **out_url, GError **error);
+#endif
 
 G_END_DECLS
 
