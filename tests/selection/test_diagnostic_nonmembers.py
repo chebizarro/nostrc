@@ -319,7 +319,10 @@ nostrc_finalize_test_inventory()'''))
         declared = checked["diagnostic_nonmembers"][nm.NONMEMBER_PROFILE]
         self.assertEqual(len(declared["registrations"]), 347)
         frozen = json.loads((ROOT / "tests/selection/fixtures/nonmember_audit_edges.json").read_text())
-        self.assertEqual(declared["registrations"], frozen["unclaimed_registrations"])
+        # The frozen post-audit list predates the BUD-02 registration rename; reverse
+        # exactly that one pinned name rather than editing the frozen witness.
+        from bud02_registration_rename_support import before_registrations
+        self.assertEqual(before_registrations(declared["registrations"]), frozen["unclaimed_registrations"])
         self.assertEqual(declared["review"], {"source_sha": "8d052ca8440eba453f951b62f0c799853980c266",
                                               "post_audit_sha256": "4e65b90e07c0fd26fae54fa6815e156f71643c723f386ebeb3abe36c73aa8436"})
         compat = checked["profiles"][nm.NONMEMBER_PROFILE]["sanitizer_compatibility"]

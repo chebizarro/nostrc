@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 from selector_support import ROOT, s
 from realization_support import r
+from bud02_registration_rename_support import before_policy as before_bud02_rename
 
 WITNESS = 'tests/selection/fixtures/sanitizer_partition_drift_20261024.json'
 SHA256 = '443684234eedd500dd91b7432232e6068e484baa2cb1ec3e4dbc22d6c72f6662'
@@ -38,7 +39,9 @@ def require_reviewed_contract(contract):
 
 class SanitizerPartitionDrift(unittest.TestCase):
     def setUp(self):
-        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        # The reviewed contract predates the BUD-02 registration rename; project
+        # exactly that one name back (pinned witness) instead of renewing the contract.
+        self.policy = before_bud02_rename(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
         self.data = witness()
         self.contract = s.diagnostic_nonmember_contracts(self.policy)[PROFILE]
         # Exactly how the engine derives authored primaries (_diagnostic_nonmembers).

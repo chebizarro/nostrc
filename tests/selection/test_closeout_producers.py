@@ -11,6 +11,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from closeout_support import witness
+from groundhog_cmake_support import before_groundhog_cmake
 import test_command_execution as execution
 from realization_support import Project, ROOT, r
 from selector_support import change, s
@@ -35,7 +36,10 @@ class ProductionSourceRepairs(unittest.TestCase):
     def test_all_static_resource_reads_are_declared_without_changing_generated_ui_precedence(self):
         data = witness()['source_producer_repair']
         text = CMAKE.read_text()
-        self.assertEqual(hashlib.sha256(CMAKE.read_bytes()).hexdigest(), data['after_cmake_sha256'])
+        # Audited bytes plus the exact recorded later edits (pinned witness); the
+        # assertions below still read the live file.
+        self.assertEqual(hashlib.sha256(before_groundhog_cmake(CMAKE.read_bytes())).hexdigest(),
+                         data['after_cmake_sha256'])
         xml = ET.parse(ROOT / 'gnome/groundhog/data/groundhog.gresource.xml')
         reads = {'gnome/groundhog/data/' + item.text.strip() for item in xml.findall('.//file')
                  if not item.text.strip().startswith('ui/')}

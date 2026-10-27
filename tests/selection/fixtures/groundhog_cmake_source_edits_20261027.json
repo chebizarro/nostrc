@@ -1,0 +1,29 @@
+{
+  "after_sha256": "4487a06f58c23a186aae6de7ea29e07eda4bfdea5e9a3e78b28f134db886db50",
+  "before_sha256": "0310724b36c40157385555e032a02519c13530edf5774f031176f92bb8e72d39",
+  "edits": [
+    {
+      "after": "  target_link_libraries(test-groundhog-multi-send PRIVATE groundhog-account-relays\n    groundhog-auth-policy groundhog-conversations groundhog-store-testhooks nostr_nip17_core\n    nostr_nip59_core nostrc::bud02 nostrc-test-bus)\n  if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)\n    target_link_libraries(test-groundhog-multi-send PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)\n",
+      "before": "  target_link_libraries(test-groundhog-multi-send PRIVATE groundhog-account-relays\n    groundhog-auth-policy groundhog-conversations groundhog-store-testhooks nostr_nip17_core\n    nostr_nip59_core nostrc-test-bus)\n  if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)\n    target_link_libraries(test-groundhog-multi-send PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)\n"
+    },
+    {
+      "after": "if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-conversations AND\n    TARGET OpenSSL::Crypto)\n    message(STATUS \"Groundhog encrypted attachments core: enabled\")\n    if(NOT TARGET nostr_gobject)\n      message(FATAL_ERROR \"Groundhog media requires GnBlossomClient; set BUILD_NOSTR_GOBJECT=ON\")\n    endif()\n  add_library(groundhog-media STATIC src/media/gh-attachment.c src/media/gh-blossom-client.c\n    src/media/gh-metadata-strip.c src/store/gh-store-media.c)\n",
+      "before": "if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-conversations AND\n    TARGET OpenSSL::Crypto)\n  message(STATUS \"Groundhog encrypted attachments core: enabled\")\n  add_library(groundhog-media STATIC src/media/gh-attachment.c src/media/gh-blossom-client.c\n    src/media/gh-metadata-strip.c src/store/gh-store-media.c)\n"
+    },
+    {
+      "after": "    ${CMAKE_CURRENT_SOURCE_DIR}/src/store)\n  target_link_libraries(groundhog-media PUBLIC groundhog-net groundhog-store\n      groundhog-conversations nostr_gobject nostrc::bud02 OpenSSL::Crypto)\n  target_compile_options(groundhog-media PRIVATE -Wall -Wextra -Werror)\n  if (BUILD_TESTING AND TARGET groundhog-test-schemas)\n",
+      "before": "    ${CMAKE_CURRENT_SOURCE_DIR}/src/store)\n  target_link_libraries(groundhog-media PUBLIC groundhog-net groundhog-store\n    groundhog-conversations OpenSSL::Crypto)\n  target_compile_options(groundhog-media PRIVATE -Wall -Wextra -Werror)\n  if (BUILD_TESTING AND TARGET groundhog-test-schemas)\n"
+    },
+    {
+      "after": "        groundhog-dm-inbox groundhog-auth-policy groundhog-conversations\n        groundhog-account-relays groundhog-net nostr_nip17_core nostr_nip59_core\n        nostrc::bud02 nostrc-test-bus OpenSSL::Crypto PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)\n      target_compile_options(test-groundhog-mls-files PRIVATE -Wall -Wextra -Werror)\n      target_compile_definitions(test-groundhog-mls-files PRIVATE GH_MLS_TEST_HOOKS=1\n",
+      "before": "        groundhog-dm-inbox groundhog-auth-policy groundhog-conversations\n        groundhog-account-relays groundhog-net nostr_nip17_core nostr_nip59_core\n        nostrc-test-bus OpenSSL::Crypto PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)\n      target_compile_options(test-groundhog-mls-files PRIVATE -Wall -Wextra -Werror)\n      target_compile_definitions(test-groundhog-mls-files PRIVATE GH_MLS_TEST_HOOKS=1\n"
+    },
+    {
+      "after": "endif()\n\n# Groundhog's local libraries are static convenience archives linked into the\n# app and its tests, not separately installed shared APIs.\ninclude(\"${CMAKE_SOURCE_DIR}/cmake/NostrcVisibility.cmake\")\nget_property(_groundhog_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)\nforeach(_groundhog_target IN LISTS _groundhog_targets)\n  get_target_property(_groundhog_type ${_groundhog_target} TYPE)\n  if(_groundhog_type STREQUAL \"STATIC_LIBRARY\")\n    nostrc_internal_visibility(${_groundhog_target})\n  endif()\nendforeach()\n\n# --- test isolation (nostrc-ttvxv) ---\n# A test-key account once got a store under the developer's real\n",
+      "before": "endif()\n\n# --- test isolation (nostrc-ttvxv) ---\n# A test-key account once got a store under the developer's real\n"
+    }
+  ],
+  "path": "gnome/groundhog/CMakeLists.txt",
+  "schema_version": 1,
+  "scope": "Exact inverse of the post-17f67593e Groundhog CMake edits (1ec7eb449 GnBlossomClient/bud02 linkage, 2d4d37ac4, d0154559b, 0927cdabe symbol visibility) so the closeout producer witness keeps pinning its audited bytes. Historical view only, never admission."
+}

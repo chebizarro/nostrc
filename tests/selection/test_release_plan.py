@@ -135,5 +135,9 @@ class ReleaseTests(GitCase):
     def test_checked_in_version_sources_match_independent_manifest(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         result = s.release_plan(ROOT, p, head="HEAD", component="global", dry_run=True, run_id="test-only")
-        self.assertEqual(len(result["verified_versions"]), 17)
+        # 17 components at 17f67593e plus the seven versioned components the
+        # shared-vault/portable-home programme added to the inventory and manifest.
+        added = {"nip59", "libporthome", "libvault", "libvault-marmot", "vaultctl", "porthome-sys", "vault-sys"}
+        self.assertEqual(len(result["verified_versions"]), 17 + len(added))
+        self.assertTrue(added <= set(result["verified_versions"]))
         self.assertFalse(result["publish"])
