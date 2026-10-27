@@ -1,9 +1,16 @@
 """Signer impact and entry-level inventory regressions, not runtime acceptance."""
 import copy
 import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
+from profile_contract_support import step_script
 from selector_support import ROOT, GitCase, change, plan, policy, s
+
+SIGNER_PROFILES = ('nostr_seal.linux', 'desktop.signer.linux', 'groundhog.identity_compat.linux')
 
 
 class SignerSelectionTests(unittest.TestCase):
@@ -94,10 +101,50 @@ class SignerSelectionTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/nip55l-libsecret-ci.yml').read_text()
         self.assertIn('runner.load_handoff', workflow)
         self.assertIn('scripts/test-gate.sh "${args[@]}"', workflow)
-        for profile in ('nostr_seal.linux', 'desktop.signer.linux', 'groundhog.identity_compat.linux'):
+        for profile in SIGNER_PROFILES:
             self.assertIn(profile, workflow)
         self.assertIn('selection_artifact: ${{ needs.select.outputs.selection_artifact }}',
                       (ROOT / '.github/workflows/ci-selective.yml').read_text())
+
+    def test_actual_selection_step_validates_handoff_in_a_clean_interpreter(self):
+        # Run the literal workflow step in a fresh process: this harness's own
+        # sys.path (selector_support adds scripts/) must not mask its imports.
+        from test_ci_selected_execution import ci
+        script = step_script((ROOT / '.github/workflows/nip55l-libsecret-ci.yml').read_text(),
+                             'Validate source-bound selection')
+        sha = s.commit_sha(ROOT, 'HEAD')
+        broad = s.make_plan(self.p, [change('scripts/test_selection.py')], head=sha, context='ci', mode='broad')
+        unrelated = s.make_plan(self.p, [change('apps/grotto/src/main_app.c')], head=sha, context='ci')
+        self.assertFalse(set(SIGNER_PROFILES) & set(unrelated['expected_lane_ids']))
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            (temp / 'ci-selection').mkdir()
+            env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
+            env.update(RUNNER_TEMP=str(temp), GITHUB_OUTPUT=str(temp / 'output'),
+                       SELECTION_ARTIFACT='ci-selection-' + sha + '-1')
+
+            def run(saved, profile):
+                (temp / 'ci-selection/plan.json').write_text(json.dumps(saved))
+                (temp / 'output').write_text('')
+                result = subprocess.run(['bash', '-e', '-c', script], cwd=ROOT, env=dict(env, PROFILE=profile),
+                                        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                return result, (temp / 'output').read_text()
+
+            for profile in SIGNER_PROFILES:
+                with self.subTest(profile=profile):
+                    result, output = run({'shared_plan': broad, 'dispatch': ci.project(broad)}, profile)
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertEqual(output, 'selected=true\n')
+                    self.assertEqual(s.read_json(temp / 'signer-plan.json'), broad)
+            result, output = run({'shared_plan': unrelated, 'dispatch': ci.project(unrelated)}, SIGNER_PROFILES[0])
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(output, 'selected=false\n')
+            tampered = ci.project(broad)
+            tampered['families'] = []
+            result, output = run({'shared_plan': broad, 'dispatch': tampered}, SIGNER_PROFILES[0])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('dispatch differs from shared plan', result.stdout)
+            self.assertEqual(output, '')
 
 
 class InventoryEntryTests(GitCase):
