@@ -258,18 +258,25 @@ env_opt_in(const char *name)
 
 #define CONTROL_INTERVAL_US (10 * G_TIME_SPAN_MILLISECOND)
 
-/* Opt-in poll-function counterfactual (nostrc-0cfsg.11.1), set ONLY by
- * heartbeat_sched/heartbeat-sched-probe.sh. GLib builds g_poll() on Darwin
- * from select() (BROKEN_POLL), and XNU gives select() timeouts latency-QoS
- * leeway: under an inherited UTILITY clamp (latency tier 3) a 10 ms timeout
- * may legally fire about 40 ms late. poll(2) takes the kqueue path without
- * that leeway. Comparing the two on the same host separates OS timer leeway
- * from the remaining wake latency. Default CTest never sets it. */
+/* Measure storage-induced stalls, not Darwin select() timeout leeway.
+ * GLib's Darwin g_poll() uses select() (BROKEN_POLL). Under the hosted
+ * runner's UTILITY clamp its idle waits exceed the heartbeat budget even
+ * with near-zero thread CPU; the same binary using poll(2) does not
+ * (nostrc-8kzuf). Use a real poll(2) wait for this harness on Darwin.
+ * This does not change or qualify the production GUI's GLib wait backend.
+ * Keep glib-default as an explicit diagnostic counterfactual. The workload,
+ * timer, initial/final samples and miss assertions are identical either way. */
 #ifdef __APPLE__
 G_STATIC_ASSERT(sizeof(GPollFD) == sizeof(struct pollfd));
 G_STATIC_ASSERT(offsetof(GPollFD, fd) == offsetof(struct pollfd, fd));
 G_STATIC_ASSERT(offsetof(GPollFD, events) == offsetof(struct pollfd, events));
 G_STATIC_ASSERT(offsetof(GPollFD, revents) == offsetof(struct pollfd, revents));
+G_STATIC_ASSERT((int)G_IO_IN == POLLIN);
+G_STATIC_ASSERT((int)G_IO_PRI == POLLPRI);
+G_STATIC_ASSERT((int)G_IO_OUT == POLLOUT);
+G_STATIC_ASSERT((int)G_IO_ERR == POLLERR);
+G_STATIC_ASSERT((int)G_IO_HUP == POLLHUP);
+G_STATIC_ASSERT((int)G_IO_NVAL == POLLNVAL);
 
 static gint
 heartbeat_posix_poll(GPollFD *fds, guint nfds, gint timeout)
@@ -283,7 +290,10 @@ heartbeat_poll_func_begin(GMainContext *ctx, GPollFunc *saved)
 {
     *saved = NULL;
 #ifdef __APPLE__
-    if (g_strcmp0(g_getenv("NOSTRC_HEARTBEAT_POLL_FUNC"), "poll") == 0) {
+    const char *backend = g_getenv("NOSTRC_HEARTBEAT_POLL_FUNC");
+    if (g_strcmp0(backend, "glib-default") != 0) {
+        if (backend && *backend && g_strcmp0(backend, "poll") != 0)
+            g_error("Unknown NOSTRC_HEARTBEAT_POLL_FUNC: %s", backend);
         *saved = g_main_context_get_poll_func(ctx);
         g_main_context_set_poll_func(ctx, heartbeat_posix_poll);
         return "poll(2)";
@@ -297,8 +307,10 @@ heartbeat_poll_func_begin(GMainContext *ctx, GPollFunc *saved)
 static void
 heartbeat_poll_func_end(GMainContext *ctx, GPollFunc saved)
 {
-    if (saved)
+    if (saved) {
         g_main_context_set_poll_func(ctx, saved);
+        g_assert_true(g_main_context_get_poll_func(ctx) == saved);
+    }
 }
 
 typedef struct {

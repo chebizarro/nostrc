@@ -135,14 +135,14 @@ jobs:
       # >5 beat guard, 50 cycles, TIMEOUT 90 and sanitizers unchanged. This step
       # re-runs the SAME binary with the same command line under explicit
       # child-local variants (inherited policy with GLib's default select()-
-      # based g_poll versus an opt-in poll(2) main-context poll function, which
+      # based g_poll versus the harness's Darwin poll(2) default, which
       # separates XNU latency-QoS timer leeway under the inherited UTILITY
       # clamp from remaining wake latency; one foreground and one background
       # control), sequentially and quietly (it does not reproduce `ctest -j2`;
       # the real `Test` step's own `SchedEnv:` lines show that state), and
       # prints the Darwin policy, scheduler priority and thread-CPU evidence.
-      # The no-work control thread and the poll(2) variant are opt-in and only
-      # set by the probe script; the gating `Test` step never sets either.
+      # The probe explicitly selects each backend. The no-work control thread
+      # is opt-in; the gating `Test` step never enables it.
       # `continue-on-error` + an always-zero script keep it from masking or
       # creating failures; failed probe runs are printed in full, not retried.
       - name: Heartbeat scheduling probe (macOS, record-only)
