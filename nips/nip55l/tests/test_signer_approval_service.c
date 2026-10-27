@@ -302,6 +302,8 @@ static void test_revoke_queued_scope(void) {
       identity, "event", NOSTR_KIND_TEXT_NOTE, TRUE, 0, NULL));
   signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &de);
   g_assert_cmpuint(de.count, ==, 1); g_assert_false(de.ok); /* already auto-admitted */
+  g_assert_cmpstr(de.error, ==, ORG_NOSTR_SIGNER_ERR_NOT_FOUND);
+  g_clear_pointer(&de.error, g_free);
   signer_approval_service_decide(s, request_id(&w, 2), TRUE, FALSE, 0, decided, &dr);
   gboolean removed = FALSE;
   g_assert_true(signer_approval_service_revoke_grant(s, "event", who.principal, identity, &removed));
