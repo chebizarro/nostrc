@@ -13,6 +13,11 @@
 #include <git2/odb.h>
 #include <git2/oid.h>
 #include <git2/errors.h>
+#if defined(__has_include)
+#  if __has_include(<git2/sys/errors.h>)
+#    include <git2/sys/errors.h>
+#  endif
+#endif
 #include <git2/sys/odb_backend.h>
 #include <stdio.h>
 #include <stdlib.h>
