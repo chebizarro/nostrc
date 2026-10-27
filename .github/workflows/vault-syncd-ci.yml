@@ -37,22 +37,16 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libnsync-dev \
             libsodium-dev libssl-dev libcurl4-openssl-dev libsqlite3-dev \
             libsecret-1-dev libpam0g-dev libfuse3-dev
-      - name: Require the selected vault check
+      - name: Validate handoff and extract the selected vault plan
         run: |
-          python3 - <<'PY'
-          import os, sys
-          sys.path.insert(0, 'scripts')
-          import test_selection as s
-          p = s.read_json(os.environ['RUNNER_TEMP'] + '/vault-plan/plan.json')
-          s.validate_plan(p, s.load_inventory('tests/selection/inventory.json'))
-          s.require(p['tested_sha'] == os.environ['REQUESTED_SHA'], 'source identity mismatch')
-          s.require('homed.vault.filesystem' in p['selected_checks'], 'vault check was not selected')
-          s.require('homed.vault.linux' in p['expected_lane_ids'], 'vault profile was not selected')
-          PY
+          python3 scripts/ci-vault-syncd-plan.py \
+            --handoff "$RUNNER_TEMP/vault-plan/plan.json" \
+            --output "$RUNNER_TEMP/vault-plan/shared-plan.json" \
+            --sha "$REQUESTED_SHA"
       - name: Execute the selected profile
         run: |
           python3 scripts/test-plan.py run \
-            --plan "$RUNNER_TEMP/vault-plan/plan.json" --profile homed.vault.linux \
+            --plan "$RUNNER_TEMP/vault-plan/shared-plan.json" --profile homed.vault.linux \
             --build-dir "$RUNNER_TEMP/vault-build" --configure --phase all \
             --evidence-dir "$RUNNER_TEMP/vault-evidence"
       - uses: actions/upload-artifact@v4
