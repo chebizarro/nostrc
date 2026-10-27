@@ -527,8 +527,9 @@ on_account_signed(GObject *source, GAsyncResult *result, gpointer data)
     .expected_pubkey = self->account_pubkey,
   };
   gboolean valid = signed_json && self->account_pubkey && event &&
-    nostr_event_deserialize_signed(event, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
-    g_strcmp0(nostr_event_get_id(event), upload->auth_id) == 0 &&
+    nostr_event_deserialize_signed(event, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK;
+  g_autofree gchar *signed_id = valid ? nostr_event_get_id(event) : NULL;
+  valid = valid && signed_id && g_strcmp0(signed_id, upload->auth_id) == 0 &&
     nostr_bud02_validate_auth_event(event, NOSTR_BUD02_ACTION_UPLOAD, &options) == NOSTR_BUD02_OK;
   nostr_event_free(event);
   if (!valid) {
