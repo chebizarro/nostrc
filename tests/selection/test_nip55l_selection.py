@@ -118,6 +118,14 @@ class SignerSelectionTests(unittest.TestCase):
         self.assertIn('selection_artifact: ${{ needs.select.outputs.selection_artifact }}',
                       (ROOT / '.github/workflows/ci-selective.yml').read_text())
 
+    def test_signer_consumer_job_installs_its_display_stack(self):
+        # Broad runs execute each profile's configured display tests under
+        # xvfb-run; GTK aborts on the missing a11y bus without at-spi2-core.
+        install = step_script((ROOT / '.github/workflows/nip55l-libsecret-ci.yml').read_text(),
+                              'Install signer-consumer build prerequisites').split()
+        for package in ('dbus-bin', 'xvfb', 'xauth', 'at-spi2-core'):
+            self.assertIn(package, install)
+
     def test_actual_selection_step_validates_handoff_in_a_clean_interpreter(self):
         # Run the literal workflow step in a fresh process: this harness's own
         # sys.path (selector_support adds scripts/) must not mask its imports.
