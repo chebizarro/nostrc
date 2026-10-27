@@ -21,6 +21,7 @@
 #include <assert.h>
 
 static int tests_passed = 0;
+static const char *relay_url = NULL;
 
 #define TEST(name) \
     do { \
@@ -50,7 +51,7 @@ static const hanami_signer_t test_signer = {
 /* Helper: create nostr ctx for tests */
 static hanami_nostr_ctx_t *make_ctx(void)
 {
-    const char *relays[] = { "wss://relay.example.com", NULL };
+    const char *relays[] = { relay_url, NULL };
     hanami_nostr_ctx_t *ctx = NULL;
     hanami_error_t err = hanami_nostr_ctx_new(relays, &test_signer, &ctx);
     assert(err == HANAMI_OK);
@@ -195,7 +196,7 @@ static void test_write_and_lookup_direct(void)
     git_reference *ref = git_reference__alloc("refs/heads/main", &oid, NULL);
     assert(ref != NULL);
 
-    /* Write it (publish will fail since relay is fake — but cache is updated) */
+    /* Write it (the loopback relay may reject the dummy signature; cache is local). */
     int rc = be->write(be, ref, 1 /* force */, NULL, NULL, NULL, NULL);
     git_reference_free(ref);
     /* rc may be -1 from failed publish, but let's check the cache was updated */
@@ -451,8 +452,7 @@ static void test_rename_ref(void)
 static void test_write_attempts_nostr_publish(void)
 {
     /* Test that refdb_write exercises the Nostr publish path.
-     * The publish will fail (fake relay), but it should get past parameter
-     * validation and attempt the network operation. */
+     * The loopback relay rejects publication, but the cache remains local. */
     hanami_nostr_ctx_t *ctx = make_ctx();
     git_refdb_backend *be = NULL;
     hanami_refdb_backend_opts_t opts = {
@@ -470,9 +470,9 @@ static void test_write_attempts_nostr_publish(void)
 
     /* Write it — this should:
      * 1. Update the in-memory cache ✓
-     * 2. Attempt to publish a Nostr state event ✓ (will fail with network error)
+     * 2. Attempt to publish a Nostr state event to the loopback relay.
      *
-     * The return value may be -1 (network error) but cache should be updated. */
+     * A rejected publish must not discard the local cache update. */
     int rc = be->write(be, ref, 1, NULL, NULL, NULL, NULL);
     git_reference_free(ref);
 
@@ -554,8 +554,13 @@ static void test_reflog_write_noop(void)
 
 /* ---- Main ---- */
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc != 2) {
+        fprintf(stderr, "usage: %s <loopback-relay-url>\n", argv[0]);
+        return 2;
+    }
+    relay_url = argv[1];
     git_libgit2_init();
 
     printf("libhanami RefDB backend tests\n");
