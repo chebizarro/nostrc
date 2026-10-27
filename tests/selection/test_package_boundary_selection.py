@@ -1,4 +1,5 @@
 """Package boundary tools have executable, bounded affected-check ownership."""
+import sys
 import unittest
 
 from selector_support import ROOT, change, s
@@ -291,7 +292,6 @@ class PackageBoundarySelection(unittest.TestCase):
             self.assertNotIn("supported.vaultctl", plan["selected_checks"])
 
     def test_vault_syncd_inputs_select_a_real_bounded_runner(self):
-        import sys
         sys.path.insert(0, str(ROOT / ".github/workflows"))
         import ci_selection as ci
         check_name = "homed.vault.filesystem"
@@ -336,8 +336,10 @@ class PackageBoundarySelection(unittest.TestCase):
             "json_glib_off_closure", "homed_syncd_vault_config", "homed_syncd_push_e2e",
             "homed_syncd_pusher_multi_server"})
         workflow = (ROOT / ".github/workflows/vault-syncd-ci.yml").read_text()
-        self.assertIn("python3 scripts/test-plan.py run", workflow)
+        self.assertIn("python3 scripts/ci-selected-execution.py run", workflow)
+        self.assertIn("--plan \"$RUNNER_TEMP/vault-plan/plan.json\"", workflow)
         self.assertIn("--profile homed.vault.linux", workflow)
+        self.assertIn("--configure", workflow)
         self.assertIn("test \"$(git rev-parse HEAD)\" = \"$REQUESTED_SHA\"", workflow)
         aggregate = (ROOT / ".github/workflows/ci-selective.yml").read_text()
         self.assertIn("uses: ./.github/workflows/vault-syncd-ci.yml", aggregate)

@@ -199,6 +199,63 @@ class PhysicalRunnerFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(s.ContractError, 'dispatch differs'):
             runner.load_handoff(saved)
 
+    def test_vault_committed_checkout_rejects_dirty_source_but_not_build_outputs(self):
+        root = self.directory / 'source'
+        root.mkdir()
+        subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        tracked = root / 'tracked.txt'
+        tracked.write_text('committed\n')
+        subprocess.run(['git', '-C', str(root), 'add', 'tracked.txt'], check=True)
+        subprocess.run(['git', '-C', str(root), '-c', 'user.name=CI',
+                        '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'fixture'], check=True)
+        build = root / 'build'
+        runner.require_clean_checkout(root, build)
+        tracked.write_text('changed\n')
+        with self.assertRaisesRegex(s.ContractError, 'dirty tracked'):
+            runner.require_clean_checkout(root, build)
+        tracked.write_text('committed\n')
+        untracked = root / 'source.txt'
+        untracked.write_text('new\n')
+        with self.assertRaisesRegex(s.ContractError, 'untracked source input'):
+            runner.require_clean_checkout(root, build)
+        untracked.unlink()
+        build.mkdir()
+        (build / 'output').write_text('generated\n')
+        runner.require_clean_checkout(root, build)
+
+    def test_broad_vault_cli_runs_exact_selected_checks_and_refuses_missing_membership(self):
+        sha = s.commit_sha(ROOT, 'HEAD')
+        plan = s.make_plan(self.policy, [change('.github/workflows/vault-syncd-ci.yml')],
+                           head=sha, context='ci', mode='broad')
+        checks = runner.selected_checks(plan, self.policy, runner.VAULT_PROFILE)
+        self.assertEqual(set(checks), {runner.VAULT_CHECK})
+        names = runner.test_names(checks, runner.VAULT_PROFILE)
+        targets = {target for check in checks.values() for target in check.get('build_targets', [])}
+        self.configure(names, targets=targets)
+        saved = self.directory / 'plan.json'
+        saved.write_text(json.dumps({'shared_plan': plan, 'dispatch': ci.project(plan)}))
+        command = [sys.executable, str(ROOT / 'scripts/ci-selected-execution.py'),
+                   'run', '--plan', str(saved), '--profile', runner.VAULT_PROFILE,
+                   '--build', str(self.build)]
+        result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        observed = set(self.marker.read_text().splitlines())
+        self.assertTrue(set(names) | {'fixture.setup', 'fixture.cleanup'} <= observed)
+        self.assertNotIn('unrelated.libnostr', observed)
+        self.assertNotIn('unrelated.libgo', observed)
+        self.assertTrue((self.build / 'ci-selected.xml').is_file())
+        unrelated = s.make_plan(self.policy, [change('gnome/groundhog/src/ui/gh-about-dialog.c')],
+                                head=sha, context='ci')
+        saved.write_text(json.dumps({'shared_plan': unrelated, 'dispatch': ci.project(unrelated)}))
+        refused = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('vault CI requires exactly the selected vault check', refused.stdout)
+        saved.write_text(json.dumps({'shared_plan': plan, 'dispatch': ci.project(plan)}))
+        refused_tsan = subprocess.run(command + ['--tsan'], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertNotEqual(refused_tsan.returncode, 0)
+        self.assertIn('vault CI cannot use the TSan partition', refused_tsan.stdout)
+
     def test_production_grotto_cli_runs_commands_and_exact_tests_not_library_suites(self):
         sha = s.commit_sha(ROOT, 'HEAD')
         plan = s.make_plan(self.policy, [change('apps/grotto/src/main_app.c')], head=sha, context='ci')
