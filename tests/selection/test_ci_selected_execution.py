@@ -115,6 +115,22 @@ class SelectedPlanTests(unittest.TestCase):
         self.assertIn("affected: ${{ needs.select.outputs.broad == 'false' }}",
                       job_block(workflow('ci-selective'), 'groundhog'))
 
+    def test_selection_artifact_handoff_survives_partial_reruns(self):
+        text = workflow('ci-selective')
+        gate = job_block(text, 'gate')
+        self.assertIn('name: ${{ needs.select.outputs.selection_artifact }}', gate)
+        self.assertNotIn('name: ci-selection-', gate)
+        self.assertIn('name: ci-conclusions-${{ needs.select.outputs.sha }}-${{ github.run_attempt }}', gate)
+        for family, child in [('vault_syncd', 'vault-syncd-ci'),
+                              ('groundhog', 'groundhog-ci'),
+                              ('grotto', 'grotto-ci'),
+                              ('nip55l', 'nip55l-libsecret-ci')]:
+            with self.subTest(family=family):
+                self.assertIn('selection_artifact: ${{ needs.select.outputs.selection_artifact }}',
+                              job_block(text, family))
+                self.assertIn('name: ${{ inputs.selection_artifact }}', workflow(child))
+                self.assertNotIn('name: ci-selection-', workflow(child))
+
     def test_saved_plan_handoff_and_standalone_broad_wiring(self):
         text = workflow('ci-selective')
         for family in ['grotto', 'groundhog']:

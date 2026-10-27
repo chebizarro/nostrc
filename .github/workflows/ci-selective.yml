@@ -227,7 +227,7 @@ jobs:
       - uses: actions/download-artifact@v4
         if: always() && needs.select.result == 'success'
         with:
-          name: ci-selection-${{ needs.select.outputs.sha }}-${{ github.run_attempt }}
+          name: ${{ needs.select.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ci-selection
       - name: Require every selected family; account for deliberate omissions
         if: always() && needs.select.result == 'success'
