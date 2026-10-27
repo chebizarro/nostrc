@@ -26,3 +26,19 @@ endif()
 if(TEST homed_groups)
   nostrc_describe_test(homed_groups OWNER gnome.nostr_homed gnome.nostr_homed.test_inputs TARGETS test_groups EXPECTED pass)
 endif()
+
+if(TEST homed_syncd_vault_protocol)
+  nostrc_describe_test(homed_syncd_vault_protocol OWNER gnome.nostr_homed
+    INPUTS tests/integration/test_syncd_vault_protocol.py
+           ${CMAKE_SOURCE_DIR}/tools/vaultctl/tests/fixtures.py EXPECTED pass)
+endif()
+if(TEST homed_syncd_vault_config)
+  nostrc_describe_test(homed_syncd_vault_config OWNER gnome.nostr_homed
+    INPUTS tests/integration/test_syncd_vault_config.py EXPECTED pass)
+endif()
+foreach(_closure_test homed_syncd_off_closure homed_vault_pam_nostr_closure homed_vault_nss_nostr_closure)
+  if(TEST ${_closure_test})
+    nostrc_describe_test(${_closure_test} OWNER gnome.nostr_homed
+      INPUTS tests/integration/test_syncd_off_closure.sh EXPECTED pass)
+  endif()
+endforeach()
