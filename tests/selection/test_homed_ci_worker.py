@@ -17,11 +17,17 @@ import dependency_contract as ci  # noqa: E402
 import test_selection_execution as normal  # noqa: E402
 
 LOCAL, CI = 'homed.linux.units', 'homed.linux.ci'
+# The separate vault assembly profile (d2f548016) has no context restriction and
+# builds the shared homed common sources, so those inputs also select it as a
+# downstream consumer; the unit-test input does not.
+VAULT = 'homed.vault.linux'
+VAULT_CHECKS = {'homed.vault.filesystem'}
 NAMES = ['homed_cache', 'homed_cache_config', 'homed_groups', 'homed_manifest', 'homed_uid_map']
 ROUTE_FIELDS = {'setup', 'local_availability', 'contexts'}
 LEGACY = '.github/workflows/nostr-homed-ci.yml:build-and-test'
 INPUTS = ['gnome/nostr-homed/src/common/nostr_cache.c', 'gnome/nostr-homed/include/nostr_manifest.h',
           'gnome/nostr-homed/tests/unit/test_manifest.c']
+SHARED_INPUTS = INPUTS[:2]
 
 
 def workflow(name):
@@ -84,19 +90,25 @@ class HomedCIProfile(unittest.TestCase):
 
     def test_each_context_selects_only_its_own_homed_realization(self):
         for path in INPUTS:
+            shared = [VAULT] if path in SHARED_INPUTS else []
             with self.subTest(path=path):
                 local = s.make_plan(self.policy, [change(path)], head='a' * 40, base='b' * 40, context='local')
-                self.assertEqual(homed_lanes(local), [LOCAL])
+                self.assertEqual(homed_lanes(local), [LOCAL] + shared)
                 plan = s.make_plan(self.policy, [change(path)], head='a' * 40, base='b' * 40, context='ci')
-                self.assertEqual(homed_lanes(plan), [CI])
+                self.assertEqual(homed_lanes(plan), [CI] + shared)
                 lane = next(lane for lane in plan['lanes'] if lane['profile'] == CI)
                 self.assertEqual(set(lane['checks']), {'homed.units', 'homed.default_build'})
+                for selected in (local, plan):
+                    for lane in selected['lanes']:
+                        if lane['profile'] == VAULT:
+                            self.assertEqual(set(lane['checks']), VAULT_CHECKS)
                 omitted = {item['id']: item for item in plan['omitted_profiles']}
                 self.assertEqual(omitted[LOCAL]['status'], 'not_executed')
                 self.assertNotIn(CI, omitted)
                 release = s.make_plan(self.policy, [change(path)], head='a' * 40, base='b' * 40, context='release')
-                self.assertEqual(homed_lanes(release), [])
+                self.assertEqual(homed_lanes(release), [VAULT])
                 self.assertIn(CI, {item['id'] for item in release['omitted_profiles']})
+                self.assertIn(LOCAL, {item['id'] for item in release['omitted_profiles']})
         broad = s.make_plan(self.policy, [], head='a' * 40, context='ci', mode='broad')
         self.assertIn(CI, broad['expected_lane_ids'])
         self.assertNotIn(LOCAL, broad['expected_lane_ids'])
