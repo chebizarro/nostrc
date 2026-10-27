@@ -82,6 +82,18 @@ class SignerSelectionTests(unittest.TestCase):
         self.assertIn('private_bus', self.p['checks']['nostr_seal.signer']['requires'])
         self.assertNotIn('coverage_gap', self.p['nodes']['gnome.nostr_seal'])
 
+    def test_app_free_signer_profiles_do_not_register_the_provisioned_signer_test(self):
+        # Broad legacy runs execute the whole configured universe. On Linux only
+        # grotto-daemon (BUILD_APPS=ON) can provision test_nip5f_tcp's endpoint.
+        nip5f = (ROOT / 'nips/nip5f/CMakeLists.txt').read_text()
+        self.assertIn('AND (BUILD_APPS OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"))', nip5f)
+        root = (ROOT / 'CMakeLists.txt').read_text()
+        self.assertLess(root.index('option(BUILD_APPS '), root.index('include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)'))
+        for profile in ('nostr_seal.linux', 'desktop.signer.linux'):
+            flags = self.p['profiles'][profile]['configure_args']
+            self.assertIn('-DBUILD_APPS=OFF', flags)
+            self.assertNotIn('signer_endpoint', self.p['profiles'][profile]['capabilities'])
+
     def test_identity_api_changes_still_reach_mls_and_unknown_paths_stay_broad(self):
         result = plan(self.p, paths=('gnome/groundhog/src/identity/gh-signer.h',))
         self.assertIn('groundhog.mls_service', result['witnesses'])

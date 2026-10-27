@@ -396,6 +396,10 @@ if(BUILD_GROUNDHOG)
   set(ENABLE_NIP29 ON CACHE BOOL "Enable nip29 (required by Groundhog)" FORCE)
 endif()
 
+# nips/nip5f and nostr-gtk register app-coupled tests before apps/ is added, so
+# this option must already have its default value on a fresh configure.
+option(BUILD_APPS "Build application binaries under apps/" ON)
+
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 
 option(ENABLE_BUD02 "Build BUD-02 Blossom authorization codec" ON)
@@ -534,9 +538,6 @@ if (BUILD_NOSTR_GOBJECT)
 endif()
 
 # GTK4/libadwaita widget library (nostr-gtk-1.0) — depends on nostr-gobject
-# nostr-gtk registers Gnostr-coupled tests before apps/ is added, so this
-# option must already have its default value on a fresh configure.
-option(BUILD_APPS "Build application binaries under apps/" ON)
 option(BUILD_NOSTR_GTK "Build nostr-gtk widget library (requires GTK4 + libadwaita)" ON)
 # nostr_gtk_portable is a shared library, so its link must resolve the nostrdb
 # symbols that content_renderer.c and nostr_gobject's storage_ndb.c reference;
