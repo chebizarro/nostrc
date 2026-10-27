@@ -8,7 +8,7 @@ import tempfile
 
 with tempfile.TemporaryDirectory(prefix='grotto-version-') as tmp:
     config = pathlib.Path(tmp) / 'config'
-    legacy = config / 'gnostr-signer'
+    legacy = config / 'gnostr-signer'  # grotto-names: allow legacy-fixture (pre-rename config dir; must stay untouched)
     legacy.mkdir(parents=True)
     sentinel = legacy / 'sentinel'
     sentinel.write_text('preserve legacy state\n')
