@@ -57,5 +57,7 @@ jobs:
         run: bash scripts/test-sanitizer-gate.sh
       - name: Old signer names stay gone (W31)
         run: bash scripts/check-grotto-names.sh
+      - name: Grotto name guard self-test (nostrc-vl8el)
+        run: bash scripts/test-check-grotto-names.sh
       - name: Keychain guard self-test (nostrc-2hmd)
         run: bash scripts/test-check-macos-keychain.sh
