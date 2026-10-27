@@ -6,5 +6,5 @@ Description: Content-addressed Blossom client with BUD-02 authorization
 Version: @blossom_VERSION@
 Requires.private: nostr libnostrgo libcurl openssl jansson libsecp256k1 libwebsockets
 Libs: -L${libdir} -lblossom
-Libs.private: @BLOSSOM_NSYNC_SEARCH@ -lbud02 -lpthread
+Libs.private: @BLOSSOM_NSYNC_SEARCH@ -lbud02 -lpthread @BLOSSOM_PLATFORM_LIBS@
 Cflags: -I${includedir}

@@ -19,16 +19,21 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <time.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <openssl/sha.h>
 #include <openssl/crypto.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <jansson.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#endif
 #include <ctype.h>
 #include "internal.h"
 
@@ -1384,16 +1389,9 @@ blossom_error_t blossom_put_batch_wire(blossom_client_t *c,
 
 static int probe_random_bytes(uint8_t *buf, size_t len)
 {
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0) return -1;
-    size_t off = 0;
-    while (off < len) {
-        ssize_t n = read(fd, buf + off, len - off);
-        if (n <= 0) { close(fd); return -1; }
-        off += (size_t)n;
-    }
-    close(fd);
-    return 0;
+    /* OpenSSL's CSPRNG is portable; /dev/urandom does not exist on Windows. */
+    if (len > INT_MAX) return -1;
+    return RAND_bytes(buf, (int)len) == 1 ? 0 : -1;
 }
 
 static void probe_sha256_hex(const uint8_t *data, size_t len, char out_hex[65])

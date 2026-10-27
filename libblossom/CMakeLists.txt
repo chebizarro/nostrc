@@ -25,9 +25,15 @@ target_include_directories(blossom
   PRIVATE src)
 target_link_libraries(blossom PRIVATE nostrc::bud02 CURL::libcurl OpenSSL::SSL OpenSSL::Crypto
   Threads::Threads PkgConfig::BLOSSOM_JSON)
+# client.c calls socket()/inet_pton() directly for its address policy.
+set(BLOSSOM_PLATFORM_LIBS "")
+if(WIN32)
+  target_link_libraries(blossom PRIVATE ws2_32)
+  set(BLOSSOM_PLATFORM_LIBS "-lws2_32")
+endif()
 nostrc_generate_export_header(blossom BLOSSOM_API blossom/export.h)
 set_target_properties(blossom PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(blossom 0 3 1)
+declare_component_version(blossom 0 3 2)
 set_target_properties(blossom PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/blossom")
 apply_versioning(blossom)
