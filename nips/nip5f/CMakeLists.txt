@@ -76,8 +76,13 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_negative_env.c)
   add_test(NAME test_nip5f_negative_env COMMAND test_nip5f_negative_env)
 endif()
 
-# TCP test (optional; skips when endpoint/token not set)
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c)
+# TCP test against a provisioned signer (skips when endpoint/token not set).
+# On Linux the only provisioned signer is apps/grotto's grotto-daemon
+# (tests/runtime/test_provisioned_nip5f.py), so a BUILD_APPS=OFF configuration
+# can never run it: registering it there only adds an unrunnable registration
+# to that configuration's universe. Other hosts keep their own provisioning.
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c
+    AND (BUILD_APPS OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"))
   add_executable(test_nip5f_tcp ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip5f_tcp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sock_framing.c)
   target_link_libraries(test_nip5f_tcp PRIVATE nostr_nip5f_core nostr nostr_json)
