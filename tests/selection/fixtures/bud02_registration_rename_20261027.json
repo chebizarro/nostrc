@@ -1,0 +1,49 @@
+{
+  "base": "17f67593e324064b0b891b5f2398d7251ce56824",
+  "new": "test-bud02-auth",
+  "old": "test-hanami-bud02-auth",
+  "paths": [
+    [
+      "coverage_gaps",
+      "groundhog_sanitizer_execution_contract",
+      "not_selected_registrations"
+    ],
+    [
+      "diagnostic_nonmembers",
+      "groundhog.linux.sanitizers",
+      "registrations"
+    ],
+    [
+      "diagnostic_nonmember_subsets",
+      "groundhog.linux",
+      "primary_registrations"
+    ],
+    [
+      "diagnostic_nonmember_subsets",
+      "groundhog.linux",
+      "registration_universe"
+    ],
+    [
+      "diagnostic_nonmember_subsets",
+      "groundhog.linux",
+      "required_closure"
+    ],
+    [
+      "diagnostic_nonmember_subsets",
+      "grotto.linux",
+      "primary_registrations"
+    ],
+    [
+      "diagnostic_nonmember_subsets",
+      "grotto.linux",
+      "registration_universe"
+    ],
+    [
+      "diagnostic_nonmember_subsets",
+      "grotto.linux",
+      "required_closure"
+    ]
+  ],
+  "schema_version": 1,
+  "scope": "Exact inverse of the BUD-02 extraction rename of ctest registration test-hanami-bud02-auth to test-bud02-auth (4310ade58) in the inventory's reviewed registration lists. Historical views and the frozen post-audit comparison only, never admission. Reversal reproduces the pinned universe_hash of both ordinary subsets and the reviewed groundhog.linux.sanitizers contract digest exactly."
+}

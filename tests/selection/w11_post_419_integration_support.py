@@ -49,7 +49,7 @@ def before_source(path, raw):
 
 
 def before_policy(policy):
-    from inventory_option_drift_support import before_policy as before_newer_policy
+    from bud02_registration_rename_support import before_policy as before_newer_policy
     data = witness()
     previous = before_newer_policy(policy)
     # The permission-repeat check postdates this immutable historical view.
