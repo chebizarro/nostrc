@@ -77,8 +77,8 @@ static void test_version_info(void)
     assert(v != NULL);
     assert(major == 0);
     assert(minor == 5);
-    assert(strcmp(v, "0.5.0") == 0);
-    assert(patch == 0);
+    assert(strcmp(v, "0.5.1") == 0);
+    assert(patch == 1);
 }
 
 /* =========================================================================

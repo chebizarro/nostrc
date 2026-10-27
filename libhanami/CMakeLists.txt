@@ -18,7 +18,7 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
 set(HANAMI_VERSION_MINOR 5)
-set(HANAMI_VERSION_MICRO 0)
+set(HANAMI_VERSION_MICRO 1)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
   ${HANAMI_VERSION_MINOR}
@@ -265,7 +265,9 @@ if(BUILD_TESTING)
   add_executable(test-hanami-refdb-backend tests/test_hanami_refdb_backend.c)
   target_compile_features(test-hanami-refdb-backend PRIVATE c_std_11)
   target_link_libraries(test-hanami-refdb-backend PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
-  add_test(NAME test-hanami-refdb-backend COMMAND test-hanami-refdb-backend)
+  add_test(NAME test-hanami-refdb-backend
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+            $<TARGET_FILE:test-hanami-refdb-backend> refdb)
   set_tests_properties(test-hanami-refdb-backend PROPERTIES
     TIMEOUT 30
     LABELS "libhanami;refdb;unit"

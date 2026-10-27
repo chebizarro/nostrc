@@ -15,6 +15,11 @@
 #include <git2/refs.h>
 #include <git2/oid.h>
 #include <git2/errors.h>
+#if defined(__has_include)
+#  if __has_include(<git2/sys/errors.h>)
+#    include <git2/sys/errors.h>
+#  endif
+#endif
 #include <git2/sys/refdb_backend.h>
 #include <git2/sys/refs.h>
 

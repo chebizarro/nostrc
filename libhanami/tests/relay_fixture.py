@@ -47,7 +47,7 @@ class Relay(socketserver.StreamRequestHandler):
                 message = json.loads(payload)
                 if message[0] == "EVENT":
                     event = message[1]
-                    accepted = mode not in ("reject", "publish-auth")
+                    accepted = mode not in ("reject", "publish-auth", "refdb")
                     if accepted:
                         with self.server.lock:
                             self.server.events[mode] = event
@@ -55,8 +55,15 @@ class Relay(socketserver.StreamRequestHandler):
                     self.frame(["OK", event["id"], accepted, "" if accepted else reason])
                 elif message[0] == "REQ":
                     subid, filters = message[1], message[2]
-                    assert filters["kinds"][0] in (30617, 30618)
-                    assert filters["authors"] and filters["#d"] == ["repo"]
+                    if mode == "refdb":
+                        assert filters["kinds"] == [30618]
+                        assert filters["authors"] and all(author in ("bbbb", "b" * 64) for author in filters["authors"])
+                        assert filters["#d"] == ["test-repo"]
+                        with self.server.lock:
+                            self.server.refdb_requests += 1
+                    else:
+                        assert filters["kinds"][0] in (30617, 30618)
+                        assert filters["authors"] and filters["#d"] == ["repo"]
                     assert filters["limit"] == 1
                     if mode == "closed":
                         self.frame(["CLOSED", subid, "blocked: fixture refusal"])
@@ -85,12 +92,19 @@ class Server(socketserver.ThreadingTCPServer):
 
 with Server(("127.0.0.1", 0), Relay) as server:
     server.events = {}
+    server.refdb_requests = 0
     server.lock = threading.Lock()
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        result = subprocess.run([sys.argv[1], f"ws://127.0.0.1:{server.server_address[1]}"], timeout=40)
+        mode = sys.argv[2] if len(sys.argv) > 2 else ""
+        url = f"ws://127.0.0.1:{server.server_address[1]}"
+        if mode:
+            url += f"/{mode}"
+        result = subprocess.run([sys.argv[1], url], timeout=25 if mode == "refdb" else 40)
     finally:
         server.shutdown()
         worker.join()
+    if mode == "refdb" and server.refdb_requests == 0:
+        sys.exit("refdb test did not query the loopback relay")
     sys.exit(result.returncode)

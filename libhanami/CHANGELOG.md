@@ -1,5 +1,10 @@
 # libhanami changelog
 
+## 0.5.1 (unreleased)
+
+Fix the libgit2 error-reporting declarations needed to build the sealed ODB and
+refdb backends with current libgit2 headers on macOS.
+
 ## 0.5.0 (unreleased)
 
 The shared library now hides implementation symbols by default and exports
