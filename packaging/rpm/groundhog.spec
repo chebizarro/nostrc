@@ -5,14 +5,14 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha8 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.1-alpha8 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha8
+%global upstream_version 0.12.1-alpha8
 %bcond_with system_nsync
 
 Name:           groundhog
@@ -188,6 +188,9 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %doc %{_datadir}/doc/grotto/examples/*.conf.example
 
 %changelog
+* Tue Oct 27 2026 Biz <chebizarro@protonmail.com> - 0.12.1-0.8.alpha8
+- Release the owned account-signer event ID after Blossom upload validation.
+
 * Thu Oct 15 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.8.alpha8
 - The version shown in About and by --version now carries the alpha
   label (0.12.0-alpha8), so testers can report the exact build.

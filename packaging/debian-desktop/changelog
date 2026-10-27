@@ -1,3 +1,9 @@
+groundhog (0.12.1~alpha8-1) unstable; urgency=medium
+
+  * Release the owned account-signer event ID after Blossom upload validation.
+
+ -- Biz <chebizarro@protonmail.com>  Tue, 27 Oct 2026 03:00:00 +0000
+
 groundhog (0.12.0~alpha8-1) unstable; urgency=medium
 
   * The version shown in About and by --version now carries the alpha

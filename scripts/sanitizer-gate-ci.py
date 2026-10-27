@@ -70,9 +70,13 @@ SANITIZER_BUILD_PATHS = (
     "NipOptions.cmake",
     "cmake/",                         # NostrcTestBus.cmake defines a test of the set
     "Testing/CMakeLists.txt",         # configure-only: the root adds these
+    "Testing/TestInventory.cmake",
     "benchmark/CMakeLists.txt",
     "libhanami/CMakeLists.txt",
+    "libhanami/TestInventory.cmake",
     "libhanami/hanami.pc.in",
+    "libvault-marmot/CMakeLists.txt",   # configure-only: not a sanitizer build target
+    "libvault-marmot/vault-marmot.pc.in",
     "tools/CMakeLists.txt",
     "gnome/groundhog/",
     "gnome/common/",                  # gn-status-notifier, compiled into groundhog (W32)
@@ -85,6 +89,9 @@ SANITIZER_BUILD_PATHS = (
     "nostr-gobject/",
     "libmarmot/",
     "marmot-gobject/",
+    "libblossom/",                    # extracted media transport, linked by Groundhog
+    "libporthome/",                   # portable-home codecs used by vault
+    "libvault/",                      # shared-vault support linked by Groundhog
     "nips/",
     "components/nostrdb/",
     "apps/relayd/include/relayd_async_storage.h",  # included by nostrdb storage

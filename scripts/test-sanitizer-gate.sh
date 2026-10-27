@@ -262,13 +262,26 @@ check_inputs > "$tmp/out" 2>&1 || fail "check-inputs rejected covered inputs: $(
 grep -q 'all 6 source inputs' "$tmp/out" || fail "check-inputs count: $(cat "$tmp/out")"
 grep -q -- '-t inputs groundhog test-groundhog-identity .*test_connection_recv_drain$' "$tmp/ninja-trace" ||
     fail "check-inputs did not ask for the job's targets"
+# SDK extraction moved real Groundhog inputs out of the existing prefixes.
+# Exercise the input audit itself, not affected()'s conservative fallback.
+for path in libblossom/src/client.c libblossom/include/blossom/client.h \
+    libporthome/src/manifest.c libporthome/include/porthome/manifest.h \
+    libvault/src/nip59.c libvault/include/vault/vault.h \
+    Testing/TestInventory.cmake libhanami/TestInventory.cmake \
+    libvault-marmot/CMakeLists.txt libvault-marmot/vault-marmot.pc.in; do
+    EXTRA_INPUT="../$path" check_inputs > "$tmp/out" 2>&1 ||
+        fail "check-inputs rejected SDK input $path: $(cat "$tmp/out")"
+done
 if EXTRA_INPUT=../docs/new-input.cmake check_inputs > "$tmp/out" 2>&1; then
     fail "an input outside SANITIZER_BUILD_PATHS passed"
 fi
 grep -q '^  docs/new-input.cmake$' "$tmp/out" || fail "the uncovered input is not named: $(cat "$tmp/out")"
-if EXTRA_INPUT=../gnome/nostr-homed/src/w.c check_inputs > /dev/null 2>&1; then
-    fail "gnome/nostr-homed (not in the list) passed"
-fi
+for path in gnome/nostr-homed/src/w.c libvault-marmot/src/carrier.c \
+    Testing/tests/new-test.c libhanami/src/hanami.c libvault-extra/src/x.c; do
+    if EXTRA_INPUT="../$path" check_inputs > /dev/null 2>&1; then
+        fail "$path (not in the list) passed"
+    fi
+done
 echo 'ok: the input list against ninja'
 
 echo 'sanitizer gate tests passed'
