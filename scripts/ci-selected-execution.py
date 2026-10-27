@@ -17,6 +17,8 @@ import ci_selection
 
 TSAN_TESTS = {'signer/bunker', 'signer/bunker-e2e', 'nip55l_approval_service',
               'nip55l_cache_concurrency'}
+VAULT_PROFILE = 'homed.vault.linux'
+VAULT_CHECK = 'homed.vault.filesystem'
 
 
 def selected_checks(plan, policy, profile):
@@ -117,6 +119,19 @@ def execute_tests(build, names, *, prefix=(), parallel=1, stem='ci-selected'):
                               for case in cases), 'selected CTest or fixture skipped, failed or did not run')
 
 
+def require_clean_checkout(root, build):
+    """Keep configured vault execution bound to the handoff's committed tree."""
+    if selection.git(root, 'diff', '--quiet', 'HEAD', '--', check=False).returncode:
+        raise selection.ContractError('committed-tree execution refuses dirty tracked inputs')
+    excluded = build.resolve()
+    for value in selection.git(root, 'ls-files', '--others', '--exclude-standard', '-z').stdout.split(b'\0'):
+        if value:
+            path = (root / os.fsdecode(value)).resolve()
+            if path != excluded and excluded not in path.parents:
+                raise selection.ContractError(
+                    'committed-tree execution refuses untracked source input: ' + os.fsdecode(value))
+
+
 def execute_commands(checks, root, build):
     values = {'source': str(root), 'build': str(build.resolve())}
     targets = sorted({target for check in checks.values() for target in check.get('build_targets', [])})
@@ -140,12 +155,22 @@ def main():
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--profile', required=True,
                         choices=['grotto.linux', 'grotto.linux.asan_ubsan',
-                                 'groundhog.linux', 'groundhog.linux.sanitizers'])
+                                 'groundhog.linux', 'groundhog.linux.sanitizers',
+                                 VAULT_PROFILE])
     parser.add_argument('--build', type=Path, default=Path('build'))
+    parser.add_argument('--configure', action='store_true',
+                        help='configure the selected vault profile before building')
     parser.add_argument('--tsan', action='store_true', help='existing advisory TSan partition only')
     args = parser.parse_args()
     plan, policy, dispatch = load_handoff(args.plan)
     checks = selected_checks(plan, policy, args.profile)
+    if args.profile == VAULT_PROFILE:
+        selection.require(set(checks) == {VAULT_CHECK},
+                          'vault CI requires exactly the selected vault check')
+        selection.require(not args.tsan, 'vault CI cannot use the TSan partition')
+    if args.configure:
+        selection.require(args.command == 'run' and args.profile == VAULT_PROFILE,
+                          '--configure requires a vault run')
     names = test_names(checks, args.profile)
     if args.tsan:
         names = sorted(set(names) & TSAN_TESTS)
@@ -162,11 +187,16 @@ def main():
         print(json.dumps({'profile': args.profile, 'checks': sorted(checks),
                           'ctest_names': names, **outputs}, indent=2))
         return
-    selection.require(not dispatch['broad'] and args.profile not in plan.get('metadata_broad_profiles', []),
-                      'broad runs must use the ordinary broad runner')
+    if args.profile != VAULT_PROFILE:
+        selection.require(not dispatch['broad'] and args.profile not in plan.get('metadata_broad_profiles', []),
+                          'broad runs must use the ordinary broad runner')
     # Keep sanitizer policy from the ordinary workflow; add only authored test env.
     for key, value in policy['profiles'][args.profile].get('environment', {}).items():
         os.environ.setdefault(key, value)
+    if args.configure:
+        require_clean_checkout(ROOT, args.build)
+        subprocess.run(['cmake', '-S', str(ROOT), '-B', str(args.build),
+                        *policy['profiles'][args.profile]['configure_args']], check=True)
     if not args.tsan:
         execute_commands(checks, ROOT, args.build)
     execute_tests(args.build, names, parallel=1)

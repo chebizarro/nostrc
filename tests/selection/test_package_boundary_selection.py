@@ -1,9 +1,5 @@
 """Package boundary tools have executable, bounded affected-check ownership."""
-import json
-from pathlib import Path
-import subprocess
 import sys
-import tempfile
 import unittest
 
 from selector_support import ROOT, change, s
@@ -340,45 +336,14 @@ class PackageBoundarySelection(unittest.TestCase):
             "json_glib_off_closure", "homed_syncd_vault_config", "homed_syncd_push_e2e",
             "homed_syncd_pusher_multi_server"})
         workflow = (ROOT / ".github/workflows/vault-syncd-ci.yml").read_text()
-        self.assertIn("python3 scripts/ci-vault-syncd-plan.py", workflow)
-        self.assertIn("--plan \"$RUNNER_TEMP/vault-plan/shared-plan.json\"", workflow)
-        self.assertIn("python3 scripts/test-plan.py run", workflow)
+        self.assertIn("python3 scripts/ci-selected-execution.py run", workflow)
+        self.assertIn("--plan \"$RUNNER_TEMP/vault-plan/plan.json\"", workflow)
         self.assertIn("--profile homed.vault.linux", workflow)
+        self.assertIn("--configure", workflow)
         self.assertIn("test \"$(git rev-parse HEAD)\" = \"$REQUESTED_SHA\"", workflow)
         aggregate = (ROOT / ".github/workflows/ci-selective.yml").read_text()
         self.assertIn("uses: ./.github/workflows/vault-syncd-ci.yml", aggregate)
         self.assertIn("homed, vault_syncd, signet", aggregate)
-
-    def test_vault_runner_extracts_only_a_valid_selected_shared_plan(self):
-        sys.path.insert(0, str(ROOT / ".github/workflows"))
-        import ci_selection as ci
-        sha = s.commit_sha(ROOT, "HEAD")
-        plan = s.make_plan(self.policy, [change(".github/workflows/vault-syncd-ci.yml")],
-                           head=sha, context="ci")
-        dispatch = ci.project(plan)
-        with tempfile.TemporaryDirectory(prefix="vault-ci-handoff-") as tmp:
-            handoff = Path(tmp) / "plan.json"
-            output = Path(tmp) / "shared-plan.json"
-            command = [sys.executable, str(ROOT / "scripts/ci-vault-syncd-plan.py"),
-                       "--handoff", str(handoff), "--output", str(output), "--sha", sha]
-            handoff.write_text(json.dumps({"shared_plan": plan, "dispatch": dispatch}))
-            accepted = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
-            self.assertEqual(accepted.returncode, 0, accepted.stderr)
-            self.assertEqual(json.loads(output.read_text()), plan)
-            output.unlink()
-            handoff.write_text(json.dumps({"shared_plan": plan, "dispatch": {**dispatch, "families": []}}))
-            refused = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
-            self.assertNotEqual(refused.returncode, 0)
-            self.assertIn("dispatch differs from shared plan", refused.stderr)
-            self.assertFalse(output.exists())
-            unrelated = s.make_plan(self.policy, [change("gnome/groundhog/src/ui/gh-about-dialog.c")],
-                                    head=sha, context="ci")
-            handoff.write_text(json.dumps({"shared_plan": unrelated,
-                                           "dispatch": ci.project(unrelated)}))
-            refused = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
-            self.assertNotEqual(refused.returncode, 0)
-            self.assertIn("vault check/profile was not selected", refused.stderr)
-            self.assertFalse(output.exists())
 
     def test_unrelated_product_edit_does_not_select_boundary_tool_regressions(self):
         plan = s.make_plan(self.policy, [change("libgo/src/channel.c")],

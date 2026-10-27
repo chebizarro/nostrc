@@ -37,23 +37,18 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libnsync-dev \
             libsodium-dev libssl-dev libcurl4-openssl-dev libsqlite3-dev \
             libsecret-1-dev libpam0g-dev libfuse3-dev
-      - name: Validate handoff and extract the selected vault plan
+      - name: Execute the selected vault checks
         run: |
-          python3 scripts/ci-vault-syncd-plan.py \
-            --handoff "$RUNNER_TEMP/vault-plan/plan.json" \
-            --output "$RUNNER_TEMP/vault-plan/shared-plan.json" \
-            --sha "$REQUESTED_SHA"
-      - name: Execute the selected profile
-        run: |
-          python3 scripts/test-plan.py run \
-            --plan "$RUNNER_TEMP/vault-plan/shared-plan.json" --profile homed.vault.linux \
-            --build-dir "$RUNNER_TEMP/vault-build" --configure --phase all \
-            --evidence-dir "$RUNNER_TEMP/vault-evidence"
+          python3 scripts/ci-selected-execution.py run \
+            --plan "$RUNNER_TEMP/vault-plan/plan.json" --profile homed.vault.linux \
+            --build "$RUNNER_TEMP/vault-build" --configure
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: vault-syncd-${{ inputs.sha }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/vault-evidence
+            ${{ runner.temp }}/vault-build/ci-selected.log
+            ${{ runner.temp }}/vault-build/ci-selected.xml
+            ${{ runner.temp }}/vault-build/ci-selected-registration.json
             ${{ runner.temp }}/vault-build/Testing
           if-no-files-found: warn
