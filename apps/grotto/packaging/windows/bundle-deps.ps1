@@ -109,6 +109,15 @@ foreach ($dir in $Directories) {
 # -----------------------------------------------------------------------------
 
 $CollectedDlls = @{}
+
+# Project libraries built as DLLs (e.g. libnostr-json.dll) exist only in the
+# build tree; resolve imports there before the dependency prefix.
+$BuildDlls = @{}
+Get-ChildItem -Path $BuildDir -Recurse -File -Filter "*.dll" | ForEach-Object {
+    $key = $_.Name.ToLower()
+    if (-not $BuildDlls.ContainsKey($key)) { $BuildDlls[$key] = $_.FullName }
+}
+
 $SystemDllPatterns = @(
     "^kernel32", "^user32", "^gdi32", "^shell32", "^ole32", "^oleaut32",
     "^advapi32", "^ws2_32", "^msvcrt", "^ntdll", "^comctl32", "^comdlg32",
@@ -177,8 +186,12 @@ function Collect-Dlls {
             continue
         }
 
-        # Find the DLL
-        $dllPath = Join-Path $BinDir $dll
+        # Find the DLL: build tree first, then the dependency prefix
+        if ($BuildDlls.ContainsKey($dllLower)) {
+            $dllPath = $BuildDlls[$dllLower]
+        } else {
+            $dllPath = Join-Path $BinDir $dll
+        }
         if (Test-Path $dllPath) {
             Write-Log "  Collecting: $dll"
             $CollectedDlls[$dllLower] = $dllPath

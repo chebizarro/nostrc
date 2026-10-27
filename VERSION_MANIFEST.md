@@ -43,7 +43,7 @@ files already declare a version.
 
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
 | libvault | `libvault/` | 0.5.1 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
-| libblossom | `libblossom/` | 0.3.1 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| libblossom | `libblossom/` | 0.3.2 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -52,6 +52,20 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### Windows portability for libblossom (nostrc-zk7to)
+
+- **libblossom 0.3.1 → 0.3.2 (PATCH):** shipped build/bug correction. Use
+  Winsock headers on Windows and link `ws2_32` (also in `blossom.pc`
+  `Libs.private` there); draw probe randomness from OpenSSL `RAND_bytes`
+  instead of `/dev/urandom`. No header/ABI, wire or storage change.
+- Grotto Preview stays 0.1.1 (no bump): its sources and package files are
+  unchanged and its 0.1.1 Windows installer was never produced before this
+  fix. Other components have no bump. No tags or release-column changes.
+- nostrc-l9n8m: the Windows bundlers resolve imports from build-tree DLLs (so
+  the installer ships `libnostr-json.dll`) and `bundle-deps.sh` fails on any
+  unresolved import. PATCH-class packaging correction folded into the
+  unreleased Grotto 0.1.1, whose Windows installer has not shipped; no bump.
 
 ### Executable-owned archive consumers (nostrc-zq9m6, nostrc-c2y45, nostrc-nozpl)
 
