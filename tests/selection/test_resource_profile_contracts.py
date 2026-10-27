@@ -4,14 +4,17 @@ import json
 import unittest
 
 from selector_support import ROOT, change, s
-from resource_export_projection import project_resource_helper
-from closeout_support import before_core_producer_source
+
+
+# Fresh Linux export of the current tree. resource_profile_exports.json keeps its
+# historical bytes: resource_diagnostics_projection_20261022.json pins them.
+EXPORT = 'tests/selection/fixtures/resource_profile_exports_20261027.json'
 
 
 class ResourceProfileContracts(unittest.TestCase):
     def setUp(self):
         self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        self.export = json.loads((ROOT / 'tests/selection/fixtures/resource_profile_exports.json').read_text())
+        self.export = json.loads((ROOT / EXPORT).read_text())
 
     def test_fresh_core_export_preserves_app_home_fixture_and_targetless_commands(self):
         self.assertEqual(self.export['architecture'], 'aarch64')
@@ -20,8 +23,8 @@ class ResourceProfileContracts(unittest.TestCase):
         self.assertEqual(self.export['fixture_names'], ['gnostr-test-homes'])
         registrations = {test['name']: test for test in self.export['ctest']}
         for ident, name, owner, count in (
-                ('gnostr.resource_build', 'gnostr-resource-build', 'gnostr', 100),
-                ('nostr.gtk.resource_build', 'nostr-gtk-resource-build', 'nostr.gtk', 17)):
+                ('gnostr.resource_build', 'gnostr-resource-build', 'gnostr', 109),
+                ('nostr.gtk.resource_build', 'nostr-gtk-resource-build', 'nostr.gtk', 9)):
             check = self.policy['checks'][ident]
             self.assertEqual(check['ctest_tests'], {'core.linux': [name]})
             self.assertEqual(check['profiles'], ['core.linux'])
@@ -77,11 +80,6 @@ class ResourceProfileContracts(unittest.TestCase):
         for relative, expected in self.export['source_sha256'].items():
             self.assertIn('{source}/' + relative, inputs)
             content = (ROOT / relative).read_bytes()
-            content = before_core_producer_source(relative, content)
-            if relative == 'tests/common/test_blueprint_resources.py':
-                with self.assertRaises(AssertionError):
-                    project_resource_helper(self, content + b'\n', expected)
-                content = project_resource_helper(self, content, expected)
             self.assertEqual(hashlib.sha256(content).hexdigest(), expected, relative)
 
     def test_new_gtk_registration_is_visible_but_not_in_legacy_grotto_selection(self):
