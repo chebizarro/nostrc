@@ -5,10 +5,9 @@
 # (test_nostr_gobject_main_thread_latency, no arguments) under explicit
 # child-local process policies and prints what each run observed:
 #
-#   inherit          policy exactly as the CI step handed it down (the control)
-#   poll             inherit, but the test's main context waits in poll(2)
-#                    instead of GLib's Darwin select()-based g_poll()
-#                    (NOSTRC_HEARTBEAT_POLL_FUNC=poll; ONLY these runs set it).
+#   inherit          inherited policy, explicit glib-default wait (the control)
+#   poll             inherited policy, explicit poll(2) wait (the Darwin default)
+#                    instead of GLib's Darwin select()-based g_poll().
 #                    select() timeouts get latency-QoS leeway (up to ~40 ms for
 #                    10 ms under an inherited UTILITY clamp); poll(2) does not.
 #                    inherit vs poll separates OS timer leeway from the
@@ -22,10 +21,10 @@
 #   diag-case        the opt-in metric-validity case
 #                    (NOSTRC_HEARTBEAT_DIAGNOSTICS=1, run with -p; never in CTest)
 #
-# Opt-in variables are set EXPLICITLY on every run (0/unset for the gating-
-# equivalent runs), so a run's workload is stated in its own log line
-# `probe-env:`. Normal CTest sets none of them and keeps the original 8 cases,
-# the original single-thread workload and GLib's default poll function.
+# Diagnostic variables are set EXPLICITLY on every run, including the wait
+# backend, so changing the harness default cannot relabel a comparison.
+# Normal CTest sets none of them and keeps the original 8 cases and original
+# single-thread workload, using poll(2) on Darwin (nostrc-8kzuf).
 #
 # Runs are sequential and quiet. The probe deliberately does NOT try to
 # reproduce `ctest -j2` contention (no background load generators, no PID
@@ -84,27 +83,21 @@ export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:strict_string_checks=1}"
 
 declare -a rows=()
 declare -a rcs=()
-# run_one label policy index control(0|1) pollfunc(default|poll) [test args...]
+# run_one label policy index control(0|1) pollfunc(glib-default|poll) [test args...]
 run_one() {
     local label=$1 policy=$2 idx=$3 control=$4 pollfunc=$5
     shift 5
     local log="$work/$label-$idx.log" rc diag=unset
     # BSD env(1) stops option parsing at the first NAME=value, so every -u
     # must precede every assignment.
-    local -a unset_env=() set_env=(NOSTRC_HEARTBEAT_CONTROL="$control")
+    local -a unset_env=(-u NOSTRC_HEARTBEAT_DIAGNOSTICS) set_env=(NOSTRC_HEARTBEAT_CONTROL="$control")
     if [[ $label == diag-case ]]; then
         diag=1
         set_env+=(NOSTRC_HEARTBEAT_DIAGNOSTICS=1)
-    else
-        unset_env+=(-u NOSTRC_HEARTBEAT_DIAGNOSTICS)
     fi
-    if [[ $pollfunc == poll ]]; then
-        set_env+=(NOSTRC_HEARTBEAT_POLL_FUNC=poll)
-    else
-        unset_env+=(-u NOSTRC_HEARTBEAT_POLL_FUNC)
-    fi
+    set_env+=(NOSTRC_HEARTBEAT_POLL_FUNC="$pollfunc")
     {
-        echo "probe-env: label=$label policy=$policy NOSTRC_HEARTBEAT_CONTROL=$control NOSTRC_HEARTBEAT_DIAGNOSTICS=$diag NOSTRC_HEARTBEAT_POLL_FUNC=${pollfunc/default/unset} args=${*:-<none>}"
+        echo "probe-env: label=$label policy=$policy NOSTRC_HEARTBEAT_CONTROL=$control NOSTRC_HEARTBEAT_DIAGNOSTICS=$diag NOSTRC_HEARTBEAT_POLL_FUNC=$pollfunc args=${*:-<none>}"
         env "${unset_env[@]}" "${set_env[@]}" "$launch" --policy "$policy" -- "$bin" "$@"
     } >"$log" 2>&1
     rc=$?
@@ -133,14 +126,14 @@ run_one() {
 # inherit and poll alternate within each repetition so both see the same
 # host state; every run is reported, none is retried.
 for ((i = 1; i <= reps; i++)); do
-    run_one inherit inherit "$i" 0 default
+    run_one inherit inherit "$i" 0 glib-default
     run_one poll inherit "$i" 0 poll
-    run_one inherit-control inherit "$i" 1 default
+    run_one inherit-control inherit "$i" 1 glib-default
     run_one poll-control inherit "$i" 1 poll
 done
-run_one fg fg 1 0 default
-run_one bg-positive bg 1 0 default
-run_one diag-case inherit 1 0 default -p /nostr-gobject/latency-diagnostic/sched-env-thread-cpu
+run_one fg fg 1 0 glib-default
+run_one bg-positive bg 1 0 glib-default
+run_one diag-case inherit 1 0 glib-default -p /nostr-gobject/latency-diagnostic/sched-env-thread-cpu
 
 echo "-- top CPU consumers after runs (pid pri nice %cpu stat comm):"
 ps -A -o pid=,pri=,nice=,%cpu=,stat=,comm= -r 2>&1 | head -12
