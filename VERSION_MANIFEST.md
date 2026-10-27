@@ -62,6 +62,10 @@ files already declare a version.
 - Grotto Preview stays 0.1.1 (no bump): its sources and package files are
   unchanged and its 0.1.1 Windows installer was never produced before this
   fix. Other components have no bump. No tags or release-column changes.
+- nostrc-l9n8m: the Windows bundlers resolve imports from build-tree DLLs (so
+  the installer ships `libnostr-json.dll`) and `bundle-deps.sh` fails on any
+  unresolved import. PATCH-class packaging correction folded into the
+  unreleased Grotto 0.1.1, whose Windows installer has not shipped; no bump.
 
 ### Executable-owned archive consumers (nostrc-zq9m6, nostrc-c2y45, nostrc-nozpl)
 

@@ -17,6 +17,11 @@
 #
 # Must be run from MSYS2 MinGW64 or UCRT64 shell.
 #
+# The DLL set is the import closure of the bundled executables and modules.
+# Imports resolve against DLLs built in --build-dir, then the MSYS2 prefix,
+# then Windows System32; anything unresolved fails the bundle.
+# OBJDUMP and SYSTEM32_DIR override the PE reader and system directory.
+#
 # =============================================================================
 
 set -euo pipefail
@@ -135,10 +140,40 @@ mkdir -p "${OUTPUT_DIR}/share/locale"
 mkdir -p "${OUTPUT_DIR}/share/libadwaita-1"
 
 # -----------------------------------------------------------------------------
-# Collect DLL dependencies recursively
+# Collect DLL dependencies recursively (import closure)
 # -----------------------------------------------------------------------------
 
-declare -A COLLECTED_DLLS
+OBJDUMP="${OBJDUMP:-objdump}"
+if [[ -z "${SYSTEM32_DIR:-}" ]]; then
+    if [[ -n "${SYSTEMROOT:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+        SYSTEM32_DIR="$(cygpath -u "${SYSTEMROOT}")/System32"
+    else
+        SYSTEM32_DIR="/c/Windows/System32"
+    fi
+fi
+
+# Index DLLs by lower-cased name (Windows resolves imports case-insensitively).
+# Project libraries built as DLLs (e.g. libnostr-json.dll) exist only in the
+# build tree, so it is searched before the MSYS2 prefix.
+declare -A BUILD_DLLS=() MINGW_DLLS=() COLLECTED_DLLS=() UNRESOLVED_DLLS=()
+
+while IFS= read -r -d '' f; do
+    key="$(basename "${f}")"; key="${key,,}"
+    if [[ -n "${BUILD_DLLS[${key}]:-}" ]] && ! cmp -s "${BUILD_DLLS[${key}]}" "${f}"; then
+        error "Ambiguous build-tree DLL ${key}: ${BUILD_DLLS[${key}]} and ${f}"
+    fi
+    BUILD_DLLS["${key}"]="${f}"
+done < <(find "${BUILD_DIR}" -type f -iname '*.dll' -print0)
+
+while IFS= read -r -d '' f; do
+    key="$(basename "${f}")"; MINGW_DLLS["${key,,}"]="${f}"
+done < <(find "${MINGW_PREFIX}/bin" -maxdepth 1 -type f -iname '*.dll' -print0)
+
+is_system_dll() {
+    local dll="$1"
+    [[ "${dll,,}" =~ ^(kernel32|user32|gdi32|shell32|ole32|oleaut32|advapi32|ws2_32|msvcrt|ntdll|comctl32|comdlg32|shlwapi|version|secur32|crypt32|bcrypt|ncrypt|rpcrt4|imm32|usp10|dwrite|d2d1|d3d|dwmapi|uxtheme|msimg32|winmm|winspool|wldap32|api-ms-|ext-ms-|ucrtbase) ]] \
+        || [[ -f "${SYSTEM32_DIR}/${dll}" ]]
+}
 
 collect_dlls() {
     local binary="$1"
@@ -147,35 +182,38 @@ collect_dlls() {
 
     debug "Analyzing: ${binary_name}"
 
-    # Get list of DLL dependencies using objdump
     local dlls
-    dlls=$(objdump -p "${binary}" 2>/dev/null | grep "DLL Name:" | awk '{print $3}' || true)
+    dlls=$("${OBJDUMP}" -p "${binary}" | awk '/DLL Name:/ {print $3}') \
+        || error "Cannot read imports of ${binary} with ${OBJDUMP}"
 
+    local dll key dll_path
     for dll in ${dlls}; do
-        # Skip if already collected
-        if [[ -n "${COLLECTED_DLLS[${dll}]:-}" ]]; then
+        key="${dll,,}"
+        if [[ -n "${COLLECTED_DLLS[${key}]:-}" ]]; then
             continue
         fi
 
-        # Skip Windows system DLLs
-        if echo "${dll}" | grep -qiE '^(kernel32|user32|gdi32|shell32|ole32|oleaut32|advapi32|ws2_32|msvcrt|ntdll|comctl32|comdlg32|shlwapi|version|secur32|crypt32|bcrypt|ncrypt|rpcrt4|imm32|usp10|dwrite|d2d1|d3d|dwmapi|uxtheme|msimg32|winmm|winspool|wldap32|api-ms-|ext-ms-|ucrtbase)'; then
-            debug "  Skipping system DLL: ${dll}"
-            continue
-        fi
-
-        # Find the DLL in MSYS2
-        local dll_path="${MINGW_PREFIX}/bin/${dll}"
-        if [[ -f "${dll_path}" ]]; then
+        dll_path="${BUILD_DLLS[${key}]:-${MINGW_DLLS[${key}]:-}}"
+        if [[ -n "${dll_path}" ]]; then
             log "  Collecting: ${dll}"
-            COLLECTED_DLLS["${dll}"]="${dll_path}"
+            COLLECTED_DLLS["${key}"]="${dll_path}"
             cp "${dll_path}" "${OUTPUT_DIR}/bin/"
-
-            # Recursively collect dependencies
             collect_dlls "${dll_path}"
+        elif is_system_dll "${dll}"; then
+            debug "  Skipping system DLL: ${dll}"
         else
-            warn "  DLL not found in MSYS2: ${dll}"
+            UNRESOLVED_DLLS["${key}"]="${dll} (imported by ${binary_name})"
         fi
     done
+}
+
+require_resolved() {
+    if [[ ${#UNRESOLVED_DLLS[@]} -gt 0 ]]; then
+        for entry in "${UNRESOLVED_DLLS[@]}"; do
+            warn "  Unresolved DLL: ${entry}"
+        done
+        error "${#UNRESOLVED_DLLS[@]} imported DLL(s) not found in ${BUILD_DIR}, ${MINGW_PREFIX}/bin or ${SYSTEM32_DIR}"
+    fi
 }
 
 log "Collecting DLL dependencies..."
@@ -183,6 +221,7 @@ collect_dlls "${EXE_PATH}"
 if [[ -f "${DAEMON_PATH}" ]]; then
     collect_dlls "${DAEMON_PATH}"
 fi
+require_resolved
 
 log "Collected ${#COLLECTED_DLLS[@]} DLLs"
 
@@ -259,6 +298,20 @@ GTK4_PRINT_DIR="${MINGW_PREFIX}/lib/gtk-4.0/4.0.0/printbackends"
 if [[ -d "${GTK4_PRINT_DIR}" ]]; then
     cp "${GTK4_PRINT_DIR}"/*.dll "${OUTPUT_DIR}/lib/gtk-4.0/4.0.0/printbackends/" 2>/dev/null || true
 fi
+
+# Bundled helpers and loadable modules need their own import closures too.
+log "Collecting dependencies of bundled helpers and modules..."
+for module in "${OUTPUT_DIR}"/bin/*.exe \
+              "${OUTPUT_DIR}"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll \
+              "${OUTPUT_DIR}"/lib/gtk-4.0/4.0.0/media/*.dll \
+              "${OUTPUT_DIR}"/lib/gtk-4.0/4.0.0/printbackends/*.dll; do
+    if [[ -f "${module}" ]]; then
+        collect_dlls "${module}"
+    fi
+done
+require_resolved
+
+log "Collected ${#COLLECTED_DLLS[@]} DLLs in total"
 
 # -----------------------------------------------------------------------------
 # Copy GSettings schemas
