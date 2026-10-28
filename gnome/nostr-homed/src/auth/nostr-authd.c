@@ -98,7 +98,8 @@ int main(int argc, char **argv) {
   nh_identity_config_defaults(&config);
   snprintf(config.authority_path, sizeof config.authority_path, "%s/authority.db", dir);
   snprintf(config.projection_path, sizeof config.projection_path, "%s/nss.db", dir);
-  snprintf(config.home_root, sizeof config.home_root, "%s/home", dir);
+  /* Authority storage is not the home root. Keep the /home default shared
+   * with enrollment; otherwise first login stages below authority-dir/home. */
   nh_identity_store_options options = {0};
   options.config = &config;
   options.ownership_probe = probe;

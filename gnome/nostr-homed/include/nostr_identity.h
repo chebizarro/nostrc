@@ -29,7 +29,8 @@ extern "C" {
  *                                    the wrap-key hand-off).
  *   wrap_key_ok_ts           INTEGER — unix seconds of the last outcome
  *                                    write (0 when unset). */
-#define NH_IDENTITY_AUTHORITY_SCHEMA_VERSION 3u
+/* v4 adds operations.portable_state for explicit deferred-home enrollment. */
+#define NH_IDENTITY_AUTHORITY_SCHEMA_VERSION 4u
 #define NH_IDENTITY_PROJECTION_SCHEMA_VERSION 1u
 #define NH_IDENTITY_PROJECTION_APPLICATION_ID 0x4e485031u /* "NHP1" */
 
@@ -341,6 +342,22 @@ nh_identity_rc nh_identity_operation_advance_home(
 nh_identity_rc nh_identity_operation_activate(
     nh_identity_store *store, const char *operation_id,
     nh_identity_operation_state *out);
+/* Explicit administrator opt-in, after the ordinary provider proof/activation.
+ * Publishes an active identity whose CREATE home remains unprovisioned. It
+ * never enables a provider or bypasses broker challenge verification. */
+nh_identity_rc nh_identity_operation_defer_portable_home(
+    nh_identity_store *store, const char *operation_id);
+typedef struct nh_identity_portable_home {
+    char operation_id[NH_IDENTITY_UUID_CAP];
+    char state[32]; /* enrolled-unprovisioned, provisioning, installed, failed */
+} nh_identity_portable_home;
+nh_identity_rc nh_identity_portable_home_get(nh_identity_store *store,
+    const char *account_id, nh_identity_portable_home *out);
+nh_identity_rc nh_identity_portable_home_begin(nh_identity_store *store,
+    const char *account_id);
+nh_identity_rc nh_identity_portable_home_complete(nh_identity_store *store,
+    const char *account_id);
+
 nh_identity_rc nh_identity_operation_fail(
     nh_identity_store *store, const char *operation_id,
     nh_identity_operation_outcome outcome, const char *reason_token,

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.6.0 LANGUAGES C)
+project(nostr_homed VERSION 0.7.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -1643,6 +1643,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       NH_AUTH_BROKER_ENABLE_PORTHOME=1)
     target_sources(nostr_auth_runtime PRIVATE
       src/auth/auth_porthome_fetch.c
+      src/auth/auth_porthome_stage.c
       # Bead nostrc-3o91 — provisioner "provisioner" key writer.
       # Compiled behind NH_AUTH_BROKER_ENABLE_PORTHOME so the
       # base link closure is unchanged when experimental is off.
@@ -1850,6 +1851,12 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     # dispatch, no relay). Requires the AUTH_RUNTIME so it links into
     # the same broker binary that includes auth_porthome.c.
     if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
+      add_executable(test_porthome_stage tests/integration/test_porthome_stage.c)
+      target_link_libraries(test_porthome_stage PRIVATE nostr_auth_runtime)
+      target_include_directories(test_porthome_stage PRIVATE src/auth)
+      add_test(NAME homed_porthome_stage COMMAND test_porthome_stage)
+      set_tests_properties(homed_porthome_stage PROPERTIES
+        LABELS "nostr-homed;porthome;linux;root" SKIP_RETURN_CODE 77 TIMEOUT 30)
       add_executable(test_porthome_broker_wait
         tests/integration/test_porthome_broker_wait.c)
       target_link_libraries(test_porthome_broker_wait PRIVATE

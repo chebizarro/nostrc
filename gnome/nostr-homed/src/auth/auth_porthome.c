@@ -20,6 +20,7 @@
 #include "nh_porthome_wrapkey.h"
 #include "nh_porthome_sandbox.h"
 #include "auth_porthome_fetch.h"
+#include "auth_porthome_stage.h"
 #include "auth_porthome_status.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_types.h"
@@ -114,8 +115,10 @@ static const char *progress_dir(void) {
 
 int nh_auth_porthome_registry_init(void) {
   pthread_mutex_lock(&g_reg_mutex);
-  for (size_t i = 0; i < REG_CAP; i++) g_reg[i] = NULL;
-  g_reg_ready = 1;
+  if (!g_reg_ready) {
+    for (size_t i = 0; i < REG_CAP; i++) g_reg[i] = NULL;
+    g_reg_ready = 1;
+  }
   pthread_mutex_unlock(&g_reg_mutex);
   return 0;
 }
@@ -168,6 +171,26 @@ static void job_release(nh_auth_porthome_job *j) {
   nh_provisioner_status_writer_free(j->pstat);
   OPENSSL_cleanse(j->wrap_seed, sizeof j->wrap_seed);
   free(j);
+}
+
+unsigned nh_auth_porthome_reap_completed(void) {
+  unsigned retired = 0;
+  pthread_mutex_lock(&g_reg_mutex);
+  for (size_t i = 0; i < REG_CAP; i++) {
+    nh_auth_porthome_job *j = g_reg[i];
+    if (!j) continue;
+    int state = atomic_load(&j->state);
+    if (state != NH_AUTH_PORTHOME_JOB_OK && state != NH_AUTH_PORTHOME_JOB_LIMITED &&
+        state != NH_AUTH_PORTHOME_JOB_FAILED) continue;
+    g_reg[i] = NULL;
+    pthread_mutex_unlock(&g_reg_mutex);
+    if (j->thread_started) pthread_join(j->thread, NULL);
+    job_release(j);
+    retired++;
+    pthread_mutex_lock(&g_reg_mutex);
+  }
+  pthread_mutex_unlock(&g_reg_mutex);
+  return retired;
 }
 
 static nh_auth_porthome_job *lookup_locked(const char *account_id) {
@@ -256,12 +279,10 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
     return NH_IDENTITY_UNSUPPORTED;
 
   nh_porthome_prov_opts opts = {0};
-  /* Materialise as root:root inside the staging descriptor. The
-   * identity layer chown()s the whole tree to the account uid/gid
-   * when it installs the home (identity_home.c). We do NOT try to
-   * uid-map per file — design §D17: uid/gid are machine-local. */
-  opts.local_uid = 0;
-  opts.local_gid = 0;
+  /* The identity installer chowns only the home root. Descendants must
+   * already carry the account's machine-local ownership. */
+  opts.local_uid = lc->job->account_uid;
+  opts.local_gid = lc->job->account_gid;
   opts.max_bytes_per_load = lc->job->config.bandwidth_bytes_per_load;
   opts.load_timeout_sec   = lc->job->config.load_timeout_sec;
   opts.max_total_bytes    = lc->job->config.max_home_bytes;
@@ -275,6 +296,8 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
      * via the same nh_porthome_materialize_sealed_into_fd path used
      * by the in-process branch. On any recoverable failure the helper
      * exits 71/72/73/74/65 — mapped to LIMITED by the spawner. */
+    int workspace = nh_auth_porthome_stage_open(home_fd);
+    if (workspace < 0) return NH_IDENTITY_UNSUPPORTED;
     nh_auth_porthome_fetch_args fa = {0};
     fa.account_pubkey_hex     = lc->account_pubkey_hex;
     fa.home_root_id_hex       = lc->home_root_id_hex;
@@ -289,7 +312,8 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
     fa.max_total_bytes        = lc->job->config.max_home_bytes;
     fa.relay_timeout_ms       = 10000u;
     fa.allow_insecure         = lc->allow_insecure;
-    fa.staging_fd             = home_fd;
+    fa.staging_fd             = workspace;
+    fa.private_staging        = 1;
     fa.staging_dir            = NULL;
     fa.total_timeout_ms       = 300000u;
 
@@ -298,6 +322,16 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
     int helper_exit = -1;
     nh_auth_porthome_fetch_result fr =
         nh_auth_porthome_fetch_spawn(&fa, &cb, &helper_exit);
+    /* Reclaim even failed fetches; the identity layer retains the protected
+     * stage for repair. Never install helper-owned or still-shared inodes. */
+    int reclaim = nh_auth_porthome_stage_reclaim(workspace);
+    if (reclaim != 0 || (fr == NH_PORTHOME_FETCH_RES_OK &&
+        nh_auth_porthome_stage_import(home_fd, workspace,
+            lc->job->account_uid, lc->job->account_gid,
+            lc->job->config.max_home_bytes ? lc->job->config.max_home_bytes
+                : NH_PORTHOME_DEFAULT_MAX_HOME_BYTES) != 0))
+      fr = NH_PORTHOME_FETCH_RES_FAILED;
+    close(workspace);
     switch (fr) {
     case NH_PORTHOME_FETCH_RES_OK:
       pr = NH_PORTHOME_PROV_OK;
@@ -572,6 +606,12 @@ static void *job_run(void *arg) {
   nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_FETCHING);
   emit_pstat(j);
   rc = nh_identity_home_prepare(j->store, j->tx_id, &opts, &after);
+  nh_identity_portable_home portable;
+  nh_identity_rc portable_rc = nh_identity_portable_home_get(j->store, j->account_id, &portable);
+  if (rc == NH_IDENTITY_OK && portable_rc == NH_IDENTITY_OK)
+    rc = nh_identity_portable_home_complete(j->store, j->account_id);
+  else if (portable_rc != NH_IDENTITY_OK && portable_rc != NH_IDENTITY_NOT_FOUND)
+    rc = portable_rc;
   int cur = atomic_load(&j->state);
   if (rc == NH_IDENTITY_OK) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_OK);
@@ -597,8 +637,8 @@ static void *job_run(void *arg) {
                                                        j->wrap_seed);
     }
   } else if (cur == NH_AUTH_PORTHOME_JOB_RUNNING) {
-    /* Labeler didn't tag a terminal state; treat as LIMITED so PAM
-     * lets login proceed with the existing/empty home. */
+    /* Labeler did not tag a terminal state. LIMITED is a visible session
+     * failure for explicitly portable accounts, never an empty-home fallback. */
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
     nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
     nh_provisioner_status_set_last_error_class(j->pstat, "unknown");
@@ -622,7 +662,19 @@ static void *job_run(void *arg) {
   }
 
 done:
+  if (atomic_load(&j->state) != NH_AUTH_PORTHOME_JOB_OK) {
+    nh_identity_portable_home failed_home;
+    nh_identity_operation_state failed_op;
+    if (nh_identity_portable_home_get(j->store, j->account_id, &failed_home) == NH_IDENTITY_OK &&
+        strcmp(failed_home.state, "installed") != 0) {
+      if (nh_identity_operation_fail(j->store, failed_home.operation_id,
+              NH_IDENTITY_OUTCOME_REPAIR_REQUIRED, "portable_home_provision_failed",
+              &failed_op) != NH_IDENTITY_OK)
+        syslog(LOG_ERR, "porthome: cannot persist failed operation %s", failed_home.operation_id);
+    }
+  }
   OPENSSL_cleanse(lc.home_key, sizeof lc.home_key);
+  OPENSSL_cleanse(j->wrap_seed, sizeof j->wrap_seed);
   return NULL;
 }
 
@@ -636,8 +688,8 @@ int nh_auth_porthome_start(const nh_auth_porthome_config *config,
     return -1;
   *out_job = NULL;
 
+  nh_auth_porthome_registry_init();
   pthread_mutex_lock(&g_reg_mutex);
-  if (!g_reg_ready) nh_auth_porthome_registry_init();
 
   if (lookup_locked(account->account_id)) {
     pthread_mutex_unlock(&g_reg_mutex);
@@ -704,7 +756,6 @@ int nh_auth_porthome_start(const nh_auth_porthome_config *config,
   if (nn > 0 && (size_t)nn < sizeof pp) j->progress_path = strdup(pp);
 
   g_reg[slot] = j;
-  atomic_fetch_add(&j->refcount, 1); /* hold a ref on behalf of registry */
   pthread_mutex_unlock(&g_reg_mutex);
 
   if (pthread_create(&j->thread, NULL, job_run, j) != 0) {
@@ -713,8 +764,7 @@ int nh_auth_porthome_start(const nh_auth_porthome_config *config,
     for (size_t i = 0; i < REG_CAP; i++)
       if (g_reg[i] == j) { g_reg[i] = NULL; break; }
     pthread_mutex_unlock(&g_reg_mutex);
-    job_release(j);  /* registry ref */
-    job_release(j);  /* creator ref */
+    job_release(j);  /* sole registry ref; returned handles are borrowed */
     return -1;
   }
   j->thread_started = 1;
@@ -755,7 +805,7 @@ nh_auth_porthome_wait(nh_auth_porthome_job *j, uint32_t timeout_ms,
       for (size_t i = 0; i < REG_CAP; i++)
         if (g_reg[i] == j) { g_reg[i] = NULL; break; }
       pthread_mutex_unlock(&g_reg_mutex);
-      /* Release the registry's ref. Caller still holds its own. */
+      /* Returned/lookup handles are borrowed; retire the sole registry ref. */
       job_release(j);
       return (nh_auth_porthome_job_state)st;
     }
@@ -1426,12 +1476,10 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
  * handler can still distinguish LIMITED_MODE (network / decode /
  * SSRF-refused) from FAILED (internal / killed).
  *
- * Materialisation stays in the broker as root — the labeler in
- * label_write_into() writes through nh_identity_home_prepare's
- * staging descriptor, which cannot be handed across the exec()
- * boundary without giving the helper write access to /var/lib and
- * defeating the whole point of dropping privileges. That split
- * matches design §7.2 exactly.
+ * Login materialisation uses auth_porthome_fetch_spawn instead: the
+ * helper writes to a private workspace below the root-only installer
+ * stage. The broker imports account-owned copies after the helper exits;
+ * neither the installer stage nor authority storage is granted to it.
  * ──────────────────────────────────────────────────────────────────── */
 
 int nh_auth_broker_porthome_run_fetch(const char *helper_path,
@@ -1640,6 +1688,7 @@ int nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
 
 int  nh_auth_porthome_registry_init(void)     { return 0; }
 void nh_auth_porthome_registry_shutdown(void) {}
+unsigned nh_auth_porthome_reap_completed(void) { return 0; }
 void nh_auth_porthome_set_progress_dir(const char *d) { (void)d; }
 void nh_auth_porthome_set_test_hook(const uint8_t *m, size_t l,
                                     nh_auth_porthome_fetch_hook_fn f, void *c) {

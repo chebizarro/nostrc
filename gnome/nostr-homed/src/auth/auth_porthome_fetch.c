@@ -36,7 +36,7 @@
  * with PR_SET_NO_NEW_PRIVS, PR_SET_DUMPABLE=0, minimal env, closed
  * fds, and RLIMIT_AS/CPU/FSIZE/NOFILE caps. Without this the helper
  * would refuse to start (its main() rejects euid==0). */
-#include "nh_porthome_sandbox.h"
+#include "../porthome/nh_porthome_sandbox_internal.h"
 
 /* Compile-time default. Can be overridden via CMake:
  *   -DNH_PORTHOME_FETCH_HELPER_PATH="/opt/whatever/nostr-home-fetch" */
@@ -271,7 +271,8 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
                              const nh_auth_porthome_fetch_progress_cb *cb,
                              int *exit_code_out)
 {
-    if (!a) return NH_PORTHOME_FETCH_RES_FAILED;
+    if (!a || (a->private_staging && a->staging_fd < 0))
+        return NH_PORTHOME_FETCH_RES_FAILED;
     if ((a->staging_fd < 0 && !a->staging_dir) ||
         (a->staging_fd >= 0 && a->staging_dir))
         return NH_PORTHOME_FETCH_RES_FAILED;
@@ -363,12 +364,12 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
     if (child_staging_fd >= 0) {
         keep_arr[keep_n++] = child_staging_fd;
     }
-    srx = nh_porthome_spawn_sandboxed_ex(
+    srx = nh_porthome_spawn_staged(
         argv, /* envp= */ NULL,
         in_pipe[0], out_pipe[1], /* stderr inherit journal */ -1,
         keep_n ? keep_arr : NULL, keep_n,
         /* deadline_ms — advisory hint only; wait enforces it */ 0,
-        &pid);
+        &pid, a->private_staging ? child_staging_fd : -1);
     if (srx != NH_PORTHOME_SANDBOX_OK || pid < 0) {
     io_fail:
         if (in_pipe[0]  != -1) close(in_pipe[0]);

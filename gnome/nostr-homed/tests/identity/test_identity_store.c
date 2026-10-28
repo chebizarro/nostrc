@@ -70,6 +70,8 @@ static void expect_upgraded(nh_identity_store_options *options, const char *db_p
   NH_CHECK(nh_identity_store_get_info(store, &info) == NH_IDENTITY_OK);
   NH_CHECK(info.schema_version == NH_IDENTITY_AUTHORITY_SCHEMA_VERSION);
   NH_CHECK(nh_identity_store_lookup_by_name(store, "n_bob", &account) == NH_IDENTITY_OK);
+  nh_identity_portable_home home;
+  NH_CHECK(nh_identity_portable_home_get(store, account.account_id, &home) == NH_IDENTITY_NOT_FOUND);
   nh_identity_store_close(store);
   NH_CHECK(providers_has_column(db_path, "wrapped_home_key") == 1);
   NH_CHECK(providers_has_column(db_path, "wrap_key_ok_last_outcome") == 1);
@@ -333,6 +335,12 @@ int main(void) {
   sql_expect_failure(db_path, "DELETE FROM accounts WHERE username='n_bob'");
 
   options.flags = 0;
+  /* A real v3 layout upgrades without opting existing accounts in. */
+  sql_exec_ok(db_path,
+    "DROP INDEX portable_home_account;"
+    "ALTER TABLE operations DROP COLUMN portable_state;"
+    "PRAGMA user_version=3;");
+  expect_upgraded(&options, db_path);
   /* In-place migrations. Rewind the file to a real v1 layout (drop the
    * columns v2 and v3 added) and to a real v2 layout, and require each to
    * upgrade to the current version on open. Then rewind only user_version

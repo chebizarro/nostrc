@@ -111,6 +111,7 @@ int nh_auth_client_begin_login(int fd, const char *username, const char *service
 typedef struct nh_auth_login_canonical {
   char canonical[NH_IDENTITY_USERNAME_CAP];      /* local username */
   char identifier[256];                          /* NIP-05 as typed */
+  int portable_home; /* explicit deferred-home enrollment, not seed availability */
 } nh_auth_login_canonical;
 
 /* Extended BEGIN_LOGIN that additionally captures the NIP-05

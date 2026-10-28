@@ -347,6 +347,19 @@ static void qr_display_cb(void *ctx, const nh_auth_display *display) {
   render_qr_info(c->pamh, display, c->text_console);
 }
 
+#define NH_PAM_LOGIN_CONTEXT "nostr.verified-login"
+typedef struct {
+  int fd;
+  int portable_home;
+  char username[NH_IDENTITY_USERNAME_CAP];
+} pam_login_context;
+
+static void login_context_free(pam_handle_t *pamh, void *data, int status) {
+  (void)pamh; (void)status;
+  pam_login_context *ctx = data;
+  if (ctx) { if (ctx->fd >= 0) nh_auth_client_close(ctx->fd); free(ctx); }
+}
+
 NH_PAM_ENTRY int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
   (void)flags;
@@ -360,6 +373,12 @@ NH_PAM_ENTRY int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   const char *sock = socket_path(argc, argv);
   const char *pinned = pinned_provider(argc, argv);
 
+  const void *old_data = NULL;
+  if (pam_get_data(pamh, NH_PAM_LOGIN_CONTEXT, &old_data) == PAM_SUCCESS && old_data) {
+    pam_login_context *old = (pam_login_context *)old_data;
+    if (old->fd >= 0) nh_auth_client_close(old->fd);
+    old->fd = -1; /* A failed reauthentication must not retain prior authority. */
+  }
   unsigned int attempts_left = NH_AUTH_PAM_MAX_INVALID_ATTEMPTS;
 
   /* Learn the account's providers via a dedicated connection. Keeping this on
@@ -482,7 +501,18 @@ NH_PAM_ENTRY int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     } else {
       trc = nh_auth_client_login_with(fd, user, service, chosen, pass, &result);
     }
-    nh_auth_client_close(fd);
+    if (trc == 0 && result == NH_AUTH_RESULT_OK) {
+      pam_login_context *ctx = calloc(1, sizeof *ctx);
+      if (!ctx) { nh_auth_client_close(fd); if (pass) { wipe(pass); free(pass); } return PAM_BUF_ERR; }
+      ctx->fd = fd;
+      ctx->portable_home = canon.portable_home;
+      snprintf(ctx->username, sizeof ctx->username, "%s", user);
+      if (pam_set_data(pamh, NH_PAM_LOGIN_CONTEXT, ctx, login_context_free) != PAM_SUCCESS) {
+        login_context_free(pamh, ctx, 0);
+        if (pass) { wipe(pass); free(pass); }
+        return PAM_AUTHINFO_UNAVAIL;
+      }
+    } else nh_auth_client_close(fd);
     if (pass) { wipe(pass); free(pass); }
     if (trc != 0) {
       pam_syslog(pamh, LOG_ERR, "nostr: broker transport failure for %s",
@@ -545,6 +575,21 @@ static void porthome_show_progress(pam_handle_t *pamh,
   snprintf(shown, shown_cap, "%s", line);
 }
 
+/* Do not use getpwnam(): NSS also contains portable accounts. Only the
+ * local passwd file positively identifies a fallback Unix account when the
+ * broker is unavailable. Enrollment's ownership check excludes these names. */
+static int local_unix_account(const char *name) {
+  FILE *file = fopen("/etc/passwd", "re");
+  if (!file) return 0;
+  struct passwd *entry;
+  int found = 0;
+  while ((entry = fgetpwent(file)) != NULL) {
+    if (!strcmp(entry->pw_name, name)) { found = 1; break; }
+  }
+  fclose(file);
+  return found;
+}
+
 NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
   (void)flags;
@@ -553,65 +598,67 @@ NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
     return PAM_SUCCESS;  /* nothing to do; ordinary session */
   pam_syslog(pamh, LOG_INFO, "nostr: open_session %s", user);
 
-  /* Portable-home Phase 2 (bead nostrc-89rj): ask the broker to
-   * materialise the account's home from the encrypted manifest.
-   * The broker returns NOT_SUPPORTED when the account has no
-   * portable-home provider record or when the broker was built
-   * without NH_AUTH_BROKER_ENABLE_PORTHOME — in either case the
-   * ordinary local home path stands and open_session succeeds.
-   *
-   * LIMITED_MODE (relay unreachable, manifest missing,
-   * per-file cap tripped) is a first-class outcome, not an error:
-   * PAM_SUCCESS + pam_info("...limited mode...") + putenv
-   * NOSTR_HOME_STATE=limited so the sync daemon can retry later
-   * without pushing (design §5.3 no-push interlock). */
+  /* Keep the verified authentication connection: its transaction binds the
+   * account and proof. An auth transaction ID is NOT a home-enrollment ID;
+   * the broker resolves the latter from the explicit portable-home record. */
+  const void *data = NULL;
+  pam_login_context *ctx = NULL;
+  if (pam_get_data(pamh, NH_PAM_LOGIN_CONTEXT, &data) == PAM_SUCCESS && data)
+    ctx = (pam_login_context *)data;
+  if (ctx && strcmp(ctx->username, user)) {
+    pam_error(pamh, "The login account changed. Authenticate again.");
+    return PAM_SESSION_ERR;
+  }
+  if (ctx && ctx->fd >= 0 && !ctx->portable_home) {
+    nh_auth_client_close(ctx->fd); ctx->fd = -1;
+    return PAM_SUCCESS;
+  }
   const char *sock = socket_path(argc, argv);
   int fd = -1;
-  if (nh_auth_client_connect(sock, &fd) != 0) {
-    pam_syslog(pamh, LOG_NOTICE, "nostr: open_session: broker unreachable"
-                                 " — skipping portable-home");
-    return PAM_SUCCESS;
+  if (ctx && ctx->fd >= 0) { fd = ctx->fd; ctx->fd = -1; }
+  else if (nh_auth_client_connect(sock, &fd) != 0) {
+    if (!ctx && local_unix_account(user)) return PAM_SUCCESS;
+  }
+  if (fd < 0) {
+    pam_error(pamh, "Your portable home is unavailable: the authentication broker cannot be reached.");
+    return PAM_SESSION_ERR;
   }
 
   nh_auth_result r = NH_AUTH_RESULT_INTERNAL_ERROR;
   int trc = nh_auth_client_provision_home(fd, user, "open_session", 0, &r);
   if (trc != 0) {
     nh_auth_client_close(fd);
-    pam_syslog(pamh, LOG_NOTICE, "nostr: open_session: PROVISION_HOME"
-                                 " transport failure — skipping");
-    return PAM_SUCCESS;
+    pam_error(pamh, "Your portable home is unavailable: the authentication broker disconnected.");
+    return PAM_SESSION_ERR;
   }
 
-  /* NOT_SUPPORTED = account has no portable home OR broker built
-   * without porthome. Either way, no work to do. */
+  /* An authenticated portable account must not fall back when this host
+   * was built without the experimental provisioner. */
   if (r == NH_AUTH_RESULT_NOT_SUPPORTED) {
     nh_auth_client_close(fd);
-    return PAM_SUCCESS;
+    if (!ctx || !ctx->portable_home) return PAM_SUCCESS;
+    pam_error(pamh, "This host does not support your portable home. Session not opened.");
+    return PAM_SESSION_ERR;
   }
 
   /* OK (synchronous provision) or IN_PROGRESS (async job). On
    * IN_PROGRESS we poll with WAIT_HOME until the broker's bounded
    * wait returns terminal. */
   if (r == NH_AUTH_RESULT_OK) {
+    pam_info(pamh, "Your portable home is ready.");
     (void)pam_putenv(pamh, "NOSTR_HOME_STATE=ready");
     nh_auth_client_close(fd);
     return PAM_SUCCESS;
   }
 
   if (r != NH_AUTH_RESULT_IN_PROGRESS && r != NH_AUTH_RESULT_LIMITED_MODE) {
-    /* Any other unexpected outcome — a real failure. Do NOT let
-     * PAM fail here (the user is already authenticated); fall
-     * through into LIMITED_MODE so the session opens empty and
-     * the sync daemon retries. */
     nh_auth_client_close(fd);
-    pam_syslog(pamh, LOG_WARNING, "nostr: PROVISION_HOME -> %s;"
-                                  " opening limited session",
+    pam_syslog(pamh, LOG_WARNING, "nostr: PROVISION_HOME -> %s; session refused",
                nh_auth_result_name(r));
-    (void)pam_putenv(pamh, "NOSTR_HOME_STATE=limited");
-    pam_info(pamh, "Your portable home is unavailable — signing you"
-                   " in with a limited session. Files created now"
-                   " will sync when the connection returns.");
-    return PAM_SUCCESS;
+    (void)pam_putenv(pamh, "NOSTR_HOME_STATE=failed");
+    pam_error(pamh, "Your portable home is unavailable (%s). Session not opened.",
+              nh_auth_result_name(r));
+    return r == NH_AUTH_RESULT_UNKNOWN_ACCOUNT ? PAM_USER_UNKNOWN : PAM_SESSION_ERR;
   }
 
   /* Poll WAIT_HOME until terminal or budget exhausted. The broker
@@ -644,6 +691,8 @@ NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
   nh_auth_client_close(fd);
 
   if (final == NH_AUTH_RESULT_OK) {
+    porthome_show_progress(pamh, &prog, shown, sizeof shown);
+    pam_info(pamh, "Your portable home is ready.");
     (void)pam_putenv(pamh, "NOSTR_HOME_STATE=ready");
     return PAM_SUCCESS;
   }
@@ -654,11 +703,11 @@ NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
                     " open the session. Contact your administrator.");
     return PAM_SESSION_ERR;
   }
-  /* LIMITED_MODE (or IN_PROGRESS at deadline). Login proceeds. */
-  (void)pam_putenv(pamh, "NOSTR_HOME_STATE=limited");
-  pam_info(pamh, "Your portable home is loading in the background."
-                 " You may see fewer files until sync completes.");
-  return PAM_SUCCESS;
+  (void)pam_putenv(pamh, "NOSTR_HOME_STATE=failed");
+  pam_error(pamh, "Your portable home could not be loaded (%s). Session not opened."
+                  " Check the connection or contact your administrator.",
+            nh_auth_result_name(final));
+  return PAM_SESSION_ERR;
 }
 
 /* SMB teardown wait (plan §4.1 A4): a per-user systemctl start of
@@ -794,12 +843,18 @@ NH_PAM_ENTRY int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
   const char *user = NULL;
   if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || !user || !user[0])
     return PAM_USER_UNKNOWN;
-  int fd = -1;
-  if (nh_auth_client_connect(socket_path(argc, argv), &fd) != 0)
+  const void *data = NULL;
+  const pam_login_context *ctx = NULL;
+  if (pam_get_data(pamh, NH_PAM_LOGIN_CONTEXT, &data) == PAM_SUCCESS && data)
+    ctx = data;
+  if (ctx && strcmp(ctx->username, user)) return PAM_AUTH_ERR;
+  int borrowed = ctx && ctx->fd >= 0;
+  int fd = borrowed ? ctx->fd : -1;
+  if (!borrowed && nh_auth_client_connect(socket_path(argc, argv), &fd) != 0)
     return PAM_AUTHINFO_UNAVAIL;
   nh_auth_result result = NH_AUTH_RESULT_INTERNAL_ERROR;
   int rc = nh_auth_client_check_account(fd, user, &result);
-  nh_auth_client_close(fd);
+  if (!borrowed) nh_auth_client_close(fd);
   if (rc != 0) return PAM_AUTHINFO_UNAVAIL;
   switch (result) {
     case NH_AUTH_RESULT_OK: return PAM_SUCCESS;

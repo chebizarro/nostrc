@@ -133,6 +133,96 @@ verdict:
 `pamtester` links against the same `libpam.so` GDM does — a passing pamtester
 run is the substantive installed-system proof of the broker + PAM stack.
 
+## First-login portable homes
+
+This is an explicit experimental enrollment mode, not automatic enrollment of
+unknown relay identities. Build with `NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON`.
+After the administrator has reserved an ENROLL/CREATE operation and enabled a
+proof-bound provider, `nh_identity_operation_defer_portable_home()` marks the
+account active/projectable but its home **enrolled-unprovisioned**. The ordinary
+`operation_activate()` path still requires an installed home. For lab enrollment,
+`nh-seed-authority ... --portable-home` exercises the explicit API; it is not a
+remote enrollment endpoint. Existing accounts are not implicitly opted in.
+
+The authority's schema-4 operation records these transitions:
+
+1. **enrolled-unprovisioned**: known identity and enabled provider, no home yet.
+2. **provisioning**: only after the usual cryptographic authentication succeeds.
+3. **installed**: staging/import and atomic home installation succeeded, and
+   recorded inode/owner evidence validates. Subsequent logins revalidate and reuse
+   that home without contacting relays or overwriting local changes, renewing
+   the read-once session seed handoff when authentication supplies the seed.
+4. **failed**: an attempted job failed; its reason and `repair_required` account
+   status are persisted. Do not delete evidence or retry it as a new enrollment.
+   An administrator must inspect/repair the recorded operation. An interrupted
+   `provisioning` operation also refuses new sessions rather than guessing success.
+
+PAM retains its verified broker connection on the PAM handle through account
+management and session open. PROVISION sends the username; the broker binds it
+to that verified account and resolves the **enrollment operation ID** itself.
+An authentication transaction ID is not an enrollment ID. WAIT uses the same
+verified account. No caller-supplied IDs, cached seed alone, missing home, or
+`open_session` without authentication grant permission to provision.
+
+Run all three calls on one PAM handle:
+
+```sh
+printf 'fixture-pass\n' | pamtester -v nostr-login n_alice authenticate acct_mgmt open_session
+```
+
+The shipped named service has a required session hook. The Debian profile puts
+it before `pam_systemd`; the manual GDM example puts it before `common-session`.
+Use the profile **or** manual wiring, not both. A portable-home failure is fatal
+for session open, with PAM_ERROR_MSG, not a successful ordinary/limited home.
+Unknown accounts return PAM_USER_UNKNOWN (the shared local-login stack may ignore
+that and use its own authentication). Ordinary enrolled local-home accounts
+retain their existing behavior. If the broker is unavailable and no verified
+context exists, only names positively present in `/etc/passwd` may fall through;
+an unclassified NSS identity is not assumed ordinary. Greeter PAM_TEXT_INFO reports loading, actual
+plaintext bytes/files copied, and ready only after successful installation.
+These messages are tested with pamtester; rendering in GDM remains a manual check.
+
+The root installer keeps its stage root-owned 0700. A private helper workspace
+is accessible only through the inherited fd, then imported into fresh inodes
+owned by the account before atomic installation. The shipped unit uses
+`ProtectHome=tmpfs` plus `BindPaths=/home` and writable `/home`; `/root` and
+`/run/user` stay hidden. Post-install status writes use the account's thread-local
+filesystem credentials, including creation of `.local/state`.
+
+### Reproduce the real PAM lab proof
+
+Use a **disposable root Linux container/VM with systemd**, not a developer host.
+Install pamtester, Python websockets, libpam development files and libseccomp;
+apply the shipped sysusers snippets. Build `nostr-authd`, `pam_nostr`,
+`nostr-home-fetch`, `nostr-home-publisher`, and `nh-seed-authority` with auth core,
+identity core, auth runtime, PAM, auth install and experimental porthome enabled.
+Auth install generates the service template used by the runner. Start the real
+`packaging/lab-blossom/docker-compose.yml` service on a private lab network.
+The helper's SSRF guard remains enabled: Docker RFC1918 Blossom endpoints are
+refused. One isolated recipe is a Docker **internal** network `203.0.113.0/24`,
+Blossom at `.2`, and the systemd lab container at `.3`; do not route it externally.
+Use `BLOSSOM_DATA_DIR`/`BLOSSOM_BLOBS_DIR` in disposable scratch for the Compose
+service and a unique Compose project name. Do not use production keys.
+
+Inside that container, with source mounted at `/src` and build at `/build`:
+
+```sh
+NH_DISPOSABLE_LOGIN_LAB=1 python3 \
+  /src/gnome/nostr-homed/tests/integration/run_porthome_first_login.py \
+  --build /build --blossom http://203.0.113.2:3000
+```
+
+The runner starts an EVENT/EOSE fixture relay, publishes a signed schema-v2 home
+through the real publisher to real lab Blossom, and runs the shipped named PAM
+stack against authd under the generated unit's unchanged hardening. It checks
+unknown accounts, missing proof, wrong password and mismatched vault key, first
+materialization/ownership/progress, ordinary enrollment, broker-restarted second
+login with relay offline and renewed seed files, broker-outage refusal, missing
+installed-home refusal, and fresh offline-login refusal with durable failure.
+It removes its units, PAM service, authority data and homes in `finally`. Remove
+the disposable container/VM, Compose project, lab network and scratch afterward.
+This is local Linux integration proof, not hosted CI, native GDM or release proof.
+
 ## 5 — Real GDM graphical login (manual step)
 
 A real graphical login cannot be driven headlessly.  The sample GDM stack at

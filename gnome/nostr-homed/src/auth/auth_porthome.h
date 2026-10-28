@@ -78,6 +78,12 @@ typedef struct nh_auth_porthome_progress_hint {
 int  nh_auth_porthome_registry_init(void);
 void nh_auth_porthome_registry_shutdown(void);
 
+/* Reap terminal jobs abandoned by a disconnected/timed-out client. Call only
+ * between requests on the serialized broker dispatcher, with no borrowed job
+ * handles in use. Joins workers before release; never cancels running work.
+ * Returns the number retired. */
+unsigned nh_auth_porthome_reap_completed(void);
+
 /* Look up an existing job for `account_id`; returns NULL if none. Does
  * NOT bump the refcount — caller must not free. */
 nh_auth_porthome_job *nh_auth_porthome_lookup(const char *account_id);

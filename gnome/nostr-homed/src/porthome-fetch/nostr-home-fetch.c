@@ -276,6 +276,14 @@ typedef struct {
     uint64_t running_bytes;
 } fetch_ctx_t;
 
+static void copied_progress(void *ctx, uint64_t bytes, uint64_t files)
+{
+    (void)ctx;
+    g_bytes = bytes;
+    g_files = files;
+    emit_progress(NH_PORTHOME_FETCH_PHASE_CHUNK, 0);
+}
+
 static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
                           uint8_t **out_ct, size_t *out_ct_len)
 {
@@ -293,8 +301,6 @@ static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
         free(buf);
         return -1;
     }
-    g_bytes = fc->running_bytes;
-    emit_progress(NH_PORTHOME_FETCH_PHASE_CHUNK, 0);
 
     /* PNG-shim detection (nostrc-bpum): if the pusher shimmed this blob
      * to bypass a body-sniffing Blossom server, the downloaded bytes
@@ -673,7 +679,6 @@ int main(int argc, char **argv) {
         if (close_staging) close(staging_fd);
         return NH_PORTHOME_FETCH_EXIT_NETWORK_FAIL;
     }
-    g_bytes += (uint64_t)sealed_len;
     emit_progress(NH_PORTHOME_FETCH_PHASE_DECODE, 1);
 
     /* Build the Blossom client. */
@@ -707,7 +712,7 @@ int main(int argc, char **argv) {
 
     fetch_ctx_t fc = { .bl = bl,
                        .total_cap_bytes = ctl.max_total_bytes,
-                       .running_bytes = g_bytes };
+                       .running_bytes = sealed_len };
 
     nh_porthome_prov_opts pv = {
         .local_uid = getuid(),
@@ -717,6 +722,7 @@ int main(int argc, char **argv) {
         .max_total_bytes    = ctl.max_total_bytes,
         .max_entries        = 0, /* default */
         .progress_path      = NULL, /* progress goes on stdout, not a file */
+        .progress           = copied_progress,
     };
 
     /* Decode + materialize + rename walk (schema v2 — nostrc-q25o/bms6).
@@ -770,7 +776,6 @@ int main(int argc, char **argv) {
                     "nostr-home-fetch: renamed %zu entries (missed=%zu)\n",
                     renamed, missed);
         }
-        g_bytes = fc.running_bytes;
         emit_progress(NH_PORTHOME_FETCH_PHASE_DONE, 1);
         rc = NH_PORTHOME_FETCH_EXIT_OK;
         break;

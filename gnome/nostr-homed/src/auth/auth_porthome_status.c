@@ -28,6 +28,9 @@
 #include <sys/types.h>
 #include <syslog.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/fsuid.h>
+#endif
 
 /* ─────────────── writer ─────────────── */
 
@@ -119,17 +122,6 @@ void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
     });
 }
 
-/* Best-effort chown; on failure log at INFO and continue (the file is
- * still valid for the broker itself, and the user session will fall
- * back to the syncd's own writer for its half of the document). */
-static void best_effort_chown(const char *path, uid_t uid, gid_t gid) {
-    if (!path || !*path) return;
-    if (chown(path, uid, gid) != 0)
-        syslog(LOG_INFO,
-               "porthome/prov-status: chown(%s,%u,%u) failed errno=%d",
-               path, (unsigned)uid, (unsigned)gid, errno);
-}
-
 int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
                                const char *homedir,
                                uid_t uid, gid_t gid,
@@ -185,26 +177,28 @@ int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
         "%s/.local/state/nostr-homed/porthome-status.json", hd);
     if (pn < 0 || (size_t)pn >= sizeof path) return -ENAMETOOLONG;
 
-    /* Ensure the .../nostr-homed dir exists with a permissive mode we
-     * can chown from — write_key does mkdir_p at 0700 but the created
-     * dirs will land owned by root; chown them to the account so the
-     * user's syncd + CLI can traverse. */
-    int rc = nh_porthome_status_write_key(path, "provisioner", body);
-    if (rc != 0) return rc;
-
-    /* Best-effort chowns: file itself, its lock companion, and the
-     * parent nostr-homed dir. When the test path (homedir_override)
-     * points at a tmpdir we skip these if uid==0. */
-    if (uid != 0) {
-        best_effort_chown(path, uid, gid);
-        char lockp[1100];
-        if (snprintf(lockp, sizeof lockp, "%s.lock", path) < (int)sizeof lockp)
-            best_effort_chown(lockp, uid, gid);
-        char dir[1024];
-        snprintf(dir, sizeof dir, "%s/.local/state/nostr-homed", hd);
-        best_effort_chown(dir, uid, gid);
-    }
-    return 0;
+    /* This is an installed, user-controlled tree. Write with the account's
+     * filesystem credentials, not root followed by chown. This also makes
+     * every newly created ancestor (.local/state included) account-owned.
+     * Linux fsuid/fsgid are thread-local: changing process-wide credentials
+     * here would affect the broker and its other workers. */
+#ifdef __linux__
+    gid_t old_gid = (gid_t)setfsgid(gid);
+    uid_t old_uid = (uid_t)setfsuid(uid);
+    int rc = -EACCES;
+    if ((uid_t)setfsuid((uid_t)-1) == uid &&
+        (gid_t)setfsgid((gid_t)-1) == gid)
+        rc = nh_porthome_status_write_key(path, "provisioner", body);
+    (void)setfsuid(old_uid);
+    (void)setfsgid(old_gid);
+    if ((uid_t)setfsuid((uid_t)-1) != old_uid ||
+        (gid_t)setfsgid((gid_t)-1) != old_gid)
+        abort(); /* Never resume privileged work with uncertain credentials. */
+    return rc;
+#else
+    if (geteuid() != uid || getegid() != gid) return -EACCES;
+    return nh_porthome_status_write_key(path, "provisioner", body);
+#endif
 }
 
 /* ─────────────── notifier plumbing ─────────────── */

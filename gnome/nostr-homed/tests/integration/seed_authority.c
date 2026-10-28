@@ -78,17 +78,19 @@ int main(int argc, char **argv) {
    * Flags (may appear after the positional args):
    *   --fetch-profile / --no-fetch-profile — default is on. */
   int fetch_profile = 1;
+  int portable_home = 0;
   const char *pos[5] = {0};
   size_t np = 0;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
+    if (strcmp(a, "--portable-home") == 0) { portable_home = 1; continue; }
     if (strcmp(a, "--fetch-profile") == 0)         { fetch_profile = 1; continue; }
     if (strcmp(a, "--no-fetch-profile") == 0)      { fetch_profile = 0; continue; }
     if (np < 5) pos[np++] = a;
-    else { fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex] [--fetch-profile|--no-fetch-profile]\n", argv[0]); return 2; }
+    else { fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex] [--fetch-profile|--no-fetch-profile] [--portable-home]\n", argv[0]); return 2; }
   }
   if (np < 3) {
-    fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex] [--fetch-profile|--no-fetch-profile]\n", argv[0]);
+    fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex] [--fetch-profile|--no-fetch-profile] [--portable-home]\n", argv[0]);
     return 2;
   }
   const char *dir = pos[0], *username = pos[1], *passphrase = pos[2];
@@ -135,9 +137,14 @@ int main(int argc, char **argv) {
     nh_identity_store_close(store);
     return 1;
   }
-  nh_identity_home_options hopts = {0}; /* empty home (no skel) */
-  nh_identity_rc hrc = nh_identity_home_prepare(store, op, &hopts, &state);
-  if (hrc != NH_IDENTITY_OK) { fprintf(stderr, "seed: home prepare: %s (need root, /home writable)\n", nh_identity_rc_name(hrc)); return 1; }
+  if (portable_home) {
+    CHECK(nh_identity_operation_defer_portable_home(store, op) == NH_IDENTITY_BAD_STATE,
+          "deferred enrollment cannot activate without an enabled proof-backed provider");
+  } else {
+    nh_identity_home_options hopts = {0}; /* empty home (no skel) */
+    nh_identity_rc hrc = nh_identity_home_prepare(store, op, &hopts, &state);
+    if (hrc != NH_IDENTITY_OK) { fprintf(stderr, "seed: home prepare: %s (need root, /home writable)\n", nh_identity_rc_name(hrc)); return 1; }
+  }
   nh_identity_account account;
   CHECK(nh_identity_store_lookup_by_name(store, username, &account) == NH_IDENTITY_OK, "lookup");
   char provider_id[NH_IDENTITY_UUID_CAP];
@@ -162,8 +169,16 @@ int main(int argc, char **argv) {
   /* Publish before activation: publish advances the operation to PROJECTED,
    * which nh_identity_operation_activate requires. Reversing these calls
    * leaves the account enrolling instead of active. */
-  CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK, "publish");
-  CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK, "activate account");
+  if (portable_home) {
+    CHECK(nh_identity_operation_defer_portable_home(store, op) == NH_IDENTITY_OK,
+          "explicit deferred portable-home enrollment");
+    nh_identity_portable_home home;
+    CHECK(nh_identity_portable_home_get(store, account.account_id, &home) == NH_IDENTITY_OK &&
+          !strcmp(home.state, "enrolled-unprovisioned"), "durable unprovisioned state");
+  } else {
+    CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK, "publish");
+    CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK, "activate account");
+  }
   nh_identity_store_close(store);
 
   printf("seeded %s (uid=%u) pubkey=%s in %s\n", username, account.uid, pubkey, dir);
