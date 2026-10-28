@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include "auth_fscrypt.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +53,7 @@ typedef struct nh_auth_porthome_config {
   /* Total per-home cap (bytes). 0 -> defaults. */
   size_t   max_home_bytes;
   int      require_encrypted; /* refuse unless dm-crypt evidence is present */
+  const nh_auth_fscrypt_hooks *fscrypt; /* authd-owned, outlives jobs */
   /* If non-zero, on first login with no wrapped_home_key on the
    * account, ask the signer to nip44_encrypt(fresh_seed) and persist
    * the ciphertext (design §4.3 first-login enrollment). Off by

@@ -38,6 +38,24 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef NH_TEST_FSCRYPT
+#include "auth_porthome.h"
+#include "fscrypt_lifecycle.h"
+#include "fscrypt_kernel.h"
+#include "fscrypt_copy.h"
+#include <fcntl.h>
+#include <sys/stat.h>
+static const uint8_t fs_seed[32] = {0x91, 0x42, 0x18};
+struct fs_stage_context { nh_fscrypt *ctx; const char *account; };
+static nh_identity_rc fs_initialize(void *arg, int fd) {
+  struct fs_stage_context *c = arg;
+  return nh_fscrypt_stage(c->ctx, c->account, fd, 1) ? NH_IDENTITY_UNSUPPORTED : NH_IDENTITY_OK;
+}
+static nh_identity_rc fs_verify(void *arg, int fd) {
+  struct fs_stage_context *c = arg;
+  return nh_fscrypt_stage(c->ctx, c->account, fd, 0) ? NH_IDENTITY_UNSUPPORTED : NH_IDENTITY_OK;
+}
+#endif
 
 /* Well-known secp256k1 private key 1; xonly pubkey is the constant below. */
 static const char *ALICE_SK =
@@ -256,6 +274,7 @@ static void seed(const char *dir) {
   const char *op_enroll = "00000000-0000-4000-8000-000000000001";
   NH_CHECK(nh_identity_operation_begin_enroll(store, op_enroll, &enroll, &state) ==
            NH_IDENTITY_OK);
+#ifndef NH_TEST_FSCRYPT
   nh_identity_home_evidence staged = {11, 101}, installed = {11, 202};
   NH_CHECK(nh_identity_operation_advance_home(store, op_enroll,
              NH_IDENTITY_PHASE_RESERVED, NH_IDENTITY_PHASE_STAGED, &staged,
@@ -263,6 +282,7 @@ static void seed(const char *dir) {
   NH_CHECK(nh_identity_operation_advance_home(store, op_enroll,
              NH_IDENTITY_PHASE_STAGED, NH_IDENTITY_PHASE_INSTALLED,
              &installed, &state) == NH_IDENTITY_OK);
+#endif
   nh_identity_account account;
   NH_CHECK(nh_identity_store_lookup_by_name(store, "n_alice", &account) ==
            NH_IDENTITY_OK);
@@ -287,8 +307,33 @@ static void seed(const char *dir) {
              &attestation) == NH_IDENTITY_OK);
 
   NH_CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
-  NH_CHECK(nh_identity_operation_activate(store, op_enroll, &state) ==
-           NH_IDENTITY_OK);
+#ifdef NH_TEST_FSCRYPT
+  NH_CHECK(nh_identity_operation_defer_portable_home(store, op_enroll) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_provider_set_wrapped_home_key(store, provider_id,
+      (const uint8_t *)"fixture-ciphertext", 18) == NH_IDENTITY_OK);
+  nh_fscrypt *fs = NULL;
+  char homes[512]; snprintf(homes, sizeof homes, "%s/home", dir);
+  NH_CHECK(mkdir(homes, 0700) == 0);
+  NH_CHECK(nh_fscrypt_open(dir, 1, 1, &fs) == 0);
+  NH_CHECK(nh_fscrypt_admit(fs, &account, fs_seed, getpid(), op_enroll, 1) == 1);
+  NH_CHECK(nh_identity_portable_home_begin(store, account.account_id) == NH_IDENTITY_OK);
+  char skel[512], skel_file[540];
+  snprintf(skel, sizeof skel, "%s/skel", dir);
+  NH_CHECK(mkdir(skel, 0700) == 0);
+  snprintf(skel_file, sizeof skel_file, "%s/welcome", skel);
+  int skel_fd = open(skel_file, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  NH_CHECK(skel_fd >= 0 && write(skel_fd, "skeleton", 8) == 8);
+  close(skel_fd);
+  struct fs_stage_context sc = {fs, account.account_id};
+  nh_identity_home_options home_options = {.skel_path = skel, .initialize = fs_initialize,
+      .verify = fs_verify, .initialize_context = &sc};
+  NH_CHECK(nh_identity_home_prepare(store, op_enroll, &home_options, &state) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_portable_home_complete(store, account.account_id) == NH_IDENTITY_OK);
+  NH_CHECK(nh_fscrypt_finished(fs, account.account_id, 1) == 0);
+  nh_fscrypt_close(fs);
+#else
+  NH_CHECK(nh_identity_operation_activate(store, op_enroll, &state) == NH_IDENTITY_OK);
+#endif
   nh_identity_store_close(store);
 }
 
@@ -394,6 +439,25 @@ static int client_login_nip46(int fd, const char *username,
   return found ? 0 : -1;
 }
 
+#ifdef NH_TEST_FSCRYPT
+static int denied_decrypt(void *session, const char *peer, const char *cipher, char **out,
+                          nh_auth_porthome_wrap_err *error, void *data) {
+  struct signer_ctx *ctx = data;
+  const char *params[] = {peer, cipher};
+  char *request = nostr_nip46_request_build("deny_unwrap", "nip44_decrypt", params, 2);
+  NH_CHECK(request);
+  NostrNip46Response response = {0};
+  NH_CHECK(bridge_call(session, ctx, request, &response) == 0);
+  free(request);
+  /* This bunker grants sign_event only. Exercise its real permission denial
+   * over encrypted NIP-46 requests, not an invented broker result. */
+  NH_CHECK(response.error && !strcmp(response.error, "forbidden") && !response.result);
+  nostr_nip46_response_free(&response);
+  *out = NULL; *error = NH_AUTH_PORTHOME_WRAP_ERR_DENIED;
+  return -1;
+}
+#endif
+
 /* Fork the broker and drive one nip46 login through it with a bunker signing
  * with `bunker_sk` and a bunker URI that names `bunker_pk_sec1` as the
  * client-side remote. The child installs the sign hook so the provider sees
@@ -418,8 +482,24 @@ static nh_auth_result run_login(const char *dir, const char *bunker_sk,
     nh_identity_store *store = open_store(dir, 0);
     nh_auth_broker *broker = nh_auth_broker_new(store);
     NH_CHECK(broker);
+#ifdef NH_TEST_FSCRYPT
+    nh_fscrypt *fs = NULL;
+    NH_CHECK(nh_fscrypt_open(dir, 0, 1, &fs) == 0);
+    nh_auth_fscrypt_hooks hooks = {fs, nh_fscrypt_required, nh_fscrypt_admit, nh_fscrypt_stage, nh_fscrypt_finished};
+    nh_auth_broker_set_fscrypt(broker, &hooks);
+    nh_auth_broker_porthome_install(store, 0, 3);
+    nh_auth_broker_porthome_set_nip44_hooks(NULL, NULL, denied_decrypt, &ctx);
+    nh_identity_account account;
+    NH_CHECK(nh_identity_store_lookup_by_name(store, "n_alice", &account) == NH_IDENTITY_OK);
+    /* Stale cache deliberately seeded: the new BEGIN_LOGIN must discard it. */
+    NH_CHECK(nh_auth_broker_porthome_deposit_wrap_seed(account.account_id, fs_seed) == 0);
+#endif
     (void)nh_auth_broker_handle_connection(broker, sv[1]);
     nh_auth_broker_free(broker);
+#ifdef NH_TEST_FSCRYPT
+    nh_auth_broker_porthome_install(NULL, 0, 0);
+    nh_fscrypt_close(fs);
+#endif
     nh_identity_store_close(store);
     nh_auth_provider_nip46_set_sign_hook(NULL, NULL);
     free(ctx.bunker_pk_xonly);
@@ -430,14 +510,36 @@ static nh_auth_result run_login(const char *dir, const char *bunker_sk,
   close(sv[1]);
   nh_auth_result result = NH_AUTH_RESULT_INTERNAL_ERROR;
   NH_CHECK(client_login_nip46(sv[0], "n_alice", &result) == 0);
+#ifdef NH_TEST_FSCRYPT
+  NH_CHECK(result == NH_AUTH_RESULT_OK); /* Sign was approved and verified. */
+  nh_auth_message req = {0}, rsp = {0};
+  req.operation = NH_AUTH_OP_PROVISION_HOME;
+  memset(req.request_id, 'a', NH_AUTH_REQUEST_ID_HEX_LEN);
+  req.payload_json = "{\"username\":\"n_alice\"}";
+  NH_CHECK(nh_auth_send_message(sv[0], &req) == 0);
+  unsigned char *packet = NULL; size_t length = 0;
+  NH_CHECK(nh_auth_recv_packet(sv[0], &packet, &length) == 0);
+  NH_CHECK(nh_auth_message_parse(packet, length, &rsp) == 0);
+  NH_CHECK(strstr(rsp.payload_json, "denied"));
+  free(packet); nh_auth_message_clear(&rsp);
+  result = NH_AUTH_RESULT_DENIED;
+#endif
   close(sv[0]);
   int status = 0;
   NH_CHECK(waitpid(pid, &status, 0) == pid);
+  NH_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
   return result;
 }
 
 int main(void) {
+#ifdef NH_TEST_FSCRYPT
+  const char *fsroot = getenv("NH_TEST_FSCRYPT_ROOT");
+  if (!fsroot || geteuid()) return 77;
+  char dir[256];
+  NH_CHECK(snprintf(dir, sizeof dir, "%s/nip46-XXXXXX", fsroot) < (int)sizeof dir);
+#else
   char dir[] = "/tmp/nostr-login-nip46-XXXXXX";
+#endif
   NH_CHECK(mkdtemp(dir));
   seed(dir);
   int is_root = (geteuid() == 0);
@@ -446,6 +548,14 @@ int main(void) {
    * matches the account. Non-root: ACL denies at BEGIN_LOGIN. */
   nh_auth_result r = run_login(dir, ALICE_SK, ALICE_PK_SEC1, ALICE_PK);
   printf("matching signer -> %s\n", nh_auth_result_name(r));
+#ifdef NH_TEST_FSCRYPT
+  NH_CHECK(r == NH_AUTH_RESULT_DENIED);
+  int root_fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  NH_CHECK(root_fd >= 0 && nh_fscrypt_remove_tree(root_fd) == 0);
+  close(root_fd); NH_CHECK(rmdir(dir) == 0);
+  puts("PASS: real encrypted home, approved NIP-46 sign, refused unwrap, stale seed discarded, PROVISION_HOME denied");
+  return 0;
+#endif
   NH_CHECK(r == (is_root ? NH_AUTH_RESULT_OK : NH_AUTH_RESULT_DENIED));
 
   if (is_root) {

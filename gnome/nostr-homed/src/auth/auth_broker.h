@@ -44,6 +44,8 @@ void nh_auth_broker_set_clock(nh_auth_broker *broker,
  * retained. */
 /* Configure before accepting connections. Default is warn-only. */
 void nh_auth_broker_set_require_encrypted(nh_auth_broker *broker, int required);
+#include "auth_fscrypt.h"
+void nh_auth_broker_set_fscrypt(nh_auth_broker *broker, const nh_auth_fscrypt_hooks *hooks);
 
 int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
                                         const nh_auth_ratelimit_config *config);
@@ -185,6 +187,9 @@ typedef struct nh_auth_conf {
   uint32_t porthome_load_timeout_sec;
   uint64_t porthome_max_home_bytes;
   uint8_t porthome_require_encrypted; /* 0: warn; 1: refuse unknown/plain */
+  uint8_t porthome_fscrypt; /* new homes only; default off */
+  uint8_t porthome_fscrypt_allow_without_luks; /* explicit override; default off */
+  uint8_t porthome_fscrypt_invalid; /* malformed security setting refuses startup */
   uint8_t  porthome_enroll_wrap_key;   /* 0=unset(off), 1=on, 2=off */
   /* porthome_nip46_decrypt_timeout_sec — wall-clock cap the broker
    * applies to the NIP-46 nip44_decrypt/nip44_encrypt RPCs used for

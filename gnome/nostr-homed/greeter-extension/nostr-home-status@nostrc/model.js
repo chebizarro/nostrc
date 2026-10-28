@@ -235,12 +235,22 @@ export function buildModel(doc) {
     const cache = usage('Cache', syncd?.cache_bytes, syncd?.cache_quota_bytes);
     const home = usage('Home size', prov?.home_bytes, prov?.home_quota_bytes);
 
+    const lockLabels = {
+        preparing: 'preparing encrypted home', unlocked: 'unlocked',
+        locking: 'LOCKING — open files may remain readable', locked: 'locked',
+        migrating: 'offline migration in progress', 'repair-required': 'REPAIR REQUIRED',
+    };
+    const lockState = doc?.fscrypt?.state;
+    const lockLabel = Object.prototype.hasOwnProperty.call(lockLabels, lockState)
+        ? lockLabels[lockState] : undefined;
+    const fscryptText = `Local home lock: ${lockLabel ?? 'unknown / not enrolled'}`;
     const atRestState = doc?.at_rest?.state;
     const atRestWarning = atRestState !== 'encrypted';
     const atRestText = atRestState === 'encrypted'
         ? 'Disk encryption: dm-crypt detected at provisioning'
         : atRestState === 'unencrypted'
-            ? 'WARNING: Home is plaintext at rest. Use an encrypted volume.'
+            ? (lockLabel ? 'WARNING: No dm-crypt detected. fscrypt does not protect swap or filesystem metadata.'
+                : 'WARNING: Home is plaintext at rest. Use an encrypted volume.')
             : 'WARNING: Home disk encryption is unknown. Verify an encrypted volume.';
 
     const n = conflicts.length;
@@ -262,7 +272,7 @@ export function buildModel(doc) {
     if (n > 0) label = `${label} · ${n} conflict${n === 1 ? '' : 's'}`;
 
     const accessibleName = ['Portable home', provision.active ? provision.text : syncText,
-        atRestText, n > 0 ? conflictText : null].filter(Boolean).join(', ');
+        atRestText, fscryptText, n > 0 ? conflictText : null].filter(Boolean).join(', ');
 
     return {
         available: !!syncd || !!prov,
@@ -272,6 +282,7 @@ export function buildModel(doc) {
         syncText,
         atRestText,
         atRestWarning,
+        fscryptText,
         provision,
         cache,
         home,

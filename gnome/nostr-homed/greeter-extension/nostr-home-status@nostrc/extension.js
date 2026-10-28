@@ -32,6 +32,10 @@ import {buildModel, resolveArgv, resolveOutcome} from './model.js';
 const MAX_FILE_BYTES = 512 * 1024;
 const BAR_WIDTH = 220;
 
+function _fscryptPath() {
+    return `/run/nostr-auth/fscrypt/${new Gio.Credentials().get_unix_user()}.json`;
+}
+
 function _statusPath() {
     const xdg = GLib.getenv('XDG_STATE_HOME');
     if (xdg && xdg.length > 0)
@@ -86,6 +90,7 @@ class Indicator extends PanelMenu.Button {
         super._init(0.0, 'Portable home status', false);
         this._ext = ext;
         this._monitor = null;
+        this._fscryptMonitor = null;
         this._busy = new Set();
         this._cancellable = new Gio.Cancellable();
         this._conflictSignature = null;
@@ -105,6 +110,9 @@ class Indicator extends PanelMenu.Button {
         this._atRestItem = new PopupMenu.PopupMenuItem('', {reactive: false});
         this._atRestItem.label.clutter_text.line_wrap = true;
         this.menu.addMenuItem(this._atRestItem);
+        this._fscryptItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._fscryptItem.label.clutter_text.line_wrap = true;
+        this.menu.addMenuItem(this._fscryptItem);
         this._provisionItem = new BarItem();
         this.menu.addMenuItem(this._provisionItem);
         this._cacheItem = new BarItem();
@@ -135,6 +143,13 @@ class Indicator extends PanelMenu.Button {
         } catch (_e) {
             // Directory missing until the first writer runs: the backstop covers it.
         }
+        try {
+            const file = Gio.File.new_for_path(_fscryptPath());
+            this._fscryptMonitor = file.get_parent().monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, null);
+            this._fscryptMonitor.connect('changed', (_m, changed) => {
+                if (changed?.get_basename() === file.get_basename()) this.refresh();
+            });
+        } catch (_e) { /* Optional feature; the directory may not exist. */ }
         // Backstop for a missing directory or a dropped notification.
         this._pollId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 15,
             () => { this.refresh(); return GLib.SOURCE_CONTINUE; });
@@ -144,11 +159,14 @@ class Indicator extends PanelMenu.Button {
     stopWatching() {
         this._cancellable.cancel();
         if (this._monitor) { this._monitor.cancel(); this._monitor = null; }
+        if (this._fscryptMonitor) { this._fscryptMonitor.cancel(); this._fscryptMonitor = null; }
         if (this._pollId) { GLib.source_remove(this._pollId); this._pollId = 0; }
     }
 
     refresh() {
-        const m = buildModel(_readStatus(_statusPath()));
+        const doc = _readStatus(_statusPath()) ?? {};
+        doc.fscrypt = _readStatus(_fscryptPath());
+        const m = buildModel(doc);
         this._model = m;
         this._icon.text = m.glyph;
         this._label.text = m.label;
@@ -156,6 +174,7 @@ class Indicator extends PanelMenu.Button {
 
         this._syncItem.label.text = m.syncText;
         this._atRestItem.label.text = m.atRestText;
+        this._fscryptItem.label.text = m.fscryptText;
         this._provisionItem.update(m.provision.text, m.provision.fraction);
         this._cacheItem.update(m.cache?.text ?? null, m.cache?.fraction ?? null, m.cache?.over);
         this._homeItem.update(m.home?.text ?? null, m.home?.fraction ?? null, m.home?.over);

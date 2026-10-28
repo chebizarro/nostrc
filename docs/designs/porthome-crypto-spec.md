@@ -21,7 +21,7 @@ This spec is a **Phase-1 realisation of D4** with a deliberate scope shrink: Ope
 
 ## 2. Domain-separation constants
 
-Every HKDF call fixes both `salt` (the "purpose") and `info` (the "input binding"). The four purposes used in Phase 1 are:
+Every HKDF call fixes both `salt` (the "purpose") and `info` (the "input binding"). The four PCS Phase-1 purposes and independent local-at-rest purpose are:
 
 | Purpose | `salt` (ASCII) | Notes |
 | --- | --- | --- |
@@ -29,12 +29,44 @@ Every HKDF call fixes both `salt` (the "purpose") and `info` (the "input binding
 | chunk sealing | `porthome/v1/chunk` | `ikm = home_key`, `info = SHA256(plaintext_chunk)` |
 | manifest-node sealing | `porthome/v1/manifest` | `ikm = home_key`, `info = SHA256(plaintext_cbor)` |
 | name-key derivation | `porthome/v1/name` | `ikm = home_key`, `info = ""` (empty) |
+| local fscrypt master | `porthome/local/fscrypt/v1` | `ikm = home_key[32]`, 64-byte output; §2.1. Not a PCS v1/v2 wire salt. |
 
-The `v1` in each string is the **layout version** covered by this document. If any byte layout below changes, the salt bumps to `v2` and the on-wire version byte (§5) bumps in lockstep — old and new blobs are then key-disjoint.
+For the four PCS salts, `v1` is the **layout version** covered by this document. If any byte layout below changes, the salt bumps to `v2` and the on-wire version byte (§5) bumps in lockstep — old and new blobs are then key-disjoint.
 
 `ikm` for chunk / manifest / name is always the **32-byte `home_key`**, never the raw seed. `home_key` sits above the seed by exactly one HKDF hop (§3), so a leaked `home_key` reveals only that home's blobs, and a leaked seed can regenerate `home_key` but nothing above the seed.
 
 ---
+
+### 2.1 Local fscrypt derivation (nostrc-h10m.12)
+
+`porthome_fscrypt_master_derive()` uses HKDF-SHA256 (RFC 5869 Extract +
+Expand) with the literal ASCII salt `porthome/local/fscrypt/v1`, **without**
+a trailing NUL, and `home_key[32]` as IKM. The 78-byte info is:
+
+```
+"home" || 00 || canonical-lowercase-hyphenated-account-UUID[36] || 00
+       || device_salt[32] || generation_be32
+```
+
+Generation starts at 1; zero, malformed UUIDs and uppercase UUIDs are refused.
+The 64-byte result is local-only: never include it in PCS manifests, runtime
+seed handoffs, environment variables, PAM, or persistent storage. Authd locks
+and wipes its transient buffers after adding the kernel key. One fscrypt v2
+policy covers the whole home; shared-vault wire keys remain separate.
+
+Independent Python `hmac` vectors (IKM bytes `00..1f`, account
+`01234567-89ab-cdef-0123-456789abcdef`), frozen in
+`libporthome/tests/test_fscrypt_derivation.c`:
+
+| device_salt | generation | 64-byte output (hex) |
+| --- | --- | --- |
+| bytes `20..3f` | 1 | `de121e9b70369e899436180170aede93ab6de31ef1ddb2a2d47d5536a00ee0a7ba6777f187b55e610ac7058bd60761e025be4aed79fd712748c51d392cb7d486` |
+| `a5` repeated 32 times | 1 | `4a49340bea08f3ed6bd41cc9a453d3a562610dfcbb1ea4d57420fc6cfd258b2e005340fa40da9f755d3cceaf5556b02cddc22c055ee2113c1f3e2825ae7ff2b3` |
+| bytes `20..3f` | 2 | `68f9320f38e812d32be7a17307eece1c52f96412a2e930b734a68fb202b74b50307a5e450b8a3d0971bb98340b6396418df0718a8121d509f905ebc51051562e` |
+
+Changing device salt or generation changes the key without changing PCS wire
+keys. Changing the seed also changes remote keys; see the operator guide's
+unrecoverable seed-loss warning before any rotation.
 
 ## 3. Key hierarchy
 

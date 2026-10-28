@@ -77,6 +77,16 @@ typedef enum {
 PORTHOME_API int porthome_key_derive(const uint8_t seed[PORTHOME_KEY_LEN],
                            uint8_t out_home_key[PORTHOME_KEY_LEN]);
 
+/* Local-only fscrypt master; never serialize it in a PCS manifest or /run.
+* account_id is the canonical lowercase hyphenated UUID (36 ASCII bytes).
+* device_salt is 32 random, persistent per-device bytes. generation starts at 1.
+* HKDF-SHA256 salt="porthome/local/fscrypt/v1", IKM=home_key,
+* info="home\0" || account_id || "\0" || device_salt || be32(generation).
+* Caller must mlock the 64-byte output and wipe it after the add-key ioctl. */
+PORTHOME_API int porthome_fscrypt_master_derive(
+  const uint8_t home_key[PORTHOME_KEY_LEN], const char *account_id,
+  const uint8_t device_salt[32], uint32_t generation, uint8_t out_master[64]);
+
 /* ────────────────────────────────────────────────────────────────────
  * Chunk sealing (convergent)
  *

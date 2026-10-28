@@ -456,6 +456,13 @@ typedef struct nh_identity_home_options {
   bool labeling_required;
   nh_identity_home_label_fn label;
   void *label_context;
+  /* Optional at-rest policy hook. initialize runs on the empty root-owned
+   * CREATE stage, before any skeleton file; never on ADOPT_EXISTING.
+   * verify runs before publication (including replay). Failure retains the
+   * stage for repair; callers must never fall back to an unprotected home. */
+  nh_identity_home_label_fn initialize;
+  nh_identity_home_label_fn verify;
+  void *initialize_context;
 } nh_identity_home_options;
 nh_identity_rc nh_identity_home_prepare(nh_identity_store *store,
     const char *operation_id, const nh_identity_home_options *options,
@@ -463,6 +470,13 @@ nh_identity_rc nh_identity_home_prepare(nh_identity_store *store,
 nh_identity_rc nh_identity_home_validate(nh_identity_store *store,
     const char *account_id, const nh_identity_home_evidence *expected,
     nh_identity_home_evidence *out);
+
+/* Offline maintenance only: caller holds the exclusive authority store and
+ * a durable replacement journal. CAS old inode evidence after publishing the
+ * verified replacement; idempotent if already committed. */
+nh_identity_rc nh_identity_portable_home_replace_evidence(nh_identity_store *store,
+    const char *account_id, const nh_identity_home_evidence *old_home,
+    const nh_identity_home_evidence *new_home);
 
 /* Complete-snapshot publication. The target comes only from identity config. */
 nh_identity_rc nh_identity_store_publish_projection(

@@ -1,5 +1,9 @@
 #define _GNU_SOURCE
 #include "auth_broker.h"
+#ifdef __linux__
+#include <linux/fscrypt.h>
+#include <sys/ioctl.h>
+#endif
 
 #include "auth_challenge.h"
 #include "auth_peer.h"
@@ -44,6 +48,7 @@ struct nh_auth_broker {
   nh_auth_ratelimit *ratelimit;
   nh_auth_ratelimit_config ratelimit_config;
   int porthome_require_encrypted;
+  const nh_auth_fscrypt_hooks *fscrypt;
   char *ratelimit_path; /* NULL => in-memory only. */
 
   /* NIP-05 login identifier resolution (B5-NIP-05, nostrc-bit0).
@@ -68,6 +73,7 @@ typedef struct conn_state {
   nh_auth_broker *broker;
   nh_auth_peer_snapshot peer;
   nh_auth_transaction *tx;
+  int fscrypt_admitted;
   nh_auth_provider *provider;
   nh_auth_challenge challenge;
   int challenge_built;
@@ -186,6 +192,10 @@ void nh_auth_broker_set_clock(nh_auth_broker *broker,
   if (!broker) return;
   broker->clock_fn = fn;
   broker->clock_ctx = context;
+}
+
+void nh_auth_broker_set_fscrypt(nh_auth_broker *broker, const nh_auth_fscrypt_hooks *hooks) {
+  if (broker) broker->fscrypt = hooks;
 }
 
 void nh_auth_broker_set_require_encrypted(nh_auth_broker *broker, int required) {
@@ -645,6 +655,18 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
     const nh_identity_account *account =
         nh_auth_transaction_get_account(cs->tx);
     if (account) *providers_out = account->enabled_providers;
+  }
+
+  /* The broker drives one connection at a time. A previous verified login
+   * may have disconnected before consuming its account-scoped wrap cache.
+   * Clear that residue BEFORE this transaction asks the provider to unwrap,
+   * so a refused unwrap cannot borrow an older login's seed. */
+  if (result == NH_AUTH_RESULT_OK && cs->tx && cs->broker->fscrypt) {
+    const nh_identity_account *account = nh_auth_transaction_get_account(cs->tx);
+    uint8_t stale[32] = {0};
+    if (account) (void)nh_auth_broker_porthome_take_wrap_seed(account->account_id, stale);
+    volatile uint8_t *wipe = stale;
+    for (size_t i = 0; i < sizeof stale; i++) wipe[i] = 0;
   }
 
   /* Optional client-asserted `identifier` (nostrc-bit0 follow-up).
@@ -1211,18 +1233,52 @@ static nh_auth_result provision_home(conn_state *cs, const char *payload) {
         nh_identity_home_validate(cs->broker->store, account.account_id,
                                   &op.installed_home, &evidence) != NH_IDENTITY_OK)
       return NH_AUTH_RESULT_NOT_READY;
+#ifdef __linux__
+    if (!cs->broker->fscrypt) {
+      int home_fd = open(account.home, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      struct fscrypt_get_policy_ex_arg policy = {.policy_size = sizeof policy.policy};
+      int protected = home_fd < 0 || !ioctl(home_fd, FS_IOC_GET_ENCRYPTION_POLICY_EX, &policy);
+      int saved = errno;
+      if (home_fd >= 0) close(home_fd);
+      if (protected || (saved != ENODATA && saved != ENOTTY && saved != EOPNOTSUPP))
+        return NH_AUTH_RESULT_NOT_READY;
+    }
+#endif
     /* Each login needs a new read-once session handoff, not a second
      * materialization. The previous login's consumers may have unlinked it. */
     uint8_t seed[32];
-    if (nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed) == 0) {
-      int dropped = nh_auth_broker_porthome_drop_seed_for_uid((uid_t)account.uid, seed);
+    const nh_auth_fscrypt_hooks *fs = cs->broker->fscrypt;
+    int required = fs ? fs->required(fs->context, account.account_id, 0) : 0;
+    if (required < 0) return NH_AUTH_RESULT_NOT_READY;
+    int got_seed = nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed) == 0;
+    if (required && !got_seed) return NH_AUTH_RESULT_DENIED;
+    int encrypted = fs ? fs->admit(fs->context, &account, got_seed ? seed : NULL,
+                                   cs->peer.pid, home.operation_id, 0) : 0;
+    if (encrypted == 1) cs->fscrypt_admitted = 1;
+    if (!got_seed && encrypted < 0) return NH_AUTH_RESULT_DENIED;
+    if (got_seed) {
+      int dropped = encrypted >= 0 ? nh_auth_broker_porthome_drop_seed_for_uid((uid_t)account.uid, seed) : -1;
       volatile uint8_t *wipe = seed;
       for (size_t i = 0; i < sizeof seed; i++) wipe[i] = 0;
       if (dropped != 0) return NH_AUTH_RESULT_INTERNAL_ERROR;
     }
     return NH_AUTH_RESULT_OK;
   }
-  if (nh_auth_porthome_lookup(account.account_id)) return NH_AUTH_RESULT_IN_PROGRESS;
+  if (nh_auth_porthome_lookup(account.account_id)) {
+    const nh_auth_fscrypt_hooks *fs = cs->broker->fscrypt;
+    int required = fs ? fs->required(fs->context, account.account_id, 0) : 0;
+    if (required < 0) return NH_AUTH_RESULT_NOT_READY;
+    if (required && !cs->fscrypt_admitted) {
+      uint8_t seed[32];
+      if (nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed)) return NH_AUTH_RESULT_DENIED;
+      int unlocked = fs->admit(fs->context, &account, seed, cs->peer.pid, home.operation_id, 1);
+      volatile uint8_t *p = seed;
+      for (size_t i = 0; i < sizeof seed; i++) p[i] = 0;
+      if (unlocked != 1) return NH_AUTH_RESULT_DENIED;
+      cs->fscrypt_admitted = 1;
+    }
+    return NH_AUTH_RESULT_IN_PROGRESS;
+  }
   if (strcmp(home.state, "enrolled-unprovisioned")) return NH_AUTH_RESULT_NOT_READY;
   /* Policy refusal is not corruption. Leave enrollment retryable and do not
    * consume the seed or create an operation/staging tree. The worker also
@@ -1238,8 +1294,17 @@ static nh_auth_result provision_home(conn_state *cs, const char *payload) {
   uint8_t seed[32];
   if (nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed) != 0)
     return NH_AUTH_RESULT_NOT_READY;
+  const nh_auth_fscrypt_hooks *fs = cs->broker->fscrypt;
+  int encrypted = fs ? fs->admit(fs->context, &account, seed, cs->peer.pid, home.operation_id, 1) : 0;
+  if (encrypted < 0) {
+    volatile uint8_t *p = seed;
+    for (size_t i = 0; i < sizeof seed; i++) p[i] = 0;
+    return NH_AUTH_RESULT_DENIED;
+  }
   rc = nh_identity_portable_home_begin(cs->broker->store, account.account_id);
   nh_auth_porthome_config config = {0};
+  config.fscrypt = encrypted ? fs : NULL;
+  cs->fscrypt_admitted = encrypted == 1;
   config.require_encrypted = cs->broker->porthome_require_encrypted;
   nh_auth_porthome_job *job = NULL;
   int started = rc == NH_IDENTITY_OK &&
@@ -1247,6 +1312,7 @@ static nh_auth_result provision_home(conn_state *cs, const char *payload) {
                              cs->broker->store, &job) == 0;
   volatile uint8_t *wipe = seed;
   for (size_t i = 0; i < sizeof seed; i++) wipe[i] = 0;
+  if (!started && encrypted) (void)fs->finished(fs->context, account.account_id, 0);
   if (!started && rc == NH_IDENTITY_OK) {
     nh_identity_operation_state failed;
     (void)nh_identity_operation_fail(cs->broker->store, home.operation_id,
@@ -1489,6 +1555,10 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
           ? nh_auth_porthome_lookup(_wh_acct->account_id)
           : NULL;
       if (!_wh_job) return respond(fd, req, op, NH_AUTH_RESULT_NOT_READY);
+      const nh_auth_fscrypt_hooks *_wh_fs = cs->broker->fscrypt;
+      int _wh_encrypted = _wh_fs ? _wh_fs->required(_wh_fs->context, _wh_acct->account_id, 0) : 0;
+      if (_wh_encrypted < 0 || (_wh_encrypted && !cs->fscrypt_admitted))
+        return respond(fd, req, op, NH_AUTH_RESULT_DENIED);
       nh_auth_porthome_progress_hint _wh_hint;
       memset(&_wh_hint, 0, sizeof _wh_hint);
       nh_auth_porthome_job_state _wh_st =

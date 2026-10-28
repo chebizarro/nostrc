@@ -138,6 +138,151 @@ It requires unencrypted/unknown test storage. The fixture unit tests cover both
 LUKS/LVM orderings, partition inheritance, MD including mixed branches, loop,
 missing metadata, integrity/verity mappings, and cycle refusal. This is not graphical GDM or hosted CI proof.
 
+### 2.1a Opt-in fscrypt home lock
+
+D16(a) remains the baseline. D16(c) adds a **per-home at-rest lock**, not
+protection from root while unlocked, swap, filesystem metadata, external mounts,
+or files copied elsewhere. Keep encrypted root/swap. One policy covers the
+whole home; vault subdirectories inherit it and keep their separate wire keys.
+
+Build the Linux broker with `-DNOSTR_HOMED_ENABLE_FSCRYPT=ON` (default **OFF**),
+alongside auth runtime and experimental porthome. This requires libsystemd
+headers/libraries at configure time; only authd links the watcher, not PAM.
+CMake is the supported auth runtime build. Meson's `fscrypt` option defaults to
+`disabled`; enabling it fails clearly and names the CMake option. It does not
+build or port the auth runtime.
+Then explicitly enable **new** portable homes in `/etc/nostr-auth/auth.conf`:
+
+```ini
+porthome_fscrypt=on
+# Leave OFF normally. Required for a consciously accepted unknown/plain backing
+# device, including F2FS whose full dm-crypt topology cannot currently be proven.
+porthome_fscrypt_allow_without_luks=off
+```
+
+Unknown or unencrypted backing storage is refused unless the second setting is
+explicitly `on`. That override does not bypass `porthome_require_encrypted=on`.
+Malformed fscrypt settings refuse broker startup. Ext4 and F2FS require their
+`encrypt` feature; btrfs, XFS and ext4 without it are refused, **not** restored
+as plaintext. Enrollment performs a real encrypted-file create/write/read test
+on the same filesystem, not just SET_POLICY. Linger is refused for new
+fscrypt homes; do not enable it later unless you accept delayed locking.
+
+The broker adds the key at authenticated `PROVISION_HOME`; the empty
+root-owned stage receives a v2 AES-256-XTS/AES-256-CTS/PAD32 policy **before**
+any skeleton or fetched content. The existing rename publishes that stage.
+Every subsequent login verifies the recorded inode and exact policy, then
+requires a fresh seed unwrap even if another session already loaded the key.
+An approved signature with a refused unwrap is **not** a successful session.
+The existing signer-denial cache may require the provider's wrap-key reset
+before retrying after a permission change. LOCAL vault unlock remains offline.
+
+Keep `pam_nostr`'s session line **before** `pam_systemd`/`common-session` on
+all login routes (as in the shipped `gdm-password.sample`). The watcher follows
+logind and `user@UID.service`, not the broker socket: PAM closes that socket
+before `pam_systemd` runs. Durable per-process admissions protect that handoff.
+A live PAM process that never reaches a session deliberately delays locking;
+terminate the failed login process, rather than using a timeout to revoke a
+possibly successful login. Sessions still closing and an exiting user manager
+remain blockers. A new admission invalidates old lock work under the same
+serialization used for key add/remove. If files remain open, status is
+`locking`, never `locked`; local retries check current lifecycle state again.
+A lost system bus suspends locking and refuses new encrypted admissions until
+broker restart; inspect its journal. Startup reconciles recorded kernel key claims,
+including interrupted maintenance intents without discarding their recovery trees.
+Derivation metadata and the expected kernel identifier are committed **before**
+ADD_KEY. Bus snapshots run outside the mutation lock and admissions have a bounded
+five-second lock wait; contention fails the attempt instead of hanging login.
+Removal releases only authd's root claim. Another UID's independently installed
+claim keeps the state `locking`; it is not forcibly revoked.
+
+Public derivation metadata and admission/maintenance journals live in
+`/var/lib/nostr-auth/fscrypt/state.db`, below a root-only `0700` directory;
+there are **no persistent raw fscrypt keys**. Back up this directory with the
+identity authority. Turning the runtime setting off does not decrypt existing
+homes or stop their lock lifecycle. A build without fscrypt refuses startup
+when fscrypt state exists; keep a feature-enabled broker for those accounts.
+Do not delete metadata to disable encryption.
+
+`nostr-home-status --field fscrypt.state` and the panel merge the root-owned
+`/run/nostr-auth/fscrypt/<uid>.json` snapshot into the normal status model.
+This separate nonsecret snapshot stays readable while the home is locked.
+States include `preparing`, `unlocked`, `locking`, `locked`, `migrating`, and
+`repair-required`; missing status is `unknown`, not proof of a lock.
+
+**Migration/re-key is explicit offline maintenance.** Stop authd, log out the
+account, and wait for its user manager to exit. Stop scheduled jobs and other
+privileged writers too; root is outside this at-rest threat boundary. Existing plaintext homes are
+not converted merely by switching on the config. Supply the existing raw
+32-byte wrap seed through a private file descriptor (not argv/environment):
+
+```sh
+sudo nostr-authd --fscrypt-migrate /var/lib/nostr-auth ACCOUNT_UUID SEED_FD
+# Add NEW_SEED_FD after SEED_FD only for a deliberately coordinated seed change.
+# --allow-without-luks is a separate explicit maintenance override if needed.
+```
+
+The command holds the identity authority's exclusive process lock and refuses
+live sessions, user managers, pending admissions, residual account processes,
+and other processes with open descriptors/mappings into the affected trees.
+The old/new tree remains below a root-only recovery directory during exchange;
+busy-key checks precede deletion of the original. It copies the complete
+local cache, including **unpushed edits**, into a new encrypted stage, exchanges
+the directories, commits exact inode evidence, then deletes the old tree.
+The relay copy is unchanged; sync before maintenance if fresher remote content
+must be incorporated. Re-key increments the local derivation generation. It
+preserves ordinary files, symlinks, ownership, modes, timestamps and xattrs/ACLs;
+hardlinks, special files, symlink xattrs and nested mounts are refused rather
+than silently omitted. Resolve those cases explicitly before migration.
+Interrupted copying can be resumed with the same command and seeds. A
+journaled exchange is replayed only when both inodes match; ambiguous stages
+are retained for repair, never guessed or automatically discarded.
+
+**Seed loss is unrecoverable** without the old seed or an independently
+decryptable backup: both the local home and remote content use keys derived
+from it. A new seed cannot restore old ciphertext. A planned seed rotation
+must retain the old seed until both remote migration and local re-key finish.
+Lost device salt locks out the local copy; re-provisioning can recover only
+relay state, **not unpushed edits**. Deleting an old plaintext tree is **not
+secure erasure**: free blocks, SSD remapping, snapshots and backups may retain
+plaintext. Prefer enrollment on fresh encrypted storage. File backups see
+plaintext only while unlocked; raw filesystem images contain ciphertext and
+unencrypted filesystem metadata.
+
+#### Focused Linux verification
+
+Use a **disposable privileged container/VM** with systemd as PID 1, logind,
+PAM development files, `libsystemd-dev`, `python3-websockets`, GJS, e2fsprogs and
+f2fs-tools. Never mount these test images on a developer's real `/home`.
+Build the enabled CMake auth/PAM/porthome targets and `test_fscrypt_kernel`,
+`test_fscrypt_pam_session`, `test_fscrypt_unwrap`, and `nh-seed-authority`.
+Provide a private Blossom fixture (the repository's
+`packaging/lab-blossom/blossom-server.config.yaml`), not a public upload target.
+
+For each ext4 `mkfs.ext4 -O encrypt` and F2FS `mkfs.f2fs -O encrypt` loop image,
+mount it at `/home` **inside that disposable environment** and run:
+
+```sh
+BUILD=/build
+"$BUILD/gnome/nostr-homed/test_fscrypt_kernel" /home
+NH_DISPOSABLE_LOGIN_LAB=1 python3 \
+  gnome/nostr-homed/tests/integration/run_fscrypt_login.py \
+  --build "$BUILD" --blossom http://PRIVATE_BLOSSOM:3000
+NH_TEST_FSCRYPT_ROOT=/home "$BUILD/gnome/nostr-homed/test_fscrypt_unwrap"
+```
+
+Add `--migrate-plaintext` to exercise plaintext migration, residual-writer and
+hardlink refusal, then resume and re-key without losing local edits. For ext4
+formatted with `-O ^encrypt`, or btrfs/XFS, pass `--unsupported` to the kernel
+and login runners: success means refusal without publishing a plaintext home.
+The login runner exercises real `pam_nostr` + `pam_systemd`, manager exit,
+busy removal/re-login, offline LOCAL unlock, re-key, CLI status and downgrade
+refusal. The unwrap test uses a real in-process encrypted NIP-46 bridge, not an
+external signer. Unit CTest cases cover independent HKDF vectors and lifecycle
+eligibility/epoch fencing. Run the dependency fence in both default-OFF and
+fscrypt-ON builds; only the latter receives `--fscrypt`. Unmount loop filesystems
+and remove the task-owned containers/images/network after verification.
+
 ### 2.2 Enrol
 
 ```sh

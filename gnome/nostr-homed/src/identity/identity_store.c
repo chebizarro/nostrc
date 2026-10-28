@@ -1312,6 +1312,34 @@ nh_identity_rc nh_identity_portable_home_begin(nh_identity_store *store,
       account_id);
 }
 
+nh_identity_rc nh_identity_portable_home_replace_evidence(nh_identity_store *store,
+    const char *account_id, const nh_identity_home_evidence *old_home,
+    const nh_identity_home_evidence *new_home) {
+  if (!store || !old_home || !new_home || !nh_identity_uuid_is_valid(account_id))
+    return NH_IDENTITY_INVALID;
+  if (geteuid()) return NH_IDENTITY_PERMISSION_DENIED;
+  nh_identity_home_evidence found;
+  nh_identity_rc result = nh_identity_home_validate(store, account_id, new_home, &found);
+  if (result != NH_IDENTITY_OK) return result;
+  sqlite3_stmt *s = NULL;
+  int rc = sqlite3_prepare_v2(store->db,
+      "UPDATE operations SET installed_dev=?,installed_ino=?,updated_at=strftime('%s','now')"
+      " WHERE account_id=? AND portable_state='installed' AND phase='complete' AND outcome='done'"
+      " AND ((installed_dev=? AND installed_ino=?) OR (installed_dev=? AND installed_ino=?))",
+      -1, &s, NULL);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s, 1, (sqlite3_int64)new_home->filesystem_device);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s, 2, (sqlite3_int64)new_home->filesystem_inode);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_text(s, 3, account_id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s, 4, (sqlite3_int64)old_home->filesystem_device);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s, 5, (sqlite3_int64)old_home->filesystem_inode);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s, 6, (sqlite3_int64)new_home->filesystem_device);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_int64(s, 7, (sqlite3_int64)new_home->filesystem_inode);
+  if (rc == SQLITE_OK) rc = sqlite3_step(s);
+  int changed = sqlite3_changes(store->db);
+  sqlite3_finalize(s);
+  return rc == SQLITE_DONE && changed == 1 ? NH_IDENTITY_OK : NH_IDENTITY_BAD_STATE;
+}
+
 nh_identity_rc nh_identity_portable_home_complete(nh_identity_store *store,
     const char *account_id) {
   nh_identity_portable_home home;

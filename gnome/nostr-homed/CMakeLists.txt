@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.8.0 LANGUAGES C)
+project(nostr_homed VERSION 0.9.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -22,6 +22,12 @@ option(NOSTR_HOMED_ENABLE_NSS
   "Build and install the read-only libnss_nostr NSS module (requires identity core)" OFF)
 option(NOSTR_HOMED_ENABLE_AUTH_RUNTIME
   "Build the auth broker daemon/client transport nostr-authd (requires auth+identity cores)" OFF)
+option(NOSTR_HOMED_ENABLE_FSCRYPT
+  "Build authd-only fscrypt v2 at-rest lock and systemd lifecycle watcher" OFF)
+if(NOSTR_HOMED_ENABLE_FSCRYPT AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+    NOT NOSTR_HOMED_ENABLE_AUTH_RUNTIME OR NOT NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL))
+  message(FATAL_ERROR "NOSTR_HOMED_ENABLE_FSCRYPT requires Linux, NOSTR_HOMED_ENABLE_AUTH_RUNTIME and NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL")
+endif()
 option(NOSTR_HOMED_ENABLE_PAM
   "Build the broker-backed pam_nostr.so PAM module (requires auth runtime + libpam)" OFF)
 option(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG
@@ -1020,14 +1026,18 @@ endif()
 # it rides this test.
 # ----------------------------------------------------------------------------
 if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND TARGET nostr-authd)
+  set(_authd_dep_purity_flags)
+  if(NOSTR_HOMED_ENABLE_FSCRYPT)
+    list(APPEND _authd_dep_purity_flags --fscrypt)
+  endif()
   if(NOSTR_HOMED_ENABLE_PAM AND TARGET pam_nostr)
     add_test(NAME homed_authd_dep_purity
       COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-authd-dep-purity.sh
-              $<TARGET_FILE:nostr-authd> $<TARGET_FILE:pam_nostr>)
+              ${_authd_dep_purity_flags} $<TARGET_FILE:nostr-authd> $<TARGET_FILE:pam_nostr>)
   else()
     add_test(NAME homed_authd_dep_purity
       COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-authd-dep-purity.sh
-              $<TARGET_FILE:nostr-authd>)
+              ${_authd_dep_purity_flags} $<TARGET_FILE:nostr-authd>)
   endif()
   set_tests_properties(homed_authd_dep_purity PROPERTIES
     LABELS "nostr-homed;auth-runtime;dep-purity" TIMEOUT 15
@@ -1667,6 +1677,47 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     if(TARGET nostr-home-fetch)
       target_compile_definitions(nostr_auth_runtime PRIVATE
         NH_PORTHOME_FETCH_HELPER_PATH="$<TARGET_FILE:nostr-home-fetch>")
+    endif()
+  endif()
+
+  if(NOSTR_HOMED_ENABLE_FSCRYPT)
+    pkg_check_modules(FSCRYPT_SYSTEMD QUIET IMPORTED_TARGET libsystemd)
+    if(NOT FSCRYPT_SYSTEMD_FOUND)
+      message(FATAL_ERROR "NOSTR_HOMED_ENABLE_FSCRYPT requires libsystemd development files (sd-bus)")
+    endif()
+    find_package(Threads REQUIRED)
+    add_library(nostr_fscrypt STATIC src/auth/fscrypt_kernel.c src/auth/fscrypt_lifecycle.c src/auth/fscrypt_copy.c)
+    target_include_directories(nostr_fscrypt PUBLIC include src/auth)
+    target_link_libraries(nostr_fscrypt PRIVATE nostrc::porthome nostr_identity_core
+      nostr_porthome_common SQLite3::SQLite3 OpenSSL::Crypto Threads::Threads PkgConfig::FSCRYPT_SYSTEMD PkgConfig::JANSSON)
+    target_compile_options(nostr_fscrypt PRIVATE -Wall -Wextra -Werror)
+    # nostrc-h10m.12: deliberately NOT a nostr_auth_runtime/PAM dependency.
+    target_link_libraries(nostr-authd PRIVATE nostr_fscrypt)
+    target_compile_definitions(nostr-authd PRIVATE NH_AUTH_ENABLE_FSCRYPT=1)
+    if(NOSTR_HOMED_BUILD_TESTS)
+      if(NOSTR_HOMED_ENABLE_PAM)
+        add_executable(test_fscrypt_pam_session tests/integration/test_fscrypt_pam_session.c)
+        target_include_directories(test_fscrypt_pam_session PRIVATE ${PAM_INCLUDE_DIR})
+        target_link_libraries(test_fscrypt_pam_session PRIVATE ${PAM_LIBRARY})
+        target_compile_options(test_fscrypt_pam_session PRIVATE -Wall -Wextra -Werror)
+      endif()
+      add_executable(test_fscrypt_unwrap tests/integration/test_broker_login_nip46.c)
+      target_compile_definitions(test_fscrypt_unwrap PRIVATE NH_TEST_FSCRYPT=1)
+      target_link_libraries(test_fscrypt_unwrap PRIVATE nostr_auth_runtime nostr_fscrypt)
+      if(TARGET nostr_nip46_core)
+        target_link_libraries(test_fscrypt_unwrap PRIVATE nostr_nip46_core)
+      else()
+        target_link_libraries(test_fscrypt_unwrap PRIVATE PkgConfig::NOSTR_NIP46)
+      endif()
+      target_compile_options(test_fscrypt_unwrap PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      add_executable(test_fscrypt_kernel tests/integration/test_fscrypt_kernel.c)
+      target_link_libraries(test_fscrypt_kernel PRIVATE nostr_fscrypt)
+      target_compile_options(test_fscrypt_kernel PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      add_executable(test_fscrypt_lifecycle tests/unit/test_fscrypt_lifecycle.c)
+      target_include_directories(test_fscrypt_lifecycle PRIVATE include src/auth)
+      target_compile_options(test_fscrypt_lifecycle PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      add_test(NAME homed_fscrypt_lifecycle COMMAND test_fscrypt_lifecycle)
+      set_tests_properties(homed_fscrypt_lifecycle PROPERTIES LABELS "nostr-homed;porthome;unit" TIMEOUT 30)
     endif()
   endif()
 

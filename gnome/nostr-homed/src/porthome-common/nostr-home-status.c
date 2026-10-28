@@ -732,6 +732,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     free(path);
+    rc = nh_porthome_status_merge_fscrypt((unsigned long)getuid(), &body, &body_len);
+    if (rc) { free(body); return 1; }
 
     if (field) {
         char *out = NULL;

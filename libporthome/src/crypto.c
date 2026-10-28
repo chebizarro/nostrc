@@ -93,6 +93,38 @@ static int hkdf_sha256(const char *salt, size_t salt_len,
     return rc == 0 ? PORTHOME_OK : PORTHOME_ERR_CRYPTO;
 }
 
+int porthome_fscrypt_master_derive(const uint8_t home_key[32],
+    const char *account_id, const uint8_t device_salt[32], uint32_t generation,
+    uint8_t out_master[64]) {
+    if (!out_master) return PORTHOME_ERR_ARG;
+    if (!home_key || !account_id || !device_salt || !generation ||
+        strnlen(account_id, 37) != 36) {
+        OPENSSL_cleanse(out_master, 64);
+        return PORTHOME_ERR_ARG;
+    }
+    for (size_t i = 0; i < 36; i++) {
+        int dash = i == 8 || i == 13 || i == 18 || i == 23;
+        char c = account_id[i];
+        if ((dash && c != '-') || (!dash && !((c >= '0' && c <= '9') ||
+                                               (c >= 'a' && c <= 'f')))) {
+            OPENSSL_cleanse(out_master, 64);
+            return PORTHOME_ERR_ARG;
+        }
+    }
+    uint8_t info[5 + 36 + 1 + 32 + 4];
+    memcpy(info, "home", 5);
+    memcpy(info + 5, account_id, 36);
+    info[41] = 0;
+    memcpy(info + 42, device_salt, 32);
+    for (unsigned i = 0; i < 4; i++) info[74 + i] = (uint8_t)(generation >> (24 - i * 8));
+    static const char salt[] = "porthome/local/fscrypt/v1";
+    int rc = hkdf_sha256(salt, sizeof salt - 1, home_key, 32,
+                         info, sizeof info, out_master, 64);
+    OPENSSL_cleanse(info, sizeof info);
+    if (rc != PORTHOME_OK) OPENSSL_cleanse(out_master, 64);
+    return rc;
+}
+
 int porthome_key_derive(const uint8_t seed[32], uint8_t out_home_key[32]) {
     if (!seed || !out_home_key) return PORTHOME_ERR_ARG;
     int rc = hkdf_sha256(SALT_HOME, sizeof(SALT_HOME) - 1,

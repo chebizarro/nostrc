@@ -213,7 +213,8 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
     *eq = '\0';
     char *key = trim(p);
     char *value = trim(eq + 1);
-    if (!*key || (!*value && strcmp(key, "porthome_require_encrypted"))) continue;
+    if (!*key || (!*value && strcmp(key, "porthome_require_encrypted") &&
+        strcmp(key, "porthome_fscrypt") && strcmp(key, "porthome_fscrypt_allow_without_luks"))) continue;
     if (!strcmp(key, "nip46_qr_relays")) {
       parse_relays_csv(out, value);
     } else if (!strcmp(key, "nip46_qr_wait_ms")) {
@@ -262,6 +263,11 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
         out->porthome_bandwidth_bytes_per_load = (uint64_t)v;
     } else if (!strcmp(key, "porthome_load_timeout_sec")) {
       (void)parse_uint32(value, &out->porthome_load_timeout_sec);
+    } else if (!strcmp(key, "porthome_fscrypt") || !strcmp(key, "porthome_fscrypt_allow_without_luks")) {
+      uint8_t *setting = !strcmp(key, "porthome_fscrypt") ? &out->porthome_fscrypt : &out->porthome_fscrypt_allow_without_luks;
+      if (!strcasecmp(value, "on") || !strcasecmp(value, "true") || !strcmp(value, "1")) *setting = 1;
+      else if (!strcasecmp(value, "off") || !strcasecmp(value, "false") || !strcmp(value, "0")) *setting = 0;
+      else out->porthome_fscrypt_invalid = 1;
     } else if (!strcmp(key, "porthome_require_encrypted")) {
       /* Fail closed on malformed/empty values, not silently warn-only. */
       out->porthome_require_encrypted = !(!strcasecmp(value, "off") ||
