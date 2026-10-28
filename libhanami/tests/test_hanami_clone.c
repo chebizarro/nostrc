@@ -239,7 +239,7 @@ static int row_cmp(const void *a, const void *b) { return strcmp(((const row_t *
 static void upload_manifest(blossom_client_t *c, const char *repo, const char *prev,
                             rows_t *rows, char head[65])
 {
-    qsort(rows->v, rows->n, sizeof(row_t), row_cmp);
+    if (rows->n) qsort(rows->v, rows->n, sizeof(row_t), row_cmp);
     json_t *array = json_array();
     for (size_t i = 0; i < rows->n; i++)
         json_array_append_new(array, json_pack("{s:s,s:s,s:I,s:i}", "git_oid", rows->v[i].oid,

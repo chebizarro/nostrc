@@ -115,7 +115,7 @@ static int blossom_odb_read(void **data_p, size_t *len_p, git_object_t *type_p,
         free(raw_data);
         return -1;
     }
-    memcpy(odb_buf, raw_data, raw_len);
+    if (raw_len) memcpy(odb_buf, raw_data, raw_len);
     if (be->vault) OPENSSL_cleanse(raw_data, raw_len);
     free(raw_data);
 
