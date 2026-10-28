@@ -379,6 +379,24 @@ Callers serialize operations for the same signed coordinate; concurrent writers
 cannot safely share a saved baseline. GRASP purgatory is a server visibility
 boundary, not evidence of delivered Git data or a client rollback mechanism.
 
+Fetch downloads Smart HTTP objects without updating local refs, then queries the
+configured relays for the owner's latest kind-30617 announcement (if present)
+and the newest signed kind-30618 state from the owner and its listed maintainers.
+Each author query completes at EOSE; replayed event IDs have no effect, and
+states are ordered by `created_at`, then event ID. The clone URL binds the owner
+and repository identifier. Every advertised Git ref tip must exactly match a
+state ref, and every state ref must be advertised. `HEAD` and peeled-tag aliases
+are not independent refs. Only after the complete comparison may libgit2 update
+`refs/remotes/grasp/*` (for example `refs/heads/main` maps to
+`refs/remotes/grasp/heads/main`). A missing state, CLOSED, AUTH without a fetch
+signer, timeout, extra ref or mismatched tip is an error; downloaded objects
+alone do not authorize a local ref update. `hanami_grasp_fetch_with_signer`
+allows a bounded NIP-42 retry: the relay must acknowledge the signed AUTH with
+`OK true` before the state query is retried. The original entrypoint has no
+signer and fails visibly on an AUTH-gated read. Fetch accepts at most eight
+relays, 16 listed maintainers, 2048 advertised refs and 64 KiB serialized
+state events.
+
 [GRASP-08](https://ngit.dev/protocol/grasp/specification/08) additionally needs
 NIP-42 and repository-scoped HTTP NIP-98. This helper does not claim that profile:
 the private/sealed repository guard remains in force before network activity.

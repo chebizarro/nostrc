@@ -694,9 +694,14 @@ hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
         const char *target = git_reference_symbolic_target(head);
         for (size_t i = 0; target && i < state_count; i++) {
             if (!strcmp(state[i].refname, target)) {
-                initial_head = malloc(strlen(target) + 6);
+                size_t head_size = strlen(target) + sizeof("ref: ");
+                initial_head = malloc(head_size);
                 if (!initial_head) { err = HANAMI_ERR_NOMEM; goto done; }
-                sprintf(initial_head, "ref: %s", target);
+                int written = snprintf(initial_head, head_size, "ref: %s", target);
+                if (written < 0 || (size_t)written >= head_size) {
+                    err = HANAMI_ERR_LIBGIT2;
+                    goto done;
+                }
                 break;
             }
         }
@@ -768,42 +773,211 @@ done:
  * GRASP fetch
  * ========================================================================= */
 
+enum { GRASP_MAX_FETCH_RELAYS = 8, GRASP_MAX_MAINTAINERS = 16,
+       GRASP_MAX_STATE_BYTES = 65536, GRASP_MAX_ADVERTISED_REFS = 2048 };
+
+static char *decode_repo_id(const char *path)
+{
+    char *id = malloc(strlen(path) + 1);
+    if (!id) return NULL;
+    size_t out = 0;
+    for (size_t i = 0; path[i]; i++) {
+        unsigned char c = (unsigned char)path[i];
+        if (c == '%') {
+            if (!path[i + 1] || !path[i + 2] ||
+                !isxdigit((unsigned char)path[i + 1]) ||
+                !isxdigit((unsigned char)path[i + 2])) {
+                free(id);
+                return NULL;
+            }
+            char hex[] = {path[i + 1], path[i + 2], 0};
+            c = (unsigned char)strtoul(hex, NULL, 16);
+            i += 2;
+        }
+        if (!c) { free(id); return NULL; }
+        id[out++] = (char)c;
+    }
+    id[out] = '\0';
+    return id;
+}
+
+static bool valid_pubkey(const char *key)
+{
+    if (!key || strlen(key) != 64) return false;
+    for (size_t i = 0; i < 64; i++)
+        if (!isxdigit((unsigned char)key[i])) return false;
+    return true;
+}
+
+static hanami_error_t fetch_signed_grasp_state(hanami_nostr_ctx_t *ctx,
+    const char *repo_id, const char *owner, nip34_repo_state_t **out)
+{
+    *out = NULL;
+    nip34_repository_t *announcement = NULL;
+    hanami_error_t err = hanami_nostr_fetch_repo(ctx, repo_id, owner, &announcement);
+    if (err != HANAMI_OK && err != HANAMI_ERR_NOT_FOUND) return err;
+    if (announcement && (!announcement->id ||
+        strcmp(announcement->id, repo_id) ||
+        announcement->maintainer_count > GRASP_MAX_MAINTAINERS)) {
+        nip34_repository_free(announcement);
+        return HANAMI_ERR_NOSTR;
+    }
+
+    NostrEvent *latest = NULL;
+    size_t author_count = announcement ? announcement->maintainer_count + 1 : 1;
+    for (size_t i = 0; i < author_count; i++) {
+        const char *author = i ? announcement->maintainers[i - 1] : owner;
+        if (!valid_pubkey(author)) { err = HANAMI_ERR_NOSTR; goto done; }
+        bool duplicate = false;
+        for (size_t j = 0; j < i; j++)
+            if (!strcmp(author, j ? announcement->maintainers[j - 1] : owner))
+                duplicate = true;
+        if (duplicate) continue;
+        NostrEvent *event = NULL;
+        err = hanami_nostr_fetch_state_event(ctx, repo_id, author, &event);
+        if (err == HANAMI_ERR_NOT_FOUND) continue;
+        if (err != HANAMI_OK) goto done;
+        char *json = nostr_event_serialize_compact(event);
+        if (!json || strlen(json) > GRASP_MAX_STATE_BYTES) {
+            free(json);
+            nostr_event_free(event);
+            err = HANAMI_ERR_NOSTR;
+            goto done;
+        }
+        free(json);
+        /* Each author query is EOSE-complete. Replayed IDs across relays have
+         * no effect; compare only the newest signed state across authors. */
+        if (!latest || event->created_at > latest->created_at ||
+            (event->created_at == latest->created_at &&
+             strcmp(event->id, latest->id) < 0)) {
+            nostr_event_free(latest);
+            latest = event;
+        } else {
+            nostr_event_free(event);
+        }
+    }
+    if (!latest) { err = HANAMI_ERR_NOT_FOUND; goto done; }
+    err = nip34_parse_repo_state(latest, out) == NIP34_OK && *out &&
+        (*out)->repo_id && !strcmp((*out)->repo_id, repo_id)
+        ? HANAMI_OK : HANAMI_ERR_NOSTR;
+done:
+    if (err != HANAMI_OK) {
+        nip34_repo_state_free(*out);
+        *out = NULL;
+    }
+    nostr_event_free(latest);
+    nip34_repository_free(announcement);
+    return err;
+}
+
+static hanami_error_t verify_grasp_advertisement(git_remote *remote,
+    const nip34_repo_state_t *state)
+{
+    const git_remote_head **heads = NULL;
+    size_t count = 0;
+    if (git_remote_ls(&heads, &count, remote) != 0) return HANAMI_ERR_NETWORK;
+    if (count > GRASP_MAX_ADVERTISED_REFS) return HANAMI_ERR_NOSTR;
+    size_t served = 0;
+    for (size_t i = 0; i < count; i++) {
+        const char *name = heads[i]->name;
+        if (!name || strncmp(name, "refs/", 5) ||
+            (strlen(name) >= 3 && !strcmp(name + strlen(name) - 3, "^{}")))
+            continue; /* HEAD and peeled-tag aliases are not independent refs. */
+        served++;
+        char actual[GIT_OID_HEXSZ + 1];
+        git_oid_tostr(actual, sizeof(actual), &heads[i]->oid);
+        bool matched = false;
+        for (size_t j = 0; j < state->ref_count; j++)
+            if (!strcmp(name, state->refs[j].refname)) {
+                matched = !strcmp(actual, state->refs[j].target);
+                break;
+            }
+        if (!matched) {
+            return HANAMI_ERR_NOSTR;
+        }
+    }
+    if (served != state->ref_count) {
+        return HANAMI_ERR_NOSTR;
+    }
+    return HANAMI_OK;
+}
+
 hanami_error_t hanami_grasp_fetch(git_repository *repo,
                                    const char *clone_url,
                                    const char *const *relay_urls,
                                    size_t relay_count)
 {
-    if (!clone_url)
-        return HANAMI_ERR_INVALID_ARG;
+    return hanami_grasp_fetch_with_signer(repo, clone_url, relay_urls,
+                                          relay_count, NULL);
+}
 
-    /* Validate GRASP URL */
+hanami_error_t hanami_grasp_fetch_with_signer(git_repository *repo,
+                                   const char *clone_url,
+                                   const char *const *relay_urls,
+                                   size_t relay_count,
+                                   const hanami_signer_t *signer)
+{
+    if (!clone_url) return HANAMI_ERR_INVALID_ARG;
     hanami_grasp_info_t *info = NULL;
     hanami_error_t err = hanami_grasp_parse_clone_url(clone_url, &info);
-    if (err != HANAMI_OK)
-        return err;
-    hanami_grasp_info_free(info);
-
-    if (!repo)
-        return HANAMI_OK; /* Info-only validation */
-
-    /*
-     * TODO: Use relay_urls/relay_count to query kind 30618 state event
-     * and verify ref consistency after fetch. Currently unused as GRASP
-     * serves standard Git Smart HTTP without requiring Nostr verification.
-     */
-    (void)relay_urls;
-    (void)relay_count;
-
-    /* Use standard libgit2 fetch — GRASP serves standard Smart HTTP */
+    if (err != HANAMI_OK) return err;
+    if (!repo) { hanami_grasp_info_free(info); return HANAMI_OK; }
+    if (signer && (!signer->sign || !valid_pubkey(signer->pubkey))) {
+        hanami_grasp_info_free(info);
+        return HANAMI_ERR_INVALID_ARG;
+    }
+    char *repo_id = decode_repo_id(info->repo_name);
+    if (!repo_id) { err = HANAMI_ERR_INVALID_ARG; goto done; }
+    if (hanami_repo_private(repo)) { err = HANAMI_ERR_AUTH; goto done; }
+    if (!relay_urls || !relay_count || relay_count > GRASP_MAX_FETCH_RELAYS) {
+        err = HANAMI_ERR_INVALID_ARG;
+        goto done;
+    }
+    const char *bounded[GRASP_MAX_FETCH_RELAYS + 1] = {0};
+    for (size_t i = 0; i < relay_count; i++) {
+        if (!relay_urls[i] || !*relay_urls[i] || strlen(relay_urls[i]) > 2048) {
+            err = HANAMI_ERR_INVALID_ARG;
+            goto done;
+        }
+        bounded[i] = relay_urls[i];
+    }
+    if (!info->pubkey || !valid_pubkey(info->pubkey)) {
+        err = HANAMI_ERR_INVALID_ARG;
+        goto done;
+    }
+    hanami_nostr_ctx_t *ctx = NULL;
     git_remote *remote = NULL;
-    int rc = git_remote_create_anonymous(&remote, repo, clone_url);
-    if (rc < 0)
-        return HANAMI_ERR_LIBGIT2;
-
-    git_fetch_options fetch_opts;
-    git_fetch_options_init(&fetch_opts, GIT_FETCH_OPTIONS_VERSION);
-    rc = git_remote_fetch(remote, NULL, &fetch_opts, "grasp fetch");
-
+    nip34_repo_state_t *state = NULL;
+    err = hanami_nostr_ctx_new(bounded, signer, &ctx);
+    if (err != HANAMI_OK) goto fetch_done;
+    if (git_remote_create_anonymous(&remote, repo, clone_url) != 0) {
+        err = HANAMI_ERR_LIBGIT2;
+        goto fetch_done;
+    }
+    git_fetch_options opts;
+    git_fetch_options_init(&opts, GIT_FETCH_OPTIONS_VERSION);
+    /* Download objects without updating any local ref. Verify the signed,
+     * EOSE-complete snapshot against the advertised tips before update_tips. */
+    char *refspec_values[] = { "+refs/*:refs/remotes/grasp/*" };
+    git_strarray refspecs = { refspec_values, 1 };
+    if (git_remote_download(remote, &refspecs, &opts) != 0) {
+        err = HANAMI_ERR_NETWORK;
+        goto fetch_done;
+    }
+    err = fetch_signed_grasp_state(ctx, repo_id, info->pubkey, &state);
+    if (err != HANAMI_OK) goto fetch_done;
+    err = verify_grasp_advertisement(remote, state);
+    if (err != HANAMI_OK) goto fetch_done;
+    if (git_remote_update_tips(remote, NULL, 0, opts.download_tags,
+                               "grasp verified fetch") != 0)
+        err = HANAMI_ERR_LIBGIT2;
+fetch_done:
+    git_remote_disconnect(remote);
     git_remote_free(remote);
-    return (rc == 0) ? HANAMI_OK : HANAMI_ERR_NETWORK;
+    nip34_repo_state_free(state);
+    hanami_nostr_ctx_free(ctx);
+done:
+    free(repo_id);
+    hanami_grasp_info_free(info);
+    return err;
 }
