@@ -17,10 +17,24 @@ NPUB = "npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72k5cs2kd7pqf0h2zx"
 class Grasp(Relay):
     def message(self, message, mode):
         server = self.server
-        if message[0] == "REQ":
+        if message[0] == "AUTH":
+            event = message[1]
+            tags = dict(event["tags"])
+            assert event["kind"] == 22242 and event["content"] == ""
+            assert tags["relay"].rstrip("/") == f"ws://127.0.0.1:{server.server_address[1]}"
+            assert tags["challenge"] == "grasp-challenge"
+            self.authenticated = True
+            self.frame(["OK", event["id"], True, ""])
+            with server.lock:
+                server.auth_count += 1
+        elif message[0] == "REQ":
             sub, filt = message[1:3]
             assert filt["kinds"] == [30618] and filt["#d"] == ["repo"]
             assert len(filt["authors"]) == 1 and filt["limit"] == 1
+            if server.case == "auth-success" and not getattr(self, "authenticated", False):
+                self.frame(["AUTH", "grasp-challenge"])
+                self.frame(["CLOSED", sub, "auth-required: fixture credentials"])
+                return
             if server.case == "closed":
                 self.frame(["CLOSED", sub, "blocked: fixture refusal"])
                 return
@@ -44,6 +58,10 @@ class Grasp(Relay):
                 if accepted:
                     server.latest = event
                     (server.root / "state.json").write_text(json.dumps(event))
+                if server.case == "no-ok" and len(server.announcements) == 2:
+                    # Store the intended state but withhold its OK entirely.
+                    server.trace.append(("NO_OK", event["id"], True))
+                    return
                 self.frame(["OK", event["id"], accepted,
                             "purgatory: waiting for git data" if accepted else "blocked: fixture refusal"])
                 server.trace.append(("OK", event["id"], accepted))
@@ -110,6 +128,7 @@ def run_case(binary, case):
             server.latest = None
             server.announcements, server.trace = [], []
             server.http_requests = 0
+            server.auth_count = 0
             server.lock = threading.Lock()
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
@@ -119,21 +138,23 @@ def run_case(binary, case):
             finally:
                 server.shutdown()
                 worker.join()
-            if case in ("reject", "closed"):
+            if case in ("reject", "closed", "no-ok"):
                 assert server.http_requests == 0
             else:
                 assert server.http_requests > 0, "push entrypoint never reached Smart HTTP"
+            if case == "auth-success":
+                assert server.auth_count > 0
             if case == "success":
                 refs = {t[0]: t[1] for t in server.latest["tags"] if t[0].startswith("refs/")}
                 assert "refs/heads/main" not in refs, "deletion was not announced"
                 assert "refs/heads/unrelated" in refs, "selected push erased unrelated state"
                 assert len(server.announcements) == 3  # baseline, default push, delete
-            if case in ("fail-push", "first-fail"):
-                before = server.announcements[0] if case == "fail-push" else {"tags": [["d", "repo"]]}
+            if case in ("fail-push", "first-fail", "no-ok"):
+                before = server.announcements[0] if case != "first-fail" else {"tags": [["d", "repo"]]}
                 intended, correction = server.announcements[-2:]
                 assert correction["created_at"] > intended["created_at"]
                 assert correction["tags"] == before["tags"], "failed push left intended state advertised"
 
 
-for scenario in ("success", "fail-push", "first-fail", "reject", "correction-reject", "closed"):
+for scenario in ("success", "fail-push", "first-fail", "reject", "correction-reject", "closed", "auth-success", "no-ok"):
     run_case(sys.argv[1], scenario)

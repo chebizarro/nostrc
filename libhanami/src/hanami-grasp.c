@@ -595,6 +595,23 @@ static int push_negotiation(const git_push_update **updates, size_t count, void 
     return 0;
 }
 
+/* The clone path percent-encodes the same d-tag identifier, not another repo. */
+static bool repo_identifier_matches(const char *path, const char *id)
+{
+    while (*path) {
+        unsigned char c = (unsigned char)*path++;
+        if (c == '%') {
+            if (!path[0] || !path[1] || !isxdigit((unsigned char)path[0]) ||
+                !isxdigit((unsigned char)path[1])) return false;
+            char hex[] = {path[0], path[1], 0};
+            c = (unsigned char)strtoul(hex, NULL, 16);
+            path += 2;
+        }
+        if (!c || c != (unsigned char)*id++) return false;
+    }
+    return *id == '\0';
+}
+
 hanami_error_t hanami_push_to_grasp(git_repository *repo,
                                      const hanami_grasp_push_opts_t *opts)
 {
@@ -626,6 +643,10 @@ hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
     err = hanami_grasp_parse_clone_url(opts->clone_url, &info);
     if (err != HANAMI_OK) goto done;
     if (hanami_repo_private(repo)) { err = HANAMI_ERR_AUTH; goto done; }
+    if (!info->pubkey || !repo_identifier_matches(info->repo_name, opts->repo_id)) {
+        err = HANAMI_ERR_INVALID_ARG;
+        goto done;
+    }
 
     /* The GRASP root, not an arbitrary accepting replica, authorizes the push. */
     const char *roots[] = { info->relay_url, NULL };

@@ -42,7 +42,10 @@ typedef struct {
  *
  * Create a git_refdb_backend that stores refs via NIP-34 kind 30618 events.
  * On creation, the latest state is fetched from relays (if reachable). Writes
- * create new signed 30618 events and publish them to relays.
+ * create new signed 30618 events. Write/rename/delete commit the cache only
+ * after at least one configured relay returns OK true; otherwise they fail and
+ * restore the previous cache. An unconfirmed ACK is not a distributed rollback:
+ * the event may exist remotely. Repository operations are externally serialized.
  *
  * Reflog operations are not supported (return GIT_ENOTFOUND).
  *

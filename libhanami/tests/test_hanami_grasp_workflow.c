@@ -84,11 +84,15 @@ int main(int argc, char **argv)
         .refspecs = specs, .refspec_count = 1 };
     if (!strcmp(argv[2], "success")) { opts.refspecs = NULL; opts.refspec_count = 0; }
     hanami_grasp_push_result_t result;
+    opts.repo_id = "another-repo";
+    assert(hanami_push_to_grasp_with_result(repo, &opts, &result) == HANAMI_ERR_INVALID_ARG);
+    assert(!result.state_accepted && !result.push_attempted);
+    opts.repo_id = "repo";
     hanami_error_t err = hanami_push_to_grasp_with_result(repo, &opts, &result);
     fprintf(stderr, "%s: result=%d operation=%d recovery=%d git=%s\n", argv[2], err,
             result.operation_error, result.recovery_error,
             git_error_last() ? git_error_last()->message : "none");
-    if (!strcmp(argv[2], "success")) {
+    if (!strcmp(argv[2], "success") || !strcmp(argv[2], "auth-success")) {
         assert(err == HANAMI_OK && result.state_accepted && result.push_completed);
         assert(!result.recovery_attempted);
         const char *deletion[] = {":refs/heads/main", NULL};
@@ -97,6 +101,10 @@ int main(int argc, char **argv)
         assert(hanami_push_to_grasp(repo, &opts) == HANAMI_OK);
     } else if (!strcmp(argv[2], "closed")) {
         assert(err == HANAMI_ERR_NOSTR && !result.state_accepted && !result.push_attempted);
+    } else if (!strcmp(argv[2], "no-ok")) {
+        assert(err == HANAMI_ERR_TIMEOUT && result.operation_error == HANAMI_ERR_TIMEOUT);
+        assert(!result.state_accepted && !result.push_attempted);
+        assert(result.recovery_attempted && result.recovery_error == HANAMI_OK);
     } else {
         assert(err != HANAMI_OK && !result.push_completed);
         assert(result.recovery_attempted);

@@ -17,7 +17,7 @@ if(NOT COMMAND declare_component_version)
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
-set(HANAMI_VERSION_MINOR 6)
+set(HANAMI_VERSION_MINOR 7)
 set(HANAMI_VERSION_MICRO 0)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
@@ -270,7 +270,7 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
             $<TARGET_FILE:test-hanami-nostr-protocol>)
   set_tests_properties(test-hanami-nostr-protocol PROPERTIES
-    TIMEOUT 45 LABELS "libhanami;nostr;integration")
+    TIMEOUT 90 LABELS "libhanami;nostr;integration")
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-nostr-protocol)
   endif()
@@ -302,6 +302,18 @@ if(BUILD_TESTING)
     apply_sanitizers(test-hanami-refdb-backend)
   endif()
 
+  add_executable(test-hanami-refdb-acceptance tests/test_hanami_refdb_acceptance.c)
+  target_compile_options(test-hanami-refdb-acceptance PRIVATE -Wall -Wextra -UNDEBUG)
+  target_link_libraries(test-hanami-refdb-acceptance PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
+  add_test(NAME test-hanami-refdb-acceptance
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+            $<TARGET_FILE:test-hanami-refdb-acceptance> refdb-acceptance)
+  set_tests_properties(test-hanami-refdb-acceptance PROPERTIES
+    TIMEOUT 30 LABELS "libhanami;refdb;integration")
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-refdb-acceptance)
+  endif()
+
   add_executable(test-hanami-transport tests/test_hanami_transport.c)
   target_compile_features(test-hanami-transport PRIVATE c_std_11)
   target_link_libraries(test-hanami-transport PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
@@ -331,7 +343,9 @@ if(BUILD_TESTING)
   add_executable(test-hanami-integration tests/test_hanami_integration.c)
   target_compile_features(test-hanami-integration PRIVATE c_std_11)
   target_link_libraries(test-hanami-integration PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2 PkgConfig::SQLITE3)
-  add_test(NAME test-hanami-integration COMMAND test-hanami-integration)
+  add_test(NAME test-hanami-integration
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+            $<TARGET_FILE:test-hanami-integration> integration)
   set_tests_properties(test-hanami-integration PROPERTIES
     TIMEOUT 60
     LABELS "libhanami;integration"

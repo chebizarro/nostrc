@@ -28,6 +28,14 @@ if(TEST "test-hanami-grasp-workflow")
     EXPECTED pass)
 endif()
 
+if(TEST "test-hanami-refdb-acceptance")
+  nostrc_describe_test("test-hanami-refdb-acceptance"
+    OWNER libhanami nip34
+    TARGETS test-hanami-refdb-acceptance
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+    EXPECTED pass)
+endif()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "test-hanami-config")
   nostrc_add_test_owners("test-hanami-config" OWNER nip34)
@@ -39,7 +47,11 @@ if(TEST "test-hanami-index")
   nostrc_add_test_owners("test-hanami-index" OWNER nip34)
 endif()
 if(TEST "test-hanami-integration")
-  nostrc_add_test_owners("test-hanami-integration" OWNER nip34)
+  nostrc_describe_test("test-hanami-integration"
+    OWNER libhanami nip34
+    TARGETS test-hanami-integration
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+    EXPECTED pass)
 endif()
 if(TEST "test-hanami-nostr-protocol")
   nostrc_add_test_owners("test-hanami-nostr-protocol" OWNER nip34)

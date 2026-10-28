@@ -358,6 +358,9 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
         char *challenge_copy = ch ? strdup(ch) : NULL;
 
         nsync_mu_lock(&r->priv->mutex);
+        if (((r->priv->challenge == NULL) != (challenge_copy == NULL)) ||
+            (r->priv->challenge && challenge_copy && strcmp(r->priv->challenge, challenge_copy)))
+            r->priv->auth_generation++;
         if (r->priv->challenge) free(r->priv->challenge);
         r->priv->challenge = challenge_copy;
         challenge_copy = NULL;
@@ -1707,7 +1710,8 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     }
 
     nostr_metric_counter_add("events_published", 1);
-    /* NIP-01 requires client publish envelope: ["EVENT", <event>] */
+    /* NIP-42 authentication has its own envelope, but the same event-ID OK. */
+    const char *verb = event->kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? "AUTH" : "EVENT";
     size_t ej_len = strlen(event_json);
     size_t frame_len = 10 /* ["EVENT",] */ + ej_len + 1;
     char *frame = (char *)malloc(frame_len);
@@ -1718,7 +1722,7 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     }
     /* Build the frame without trailing newline */
     /* snprintf format: ["EVENT",%s] */
-    int nw = snprintf(frame, frame_len, "[\"EVENT\",%s]", event_json);
+    int nw = snprintf(frame, frame_len, "[\"%s\",%s]", verb, event_json);
     free(event_json);
     if (nw <= 0 || (size_t)nw >= frame_len) {
         fprintf(stderr, "[nostr_relay_publish] ERROR: snprintf failed\n");
@@ -1835,6 +1839,17 @@ bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
     relay_ok_waiter_free(waiter);
     free(event_id);
     return accepted;
+}
+
+char *nostr_relay_get_auth_challenge(NostrRelay *relay, uint64_t *generation) {
+    if (generation) *generation = 0;
+    if (!relay || !relay->priv) return NULL;
+    nsync_mu_lock(&relay->priv->mutex);
+    if (generation) *generation = relay->priv->auth_generation;
+    char *challenge = relay->priv->connection_state == NOSTR_RELAY_STATE_CONNECTED &&
+        relay->priv->challenge ? strdup(relay->priv->challenge) : NULL;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return challenge;
 }
 
 void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
@@ -2248,6 +2263,11 @@ static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_sta
     old_state = relay->priv->connection_state;
     if (old_state != new_state) {
         relay->priv->connection_state = new_state;
+        if (new_state == NOSTR_RELAY_STATE_CONNECTING) {
+            relay->priv->auth_generation++;
+            free(relay->priv->challenge);
+            relay->priv->challenge = NULL;
+        }
         slot = relay_callback_slot_ref_locked(relay->priv->state_slot);
     }
     nsync_mu_unlock(&relay->priv->mutex);

@@ -228,10 +228,48 @@ static int load_state_from_nostr(hanami_refdb_nostr_t *be)
  * Publish state: create and send kind 30618
  * ========================================================================= */
 
-static int restore_private(hanami_refdb_nostr_t *be)
+typedef struct {
+    hanami_cached_ref_t *refs;
+    size_t count, capacity;
+} cache_transaction;
+
+/* Mutate a private copy; retain the committed cache until a relay ACKs it. */
+static int cache_begin(hanami_refdb_nostr_t *be, cache_transaction *before)
 {
-    if (be->sealed) { cache_clear(be); load_state_from_nostr(be); }
-    return -1;
+    hanami_refdb_nostr_t copy = {0};
+    for (size_t i = 0; i < be->ref_count; i++) {
+        hanami_cached_ref_t *ref = &be->refs[i];
+        if (cache_set(&copy, ref->refname, ref->is_symbolic,
+                      ref->sym_target, &ref->oid) != 0) {
+            cache_clear(&copy);
+            free(copy.refs);
+            git_error_set(GIT_ERROR_REFERENCE, "cannot snapshot ref cache");
+            return -1;
+        }
+    }
+    *before = (cache_transaction){be->refs, be->ref_count, be->ref_capacity};
+    be->refs = copy.refs;
+    be->ref_count = copy.ref_count;
+    be->ref_capacity = copy.ref_capacity;
+    return 0;
+}
+
+static int cache_finish(hanami_refdb_nostr_t *be, cache_transaction *before, int rc)
+{
+    hanami_refdb_nostr_t discarded = { .refs = before->refs, .ref_count = before->count };
+    if (rc != 0) {
+        discarded.refs = be->refs;
+        discarded.ref_count = be->ref_count;
+        be->refs = before->refs;
+        be->ref_count = before->count;
+        be->ref_capacity = before->capacity;
+        /* Sealed publication can update the authoritative snapshot. Keep its
+         * existing recovery semantics after restoring the local transaction. */
+        if (be->sealed) { cache_clear(be); load_state_from_nostr(be); }
+    }
+    cache_clear(&discarded);
+    free(discarded.refs);
+    return rc;
 }
 
 static int publish_state(hanami_refdb_nostr_t *be)
@@ -240,7 +278,7 @@ static int publish_state(hanami_refdb_nostr_t *be)
     size_t max_refs = be->ref_count;
     nip34_ref_t *refs = calloc(max_refs, sizeof(nip34_ref_t));
     if (!refs && max_refs > 0)
-        return restore_private(be);
+        return -1;
 
     char *head_str = NULL;
     size_t ref_count = 0;
@@ -317,27 +355,22 @@ static int publish_state(hanami_refdb_nostr_t *be)
     if (be->sealed) {
         if (err != HANAMI_OK) {
             /* Private refs are committed only with a durable snapshot + ACK. */
-            cache_clear(be);
-            load_state_from_nostr(be);
             git_error_set(GIT_ERROR_REFERENCE, "private snapshot publish failed (%d)", err);
             return -1;
         }
         return 0;
     }
 
-    /* Relay publish is best-effort — the cache (source of truth) is already
-     * updated before publish_state is called.  A failed relay publish means
-     * the ref state isn't replicated to Nostr yet, but local operations
-     * continue correctly.  Log and move on. */
-    if (err != HANAMI_OK && err != HANAMI_ERR_NETWORK) {
-        fprintf(stderr, "[hanami-refdb] warning: relay state publish failed (%d)\n",
-                (int)err);
+    if (err != HANAMI_OK) {
+        git_error_set(GIT_ERROR_REFERENCE, "relay state publish failed (%d)", err);
+        return -1;
     }
     return 0;
 build_failed:
     for (size_t i = 0; i < ref_count; i++) free(refs[i].target);
     free(refs); free(head_str);
-    return restore_private(be);
+    git_error_set(GIT_ERROR_REFERENCE, "cannot build ref state");
+    return -1;
 }
 
 /* =========================================================================
@@ -538,7 +571,9 @@ static int nostr_refdb_write(git_refdb_backend *_backend,
             return GIT_EEXISTS;
     }
 
-    /* Update cache */
+    cache_transaction before;
+    if (cache_begin(be, &before) != 0) return -1;
+    /* Update the candidate cache. */
     git_reference_t type = git_reference_type(ref);
     int rc;
     if (type == GIT_REFERENCE_SYMBOLIC) {
@@ -548,10 +583,8 @@ static int nostr_refdb_write(git_refdb_backend *_backend,
         const git_oid *oid = git_reference_target(ref);
         rc = cache_set(be, name, false, NULL, oid);
     }
-    if (rc < 0) return -1;
-
-    /* Publish updated state to relays */
-    return publish_state(be);
+    if (rc == 0) rc = publish_state(be);
+    return cache_finish(be, &before, rc);
 }
 
 /* =========================================================================
@@ -576,22 +609,25 @@ static int nostr_refdb_rename(git_reference **out, git_refdb_backend *_backend,
     if (!force && cache_find(be, new_name))
         return GIT_EEXISTS;
 
+    cache_transaction before;
+    if (cache_begin(be, &before) != 0) return -1;
+    old_ref = cache_find(be, old_name);
     /* Copy old ref data, add new, remove old */
     bool is_sym = old_ref->is_symbolic;
     char *sym_target = old_ref->sym_target ? strdup(old_ref->sym_target) : NULL;
     git_oid oid;
     git_oid_cpy(&oid, &old_ref->oid);
 
-    if (is_sym && !sym_target) return -1;
+    if (is_sym && !sym_target) return cache_finish(be, &before, -1);
     int rc = cache_set(be, new_name, is_sym, sym_target, &oid);
     free(sym_target);
-    if (rc < 0) return rc;
+    if (rc < 0) return cache_finish(be, &before, rc);
     cache_remove(be, old_name);
 
     /* Create output reference */
     hanami_cached_ref_t *new_ref = cache_find(be, new_name);
     if (!new_ref)
-        return -1;
+        return cache_finish(be, &before, -1);
 
     if (new_ref->is_symbolic) {
         *out = git_reference__alloc_symbolic(new_ref->refname, new_ref->sym_target);
@@ -600,11 +636,11 @@ static int nostr_refdb_rename(git_reference **out, git_refdb_backend *_backend,
     }
 
     if (!*out)
-        return restore_private(be);
+        return cache_finish(be, &before, -1);
 
     rc = publish_state(be);
     if (rc != 0) { git_reference_free(*out); *out = NULL; }
-    return rc;
+    return cache_finish(be, &before, rc);
 }
 
 /* =========================================================================
@@ -628,8 +664,10 @@ static int nostr_refdb_del(git_refdb_backend *_backend, const char *ref_name,
                       strcmp(existing->sym_target, old_target) != 0))
         return GIT_EMODIFIED;
 
+    cache_transaction before;
+    if (cache_begin(be, &before) != 0) return -1;
     cache_remove(be, ref_name);
-    return publish_state(be);
+    return cache_finish(be, &before, publish_state(be));
 }
 
 /* =========================================================================

@@ -57,8 +57,10 @@ typedef void (*hanami_nostr_event_cb)(const NostrEvent *event, void *user_data);
  *
  * Create a Nostr context for NIP-34 operations.
  * The libnostr pool establishes relay connections lazily on first use.
- * Operations on a context are serialized. NIP-42 challenges fail with
- * HANAMI_ERR_AUTH; this API does not automatically authorize relay login.
+ * Operations on a context are serialized. Supplying a signer authorizes its
+ * use for NIP-42 on these configured relays. Signing runs on the operation's
+ * caller thread. AUTH requires its own OK true before one application retry;
+ * no signer, rejected AUTH or repeated auth-required fails visibly.
  *
  * Returns: HANAMI_OK on success
  */
@@ -105,7 +107,9 @@ HANAMI_API hanami_error_t hanami_nostr_publish_repo(hanami_nostr_ctx_t *ctx,
  * @ref_count: number of refs
  * @head: (nullable): HEAD value (e.g. "ref: refs/heads/main")
  *
- * Create and publish a kind 30618 repository state event.
+ * Create and publish a kind 30618 repository state event. State timestamps
+ * advance beyond this context's previous attempts and fetched state, so rapid
+ * writes supersede rather than race on NIP-01's same-second ID tie-break.
  *
  * Returns: HANAMI_OK on success
  */
@@ -121,7 +125,9 @@ HANAMI_API hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
  * @event: signed event to publish (borrowed)
  *
  * Publish a pre-built, pre-signed event to all connected relays.
- * Waits for NIP-01 OK acknowledgments, not just websocket sends.
+ * Waits for NIP-01 OK acknowledgments, not just websocket sends. With a signer,
+ * an auth-required refusal is retried once, using the identical signed event,
+ * after accepted NIP-42 AUTH. AUTH's OK alone is never publication success.
  *
  * Returns: HANAMI_OK if at least one relay accepts the event; otherwise
  * HANAMI_ERR_NOSTR on rejection, HANAMI_ERR_AUTH if authentication is required,
