@@ -12,6 +12,7 @@ Relay URL paths select per-connection REQ behaviour over the shared store:
   auth        AUTH + CLOSED "auth-required:" until a NIP-42 AUTH is accepted
 and serves every other kind normally. /isolated/<name> is a relay with its
 own event store (an owner's NIP-65 outbox relay that nothing else mirrors).
+/unavailable cannot be connected: the websocket upgrade gets HTTP 503.
 """
 import base64
 import hashlib
@@ -38,6 +39,7 @@ class Store:
         self.relay_reject = False     # relay EVENT -> OK false
         self.auth_ok = 0              # NIP-42 AUTH events accepted
         self.isolated = {}            # /isolated/<name> relay -> own events
+        self.unavailable_hits = 0     # dials of the /unavailable relay
 
 
 store = Store()
@@ -97,6 +99,11 @@ class Blossom(http.server.BaseHTTPRequestHandler):
         if self.path == "/control/blob-gets":
             with store.lock:
                 body = str(store.blob_gets).encode()
+            self.reply(200, body, "text/plain")
+            return
+        if self.path == "/control/unavailable-hits":
+            with store.lock:
+                body = str(store.unavailable_hits).encode()
             self.reply(200, body, "text/plain")
             return
         if self.path == "/control/auth-ok":
@@ -220,6 +227,13 @@ class Relay(socketserver.StreamRequestHandler):
         while line := self.rfile.readline().strip():
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
+        if self.path == "/unavailable":
+            with store.lock:
+                store.unavailable_hits += 1
+            self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                             b"Connection: close\r\n\r\n")
+            self.wfile.flush()
+            return
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
         self.wfile.flush()

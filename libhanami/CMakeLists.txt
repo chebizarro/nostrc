@@ -262,7 +262,7 @@ if(BUILD_TESTING)
   add_test(NAME test-hanami-clone
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/clone_fixture.py"
             $<TARGET_FILE:test-hanami-clone> discovery seed clone seed2 fetch pushfail checkpoint republish negative
-            relayfail outbox)
+            relayfail outbox unreachable)
   set_tests_properties(test-hanami-clone PROPERTIES
     TIMEOUT 180 LABELS "libhanami;clone;integration")
   if(COMMAND apply_sanitizers)

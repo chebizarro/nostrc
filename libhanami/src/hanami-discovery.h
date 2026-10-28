@@ -7,7 +7,8 @@
 #include <stdbool.h>
 
 /* Owner's BUD-03 kind-10063 server list, `server` tags in listed order.
- * EOSE-completed snapshot; HANAMI_ERR_NOT_FOUND when no list exists.
+ * EOSE-completed snapshot; HANAMI_ERR_NOT_FOUND only when every relay sent
+ * EOSE without a list (see hanami_nostr_fetch_state for the other errors).
  * Caller frees with hanami_discovery_free_list(). */
 hanami_error_t hanami_nostr_fetch_blossom_servers(hanami_nostr_ctx_t *ctx,
     const char *pubkey, char ***out, size_t *count);

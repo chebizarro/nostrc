@@ -1150,6 +1150,98 @@ static void test_outbox(void)
            "write-only, deduplicated, capped); no 10002 adds nothing\n");
 }
 
+/* =========================================================================
+ * nostrc-837ap: a relay that cannot be connected is unanswered, not
+ * excluded. Absence needs every relay's EOSE; the event from a reachable
+ * relay still wins.
+ * ========================================================================= */
+
+static const char *sk3 = "0000000000000000000000000000000000000000000000000000000000000003";
+
+static void test_unreachable(void)
+{
+    char dead[200], closed_state[200];
+    FORMAT(dead, "%s/unavailable", relay);
+    FORMAT(closed_state, "%s/closed/30618", relay);
+    const char *with_dead[] = { dead, relay, NULL };
+    const char *plain[] = { relay, NULL };
+    char *c1 = read_text("commit-1");
+    git_repository *repo = NULL;
+
+    /* 1. Unreachable + EOSE-empty 30618: visible error, not an empty clone. */
+    announce_on("ur-empty", plain);
+    long hits = counter("unavailable-hits");
+    hanami_config_t *config = NULL;
+    char uri[200], dest[PATH_MAX];
+    FORMAT(uri, "nostr://%s/ur-empty", pk);
+    path_of(dest, sizeof(dest), "ur-empty");
+    OK(hanami_config_new(&config));
+    OK(hanami_config_set_relays(config, with_dead, 2));
+    hanami_config_set_allow_insecure(config, true);
+    OK(hanami_config_set_endpoint(config, blossom));
+    expect_error("unreachable + empty", hanami_clone(&repo, uri, dest, NULL, config),
+                 HANAMI_ERR_NETWORK, "kind-30618");
+    assert(!repo && access(dest, F_OK) != 0);
+    assert(counter("unavailable-hits") > hits); /* the relay was dialled */
+    hanami_config_free(config);
+
+    /* 2. Unreachable + a relay that has the 10063 and 30618: success, and
+     *    hanami_fetch through the recorded (still partly dead) relays. */
+    seed_repo("ur-found", plain);
+    FORMAT(uri, "nostr://%s/ur-found", pk);
+    path_of(dest, sizeof(dest), "ur-found");
+    OK(hanami_config_new(&config));
+    OK(hanami_config_set_relays(config, with_dead, 2));
+    hanami_config_set_allow_insecure(config, true);
+    OK(hanami_clone(&repo, uri, dest, NULL, config));
+    hanami_config_free(config);
+    assert_cloned(repo, c1);
+    OK(hanami_config_new(&config));
+    hanami_config_set_allow_insecure(config, true);
+    OK(hanami_fetch(repo, NULL, NULL, config));
+    hanami_config_free(config);
+    assert_ref(repo, "refs/remotes/origin/main", c1);
+
+    /* 3. A refusal's classification outranks unreachability. */
+    const char *dead_closed[] = { dead, closed_state, NULL };
+    OK(hanami_config_new(&config));
+    OK(hanami_config_set_relays(config, dead_closed, 2));
+    hanami_config_set_allow_insecure(config, true);
+    expect_error("fetch unreachable + CLOSED", hanami_fetch(repo, NULL, NULL, config),
+                 HANAMI_ERR_NOSTR, "kind-30618");
+    hanami_config_free(config);
+    git_repository_free(repo);
+
+    /* 4. The motivating case: the owner's only NIP-65 write relay is down.
+     *    The 10063 and 30618 reads fail visibly with NETWORK instead of
+     *    HANAMI_ERR_CONFIG or an empty clone. */
+    char *pk3 = nostr_key_get_public(sk3); assert(pk3);
+    hanami_signer_t signer3 = { .pubkey = pk3, .sign = sign_event, .user_data = (void *)sk3 };
+    const char *clones[] = { grasp, NULL };
+    OK(hanami_announce_repo("ur-outbox", "ur-outbox", "outbox down", clones, plain, &signer3));
+    const char *const list[][3] = { { "r", dead, "write" } };
+    publish_as(&signer3, sk3, tagged_event(NOSTR_KIND_RELAY_LIST_METADATA, list, 1), relay,
+               (int64_t)time(NULL));
+    FORMAT(uri, "nostr://%s/ur-outbox", pk3);
+    path_of(dest, sizeof(dest), "ur-outbox");
+    config = fixture_config(NULL);
+    hits = counter("unavailable-hits");
+    expect_error("outbox down, 10063", hanami_clone(&repo, uri, dest, NULL, config),
+                 HANAMI_ERR_NETWORK, "kind-10063");
+    assert(!repo && access(dest, F_OK) != 0);
+    assert(counter("unavailable-hits") > hits);
+    hanami_config_free(config);
+    config = fixture_config(blossom);
+    expect_error("outbox down, 30618", hanami_clone(&repo, uri, dest, NULL, config),
+                 HANAMI_ERR_NETWORK, "kind-30618");
+    assert(!repo && access(dest, F_OK) != 0);
+    hanami_config_free(config);
+
+    free(pk3); free(c1);
+    printf("unreachable: unanswered relay makes absence NETWORK (10063 and 30618, direct "
+           "and NIP-65 outbox); event elsewhere wins; CLOSED outranks unreachable\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 6) { fprintf(stderr, "usage: %s blossom relay grasp tmp mode\n", argv[0]); return 2; }
@@ -1172,6 +1264,7 @@ int main(int argc, char **argv)
     else if (!strcmp(mode, "negative")) test_negative();
     else if (!strcmp(mode, "relayfail")) test_relayfail();
     else if (!strcmp(mode, "outbox")) test_outbox();
+    else if (!strcmp(mode, "unreachable")) test_unreachable();
     else { fprintf(stderr, "unknown mode %s\n", mode); return 2; }
 
     free(pk);

@@ -102,6 +102,26 @@ waiter. Other independently releasable components: no bump.
   on the kind-10063 and kind-30618 reads, through `hanami_clone` and
   `hanami_fetch`.
 
+**Unreachable relays are unanswered, not excluded (nostrc-837ap):**
+
+- **Behaviour change:** a configured relay that cannot be connected
+  (refused, failed WebSocket upgrade, never registered) now counts as
+  unanswered. Before, libnostr either skipped it, so absence was claimed
+  without it, or queued a REQ it never answered (`HANAMI_ERR_TIMEOUT`).
+  Queries first wait for each in-flight handshake's outcome, then await only
+  established relays.
+- With no event returned: `HANAMI_ERR_NOT_FOUND` only when every configured
+  relay sent EOSE. Otherwise `HANAMI_ERR_AUTH` (auth-required:/restricted:
+  CLOSED), else `HANAMI_ERR_NOSTR` (another CLOSED), else
+  `HANAMI_ERR_NETWORK` (unreachable). An event from any reachable relay
+  still wins.
+- Effect on callers that treat NOT_FOUND as "nothing published yet":
+  - `hanami_clone` fails visibly instead of producing an empty clone or
+    `HANAMI_ERR_CONFIG`;
+  - `hanami_fetch`, push base checks, GRASP push and `hanami_publish_state`
+    fail with the relay error;
+  - the refdb keeps its cache.
+
 **NIP-65 outbox relays for clone (nostrc-nd9yl):**
 
 - `hanami_clone` reads the owner's kind-10002 relay list (newest event across

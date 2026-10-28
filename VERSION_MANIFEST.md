@@ -73,6 +73,9 @@ files already declare a version.
     CLOSEs. A refusal with no event is an error, not
     `HANAMI_ERR_NOT_FOUND`;
   - a `restricted:` query CLOSED maps to `HANAMI_ERR_AUTH`;
+  - an unreachable relay counts as unanswered. With no event returned, the
+    query fails with `HANAMI_ERR_NETWORK` unless a CLOSED classification
+    applies (nostrc-837ap);
   - `hanami_clone` adds up to 4 of the owner's NIP-65 kind-10002 write
     relays to its kind-10063/30618 reads and to the recorded
     `hanami.relays`.

@@ -150,6 +150,18 @@ int main(int argc, char **argv)
     ctx = pair_context(argv[1], "closed", "empty", true);
     expect_fetch(ctx, HANAMI_ERR_NOSTR, NULL);
     hanami_nostr_ctx_free(ctx);
+    /* nostrc-837ap: a relay that cannot be subscribed is unanswered, not
+     * excluded. Absence is unproven (NETWORK); an event elsewhere still
+     * wins; a refusal's classification outranks unreachability. */
+    ctx = pair_context(argv[1], "unavailable", "empty", true);
+    expect_fetch(ctx, HANAMI_ERR_NETWORK, NULL);
+    hanami_nostr_ctx_free(ctx);
+    ctx = pair_context(argv[1], "state", "unavailable", true);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
+    ctx = pair_context(argv[1], "unavailable", "closed", true);
+    expect_fetch(ctx, HANAMI_ERR_NOSTR, NULL);
+    hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "reject");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NOSTR);
     hanami_nostr_ctx_free(ctx);
