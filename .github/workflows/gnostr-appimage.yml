@@ -39,8 +39,19 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install build and smoke-test dependencies
         run: scripts/ci/install-linux-build-deps.sh --appimage
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Configure
         run: scripts/ci/configure-release.sh build

@@ -29,6 +29,10 @@ jobs:
         with:
           name: ${{ inputs.selection_artifact }}
           path: ${{ runner.temp }}/vault-plan
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install bounded build dependencies
         run: |
           sudo apt-get update -y
@@ -37,6 +41,13 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libnsync-dev \
             libsodium-dev libssl-dev libcurl4-openssl-dev libsqlite3-dev \
             libsecret-1-dev libpam0g-dev libfuse3-dev
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Execute the selected vault checks
         run: |
           python3 scripts/ci-selected-execution.py run \

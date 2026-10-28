@@ -57,6 +57,13 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as stream:
               stream.write('DEPENDENCY_ROUTE=' + route + '\n')
           PY
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ${{ inputs.profile }}
+
       - name: Install Linux profile prerequisites
         if: runner.os == 'Linux'
         run: |
@@ -193,6 +200,13 @@ jobs:
           done
           # Exact dependencies fail closed; never skip symbols or widen suppressions.
           sudo apt-get install -y --no-install-recommends --no-remove "$@"
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Install existing native standalone libgo prerequisites
         if: runner.os == 'macOS' && inputs.profile == 'libgo.macos.asan'
         run: brew install ninja libsoup@3 nsync

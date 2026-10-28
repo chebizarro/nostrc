@@ -81,6 +81,10 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies
         run: |
           sudo apt-get update -y
@@ -92,6 +96,13 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libsecret-1-dev libxml2-dev libpeas-2-dev \
             libqrencode-dev libzbar-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gettext python3 python3-gi curl ca-certificates xz-utils
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Install pinned Blueprint compiler
         run: |
@@ -195,6 +206,10 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies
         run: |
           sudo apt-get update -y
@@ -206,6 +221,13 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libsecret-1-dev libxml2-dev libpeas-2-dev \
             libqrencode-dev libzbar-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gettext python3 python3-gi curl ca-certificates xz-utils lcov
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Download all corpus artifacts
         uses: actions/download-artifact@v4

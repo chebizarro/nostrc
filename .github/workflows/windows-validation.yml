@@ -41,10 +41,10 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$(git rev-parse "$REQUESTED_SHA^{commit}")"
 
       - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
+        # Bounds the upstream core-upgrade phase even if it replaces pacman.conf.
+        timeout-minutes: 30
+        uses: ./.github/actions/setup-msys2
         with:
-          msystem: UCRT64
-          update: true
           install: >-
             base-devel
             git

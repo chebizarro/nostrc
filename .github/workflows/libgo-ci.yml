@@ -44,6 +44,11 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -53,6 +58,13 @@ jobs:
           cmake --version
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -138,13 +150,25 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential ninja-build clang git python3-pip libjansson-dev pkg-config libcurl4-openssl-dev libnsync-dev
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
           cmake --version
-          sudo apt-get install -y libsecp256k1-dev || true
+          sudo apt-get install -y libsecp256k1-dev
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Configure libgo (GOF_PORTABLE_CONTEXT=OFF + sanitizers)
         working-directory: libgo
@@ -213,6 +237,11 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -221,7 +250,14 @@ jobs:
                                   libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
           cmake --version
-          sudo apt-get install -y libsecp256k1-dev || true
+          sudo apt-get install -y libsecp256k1-dev
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')

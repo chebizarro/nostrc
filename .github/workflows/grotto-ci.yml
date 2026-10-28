@@ -139,6 +139,12 @@ jobs:
           if [[ "$MODE" == tsan ]]; then args+=(--tsan); fi
           python3 scripts/ci-selected-execution.py prepare --profile "$profile" \
             --plan "$RUNNER_TEMP/ci-selection/plan.json" "${args[@]}"
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ${{ format('{0}-{1}', matrix.runner, matrix.mode) }}
+
       - name: Install build, keyring, camera and display dependencies
         run: |
           sudo apt-get update
@@ -198,6 +204,13 @@ jobs:
           done
           # Exact dependencies fail closed; never skip symbols or widen suppressions.
           sudo apt-get install -y --no-install-recommends --no-remove "$@"
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Build an instrumented unmodified GLib for TSan only
         if: matrix.mode == 'tsan'
         run: |
