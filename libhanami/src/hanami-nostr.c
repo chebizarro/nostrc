@@ -6,6 +6,7 @@
 
 #include "hanami/hanami-nostr.h"
 #include "hanami-sealed.h"
+#include "hanami-discovery.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-simple-pool.h"
@@ -510,6 +511,46 @@ hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
     nostr_event_free(ev);
 
     return (res == NIP34_OK) ? HANAMI_OK : HANAMI_ERR_NOSTR;
+}
+
+/* BUD-03: replaceable kind 10063, ordered `server` tags (most trusted first). */
+hanami_error_t hanami_nostr_fetch_blossom_servers(hanami_nostr_ctx_t *ctx,
+    const char *pubkey, char ***out, size_t *count)
+{
+    if (!ctx || !pubkey || !out || !count) return HANAMI_ERR_INVALID_ARG;
+    *out = NULL; *count = 0;
+    NostrFilter *filter = nostr_filter_new();
+    if (!filter) return HANAMI_ERR_NOMEM;
+    nostr_filter_add_kind(filter, NOSTR_KIND_BLOSSOM_SERVER_LIST);
+    nostr_filter_add_author(filter, pubkey);
+    nostr_filter_set_limit(filter, 1);
+    NostrEvent *ev = NULL;
+    hanami_error_t err = query_single_event(ctx, filter, &ev);
+    if (err != HANAMI_OK) return err;
+    if (nostr_event_get_kind(ev) != NOSTR_KIND_BLOSSOM_SERVER_LIST ||
+        strcmp(nostr_event_get_pubkey(ev), pubkey) != 0) {
+        nostr_event_free(ev);
+        return HANAMI_ERR_AUTH;
+    }
+    size_t cap = ev->tags ? ev->tags->count : 0;
+    char **urls = calloc(cap + 1, sizeof(*urls));
+    if (!urls) { nostr_event_free(ev); return HANAMI_ERR_NOMEM; }
+    size_t n = 0;
+    for (size_t i = 0; i < cap; i++) {
+        NostrTag *tag = ev->tags->data[i];
+        const char *key = nostr_tag_get_key(tag);
+        const char *url = nostr_tag_size(tag) >= 2 ? nostr_tag_get(tag, 1) : NULL;
+        if (!key || strcmp(key, "server") != 0 || !url || !*url) continue;
+        if (!(urls[n] = strdup(url))) {
+            hanami_discovery_free_list(urls, n);
+            nostr_event_free(ev);
+            return HANAMI_ERR_NOMEM;
+        }
+        n++;
+    }
+    nostr_event_free(ev);
+    *out = urls; *count = n;
+    return HANAMI_OK;
 }
 
 hanami_error_t hanami_nostr_fetch_head(hanami_nostr_ctx_t *ctx,

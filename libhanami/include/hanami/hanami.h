@@ -141,10 +141,16 @@ HANAMI_API hanami_error_t hanami_repo_lift_privacy(git_repository *repo);
  * @signer: (nullable): signer for authenticated fetch
  * @config: (nullable): configuration (uses defaults if NULL)
  *
- * Clone a repository discovered via Nostr events, fetching objects
- * from Blossom servers listed in the repository announcement.
+ * Clone a repository discovered via Nostr events (kind 30617 on the
+ * configured relays, else public defaults). The Blossom server comes from
+ * the config endpoint or the owner's BUD-03 kind-10063 list and must pass
+ * libblossom's capability probe; NIP-34 `clone` URLs are Git remotes and are
+ * never used as Blossom APIs. The selected server is stored as
+ * `hanami.endpoint` in the clone's config.
  *
- * Returns: HANAMI_OK on success
+ * Returns: HANAMI_OK on success; HANAMI_ERR_CONFIG when no Blossom server is
+ * known, HANAMI_ERR_BLOSSOM when no candidate is a Blossom server (no
+ * directory is created; git_error_last() names the cause)
  */
 HANAMI_API hanami_error_t hanami_clone(git_repository **out,
                             const char *nostr_uri,

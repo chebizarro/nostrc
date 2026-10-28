@@ -90,7 +90,7 @@ This enables offline work with transparent remote fallback.
 
 | Kind | Name | libhanami Usage |
 |------|------|-----------------|
-| 30617 | Repository Announcement | Advertise repo existence + clone URLs |
+| 30617 | Repository Announcement | Advertise repo existence + Git clone URLs |
 | 30618 | Repository State | Branch → commit mappings (ref state) |
 | 1617 | Patch | `git format-patch` content |
 | 1618 | Pull Request | PR with commit tip + clone URLs |
@@ -98,6 +98,7 @@ This enables offline work with transparent remote fallback.
 | 1621 | Issue | Bug reports, feature requests |
 | 1630–1633 | Status | Open/Applied/Closed/Draft |
 | 10317 | User GRASP List | Preferred GRASP servers |
+| 10063 | BUD-03 User Server List | Owner's Blossom servers (clone discovery) |
 
 ### 3.4 Authentication
 
@@ -281,6 +282,38 @@ Configurable via:
 
 **Source**: `hanami-config.c`, `hanami-config.h`
 
+### 4.7a Blossom server discovery for clone
+
+NIP-34 `clone` tags are URLs "to be given to `git clone`" (for example a GRASP
+Smart HTTP endpoint), not Blossom APIs, and NIP-34 defines no Blossom tag for
+kinds 30617/30618. `hanami_clone` therefore never derives the Blossom endpoint
+from `clone`. Candidates, in order:
+
+1. the explicit `hanami.endpoint` / `HANAMI_ENDPOINT` / programmatic endpoint;
+2. the repository owner's BUD-03 kind-10063 `server` tags, in listed order,
+   queried EOSE-complete on the discovery relays, then on the announcement's
+   `relays` when the discovery relays hold no list.
+
+Each candidate is classified with libblossom's capability probe. Only positive
+Blossom evidence counts (server-info JSON, an accepted BUD-02 upload, or a
+BUD-02 401 auth refusal). A bare HTTP answer, such as a Git Smart HTTP host
+returning 404, does not. The first Blossom server wins and is recorded as
+`hanami.endpoint` in the clone's repository config. When no candidate exists,
+clone fails with `HANAMI_ERR_CONFIG`. When no candidate is a Blossom server, it
+fails with `HANAMI_ERR_BLOSSOM`. A failed server-list query returns its own
+error. In each case clone creates no directory, and the libgit2 last-error
+message names the cause.
+
+Discovery relays are the configured `hanami.relays`, falling back to public
+defaults only when none are configured.
+
+**Compatibility (libhanami 0.6.0):** announcements that put a Blossom API URL
+in `clone` are no longer treated as Blossom endpoints. Their owners publish a
+kind-10063 list, or cloners set `hanami.endpoint`. Keeping the old fallback
+would silently misroute every repository with a genuine Git clone URL.
+
+**Source**: `hanami-discovery.c`
+
 ### 4.8 Public API (`hanami.h`)
 
 High-level convenience functions:
@@ -421,7 +454,8 @@ hanami_clone(&repo, "nostr://npub1.../my-repo", "/tmp/my-repo", &config);
 ```
 
 1. Resolve `nostr://` URI → query relays for kind 30617 event
-2. Extract `clone` URLs (Blossom endpoints)
+2. Select the Blossom server from config or the owner's kind-10063 list (§4.7a);
+   `clone` URLs are Git remotes and are not used as Blossom APIs
 3. Fetch kind 30618 → resolve branch→commit mappings
 4. Download Git objects from Blossom by hash
 5. Reconstruct repository locally

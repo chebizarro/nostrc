@@ -35,7 +35,7 @@ files already declare a version.
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
-| libhanami | `libhanami/` | 0.5.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libhanami | `libhanami/` | 0.6.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.7.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
@@ -52,6 +52,21 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### hanami_clone Blossom server discovery (nostrc-g2g37)
+
+- **libhanami 0.5.1 → 0.6.0 (MINOR):** `hanami_clone` stops treating NIP-34
+  `clone` URLs as Blossom APIs. Blossom servers come from the configured
+  endpoint or the owner's BUD-03 kind-10063 list, classified by libblossom's
+  capability probe. Missing or non-Blossom servers now fail visibly
+  (`HANAMI_ERR_CONFIG` / `HANAMI_ERR_BLOSSOM`). Announcements that relied on
+  `clone` as a Blossom endpoint break: a behavioural incompatibility for a 0.x
+  component, called out in `libhanami/CHANGELOG.md`. Signatures, ABI and
+  storage formats are unchanged. Clone now also honours configured relays and
+  writes the existing `hanami.endpoint` key into the clone's config.
+- **No bump:** libblossom, libnostr, nip34 and all other components: their
+  APIs and artifacts are only consumed here, not changed. No tag is published;
+  release columns remain unchanged.
 
 ### Synchronous relay dial coordination (nostrc-1h2ze)
 

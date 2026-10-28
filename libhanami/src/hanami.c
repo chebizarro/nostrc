@@ -9,6 +9,7 @@
 #endif
 #include "hanami/hanami.h"
 #include "hanami-sealed.h"
+#include "hanami-discovery.h"
 #include <git2/sys/odb_backend.h>
 #include <git2/sys/refdb_backend.h>
 #include <stdatomic.h>
@@ -314,16 +315,18 @@ hanami_error_t hanami_clone(git_repository **out,
 
     const char *repo_id = slash + 1;
 
-    /* Query relays for kind 30617 to discover clone URLs and Blossom endpoints.
-     * We use a set of default relays if no config is provided. */
+    /* Discovery relays: configured relays, else public defaults. */
     const char *default_relays[] = {
         "wss://nos.lol",
         "wss://relay.nostr.band",
         NULL
     };
+    const char *const *discovery_relays = default_relays;
+    if (hanami_config_get_relay_count(config) > 0)
+        discovery_relays = hanami_config_get_relays(config);
 
     hanami_nostr_ctx_t *ctx = NULL;
-    hanami_error_t err = hanami_nostr_ctx_new(default_relays, signer, &ctx);
+    hanami_error_t err = hanami_nostr_ctx_new(discovery_relays, signer, &ctx);
     if (err != HANAMI_OK) {
         free(owner_pubkey);
         return err;
@@ -338,29 +341,24 @@ hanami_error_t hanami_clone(git_repository **out,
         return (err != HANAMI_OK) ? err : HANAMI_ERR_NOT_FOUND;
     }
 
-    /* Extract Blossom endpoint from clone URLs (first https:// URL) */
-    const char *endpoint = NULL;
-    for (size_t i = 0; i < repo_info->clone_count && repo_info->clone[i]; i++) {
-        if (strncmp(repo_info->clone[i], "https://", 8) == 0) {
-            endpoint = repo_info->clone[i];
-            break;
-        }
-        if (strncmp(repo_info->clone[i], "http://", 7) == 0 && !endpoint) {
-            endpoint = repo_info->clone[i];
-        }
+    /* Use repo's relay list if available, otherwise the discovery relays */
+    const char **relay_urls = (const char **)discovery_relays;
+    if (repo_info->relays && repo_info->relay_count > 0) {
+        relay_urls = (const char **)repo_info->relays;
     }
 
-    if (!endpoint) {
+    /* Blossom API endpoint: explicit config or the owner's BUD-03 kind-10063
+     * list, classified by libblossom's probe. NIP-34 `clone` URLs are Git
+     * remotes, never Blossom APIs (nostrc-g2g37). */
+    char *endpoint = NULL;
+    err = hanami_select_blossom_endpoint(
+        ctx, repo_info->relay_count ? (const char *const *)repo_info->relays : NULL,
+        owner_pubkey, repo_id, config, &endpoint);
+    if (err != HANAMI_OK) {
         nip34_repository_free(repo_info);
         hanami_nostr_ctx_free(ctx);
         free(owner_pubkey);
-        return HANAMI_ERR_NOT_FOUND;
-    }
-
-    /* Use repo's relay list if available, otherwise keep defaults */
-    const char **relay_urls = (const char **)default_relays;
-    if (repo_info->relays && repo_info->relay_count > 0) {
-        relay_urls = (const char **)repo_info->relays;
+        return err;
     }
 
     /*
@@ -375,6 +373,23 @@ hanami_error_t hanami_clone(git_repository **out,
     git_repository *local_repo = NULL;
     int rc = git_repository_init(&local_repo, local_path, 0);
     if (rc < 0) {
+        free(endpoint);
+        nip34_repository_free(repo_info);
+        hanami_nostr_ctx_free(ctx);
+        free(owner_pubkey);
+        return HANAMI_ERR_LIBGIT2;
+    }
+
+    /* Record the selected Blossom server; hanami_config_load_gitconfig(repo)
+     * reads it back for later operations on this clone. */
+    git_config *repo_config = NULL;
+    rc = git_repository_config(&repo_config, local_repo);
+    if (rc == 0)
+        rc = git_config_set_string(repo_config, "hanami.endpoint", endpoint);
+    git_config_free(repo_config);
+    if (rc < 0) {
+        git_repository_free(local_repo);
+        free(endpoint);
         nip34_repository_free(repo_info);
         hanami_nostr_ctx_free(ctx);
         free(owner_pubkey);
@@ -384,6 +399,7 @@ hanami_error_t hanami_clone(git_repository **out,
     /* Step 2: Attach Blossom ODB + Nostr RefDB backends */
     err = attach_blossom_backends(
         local_repo, endpoint, relay_urls, repo_id, owner_pubkey, signer, config);
+    free(endpoint);
     if (err != HANAMI_OK) {
         git_repository_free(local_repo);
         nip34_repository_free(repo_info);
