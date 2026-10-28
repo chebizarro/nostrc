@@ -193,6 +193,14 @@ jobs:
             test-groundhog-mls-remote test-groundhog-two-instance-remote-acceptance \
             gnome/groundhog/all
 
+      - name: DIAGNOSTIC nostrc-2zcw9 (never merge) amplify seed 29 GUI prefix
+        env:
+          GH_TEST_EVIDENCE_DIR: ${{ runner.temp }}/gui-lifetime-evidence
+        run: |
+          mkdir -p "$GH_TEST_EVIDENCE_DIR"
+          sudo sysctl -w kernel.core_pattern="$GH_TEST_EVIDENCE_DIR/core.%p.%E"
+          scripts/diag-2zcw9-amplify.sh build 4 900
+
       - name: GTK bind performance regression gate (serial, no retry)
         if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.gtk_perf == 'true'
         run: |
@@ -323,6 +331,7 @@ jobs:
             ${{ runner.temp }}/gui-lifetime-evidence/*.bt
             ${{ runner.temp }}/gui-lifetime-evidence/*.trace
             ${{ runner.temp }}/gui-lifetime-evidence/*.log
+            ${{ runner.temp }}/gui-lifetime-evidence/FAILED
           if-no-files-found: ignore
 
       - name: White Noise AAC/MP4 voice interop with MDK 0.11
@@ -391,7 +400,7 @@ jobs:
     # Groundhog code is fixed instead. The widget tests stay in the job above.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    if: ${{ !inputs.affected }}
+    if: false # DIAGNOSTIC nostrc-2zcw9 (never merge)
     env:
       GROUNDHOG_SANITIZER_TESTS: >-
         groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
