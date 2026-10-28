@@ -123,6 +123,8 @@ class Relay(socketserver.StreamRequestHandler):
             assert filters["limit"] == 1
             if mode == "closed":
                 self.frame(["CLOSED", subid, "blocked: fixture refusal"])
+            elif mode == "restricted":
+                self.frame(["CLOSED", subid, "restricted: fixture read policy"])
             elif mode in ("auth", "query-auth") and not authenticated:
                 self.frame(["AUTH", "fixture-challenge"])
                 self.frame(["CLOSED", subid, "auth-required: fixture requires credentials"])

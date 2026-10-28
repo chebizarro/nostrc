@@ -38,6 +38,20 @@ static hanami_nostr_ctx_t *context(const char *base, const char *mode)
     return ctx;
 }
 
+/* Two fixture relays in one context; a NULL signer cannot answer AUTH. */
+static hanami_nostr_ctx_t *pair_context(const char *base, const char *a, const char *b,
+                                        bool with_signer)
+{
+    char url_a[256], url_b[256];
+    snprintf(url_a, sizeof(url_a), "%s/%s", base, a);
+    snprintf(url_b, sizeof(url_b), "%s/%s", base, b);
+    const char *urls[] = { url_a, url_b, NULL };
+    hanami_signer_t signer = { .pubkey = pk, .sign = sign_event, .user_data = (void *)sk };
+    hanami_nostr_ctx_t *ctx = NULL;
+    assert(hanami_nostr_ctx_new(urls, with_signer ? &signer : NULL, &ctx) == HANAMI_OK);
+    return ctx;
+}
+
 static void publish_state(hanami_nostr_ctx_t *ctx, const char *target, int age)
 {
     nip34_ref_t ref = { .refname = "refs/heads/main", .target = (char *)target };
@@ -116,6 +130,25 @@ int main(int argc, char **argv)
     hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "auth");
     expect_fetch(ctx, HANAMI_ERR_AUTH, NULL);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "restricted");
+    expect_fetch(ctx, HANAMI_ERR_AUTH, NULL);
+    hanami_nostr_ctx_free(ctx);
+    /* One relay's CLOSED is that relay's failure: the snapshot completes on
+     * the other relay's EOSE, in either order of subscription. */
+    ctx = pair_context(argv[1], "closed", "state", true);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
+    ctx = pair_context(argv[1], "state", "restricted", true);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
+    /* Unanswerable AUTH (no signer) does not abort the other relay. */
+    ctx = pair_context(argv[1], "auth", "state", false);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
+    /* Absence is unproven while a relay refused: an error, not NOT_FOUND. */
+    ctx = pair_context(argv[1], "closed", "empty", true);
+    expect_fetch(ctx, HANAMI_ERR_NOSTR, NULL);
     hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "reject");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NOSTR);

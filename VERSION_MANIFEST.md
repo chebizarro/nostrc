@@ -53,6 +53,19 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
+### Clone relay coverage: per-relay CLOSED, NIP-65 outbox (nostrc-sp8zk, nostrc-nd9yl)
+
+- **libhanami 0.7.0 (no further bump):** folds into the unreleased 0.7.0
+  MINOR. These 0.x behaviour changes are called out in
+  `libhanami/CHANGELOG.md`:
+  - a multi-relay query completes on the other relays' EOSE when one relay
+    CLOSEs. A refusal with no event is an error, not
+    `HANAMI_ERR_NOT_FOUND`;
+  - a `restricted:` query CLOSED maps to `HANAMI_ERR_AUTH`.
+  - No API, ABI or wire-format change.
+- **No bump:** libnostr and all other components are consumed only.
+  Test-only fixture changes do not alter a shipped artifact.
+
 ### Cold clone via published manifest chain (nostrc-v2zyh)
 
 - **libhanami 0.7.0 (no further bump):** folds into the unreleased 0.7.0 MINOR

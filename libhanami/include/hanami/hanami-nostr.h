@@ -149,11 +149,16 @@ HANAMI_API hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
  *
  * Query relays for the latest kind 30617 event for this repo.
  *
- * Waits for EOSE from all successfully subscribed relays. A deadline is an
- * error, never evidence of empty or complete history.
+ * Waits until every successfully subscribed relay has sent EOSE or CLOSED.
+ * A deadline is an error, never evidence of empty or complete history. One
+ * relay's CLOSED is that relay's failure: the newest event from the relays
+ * that answered is still returned.
  *
- * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND after empty EOSE;
- * network, CLOSED, AUTH and timeout failures remain errors.
+ * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND only when every relay
+ * sent EOSE without a matching event. With no event and at least one CLOSED:
+ * HANAMI_ERR_AUTH for "auth-required:" (after one NIP-42 attempt when a
+ * signer is set) or "restricted:", else HANAMI_ERR_NOSTR. Network and
+ * timeout failures remain errors.
  */
 HANAMI_API hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
                                        const char *repo_id,
@@ -169,11 +174,16 @@ HANAMI_API hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
  *
  * Query relays for the latest kind 30618 event for this repo.
  *
- * Waits for EOSE from all successfully subscribed relays. A deadline is an
- * error, never evidence of empty or complete history.
+ * Waits until every successfully subscribed relay has sent EOSE or CLOSED.
+ * A deadline is an error, never evidence of empty or complete history. One
+ * relay's CLOSED is that relay's failure: the newest event from the relays
+ * that answered is still returned.
  *
- * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND after empty EOSE;
- * network, CLOSED, AUTH and timeout failures remain errors.
+ * Returns: HANAMI_OK on success, HANAMI_ERR_NOT_FOUND only when every relay
+ * sent EOSE without a matching event. With no event and at least one CLOSED:
+ * HANAMI_ERR_AUTH for "auth-required:" (after one NIP-42 attempt when a
+ * signer is set) or "restricted:", else HANAMI_ERR_NOSTR. Network and
+ * timeout failures remain errors.
  */
 HANAMI_API hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,
                                         const char *repo_id,

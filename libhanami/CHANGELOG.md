@@ -82,6 +82,21 @@ waiter. Other independently releasable components: no bump.
 - `hanami_publish_state` carries the signer's published manifest head
   forward.
 
+**Multi-relay query completion (nostrc-sp8zk):**
+
+- **Behaviour change:** one relay's CLOSED no longer aborts a multi-relay
+  query (`hanami_nostr_fetch_repo`, `_fetch_state` and the internal
+  kind-10063/30618 reads used by `hanami_clone`/`hanami_fetch`). It counts as
+  that relay's failure; the query completes on the other relays' EOSE and
+  returns the newest event they sent. With no event, a CLOSED is reported
+  instead of `HANAMI_ERR_NOT_FOUND`, because the refusing relay may hold the
+  event. A relay whose NIP-42 AUTH fails no longer aborts the query either.
+- **Behaviour change:** a query CLOSED with `restricted:` now returns
+  `HANAMI_ERR_AUTH`, matching publication. Previously it returned
+  `HANAMI_ERR_NOSTR`.
+- Without a signer, an AUTH challenge no longer stops the query early. The
+  relay's eventual CLOSED is classified as above.
+
 ## 0.6.0 (unreleased)
 
 **Behaviour change (0.x MINOR):** `hanami_clone` no longer uses NIP-34 `clone`
