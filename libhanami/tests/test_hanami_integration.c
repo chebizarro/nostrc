@@ -19,11 +19,13 @@
 #include "hanami/hanami-refdb-backend.h"
 #include "hanami/hanami-nostr.h"
 #include "hanami/hanami-transport.h"
+#include "hanami_test_fs.h"
 
 #include <git2.h>
 #include <git2/sys/odb_backend.h>
 #include <git2/sys/refdb_backend.h>
 #include <git2/sys/refs.h>
+#include <git2/sys/repository.h>
 #include <nostr-filter.h>
 
 #include <stdio.h>
@@ -385,6 +387,82 @@ static void test_repo_open_null_args(void)
                             "id", "pk", NULL, NULL, NULL) == HANAMI_ERR_INVALID_ARG);
 }
 
+static int count_object(const git_oid *oid, void *payload)
+{
+    (void)oid;
+    (*(size_t *)payload)++;
+    return 0;
+}
+
+static void test_repo_open_backend_lifetime(void)
+{
+    const char *relays[] = {relay_url, NULL};
+    hanami_config_t *config = NULL;
+    assert(hanami_config_new(&config) == HANAMI_OK);
+    hanami_config_set_allow_insecure(config, true);
+    for (unsigned i = 0; i < 64; i++) {
+        git_repository *repo = NULL;
+        assert(hanami_repo_open(&repo, "https://127.0.0.1:1", relays,
+            "integration-test", test_signer.pubkey, &test_signer, config, NULL) == HANAMI_OK);
+        char *path = strdup(git_repository_path(repo));
+        assert(path);
+        git_odb *odb = NULL;
+        git_refdb *refdb = NULL;
+        assert(git_repository_odb(&odb, repo) == 0);
+        assert(git_repository_refdb(&refdb, repo) == 0);
+        git_repository_free(repo);
+
+        /* External DB handles can outlive the repository, in either order. */
+        if (i % 2) {
+            git_refdb_free(refdb);
+            size_t count = 0;
+            assert(git_odb_foreach(odb, count_object, &count) == 0);
+            assert(count == 0);
+            git_odb_free(odb);
+        } else {
+            git_odb_free(odb);
+            git_refdb_free(refdb);
+        }
+        assert(hanami_test_rm_rf(path) == 0);
+        free(path);
+    }
+    hanami_config_free(config);
+}
+
+static void test_repo_open_refdb_outlives_odb(void)
+{
+    const char *relays[] = {relay_url, NULL};
+    hanami_config_t *config = NULL;
+    assert(hanami_config_new(&config) == HANAMI_OK);
+    hanami_config_set_allow_insecure(config, true);
+    git_repository *repo = NULL;
+    assert(hanami_repo_open(&repo, "https://127.0.0.1:1", relays,
+        "integration-test", test_signer.pubkey, &test_signer, config, NULL) == HANAMI_OK);
+    char *path = strdup(git_repository_path(repo));
+    assert(path);
+
+    /* Replacing the ODB destroys its backend before the refdb manifest hook. */
+    git_odb *replacement = NULL;
+    assert(git_odb_new(&replacement) == 0);
+    assert(git_repository_set_odb(repo, replacement) == 0);
+    git_odb_free(replacement);
+    git_reference *ref = NULL;
+    /* Publication must use the still-live cache/client, then fail because the
+     * Blossom endpoint is unreachable (not crash or succeed cache-only). */
+    assert(git_reference_symbolic_create(&ref, repo, "HEAD", "refs/heads/lifetime",
+                                         1, NULL) < 0);
+    assert(!ref);
+    const git_error *error = git_error_last();
+    assert(error && error->klass == GIT_ERROR_REFERENCE);
+    char expected[64];
+    snprintf(expected, sizeof(expected), "relay state publish failed (%d)", HANAMI_ERR_NETWORK);
+    assert(strcmp(error->message, expected) == 0);
+    git_repository_free(repo);
+    assert(hanami_test_rm_rf(path) == 0);
+    free(path);
+    hanami_config_free(config);
+}
+
 static void test_clone_null_args(void)
 {
     git_repository *repo = NULL;
@@ -571,7 +649,10 @@ int main(int argc, char **argv)
     /* 2. Index ↔ ODB backend */
     TEST(index_odb_interop);
 
-    /* 3. Nostr ↔ RefDB backend */
+    /* 3. Nostr ↔ RefDB backend. Lifetime checks run before ref publication
+     * so the manifest hook starts from an empty remote state. */
+    TEST(repo_open_backend_lifetime);
+    TEST(repo_open_refdb_outlives_odb);
     TEST(nostr_refdb_interop);
 
     /* 4. Hash integrity */

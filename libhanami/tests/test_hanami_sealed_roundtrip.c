@@ -199,6 +199,27 @@ int main(int argc, char **argv)
         assert(hanami_push_to_grasp(repo, &grasp) == HANAMI_ERR_AUTH);
         assert(hanami_push_to_blossom(repo, endpoint, &signer, relays, id) == HANAMI_ERR_AUTH);
         verify_opaque_objects(endpoint, pk, &ring);
+        for (unsigned i = 0; i < 16; i++) {
+            git_repository *opened = NULL;
+            OK(hanami_repo_open(&opened, endpoint, relays, id, pk, NULL, config, &ring));
+            char *opened_path = strdup(git_repository_path(opened)); assert(opened_path);
+            git_odb *held_odb = NULL; git_refdb *held_refdb = NULL;
+            OK(git_repository_odb(&held_odb, opened));
+            OK(git_repository_refdb(&held_refdb, opened));
+            git_repository_free(opened);
+            if (i % 2) {
+                git_refdb_free(held_refdb);
+                git_odb_object *held_object = NULL;
+                OK(git_odb_read(&held_object, held_odb, &blob));
+                assert(git_odb_object_size(held_object) == sizeof(content) - 1);
+                git_odb_object_free(held_object);
+                git_odb_free(held_odb);
+            } else {
+                git_odb_free(held_odb);
+                git_refdb_free(held_refdb);
+            }
+            assert(hanami_test_rm_rf(opened_path) == 0); free(opened_path);
+        }
         free_temp_repo(repo); repo = NULL;
         char path[1024]; snprintf(path, sizeof(path), "%s/clone", argv[3]);
         OK(hanami_clone_sealed(&repo, path, endpoint, relays, id, pk, NULL, &ring, config));
@@ -216,6 +237,12 @@ int main(int argc, char **argv)
         assert(hanami_push_to_grasp(repo, &grasp) == HANAMI_ERR_AUTH);
         assert(hanami_push_to_blossom(repo, endpoint, &signer, relays, id) == HANAMI_ERR_AUTH);
         git_repository_free(repo); repo = NULL;
+        for (unsigned i = 0; i < 8; i++) {
+            assert(hanami_test_rm_rf(path) == 0);
+            OK(hanami_clone_sealed(&repo, path, endpoint, relays, id, pk, NULL, &ring, config));
+            git_repository_free(repo); repo = NULL;
+        }
+        assert(hanami_test_rm_rf(path) == 0);
         porthome_ring_entry_t bad = {.epoch = 1, .node_key = {0xff}};
         porthome_ring_t wrong = {&bad, 1};
         assert(hanami_repo_open(&repo, endpoint, relays, id, pk, NULL, config, &wrong) != HANAMI_OK);

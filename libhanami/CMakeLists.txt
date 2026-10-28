@@ -73,6 +73,7 @@ endif()
 
 set(HANAMI_SOURCES
   src/hanami.c
+  src/hanami-backend-owner.c
   src/hanami-sealed.c
   src/hanami-index-sqlite.c
   src/hanami-odb-backend.c

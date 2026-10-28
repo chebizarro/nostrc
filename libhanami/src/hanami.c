@@ -112,6 +112,7 @@ const char *hanami_version(int *major, int *minor, int *patch)
 #include <blossom/client.h>
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-refdb-backend.h"
+#include "hanami-backend-owner.h"
 #include "hanami/hanami-nostr.h"
 #include <nip34.h>
 #include <time.h>
@@ -134,14 +135,12 @@ static hanami_error_t attach_blossom_backends(
     if (!repo || !endpoint || !relay_urls || !repo_id || !owner_pubkey)
         return HANAMI_ERR_INVALID_ARG;
 
-    hanami_error_t err;
+    hanami_backend_owner *owner = hanami_backend_owner_new();
+    if (!owner) return HANAMI_ERR_NOMEM;
 
     /* 1. OID ↔ Blossom hash cache (<gitdir>/hanami/index.sqlite) */
-    hanami_index_t *index = NULL;
-    err = hanami_repo_cache_open(repo, &index);
-    if (err != HANAMI_OK) {
-        return err;
-    }
+    hanami_error_t err = hanami_repo_cache_open(repo, &owner->index);
+    if (err != HANAMI_OK) goto done;
 
     /* 2. Create Blossom client */
     blossom_client_opts_t blossom_opts = {
@@ -150,51 +149,38 @@ static hanami_error_t attach_blossom_backends(
         .allow_insecure = hanami_config_get_allow_insecure(config),
         .user_agent = "libhanami/0.4"
     };
-    blossom_client_t *client = NULL;
-    err = blossom_client_new(&blossom_opts, signer, &client);
-    if (err != HANAMI_OK) {
-        hanami_index_close(index);
-        return err;
-    }
+    err = blossom_client_new(&blossom_opts, signer, &owner->client);
+    if (err != HANAMI_OK) goto done;
 
     /* 3. Create ODB backend */
     bool verify = config ? hanami_config_get_verify_on_read(config) : true;
-    hanami_odb_backend_opts_t odb_opts = {
-        .index = index,
-        .client = client,
-        .verify_on_read = verify
-    };
     git_odb_backend *odb_be = NULL;
-    err = hanami_odb_backend_new(&odb_be, &odb_opts);
-    if (err != HANAMI_OK) {
-        blossom_client_free(client);
-        hanami_index_close(index);
-        return err;
-    }
+    err = hanami_owned_odb_backend_new(&odb_be, owner, verify);
+    if (err != HANAMI_OK) goto done;
 
     /* 4. Attach ODB backend */
     git_odb *odb = NULL;
-    if (git_repository_odb(&odb, repo) == 0) {
-        git_odb_add_backend(odb, odb_be, 1);
-        git_odb_free(odb);
-    } else {
-        /* ODB attach failed — free the backend to prevent leak */
+    if (git_repository_odb(&odb, repo) < 0 || git_odb_add_backend(odb, odb_be, 1) < 0) {
         odb_be->free(odb_be);
+        git_odb_free(odb);
+        err = HANAMI_ERR_LIBGIT2;
+        goto done;
     }
+    git_odb_free(odb);
 
     /* 5. Create Nostr context */
-    hanami_nostr_ctx_t *nostr_ctx = NULL;
     err = hanami_nostr_ctx_new(
-        (const char *const *)relay_urls, signer, &nostr_ctx);
+        (const char *const *)relay_urls, signer, &owner->nostr);
     if (err != HANAMI_OK) {
         /* Non-fatal: repo still works for local ops */
-        nostr_ctx = NULL;
+        err = HANAMI_OK;
+        goto done;
     }
 
     /* 6. Create RefDB backend (if we have nostr context) */
-    if (nostr_ctx) {
+    if (owner->nostr) {
         hanami_refdb_backend_opts_t refdb_opts = {
-            .nostr_ctx = nostr_ctx,
+            .nostr_ctx = owner->nostr,
             .repo_id = repo_id,
             .owner_pubkey = owner_pubkey
         };
@@ -203,39 +189,42 @@ static hanami_error_t attach_blossom_backends(
         if (err == HANAMI_OK) {
             git_refdb *refdb = NULL;
             /* Ref writes publish objects' manifest rows before the 30618. */
-            hanami_refdb_use_manifest(refdb_be, client, index);
-            if (git_repository_refdb(&refdb, repo) == 0) {
-                git_refdb_set_backend(refdb, refdb_be);
-                git_refdb_free(refdb);
-            } else {
-                /* RefDB attach failed — free the backend */
+            hanami_refdb_use_manifest(refdb_be, owner);
+            if (git_repository_refdb(&refdb, repo) < 0 ||
+                git_refdb_set_backend(refdb, refdb_be) < 0) {
                 refdb_be->free(refdb_be);
+                git_refdb_free(refdb);
+                err = HANAMI_ERR_LIBGIT2;
+                goto done;
             }
+            git_refdb_free(refdb);
         } else {
             /* RefDB creation failed — free the nostr context */
-            hanami_nostr_ctx_free(nostr_ctx);
-            nostr_ctx = NULL;
+            hanami_nostr_ctx_free(owner->nostr);
+            owner->nostr = NULL;
+            err = HANAMI_OK;
         }
     }
 
     /* 7. Make existing remote objects readable: import the owner's published
      * manifest chain. A found but invalid/unavailable chain fails visibly;
      * relay query failures stay non-fatal, as for the refdb's ref load. */
-    if (nostr_ctx) {
+    if (owner->nostr) {
         nip34_repo_state_t *state = NULL;
         char manifest[65] = {0};
-        if (hanami_nostr_fetch_state_manifest(nostr_ctx, repo_id, owner_pubkey,
+        if (hanami_nostr_fetch_state_manifest(owner->nostr, repo_id, owner_pubkey,
                                               &state, manifest) == HANAMI_OK && manifest[0]) {
-            err = hanami_manifest_sync(client, index, repo_id, manifest, NULL);
+            err = hanami_manifest_sync(owner->client, owner->index, repo_id, manifest, NULL);
             if (err != HANAMI_OK)
                 git_error_set(GIT_ERROR_INVALID, "hanami: manifest chain %s for %s is "
                               "unavailable or invalid", manifest, repo_id);
         }
         nip34_repo_state_free(state);
-        if (err != HANAMI_OK) return err;
     }
 
-    return HANAMI_OK;
+done:
+    hanami_backend_owner_release(owner);
+    return err;
 }
 
 static int remove_temp_entry(const char *path, const struct stat *st, int kind, struct FTW *ftw)

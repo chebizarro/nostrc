@@ -73,6 +73,10 @@ files already declare a version.
     - plaintext reads fail on a Git OID mismatch;
     - `hanami_index_get_by_blossom` refuses ambiguous hashes.
   - Sealed wire format is unchanged.
+  - Backend lifetime correction (nostrc-7fhvv): the public ODB and refdb
+    share ownership of their index, Blossom client and Nostr context until
+    the last backend is freed. This backward-compatible bugfix is folded
+    into unreleased 0.7.0; no public API, ABI or format change.
 - **No bump:** libblossom, libnostr, nip34 and all other components are
   consumed only. No tag is published; release columns remain unchanged.
 

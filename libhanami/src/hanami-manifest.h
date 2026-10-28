@@ -86,11 +86,6 @@ hanami_error_t hanami_manifest_publish_state(blossom_client_t *client, hanami_no
 hanami_error_t hanami_push_repo_state(git_repository *repo, blossom_client_t *client,
     hanami_nostr_ctx_t *ctx, const char *repo_id, const char *author);
 
-/* Make a public refdb publish ref writes through hanami_manifest_publish_state
- * (objects written via the Blossom ODB are rows in index). Both borrowed. */
-void hanami_refdb_use_manifest(git_refdb_backend *backend, blossom_client_t *client,
-                               hanami_index_t *index);
-
 /* Every direct ref/HEAD target in state must be present in cache. */
 hanami_error_t hanami_manifest_check_coverage(const nip34_repo_state_t *state,
     hanami_index_t *cache);

@@ -7,6 +7,7 @@
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-index.h"
 #include "hanami-sealed.h"
+#include "hanami-backend-owner.h"
 #include <openssl/crypto.h>
 #include <blossom/client.h>
 
@@ -35,6 +36,7 @@ typedef struct {
     bool verify_on_read;
     const porthome_ring_t *vault;
     hanami_sealed *sealed;
+    hanami_backend_owner *owner;
 } hanami_odb_blossom_t;
 
 /* =========================================================================
@@ -264,6 +266,7 @@ static void blossom_odb_free(git_odb_backend *_backend)
 {
     hanami_odb_blossom_t *be = (hanami_odb_blossom_t *)_backend;
     hanami_sealed_release(be->sealed);
+    hanami_backend_owner_release(be->owner);
     free(be);
 }
 
@@ -336,6 +339,21 @@ hanami_error_t hanami_odb_backend_new(git_odb_backend **out,
 
     *out = &be->parent;
     return HANAMI_OK;
+}
+
+hanami_error_t hanami_owned_odb_backend_new(git_odb_backend **out,
+    hanami_backend_owner *owner, bool verify_on_read)
+{
+    hanami_odb_backend_opts_t opts = {
+        .index = owner->index, .client = owner->client,
+        .verify_on_read = verify_on_read
+    };
+    hanami_error_t err = hanami_odb_backend_new(out, &opts);
+    if (err == HANAMI_OK) {
+        ((hanami_odb_blossom_t *)*out)->owner = owner;
+        hanami_backend_owner_retain(owner);
+    }
+    return err;
 }
 
 hanami_error_t hanami_sealed_odb_new(git_odb_backend **out, hanami_sealed *sealed)
