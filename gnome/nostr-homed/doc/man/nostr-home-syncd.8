@@ -195,7 +195,24 @@ other load failure (too large, newer schema, I/O) stops the daemon with
 exit 7 and leaves the file untouched.
 .TP
 .I $XDG_STATE_HOME/nostr-homed/porthome-status.json
-Status file; kept up to date by the daemon.
+Status file; kept up to date by the daemon. Unresolved conflicts appear
+under syncd.home_conflicts and syncd.vault_conflicts, resolution outcomes
+under syncd.resolutions.
+.TP
+.I $XDG_STATE_HOME/nostr-homed/requests/
+Conflict-resolution inbox (inotify-watched, scanned once the home is
+managed). Each request names a conflict and a choice; the daemon applies
+it itself and publishes the result (personal home: HOME edit plus the
+normal push of a new generation; shared folder: a signed head, journalled
+and committed only after a relay accepts it). Malformed, foreign-owned,
+symlinked or oversized files are removed and reported as invalid. Written
+by
+.BR "nostr-home-status conflicts resolve" (1).
+.TP
+.I $NOSTR_HOMED_SYNCD_STATE_DIR/home-conflicts.json
+Personal-home conflict journal: provenance recorded when the reconciler
+keeps both versions (which side the saved copy holds, deletion kind), and
+each resolution's intent until its generation is published.
 .TP
 .I ~/.nostr-home-limited
 If present, the daemon refuses to start (\(dqlimited mode\(dq). Used by

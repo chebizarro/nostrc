@@ -250,6 +250,41 @@ writer head arrives. Copy completion and namespace publication are separate:
 completed copies rebuild their namespace from the authenticated retained tree
 after restart, without trusting or rewriting locally edited conflict bytes.
 
+### Seeing and resolving conflicts
+
+`nostr-home-status conflicts` lists unresolved conflicts from both sources
+(`syncd.home_conflicts` for the personal home, `syncd.vault_conflicts` for
+shared folders, including deletion-only and `.overflow` cases) with a
+plain-language explanation and the choices syncd accepts:
+
+```sh
+nostr-home-status conflicts
+nostr-home-status conflicts resolve 3f2a1b0c --use-saved    # or --keep-current, --keep-both
+nostr-home-status conflicts resolve 3f2a1b0c --keep-mine    # when provenance is known
+```
+
+The CLI (and the `nostr-home-status@nostrc` panel menu, which runs it) only
+drops a request into `$XDG_STATE_HOME/nostr-homed/requests/`. nostr-home-syncd
+applies it on its main loop:
+
+* **Personal home:** edits HOME and enqueues the batcher, so the normal push
+  publishes a generation. The row stays *pending* until the snapshot shows
+  that generation (or resolves at once when nothing published was touched).
+* **Shared folder:** an engine transaction. Intent is journalled on the
+  conflict row, the chosen version is applied from the authenticated retained
+  snapshot (never from the editable `Portable/.conflicts` copy), and a forced
+  successor head is signed (keep-current included, so it covers the
+  conflicting head) and published through the pending journal. Only after a
+  relay accepts it is the row resolved and the saved copy removed; offline,
+  the row stays pending and commits on the next successful publish. Read-only
+  members can only dismiss locally.
+
+Requests carry a freshness token; if the file changed since it was listed,
+syncd answers `stale`. Outcomes appear in `syncd.resolutions[]`. Resolution
+notices are per device: other devices keep their own record until resolved
+there. Live personal-home conflicts additionally need the pull path wired into
+the daemon (`nostrc-klwqq`); the reconciler already journals them.
+
 FUSE consumes the existing folded namespace snapshot unchanged. Open file
 handles bind to immutable verified trees, their exact per-node epoch rings and
 CDC lengths. No home-key/tier-0 fallback is permitted for configured vault paths.

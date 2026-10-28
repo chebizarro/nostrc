@@ -3,6 +3,7 @@
 #include "nh_syncd_vault_engine.h"
 #include "nh_syncd_vault_reader.h"
 #include "nh_syncd_vault_net.h"
+#include "nh_syncd_vault_fs.h"
 #include <vault/nip59.h>
 #include <time.h>
 #include <json.h>
@@ -518,6 +519,225 @@ static void runtime_recovery(nh_vault_session *disk, nh_vault_engine **engine,
     node_free(re_root);
     node_free(re_child);
 }
+/* ── nostrc-h10m.6: conflict resolution through the engine ──
+ *
+ * V1 of Portable/Shared is published, then a.txt changes and V2 is
+ * published, so V1 is a retained signed snapshot. Conflict rows pointing at
+ * V1 (as conflicts() records a losing writer's version) are resolved with
+ * each choice; every resolution must sign + publish a head, leave HOME
+ * matching that head (fold_apply's dirty preflight passes) and drop the
+ * saved copy only after publication. */
+#define OTHER_WRITER "abababababababababababababababababababababababababababababababab"
+static int publish_offline(void *ctx, NostrEvent *e) {
+    (void)ctx;
+    (void)e;
+    return VAULT_ERR_IO;
+}
+static void put_text(int home, const char *rel, const char *text) {
+    int fd = openat(home, rel, O_CREAT | O_TRUNC | O_WRONLY | O_NOFOLLOW, 0600);
+    assert(fd >= 0 && write(fd, text, strlen(text)) == (ssize_t)strlen(text) && !close(fd));
+}
+static int has_text(int home, const char *rel, const char *text) {
+    char buf[128] = {0};
+    int fd = openat(home, rel, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0)
+        return 0;
+    ssize_t n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    return n == (ssize_t)strlen(text) && !memcmp(buf, text, (size_t)n);
+}
+static int present(int home, const char *rel) {
+    struct stat st;
+    return !fstatat(home, rel, &st, AT_SYMLINK_NOFOLLOW);
+}
+static void inject(nh_vault_session *disk, const char *head, const char *leaf, const char *enc,
+                   int saved) {
+    char path[128], dest[256];
+    snprintf(path, sizeof path, "Portable/Shared/%s", leaf);
+    snprintf(dest, sizeof dest, "Portable/.conflicts/%s@%s", path, OTHER_WRITER);
+    json_t *row = saved ? json_pack("{s:s,s:s,s:s,s:b,s:b,s:s,s:s}", "path", path, "writer",
+                                    OTHER_WRITER, "head", head, "present", 1, "materialized", 0,
+                                    "destination", dest, "source_path", enc)
+                        : json_pack("{s:s,s:s,s:s,s:b,s:b}", "path", path, "writer", OTHER_WRITER,
+                                    "head", head, "present", 0, "materialized", 0);
+    assert(row && !json_array_append_new(json_object_get(disk->doc, "conflicts"), row));
+    assert(!nh_vault_session_save(disk));
+}
+static json_t *projected(nh_vault_engine *e, const char *leaf, char id[65], char token[65]) {
+    json_t *rows = json_array();
+    assert(!nh_vault_engine_project_conflicts(e, rows));
+    char path[128];
+    snprintf(path, sizeof path, "Portable/Shared/%s", leaf);
+    size_t i;
+    json_t *row, *hit = NULL;
+    json_array_foreach(rows, i, row) if (!strcmp(json_string_value(json_object_get(row, "path")),
+                                                 path)) hit = json_incref(row);
+    if (hit) {
+        snprintf(id, 65, "%s", json_string_value(json_object_get(hit, "id")));
+        snprintf(token, 65, "%s", json_string_value(json_object_get(hit, "expect")));
+    }
+    json_decref(rows);
+    return hit;
+}
+static void resolve_flow(const char *dir, int home, nh_syncd_state *state,
+                         const nh_syncd_ignore *ignore, const vault_blob_io *io,
+                         nh_syncd_cache *cache, const uint8_t key[32], const uint8_t rootkey[32]) {
+    static const char *names[] = {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"};
+    assert(!mkdirat(home, "Portable/Shared", 0700));
+    for (size_t i = 0; i < 6; ++i) {
+        char rel[64], text[32];
+        snprintf(rel, sizeof rel, "Portable/Shared/%s", names[i]);
+        snprintf(text, sizeof text, "v1 %s\n", names[i]);
+        put_text(home, rel, text);
+    }
+    nh_syncd_vault_config_entry cfg = {.path = "Portable/Shared", .is_owner = 1};
+    cfg.vault_id[0] = 99;
+    nh_vault_session *disk = NULL;
+    nh_vault_engine *e = NULL;
+    assert(!nh_vault_session_open(dir, cfg.vault_id, key, &disk));
+    disk->remote = *io;
+    disk->cache = cache;
+    strcpy(disk->remote_scope, "fixture");
+    assert(!nh_vault_engine_open(&cfg, disk, home, state, ignore, sk, &e));
+    assert(!nh_vault_engine_owner_init(e, 0, rootkey));
+    size_t pubs = 0;
+    assert(!nh_vault_engine_publish_pending(e, publish, &pubs) && pubs == 1);
+    assert(!nh_vault_engine_fold_apply(e));
+
+    /* V1: remember its signed snapshot and every file's encrypted name. */
+    json_t *v1 = json_deep_copy(json_object_get(disk->doc, "view"));
+    NostrEvent *v1_event = nostr_event_new();
+    assert(v1 && !nostr_event_deserialize(v1_event, json_string_value(json_object_get(v1, "event"))));
+    char v1_id[65];
+    snprintf(v1_id, sizeof v1_id, "%s", v1_event->id);
+    nostr_event_free(v1_event);
+    char enc[6][256] = {{0}};
+    const porthome_dir_node *root = vault_tree_node_at(nh_vault_engine_view(e), 0, NULL);
+    for (size_t i = 0; i < root->entries_len; ++i)
+        for (size_t k = 0; k < 6; ++k)
+            if (!strcmp(root->entries[i].name_plain, names[k]))
+                snprintf(enc[k], sizeof enc[k], "%s", root->entries[i].name_enc);
+    for (size_t k = 0; k < 6; ++k)
+        assert(enc[k][0]);
+
+    /* V2: a.txt changes and is published; V1 stays retained. */
+    put_text(home, "Portable/Shared/a.txt", "v2 a.txt\n");
+    assert(!nh_vault_engine_capture(e, NULL, publish, &pubs) && pubs == 2);
+    assert(!nh_vault_engine_fold_apply(e));
+    assert(!json_array_append_new(json_object_get(disk->doc, "retained"), v1));
+
+    inject(disk, v1_id, "a.txt", enc[0], 1);
+    inject(disk, v1_id, "b.txt", enc[1], 1);
+    inject(disk, v1_id, "c.txt", enc[2], 1);
+    inject(disk, v1_id, "d.txt", NULL, 0); /* deletion-only: the other writer removed it */
+    inject(disk, v1_id, "e.txt", enc[4], 1);
+    /* The normal fold materialises the saved copies from the signed V1. */
+    assert(!nh_vault_engine_fold_apply(e));
+    const char *copy_a = "Portable/.conflicts/Portable/Shared/a.txt@" OTHER_WRITER;
+    assert(has_text(home, copy_a, "v1 a.txt\n"));
+
+    char id[65], token[65];
+    json_t *row = projected(e, "a.txt", id, token);
+    assert(row && strlen(id) == 64 && strcmp(token, "absent"));
+    assert(!strcmp(json_string_value(json_object_get(row, "mine")), "current")); /* owner view */
+    assert(json_array_size(json_object_get(row, "choices")) == 3);
+    assert(!json_object_get(row, "source_path") && !json_object_get(row, "resolution"));
+    json_decref(row);
+    row = projected(e, "d.txt", id, token);
+    assert(row && json_is_false(json_object_get(row, "present")) &&
+           json_array_size(json_object_get(row, "choices")) == 2);
+    json_decref(row);
+
+    const char *why = NULL;
+    /* Refusals publish nothing. */
+    json_decref(projected(e, "a.txt", id, token));
+    assert(nh_vault_engine_resolve(e, id, NH_CONFLICT_USE_SAVED, "0000", "11111111111111111111111111111111",
+                                   publish, &pubs, &why) < 0 && !strcmp(why, "stale"));
+    json_decref(projected(e, "d.txt", id, token));
+    assert(nh_vault_engine_resolve(e, id, NH_CONFLICT_KEEP_BOTH, token, "22222222222222222222222222222222",
+                                   publish, &pubs, &why) < 0 && !strcmp(why, "unsupported-choice"));
+    assert(nh_vault_engine_resolve(e, "ff", NH_CONFLICT_KEEP_CURRENT, "", "33333333333333333333333333333333",
+                                   publish, &pubs, &why) < 0 && !strcmp(why, "not-found"));
+    assert(pubs == 2);
+
+    /* use-saved: V1's a.txt comes back and is published as a new head. */
+    json_decref(projected(e, "a.txt", id, token));
+    assert(!nh_vault_engine_resolve(e, id, NH_CONFLICT_USE_SAVED, token, "44444444444444444444444444444444",
+                                    publish, &pubs, &why));
+    assert(pubs == 3 && has_text(home, "Portable/Shared/a.txt", "v1 a.txt\n"));
+    assert(!present(home, copy_a));
+    assert(!nh_vault_engine_fold_apply(e)); /* HOME matches the published head */
+    /* The new view itself carries V1's bytes (same length as V2's). */
+    uint8_t bytes[32];
+    size_t got = 0;
+    assert(!nh_syncd_vault_read(nh_vault_engine_view(e), "a.txt", 0, bytes, sizeof bytes,
+                                &disk->io, &got) &&
+           got == 9 && !memcmp(bytes, "v1 a.txt\n", 9));
+    assert(!projected(e, "a.txt", id, token));
+    /* Duplicate delivery of the finished request is a no-op. */
+    assert(!nh_vault_engine_resolve(e, id, NH_CONFLICT_USE_SAVED, "", "44444444444444444444444444444444",
+                                    publish, &pubs, &why) && pubs == 3);
+    /* ...and a resolved row is never rematerialised by later folds. */
+    assert(!nh_vault_engine_fold_apply(e) && !present(home, copy_a));
+
+    /* keep-both: the saved version is added next to the current one. */
+    json_decref(projected(e, "b.txt", id, token));
+    assert(!nh_vault_engine_resolve(e, id, NH_CONFLICT_KEEP_BOTH, token, "55555555555555555555555555555555",
+                                    publish, &pubs, &why));
+    assert(pubs == 4 && has_text(home, "Portable/Shared/b.txt", "v1 b.txt\n"));
+    assert(has_text(home, "Portable/Shared/b (conflicted copy from abababab).txt", "v1 b.txt\n"));
+    assert(!nh_vault_engine_fold_apply(e));
+    const porthome_node_entry *found = NULL;
+    porthome_ring_t ring;
+    assert(!nh_syncd_vault_lookup(nh_vault_engine_view(e), "b (conflicted copy from abababab).txt", 0,
+                                  &found, &ring) && found);
+
+    /* keep-current still signs a head (it covers the conflicting one). */
+    json_decref(projected(e, "c.txt", id, token));
+    assert(!nh_vault_engine_resolve(e, id, NH_CONFLICT_KEEP_CURRENT, token, "66666666666666666666666666666666",
+                                    publish, &pubs, &why));
+    assert(pubs == 5 && has_text(home, "Portable/Shared/c.txt", "v1 c.txt\n"));
+    assert(!present(home, "Portable/.conflicts/Portable/Shared/c.txt@" OTHER_WRITER));
+
+    /* Deletion-only, use-saved = delete the file, and that is published. */
+    json_decref(projected(e, "d.txt", id, token));
+    assert(!nh_vault_engine_resolve(e, id, NH_CONFLICT_USE_SAVED, token, "77777777777777777777777777777777",
+                                    publish, &pubs, &why));
+    assert(pubs == 6 && !present(home, "Portable/Shared/d.txt"));
+    assert(!nh_vault_engine_fold_apply(e));
+    assert(nh_syncd_vault_lookup(nh_vault_engine_view(e), "d.txt", 0, &found, &ring) != 0);
+
+    /* Offline: signed and journalled, row pending, saved copy kept until a
+     * later publication succeeds and commits it. */
+    json_decref(projected(e, "e.txt", id, token));
+    assert(nh_vault_engine_resolve(e, id, NH_CONFLICT_USE_SAVED, token, "88888888888888888888888888888888",
+                                   publish_offline, NULL, &why) == NH_CONFLICT_QUEUED);
+    assert(!strcmp(why, "offline"));
+    assert(present(home, "Portable/.conflicts/Portable/Shared/e.txt@" OTHER_WRITER));
+    row = projected(e, "e.txt", id, token);
+    assert(row && !strcmp(json_string_value(json_object_get(row, "state")), "pending"));
+    json_decref(row);
+    assert(!nh_vault_engine_publish_pending(e, publish, &pubs) && pubs == 7);
+    assert(!projected(e, "e.txt", id, token));
+    assert(!present(home, "Portable/.conflicts/Portable/Shared/e.txt@" OTHER_WRITER));
+    assert(has_text(home, "Portable/Shared/e.txt", "v1 e.txt\n"));
+    assert(!nh_vault_engine_fold_apply(e));
+
+    /* Every resolved row is still in the journal, with its resolution. */
+    size_t i, resolved = 0;
+    json_array_foreach(json_object_get(disk->doc, "conflicts"), i, row) {
+        const char *st = json_string_value(json_object_get(json_object_get(row, "resolution"), "state"));
+        if (st && !strcmp(st, "resolved")) {
+            ++resolved;
+            assert(json_integer_value(json_object_get(row, "resolved_generation")) > 0);
+        }
+    }
+    assert(resolved == 5);
+    nh_vault_engine_close(e);
+    nh_vault_session_close(disk);
+    puts("PASS vault conflict resolution: use-saved/keep-both/keep-current/delete publish a head; "
+         "offline resolutions commit on later publication");
+}
 void nh_syncd_state_bump_generation_(nh_syncd_state *);
 int main(int argc, char **argv) {
     int fuse_mode = argc == 3 && !strcmp(argv[1], "--fuse");
@@ -678,6 +898,8 @@ int main(int argc, char **argv) {
         memcpy(prior_key, expected, 32);
         nh_vault_engine_close(fresh); nh_vault_session_close(journal);
     }
+    if (!fuse_mode)
+        resolve_flow(dir, homefd, state, ignore, &io, cache, key, rootkey);
     nh_vault_engine_close(engine);
     nh_vault_session_close(disk);
     nh_syncd_cache_close(cache);

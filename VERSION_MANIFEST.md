@@ -53,6 +53,31 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
+### Portable-home progress, quota and conflict-resolution UX (nostrc-h10m.6)
+
+- **nostr-homed stays 0.6.0 (no further bump):** these are additive changes on
+  top of the unreleased 0.6.0 MINOR wave (nostrc-h10m.5), following the
+  nostrc-hl30i.10 precedent of folding into an untagged MINOR. New public
+  surfaces: `nostr-home-status conflicts [--json]` and `conflicts resolve`
+  (documented exit statuses), additive `syncd.home_conflicts`,
+  `syncd.resolutions`, `syncd.conflicts_active_count` and per-row
+  `id/choices/mine/expect/current_present/state/overflow` status fields, additive
+  `provisioner.home_bytes`/`home_quota_bytes`, the syncd request inbox
+  (`$XDG_STATE_HOME/nostr-homed/requests/`) and the private personal-home
+  journal `home-conflicts.json`; pam_nostr shows provisioning progress as
+  PAM_TEXT_INFO and clamps each WAIT_HOME poll to the remaining budget; the
+  nostr-home-status@nostrc extension (installed by nostr-homed) gains
+  progress, usage and conflict UI and installs `model.js`. Status schema stays
+  1; existing keys keep their meaning (`vault_conflicts` rows keep their field
+  names; encrypted `source_path` and resolution journals are no longer
+  copied into status). The broker no longer writes provisioner status before
+  the home is installed (PATCH-class fix to first-login provisioning, same
+  wave). h10m.5's `gc` namespace is untouched.
+- **No bump:** libvault, libporthome, libblossom, bud02, vaultctl and the Nostr
+  Shell extension are unchanged (resolution reuses libvault's existing
+  `vault_fold_checkpoint`/`vault_head_cover` via syncd's engine). No release
+  tags or release-column updates.
+
 ### Conservative portable-home blob GC (nostrc-h10m.5)
 
 - **nostr-homed 0.5.1 -> 0.6.0 (MINOR):** additive experimental syncd

@@ -26,6 +26,11 @@ int nh_vault_manager_bootstrap(nh_vault_manager *, int once);
 int nh_vault_manager_fd(const nh_vault_manager *);
 int nh_vault_manager_capture(nh_vault_manager *, const nh_syncd_batch *);
 int nh_vault_manager_service(nh_vault_manager *);
+/* Route a conflict-resolution request to the vault that owns `conflict_id`
+ * and run it as nh_vault_engine_resolve() does (same return contract), then
+ * fold/commit and refresh status.syncd.vault_conflicts. */
+int nh_vault_manager_resolve(nh_vault_manager *, const char *conflict_id, nh_conflict_choice,
+                             const char *expect, const char *request, const char **why);
 int nh_vault_manager_retention(nh_vault_manager *);
 /* Borrowed pins include in-flight installation/reseal views, not just frontier. */
 const json_t *nh_vault_manager_gc_refs(const nh_vault_manager *);

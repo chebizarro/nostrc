@@ -37,6 +37,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -227,6 +228,18 @@ int main(void) {
     nh_auth_message_clear(&rsp);
     close(sv[0]);
     int st; waitpid(pid, &st, 0);
+
+    /* nostrc-h10m.6: the job never installed n_bob's home, so its status
+     * writes must not have created it. A pre-created <home_root>/n_bob
+     * makes the next real first-login install refuse (RENAME_NOREPLACE). */
+    char bob_home[600];
+    snprintf(bob_home, sizeof bob_home, "%s/home/n_bob", dir);
+    struct stat hst;
+    if (stat(bob_home, &hst) == 0 || errno != ENOENT) {
+      fprintf(stderr, "status write created uninstalled home %s\n", bob_home);
+      exit(1);
+    }
+    printf("PASS: provisioner status never creates an uninstalled home\n");
   }
 
   /* ─── Test 3: WAIT_HOME with no job → NOT_SUPPORTED ─── */

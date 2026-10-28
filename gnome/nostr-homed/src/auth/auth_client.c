@@ -2,6 +2,7 @@
 #include "auth_client.h"
 
 #include <jansson.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
@@ -628,4 +629,48 @@ int nh_auth_client_wait_home(int fd, uint32_t timeout_ms,
   if (rc == 0) parse_porthome_progress(response_json, progress_out);
   free(response_json);
   return rc;
+}
+
+/* Decimal (SI) units, matching GNOME's default size formatting. */
+static void format_size_si(uint64_t bytes, char *out, size_t cap) {
+  static const char *const units[] = {"kB", "MB", "GB", "TB"};
+  if (bytes < 1000u) {
+    snprintf(out, cap, "%llu bytes", (unsigned long long)bytes);
+    return;
+  }
+  double v = (double)bytes / 1000.0;
+  size_t u = 0;
+  while (v >= 1000.0 && u + 1 < sizeof units / sizeof units[0]) {
+    v /= 1000.0;
+    u++;
+  }
+  snprintf(out, cap, "%.1f %s", v, units[u]);
+}
+
+int nh_auth_porthome_progress_format(const nh_auth_porthome_progress *p,
+                                     char *out, size_t cap) {
+  if (!out || cap == 0) return -1;
+  out[0] = '\0';
+  int n;
+  if (!p || (p->files == 0 && p->bytes == 0)) {
+    n = snprintf(out, cap, "Loading your portable home\xe2\x80\xa6");
+  } else {
+    char size[32];
+    format_size_si(p->bytes, size, sizeof size);
+    if (p->total_files > 0 && p->files <= p->total_files) {
+      unsigned pct = (unsigned)(((uint64_t)p->files * 100u) / p->total_files);
+      n = snprintf(out, cap,
+                   "Loading your portable home: %u%% (%u of %u files, %s)",
+                   pct, (unsigned)p->files, (unsigned)p->total_files, size);
+    } else {
+      n = snprintf(out, cap,
+                   "Loading your portable home: %u %s (%s) copied so far",
+                   (unsigned)p->files, p->files == 1 ? "file" : "files", size);
+    }
+  }
+  if (n < 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return -1;
+  }
+  return n;
 }

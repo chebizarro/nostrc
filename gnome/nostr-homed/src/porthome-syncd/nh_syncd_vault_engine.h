@@ -3,6 +3,7 @@
 #define NH_SYNCD_VAULT_ENGINE_H
 #include "nh_syncd_vault_config.h"
 #include "nh_syncd_vault_session.h"
+#include "nh_syncd_conflicts.h"
 
 typedef struct nh_vault_engine nh_vault_engine;
 typedef int (*nh_vault_publish_fn)(void *, NostrEvent *);
@@ -37,5 +38,19 @@ const vault_grant *nh_vault_engine_grant(const nh_vault_engine *);
 const porthome_vault_info *nh_vault_engine_policy(const nh_vault_engine *);
 const vault_tree *nh_vault_engine_view(const nh_vault_engine *);
 const json_t *nh_vault_engine_conflicts(const nh_vault_engine *);
+/* Conflict resolution (nostrc-h10m.6). Returns 0 once the resolution head is accepted
+ * by a relay and the row is resolved (its saved copy removed), the positive
+ * NH_CONFLICT_QUEUED when the head is signed and journalled but publication
+ * failed (the row commits on a later successful publish), or a negative
+ * error with *why set to a status slug ("not-found", "already-resolved",
+ * "busy", "unsupported-choice", "stale", "offline", "io"). Read-only
+ * members may only keep-current, which dismisses locally without a head.
+ * Re-sending the same request id resumes rather than repeats. */
+int nh_vault_engine_resolve(nh_vault_engine *, const char *conflict_id, nh_conflict_choice,
+                            const char *expect, const char *request_id, nh_vault_publish_fn,
+                            void *, const char **why);
+int nh_vault_engine_has_conflict(const nh_vault_engine *, const char *conflict_id);
+/* Append unresolved rows (allowlisted fields + id/choices/mine/expect) to `out`. */
+int nh_vault_engine_project_conflicts(const nh_vault_engine *, json_t *out);
 void nh_vault_engine_close(nh_vault_engine *);
 #endif

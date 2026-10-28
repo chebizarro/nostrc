@@ -77,6 +77,10 @@ static int open_one(const nh_syncd_vault_config_entry *cfg, const char *state,
     json_array_foreach(json_object_get(r->disk->doc, "conflicts"), i, row) {
         const char *dest = json_string_value(json_object_get(row, "destination"));
         json_int_t g = json_integer_value(json_object_get(row, "generation"));
+        /* Resolved rows (nostrc-h10m.6) stop at their resolution generation. */
+        json_int_t gone = json_integer_value(json_object_get(row, "resolved_generation"));
+        if (gone > 0 && (uint64_t)gone <= generation)
+            continue;
         if (!dest || !below(path, dest) || g <= 0 || (uint64_t)g > generation ||
             strlen(dest) < longest || (strlen(dest) == longest && (uint64_t)g < conflict_gen))
             continue;

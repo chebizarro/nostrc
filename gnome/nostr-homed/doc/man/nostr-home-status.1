@@ -1,6 +1,6 @@
-.TH NOSTR-HOME-STATUS 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.TH NOSTR-HOME-STATUS 1 "2026-10-28" "nostr-homed 0.6" "User Commands"
 .SH NAME
-nostr-home-status \- read porthome-status.json and (optionally) manage quiet hours + quotas
+nostr-home-status \- read porthome-status.json, manage quiet hours and quotas, resolve conflicts
 .SH SYNOPSIS
 .B nostr-home-status
 [\fB\-\-json\fR]
@@ -12,6 +12,14 @@ nostr-home-status \- read porthome-status.json and (optionally) manage quiet hou
 [\fB\-\-json\fR]
 [\fB\-\-set\-override\fR \fIBYTES\fR | \fB\-\-clear\-override\fR]
 [\fB\-\-reload\fR]
+.br
+.B nostr-home-status conflicts
+[\fB\-\-json\fR]
+.br
+.B nostr-home-status conflicts resolve
+.I ID CHOICE
+[\fB\-\-no\-wait\fR]
+[\fB\-\-timeout\fR \fISECONDS\fR]
 .SH DESCRIPTION
 Operator CLI over
 .IR $XDG_STATE_HOME/nostr-homed/porthome-status.json .
@@ -35,7 +43,44 @@ subcommand reports (and, with
 .BR \-\-set\-override / \-\-clear\-override ,
 mutates) the syncd's per-user quota override.
 .B \-\-reload
-signals the daemon to re-read its configuration.
+signals the daemon to re-read its configuration. It also shows the cache
+and home sizes against their limits.
+.PP
+The
+.B conflicts
+subcommand lists unresolved conflicts from both the personal home
+(\fIsyncd.home_conflicts\fR: sibling \fI.conflict-*\fR copies and deletion
+markers) and shared folders (\fIsyncd.vault_conflicts\fR: copies under
+\fIPortable/.conflicts/\fR, over-long names under
+\fIPortable/.conflicts/.overflow/\fR, and deletion-only conflicts that have
+no copy). Each entry has an ID, a plain-language explanation and the
+choices available for it.
+.PP
+.B conflicts resolve
+never edits files itself. It writes a request into
+.B nostr-home-syncd (8)'s
+inbox; syncd applies the choice and publishes it (a new personal-home
+generation, or a new signed shared-folder head), then reports the outcome
+in \fIsyncd.resolutions\fR, which the command waits for. The ID may be
+abbreviated to any unique prefix of at least 6 characters.
+.SH CHOICES
+.TP
+.B \-\-keep\-current
+Keep what is at the original path now and discard the saved copy (for a
+deletion conflict: keep the file).
+.TP
+.B \-\-use\-saved
+Replace it with the saved version (for a deletion conflict: delete the
+file).
+.TP
+.B \-\-keep\-both
+Keep the current version and add the saved one beside it as
+\fIname (conflicted copy ...)\fR. Not offered when one side is a deletion.
+.TP
+.BR \-\-keep\-mine ", " \-\-take\-theirs
+Aliases that map to one of the above using the recorded provenance of
+which version came from this device or account. Refused when that is not
+known (for example, a shared-folder conflict between two other members).
 .SH OPTIONS
 .TP
 .B \-\-json
@@ -67,6 +112,17 @@ Remove the override; syncd falls back to the compiled default.
 Send SIGHUP to the running syncd (if any) so it re-reads the quota file
 immediately.
 .TP
+.B conflicts \-\-json
+List conflicts as a JSON array (id, source, path, saved_path,
+saved_present, current_present, overflow, pending, mine, description,
+choices).
+.TP
+.B conflicts resolve \-\-no\-wait
+Queue the request and exit 3 without waiting for syncd.
+.TP
+.B conflicts resolve \-\-timeout \fISECONDS\fR
+How long to wait for syncd's answer (default 30).
+.TP
 .B \-h ", " \-\-help
 Print usage and exit.
 .SH EXIT CODES
@@ -84,8 +140,17 @@ matched no key.
 Bad argument.
 .TP 4
 .B 3
-Status file does not exist.
+Status file does not exist; for
+.BR "conflicts resolve" :
+the choice was accepted but is not yet shared (offline, or no answer
+from syncd before the timeout; a queued request is applied when syncd
+runs).
 .RE
+.PP
+For
+.BR "conflicts resolve" ,
+0 means resolved and shared, and 1 means syncd refused or failed the
+request (the reason is printed).
 .SH FILES
 .TP
 .I $XDG_STATE_HOME/nostr-homed/porthome-status.json
@@ -97,6 +162,11 @@ Quiet-hours config.
 .TP
 .I $XDG_CONFIG_HOME/nostr-homed/quota-override
 Per-user quota override.
+.TP
+.I $XDG_STATE_HOME/nostr-homed/requests/
+Conflict-resolution inbox read by
+.BR nostr-home-syncd (8)
+(mode 0700; one \fI<request-id>.json\fR per request).
 .SH ENVIRONMENT
 .TP
 .B XDG_STATE_HOME

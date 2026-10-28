@@ -44,6 +44,7 @@
 #define _GNU_SOURCE
 
 #include "nh_syncd.h"
+#include "nh_syncd_conflicts.h"
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_notify.h"
@@ -174,6 +175,9 @@ int nh_syncd_partial_state_is_set(const char *state_dir) {
 typedef struct {
     char *rel;
     char *conflict_path;
+    /* Provenance for the conflict journal (nostrc-h10m.6). */
+    nh_home_conflict_kind kind;
+    bool saved_is_local;
 } conflict_row;
 
 struct nh_syncd_reconcile_result {
@@ -207,7 +211,8 @@ static int result_push(nh_syncd_reconcile_result *r, const char *rel) {
 }
 
 static int result_conflict(nh_syncd_reconcile_result *r,
-                           const char *rel, const char *conflict_path) {
+                           const char *rel, const char *conflict_path,
+                           nh_home_conflict_kind kind, bool saved_is_local) {
     if (r->conflicts_n == r->conflicts_cap) {
         size_t nc = r->conflicts_cap ? r->conflicts_cap * 2 : 8;
         conflict_row *nr = realloc(r->conflicts, nc * sizeof *nr);
@@ -216,6 +221,8 @@ static int result_conflict(nh_syncd_reconcile_result *r,
     }
     r->conflicts[r->conflicts_n].rel = strdup(rel);
     r->conflicts[r->conflicts_n].conflict_path = strdup(conflict_path);
+    r->conflicts[r->conflicts_n].kind = kind;
+    r->conflicts[r->conflicts_n].saved_is_local = saved_is_local;
     if (!r->conflicts[r->conflicts_n].rel || !r->conflicts[r->conflicts_n].conflict_path) {
         free(r->conflicts[r->conflicts_n].rel);
         free(r->conflicts[r->conflicts_n].conflict_path);
@@ -776,7 +783,8 @@ static int handle_content_conflict(const nh_syncd_reconcile_cfg *cfg,
             (void)nh_syncd_batcher_push(cfg->push_queue, rel, NH_SYNCD_CHANGE_MODIFY);
     }
 
-    int rr = result_conflict(res, rel, loser_path);
+    /* Remote won: the copy holds the local edit. Local won: the remote one. */
+    int rr = result_conflict(res, rel, loser_path, NH_HOME_CONFLICT_EDIT, remote_wins);
     free(loser_path);
     return rr;
 }
@@ -804,7 +812,7 @@ static int handle_delete_conflict(const nh_syncd_reconcile_cfg *cfg,
     /* Enqueue the local for push so it makes it back to the remote. */
     if (cfg->push_queue)
         (void)nh_syncd_batcher_push(cfg->push_queue, rel, NH_SYNCD_CHANGE_MODIFY);
-    int rr = result_conflict(res, rel, marker);
+    int rr = result_conflict(res, rel, marker, NH_HOME_CONFLICT_DELETED_REMOTELY, false);
     free(marker);
     return rr;
 }
@@ -1083,7 +1091,8 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
                 if (build_conflict_path(b->rel, cfg->device_name, clock_now,
                                         ".conflict-locally-deleted", &marker) == 0) {
                     (void)write_file_atomic_at(home_fd, marker, (const uint8_t *)"", 0, 0644);
-                    (void)result_conflict(res, b->rel, marker);
+                    (void)result_conflict(res, b->rel, marker,
+                                          NH_HOME_CONFLICT_DELETED_LOCALLY, false);
                     free(marker);
                 }
             } else {
@@ -1147,6 +1156,27 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
     if (state_dir_for_persist) {
         int srv = nh_syncd_state_save(state, state_dir_for_persist);
         if (srv != NH_SYNCD_OK) set_err(out_error_msg, "state_save rc=%d", srv);
+    }
+
+    /* Durable provenance so the conflicts can be listed and resolved later
+     * (nostr-home-status conflicts). Warn-only: the copies/markers are
+     * already on disk and nothing is lost if the journal write fails. */
+    if (state_dir_for_persist && res->conflicts_n > 0) {
+        nh_home_conflict_record *recs = calloc(res->conflicts_n, sizeof *recs);
+        if (recs) {
+            for (size_t i = 0; i < res->conflicts_n; i++) {
+                recs[i].path = res->conflicts[i].rel;
+                recs[i].kind = res->conflicts[i].kind;
+                recs[i].saved = res->conflicts[i].conflict_path;
+                recs[i].saved_is_local = res->conflicts[i].saved_is_local;
+            }
+            int jr = nh_syncd_home_conflicts_record(state_dir_for_persist, recs,
+                                                    res->conflicts_n, cfg->remote_generation,
+                                                    clock_now);
+            if (jr != NH_SYNCD_OK)
+                fprintf(stderr, "syncd/reconcile: conflict journal rc=%d\n", jr);
+            free(recs);
+        }
     }
 
     /* Notification (single per pass). */

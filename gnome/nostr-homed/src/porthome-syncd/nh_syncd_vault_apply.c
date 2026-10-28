@@ -671,6 +671,43 @@ int nh_syncd_vault_materialize_one(int home_fd, const char *destination, const v
     int restored = restore_permissions(&guard, rc == 0);
     return rc ? rc : restored;
 }
+int nh_syncd_vault_remove_one(int home_fd, const char *path, nh_syncd_state *state)
+{
+    if (home_fd < 0 || !path || !*path || *path == '/' || !state ||
+        strlen(path) >= PORTHOME_MAX_PATH_LEN)
+        return VAULT_ERR_ARG;
+    permissions guard = {0};
+    /* Tracked descendants first (deepest first); untracked files survive. */
+    int rc = remove_absent(home_fd, path, NULL, NULL, state, &guard);
+    char parent[PORTHOME_MAX_PATH_LEN];
+    memcpy(parent, path, strlen(path) + 1);
+    char *leaf = strrchr(parent, '/');
+    if (leaf)
+        *leaf++ = 0;
+    else
+        leaf = parent;
+    if (!rc) {
+        int dir = leaf == parent ? fcntl(home_fd, F_DUPFD_CLOEXEC, 0)
+                                 : directory(home_fd, parent, 0, "", state, &guard);
+        struct stat st;
+        if (dir < 0)
+            rc = errno == ENOENT ? 0 : VAULT_ERR_IO;
+        else if (fstatat(dir, leaf, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            if (unlinkat(dir, leaf, S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0) &&
+                !(S_ISDIR(st.st_mode) && (errno == ENOTEMPTY || errno == EEXIST)))
+                rc = VAULT_ERR_IO;
+            if (!rc && fsync(dir))
+                rc = VAULT_ERR_IO;
+        } else if (errno != ENOENT)
+            rc = VAULT_ERR_IO;
+        if (dir >= 0)
+            close(dir);
+    }
+    if (!rc)
+        rc = nh_syncd_state_delete_(state, path);
+    int restored = restore_permissions(&guard, rc == 0);
+    return rc ? rc : restored;
+}
 static int reserved_entries(const char *prefix, const vault_tree *tree, const porthome_dir_node *node, unsigned depth)
 {
     if (depth >= 128) return PORTHOME_ERR_TOO_LARGE;

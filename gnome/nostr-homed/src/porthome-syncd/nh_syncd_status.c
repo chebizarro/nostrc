@@ -3,12 +3,12 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * See nh_syncd_status.h. Deliberately no jansson dep — the body is a
- * hand-serialised object that reuses nh_porthome_json_escape from the
- * common library. Format is stable within v1 (schema field on the
- * outer document; each key body is a flat object).
+ * See nh_syncd_status.h. The fixed scalar fields and recent[] ring are
+ * hand-serialised with nh_porthome_json_escape; the variable-length
+ * conflict and resolution arrays are attached with jansson. Format is
+ * stable within v1 (schema field on the outer document; additive keys).
  *
- * Beads: nostrc-8hw8, nostrc-h10m.1.1.
+ * Beads: nostrc-8hw8, nostrc-h10m.1.1, nostrc-h10m.6.
  */
 #define _GNU_SOURCE
 #include "nh_syncd_status.h"
@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
     int64_t             ts;
@@ -40,9 +41,25 @@ typedef struct {
 
 #include <jansson.h>
 
+typedef struct {
+    int64_t ts;
+    char    request[NH_SYNCD_STATUS_REQUEST_ID_LEN + 1];
+    char    conflict[65];
+    char    choice[16];
+    char    result[8];
+    char    reason[32];
+} resolution_slot;
+
 struct nh_syncd_status_writer {
     pthread_mutex_t     mu;
     json_t             *vault_conflicts;
+    json_t             *home_conflicts;
+    /* Bounded resolution-result ring (most recent at res_head). Several
+     * slots may share a request id as it moves pending -> ok; readers use
+     * the newest. Not durable: the conflict rows carry the durable state. */
+    resolution_slot     res[NH_SYNCD_STATUS_RESOLUTIONS_CAP];
+    unsigned            res_count;
+    unsigned            res_head;
     /* Snapshot of the current field set. Copied under the lock. */
     nh_syncd_state_slug state;
     uint64_t            last_push_gen;
@@ -105,6 +122,7 @@ nh_syncd_status_writer *nh_syncd_status_writer_new(void) {
 void nh_syncd_status_writer_free(nh_syncd_status_writer *w) {
     if (!w) return;
     json_decref(w->vault_conflicts);
+    json_decref(w->home_conflicts);
     pthread_mutex_destroy(&w->mu);
     free(w);
 }
@@ -252,16 +270,74 @@ static int appendf(char *buf, size_t cap, size_t *off,
     return 0;
 }
 
-int nh_syncd_status_set_vault_conflicts(nh_syncd_status_writer *w, const char *wire) {
+static int set_array(nh_syncd_status_writer *w, json_t **slot, const char *wire) {
     if (!w || !wire) return -1;
     json_t *array = json_loads(wire, JSON_REJECT_DUPLICATES, NULL);
     if (!json_is_array(array)) { json_decref(array); return -1; }
     pthread_mutex_lock(&w->mu);
-    json_t *old = w->vault_conflicts;
-    w->vault_conflicts = array;
+    json_t *old = *slot;
+    *slot = array;
     pthread_mutex_unlock(&w->mu);
     json_decref(old);
     return 0;
+}
+
+int nh_syncd_status_set_vault_conflicts(nh_syncd_status_writer *w, const char *wire) {
+    return w ? set_array(w, &w->vault_conflicts, wire) : -1;
+}
+
+int nh_syncd_status_set_home_conflicts(nh_syncd_status_writer *w, const char *wire) {
+    return w ? set_array(w, &w->home_conflicts, wire) : -1;
+}
+
+void nh_syncd_status_record_resolution(nh_syncd_status_writer *w,
+                                       const char *request,
+                                       const char *conflict,
+                                       const char *choice,
+                                       const char *result,
+                                       const char *reason) {
+    if (!w || !request || !result) return;
+    pthread_mutex_lock(&w->mu);
+    unsigned target = w->res_count ? (w->res_head + 1u) % NH_SYNCD_STATUS_RESOLUTIONS_CAP : 0u;
+    resolution_slot *s = &w->res[target];
+    memset(s, 0, sizeof *s);
+    s->ts = (int64_t)time(NULL);
+    snprintf(s->request, sizeof s->request, "%s", request);
+    snprintf(s->conflict, sizeof s->conflict, "%s", conflict ? conflict : "");
+    snprintf(s->choice, sizeof s->choice, "%s", choice ? choice : "");
+    snprintf(s->result, sizeof s->result, "%s", result);
+    snprintf(s->reason, sizeof s->reason, "%s", reason ? reason : "");
+    w->res_head = target;
+    if (w->res_count < NH_SYNCD_STATUS_RESOLUTIONS_CAP) w->res_count++;
+    pthread_mutex_unlock(&w->mu);
+}
+
+/* Attach the variable-length arrays and the derived active count. */
+static char *extend_body(const char *body, json_t *home, json_t *vault,
+                         const resolution_slot *res, unsigned res_count,
+                         unsigned res_head) {
+    json_t *j = json_loads(body, JSON_REJECT_DUPLICATES, NULL);
+    json_t *results = json_array();
+    int bad = !j || !results;
+    for (unsigned i = 0; !bad && i < res_count; ++i) {
+        const resolution_slot *s =
+            &res[(res_head + NH_SYNCD_STATUS_RESOLUTIONS_CAP - i) % NH_SYNCD_STATUS_RESOLUTIONS_CAP];
+        json_t *row = json_pack("{s:I,s:s,s:s,s:s,s:s,s:s}", "ts", (json_int_t)s->ts,
+                                "request", s->request, "conflict", s->conflict,
+                                "choice", s->choice, "result", s->result,
+                                "reason", s->reason);
+        bad = !row || json_array_append_new(results, row);
+    }
+    size_t active = json_array_size(home) + json_array_size(vault);
+    if (!bad)
+        bad = json_object_set_new(j, "conflicts_active_count", json_integer((json_int_t)active)) ||
+              json_object_set(j, "resolutions", results) ||
+              (home && json_object_set(j, "home_conflicts", home)) ||
+              (vault && json_object_set(j, "vault_conflicts", vault));
+    char *out = bad ? NULL : json_dumps(j, JSON_COMPACT);
+    json_decref(results);
+    json_decref(j);
+    return out;
 }
 
 int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
@@ -289,6 +365,10 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
     recent_slot recent[NH_SYNCD_STATUS_RECENT_CAP];
     memcpy(recent, w->recent, sizeof recent);
     json_t *vault_conflicts = json_incref(w->vault_conflicts);
+    json_t *home_conflicts = json_incref(w->home_conflicts);
+    resolution_slot res[NH_SYNCD_STATUS_RESOLUTIONS_CAP];
+    memcpy(res, w->res, sizeof res);
+    unsigned res_count = w->res_count, res_head = w->res_head;
     pthread_mutex_unlock(&w->mu);
 
     char err_esc[128]  = {0};
@@ -317,7 +397,7 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                 nh_syncd_status_state_slug(state),
                 lpg, lpg2, err_esc, pinned, cb, cq, qs_esc, evr,
                 upok, uptot, upcls_esc) != 0)
-        { json_decref(vault_conflicts); return -1; }
+        { json_decref(vault_conflicts); json_decref(home_conflicts); return -1; }
 
     /* Emit recent[] most-recent-first. Walk backward from `head`. */
     for (unsigned i = 0; i < rc; ++i) {
@@ -341,7 +421,7 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                         sum_esc,
                         s->delivered ? "true" : "false",
                         (unsigned)s->count) != 0)
-                { json_decref(vault_conflicts); return -1; }
+                { json_decref(vault_conflicts); json_decref(home_conflicts); return -1; }
         } else {
             if (appendf(body, sizeof body, &off,
                         "%s{\"ts\":%" PRId64
@@ -355,21 +435,17 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                         (unsigned)s->key_hash8,
                         sum_esc,
                         s->delivered ? "true" : "false") != 0)
-                { json_decref(vault_conflicts); return -1; }
+                { json_decref(vault_conflicts); json_decref(home_conflicts); return -1; }
         }
     }
-    if (appendf(body, sizeof body, &off, "]}") != 0) { json_decref(vault_conflicts); return -1; }
+    if (appendf(body, sizeof body, &off, "]}") != 0) { json_decref(vault_conflicts); json_decref(home_conflicts); return -1; }
 
-    char *extended = NULL;
-    if (vault_conflicts) {
-        json_t *j = json_loads(body, JSON_REJECT_DUPLICATES, NULL);
-        if (j && json_object_set(j, "vault_conflicts", vault_conflicts) == 0)
-            extended = json_dumps(j, JSON_COMPACT);
-        json_decref(j); json_decref(vault_conflicts);
-        if (!extended) return -1;
-    }
-    int result = path ? nh_porthome_status_write_key(path, "syncd", extended ? extended : body)
-                      : nh_porthome_status_write_key_default("syncd", extended ? extended : body);
+    char *extended = extend_body(body, home_conflicts, vault_conflicts, res, res_count, res_head);
+    json_decref(vault_conflicts);
+    json_decref(home_conflicts);
+    if (!extended) return -1;
+    int result = path ? nh_porthome_status_write_key(path, "syncd", extended)
+                      : nh_porthome_status_write_key_default("syncd", extended);
     free(extended);
     return result;
 }
