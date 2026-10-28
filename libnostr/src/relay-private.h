@@ -40,6 +40,7 @@ struct _NostrRelayPrivate {
     // cancel_func
 
     char *challenge;
+    uint64_t auth_generation; /* Changes on reconnect or a different challenge. */
     void (*notice_handler)(const char *);
     bool (*custom_handler)(const char *);
     GoHashMap *ok_callbacks; /* event_id -> NostrRelayOkWaiter* */

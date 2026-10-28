@@ -41,19 +41,27 @@ static int tests_passed = 0;
         tests_passed++; \
     } while (0)
 
-/* ---- Dummy signer ---- */
+#include "nostr-event.h"
+#include "keys.h"
+static const char *relay_url;
+
+/* ---- Test-only real signer ---- */
 
 static hanami_error_t dummy_sign(const char *event_json,
                                   char **out_signed_json,
                                   void *user_data)
 {
     (void)user_data;
-    *out_signed_json = strdup(event_json);
+    NostrEvent *event = nostr_event_new();
+    assert(event && nostr_event_deserialize_compact(event, event_json, NULL) == 1);
+    assert(nostr_event_sign(event, "0000000000000000000000000000000000000000000000000000000000000001") == 0);
+    *out_signed_json = nostr_event_serialize_compact(event);
+    nostr_event_free(event);
     return *out_signed_json ? HANAMI_OK : HANAMI_ERR_NOMEM;
 }
 
-static const hanami_signer_t test_signer = {
-    .pubkey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+static hanami_signer_t test_signer = {
+    .pubkey = NULL,
     .sign = dummy_sign,
     .user_data = NULL
 };
@@ -76,8 +84,8 @@ static void test_version_info(void)
     const char *v = hanami_version(&major, &minor, &patch);
     assert(v != NULL);
     assert(major == 0);
-    assert(minor == 6);
-    assert(strcmp(v, "0.6.0") == 0);
+    assert(minor == 7);
+    assert(strcmp(v, "0.7.0") == 0);
     assert(patch == 0);
 }
 
@@ -156,7 +164,7 @@ static void test_index_odb_interop(void)
 static void test_nostr_refdb_interop(void)
 {
     /* Create nostr context */
-    const char *relays[] = { "wss://relay.test.com", NULL };
+    const char *relays[] = { relay_url, NULL };
     hanami_nostr_ctx_t *ctx = NULL;
     assert(hanami_nostr_ctx_new(relays, &test_signer, &ctx) == HANAMI_OK);
 
@@ -164,7 +172,7 @@ static void test_nostr_refdb_interop(void)
     hanami_refdb_backend_opts_t opts = {
         .nostr_ctx = ctx,
         .repo_id = "integration-test",
-        .owner_pubkey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        .owner_pubkey = test_signer.pubkey
     };
     git_refdb_backend *refdb_be = NULL;
     assert(hanami_refdb_backend_new(&refdb_be, &opts) == HANAMI_OK);
@@ -174,13 +182,13 @@ static void test_nostr_refdb_interop(void)
     git_oid_fromstr(&oid, "1111111111111111111111111111111111111111");
     git_reference *ref = git_reference__alloc("refs/heads/main", &oid, NULL);
     assert(ref != NULL);
-    refdb_be->write(refdb_be, ref, 1, NULL, NULL, NULL, NULL);
+    assert(refdb_be->write(refdb_be, ref, 1, NULL, NULL, NULL, NULL) == 0);
     git_reference_free(ref);
 
     /* Write a symbolic ref */
     git_reference *head = git_reference__alloc_symbolic("HEAD", "refs/heads/main");
     assert(head != NULL);
-    refdb_be->write(refdb_be, head, 1, NULL, NULL, NULL, NULL);
+    assert(refdb_be->write(refdb_be, head, 1, NULL, NULL, NULL, NULL) == 0);
     git_reference_free(head);
 
     /* Read back and verify */
@@ -544,8 +552,13 @@ static void test_filter_builder_consistency(void)
 
 /* ---- Main ---- */
 
-int main(void)
+int main(int argc, char **argv)
 {
+    assert(argc == 2);
+    relay_url = argv[1];
+    char *pk = nostr_key_get_public("0000000000000000000000000000000000000000000000000000000000000001");
+    assert(pk);
+    test_signer.pubkey = pk;
     git_libgit2_init();
 
     printf("libhanami integration tests\n");
@@ -593,5 +606,6 @@ int main(void)
     printf("\n%d passed, 0 failed\n", tests_passed);
 
     git_libgit2_shutdown();
+    free(pk);
     return 0;
 }

@@ -245,6 +245,42 @@ Git repository discovery and publication using NIP-34 announcements, GRASP
 server URL parsing, and GRASP-specific announcement tags. Uses the NIP-34
 helpers below; it does not implement Blossom HTTP or BUD-02 authentication.
 
+Push authorization follows [GRASP-01](https://ngit.dev/protocol/grasp/specification/01):
+fetch the signer's previous state through EOSE from the clone authority's root
+WebSocket relay, merge the requested destination ref updates into that complete
+state, sign, and require that root's event-ID-specific `OK true` before calling
+`git_remote_push`. The d-tag identifier must match the percent-decoded clone-path
+identifier, and signed state must use the configured signer's key. The signer
+may be an authorized maintainer rather than the clone URL's owner; the GRASP
+server still enforces its recursive-maintainer push policy. Other configured relays are optional replicas; their ACKs
+cannot authorize this endpoint. The existing named remote must target the same
+clone URL. Default pushes include only heads; explicit force, wildcard and
+removal refspecs use libgit2 parsing. Negotiated OIDs must still match the signed
+plan, and per-ref receive-pack rejection is a failure even if transport succeeds.
+
+The historical reversal in `85914cb3d` / `nostrc-dwj` attempted to prevent a
+failed push advertising absent refs. It had no server-specific justification.
+Restore protocol ordering without losing that concern: before announcement,
+prepare a second signed event with the saved prior refs/HEAD (empty on a first
+push). If the announcement is unconfirmed or the transfer fails, publish this
+corrective event to the same root and require its `OK true`. Its timestamp is
+strictly newer than the intended event, itself newer than the previous state;
+same-second event-ID tie-breaking cannot leave the failed intent current.
+`hanami_push_to_grasp_with_result` reports original and corrective outcomes.
+A corrected transfer failure is still a failure, never `HANAMI_OK`.
+
+Correction repairs signed authorization, not partially applied Git refs/objects.
+If correction is refused or unconfirmed, the API exposes recovery failure: the
+intended state may remain pending and needs explicit caller repair/retry. This
+is a synchronous compensation, not a durable transaction or crash recovery.
+Callers serialize operations for the same signed coordinate; concurrent writers
+cannot safely share a saved baseline. GRASP purgatory is a server visibility
+boundary, not evidence of delivered Git data or a client rollback mechanism.
+
+[GRASP-08](https://ngit.dev/protocol/grasp/specification/08) additionally needs
+NIP-42 and repository-scoped HTTP NIP-98. This helper does not claim that profile:
+the private/sealed repository guard remains in force before network activity.
+
 **Source**: `hanami-grasp.c`, `hanami-grasp.h`
 
 ### 4.6 Nostr Client Integration (`hanami_nostr`)
@@ -256,11 +292,39 @@ subscription dispatch and EOSE/CLOSED observation to libnostr's
 the newest event across subscribed relays, with the NIP-01 event-id tie-break.
 EOSE completes catch-up; the deadline reports an error, not empty history.
 
-The pool has no publish API, so Hanami retains its best-effort policy over
-pool-owned relays using `nostr_relay_publish_and_wait()`: success requires at
-least one `OK true`, never just a successful websocket send. `OK false` and
-`CLOSED` fail visibly. NIP-42 challenges return an authentication error rather
-than implicitly authorizing relay login. NIP-11 probing is not added here.
+The pool has no publish API, so Hanami applies an explicit any-one acceptance
+policy over pool-owned relays using `nostr_relay_publish_and_wait()`: success
+requires at least one application event's `OK true`, never just a websocket send
+or an AUTH acknowledgment. GRASP's root-only context makes that specific relay
+mandatory. `OK false`, missing ACK, no connected relay and subscription `CLOSED`
+are errors when the operation's policy is not met; a refusal from an optional
+replica cannot veto another accepting relay in the generic publisher.
+
+A signer supplied to a context authorizes NIP-42 on that context's configured
+relays. AUTH callbacks only wake the caller; the retained current-connection
+challenge also covers AUTH received during pool dialing, before callback
+installation. A connection/challenge generation records completed authentication;
+retaining or repeating the same challenge does not cause another login on every
+operation. Reconnects or different challenges invalidate that record. A challenge
+arriving during a publication wait is serviced after the failed attempt within
+the same one-AUTH retry budget, even when the relay omitted an OK refusal.
+The operation thread signs kind 22242 with the exact relay and
+challenge tags, sends an `AUTH` frame and waits for its event-ID-specific
+`OK true`. Only then may it retry the identical signed application event once.
+No signer, refused AUTH, missing AUTH OK, or another auth-required refusal fails
+visibly. Authentication never blocks the relay reader. Query retry joins and
+removes the old subscriptions, discards partial events and starts a fresh
+EOSE-complete snapshot. NIP-11 probing is not added here.
+
+Public refdb write, rename and deletion now operate on a private cache copy.
+Only accepted publication commits that copy; any build/sign/auth/relay failure
+returns a libgit2 reference error and restores the original cache, including a
+force-renamed destination. Private refs retain their authoritative sealed-state
+recovery. State timestamps advance beyond prior attempts and fetched state to
+avoid same-second replacement ties. Missing ACK may mean the event exists on a
+relay: local rollback is not distributed rollback. Future-timestamp rejection
+is an error, not a reason to report cache-only success. Backend access remains
+externally serialized.
 
 **Source**: `hanami-nostr.c`, `hanami-nostr.h`
 

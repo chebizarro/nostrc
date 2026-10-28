@@ -19,7 +19,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.1.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -35,7 +35,7 @@ files already declare a version.
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
-| libhanami | `libhanami/` | 0.6.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libhanami | `libhanami/` | 0.7.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.7.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
@@ -67,6 +67,21 @@ files already declare a version.
 - **No bump:** libblossom, libnostr, nip34 and all other components: their
   APIs and artifacts are only consumed here, not changed. No tag is published;
   release columns remain unchanged.
+
+### GRASP ordering and relay acceptance (nostrc-fsuei, nostrc-3rxpv)
+
+- **libhanami 0.5.1 → 0.6.0 → 0.7.0 (MINOR per bead):** first restore
+  GRASP root-relay authorization before Smart HTTP, with corrective publication
+  and additive result-bearing API; then require public-refdb acceptance with
+  cache rollback and signer-backed NIP-42 retry. These are 0.x public behavior
+  changes, not cache-only internal fixes. CMake authority and declared version
+  agree; release notes describe the incompatibility for formerly silent failures.
+- **libnostr 2.0.0 → 2.1.0 (MINOR):** additive current-connection NIP-42
+  challenge accessor, including challenges received before callback installation;
+  correct kind-22242 AUTH framing shares the existing event-ID OK waiter. The
+  already merged pool sync-add fix is reused unchanged, not duplicated.
+- Other components: **no bump**; no shipped source/API changes. Test inventory
+  and docs are not independently versioned. No release tag is published here.
 
 ### Synchronous relay dial coordination (nostrc-1h2ze)
 

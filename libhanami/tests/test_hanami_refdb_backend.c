@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include "nostr-event.h"
+#include "keys.h"
 
 static int tests_passed = 0;
 static const char *relay_url = NULL;
@@ -31,19 +33,23 @@ static const char *relay_url = NULL;
         tests_passed++; \
     } while (0)
 
-/* ---- Dummy signer (not invoked for read-only tests) ---- */
+/* ---- Test-only real signer; writes require relay acceptance. ---- */
 
 static hanami_error_t dummy_sign(const char *event_json,
                                   char **out_signed_json,
                                   void *user_data)
 {
     (void)user_data;
-    *out_signed_json = strdup(event_json);
+    NostrEvent *event = nostr_event_new();
+    assert(event && nostr_event_deserialize_compact(event, event_json, NULL) == 1);
+    assert(nostr_event_sign(event, "0000000000000000000000000000000000000000000000000000000000000001") == 0);
+    *out_signed_json = nostr_event_serialize_compact(event);
+    nostr_event_free(event);
     return *out_signed_json ? HANAMI_OK : HANAMI_ERR_NOMEM;
 }
 
-static const hanami_signer_t test_signer = {
-    .pubkey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+static hanami_signer_t test_signer = {
+    .pubkey = NULL,
     .sign = dummy_sign,
     .user_data = NULL
 };
@@ -196,10 +202,10 @@ static void test_write_and_lookup_direct(void)
     git_reference *ref = git_reference__alloc("refs/heads/main", &oid, NULL);
     assert(ref != NULL);
 
-    /* Write it (the loopback relay may reject the dummy signature; cache is local). */
+    /* A cache mutation succeeds only after relay OK true. */
     int rc = be->write(be, ref, 1 /* force */, NULL, NULL, NULL, NULL);
     git_reference_free(ref);
-    /* rc may be -1 from failed publish, but let's check the cache was updated */
+    assert(rc == 0);
 
     /* Check exists */
     int exists = 0;
@@ -561,6 +567,9 @@ int main(int argc, char **argv)
         return 2;
     }
     relay_url = argv[1];
+    char *pk = nostr_key_get_public("0000000000000000000000000000000000000000000000000000000000000001");
+    assert(pk);
+    test_signer.pubkey = pk;
     git_libgit2_init();
 
     printf("libhanami RefDB backend tests\n");
@@ -603,5 +612,6 @@ int main(int argc, char **argv)
     printf("\n%d passed, 0 failed\n", tests_passed);
 
     git_libgit2_shutdown();
+    free(pk);
     return 0;
 }

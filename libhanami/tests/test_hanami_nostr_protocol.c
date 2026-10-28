@@ -7,16 +7,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 
 static const char *sk = "0000000000000000000000000000000000000000000000000000000000000001";
 static const char *pk;
+static pthread_t caller_thread;
 
 static hanami_error_t sign_event(const char *json, char **out, void *data)
 {
-    (void)data;
+    assert(data == (void *)sk);
+    assert(pthread_equal(pthread_self(), caller_thread));
     NostrEvent *event = nostr_event_new();
     assert(event);
     assert(nostr_event_deserialize_compact(event, json, NULL) == 1);
+    nostr_event_set_pubkey(event, pk);
     assert(nostr_event_sign(event, sk) == 0);
     *out = nostr_event_serialize_compact(event);
     nostr_event_free(event);
@@ -28,9 +32,9 @@ static hanami_nostr_ctx_t *context(const char *base, const char *mode)
     char url[256];
     snprintf(url, sizeof(url), "%s/%s", base, mode);
     const char *urls[] = { url, NULL };
-    hanami_signer_t signer = { .pubkey = pk, .sign = sign_event };
+    hanami_signer_t signer = { .pubkey = pk, .sign = sign_event, .user_data = (void *)sk };
     hanami_nostr_ctx_t *ctx = NULL;
-    assert(hanami_nostr_ctx_new(urls, &signer, &ctx) == HANAMI_OK);
+    assert(hanami_nostr_ctx_new(urls, !strcmp(mode, "auth") ? NULL : &signer, &ctx) == HANAMI_OK);
     return ctx;
 }
 
@@ -66,6 +70,7 @@ static void expect_fetch(hanami_nostr_ctx_t *ctx, hanami_error_t expected,
 int main(int argc, char **argv)
 {
     assert(argc == 2);
+    caller_thread = pthread_self();
     char *pubkey = nostr_key_get_public(sk);
     assert(pubkey);
     pk = pubkey;
@@ -116,7 +121,48 @@ int main(int argc, char **argv)
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NOSTR);
     hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "publish-auth");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
+    /* A completed challenge is not permission to AUTH repeatedly. The fixture
+     * rejects a second AUTH on this same connection. */
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "auth-late");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "auth-next");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "auth-early");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "auth-denied");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_AUTH);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "auth-repeat");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_AUTH);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "auth-no-ok");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_TIMEOUT);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "query-auth");
+    publish_state(ctx, new_oid, 0);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
+    const char *wrong_urls[] = {argv[1], NULL};
+    hanami_signer_t wrong_signer = {.pubkey = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        .sign = sign_event, .user_data = (void *)sk};
+    assert(hanami_nostr_ctx_new(wrong_urls, &wrong_signer, &ctx) == HANAMI_OK);
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_AUTH);
+    hanami_nostr_ctx_free(ctx);
+    char reject_url[256], accept_url[256];
+    snprintf(reject_url, sizeof(reject_url), "%s/reject", argv[1]);
+    snprintf(accept_url, sizeof(accept_url), "%s/state", argv[1]);
+    const char *mixed_urls[] = {reject_url, accept_url, NULL};
+    hanami_signer_t signer = {.pubkey = pk, .sign = sign_event, .user_data = (void *)sk};
+    assert(hanami_nostr_ctx_new(mixed_urls, &signer, &ctx) == HANAMI_OK);
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
     hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "invalid");
     publish_state(ctx, new_oid, 0);

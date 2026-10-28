@@ -168,6 +168,19 @@ NOSTR_API bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent
 NOSTR_API void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err);
 
 /**
+ * nostr_relay_get_auth_challenge:
+ * @relay: (nullable): relay
+ * @generation: (out) (optional): changes on reconnect or a different challenge
+ *
+ * Snapshot the current connection's retained NIP-42 challenge. This also
+ * covers AUTH received before the caller installed its callback. No signing
+ * or I/O occurs; the caller can authenticate outside the relay reader thread.
+ *
+ * Returns: (transfer full) (nullable): challenge copy; free with free().
+ */
+NOSTR_API char *nostr_relay_get_auth_challenge(NostrRelay *relay, uint64_t *generation);
+
+/**
  * nostr_relay_count:
  * @relay: (nullable): relay
  * @ctx: (nullable): context

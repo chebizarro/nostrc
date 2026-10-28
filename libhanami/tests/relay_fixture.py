@@ -26,9 +26,13 @@ class Relay(socketserver.StreamRequestHandler):
         while line := self.rfile.readline().strip():
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
+        if "sec-websocket-key" not in headers:
+            return self.http(request, headers)
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
         self.wfile.flush()
+        if mode == "auth-early":
+            self.frame(["AUTH", "fixture-challenge"])
         try:
             while header := self.rfile.read(2):
                 if len(header) != 2 or header[0] & 15 == 8:
@@ -42,47 +46,96 @@ class Relay(socketserver.StreamRequestHandler):
                 payload = self.rfile.read(length)
                 if mask:
                     payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
-                if header[0] & 15 != 1:
-                    continue
-                message = json.loads(payload)
-                if message[0] == "EVENT":
-                    event = message[1]
-                    accepted = mode not in ("reject", "publish-auth", "refdb")
-                    if accepted:
-                        with self.server.lock:
-                            self.server.events[mode] = event
-                    reason = "auth-required: fixture requires credentials" if mode == "publish-auth" else "blocked: fixture refusal"
-                    self.frame(["OK", event["id"], accepted, "" if accepted else reason])
-                elif message[0] == "REQ":
-                    subid, filters = message[1], message[2]
-                    if mode == "refdb":
-                        assert filters["kinds"] == [30618]
-                        assert filters["authors"] and all(author in ("bbbb", "b" * 64) for author in filters["authors"])
-                        assert filters["#d"] == ["test-repo"]
-                        with self.server.lock:
-                            self.server.refdb_requests += 1
-                    else:
-                        assert filters["kinds"][0] in (30617, 30618)
-                        assert filters["authors"] and filters["#d"] == ["repo"]
-                    assert filters["limit"] == 1
-                    if mode == "closed":
-                        self.frame(["CLOSED", subid, "blocked: fixture refusal"])
-                    elif mode == "auth":
-                        self.frame(["AUTH", "fixture-challenge"])
-                        self.frame(["CLOSED", subid, "auth-required: fixture requires credentials"])
-                    else:
-                        with self.server.lock:
-                            event = self.server.events.get(mode)
-                        if event and mode == "invalid":
-                            event = dict(event, sig="0" * 128)
-                        if event and event["kind"] in filters["kinds"]:
-                            self.frame(["EVENT", subid, event])
-                            # Replay the same id: snapshot reduction must be idempotent.
-                            self.frame(["EVENT", subid, event])
-                        if mode != "no-eose":
-                            self.frame(["EOSE", subid])
+                if header[0] & 15 == 1:
+                    self.message(json.loads(payload), mode)
         except (BrokenPipeError, ConnectionResetError):
             return
+
+    def http(self, request, headers):
+        raise AssertionError(f"unexpected HTTP request: {request}")
+
+    def message(self, message, mode):
+        authenticated = getattr(self, "authenticated", False)
+        auth_modes = ("publish-auth", "auth-denied", "auth-repeat", "auth-no-ok", "auth-nosigner", "auth-early", "auth-late", "auth-next")
+        if message[0] == "AUTH":
+            event = message[1]
+            assert event["kind"] == 22242 and event["content"] == ""
+            tags = dict(event["tags"])
+            assert tags["challenge"] == getattr(self, "challenge", "fixture-challenge")
+            assert tags["relay"] == f"ws://127.0.0.1:{self.server.server_address[1]}/{mode}"
+            assert len(event["sig"]) == 128 and len(event["id"]) == 64
+            self.auth_attempts = getattr(self, "auth_attempts", 0) + 1
+            assert self.auth_attempts <= (2 if mode == "auth-next" else 1), "unbounded AUTH retry"
+            if mode == "auth-no-ok":
+                return
+            self.authenticated = mode != "auth-denied"
+            self.frame(["OK", event["id"], self.authenticated,
+                        "" if self.authenticated else "restricted: fixture denied"])
+        elif message[0] == "EVENT":
+            event = message[1]
+            assert event["kind"] != 22242, "NIP-42 must use AUTH, not EVENT"
+            if mode == "auth-next" and getattr(self, "next_challenge_needed", False):
+                self.challenge = "fixture-challenge-2"
+                self.authenticated = authenticated = False
+                self.next_challenge_needed = False
+            if mode in auth_modes and (not authenticated or mode == "auth-repeat"):
+                previous_id = getattr(self, "application_id", event["id"])
+                assert event["id"] == previous_id, "retry changed the signed application event"
+                self.application_id = event["id"]
+                # Deliberately reject before sending the challenge: caller must
+                # wait on AUTH delivery, not sleep or assume it arrived first.
+                if mode != "auth-late":
+                    self.frame(["OK", event["id"], False, "auth-required: fixture credentials"])
+                self.frame(["AUTH", getattr(self, "challenge", "fixture-challenge")])
+                return
+            if mode in auth_modes and hasattr(self, "application_id"):
+                assert event["id"] == self.application_id
+                del self.application_id
+            if mode == "auth-next":
+                self.next_challenge_needed = True
+            accepted = mode != "reject"
+            if mode == "refdb-acceptance":
+                with self.server.lock:
+                    self.server.refdb_writes += 1
+                    accepted = self.server.refdb_writes not in (3, 4, 5)
+            if accepted:
+                with self.server.lock:
+                    previous = self.server.events.get(mode)
+                    if mode == "refdb-acceptance" and previous:
+                        assert event["created_at"] > previous["created_at"], "state did not supersede last ACK"
+                    self.server.events[mode] = event
+            reason = "blocked: fixture refusal"
+            self.frame(["OK", event["id"], accepted, "" if accepted else reason])
+        elif message[0] == "REQ":
+            subid, filters = message[1], message[2]
+            if mode == "publish-auth" and authenticated:
+                self.frame(["AUTH", "fixture-challenge"])  # already completed, not a new boundary
+            if mode.startswith("refdb"):
+                assert filters["kinds"] == [30618]
+                assert filters["authors"]
+                assert filters["#d"] == ["test-repo"]
+                with self.server.lock:
+                    self.server.refdb_requests += 1
+            else:
+                assert filters["kinds"][0] in (30617, 30618)
+                expected_id = "integration-test" if mode == "integration" else "repo"
+                assert filters["authors"] and filters["#d"] == [expected_id]
+            assert filters["limit"] == 1
+            if mode == "closed":
+                self.frame(["CLOSED", subid, "blocked: fixture refusal"])
+            elif mode in ("auth", "query-auth") and not authenticated:
+                self.frame(["AUTH", "fixture-challenge"])
+                self.frame(["CLOSED", subid, "auth-required: fixture requires credentials"])
+            else:
+                with self.server.lock:
+                    event = self.server.events.get(mode)
+                if event and mode == "invalid":
+                    event = dict(event, sig="0" * 128)
+                if event and event["kind"] in filters["kinds"] and event["pubkey"] in filters["authors"]:
+                    self.frame(["EVENT", subid, event])
+                    self.frame(["EVENT", subid, event])
+                if mode != "no-eose":
+                    self.frame(["EOSE", subid])
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -90,21 +143,29 @@ class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
 
-with Server(("127.0.0.1", 0), Relay) as server:
-    server.events = {}
-    server.refdb_requests = 0
-    server.lock = threading.Lock()
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
-    worker.start()
-    try:
-        mode = sys.argv[2] if len(sys.argv) > 2 else ""
-        url = f"ws://127.0.0.1:{server.server_address[1]}"
-        if mode:
-            url += f"/{mode}"
-        result = subprocess.run([sys.argv[1], url], timeout=25 if mode == "refdb" else 40)
-    finally:
-        server.shutdown()
-        worker.join()
-    if mode == "refdb" and server.refdb_requests == 0:
-        sys.exit("refdb test did not query the loopback relay")
-    sys.exit(result.returncode)
+def main():
+    with Server(("127.0.0.1", 0), Relay) as server:
+        server.events = {}
+        server.refdb_requests = 0
+        server.refdb_writes = 0
+        server.lock = threading.Lock()
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            mode = sys.argv[2] if len(sys.argv) > 2 else ""
+            url = f"ws://127.0.0.1:{server.server_address[1]}"
+            if mode:
+                url += f"/{mode}"
+            result = subprocess.run([sys.argv[1], url], timeout=25 if mode.startswith("refdb") else 75)
+        finally:
+            server.shutdown()
+            worker.join()
+        if mode == "refdb-acceptance":
+            assert server.refdb_writes == 6, "ref operations did not reach the relay"
+        if mode.startswith("refdb") and server.refdb_requests == 0:
+            sys.exit("refdb test did not query the loopback relay")
+        sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()

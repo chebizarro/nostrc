@@ -10,6 +10,8 @@
 #include "hanami/hanami-grasp.h"
 #include "hanami-sealed.h"
 #include "hanami/hanami-nostr.h"
+#include "hanami-nostr-internal.h"
+#include <stdint.h>
 
 #include <git2.h>
 #include <nip34.h>
@@ -435,129 +437,89 @@ hanami_error_t hanami_grasp_pr_refname(const char *event_id, char **out)
  * GRASP push workflow
  * ========================================================================= */
 
-/**
- * Collect current ref state from the local repository for the given refspecs.
- * Returns an allocated array of nip34_ref_t. Caller frees with free_ref_array.
- */
+static void free_ref_array(nip34_ref_t *refs, size_t count);
+
+static int append_push_ref(nip34_ref_t **refs, size_t *count, git_strarray *specs,
+    const char *source, const char *destination, const git_oid *oid, bool force)
+{
+    char hex[GIT_OID_HEXSZ + 1] = {0};
+    if (oid) git_oid_tostr(hex, sizeof(hex), oid);
+    for (size_t i = 0; i < *count; i++)
+        if (!strcmp((*refs)[i].refname, destination))
+            return strcmp((*refs)[i].target, hex) ? -1 : 0;
+    char *name = strdup(destination), *target = strdup(hex);
+    if (!name || !target) { free(name); free(target); return -1; }
+    nip34_ref_t *tmp = realloc(*refs, (*count + 1) * sizeof(**refs));
+    if (!tmp) { free(name); free(target); return -1; }
+    *refs = tmp;
+    size_t len = strlen(source) + strlen(destination) + 3;
+    char *spec = malloc(len);
+    char **strings = realloc(specs->strings, (*count + 1) * sizeof(*strings));
+    if (strings) specs->strings = strings;
+    if (!spec || !strings) { free(spec); free(name); free(target); return -1; }
+    snprintf(spec, len, "%s%s:%s", force ? "+" : "", source, destination);
+    specs->strings[*count] = spec;
+    (*refs)[(*count)++] = (nip34_ref_t){ name, target };
+    specs->count = *count;
+    return 0;
+}
+
+/* Resolve the same push refspecs libgit2 will use, failing closed on incomplete
+ * collection. Targets are destination refs; an empty OID denotes deletion. */
 static nip34_ref_t *collect_local_refs(git_repository *repo,
                                         const char *const *refspecs,
                                         size_t refspec_count,
-                                        size_t *out_count)
+                                        size_t *out_count, git_strarray *expanded)
 {
     *out_count = 0;
-
-    if (!refspecs || refspec_count == 0) {
-        /* Default: push all refs */
-        git_reference_iterator *iter = NULL;
-        if (git_reference_iterator_new(&iter, repo) != 0)
-            return NULL;
-
-        /* Count first pass */
-        size_t cap = 16;
-        nip34_ref_t *refs = calloc(cap, sizeof(nip34_ref_t));
-        if (!refs) {
-            git_reference_iterator_free(iter);
-            return NULL;
-        }
-
-        git_reference *ref = NULL;
-        size_t count = 0;
-        while (git_reference_next(&ref, iter) == 0) {
-            if (git_reference_type(ref) == GIT_REFERENCE_SYMBOLIC) {
-                git_reference_free(ref);
-                continue;
-            }
-
-            if (count >= cap) {
-                size_t new_cap = cap * 2;
-                nip34_ref_t *tmp = realloc(refs, new_cap * sizeof(nip34_ref_t));
-                if (!tmp) {
-                    git_reference_free(ref);
-                    break;  /* cap unchanged — bounds checks below remain valid */
-                }
-                refs = tmp;
-                cap = new_cap;  /* only update cap after successful realloc */
-            }
-
-            refs[count].refname = strdup(git_reference_name(ref));
-            char oid_hex[41] = {0};
-            git_oid_tostr(oid_hex, sizeof(oid_hex), git_reference_target(ref));
-            refs[count].target = strdup(oid_hex);
-            count++;
-            git_reference_free(ref);
-        }
-        git_reference_iterator_free(iter);
-
-        /* Add HEAD */
-        git_reference *head = NULL;
-        if (git_repository_head(&head, repo) == 0) {
-            if (count >= cap) {
-                cap++;
-                nip34_ref_t *tmp = realloc(refs, cap * sizeof(nip34_ref_t));
-                if (tmp) refs = tmp;
-            }
-            if (count < cap) {
-                refs[count].refname = strdup("HEAD");
-                const char *target_name = git_reference_symbolic_target(head);
-                if (target_name) {
-                    size_t tlen = 5 + strlen(target_name) + 1;
-                    char *t = malloc(tlen);
-                    if (t) {
-                        snprintf(t, tlen, "ref: %s", target_name);
-                        refs[count].target = t;
-                    } else {
-                        refs[count].target = strdup("ref: refs/heads/main");
-                    }
-                } else {
-                    char oid_hex[41] = {0};
-                    git_oid_tostr(oid_hex, sizeof(oid_hex), git_reference_target(head));
-                    refs[count].target = strdup(oid_hex);
-                }
-                count++;
-            }
-            git_reference_free(head);
-        }
-
-        *out_count = count;
-        return refs;
-    }
-
-    /* Push specific refspecs */
-    size_t cap = refspec_count + 1;
-    nip34_ref_t *refs = calloc(cap, sizeof(nip34_ref_t));
-    if (!refs)
-        return NULL;
-
+    const char *defaults[] = { "refs/heads/*:refs/heads/*" };
+    if (!refspec_count) { refspecs = defaults; refspec_count = 1; }
+    nip34_ref_t *refs = calloc(1, sizeof(*refs));
+    if (!refs) return NULL;
     size_t count = 0;
-    for (size_t i = 0; i < refspec_count && refspecs[i]; i++) {
-        const char *spec = refspecs[i];
-
-        /* Simple refspec: "refs/heads/main" or "refs/heads/main:refs/heads/main" */
-        const char *colon = strchr(spec, ':');
-        const char *local_ref = spec;
-        size_t local_len = colon ? (size_t)(colon - spec) : strlen(spec);
-
-        char *local_name = strndup(local_ref, local_len);
-        if (!local_name)
-            continue;
-
-        git_reference *ref = NULL;
-        if (git_reference_lookup(&ref, repo, local_name) == 0) {
-            git_reference *resolved = NULL;
-            if (git_reference_resolve(&resolved, ref) == 0) {
-                const char *remote_name = colon ? colon + 1 : local_name;
-                refs[count].refname = strdup(remote_name);
-                char oid_hex[41] = {0};
-                git_oid_tostr(oid_hex, sizeof(oid_hex), git_reference_target(resolved));
-                refs[count].target = strdup(oid_hex);
-                count++;
-                git_reference_free(resolved);
+    for (size_t i = 0; i < refspec_count; i++) {
+        git_refspec *spec = NULL;
+        git_reference_iterator *iter = NULL;
+        git_reference *ref = NULL, *resolved = NULL;
+        git_buf destination = GIT_BUF_INIT;
+        int rc = -1;
+        if (!refspecs[i] || git_refspec_parse(&spec, refspecs[i], 0) != 0)
+            goto item_done;
+        const char *src = git_refspec_src(spec), *dst = git_refspec_dst(spec);
+        if (!src || !*src) {
+            rc = dst && *dst ? append_push_ref(&refs, &count, expanded, "", dst, NULL, git_refspec_force(spec)) : -1;
+        } else if (strchr(src, '*')) {
+            if (!dst || git_reference_iterator_new(&iter, repo) != 0)
+                goto item_done;
+            while ((rc = git_reference_next(&ref, iter)) == 0) {
+                if (git_refspec_src_matches(spec, git_reference_name(ref))) {
+                    if (git_reference_resolve(&resolved, ref) != 0 ||
+                        git_refspec_transform(&destination, spec, git_reference_name(ref)) != 0 ||
+                        append_push_ref(&refs, &count, expanded, git_reference_name(ref),
+                            destination.ptr, git_reference_target(resolved), git_refspec_force(spec)) != 0) {
+                        rc = -1;
+                        break;
+                    }
+                    git_reference_free(resolved); resolved = NULL;
+                    git_buf_dispose(&destination);
+                }
+                git_reference_free(ref); ref = NULL;
             }
-            git_reference_free(ref);
+            if (rc == GIT_ITEROVER) rc = 0;
+        } else if (git_reference_dwim(&ref, repo, src) == 0 &&
+                   git_reference_resolve(&resolved, ref) == 0) {
+            rc = append_push_ref(&refs, &count, expanded, git_reference_name(resolved),
+                dst && *dst ? dst : git_reference_name(resolved),
+                git_reference_target(resolved), git_refspec_force(spec));
         }
-        free(local_name);
+item_done:
+        git_buf_dispose(&destination);
+        git_reference_free(resolved);
+        git_reference_free(ref);
+        git_reference_iterator_free(iter);
+        git_refspec_free(spec);
+        if (rc != 0) { free_ref_array(refs, count); return NULL; }
     }
-
     *out_count = count;
     return refs;
 }
@@ -573,120 +535,233 @@ static void free_ref_array(nip34_ref_t *refs, size_t count)
     free(refs);
 }
 
+/* Apply one ref update to a complete state (empty target means deletion). */
+static int state_set(nip34_ref_t **refs, size_t *count,
+                     const char *name, const char *target)
+{
+    size_t i;
+    for (i = 0; i < *count; i++)
+        if (!strcmp((*refs)[i].refname, name)) break;
+    if (!*target) {
+        if (i < *count) {
+            free((*refs)[i].refname);
+            free((*refs)[i].target);
+            (*refs)[i] = (*refs)[--*count];
+        }
+        return 0;
+    }
+    char *value = strdup(target), *key = strdup(name);
+    if (!value || !key) { free(value); free(key); return -1; }
+    if (i == *count) {
+        nip34_ref_t *tmp = realloc(*refs, (*count + 1) * sizeof(**refs));
+        if (!tmp) { free(value); free(key); return -1; }
+        *refs = tmp;
+        (*count)++;
+    } else {
+        free((*refs)[i].refname);
+        free((*refs)[i].target);
+    }
+    (*refs)[i] = (nip34_ref_t){ key, value };
+    return 0;
+}
+
+typedef struct {
+    nip34_ref_t *updates;
+    size_t count;
+    bool rejected;
+} grasp_push_plan;
+
+static int push_status(const char *ref, const char *status, void *data)
+{
+    (void)ref;
+    if (status) ((grasp_push_plan *)data)->rejected = true;
+    return 0;
+}
+
+static int push_negotiation(const git_push_update **updates, size_t count, void *data)
+{
+    grasp_push_plan *plan = data;
+    for (size_t i = 0; i < count; i++) {
+        size_t j;
+        for (j = 0; j < plan->count; j++)
+            if (!strcmp(updates[i]->dst_refname, plan->updates[j].refname)) break;
+        git_oid expected = {{0}};
+        if (j == plan->count ||
+            (*plan->updates[j].target &&
+             git_oid_fromstr(&expected, plan->updates[j].target) != 0) ||
+            git_oid_cmp(&expected, &updates[i]->dst) != 0)
+            return -1; /* Local source changed after signing; do not upload it. */
+    }
+    return 0;
+}
+
+/* The clone path percent-encodes the same d-tag identifier, not another repo. */
+static bool repo_identifier_matches(const char *path, const char *id)
+{
+    while (*path) {
+        unsigned char c = (unsigned char)*path++;
+        if (c == '%') {
+            if (!path[0] || !path[1] || !isxdigit((unsigned char)path[0]) ||
+                !isxdigit((unsigned char)path[1])) return false;
+            char hex[] = {path[0], path[1], 0};
+            c = (unsigned char)strtoul(hex, NULL, 16);
+            path += 2;
+        }
+        if (!c || c != (unsigned char)*id++) return false;
+    }
+    return *id == '\0';
+}
+
 hanami_error_t hanami_push_to_grasp(git_repository *repo,
                                      const hanami_grasp_push_opts_t *opts)
 {
-    if (!repo || !opts)
-        return HANAMI_ERR_INVALID_ARG;
-    if (!opts->clone_url || !opts->signer || !opts->repo_id)
-        return HANAMI_ERR_INVALID_ARG;
-    if (!opts->relay_urls || opts->relay_count == 0)
-        return HANAMI_ERR_INVALID_ARG;
+    return hanami_push_to_grasp_with_result(repo, opts, NULL);
+}
 
-    /* Validate this is a GRASP URL */
+hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
+    const hanami_grasp_push_opts_t *opts, hanami_grasp_push_result_t *result)
+{
+    hanami_grasp_push_result_t local = {0};
+    if (!result) result = &local;
+    memset(result, 0, sizeof(*result));
+    hanami_error_t err = HANAMI_ERR_INVALID_ARG;
     hanami_grasp_info_t *info = NULL;
-    hanami_error_t err = hanami_grasp_parse_clone_url(opts->clone_url, &info);
-    if (err != HANAMI_OK)
-        return err;
-    hanami_grasp_info_free(info);
-    if (hanami_repo_private(repo))
-        return HANAMI_ERR_AUTH;
-
-    /* Step 1: Collect local refs to publish */
-    size_t ref_count = 0;
-    nip34_ref_t *refs = collect_local_refs(repo, opts->refspecs,
-                                            opts->refspec_count, &ref_count);
-    if (!refs && ref_count > 0) {
-        return HANAMI_ERR_LIBGIT2;
-    }
-
-    /* Separate HEAD from regular refs for the state event */
-    const char *head_value = NULL;
-    for (size_t i = 0; i < ref_count; i++) {
-        if (refs[i].refname && strcmp(refs[i].refname, "HEAD") == 0) {
-            head_value = refs[i].target;
-            break;
-        }
-    }
-
-    /* Step 2: Push via standard Git Smart HTTP (moved BEFORE state publish) */
-    const char *remote_name = opts->remote_name ? opts->remote_name : "grasp";
-
-    /* Create/update remote with the GRASP clone URL */
+    hanami_nostr_ctx_t *ctx = NULL, *replicas = NULL;
+    NostrEvent *previous = NULL, *intended = NULL, *correction = NULL;
+    nip34_repo_state_t *baseline = NULL;
+    nip34_ref_t *state = NULL;
+    size_t state_count = 0;
+    grasp_push_plan plan = {0};
+    git_strarray expanded = {0};
     git_remote *remote = NULL;
-    int rc = git_remote_lookup(&remote, repo, remote_name);
-    if (rc == GIT_ENOTFOUND) {
-        rc = git_remote_create(&remote, repo, remote_name, opts->clone_url);
+    git_reference *head = NULL;
+    char *initial_head = NULL;
+    if (!repo || !opts || !opts->clone_url || !opts->signer ||
+        !opts->signer->sign || !opts->signer->pubkey || !opts->repo_id ||
+        !opts->relay_urls || !opts->relay_count ||
+        (opts->refspec_count && !opts->refspecs)) goto done;
+    err = hanami_grasp_parse_clone_url(opts->clone_url, &info);
+    if (err != HANAMI_OK) goto done;
+    if (hanami_repo_private(repo)) { err = HANAMI_ERR_AUTH; goto done; }
+    if (!info->pubkey || !repo_identifier_matches(info->repo_name, opts->repo_id)) {
+        err = HANAMI_ERR_INVALID_ARG;
+        goto done;
     }
 
-    if (rc < 0) {
-        free_ref_array(refs, ref_count);
-        return HANAMI_ERR_LIBGIT2;
+    /* The GRASP root, not an arbitrary accepting replica, authorizes the push. */
+    const char *roots[] = { info->relay_url, NULL };
+    err = hanami_nostr_ctx_new(roots, opts->signer, &ctx);
+    if (err != HANAMI_OK) goto done;
+    const char *name = opts->remote_name ? opts->remote_name : "grasp";
+    int rc = git_remote_lookup(&remote, repo, name);
+    if (rc == GIT_ENOTFOUND)
+        rc = git_remote_create(&remote, repo, name, opts->clone_url);
+    if (rc != 0) { err = HANAMI_ERR_LIBGIT2; goto done; }
+    const char *push_url = git_remote_pushurl(remote);
+    if (!push_url) push_url = git_remote_url(remote);
+    if (!push_url || strcmp(push_url, opts->clone_url)) {
+        err = HANAMI_ERR_INVALID_ARG;
+        goto done;
     }
 
-    /* Build refspec strings for push */
-    git_strarray push_refspecs = {0};
-    if (opts->refspecs && opts->refspec_count > 0) {
-        push_refspecs.strings = (char **)opts->refspecs;
-        push_refspecs.count = opts->refspec_count;
-    } else {
-        /* Default: push all heads */
-        char *default_spec = "refs/heads/*:refs/heads/*";
-        push_refspecs.strings = &default_spec;
-        push_refspecs.count = 1;
+    plan.updates = collect_local_refs(repo, opts->refspecs,
+                                     opts->refspec_count, &plan.count, &expanded);
+    if (!plan.updates) { err = HANAMI_ERR_LIBGIT2; goto done; }
+    if (!plan.count) { err = HANAMI_OK; goto done; }
+    err = hanami_nostr_fetch_state_event(ctx, opts->repo_id,
+                                         opts->signer->pubkey, &previous);
+    if (err != HANAMI_OK && err != HANAMI_ERR_NOT_FOUND) goto done;
+    if (previous) {
+        if (previous->created_at >= INT64_MAX - 1 ||
+            nip34_parse_repo_state(previous, &baseline) != NIP34_OK) {
+            err = HANAMI_ERR_NOSTR;
+            goto done;
+        }
+        for (size_t i = 0; i < baseline->ref_count; i++)
+            if (state_set(&state, &state_count, baseline->refs[i].refname,
+                          baseline->refs[i].target) != 0) {
+                err = HANAMI_ERR_NOMEM;
+                goto done;
+            }
     }
-
-    git_push_options push_opts;
-    git_push_options_init(&push_opts, GIT_PUSH_OPTIONS_VERSION);
-    rc = git_remote_push(remote, &push_refspecs, &push_opts);
-
-    git_remote_free(remote);
-
-    /* If push failed, abort before publishing state */
-    if (rc != 0) {
-        free_ref_array(refs, ref_count);
-        return HANAMI_ERR_NETWORK;
-    }
-
-    /* Step 3: Publish kind 30618 state AFTER successful push */
-    hanami_nostr_ctx_t *nostr_ctx = NULL;
-    err = hanami_nostr_ctx_new(opts->relay_urls, opts->signer, &nostr_ctx);
-    if (err != HANAMI_OK) {
-        /* Push succeeded but state publish setup failed.
-         * Log warning but return success since data is on server. */
-        free_ref_array(refs, ref_count);
-        fprintf(stderr, "Warning: Push succeeded but failed to initialize Nostr context for state event\n");
-        return HANAMI_OK;
-    }
-
-    /* Build ref array without HEAD for the state event */
-    size_t state_ref_count = 0;
-    nip34_ref_t *state_refs = calloc(ref_count, sizeof(nip34_ref_t));
-    if (state_refs) {
-        for (size_t i = 0; i < ref_count; i++) {
-            if (refs[i].refname && strcmp(refs[i].refname, "HEAD") != 0) {
-                state_refs[state_ref_count].refname = refs[i].refname;
-                state_refs[state_ref_count].target = refs[i].target;
-                state_ref_count++;
+    for (size_t i = 0; i < plan.count; i++)
+        if (state_set(&state, &state_count, plan.updates[i].refname,
+                      plan.updates[i].target) != 0) {
+            err = HANAMI_ERR_NOMEM;
+            goto done;
+        }
+    if (!baseline && git_reference_lookup(&head, repo, "HEAD") == 0) {
+        const char *target = git_reference_symbolic_target(head);
+        for (size_t i = 0; target && i < state_count; i++) {
+            if (!strcmp(state[i].refname, target)) {
+                initial_head = malloc(strlen(target) + 6);
+                if (!initial_head) { err = HANAMI_ERR_NOMEM; goto done; }
+                sprintf(initial_head, "ref: %s", target);
+                break;
             }
         }
     }
-
-    err = hanami_nostr_publish_state(nostr_ctx, opts->repo_id,
-                                     state_refs, state_ref_count,
-                                     head_value);
-    free(state_refs);
-    hanami_nostr_ctx_free(nostr_ctx);
-    free_ref_array(refs, ref_count);
-
-    if (err != HANAMI_OK) {
-        /* Push succeeded but state publish failed.
-         * Log warning but return success since data is on server. */
-        fprintf(stderr, "Warning: Push succeeded but failed to publish state event to Nostr\n");
-        return HANAMI_OK;
+    const char *head_value = baseline ? baseline->head : initial_head;
+    if (head_value && !strncmp(head_value, "ref: ", 5)) {
+        size_t i;
+        for (i = 0; i < state_count; i++)
+            if (!strcmp(state[i].refname, head_value + 5)) break;
+        if (i == state_count) head_value = NULL;
     }
-
-    return HANAMI_OK;
+    err = hanami_nostr_create_state(ctx, opts->repo_id, state, state_count,
+        head_value, previous ? previous->created_at + 1 : 0, &intended);
+    if (err != HANAMI_OK) goto done;
+    /* Prepare compensation before making any externally visible change. */
+    if (intended->created_at == INT64_MAX) { err = HANAMI_ERR_NOSTR; goto done; }
+    err = hanami_nostr_create_state(ctx, opts->repo_id,
+        baseline ? baseline->refs : NULL, baseline ? baseline->ref_count : 0,
+        baseline ? baseline->head : NULL, intended->created_at + 1, &correction);
+    if (err != HANAMI_OK) goto done;
+    err = hanami_nostr_publish_event(ctx, intended);
+    if (err == HANAMI_OK) {
+        result->state_accepted = true;
+        git_push_options push_opts;
+        git_push_options_init(&push_opts, GIT_PUSH_OPTIONS_VERSION);
+        push_opts.callbacks.push_update_reference = push_status;
+        push_opts.callbacks.push_negotiation = push_negotiation;
+        push_opts.callbacks.payload = &plan;
+        result->push_attempted = true;
+        rc = git_remote_push(remote, &expanded, &push_opts);
+        err = rc == 0 && !plan.rejected ? HANAMI_OK : HANAMI_ERR_NETWORK;
+        result->push_completed = err == HANAMI_OK;
+    }
+    result->operation_error = err;
+    NostrEvent *final = intended;
+    if (err != HANAMI_OK) {
+        /* A lost OK may still have stored the intended state. Correct even
+         * an unconfirmed publish; never rely on purgatory expiry as rollback. */
+        result->recovery_attempted = true;
+        result->recovery_error = hanami_nostr_publish_event(ctx, correction);
+        final = correction;
+        if (result->recovery_error != HANAMI_OK) {
+            err = result->recovery_error;
+            goto done;
+        }
+    }
+    /* Extra relays are replicas, not substitutes for the required GRASP OK. */
+    if (hanami_nostr_ctx_new(opts->relay_urls, opts->signer, &replicas) == HANAMI_OK)
+        (void)hanami_nostr_publish_event(replicas, final);
+done:
+    if (!result->operation_error) result->operation_error = err;
+    git_reference_free(head);
+    free(initial_head);
+    git_remote_free(remote);
+    free_ref_array(plan.updates, plan.count);
+    git_strarray_dispose(&expanded);
+    free_ref_array(state, state_count);
+    nip34_repo_state_free(baseline);
+    nostr_event_free(previous);
+    nostr_event_free(intended);
+    nostr_event_free(correction);
+    hanami_nostr_ctx_free(replicas);
+    hanami_nostr_ctx_free(ctx);
+    hanami_grasp_info_free(info);
+    return err;
 }
 
 /* =========================================================================
