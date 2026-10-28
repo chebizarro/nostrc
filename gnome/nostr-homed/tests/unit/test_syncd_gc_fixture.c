@@ -13,6 +13,10 @@
 
 int nh_syncd_state_upsert_file_(nh_syncd_state *, const char *, uint32_t, uint32_t, uint32_t,
                                 uint64_t, uint64_t, const char *, const char *const *, size_t);
+int nh_syncd_state_upsert_dir_(nh_syncd_state *, const char *, uint32_t, uint32_t, uint32_t, uint64_t);
+int nh_syncd_state_set_lazy_dir_(nh_syncd_state *, const char *, bool);
+int nh_syncd_state_delete_(nh_syncd_state *, const char *);
+void nh_syncd_state_bump_generation_(nh_syncd_state *);
 static void mkdir_at(const char *path) { assert(!mkdir(path, 0700)); }
 static void json_file(const char *base, const char *name, json_t *j) {
     char *path = NULL;
@@ -110,7 +114,30 @@ int main(int argc, char **argv) {
     assert(!nh_syncd_state_upsert_file_(local, "file", 0600, 0, 0, 1, 10, current, hashes, 1));
     hashes[0] = conflict;
     assert(!nh_syncd_state_upsert_file_(local, "file.conflict-other", 0600, 0, 0, 1, 10, conflict, hashes, 1));
-    assert(!nh_syncd_state_save(local, state)); nh_syncd_state_free(local);
+    /* A prior generation had a lazy Archive. The current snapshot drops its
+     * child, but the retained generation must still protect that blob. */
+    assert(!nh_syncd_state_upsert_dir_(local, "Archive", 0700, 0, 0, 1));
+    assert(!nh_syncd_state_set_lazy_dir_(local, "Archive", true));
+    hashes[0] = retained;
+    assert(!nh_syncd_state_upsert_file_(local, "Archive/cold.txt", 0600, 0, 0, 1, 10, retained, hashes, 1));
+    nh_syncd_state_bump_generation_(local);
+    nh_syncd_state_bump_generation_(local);
+    assert(!nh_syncd_state_save(local, state));
+    char *snapshot_path = NULL;
+    assert(asprintf(&snapshot_path, "%s/snapshot.json", state) > 0);
+    json_t *archive_prior = json_load_file(snapshot_path, JSON_REJECT_DUPLICATES, NULL);
+    assert(archive_prior);
+    json_file(base, "lazy-archive-prior.json", archive_prior);
+    json_decref(archive_prior);
+    free(snapshot_path);
+    nh_syncd_pin_ring *pins = NULL;
+    assert(!nh_syncd_pin_ring_open(pin_path, &pins));
+    hashes[0] = orphan; assert(!nh_syncd_pin_ring_promote(pins, 1, hashes, 1));
+    assert(!nh_syncd_pin_ring_promote_from_snapshot(pins, state));
+    assert(!nh_syncd_state_delete_(local, "Archive/cold.txt"));
+    nh_syncd_state_bump_generation_(local);
+    assert(!nh_syncd_state_save(local, state));
+    nh_syncd_state_free(local);
     porthome_manifest m;
     assert(!porthome_manifest_init(&m, root_id));
     porthome_chunk c = {.size = 43}; assert(!porthome_from_hex64(remote_only, c.sha256));
@@ -198,10 +225,9 @@ int main(int argc, char **argv) {
     char old_hash[65]; porthome_hex64(w.chunks[1].sha256, old_hash);
     assert(json_object_get(marked, old_hash)); /* epoch 1 remains live at epoch 2 */
     json_decref(marked); json_decref(roots); json_decref(parents);
-    nh_syncd_pin_ring *pins = NULL;
-    assert(!nh_syncd_pin_ring_open(pin_path, &pins));
-    hashes[0] = orphan; assert(!nh_syncd_pin_ring_promote(pins, 1, hashes, 1));
-    for (uint64_t i = 2; i <= 11; ++i) { hashes[0] = retained; assert(!nh_syncd_pin_ring_promote(pins, i, hashes, 1)); }
+    /* Generation 2 is the only retained slot containing Archive/cold.txt;
+     * generation 1 is evicted at capacity, while 2 remains the oldest slot. */
+    for (uint64_t i = 3; i <= 11; ++i) { hashes[0] = current; assert(!nh_syncd_pin_ring_promote(pins, i, hashes, 1)); }
     hashes[0] = conflict; assert(!nh_syncd_pin_ring_promote(pins, 11, hashes, 1));
     nh_syncd_pin_ring_close(pins);
     assert(!nh_syncd_pin_ring_open(vault_pin, &pins));
@@ -210,8 +236,9 @@ int main(int argc, char **argv) {
     json_t *config = json_pack("{s:[{s:s,s:s,s:b}]}", "vaults", "path", "Team", "vault_id", id, "is_owner", 1);
     json_file(base, "syncd.json", config); json_decref(config);
     json_file(base, "events.json", events); json_decref(events);
-    json_t *expected = json_pack("{s:[s,s],s:s,s:s,s:s,s:s}", "garbage", orphan, vault_garbage,
-        "unrelated", unrelated, "inflight", inflight, "old_epoch", old_hash, "missing_manifest", missing_manifest);
+    json_t *expected = json_pack("{s:[s,s],s:s,s:s,s:s,s:s,s:s}", "garbage", orphan, vault_garbage,
+        "unrelated", unrelated, "inflight", inflight, "old_epoch", old_hash, "missing_manifest", missing_manifest,
+        "lazy_archive_retained", retained);
     json_file(base, "expected.json", expected); json_decref(expected);
     json_decref(old); json_decref(owner); json_decref(writer); json_decref(pending); json_decref(archive);
     nostr_event_free(old_event); nostr_event_free(owner_event); nostr_event_free(writer_event);

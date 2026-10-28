@@ -63,6 +63,7 @@ extern int nh_syncd_state_upsert_file_(nh_syncd_state *s,
                                        const char *content_hash_hex,
                                        const char *const *chunk_addrs_hex,
                                        size_t chunk_addrs_n);
+extern int nh_syncd_state_set_lazy_dir_(nh_syncd_state *s, const char *rel, bool lazy);
 extern int nh_syncd_state_upsert_dir_(nh_syncd_state *s,
                                       const char *rel,
                                       uint32_t mode, uint32_t uid, uint32_t gid,
@@ -347,15 +348,21 @@ static int rebuild_cb(void *ud, const char *rel, json_t *row) {
     if (nh_porthome_encrypt_path(rc->home_key, rel, &penc) != 0) {
         rc->rc = NH_SYNCD_ERR_CRYPTO; return -1;
     }
+    const char *base = strrchr(rel, '/');
+    char *name = strdup(base ? base + 1 : rel);
+    if (!name) { free(penc); rc->rc = NH_SYNCD_ERR_OOM; return -1; }
     if (kind && !strcmp(kind, "dir")) {
-        rc->rc = nh_porthome_manifest_add_dir(rc->m, penc, mode, uid, gid, mt_ns);
+        rc->rc = nh_porthome_manifest_add_dir_v2(rc->m, penc, name, mode, uid, gid, mt_ns);
+        if (rc->rc == 0 && (json_is_true(json_object_get(row, "lazy")) ||
+                            (rc->cfg->lazy && nh_syncd_lazy_covers(rc->cfg->lazy, rel))))
+            rc->m->entries[rc->m->entries_len - 1].lazy = true;
         return rc->rc == 0 ? 0 : -1;
     }
     if (kind && !strcmp(kind, "symlink")) {
         const char *tgt = json_string_value(json_object_get(row, "symlink_target"));
         char *dup = strdup(tgt ? tgt : "");
         if (!dup) { free(penc); rc->rc = NH_SYNCD_ERR_OOM; return -1; }
-        rc->rc = nh_porthome_manifest_add_symlink(rc->m, penc, mode, uid, gid, mt_ns, dup);
+        rc->rc = nh_porthome_manifest_add_symlink_v2(rc->m, penc, name, mode, uid, gid, mt_ns, dup);
         return rc->rc == 0 ? 0 : -1;
     }
     /* file */
@@ -377,8 +384,8 @@ static int rebuild_cb(void *ud, const char *rel, json_t *row) {
         chs[i].size = NH_SYNCD_CHUNK_SIZE + NH_PORTHOME_SEAL_OVERHEAD;
         chs[i].chunk_key_id = 0;
     }
-    rc->rc = nh_porthome_manifest_add_file(rc->m, penc, mode, uid, gid,
-                                           mt_ns, size, chs, n);
+    rc->rc = nh_porthome_manifest_add_file_v2(rc->m, penc, name, mode, uid, gid,
+                                              mt_ns, size, chs, n);
     free(chs);
     return rc->rc == 0 ? 0 : -1;
 }
@@ -569,6 +576,8 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
 
         if (S_ISDIR(st.st_mode)) {
             (void)nh_syncd_state_upsert_dir_(state, rel, mode, uid, gid, mt_ns);
+            if (cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, rel))
+                (void)nh_syncd_state_set_lazy_dir_(state, rel, true);
             continue;
         }
         if (S_ISLNK(st.st_mode)) {
@@ -647,7 +656,7 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
 
     /* Rebuild the WHOLE manifest from the (now-updated) state. */
     nh_porthome_manifest m;
-    if (nh_porthome_manifest_init(&m, cfg->root_id) != 0) {
+    if (nh_porthome_manifest_init_v2(&m, cfg->root_id) != 0) {
         rc = NH_SYNCD_ERR_MANIFEST; goto fail;
     }
     rebuild_ctx rctx = { cfg->home_key, &m, cfg, NH_SYNCD_OK };

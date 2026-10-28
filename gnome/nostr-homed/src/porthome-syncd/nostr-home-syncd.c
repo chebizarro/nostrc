@@ -1085,8 +1085,16 @@ int main(int argc, char **argv) {
                 }
                 if (!personal) { nh_syncd_batch_free(batch); goto vault_service; }
 #endif
-                /* Build push config. */
+                /* Local lazy policy is additive to markers already saved in
+                 * snapshot rows; load it for this publish so config edits
+                 * take effect without a daemon restart. */
+                nh_syncd_lazy *lazy = NULL;
+                if (nh_syncd_lazy_new(cfg.home, &lazy) != NH_SYNCD_OK) {
+                    fprintf(stderr, "syncd: lazy policy load failed; refusing publish\n");
+                    nh_syncd_batch_free(batch); exit_code = 8; break;
+                }
                 nh_syncd_push_cfg pc = {0};
+                pc.lazy = lazy;
                 pc.blossom_servers   = (const char *const *)cfg.blossom;
                 pc.n_blossom_servers = cfg.n_blossom;
                 pc.min_replication   = cfg.min_repl;
@@ -1107,6 +1115,7 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "syncd: batch %llu deferred — NOSTR_HOMED_SYNCD_SEED_HEX unset\n",
                             (unsigned long long)nh_syncd_batch_id(batch));
                     nh_syncd_batch_free(batch);
+                    nh_syncd_lazy_free(lazy);
                     continue;
                 }
                 uint8_t seed[32];
@@ -1114,6 +1123,7 @@ int main(int argc, char **argv) {
                     nh_porthome_key_derive(seed, pc.home_key) != 0) {
                     fprintf(stderr, "syncd: seed derivation failed\n");
                     nh_syncd_batch_free(batch);
+                    nh_syncd_lazy_free(lazy);
                     continue;
                 }
                 /* root_id: use the seed itself as an opaque identifier
@@ -1178,6 +1188,7 @@ int main(int argc, char **argv) {
                 memset(seed, 0, sizeof seed);
                 memset(pc.home_key, 0, sizeof pc.home_key);
                 nh_syncd_batch_free(batch);
+                nh_syncd_lazy_free(lazy);
             }
         }
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL

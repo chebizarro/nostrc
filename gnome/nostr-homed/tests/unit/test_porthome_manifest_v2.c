@@ -47,6 +47,7 @@ static int test_v2_roundtrip(void) {
         ASSERT(name);
         ASSERT_EQ(nh_porthome_manifest_add_dir_v2(&m, penc, name,
             0755, 1000, 1000, 1700000000ULL * 1000000000ULL), NH_PORTHOME_OK);
+        m.entries[m.entries_len - 1].lazy = true;
     }
     /* Entry 2: FILE "docs/note.md" with 2 chunks. */
     {
@@ -101,6 +102,8 @@ static int test_v2_roundtrip(void) {
 
     ASSERT_STREQ(dm->entries[0].name_plain, "docs");
     ASSERT_EQ(dm->entries[0].kind, NH_PORTHOME_KIND_DIR);
+    ASSERT(dm->entries[0].lazy);
+    ASSERT(!dm->entries[1].lazy && !dm->entries[2].lazy);
     ASSERT_STREQ(dm->entries[1].name_plain, "note.md");
     ASSERT_EQ(dm->entries[1].kind, NH_PORTHOME_KIND_FILE);
     ASSERT_EQ(dm->entries[1].chunks_len, 2u);
@@ -140,6 +143,7 @@ static int test_v1_parse_forward(void) {
         ASSERT_EQ(nh_porthome_encrypt_path(hk, "legacy", &penc), NH_PORTHOME_OK);
         ASSERT_EQ(nh_porthome_manifest_add_dir(&m, penc,
             0755, 0, 0, 0), NH_PORTHOME_OK);
+        m.entries[m.entries_len - 1].lazy = true;
     }
     {
         char *penc = NULL;
@@ -169,6 +173,8 @@ static int test_v1_parse_forward(void) {
               NH_PORTHOME_OK);
     ASSERT_EQ(dm->version, NH_PORTHOME_MANIFEST_SCHEMA_VERSION_V1);
     ASSERT_EQ(dm->entries_len, 3u);
+    ASSERT(dm->entries[0].lazy);
+    ASSERT(!dm->entries[1].lazy && !dm->entries[2].lazy);
     /* No plaintext-name material anywhere. */
     for (size_t i = 0; i < dm->entries_len; i++) {
         ASSERT(dm->entries[i].name_plain == NULL);
@@ -306,10 +312,51 @@ static int test_v2_encoder_refuses_naked_entry(void) {
     return 0;
 }
 
+static int test_lazy_marker_strictness(void) {
+    uint8_t root[32] = {0};
+    nh_porthome_manifest m;
+    ASSERT_EQ(nh_porthome_manifest_init(&m, root), NH_PORTHOME_OK);
+    ASSERT_EQ(nh_porthome_manifest_add_dir(&m, strdup("Archive"), 0700, 0, 0, 0),
+              NH_PORTHOME_OK);
+    m.entries[0].lazy = true;
+    uint8_t *raw = NULL; size_t n = 0;
+    ASSERT_EQ(nh_porthome_manifest_encode(&m, &raw, &n), NH_PORTHOME_OK);
+    nh_porthome_manifest *decoded = NULL;
+    ASSERT_EQ(nh_porthome_manifest_decode(raw, n, &decoded), NH_PORTHOME_OK);
+    ASSERT(decoded->entries[0].lazy);
+    nh_porthome_manifest_dispose(decoded); free(decoded);
+    size_t marker = n;
+    for (size_t i = 1; i < n; ++i)
+        if (raw[i - 1] == 0x0c && raw[i] == 0x01) { marker = i; break; }
+    ASSERT(marker < n);
+    raw[marker] = 0x02; /* only the canonical uint(1) is accepted */
+    ASSERT(nh_porthome_manifest_decode(raw, n, &decoded) != NH_PORTHOME_OK);
+    raw[marker] = 0x01;
+    raw[marker - 1] = 0x0d; /* unknown key */
+    ASSERT(nh_porthome_manifest_decode(raw, n, &decoded) != NH_PORTHOME_OK);
+    free(raw);
+    m.entries[0].lazy = false; /* clearing omits the optional key */
+    ASSERT_EQ(nh_porthome_manifest_encode(&m, &raw, &n), NH_PORTHOME_OK);
+    ASSERT_EQ(nh_porthome_manifest_decode(raw, n, &decoded), NH_PORTHOME_OK);
+    ASSERT(!decoded->entries[0].lazy);
+    nh_porthome_manifest_dispose(decoded); free(decoded); free(raw);
+    nh_porthome_manifest_dispose(&m);
+    ASSERT_EQ(nh_porthome_manifest_init(&m, root), NH_PORTHOME_OK);
+    ASSERT_EQ(nh_porthome_manifest_add_file(&m, strdup("file"), 0600,
+                                            0, 0, 0, 0, NULL, 0), NH_PORTHOME_OK);
+    m.entries[0].lazy = true;
+    raw = NULL; n = 0;
+    ASSERT(nh_porthome_manifest_encode(&m, &raw, &n) != NH_PORTHOME_OK);
+    free(raw);
+    nh_porthome_manifest_dispose(&m);
+    return 0;
+}
+
 int main(void) {
     int failed = 0;
     failed += test_v2_roundtrip();
     failed += test_v1_parse_forward();
+    failed += test_lazy_marker_strictness();
     failed += test_dotdot_reject();
     failed += test_slash_reject();
     failed += test_v2_encoder_refuses_naked_entry();

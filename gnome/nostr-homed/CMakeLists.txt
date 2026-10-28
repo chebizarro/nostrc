@@ -2220,7 +2220,8 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_lazy PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable-fuse;portable" TIMEOUT 30)
 
-    add_executable(test_syncd_lazy_reconcile tests/unit/test_syncd_lazy_reconcile.c)
+    add_executable(test_syncd_lazy_reconcile tests/unit/test_syncd_lazy_reconcile.c
+      src/porthome-fuse/nh_fuse_table.c)
     target_link_libraries(test_syncd_lazy_reconcile PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_lazy_reconcile COMMAND test_syncd_lazy_reconcile)
     set_tests_properties(homed_syncd_lazy_reconcile PROPERTIES

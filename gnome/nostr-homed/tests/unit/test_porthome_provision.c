@@ -264,7 +264,75 @@ static void test_limited_mode_chunk_fetch_fail(void) {
     free(sealed);
 }
 
+static int lazy_fetch_count;
+static int counting_fetch(void *ctx, const char *addr, uint8_t **ct, size_t *len) {
+    lazy_fetch_count++;
+    return store_fetch(ctx, addr, ct, len);
+}
+
+static void test_fresh_lazy_archive(void) {
+    uint8_t seed[32], key[32], root[32];
+    memset(seed, 0x52, sizeof seed); memset(root, 0x35, sizeof root);
+    if (nh_porthome_key_derive(seed, key) != 0) die("lazy key");
+    nh_porthome_manifest m;
+    if (nh_porthome_manifest_init_v2(&m, root) != 0) die("lazy init");
+    if (nh_porthome_manifest_add_dir_v2(&m, strdup("encarchive"),
+            strdup("Archive"), 0755, 0, 0, 1) != 0) die("lazy dir");
+    m.entries[m.entries_len - 1].lazy = true;
+    if (nh_porthome_manifest_add_dir_v2(&m, strdup("encarchive/encyear"),
+            strdup("2024"), 0755, 0, 0, 1) != 0) die("lazy child dir");
+    const char *cold = "cold bytes", *eager = "eager bytes";
+    nh_porthome_chunk ch = {0};
+    uint8_t *ct = NULL; size_t ct_len = 0;
+    if (nh_porthome_encrypt_chunk(key, (const uint8_t *)cold, strlen(cold),
+                                  &ct, &ct_len, ch.sha256) != 0) die("cold seal");
+    ch.size = (uint32_t)ct_len;
+    char hex[65]; nh_porthome_hex64(ch.sha256, hex);
+    store_put(hex, ct, ct_len); free(ct);
+    if (nh_porthome_manifest_add_file_v2(&m,
+            strdup("encarchive/encyear/enccold"), strdup("cold.txt"),
+            0644, 0, 0, 1, strlen(cold), &ch, 1) != 0) die("cold entry");
+    if (nh_porthome_encrypt_chunk(key, (const uint8_t *)eager, strlen(eager),
+                                  &ct, &ct_len, ch.sha256) != 0) die("eager seal");
+    ch.size = (uint32_t)ct_len;
+    nh_porthome_hex64(ch.sha256, hex); store_put(hex, ct, ct_len); free(ct);
+    if (nh_porthome_manifest_add_file_v2(&m, strdup("enceager"),
+            strdup("eager.txt"), 0644, 0, 0, 1, strlen(eager), &ch, 1) != 0)
+        die("eager entry");
+    uint8_t *wire = NULL; size_t wire_len = 0;
+    if (nh_porthome_manifest_encode_sealed(&m, key, &wire, &wire_len) != 0)
+        die("lazy wire encode");
+    nh_porthome_manifest *decoded = NULL;
+    if (nh_porthome_manifest_decode_sealed(wire, wire_len, key, &decoded) != 0)
+        die("lazy wire decode");
+    char stage[512];
+    if (make_tempdir(stage, "lazy") != 0) die("lazy temp");
+    int fd = open(stage, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) die("lazy fd");
+    nh_porthome_prov_opts opts = {.local_uid = getuid(), .local_gid = getgid()};
+    lazy_fetch_count = 0;
+    if (nh_porthome_materialize_into_fd(fd, decoded, key, counting_fetch,
+                                        NULL, &opts, "tx-lazy") != NH_PORTHOME_PROV_OK)
+        die("lazy materialize");
+    size_t renamed = 0, missed = 0;
+    if (nh_porthome_rename_walk(fd, decoded, &renamed, &missed) != 0)
+        die("lazy rename");
+    char path[600];
+    snprintf(path, sizeof path, "%s/Archive", stage);
+    if (count_dir_entries(path) != 0) die("Archive not empty");
+    snprintf(path, sizeof path, "%s/eager.txt", stage);
+    FILE *f = fopen(path, "rb");
+    if (!f) die("eager missing");
+    char buf[32]; size_t got = fread(buf, 1, sizeof buf, f); fclose(f);
+    if (got != strlen(eager) || memcmp(buf, eager, got)) die("eager content");
+    if (lazy_fetch_count != 1) die("cold chunk was fetched");
+    pass("fresh marked Archive stays empty; eager sibling fetched once");
+    close(fd); free(wire); nh_porthome_manifest_dispose(decoded); free(decoded);
+    nh_porthome_manifest_dispose(&m);
+}
+
 int main(void) {
+    test_fresh_lazy_archive();
     test_e2e();
     test_limited_mode_hostile_manifest();
     test_limited_mode_chunk_fetch_fail();

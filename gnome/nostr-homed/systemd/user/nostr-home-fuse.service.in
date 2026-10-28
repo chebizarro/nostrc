@@ -16,8 +16,15 @@ PartOf=graphical-session.target
 # when both AUTH_INSTALL and PORTHOME_FUSE_EXPERIMENTAL are ON.
 # See docs/designs/nostrfs-porthome-overlay.md §5.1 for the shape.
 Type=notify
+# A user drop-in may set both NH_FUSE_MOUNTPOINT=%h/Archive and
+# NH_FUSE_SUBTREE=Archive. The FUSE process owns its own unmount.
+Environment=NH_FUSE_MOUNTPOINT=%h/Portable
 ExecStart=@NH_FUSE_BIN_PATH@
-ExecStopPost=-/bin/fusermount3 -u -z %h/Portable
+# Type=notify alone proves daemon readiness, not a mounted filesystem.
+ExecStartPost=/usr/bin/findmnt -n -t fuse.porthome --mountpoint ${NH_FUSE_MOUNTPOINT}
+# No unconditional ExecStopPost: systemd invokes it even after a failed
+# start, which could detach a mount this invocation never owned.
+# SIGTERM closes the session; the FUSE auto_unmount option handles crashes.
 Restart=on-failure
 RestartSec=5
 # Clean exits: 3 = no/bad snapshot, 4 = no seed, 5 = already mounted.

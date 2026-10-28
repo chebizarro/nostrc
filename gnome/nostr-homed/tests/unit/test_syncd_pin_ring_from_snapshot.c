@@ -54,12 +54,15 @@ int main(void) {
       "  \"generation\": 42,\n"
       "  \"root\":   \"/home/nobody\",\n"
       "  \"d_tag\":  \"nostr-homed.home.v1:personal\",\n"
+      "  \"account_pubkey_hex\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n"
+      "  \"root_id_hex\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\n"
       "  \"files\": {\n"
-      "    \"docs/a.txt\": { \"kind\": \"file\", \"chunk_addrs_hex\": [\n"
+      "    \"docs/a.txt\": { \"kind\": \"file\", \"size\": 2, \"chunk_addrs_hex\": [\n"
       "        \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n"
       "        \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n"
       "    ] },\n"
-      "    \"docs/b.txt\": { \"kind\": \"file\", \"chunk_addrs_hex\": [\n"
+      "    \"Archive\": { \"kind\": \"dir\", \"size\": 0, \"lazy\": true },\n"
+      "    \"Archive/b.txt\": { \"kind\": \"file\", \"size\": 2, \"chunk_addrs_hex\": [\n"
       "        \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\n"
       "        \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"\n"
       "    ] }\n"
@@ -82,7 +85,7 @@ int main(void) {
            == NH_SYNCD_CACHE_OK);
     assert(nh_syncd_pin_ring_size(r) == 1);
 
-    /* Effective set MUST contain all four known hashes. */
+    /* Effective set MUST contain eager and cold Archive hashes alike. */
     char **eff = NULL; size_t neff = 0;
     assert(nh_syncd_pin_ring_effective_pins(r, &eff, &neff) == NH_SYNCD_CACHE_OK);
     assert(neff == 4);

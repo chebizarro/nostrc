@@ -33,8 +33,9 @@
  * entry (10) and additionally in v2 symlink entries (11). */
 #define K_E_NAME_SEALED     10u
 #define K_E_LINK_TGT_SEALED 11u
+#define K_E_LAZY            12u  /* optional directory-only uint(1) */
 
-#define K_E_MAX             11u
+#define K_E_MAX             12u
 
 /* Chunk map keys. */
 #define K_C_SHA256        1u
@@ -334,6 +335,10 @@ static int encode_entry(porthome_cbor_enc *e, const porthome_entry *en,
     uint64_t n = 7;
     if (en->kind == PORTHOME_KIND_FILE)    n++;                    /* 8: chunks */
     if (!emit_v2 && en->kind == PORTHOME_KIND_SYMLINK) n++;        /* 9: legacy symlink_target */
+    if (en->lazy) {
+        if (en->kind != PORTHOME_KIND_DIR) return -1;
+        n++;                                                          /* 12: lazy */
+    }
     if (emit_v2) {
         n++;                                                          /* 10: name_sealed */
         if (en->kind == PORTHOME_KIND_SYMLINK) n++;                /* 11: link_target_sealed */
@@ -375,6 +380,10 @@ static int encode_entry(porthome_cbor_enc *e, const porthome_entry *en,
             if (porthome_cbor_write_uint(e, K_E_LINK_TGT_SEALED)) return -1;
             if (porthome_cbor_write_bstr(e, en->link_target_sealed, en->link_target_sealed_len)) return -1;
         }
+    }
+    if (en->lazy) {
+        if (porthome_cbor_write_uint(e, K_E_LAZY)) return -1;
+        if (porthome_cbor_write_uint(e, 1)) return -1;
     }
     return 0;
 }
@@ -468,7 +477,7 @@ static int decode_entry(porthome_cbor_dec *d, porthome_entry *out) {
      * with n==10 which is legal; the kind check later rejects that
      * (kind==SYMLINK requires exactly one target field, per the
      * cross-check block). */
-    if (n < 7 || n > 10) return -1;
+    if (n < 7 || n > 11) return -1;
 
     /* Read pairs, enforce strictly ascending keys within known set. */
     int seen[K_E_MAX + 2] = {0};
@@ -559,6 +568,12 @@ static int decode_entry(porthome_cbor_dec *d, porthome_entry *out) {
             out->name_sealed_len = bl;
             break;
         }
+        case K_E_LAZY: {
+            uint64_t v;
+            if (porthome_cbor_read_uint(d, &v) || v != 1) return -1;
+            out->lazy = true;
+            break;
+        }
         case K_E_LINK_TGT_SEALED: {
             const uint8_t *b; size_t bl;
             if (porthome_cbor_read_bstr(d, &b, &bl)) return -1;
@@ -578,6 +593,7 @@ static int decode_entry(porthome_cbor_dec *d, porthome_entry *out) {
 
     /* Structural cross-checks. */
     if (!out->path_enc) return -1;
+    if (out->lazy && out->kind != PORTHOME_KIND_DIR) return -1;
     /* kind consistency */
     if (out->kind == PORTHOME_KIND_FILE) {
         /* files may have zero chunks iff size == 0. */

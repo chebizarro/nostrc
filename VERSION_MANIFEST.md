@@ -36,7 +36,7 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.5.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.5.2 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.6.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.1 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
@@ -92,6 +92,17 @@ files already declare a version.
   vaultctl and the Nostr Shell extension are unchanged. Shared test helpers are
   consumed without shipping changes to those components. No release tags or
   release-column updates.
+
+### Lazy Archive overlay (nostrc-h10m.8)
+
+- **nostr-homed 0.6.0 unchanged:** the new experimental FUSE subtree projection,
+  mount-verified start path and lazy snapshot metadata are folded into the
+  unreleased 0.6.0 wave established by nostrc-h10m.5; no additional version bump
+  or release tag. **libporthome 0.5.2 → 0.6.0 (MINOR):** its public entry struct
+  and canonical codec gain an optional on-wire lazy directory marker in
+  schemas v1/v2. Old manifests decode as eager. This changes the 0.x ABI;
+  older strict decoders cannot consume marked manifests, so consumers must
+  upgrade together. Other components have no owned shipped change.
 
 ### Windows portability for libblossom (nostrc-zk7to)
 

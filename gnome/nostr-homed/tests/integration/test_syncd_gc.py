@@ -148,12 +148,25 @@ def snapshot(base):
             for p in base.rglob("*") if p.is_file()}
 
 
-def scenario(name, modify=None, dry=False, fail=False, copies=1, v1=False):
+def scenario(name, modify=None, dry=False, fail=False, copies=1, v1=False, expire_archive=False):
     labs = []
     with tempfile.TemporaryDirectory(prefix="nostrc-gc-") as tmp:
         base = Path(tmp)
         subprocess.run([HELPER, str(base)], check=True, capture_output=True, timeout=15)
         expected = json.loads((base / "expected.json").read_text())
+        archive = expected["lazy_archive_retained"]
+        prior = json.loads((base / "lazy-archive-prior.json").read_text())
+        current = json.loads((base / "state/nostr-homed/snapshot.json").read_text())
+        assert prior["files"]["Archive"]["lazy"] is True
+        assert archive in prior["files"]["Archive/cold.txt"]["chunk_addrs_hex"]
+        assert "Archive/cold.txt" not in current["files"]
+        pins_path = base / "state/nostr-homed/pinned.json"
+        pins = json.loads(pins_path.read_text())
+        assert archive in next(g["hashes"] for g in pins["generations"] if g["gen"] == 2)
+        assert all(archive not in g["hashes"] for g in pins["generations"] if g["gen"] != 2)
+        if expire_archive:
+            pins["generations"] = [g for g in pins["generations"] if g["gen"] != 2]
+            pins_path.write_text(json.dumps(pins))
         events = json.loads((base / "events.json").read_text())
         if v1:
             events = [e for e in events if any(t[:2] == ["d", "nostr-homed.home.v1:personal"] for t in e["tags"])]
@@ -195,6 +208,8 @@ def scenario(name, modify=None, dry=False, fail=False, copies=1, v1=False):
             report = json.loads(result.stdout.strip())
             assert report["dry_run"] == dry
             garbage = {expected["garbage"][0]} if v1 else set(expected["garbage"])
+            if expire_archive:
+                garbage.add(archive)
             for lab, baseline in zip(labs, remote_before):
                 assert not lab.failures, (name, lab.failures)
                 assert not lab.puts and not lab.attempts
@@ -281,6 +296,7 @@ def unreachable(base, expected, labs, env):
     env["NOSTR_HOMED_SYNCD_RELAYS"] += f",ws://127.0.0.1:{port}/relay"
 
 scenario("v1 + every vault writer + older epoch + conflict + pending/reseal intent dry-run", dry=True)
+scenario("retained lazy Archive is marked by real GC; expiry makes it a candidate", dry=True, expire_archive=True)
 scenario("real authenticated BUD-02 DELETE on two servers, per-server receipts and status", copies=2)
 scenario("v1-only daemon path, retained generations and conflict files", v1=True)
 scenario("per-server failure receipts, PUT invalidation and next-window recovery", lambda b, e, labs, env: setattr(labs[-1], "reject_delete", True), copies=2, fail="partial")

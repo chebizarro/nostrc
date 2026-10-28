@@ -155,6 +155,19 @@ static int rw_ord_cmp_desc(const void *a, const void *b) {
     return 0;
 }
 
+static int below_lazy_dir(const nh_porthome_manifest *m, const char *path_enc) {
+    if (!path_enc) return 0;
+    for (size_t i = 0; i < m->entries_len; ++i) {
+        const nh_porthome_entry *dir = &m->entries[i];
+        if (!dir->lazy || dir->kind != NH_PORTHOME_KIND_DIR || !dir->path_enc)
+            continue;
+        size_t n = strlen(dir->path_enc);
+        if (strncmp(path_enc, dir->path_enc, n) == 0 && path_enc[n] == '/')
+            return 1;
+    }
+    return 0;
+}
+
 int nh_porthome_rename_walk(int staging_fd,
                             const nh_porthome_manifest *m,
                             size_t *out_renamed_count,
@@ -190,6 +203,7 @@ int nh_porthome_rename_walk(int staging_fd,
     for (size_t k = 0; k < m->entries_len; k++) {
         const nh_porthome_entry *e = &m->entries[ord[k].idx];
         if (!e->path_enc) { missed++; continue; }
+        if (below_lazy_dir(m, e->path_enc)) { missed++; continue; }
         if (!e->name_plain) { missed++; continue; }
 
         const char *leaf_enc = NULL;

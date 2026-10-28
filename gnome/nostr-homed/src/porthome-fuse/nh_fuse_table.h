@@ -41,7 +41,8 @@ typedef enum {
 
 typedef struct {
     /* Owned. */
-    char           *rel;               /* plaintext, no leading '/' */
+    char           *rel;               /* visible path, no leading '/' */
+    char           *source_rel;        /* original snapshot path for reads */
     nh_fuse_kind_t  kind;
     uint32_t        mode;              /* masked & 0777 */
     uint64_t        mtime_ns;
@@ -61,6 +62,20 @@ typedef struct nh_fuse_table nh_fuse_table;
 int  nh_fuse_table_load(const char *state_dir,
                         uint32_t mount_uid, uint32_t mount_gid,
                         nh_fuse_table **out);
+
+/* Project one snapshot directory at the mount root. `subtree` is a
+ * validated HOME-relative path, e.g. Archive. NULL/empty preserves the
+ * full-snapshot view. Snapshot bytes and generation semantics are unchanged. */
+int  nh_fuse_table_load_subtree(const char *state_dir,
+                                uint32_t mount_uid, uint32_t mount_gid,
+                                const char *subtree, nh_fuse_table **out);
+
+/* Reload variant: a newer valid snapshot may remove the entire projected
+ * subtree. Install an empty table carrying the new generation rather than
+ * preserving stale old entries. Initial startup still requires the subtree. */
+int  nh_fuse_table_reload_subtree(const char *state_dir,
+                                  uint32_t mount_uid, uint32_t mount_gid,
+                                  const char *subtree, nh_fuse_table **out);
 
 void nh_fuse_table_free(nh_fuse_table *t);
 

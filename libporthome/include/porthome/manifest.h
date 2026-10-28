@@ -26,6 +26,7 @@
 #define PORTHOME_MANIFEST_H
 
 #include <porthome/crypto.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -77,6 +78,10 @@ typedef struct {
     /* Original file size (bytes). For dirs/symlinks: 0. */
     uint64_t size;
     porthome_entry_kind kind;
+    /* Optional on-wire directory marker. False is omitted on encode.
+     * Marked directories and descendants remain in the manifest, but
+     * provisioners skip eager content materialization. */
+    bool lazy;
     /* Only present when kind == FILE. Owned array; length in chunks_len. */
     porthome_chunk *chunks;
     size_t            chunks_len;
@@ -209,6 +214,8 @@ PORTHOME_API int porthome_manifest_encode(const porthome_manifest *m,
  *   - refuses non-zero `chunk_key_id` (Phase 1 has no other keys),
  *   - refuses paths that are absolute, ".", "..", contain "/./", "/../",
  *     start with "/", end with "/", or contain NUL / '\\',
+ *   - refuses a lazy marker on non-directory entries or any marker value
+ *     other than the canonical unsigned integer 1,
  *   - refuses non-file entries carrying `chunks`,
  *   - refuses non-symlink entries carrying `symlink_target`,
  *   - refuses file entries without `chunks` when size > 0. */

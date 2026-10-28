@@ -1,4 +1,4 @@
-.TH NOSTR-HOME-FUSE 8 "2026-09-25" "nostr-homed 0.3" "System Manager's Manual"
+.TH NOSTR-HOME-FUSE 8 "2026-09-25" "nostr-homed 0.6.0" "System Manager's Manual"
 .SH NAME
 nostr-home-fuse \- read-only portable-home FUSE overlay
 .SH SYNOPSIS
@@ -29,7 +29,20 @@ to produce and rotate snapshots.
 .B NH_FUSE_MOUNTPOINT
 Mountpoint override. Default:
 .IR $HOME/Portable .
-The directory is created (mode 0700) if it does not exist.
+The directory is created (mode 0700) if it does not exist. A nonempty
+mountpoint is refused rather than shadowing local data. When using the
+systemd user unit, set this in a service drop-in; the unit verifies the
+configured path after startup. The FUSE daemon owns unmount on exit.
+.TP
+.B NH_FUSE_SUBTREE
+Optional validated home-relative snapshot directory (for example,
+.BR Archive ).
+Only its descendants appear at the mount root. The original snapshot path
+is retained for blob and vault reads. Tier-0 reads from the real home are
+disabled in this mode, because the mount may cover that same path. Set
+.B NH_FUSE_MOUNTPOINT
+and the syncd lazy-prefix policy to the same directory for a lazy Archive.
+A missing subtree causes startup to fail; no empty substitute is mounted.
 .TP
 .B NH_FUSE_STATE_DIR
 Override the snapshot state directory. Default:
