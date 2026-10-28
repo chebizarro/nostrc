@@ -460,7 +460,7 @@ static void t_lock_reentrant(void) {
 
 /* Real relay mode is driven by test_syncd_publish_auth.py. It exercises
  * nh_syncd_push_batch without the publish override used above. */
-static int real_relay_push(const char *url, const char *secret, bool expect_ok) {
+static int real_relay_push(const char *url, const char *secret, const char *expected) {
     setup();
     char *pubkey = nostr_key_get_public(secret);
     if (!pubkey) return 1;
@@ -490,11 +490,14 @@ static int real_relay_push(const char *url, const char *secret, bool expect_ok) 
     char *error = NULL;
     int rc = nh_syncd_push_batch(&cfg, state, batch, g_home, ig,
                                  &ilk, g_state, &error);
-    bool good = expect_ok ? (rc == NH_SYNCD_OK &&
-                             nh_syncd_state_get_local_generation(state) > 0)
-                          : (rc == NH_SYNCD_ERR_PUBLISH && error &&
-                             strstr(error, "restricted:") &&
-                             nh_syncd_state_get_local_generation(state) == 0);
+    bool good = !strcmp(expected, "ok") ?
+                    (rc == NH_SYNCD_OK &&
+                     nh_syncd_state_get_local_generation(state) > 0) :
+                (!strcmp(expected, "restricted") ||
+                 !strcmp(expected, "auth-required")) ?
+                    (rc == NH_SYNCD_ERR_PUBLISH && error &&
+                     strstr(error, expected) &&
+                     nh_syncd_state_get_local_generation(state) == 0) : false;
     if (!good) fprintf(stderr, "real relay push: rc=%d error=%s generation=%llu\n",
                        rc, error ? error : "", (unsigned long long)
                        nh_syncd_state_get_local_generation(state));
@@ -510,7 +513,7 @@ static int real_relay_push(const char *url, const char *secret, bool expect_ok) 
 
 int main(int argc, char **argv) {
     if (argc == 5 && !strcmp(argv[1], "--relay"))
-        return real_relay_push(argv[2], argv[3], !strcmp(argv[4], "ok"));
+        return real_relay_push(argv[2], argv[3], argv[4]);
     setup();
     t_happy_path();
     t_lazy_marker_push();
