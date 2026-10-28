@@ -183,6 +183,9 @@ int main(int argc, char **argv)
     ctx = context(argv[1], "reject");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NOSTR);
     hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "publish-drop");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NETWORK);
+    hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "publish-auth");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);
     /* A completed challenge is not permission to AUTH repeatedly. The fixture

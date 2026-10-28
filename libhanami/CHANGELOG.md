@@ -10,6 +10,9 @@
 - Preserve snapshot verdicts: an event wins; otherwise a refusal outranks
   unreachability; unanswered relays yield NETWORK; only all-EOSE absence yields
   NOT_FOUND. A still-open subscription without a boundary remains TIMEOUT.
+- Keep publication transport failures classified as NETWORK even if the relay
+  reconnects before the caller consumes the failure. libnostr reports synthetic
+  disconnects with `ERR_WEBSOCKET_CLOSED`, distinct from the relay's `OK false`.
 - The accompanying libnostr 2.1.1 correction distinguishes HTTP establishment
   from WebSocket upgrade and gates reconnect success/REQ replay on the latter.
   Neither component adds or changes public signatures or wire formats.

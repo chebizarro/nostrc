@@ -45,6 +45,8 @@ class Relay(socketserver.StreamRequestHandler):
                 mask = self.rfile.read(4)
                 payload = self.rfile.read(length)
                 message = json.loads(bytes(c ^ mask[i % 4] for i, c in enumerate(payload)))
+                if message[0] == "EVENT" and request[1] == b"/publish-drop":
+                    return  # Transport loss, deliberately no OK false.
                 if message[0] == "REQ":
                     response = json.dumps(["EOSE", message[1]]).encode()
                     self.wfile.write(bytes([0x81, len(response)]) + response)

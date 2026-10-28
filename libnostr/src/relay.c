@@ -281,7 +281,10 @@ static bool relay_pending_ok_fail_cb(HashKey *key, void *value, void *user_data)
     NostrRelayOkWaiter *waiter = (NostrRelayOkWaiter *)value;
     if (waiter && waiter->done) {
         NostrRelayOkResult *res = relay_ok_result_new(false, reason);
-        if (res) (void)go_channel_send(waiter->done, res);
+        if (res) {
+            res->disconnected = true;
+            (void)go_channel_send(waiter->done, res);
+        }
     }
     return true;
 }
@@ -1876,7 +1879,8 @@ bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
     if (result.selected_case == 0 && ok_res) {
         accepted = ok_res->ok;
         if (!accepted && err) {
-            *err = new_error(1, "relay rejected event %s: %s",
+            *err = new_error(ok_res->disconnected ? ERR_WEBSOCKET_CLOSED : ERR_UNKNOWN,
+                             "relay rejected event %s: %s",
                              event_id, ok_res->reason ? ok_res->reason : "");
         }
         relay_ok_result_free(ok_res);

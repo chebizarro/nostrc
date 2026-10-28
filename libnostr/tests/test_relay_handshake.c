@@ -3,6 +3,9 @@
 #include "nostr-subscription.h"
 #include "nostr-filter.h"
 #include "error.h"
+#include "error_codes.h"
+#include "nostr-event.h"
+#include "nostr-keys.h"
 #include "select.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -78,6 +81,27 @@ int main(int argc, char **argv)
     nostr_subscription_free(sub);
     nostr_relay_free(relay);
     nostr_filter_free(filter);
+
+    snprintf(url, sizeof(url), "%s/publish-drop", argv[1]);
+    relay = nostr_relay_new(NULL, url, &error);
+    CHECK(relay && !error && nostr_relay_connect(relay, &error));
+    CHECK(nostr_relay_wait_established(relay, 10000, &error));
+    NostrEvent *event = nostr_event_new();
+    CHECK(event);
+    event->kind = 1;
+    event->created_at = 1;
+    nostr_event_set_content(event, "transport loss");
+    const char *secret = "0000000000000000000000000000000000000000000000000000000000000001";
+    char *pubkey = nostr_key_get_public(secret);
+    CHECK(pubkey);
+    nostr_event_set_pubkey(event, pubkey);
+    free(pubkey);
+    CHECK(nostr_event_sign(event, secret) == 0);
+    CHECK(!nostr_relay_publish_and_wait(relay, event, 10000, &error));
+    CHECK(error && error->code == ERR_WEBSOCKET_CLOSED);
+    free_error(error);
+    nostr_event_free(event);
+    nostr_relay_free(relay);
     puts("HTTP rejection and handshake-gated reconnect passed");
     return 0;
 }

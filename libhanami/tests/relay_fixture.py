@@ -88,6 +88,9 @@ class Relay(socketserver.StreamRequestHandler):
             self.frame(["OK", event["id"], self.authenticated,
                         "" if self.authenticated else "restricted: fixture denied"])
         elif message[0] == "EVENT":
+            if mode == "publish-drop":
+                self.request.shutdown(socket.SHUT_RDWR)
+                return
             event = message[1]
             assert event["kind"] != 22242, "NIP-42 must use AUTH, not EVENT"
             if mode == "auth-next" and getattr(self, "next_challenge_needed", False):

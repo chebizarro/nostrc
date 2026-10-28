@@ -61,7 +61,10 @@ files already declare a version.
 - **libnostr 2.1.0 → 2.1.1 (PATCH):** HTTP response establishment is not WebSocket
   handshake success. Reconnect reports success and re-fires REQs only after the
   upgrade succeeds; failed upgrades retain backoff. Handshake waits retain a
-  connection lease through concurrent retirement. No public API/ABI changes.
+  connection lease through concurrent retirement. Synthetic publication losses
+  use the existing `ERR_WEBSOCKET_CLOSED` code rather than an untyped refusal, so
+  Hanami's NETWORK verdict cannot change with a later reconnect. No signature or
+  ABI changes; these are PATCH-class corrections in the same unreleased versions.
 - **Other components: no bump.** No other shipped artifacts change.
 
 ### Plain -Werror builds for libblossom and libhanami (nostrc-t7kio)

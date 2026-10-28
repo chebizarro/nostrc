@@ -18,6 +18,7 @@
 #include "channel.h"
 #include "select.h"
 #include "error.h"
+#include "error_codes.h"
 #include <nip34.h>
 
 #include <pthread.h>
@@ -266,6 +267,8 @@ static hanami_error_t sign_event(hanami_nostr_ctx_t *ctx, NostrEvent *event)
 
 static hanami_error_t relay_error(NostrRelay *relay, const Error *err)
 {
+    /* Classify this operation's loss, not a later reconnect's current state. */
+    if (err && err->code == ERR_WEBSOCKET_CLOSED) return HANAMI_ERR_NETWORK;
     if (!nostr_relay_is_connected(relay)) return HANAMI_ERR_NETWORK;
     const char *message = err ? err->message : NULL;
     if (message && (strstr(message, "auth-required:") || strstr(message, "restricted:")))
