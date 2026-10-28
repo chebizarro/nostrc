@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.7.0 LANGUAGES C)
+project(nostr_homed VERSION 0.7.1 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -2281,6 +2281,12 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     # Running-daemon path: fixture relay live fanout + persistent backfill,
     # Blossom ciphertext, conflict inbox and fresh lazy snapshot.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET nostrc-relayd AND TARGET nostr-home-status)
+      add_test(NAME homed_syncd_publish_auth
+        COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_publish_auth.py
+          $<TARGET_FILE:test_syncd_push_e2e> $<TARGET_FILE:nostrc-relayd>)
+      set_tests_properties(homed_syncd_publish_auth PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;linux;relay" TIMEOUT 90)
       add_executable(syncd_live_seed tests/integration/syncd_live_seed.c)
       target_link_libraries(syncd_live_seed PRIVATE nostr_syncd_core)
       set(_syncd_live_fuse_args)

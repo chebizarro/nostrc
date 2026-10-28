@@ -445,9 +445,10 @@ void nh_syncd_lock_release(nh_syncd_lock *l);
  *     Used by pure-unit tests that must not open sockets.
  *
  * When `event_publish_fn` is NULL the push closure uses libnostr:
- *   - Opens NostrRelay per URL, connects, calls
- *     nostr_relay_publish_and_wait with `relay_publish_timeout_ms`.
- *   - Success = at least one relay returns OK true.
+ *   - Opens NostrRelay per URL, answers NIP-42 AUTH with the account
+ *     signer when challenged, and retries once after auth-required.
+ *   - Success = at least one relay returns pointer OK true within
+ *     `relay_publish_timeout_ms` per acknowledgement wait.
  *   - Never sleeps as a wait primitive — it uses the relay's own
  *     event-driven OK wait.
  * ──────────────────────────────────────────────────────────────────── */

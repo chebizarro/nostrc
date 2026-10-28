@@ -30,6 +30,7 @@
  */
 
 #include "nh_syncd.h"
+#include "nh_syncd_auth.h"
 #include <blossom/pool.h>
 
 #include <blossom/shim.h>
@@ -47,6 +48,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -391,6 +393,95 @@ static int rebuild_cb(void *ud, const char *rel, json_t *row) {
     return rc->rc == 0 ? 0 : -1;
 }
 
+typedef struct {
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    char *challenge;
+    char auth_id[65];
+    char *auth_reason;
+    bool auth_done;
+    bool auth_ok;
+} publish_auth;
+
+static struct timespec auth_deadline(uint32_t timeout_ms) {
+    struct timespec end;
+#ifdef __linux__
+    clock_gettime(CLOCK_MONOTONIC, &end);
+#else
+    clock_gettime(CLOCK_REALTIME, &end);
+#endif
+    end.tv_sec += timeout_ms / 1000;
+    end.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (end.tv_nsec >= 1000000000L) { end.tv_sec++; end.tv_nsec -= 1000000000L; }
+    return end;
+}
+
+static void publish_auth_challenge(NostrRelay *relay, const char *challenge, void *ud) {
+    publish_auth *a = ud;
+    (void)relay;
+    if (!challenge) return;
+    char *copy = strdup(challenge);
+    if (!copy) return;
+    pthread_mutex_lock(&a->mu);
+    free(a->challenge);
+    a->challenge = copy;
+    pthread_cond_signal(&a->cv);
+    pthread_mutex_unlock(&a->mu);
+}
+
+static void publish_auth_ok(const char *id, bool accepted, const char *reason, void *ud) {
+    publish_auth *a = ud;
+    if (!id) return;
+    pthread_mutex_lock(&a->mu);
+    if (a->auth_id[0] && !strcmp(a->auth_id, id)) {
+        a->auth_done = true;
+        a->auth_ok = accepted;
+        free(a->auth_reason);
+        a->auth_reason = reason ? strdup(reason) : NULL;
+        pthread_cond_signal(&a->cv);
+    }
+    pthread_mutex_unlock(&a->mu);
+}
+
+/* The pull subscription uses this same kind-22242 signer/send path. The
+ * callback records the correlated OK; neither an AUTH write nor the
+ * pointer's initial auth-required response counts as acceptance. */
+static bool authenticate_publish(NostrRelay *relay, const char *secret,
+                                 publish_auth *a, uint32_t timeout_ms,
+                                 char **reason) {
+    struct timespec end = auth_deadline(timeout_ms);
+    pthread_mutex_lock(&a->mu);
+    while (!a->challenge) {
+        if (pthread_cond_timedwait(&a->cv, &a->mu, &end) == ETIMEDOUT) {
+            pthread_mutex_unlock(&a->mu);
+            set_err(reason, "auth-required: timed out waiting for relay AUTH challenge");
+            return false;
+        }
+    }
+    char *challenge = a->challenge;
+    a->challenge = NULL;
+    a->auth_done = false;
+    a->auth_id[0] = '\0';
+    bool sent = nh_syncd_send_auth(relay, secret, challenge, a->auth_id);
+    free(challenge);
+    if (!sent) {
+        pthread_mutex_unlock(&a->mu);
+        set_err(reason, "auth-required: signing or sending relay AUTH failed");
+        return false;
+    }
+    while (!a->auth_done) {
+        if (pthread_cond_timedwait(&a->cv, &a->mu, &end) == ETIMEDOUT) {
+            pthread_mutex_unlock(&a->mu);
+            set_err(reason, "auth-required: timed out waiting for relay AUTH OK");
+            return false;
+        }
+    }
+    bool accepted = a->auth_ok;
+    if (!accepted) set_err(reason, "%s", a->auth_reason ? a->auth_reason : "relay rejected AUTH");
+    pthread_mutex_unlock(&a->mu);
+    return accepted;
+}
+
 /* Sign + publish the kind-30078 pointer via libnostr, waiting for at
  * least one OK true. Timeout is per-relay. */
 static int publish_via_libnostr(const nh_syncd_push_cfg *cfg,
@@ -437,32 +528,107 @@ static int publish_via_libnostr(const nh_syncd_push_cfg *cfg,
                    NH_SYNCD_DEFAULT_PUBLISH_TIMEOUT_MS;
 
     int any_ok = 0;
+    char *last_failure = NULL, *restricted_failure = NULL;
     for (size_t i = 0; i < cfg->n_relays; i++) {
+        const char *url = cfg->relays[i];
         Error *werr = NULL;
-        NostrRelay *r = nostr_relay_new(NULL, cfg->relays[i], &werr);
-        if (werr) free_error(werr);
-        if (!r) continue;
+        NostrRelay *r = nostr_relay_new(NULL, url, &werr);
+        if (!r) {
+            set_err(&last_failure, "%s: %s", url,
+                    werr && werr->message ? werr->message : "relay creation failed");
+            free_error(werr);
+            continue;
+        }
+        free_error(werr);
+        publish_auth auth = {0};
+        if (pthread_mutex_init(&auth.mu, NULL) != 0) {
+            set_err(&last_failure, "%s: AUTH mutex initialization failed", url);
+            nostr_relay_free(r);
+            continue;
+        }
+        pthread_condattr_t attr;
+        int attr_ok = pthread_condattr_init(&attr);
+        int cond_ok = attr_ok;
+#ifdef __linux__
+        if (cond_ok == 0) cond_ok = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+#endif
+        if (cond_ok == 0) cond_ok = pthread_cond_init(&auth.cv, &attr);
+        if (attr_ok == 0) pthread_condattr_destroy(&attr);
+        if (cond_ok != 0) {
+            set_err(&last_failure, "%s: AUTH condition initialization failed", url);
+            pthread_mutex_destroy(&auth.mu);
+            nostr_relay_free(r);
+            continue;
+        }
+        nostr_relay_set_auth_callback(r, publish_auth_challenge, &auth);
+        nostr_relay_set_ok_callback(r, publish_auth_ok, &auth);
         werr = NULL;
-        bool ok = nostr_relay_connect(r, &werr);
-        if (werr) free_error(werr);
-        if (!ok) { nostr_relay_free(r); continue; }
-        werr = NULL;
-        bool pub = nostr_relay_publish_and_wait(r, e, tmo, &werr);
-        if (werr) free_error(werr);
-        if (pub) any_ok = 1;
+        bool connected = nostr_relay_connect(r, &werr);
+        if (!connected) {
+            set_err(&last_failure, "%s: %s", url,
+                    werr && werr->message ? werr->message : "relay connect failed");
+        }
+        free_error(werr);
+        if (connected) {
+            pthread_mutex_lock(&auth.mu);
+            bool challenged = auth.challenge != NULL;
+            pthread_mutex_unlock(&auth.mu);
+            char *reason = NULL;
+            bool authenticated = !challenged ||
+                authenticate_publish(r, cfg->event_signer_nsec_hex, &auth, tmo, &reason);
+            bool pub = false;
+            if (authenticated) {
+                werr = NULL;
+                pub = nostr_relay_publish_and_wait(r, e, tmo, &werr);
+                if (!pub && werr && werr->message)
+                    set_err(&reason, "%s", werr->message);
+                free_error(werr);
+                pthread_mutex_lock(&auth.mu);
+                bool late_challenge = auth.challenge != NULL;
+                pthread_mutex_unlock(&auth.mu);
+                if (!pub &&
+                    ((reason && strstr(reason, "auth-required:")) ||
+                     (!challenged && late_challenge &&
+                      (!reason || strstr(reason, "timed out")))) &&
+                    !(reason && strstr(reason, "restricted:"))) {
+                    free(reason); reason = NULL;
+                    if (authenticate_publish(r, cfg->event_signer_nsec_hex, &auth, tmo, &reason)) {
+                        werr = NULL;
+                        pub = nostr_relay_publish_and_wait(r, e, tmo, &werr);
+                        if (!pub && werr && werr->message)
+                            set_err(&reason, "%s", werr->message);
+                        free_error(werr);
+                    }
+                }
+            }
+            if (pub) any_ok = 1;
+            else {
+                set_err(&last_failure, "%s: %s", url,
+                        reason ? reason : "no relay OK for pointer");
+                if (reason && strstr(reason, "restricted:") && !restricted_failure)
+                    restricted_failure = strdup(last_failure);
+                fprintf(stderr, "syncd/pusher: %s\n", last_failure);
+            }
+            free(reason);
+        }
         nostr_relay_free(r);
-        /* First OK wins — but we DO NOT tear down early. The relay
-         * ack means the pointer landed; further relays are best
-         * effort and are logged via the caller (I3 daemon glue). */
+        pthread_cond_destroy(&auth.cv);
+        pthread_mutex_destroy(&auth.mu);
+        free(auth.challenge);
+        free(auth.auth_reason);
+        /* First OK true wins; other configured relays remain best effort. */
         if (any_ok) break;
     }
 
     nostr_event_free(e);
     if (!any_ok) {
-        set_err(err, "no relay OK'd the pointer");
-        return NH_SYNCD_ERR_PUBLISH;
+        set_err(err, "no relay OK'd the pointer: %s",
+                restricted_failure ? restricted_failure :
+                last_failure ? last_failure : "no relays configured");
     }
-    return NH_SYNCD_OK;
+    free(last_failure);
+    free(restricted_failure);
+    return any_ok ? NH_SYNCD_OK : NH_SYNCD_ERR_PUBLISH;
 }
 
 /* Callback for nh_syncd_state_save (state_dir handed in via user

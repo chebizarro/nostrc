@@ -37,6 +37,7 @@
  */
 
 #include "nh_syncd.h"
+#include "nostr-keys.h"
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
 #include "../../src/porthome-syncd/nh_syncd_vault_config.h"
 #endif
@@ -457,7 +458,59 @@ static void t_lock_reentrant(void) {
     printf("t_lock_reentrant OK\n");
 }
 
-int main(void) {
+/* Real relay mode is driven by test_syncd_publish_auth.py. It exercises
+ * nh_syncd_push_batch without the publish override used above. */
+static int real_relay_push(const char *url, const char *secret, bool expect_ok) {
+    setup();
+    char *pubkey = nostr_key_get_public(secret);
+    if (!pubkey) return 1;
+    nh_syncd_state *state = NULL;
+    nh_syncd_ignore *ig = NULL;
+    nh_syncd_batcher *batcher = NULL;
+    uint8_t seed[32];
+    for (int i = 0; i < 32; ++i) seed[i] = (uint8_t)i;
+    if (nh_syncd_state_new(g_home, "nostr-homed.home.v1:personal",
+                           pubkey, seed, &state) != NH_SYNCD_OK ||
+        nh_syncd_ignore_new(g_home, &ig) != NH_SYNCD_OK ||
+        nh_syncd_batcher_new(vnow, NULL, 1, 1, &batcher) != NH_SYNCD_OK ||
+        nh_syncd_batcher_push(batcher, "hello.txt", NH_SYNCD_CHANGE_CREATE) != NH_SYNCD_OK)
+        return 1;
+    nh_syncd_batch *batch = nh_syncd_batcher_take(batcher, true);
+    if (!batch) return 1;
+    nh_syncd_push_cfg cfg = {0};
+    if (nh_porthome_key_derive(seed, cfg.home_key) != NH_SYNCD_OK) return 1;
+    memcpy(cfg.root_id, seed, 32);
+    cfg.event_signer_nsec_hex = secret;
+    cfg.account_pubkey_hex_override = pubkey;
+    cfg.d_tag = "nostr-homed.home.v1:personal";
+    cfg.relays = &url;
+    cfg.n_relays = 1;
+    cfg.relay_publish_timeout_ms = 5000;
+    nh_syncd_interlocks ilk = { g_home, NULL };
+    char *error = NULL;
+    int rc = nh_syncd_push_batch(&cfg, state, batch, g_home, ig,
+                                 &ilk, g_state, &error);
+    bool good = expect_ok ? (rc == NH_SYNCD_OK &&
+                             nh_syncd_state_get_local_generation(state) > 0)
+                          : (rc == NH_SYNCD_ERR_PUBLISH && error &&
+                             strstr(error, "restricted:") &&
+                             nh_syncd_state_get_local_generation(state) == 0);
+    if (!good) fprintf(stderr, "real relay push: rc=%d error=%s generation=%llu\n",
+                       rc, error ? error : "", (unsigned long long)
+                       nh_syncd_state_get_local_generation(state));
+    free(error);
+    nh_syncd_batch_free(batch);
+    nh_syncd_batcher_free(batcher);
+    nh_syncd_ignore_free(ig);
+    nh_syncd_state_free(state);
+    free(pubkey);
+    teardown();
+    return good ? 0 : 1;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 5 && !strcmp(argv[1], "--relay"))
+        return real_relay_push(argv[2], argv[3], !strcmp(argv[4], "ok"));
     setup();
     t_happy_path();
     t_lazy_marker_push();
