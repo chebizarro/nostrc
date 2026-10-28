@@ -19,6 +19,15 @@ if(TEST "test-hanami-clone")
     EXPECTED pass)
 endif()
 
+if(TEST "test-hanami-grasp-workflow")
+  nostrc_describe_test("test-hanami-grasp-workflow"
+    OWNER libhanami nip34
+    TARGETS test-hanami-grasp-workflow
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/grasp_fixture.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+    EXPECTED pass)
+endif()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "test-hanami-config")
   nostrc_add_test_owners("test-hanami-config" OWNER nip34)

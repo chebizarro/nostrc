@@ -245,6 +245,39 @@ Git repository discovery and publication using NIP-34 announcements, GRASP
 server URL parsing, and GRASP-specific announcement tags. Uses the NIP-34
 helpers below; it does not implement Blossom HTTP or BUD-02 authentication.
 
+Push authorization follows [GRASP-01](https://ngit.dev/protocol/grasp/specification/01):
+fetch the signer's previous state through EOSE from the clone authority's root
+WebSocket relay, merge the requested destination ref updates into that complete
+state, sign, and require that root's event-ID-specific `OK true` before calling
+`git_remote_push`. Other configured relays are optional replicas; their ACKs
+cannot authorize this endpoint. The existing named remote must target the same
+clone URL. Default pushes include only heads; explicit force, wildcard and
+removal refspecs use libgit2 parsing. Negotiated OIDs must still match the signed
+plan, and per-ref receive-pack rejection is a failure even if transport succeeds.
+
+The historical reversal in `85914cb3d` / `nostrc-dwj` attempted to prevent a
+failed push advertising absent refs. It had no server-specific justification.
+Restore protocol ordering without losing that concern: before announcement,
+prepare a second signed event with the saved prior refs/HEAD (empty on a first
+push). If the announcement is unconfirmed or the transfer fails, publish this
+corrective event to the same root and require its `OK true`. Its timestamp is
+strictly newer than the intended event, itself newer than the previous state;
+same-second event-ID tie-breaking cannot leave the failed intent current.
+`hanami_push_to_grasp_with_result` reports original and corrective outcomes.
+A corrected transfer failure is still a failure, never `HANAMI_OK`.
+
+Correction repairs signed authorization, not partially applied Git refs/objects.
+If correction is refused or unconfirmed, the API exposes recovery failure: the
+intended state may remain pending and needs explicit caller repair/retry. This
+is a synchronous compensation, not a durable transaction or crash recovery.
+Callers serialize operations for the same signed coordinate; concurrent writers
+cannot safely share a saved baseline. GRASP purgatory is a server visibility
+boundary, not evidence of delivered Git data or a client rollback mechanism.
+
+[GRASP-08](https://ngit.dev/protocol/grasp/specification/08) additionally needs
+NIP-42 and repository-scoped HTTP NIP-98. This helper does not claim that profile:
+the private/sealed repository guard remains in force before network activity.
+
 **Source**: `hanami-grasp.c`, `hanami-grasp.h`
 
 ### 4.6 Nostr Client Integration (`hanami_nostr`)

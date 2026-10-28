@@ -7,6 +7,7 @@
 #include "hanami/hanami-nostr.h"
 #include "hanami-sealed.h"
 #include "hanami-discovery.h"
+#include "hanami-nostr-internal.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-simple-pool.h"
@@ -300,18 +301,28 @@ hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
     if (!ctx->has_signer)
         return HANAMI_ERR_AUTH;
 
-    NostrEvent *ev = nip34_create_repo_state(repo_id, refs, ref_count, head);
-    if (!ev)
-        return HANAMI_ERR_NOSTR;
-
-    hanami_error_t err = sign_event(ctx, ev);
-    if (err != HANAMI_OK) {
-        nostr_event_free(ev);
-        return err;
-    }
-
-    err = hanami_nostr_publish_event(ctx, ev);
+    NostrEvent *ev = NULL;
+    hanami_error_t err = hanami_nostr_create_state(ctx, repo_id, refs,
+        ref_count, head, 0, &ev);
+    if (err == HANAMI_OK)
+        err = hanami_nostr_publish_event(ctx, ev);
     nostr_event_free(ev);
+    return err;
+}
+
+hanami_error_t hanami_nostr_create_state(hanami_nostr_ctx_t *ctx,
+    const char *repo_id, const nip34_ref_t *refs, size_t count,
+    const char *head, int64_t minimum_time, NostrEvent **out)
+{
+    *out = NULL;
+    NostrEvent *ev = nip34_create_repo_state(repo_id, refs, count, head);
+    if (!ev) return HANAMI_ERR_NOMEM;
+    if (ev->created_at < minimum_time) ev->created_at = minimum_time;
+    hanami_error_t err = sign_event(ctx, ev);
+    if (err == HANAMI_OK && !nostr_event_check_signature(ev))
+        err = HANAMI_ERR_AUTH;
+    if (err == HANAMI_OK) *out = ev;
+    else nostr_event_free(ev);
     return err;
 }
 
@@ -486,6 +497,27 @@ hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
     nostr_event_free(ev);
 
     return (res == NIP34_OK) ? HANAMI_OK : HANAMI_ERR_NOSTR;
+}
+
+hanami_error_t hanami_nostr_fetch_state_event(hanami_nostr_ctx_t *ctx,
+    const char *repo_id, const char *author, NostrEvent **out)
+{
+    *out = NULL;
+    NostrFilter *f = hanami_nostr_build_state_filter(repo_id, author);
+    if (!f) return HANAMI_ERR_NOMEM;
+    hanami_error_t err = query_single_event(ctx, f, out);
+    if (err != HANAMI_OK) return err;
+    nip34_repo_state_t *state = NULL;
+    if ((*out)->kind != NIP34_KIND_REPOSITORY_STATE ||
+        strcmp((*out)->pubkey, author) != 0 ||
+        nip34_parse_repo_state(*out, &state) != NIP34_OK ||
+        !state->repo_id || strcmp(state->repo_id, repo_id) != 0) {
+        nostr_event_free(*out);
+        *out = NULL;
+        err = HANAMI_ERR_NOSTR;
+    }
+    nip34_repo_state_free(state);
+    return err;
 }
 
 hanami_error_t hanami_nostr_fetch_state(hanami_nostr_ctx_t *ctx,

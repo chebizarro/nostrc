@@ -13,6 +13,14 @@ kind-10063 list or an explicit `hanami.endpoint`. Clone discovery now honours
 configured relays and records the selected server as `hanami.endpoint` in the
 clone's config.
 
+GRASP pushes now require kind-30618 acceptance from the GRASP root relay before
+Smart HTTP transfer. Failed or unconfirmed operations attempt a strictly newer
+corrective announcement; the result-bearing API distinguishes transfer and
+recovery errors. Per-ref server rejection is no longer reported as success.
+This is a 0.x MINOR behavior change (nostrc-fsuei); callers must handle errors
+previously hidden by the post-push best-effort publication policy. Other
+components: no bump (internal helpers, tests and documentation only).
+
 ## 0.5.1 (unreleased)
 
 Fix the libgit2 error-reporting declarations needed to build the sealed ODB and

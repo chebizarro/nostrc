@@ -275,6 +275,18 @@ if(BUILD_TESTING)
     apply_sanitizers(test-hanami-nostr-protocol)
   endif()
 
+  add_executable(test-hanami-grasp-workflow tests/test_hanami_grasp_workflow.c)
+  target_compile_options(test-hanami-grasp-workflow PRIVATE -Wall -Wextra -UNDEBUG)
+  target_link_libraries(test-hanami-grasp-workflow PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)
+  add_test(NAME test-hanami-grasp-workflow
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/grasp_fixture.py"
+            $<TARGET_FILE:test-hanami-grasp-workflow>)
+  set_tests_properties(test-hanami-grasp-workflow PROPERTIES
+    TIMEOUT 180 LABELS "libhanami;grasp;integration")
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-grasp-workflow)
+  endif()
+
   add_executable(test-hanami-refdb-backend tests/test_hanami_refdb_backend.c)
   target_compile_features(test-hanami-refdb-backend PRIVATE c_std_11)
   target_link_libraries(test-hanami-refdb-backend PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2)

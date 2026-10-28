@@ -26,6 +26,8 @@ class Relay(socketserver.StreamRequestHandler):
         while line := self.rfile.readline().strip():
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
+        if "sec-websocket-key" not in headers:
+            return self.http(request, headers)
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
         self.wfile.flush()
@@ -42,47 +44,50 @@ class Relay(socketserver.StreamRequestHandler):
                 payload = self.rfile.read(length)
                 if mask:
                     payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
-                if header[0] & 15 != 1:
-                    continue
-                message = json.loads(payload)
-                if message[0] == "EVENT":
-                    event = message[1]
-                    accepted = mode not in ("reject", "publish-auth", "refdb")
-                    if accepted:
-                        with self.server.lock:
-                            self.server.events[mode] = event
-                    reason = "auth-required: fixture requires credentials" if mode == "publish-auth" else "blocked: fixture refusal"
-                    self.frame(["OK", event["id"], accepted, "" if accepted else reason])
-                elif message[0] == "REQ":
-                    subid, filters = message[1], message[2]
-                    if mode == "refdb":
-                        assert filters["kinds"] == [30618]
-                        assert filters["authors"] and all(author in ("bbbb", "b" * 64) for author in filters["authors"])
-                        assert filters["#d"] == ["test-repo"]
-                        with self.server.lock:
-                            self.server.refdb_requests += 1
-                    else:
-                        assert filters["kinds"][0] in (30617, 30618)
-                        assert filters["authors"] and filters["#d"] == ["repo"]
-                    assert filters["limit"] == 1
-                    if mode == "closed":
-                        self.frame(["CLOSED", subid, "blocked: fixture refusal"])
-                    elif mode == "auth":
-                        self.frame(["AUTH", "fixture-challenge"])
-                        self.frame(["CLOSED", subid, "auth-required: fixture requires credentials"])
-                    else:
-                        with self.server.lock:
-                            event = self.server.events.get(mode)
-                        if event and mode == "invalid":
-                            event = dict(event, sig="0" * 128)
-                        if event and event["kind"] in filters["kinds"]:
-                            self.frame(["EVENT", subid, event])
-                            # Replay the same id: snapshot reduction must be idempotent.
-                            self.frame(["EVENT", subid, event])
-                        if mode != "no-eose":
-                            self.frame(["EOSE", subid])
+                if header[0] & 15 == 1:
+                    self.message(json.loads(payload), mode)
         except (BrokenPipeError, ConnectionResetError):
             return
+
+    def http(self, request, headers):
+        raise AssertionError(f"unexpected HTTP request: {request}")
+
+    def message(self, message, mode):
+        if message[0] == "EVENT":
+            event = message[1]
+            accepted = mode not in ("reject", "publish-auth", "refdb")
+            if accepted:
+                with self.server.lock:
+                    self.server.events[mode] = event
+            reason = "auth-required: fixture requires credentials" if mode == "publish-auth" else "blocked: fixture refusal"
+            self.frame(["OK", event["id"], accepted, "" if accepted else reason])
+        elif message[0] == "REQ":
+            subid, filters = message[1], message[2]
+            if mode == "refdb":
+                assert filters["kinds"] == [30618]
+                assert filters["authors"] and all(author in ("bbbb", "b" * 64) for author in filters["authors"])
+                assert filters["#d"] == ["test-repo"]
+                with self.server.lock:
+                    self.server.refdb_requests += 1
+            else:
+                assert filters["kinds"][0] in (30617, 30618)
+                assert filters["authors"] and filters["#d"] == ["repo"]
+            assert filters["limit"] == 1
+            if mode == "closed":
+                self.frame(["CLOSED", subid, "blocked: fixture refusal"])
+            elif mode == "auth":
+                self.frame(["AUTH", "fixture-challenge"])
+                self.frame(["CLOSED", subid, "auth-required: fixture requires credentials"])
+            else:
+                with self.server.lock:
+                    event = self.server.events.get(mode)
+                if event and mode == "invalid":
+                    event = dict(event, sig="0" * 128)
+                if event and event["kind"] in filters["kinds"]:
+                    self.frame(["EVENT", subid, event])
+                    self.frame(["EVENT", subid, event])
+                if mode != "no-eose":
+                    self.frame(["EOSE", subid])
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -90,21 +95,26 @@ class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
 
-with Server(("127.0.0.1", 0), Relay) as server:
-    server.events = {}
-    server.refdb_requests = 0
-    server.lock = threading.Lock()
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
-    worker.start()
-    try:
-        mode = sys.argv[2] if len(sys.argv) > 2 else ""
-        url = f"ws://127.0.0.1:{server.server_address[1]}"
-        if mode:
-            url += f"/{mode}"
-        result = subprocess.run([sys.argv[1], url], timeout=25 if mode == "refdb" else 40)
-    finally:
-        server.shutdown()
-        worker.join()
-    if mode == "refdb" and server.refdb_requests == 0:
-        sys.exit("refdb test did not query the loopback relay")
-    sys.exit(result.returncode)
+def main():
+    with Server(("127.0.0.1", 0), Relay) as server:
+        server.events = {}
+        server.refdb_requests = 0
+        server.lock = threading.Lock()
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            mode = sys.argv[2] if len(sys.argv) > 2 else ""
+            url = f"ws://127.0.0.1:{server.server_address[1]}"
+            if mode:
+                url += f"/{mode}"
+            result = subprocess.run([sys.argv[1], url], timeout=25 if mode == "refdb" else 40)
+        finally:
+            server.shutdown()
+            worker.join()
+        if mode == "refdb" and server.refdb_requests == 0:
+            sys.exit("refdb test did not query the loopback relay")
+        sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()

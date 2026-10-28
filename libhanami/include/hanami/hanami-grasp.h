@@ -134,10 +134,21 @@ typedef struct {
     size_t relay_count;                 /**< Number of relay URLs */
     const hanami_signer_t *signer;      /**< Signer for 30618 state event */
     const char *repo_id;                /**< NIP-34 d-tag identifier */
-    const char *remote_name;            /**< Remote name (default: "origin") */
+    const char *remote_name;            /**< Remote name (default: "grasp") */
     const char *const *refspecs;        /**< NULL-terminated refspecs to push */
     size_t refspec_count;               /**< Number of refspecs */
 } hanami_grasp_push_opts_t;
+
+/** Outcome of authorization, transfer, and bounded corrective publication.
+ * A correction repairs signed state, not partially applied Git data. */
+typedef struct {
+    bool state_accepted;
+    bool push_attempted;
+    bool push_completed;
+    hanami_error_t operation_error;
+    bool recovery_attempted;
+    hanami_error_t recovery_error;
+} hanami_grasp_push_result_t;
 
 /**
  * hanami_push_to_grasp:
@@ -145,17 +156,29 @@ typedef struct {
  * @opts: push options
  *
  * Push to a GRASP server. This performs:
- *   1. Read current local refs matching refspecs
- *   2. Publish kind 30618 state event with desired ref state
- *   3. Push via standard Git Smart HTTP to the GRASP endpoint
+ *   1. Fetch the previous signed state through EOSE from the GRASP root relay
+ *   2. Publish complete desired state and wait for that relay's OK true
+ *   3. Push via Smart HTTP, checking transport and per-ref status
+ *   4. On failure, supersede the announcement with a newer corrective state
  *
- * The 30618 event must be published BEFORE the push because GRASP
- * servers verify push authorization against the latest state event.
+ * Default refspecs push all heads. Explicit refspecs support force, wildcard,
+ * and deletion. Unchanged refs are preserved. An existing named remote must
+ * target clone_url. Private/sealed repositories remain unsupported.
  *
- * Returns: HANAMI_OK on success
+ * Calls for the same state coordinate must be externally serialized. Recovery
+ * is synchronous, not crash-safe. If correction fails, the intended state may
+ * remain pending; callers must repair/retry explicitly, never report success.
+ * Extra configured relays are best-effort replicas, not authorization quorum.
+ *
+ * Returns: HANAMI_OK only after GRASP relay acceptance AND successful push.
+ * Otherwise the operation error, or recovery error if correction also failed.
  */
 HANAMI_API hanami_error_t hanami_push_to_grasp(git_repository *repo,
                                      const hanami_grasp_push_opts_t *opts);
+
+/** Same workflow, with both original and recovery outcomes. result is optional. */
+HANAMI_API hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
+    const hanami_grasp_push_opts_t *opts, hanami_grasp_push_result_t *result);
 
 /**
  * hanami_grasp_fetch:
