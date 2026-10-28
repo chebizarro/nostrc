@@ -239,6 +239,8 @@ static void relay_callback_slot_call_state(NostrRelay *relay,
 }
 
 static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state);
+static NostrConnection *relay_connection_lease(NostrRelay *r);
+static void relay_connection_unlease(NostrRelay *r);
 static uint64_t get_monotonic_time_ms(void);
 static uint64_t calculate_backoff_with_jitter(int attempt);
 static bool relay_attempt_reconnect(NostrRelay *r);
@@ -515,17 +517,18 @@ bool nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error 
         if (err) *err = new_error(1, "invalid relay");
         return false;
     }
-    nsync_mu_lock(&relay->priv->mutex);
-    NostrConnection *conn = relay->connection;
-    nsync_mu_unlock(&relay->priv->mutex);
+    NostrConnection *conn = relay_connection_lease(relay);
     int outcome = conn ? nostr_connection_wait_handshake(conn, timeout_ms) : -1;
-    if (outcome == 1) return true;
+    if (outcome == 1) {
+        relay_connection_unlease(relay);
+        return true;
+    }
 
     /* The dial set CONNECTED up front. If that connection is still the
      * relay's and nothing has moved the state on, say what happened now;
      * the message loop otherwise notices the dead connection only later. */
+    struct NostrRelayCallbackSlot *slot = NULL;
     if (outcome < 0 && conn) {
-        struct NostrRelayCallbackSlot *slot = NULL;
         nsync_mu_lock(&relay->priv->mutex);
         if (relay->connection == conn &&
             relay->priv->connection_state == NOSTR_RELAY_STATE_CONNECTED) {
@@ -533,9 +536,10 @@ bool nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error 
             slot = relay_callback_slot_ref_locked(relay->priv->state_slot);
         }
         nsync_mu_unlock(&relay->priv->mutex);
-        relay_callback_slot_call_state(relay, slot, NOSTR_RELAY_STATE_CONNECTED,
-                                       NOSTR_RELAY_STATE_DISCONNECTED);
     }
+    if (conn) relay_connection_unlease(relay);
+    relay_callback_slot_call_state(relay, slot, NOSTR_RELAY_STATE_CONNECTED,
+                                   NOSTR_RELAY_STATE_DISCONNECTED);
     if (err) {
         *err = outcome == 0
             ? new_error(1, "no WebSocket handshake with '%s' within %u ms",
@@ -655,6 +659,16 @@ static void relay_connection_unlease(NostrRelay *r) {
  * close. Those go to nostr_connection_release() directly. */
 static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
     if (!conn) return;
+    /* Wake leased handshake waiters before waiting for leases. Do not call
+     * connection_close here: test-mode close also frees the connection. */
+    if (conn->priv && !conn->priv->test_mode) {
+        nsync_mu_lock(&conn->priv->mutex);
+        if (conn->priv->handshake == 0) {
+            conn->priv->handshake = -1;
+            nsync_cv_broadcast(&conn->priv->handshake_cv);
+        }
+        nsync_mu_unlock(&conn->priv->mutex);
+    }
     /* Only the owner changes these pointers, and the owner is now us. */
     if (conn->recv_channel) go_channel_close(conn->recv_channel);
     if (conn->send_channel) go_channel_close(conn->send_channel);
@@ -1210,9 +1224,9 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     bool adopted = !closing && r->connection != NULL;
     if (!closing && !adopted) {
         r->connection = new_conn;
-        r->priv->reconnect_attempt = 0;
-        r->priv->backoff_ms = 0;
     }
+    NostrConnection *candidate = !closing ? r->connection : NULL;
+    if (candidate) r->priv->conn_leases++;
     nsync_mu_unlock(&r->priv->mutex);
     /* Never published, so released without the lease wait: the writer may hold
      * a lease on the adopted connection, blocked on its full send channel,
@@ -1223,7 +1237,44 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         return false;
     }
 
-    relay_set_state(r, NOSTR_RELAY_STATE_CONNECTED);
+    /* A dial is not a successful WebSocket upgrade. Keep the installed
+     * candidate leased while waiting; close/cancel wakes this wait before
+     * retiring its channels. Failed upgrades retain the backoff history. */
+    int outcome = nostr_connection_wait_handshake(candidate, NOSTR_CONNECT_RESULT_TIMEOUT_MS);
+    struct NostrRelayCallbackSlot *slot = NULL;
+    nsync_mu_lock(&r->priv->mutex);
+    bool current = r->connection == candidate;
+    bool ready = current && outcome == 1 &&
+                 !go_context_is_canceled(r->priv->connection_context);
+    if (ready) {
+        nsync_mu_lock(&candidate->priv->mutex);
+        ready = candidate->priv->test_mode ||
+                (candidate->priv->wsi && candidate->priv->established);
+        nsync_mu_unlock(&candidate->priv->mutex);
+    }
+    NostrRelayConnectionState old_state = r->priv->connection_state;
+    NostrRelayConnectionState new_state = ready ? NOSTR_RELAY_STATE_CONNECTED
+                                                : NOSTR_RELAY_STATE_DISCONNECTED;
+    if (ready) {
+        r->priv->reconnect_attempt = 0;
+        r->priv->backoff_ms = 0;
+    } else if (current) {
+        r->connection = NULL;
+    }
+    /* Publish the outcome only for this candidate, in the same critical
+     * section as its identity check/removal. An old handshake must not
+     * disconnect a replacement installed by another caller. */
+    if (current && old_state != new_state) {
+        r->priv->connection_state = new_state;
+        slot = relay_callback_slot_ref_locked(r->priv->state_slot);
+    }
+    nsync_mu_unlock(&r->priv->mutex);
+    relay_connection_unlease(r);
+    relay_callback_slot_call_state(r, slot, old_state, new_state);
+    if (!ready) {
+        if (current) relay_retire_connection(r, candidate);
+        return false;
+    }
 
     /* Re-fire active subscriptions */
     relay_refire_subscriptions(r);

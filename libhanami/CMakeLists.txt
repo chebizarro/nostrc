@@ -18,7 +18,7 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
 set(HANAMI_VERSION_MINOR 7)
-set(HANAMI_VERSION_MICRO 0)
+set(HANAMI_VERSION_MICRO 1)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
   ${HANAMI_VERSION_MINOR}
