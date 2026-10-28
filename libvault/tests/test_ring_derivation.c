@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "helpers.h"
+#include "nostrc-test-vault.h"
 int main(void)
 {
     world w;

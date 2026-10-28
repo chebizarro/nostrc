@@ -1641,6 +1641,8 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     # porthome archive / libhanami.
     target_compile_definitions(nostr_auth_runtime PUBLIC
       NH_AUTH_BROKER_ENABLE_PORTHOME=1)
+    target_include_directories(nostr_auth_runtime PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome)
     target_sources(nostr_auth_runtime PRIVATE
       src/auth/auth_porthome_fetch.c
       src/auth/auth_porthome_stage.c
@@ -2012,7 +2014,9 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
   if(NOSTR_HOMED_BUILD_TESTS)
     if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
       add_executable(test_syncd_gc_fixture tests/unit/test_syncd_gc_fixture.c)
-      target_include_directories(test_syncd_gc_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+      target_include_directories(test_syncd_gc_fixture PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/common)
       target_compile_options(test_syncd_gc_fixture PRIVATE -Wall -Wextra -Werror -UNDEBUG)
       target_link_libraries(test_syncd_gc_fixture PRIVATE nostr_syncd_core)
       add_test(NAME homed_syncd_gc

@@ -36,7 +36,7 @@
  * with PR_SET_NO_NEW_PRIVS, PR_SET_DUMPABLE=0, minimal env, closed
  * fds, and RLIMIT_AS/CPU/FSIZE/NOFILE caps. Without this the helper
  * would refuse to start (its main() rejects euid==0). */
-#include "../porthome/nh_porthome_sandbox_internal.h"
+#include "nh_porthome_sandbox_internal.h"
 
 /* Compile-time default. Can be overridden via CMake:
  *   -DNH_PORTHOME_FETCH_HELPER_PATH="/opt/whatever/nostr-home-fetch" */

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "helpers.h"
+#include "nostrc-test-vault.h"
 static void items(vault_revoke_result *r, vault_reseal_item out[2])
 {
     out[0] = (vault_reseal_item){r->node, &r->ring, 0, 0};
