@@ -29,6 +29,9 @@ jobs:
         with:
           name: ${{ inputs.selection_artifact }}
           path: ${{ runner.temp }}/vault-plan
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install bounded build dependencies
         run: |
           sudo apt-get update -y

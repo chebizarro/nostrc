@@ -69,6 +69,11 @@ jobs:
       - name: Every GUI test installs narrow GDK frame tolerance
         run: python3 scripts/check-gui-test-gdk-frame.py --self-test
 
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ${{ steps.selection.outputs.needs_grotto }}
+
       - name: Install build and display dependencies
         run: |
           sudo apt-get update
@@ -398,6 +403,9 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -515,6 +523,9 @@ jobs:
         run: |
           python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux.sanitizers \
             --plan "$RUNNER_TEMP/ci-selection/plan.json"
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install build dependencies and matching LSan symbols
         run: |
           sudo apt-get update

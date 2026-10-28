@@ -24,6 +24,9 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install C and binding-generator dependencies
         run: |
           sudo apt-get update

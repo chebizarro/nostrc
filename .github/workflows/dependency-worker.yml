@@ -57,6 +57,12 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as stream:
               stream.write('DEPENDENCY_ROUTE=' + route + '\n')
           PY
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ${{ inputs.profile }}
+
       - name: Install Linux profile prerequisites
         if: runner.os == 'Linux'
         run: |

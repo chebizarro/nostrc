@@ -1,0 +1,66 @@
+name: Cached MSYS2 with bounded mirror recovery
+description: Keep setup-msys2 package caching and its two-phase core upgrade
+inputs:
+  install:
+    description: The complete pacman install list (also the upstream cache identity)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Initialize runner MSYS2 without mirror access
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        release: false
+        update: false
+        cache: false
+    - name: Configure bounded downloads and alternate mirrors
+      shell: msys2 {0}
+      run: bash scripts/ci-msys2-mirrors.sh
+    - name: Restore core packages and upgrade MSYS2
+      id: upgrade
+      continue-on-error: true
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        release: false
+        update: true
+        cache: true
+    - name: Reapply mirror policy after a failed core upgrade
+      if: steps.upgrade.outcome == 'failure'
+      shell: msys2 {0}
+      run: |
+        echo '::warning::MSYS2 upgrade failed; retrying once (final failure is fatal)'
+        bash scripts/ci-msys2-mirrors.sh
+    - name: Final core database sync and upgrade attempt
+      if: steps.upgrade.outcome == 'failure'
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        release: false
+        update: true
+        cache: true
+    # setup-msys2 may replace pacman.conf with pacman.conf.pacnew during a
+    # core upgrade. Always restore bounds before installing the requested list.
+    - name: Reapply mirror policy after core upgrade
+      shell: msys2 {0}
+      run: bash scripts/ci-msys2-mirrors.sh
+    - name: Restore and install requested packages
+      id: install
+      continue-on-error: true
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        release: false
+        update: false
+        cache: true
+        install: ${{ inputs.install }}
+    - name: Retry package install after a transport failure
+      if: steps.install.outcome == 'failure'
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        release: false
+        update: false
+        cache: true
+        install: ${{ inputs.install }}

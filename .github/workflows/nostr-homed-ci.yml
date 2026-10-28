@@ -62,6 +62,21 @@ jobs:
       options: --privileged
 
     steps:
+      # checkout can use the GitHub archive API before git exists. Keep that
+      # tooling snapshot separate; the normal checkout below still creates .git.
+      - name: Fetch CI tooling before package bootstrap
+        if: matrix.distro == 'ubuntu-24.04' || matrix.distro == 'debian-bookworm'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          path: .ci-bootstrap
+          persist-credentials: false
+      - name: Cache apt package downloads (including git bootstrap)
+        if: matrix.distro == 'ubuntu-24.04' || matrix.distro == 'debian-bookworm'
+        uses: ./.ci-bootstrap/.github/actions/cache-apt
+        with:
+          variant: ${{ matrix.image }}
+
       - name: Install git and ca-certificates (minimal)
         run: |
           if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y git ca-certificates;
@@ -162,6 +177,9 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install host build deps
         run: |
           sudo apt-get update
@@ -194,6 +212,9 @@ jobs:
             --device /dev/fuse \
             --security-opt apparmor:unconfined \
             -v "$(pwd)":/workspace \
+            -v /var/cache/nostrc-apt/archives:/var/cache/nostrc-apt/archives \
+            -v /usr/local/bin/apt-get:/usr/local/bin/apt-get:ro \
+            -v /etc/apt/apt.conf.d/80nostrc-cache:/etc/apt/apt.conf.d/80nostrc-cache:ro \
             -w /workspace \
             jrei/systemd-ubuntu:24.04
           # Verify container is running

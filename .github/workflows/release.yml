@@ -199,6 +199,9 @@ jobs:
         env:
           REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install build deps
         run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
       - name: Configure
@@ -295,6 +298,9 @@ jobs:
         env:
           REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install build deps
         run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
       - name: Configure (TCP enabled)
@@ -500,6 +506,9 @@ jobs:
           REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
           set -eux
@@ -545,6 +554,9 @@ jobs:
           REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
           set -eux

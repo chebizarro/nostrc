@@ -139,6 +139,11 @@ jobs:
           if [[ "$MODE" == tsan ]]; then args+=(--tsan); fi
           python3 scripts/ci-selected-execution.py prepare --profile "$profile" \
             --plan "$RUNNER_TEMP/ci-selection/plan.json" "${args[@]}"
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ${{ format('{0}-{1}', matrix.runner, matrix.mode) }}
+
       - name: Install build, keyring, camera and display dependencies
         run: |
           sudo apt-get update

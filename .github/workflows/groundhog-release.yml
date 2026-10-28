@@ -137,6 +137,15 @@ jobs:
           - { arch: x86_64,  runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
+      # Checkout only CI tooling; packages are still built from the source artifact.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.identity.outputs.sha }}
+          persist-credentials: false
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ${{ matrix.distro.image }}
       - uses: actions/download-artifact@v4
         with: { name: source, path: src }
       - name: Build
@@ -272,6 +281,9 @@ jobs:
         env:
           REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Cache apt package downloads
+        uses: ./.github/actions/cache-apt
+
       - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
           set -eux

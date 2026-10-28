@@ -1,0 +1,64 @@
+name: Cache apt package archives
+description: Cache downloads only; apt still resolves and verifies every install
+inputs:
+  variant:
+    description: Container image or other package environment within this job
+    default: host
+runs:
+  using: composite
+  steps:
+    - name: Prepare apt archive cache
+      id: identity
+      shell: bash
+      env:
+        VARIANT: ${{ inputs.variant }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        root=()
+        if [ "$(id -u)" != 0 ]; then root=(sudo); fi
+        "${root[@]}" install -d -m 1777 /var/cache/nostrc-apt/archives
+        # Cover direct apt-get and indirect consumers such as mk-build-deps.
+        # The wrapper always delegates to the real /usr/bin/apt-get.
+        source_root="$(cd "$ACTION_PATH/../../.." && pwd)"
+        "${root[@]}" install -m 755 "$source_root/scripts/ci-apt-get.sh" /usr/local/bin/apt-get
+        test "$(command -v apt-get)" = /usr/local/bin/apt-get
+        "${root[@]}" sh -c 'test "$(command -v apt-get)" = /usr/local/bin/apt-get'
+        printf '%s\n' \
+          'Dir::Cache::archives "/var/cache/nostrc-apt/archives";' \
+          'APT::Keep-Downloaded-Packages "true";' \
+          'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+          | "${root[@]}" tee /etc/apt/apt.conf.d/80nostrc-cache
+        # Includes the runner image release, container OS and architecture.
+        identity="$(printf '%s\n' "${ImageOS:-container}" "${ImageVersion:-unversioned}" "$VARIANT" "$(cat /etc/os-release)" "$(uname -m)" | sha256sum | cut -d' ' -f1)"
+        echo "image=$identity" >> "$GITHUB_OUTPUT"
+        # The install lists stay in their owning workflows/control files.
+        # Hash source bytes even for the pre-git bootstrap checkout.
+        files=("$source_root"/.github/workflows/*.yml
+               "$ACTION_PATH/action.yml" "$source_root/scripts/ci-apt-get.sh"
+               "$source_root/scripts/linux-ci.Dockerfile"
+               "$source_root"/scripts/ci/*.sh)
+        for dir in "$source_root/packaging" "$source_root/debian"; do
+          if [[ -d "$dir" ]]; then
+            while IFS= read -r file; do files+=("$file"); done < <(find "$dir" -name control -type f | sort)
+          fi
+        done
+        # Strip checkout-path prefixes from the digest identity.
+        packages="$(sha256sum "${files[@]}" | cut -d' ' -f1 | sha256sum | cut -d' ' -f1)"
+        echo "packages=$packages" >> "$GITHUB_OUTPUT"
+    - name: Restore apt downloads (no installed files or build outputs)
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: /var/cache/nostrc-apt/archives/*.deb
+        # Hash the owning install text, including dynamic release Build-Depends.
+        # No restore prefix: different images/package inputs cannot alias.
+        key: apt-v1-${{ github.job }}-${{ steps.identity.outputs.image }}-${{ steps.identity.outputs.packages }}
+    - name: Report apt cache
+      shell: bash
+      env:
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        echo "apt archive cache-hit=${CACHE_HIT:-false}"
+        echo 'Installs always run; apt validates cached archives against fresh signed indexes.'
+        find /var/cache/nostrc-apt/archives -maxdepth 1 -name '*.deb' | wc -l

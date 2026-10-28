@@ -44,6 +44,10 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -138,13 +142,17 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential ninja-build clang git python3-pip libjansson-dev pkg-config libcurl4-openssl-dev libnsync-dev
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
           cmake --version
-          sudo apt-get install -y libsecp256k1-dev || true
+          sudo apt-get install -y libsecp256k1-dev
 
       - name: Configure libgo (GOF_PORTABLE_CONTEXT=OFF + sanitizers)
         working-directory: libgo
@@ -213,6 +221,10 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -221,7 +233,7 @@ jobs:
                                   libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
           python3 -m pip install --break-system-packages 'cmake==3.31.6'
           cmake --version
-          sudo apt-get install -y libsecp256k1-dev || true
+          sudo apt-get install -y libsecp256k1-dev
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')

@@ -50,6 +50,10 @@ jobs:
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
 
+      - name: Cache apt package downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
+
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
