@@ -5,6 +5,7 @@
  */
 #define _GNU_SOURCE
 #include "nh_syncd.h"
+#include "nh_syncd_auth.h"
 #include "nostr-simple-pool.h"
 #include "nostr-relay.h"
 #include "nostr-filter.h"
@@ -224,18 +225,21 @@ static void ok_cb(const char *id, bool accepted, const char *reason, void *ud) {
     if (!p->id) { free(p->reason); free(p); return; }
     enqueue(slot->owner, p);
 }
-static bool send_auth(nh_syncd_subscription *s, relay_slot *slot, const char *challenge) {
+bool nh_syncd_send_auth(NostrRelay *relay, const char *secret,
+                        const char *challenge, char auth_id[65]) {
+    if (!relay || !secret || !challenge || !auth_id) return false;
+    auth_id[0] = '\0';
     NostrEvent *e = nostr_event_new();
     if (!e) return false;
     NostrTags *tags = nostr_tags_new(2,
         nostr_tag_new("challenge", challenge, NULL),
-        nostr_tag_new("relay", nostr_relay_get_url_const(slot->relay), NULL));
+        nostr_tag_new("relay", nostr_relay_get_url_const(relay), NULL));
     if (!tags) { nostr_event_free(e); return false; }
     nostr_event_set_kind(e, 22242);
     nostr_event_set_created_at(e, (int64_t)time(NULL));
     nostr_event_set_content(e, "");
     nostr_event_set_tags(e, tags);
-    bool ok = nostr_event_sign(e, s->secret) == 0;
+    bool ok = nostr_event_sign(e, secret) == 0;
     char *id = ok ? nostr_event_get_id(e) : NULL;
     if (!id || strlen(id) != 64) ok = false;
     if (ok) {
@@ -243,8 +247,8 @@ static bool send_auth(nh_syncd_subscription *s, relay_slot *slot, const char *ch
         char *frame = NULL;
         if (!wire || asprintf(&frame, "[\"AUTH\",%s]", wire) < 0) ok = false;
         if (ok) {
-            memcpy(slot->auth_id, id, 65);
-            GoChannel *result = nostr_relay_write(slot->relay, frame);
+            memcpy(auth_id, id, 65);
+            GoChannel *result = nostr_relay_write(relay, frame);
             ok = result != NULL;
             if (result) {
                 go_channel_close(result);
@@ -257,6 +261,7 @@ static bool send_auth(nh_syncd_subscription *s, relay_slot *slot, const char *ch
     }
     free(id);
     nostr_event_free(e);
+    if (!ok) auth_id[0] = '\0';
     return ok;
 }
 int nh_syncd_subscription_start(const char *const *relays, size_t n_relays,
@@ -386,7 +391,7 @@ int nh_syncd_subscription_drain(nh_syncd_subscription *s) {
                     s->urls[p->relay_index], p->reason ? p->reason : "");
         } else if (p->kind == ITEM_AUTH) {
             slot->eose = false;
-            if (!send_auth(s, slot, p->reason))
+            if (!nh_syncd_send_auth(slot->relay, s->secret, p->reason, slot->auth_id))
                 fprintf(stderr, "syncd/subscription: AUTH signing failed for %s\n",
                         s->urls[p->relay_index]);
         } else if (p->kind == ITEM_OK && !strcmp(slot->auth_id, p->id)) {
