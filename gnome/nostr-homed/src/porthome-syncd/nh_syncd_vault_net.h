@@ -18,6 +18,10 @@ void nh_vault_net_read_limit(nh_vault_net *, size_t);
  * A deadline is failure. stop/join drains callbacks before returning events. */
 int nh_vault_net_catchup(nh_vault_net *, const uint8_t vault_id[32], const uint8_t (*writers)[32],
                          size_t, NostrEvent ***, size_t *);
+/* GC discovery: signed addressable heads only, every relay must reach EOSE.
+ * NULL tag discovers this identity's home/vault addresses. Saturation refuses. */
+int nh_vault_net_gc_heads(nh_vault_net *, const char *tag, const uint8_t (*writers)[32],
+                          size_t, NostrEvent ***, size_t *);
 int nh_vault_net_listen(nh_vault_net *, const uint8_t vault_id[32], const uint8_t (*writers)[32],
                         size_t);
 int nh_vault_net_fd(const nh_vault_net *);

@@ -8,14 +8,15 @@
  *   2. Promoting 11 generations evicts slot 0 (FIFO).
  *   3. Effective-pins is the union across all held generations.
  *   4. Round-trip through disk preserves ordering and hashes.
- *   5. Repeated promote of the same generation is idempotent (replaces).
- *   6. Malformed hashes are silently dropped.
+ *   5. Repeated promote of the same generation retains both reference sets.
+ *   6. Malformed hashes are refused without changing the retained slots.
  *   7. apply() pins every effective hash in a live cache.
  */
 
 #include "nh_syncd_cache.h"
 
 #include <assert.h>
+#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,8 +66,8 @@ int main(void) {
     }
     free(eff);
 
-    /* Idempotent replace: promote gen=11 again with a different hash;
-     * ring size unchanged, gen=11's slot now carries the new hash. */
+    /* Same generation, different conflict/installation snapshot: both hashes
+     * remain referenced. Repeating this operation must not grow the slot. */
     char alt[65];
     memset(alt, 'a', 64); alt[64] = '\0';  /* uniform-nibble hex — no collision with mk_hex(1..11) */
     const char *arr2[1] = { alt };
@@ -83,7 +84,8 @@ int main(void) {
     }
     free(eff);
     assert(seen_alt == 1);
-    assert(seen_old_gen11 == 0);
+    assert(seen_old_gen11 == 1);
+    assert(nh_syncd_pin_ring_promote(r, 11, arr2, 1) == NH_SYNCD_CACHE_OK);
 
     /* Round-trip through disk. */
     nh_syncd_pin_ring_close(r);
@@ -91,13 +93,13 @@ int main(void) {
     assert(nh_syncd_pin_ring_open(pin_path, &r) == NH_SYNCD_CACHE_OK);
     assert(nh_syncd_pin_ring_size(r) == 10);
     assert(nh_syncd_pin_ring_effective_pins(r, &eff, &neff) == NH_SYNCD_CACHE_OK);
-    assert(neff == 10);
+    assert(neff == 11);
     for (size_t i = 0; i < neff; ++i) free(eff[i]);
     free(eff);
 
-    /* Malformed hashes silently dropped. */
+    /* Invalid input must not turn an incomplete generation into evidence. */
     const char *arr3[3] = { "not-hex", alt, "" };
-    assert(nh_syncd_pin_ring_promote(r, 12, arr3, 3) == NH_SYNCD_CACHE_OK);
+    assert(nh_syncd_pin_ring_promote(r, 12, arr3, 3) == NH_SYNCD_CACHE_ERR_ARG);
     assert(nh_syncd_pin_ring_size(r) == 10); /* still 10 — ring was full */
     /* apply() pins every effective hash. */
     char cache_dir[128]; snprintf(cache_dir, sizeof cache_dir,
@@ -122,6 +124,17 @@ int main(void) {
     assert((st.st_mode & 0777) == 0600);
 
     nh_syncd_pin_ring_close(r);
+    json_t *doc = json_load_file(pin_path, JSON_REJECT_DUPLICATES, NULL);
+    assert(doc && json_is_true(json_object_get(json_object_get(doc, "seen"), gen1)));
+    /* Retired hashes are candidates, not effective pins. Bad persisted hashes
+     * must be an error, never a silently shortened reachability walk. */
+    json_t *held = json_object_get(json_array_get(json_object_get(doc, "generations"), 0), "hashes");
+    assert(!json_array_append_new(held, json_string("bad")));
+    assert(!json_dump_file(doc, pin_path, JSON_COMPACT)); json_decref(doc);
+    r = NULL;
+    assert(nh_syncd_pin_ring_open(pin_path, &r) == NH_SYNCD_CACHE_ERR_JSON && !r);
+    doc = json_load_file(pin_path, JSON_REJECT_DUPLICATES, NULL);
+    assert(doc); json_decref(doc); /* The corrupt evidence was not removed. */
     rm_rf(dir);
     printf("ok\n");
     return 0;

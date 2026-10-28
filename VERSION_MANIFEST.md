@@ -29,7 +29,7 @@ files already declare a version.
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.1 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
-| nostr-homed | `gnome/nostr-homed/` | 0.5.1 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
+| nostr-homed | `gnome/nostr-homed/` | 0.6.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | Grotto (Preview) | `apps/grotto/` | 0.1.1 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
@@ -52,6 +52,21 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### Conservative portable-home blob GC (nostrc-h10m.5)
+
+- **nostr-homed 0.5.1 -> 0.6.0 (MINOR):** additive experimental syncd
+  `--gc [--dry-run]`, weekly retention-class scheduling, `gc` status namespace,
+  candidate history in pin rings, and private per-server deletion receipts.
+  Incomplete/changed relay or manifest walks refuse deletion; repeated generation
+  pins now union references and malformed retention evidence is preserved, not
+  reset. Dry runs do not alter persistent state or issue uploads/deletes.
+  CMake/Meson agree; the pkg-config template derives `PROJECT_VERSION`.
+- **No bump:** libporthome, libvault, libblossom and bud02 retain their existing
+  APIs/ABI and wire formats; syncd uses their existing codecs and BUD-02 client.
+  vaultctl and the Nostr Shell extension are unchanged. Shared test helpers are
+  consumed without shipping changes to those components. No release tags or
+  release-column updates.
 
 ### Windows portability for libblossom (nostrc-zk7to)
 

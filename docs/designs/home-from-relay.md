@@ -418,7 +418,41 @@ Punted to Phase 5, documented as known-bad in v1:
 
 - **Local cache** `/var/cache/nostr-homed/blobs` is LRU-evicted against a configurable quota (default 10 GiB or 10 % of the filesystem, whichever is smaller). It is pure cache: eviction is always safe.
 - **Remote retention is server policy and we do not control it.** Blossom servers are free to delete blobs (quota, age, payment lapse). Therefore: (i) never delete a blob referenced by any of the last **N = 10** generations, even locally; (ii) a periodic (weekly) `hanami_blossom_head` sweep over the current snapshot's blobs re-uploads anything that has gone missing — a home that silently rots is worse than one that fails loudly; (iii) surface "your Blossom server dropped *n* blobs" as a notification.
-- We do **not** call BUD-02 `DELETE` in v1. Orphaned blobs cost storage; a wrongly-deleted blob costs a file. Garbage collection of unreferenced blobs is a Phase 5 item requiring the generation-history walk to be trustworthy first.
+- We do **not** call BUD-02 `DELETE` in the v1-only build. Orphaned blobs cost storage; a wrongly-deleted blob costs a file. Phase 5 adds the bounded collector below only to the opt-in shared-vault syncd build.
+
+**Phase 5 collector (nostrc-h10m.5).** `nostr-home-syncd --gc [--dry-run]`
+uses the same implementation as managed syncd's weekly maintenance. It marks all
+hashes in every retained slot of both generation pin rings, the current personal
+snapshot (including conflict files), every authenticated current v1 home head,
+every current vault writer's complete manifest graph, stored historical and
+conflict snapshots, per-generation reader views, prospective manager pins, and
+pending upload/reseal snapshots and durable PUT intents. Chunk epochs are never
+filtered: old chunks stay marked until no retained graph needs them. Parent
+manifest references must have known, fully opened closures; unsupported
+`ref_state` graphs refuse rather than count as empty.
+
+Only hashes previously recorded in a porthome pin ring's additive `seen`
+inventory or an authenticated local vault upload journal are candidates. A
+Blossom account listing alone never makes an unrelated upload collectible.
+Removed/unconfigured vault state, malformed or missing retention evidence,
+missing manifests/keys, saturated discovery, any relay failing EOSE, or a changed
+head set at the pre-sweep fence refuse **all** deletes. The pass holds sync.lock;
+it does not claim a distributed writer lock or prune historical snapshots.
+Uncertain objects remain stored. Strict pin parsing no longer drops invalid
+hashes, and repeated local generation numbers union their references.
+
+GC shares the durable weekly retention byte class with prefetch/lazy reseal.
+The complete graph/inventory walk and second EOSE head fence precede DELETE;
+insufficient walk budget refuses deletion, and the sweep keeps candidates which
+do not fit its remaining allowance. Execute mode fsyncs per-server attempt and
+result receipts in private `blob-gc-deletions.jsonl`, invalidates durable and
+in-memory PUT acknowledgements before deleting, and retains candidate provenance
+for partial-failure recovery. An unfinished attempt is not a successful receipt.
+Dry-run emits per-server `would-delete` rows without any upload, DELETE, cache,
+seed-drop, budget, journal or status mutation. Execute results appear in the
+existing status file's additive `gc` namespace (`nostr-home-status --json` or
+`--field gc.result`). See `nostr-home-syncd(8)` for the one-shot's seed/lock
+requirements, accounting and retained evidence.
 
 ---
 
@@ -586,7 +620,7 @@ Everything below runs on CI with the fixtures that already exist.
 
 **Phase 4** — `src/fs/nostrfs.c` lazy-overlay mode; `NOSTR_HOMED_ENABLE_PORTABLE_HOME_FUSE`; reuse `nh_open_session`'s mount-verify invariant.
 
-**Phase 5** — greeter progress, key rotation, GC, CDC, NIP-98 retirement.
+**Phase 5** — greeter progress, key rotation, GC, CDC, NIP-98 retirement. The bounded blob collector is `src/porthome-syncd/nh_syncd_gc.c`, gated by `NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL`; see §6.5.
 
 ---
 

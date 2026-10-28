@@ -8,18 +8,17 @@
  * still held by the ring. Persisted at (default)
  *   ${XDG_STATE_HOME:-~/.local/state}/nostr-homed/pinned.json
  *
- * The file format is stable across restart: it's the source of truth
- * for retention, so a corrupted file is an outage. Callers may treat
- * NH_SYNCD_CACHE_ERR_JSON as "recreate as empty" if they have no
- * better recovery (design: a lost ring costs at most 10 generations
- * worth of eviction safety, not user data — the blobs still exist on
- * Blossom until the weekly sweep proves otherwise).
+ * The file is retention evidence for remote GC as well as cache pinning.
+ * Malformed or missing evidence must never be repaired to empty for GC.
+ * `seen` is an additive candidate inventory, not a reachability set: unknown
+ * account blobs are never candidates, and every retained slot stays marked.
  *
  * Bead: nostrc-p6qp.
  */
 
 #define _GNU_SOURCE
 #include "nh_syncd_cache.h"
+#include "nh_syncd.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -43,6 +42,7 @@ struct nh_syncd_pin_ring {
     ring_slot  *slots;
     size_t      size;
     size_t      capacity;
+    json_t     *seen;
 };
 
 static void slot_dispose(ring_slot *s) {
@@ -97,9 +97,10 @@ static int mkdirp_parent(const char *path) {
 
 static int load_from_disk(nh_syncd_pin_ring *r) {
     struct stat st;
-    if (stat(r->path, &st) != 0) return NH_SYNCD_CACHE_OK; /* absent -> empty */
+    if (stat(r->path, &st) != 0)
+        return errno == ENOENT ? NH_SYNCD_CACHE_OK : NH_SYNCD_CACHE_ERR_IO;
     json_error_t je;
-    json_t *root = json_load_file(r->path, 0, &je);
+    json_t *root = json_load_file(r->path, JSON_REJECT_DUPLICATES, &je);
     if (!root) return NH_SYNCD_CACHE_ERR_JSON;
     if (!json_is_object(root)) { json_decref(root); return NH_SYNCD_CACHE_ERR_JSON; }
 
@@ -110,38 +111,47 @@ static int load_from_disk(nh_syncd_pin_ring *r) {
     }
 
     json_t *gens = json_object_get(root, "generations");
-    if (!json_is_array(gens)) { json_decref(root); return NH_SYNCD_CACHE_OK; }
-
+    json_t *seen = json_object_get(root, "seen");
+    if (json_integer_value(json_object_get(root, "schema")) != 1 ||
+        !json_is_integer(cap) || json_integer_value(cap) <= 0 || json_integer_value(cap) > 1024 ||
+        !json_is_array(gens) || json_array_size(gens) > r->capacity ||
+        (seen && !json_is_object(seen))) { json_decref(root); return NH_SYNCD_CACHE_ERR_JSON; }
+    const char *key; json_t *value;
+    json_object_foreach(seen, key, value) {
+        if (!is_hex64(key) || !json_is_true(value)) { json_decref(root); return NH_SYNCD_CACHE_ERR_JSON; }
+        if (json_object_set(r->seen, key, value)) { json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
+    }
     size_t n = json_array_size(gens);
-    if (n > r->capacity) n = r->capacity;
     r->slots = (ring_slot *)calloc(r->capacity, sizeof *r->slots);
     if (!r->slots) { json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
     r->size = 0;
 
     for (size_t i = 0; i < n; ++i) {
         json_t *g = json_array_get(gens, i);
-        if (!json_is_object(g)) continue;
+        if (!json_is_object(g)) { json_decref(root); return NH_SYNCD_CACHE_ERR_JSON; }
         json_t *jgen = json_object_get(g, "gen");
         json_t *jhashes = json_object_get(g, "hashes");
-        if (!json_is_integer(jgen) || !json_is_array(jhashes)) continue;
-
-        ring_slot *slot = &r->slots[r->size];
+        if (!json_is_integer(jgen) || json_integer_value(jgen) < 0 || !json_is_array(jhashes)) {
+            json_decref(root); return NH_SYNCD_CACHE_ERR_JSON;
+        }
+        ring_slot *slot = &r->slots[r->size++];
         slot->generation = (uint64_t)json_integer_value(jgen);
         size_t hn = json_array_size(jhashes);
-        slot->hashes = (char **)calloc(hn, sizeof(char *));
+        slot->hashes = (char **)calloc(hn + 1, sizeof(char *));
         if (!slot->hashes) { json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
         for (size_t j = 0; j < hn; ++j) {
             json_t *h = json_array_get(jhashes, j);
-            if (!json_is_string(h)) continue;
             const char *hex = json_string_value(h);
-            if (!is_hex64(hex)) continue;
+            if (!is_hex64(hex) || json_string_length(h) != 64) {
+                json_decref(root); return NH_SYNCD_CACHE_ERR_JSON;
+            }
+            if (json_object_set_new(r->seen, hex, json_true())) { json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
             slot->hashes[slot->n_hashes] = xstrdup(hex);
             if (!slot->hashes[slot->n_hashes]) {
                 json_decref(root); return NH_SYNCD_CACHE_ERR_OOM;
             }
             slot->n_hashes++;
         }
-        r->size++;
     }
 
     json_decref(root);
@@ -149,22 +159,26 @@ static int load_from_disk(nh_syncd_pin_ring *r) {
 }
 
 static int save_to_disk(const nh_syncd_pin_ring *r) {
-    json_t *root = json_object();
+    for (size_t i = 0; i < r->size; ++i)
+        for (size_t k = 0; k < r->slots[i].n_hashes; ++k)
+            if (json_object_set_new(r->seen, r->slots[i].hashes[k], json_true()))
+                return NH_SYNCD_CACHE_ERR_OOM;
+    json_t *root = json_pack("{s:i,s:I,s:O,s:[]}", "schema", 1,
+        "capacity", (json_int_t)r->capacity, "seen", r->seen, "generations");
     if (!root) return NH_SYNCD_CACHE_ERR_OOM;
-    json_object_set_new(root, "schema", json_integer(1));
-    json_object_set_new(root, "capacity", json_integer((json_int_t)r->capacity));
-    json_t *gens = json_array();
+    json_t *gens = json_object_get(root, "generations");
     for (size_t i = 0; i < r->size; ++i) {
         const ring_slot *s = &r->slots[i];
-        json_t *g = json_object();
-        json_object_set_new(g, "gen", json_integer((json_int_t)s->generation));
-        json_t *arr = json_array();
-        for (size_t j = 0; j < s->n_hashes; ++j)
-            json_array_append_new(arr, json_string(s->hashes[j]));
-        json_object_set_new(g, "hashes", arr);
-        json_array_append_new(gens, g);
+        json_t *g = json_pack("{s:I,s:[]}", "gen", (json_int_t)s->generation, "hashes");
+        if (!g) { json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
+        json_t *arr = json_object_get(g, "hashes");
+        for (size_t j = 0; j < s->n_hashes; ++j) {
+            if (json_array_append_new(arr, json_string(s->hashes[j]))) {
+                json_decref(g); json_decref(root); return NH_SYNCD_CACHE_ERR_OOM;
+            }
+        }
+        if (json_array_append_new(gens, g)) { json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
     }
-    json_object_set_new(root, "generations", gens);
 
     char *rendered = json_dumps(root, JSON_INDENT(2));
     json_decref(root);
@@ -190,7 +204,17 @@ static int save_to_disk(const nh_syncd_pin_ring *r) {
     close(fd);
     if (rename(tmp, r->path) != 0) { unlink(tmp); free(rendered); return NH_SYNCD_CACHE_ERR_IO; }
     free(rendered);
-    return NH_SYNCD_CACHE_OK;
+    char *parent = xstrdup(r->path);
+    if (!parent) return NH_SYNCD_CACHE_ERR_OOM;
+    char *slash = strrchr(parent, '/');
+    if (slash == parent) slash[1] = '\0';
+    else if (slash) *slash = '\0';
+    else strcpy(parent, ".");
+    int dir = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    free(parent);
+    int rc = dir < 0 || fsync(dir) ? NH_SYNCD_CACHE_ERR_IO : NH_SYNCD_CACHE_OK;
+    if (dir >= 0) close(dir);
+    return rc;
 }
 
 int nh_syncd_pin_ring_open(const char *path, nh_syncd_pin_ring **out) {
@@ -198,17 +222,16 @@ int nh_syncd_pin_ring_open(const char *path, nh_syncd_pin_ring **out) {
     nh_syncd_pin_ring *r = (nh_syncd_pin_ring *)calloc(1, sizeof *r);
     if (!r) return NH_SYNCD_CACHE_ERR_OOM;
     r->path = xstrdup(path);
+    r->seen = json_object();
     r->capacity = NH_SYNCD_CACHE_RETENTION_GENERATIONS;
-    if (!r->path) { free(r); return NH_SYNCD_CACHE_ERR_OOM; }
+    if (!r->path || !r->seen) { nh_syncd_pin_ring_close(r); return NH_SYNCD_CACHE_ERR_OOM; }
     int rc = load_from_disk(r);
     if (rc == NH_SYNCD_CACHE_ERR_OOM || rc == NH_SYNCD_CACHE_ERR_IO) {
         nh_syncd_pin_ring_close(r);
         return rc;
     }
     if (rc == NH_SYNCD_CACHE_ERR_JSON) {
-        /* Callers treat this as "recreate empty" — but honour their
-         * choice; we return the error and leave `r` half-initialised
-         * so they can pin_ring_close() and re-open after deleting. */
+        /* Preserve corrupt retention evidence. Never recreate it as empty. */
         nh_syncd_pin_ring_close(r);
         return NH_SYNCD_CACHE_ERR_JSON;
     }
@@ -228,6 +251,7 @@ void nh_syncd_pin_ring_close(nh_syncd_pin_ring *r) {
         free(r->slots);
     }
     free(r->path);
+    json_decref(r->seen);
     free(r);
 }
 
@@ -242,7 +266,7 @@ int nh_syncd_pin_ring_promote(nh_syncd_pin_ring *r,
                               uint64_t generation,
                               const char *const *hashes,
                               size_t n_hashes) {
-    if (!r || (!hashes && n_hashes)) return NH_SYNCD_CACHE_ERR_ARG;
+    if (!r || generation > INT64_MAX || (!hashes && n_hashes)) return NH_SYNCD_CACHE_ERR_ARG;
 
     /* Dedup hashes (case-insensitive would be nice, but our whole
      * pipeline emits lowercase). Reject non-hex64 entries. */
@@ -250,7 +274,11 @@ int nh_syncd_pin_ring_promote(nh_syncd_pin_ring *r,
     if (!uniq && n_hashes) return NH_SYNCD_CACHE_ERR_OOM;
     size_t un = 0;
     for (size_t i = 0; i < n_hashes; ++i) {
-        if (!is_hex64(hashes[i])) continue;
+        if (!is_hex64(hashes[i])) {
+            for (size_t k = 0; k < un; ++k) free(uniq[k]);
+            free(uniq);
+            return NH_SYNCD_CACHE_ERR_ARG;
+        }
         int dup_seen = 0;
         for (size_t j = 0; j < un; ++j) {
             if (memcmp(uniq[j], hashes[i], 64) == 0) { dup_seen = 1; break; }
@@ -265,9 +293,27 @@ int nh_syncd_pin_ring_promote(nh_syncd_pin_ring *r,
         un++;
     }
 
-    /* Idempotent replace: if the last slot already matches this gen,
-     * overwrite it. */
+    /* A repeated generation can include conflict/installation snapshots.
+     * Union it rather than dropping the earlier references from that slot. */
     if (r->size > 0 && r->slots[r->size - 1].generation == generation) {
+        ring_slot *old = &r->slots[r->size - 1];
+        char **joined = realloc(uniq, (un + old->n_hashes + 1) * sizeof *uniq);
+        if (!joined) {
+            for (size_t k = 0; k < un; ++k) free(uniq[k]);
+            free(uniq); return NH_SYNCD_CACHE_ERR_OOM;
+        }
+        uniq = joined;
+        for (size_t i = 0; i < old->n_hashes; ++i) {
+            int found = 0;
+            for (size_t k = 0; k < un; ++k) if (!strcmp(uniq[k], old->hashes[i])) found = 1;
+            if (found) continue;
+            uniq[un] = xstrdup(old->hashes[i]);
+            if (!uniq[un]) {
+                for (size_t k = 0; k < un; ++k) free(uniq[k]);
+                free(uniq); return NH_SYNCD_CACHE_ERR_OOM;
+            }
+            ++un;
+        }
         slot_dispose(&r->slots[r->size - 1]);
         r->slots[r->size - 1].generation = generation;
         r->slots[r->size - 1].hashes = uniq;
@@ -336,57 +382,63 @@ int nh_syncd_pin_ring_apply(const nh_syncd_pin_ring *r,
     return NH_SYNCD_CACHE_OK;
 }
 
+/* Do not use the display getters here: they intentionally default missing
+ * fields, which would turn a damaged file row into an empty GC reference set. */
+int nh_syncd_state_iter_(const nh_syncd_state *, int (*)(void *, const char *, json_t *), void *);
+static int snapshot_row(void *ctx, const char *path, json_t *row) {
+    (void)path;
+    json_t *set = ctx;
+    const char *kind = json_string_value(json_object_get(row, "kind"));
+    json_t *size = json_object_get(row, "size"), *chunks = json_object_get(row, "chunk_addrs_hex");
+    if (!json_is_object(row) || !kind ||
+        (strcmp(kind, "file") && strcmp(kind, "dir") && strcmp(kind, "symlink")) ||
+        !json_is_integer(size) || json_integer_value(size) < 0)
+        return NH_SYNCD_CACHE_ERR_JSON;
+    if (strcmp(kind, "file"))
+        return chunks && (!json_is_array(chunks) || json_array_size(chunks)) ? NH_SYNCD_CACHE_ERR_JSON : 0;
+    if (!json_is_array(chunks) || (json_integer_value(size) && !json_array_size(chunks)))
+        return NH_SYNCD_CACHE_ERR_JSON;
+    size_t i; json_t *value;
+    json_array_foreach(chunks, i, value) {
+        const char *hash = json_string_value(value);
+        if (!is_hex64(hash) || json_string_length(value) != 64) return NH_SYNCD_CACHE_ERR_JSON;
+        if (json_object_set_new(set, hash, json_true())) return NH_SYNCD_CACHE_ERR_OOM;
+    }
+    return 0;
+}
 /* Enumerate every chunk_addrs_hex from snapshot.json (dedup). */
 static int hashes_from_snapshot(const char *state_dir,
                                 uint64_t *out_generation,
                                 char ***out_hashes,
                                 size_t *out_n) {
     if (!state_dir || !out_hashes || !out_n) return NH_SYNCD_CACHE_ERR_ARG;
-    char snap[PATH_MAX];
-    int nn = snprintf(snap, sizeof snap, "%s/snapshot.json", state_dir);
-    if (nn < 0 || (size_t)nn >= sizeof snap) return NH_SYNCD_CACHE_ERR_IO;
-    json_error_t je;
-    json_t *root = json_load_file(snap, 0, &je);
-    if (!root) return NH_SYNCD_CACHE_ERR_JSON;
-    if (!json_is_object(root)) { json_decref(root); return NH_SYNCD_CACHE_ERR_JSON; }
-
-    if (out_generation) {
-        json_t *g = json_object_get(root, "generation");
-        *out_generation = json_is_integer(g) ? (uint64_t)json_integer_value(g) : 0;
+    nh_syncd_state *state = NULL;
+    bool unknown = true;
+    if (nh_syncd_state_load(state_dir, &state, &unknown) || unknown) {
+        nh_syncd_state_free(state);
+        return NH_SYNCD_CACHE_ERR_JSON;
     }
-    json_t *files = json_object_get(root, "files");
-    char **arr = NULL;
-    size_t n = 0, cap = 0;
-    if (json_is_object(files)) {
-        const char *key;
-        json_t *val;
-        json_object_foreach(files, key, val) {
-            (void)key;
-            json_t *addrs = json_object_get(val, "chunk_addrs_hex");
-            if (!json_is_array(addrs)) continue;
-            size_t hn = json_array_size(addrs);
-            for (size_t i = 0; i < hn; ++i) {
-                json_t *h = json_array_get(addrs, i);
-                if (!json_is_string(h)) continue;
-                const char *hex = json_string_value(h);
-                if (!is_hex64(hex)) continue;
-                int seen = 0;
-                for (size_t k = 0; k < n; ++k)
-                    if (memcmp(arr[k], hex, 64) == 0) { seen = 1; break; }
-                if (seen) continue;
-                if (n == cap) {
-                    size_t nc = cap ? cap * 2 : 64;
-                    char **nx = (char **)realloc(arr, nc * sizeof(char *));
-                    if (!nx) { for (size_t k = 0; k < n; ++k) free(arr[k]); free(arr); json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
-                    arr = nx; cap = nc;
-                }
-                arr[n] = xstrdup(hex);
-                if (!arr[n]) { for (size_t k = 0; k < n; ++k) free(arr[k]); free(arr); json_decref(root); return NH_SYNCD_CACHE_ERR_OOM; }
-                n++;
-            }
-        }
+    json_t *set = json_object();
+    if (!set) { nh_syncd_state_free(state); return NH_SYNCD_CACHE_ERR_OOM; }
+    int rc = nh_syncd_state_get_local_generation(state) > INT64_MAX ? NH_SYNCD_CACHE_ERR_JSON :
+        nh_syncd_state_iter_(state, snapshot_row, set);
+    size_t n = json_object_size(set), at = 0;
+    char **arr = calloc(n + 1, sizeof *arr);
+    if (!arr) rc = NH_SYNCD_CACHE_ERR_OOM;
+    const char *key; json_t *value;
+    json_object_foreach(set, key, value) {
+        if (rc) break;
+        arr[at] = xstrdup(key);
+        if (!arr[at]) rc = NH_SYNCD_CACHE_ERR_OOM;
+        else ++at;
     }
-    json_decref(root);
+    if (out_generation) *out_generation = nh_syncd_state_get_local_generation(state);
+    nh_syncd_state_free(state);
+    json_decref(set);
+    if (rc) {
+        for (size_t i = 0; i < at; ++i) free(arr[i]);
+        free(arr); return rc;
+    }
     *out_hashes = arr;
     *out_n = n;
     return NH_SYNCD_CACHE_OK;

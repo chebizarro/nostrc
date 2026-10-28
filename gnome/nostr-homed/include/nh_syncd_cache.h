@@ -247,7 +247,9 @@ typedef struct nh_syncd_pin_ring nh_syncd_pin_ring;
 
 /* Open or initialise. `json_path` may not exist — an empty ring is
  * returned in that case. Corrupt JSON returns NH_SYNCD_CACHE_ERR_JSON;
- * callers should treat this as recoverable (delete the file, reopen). */
+ * preserve the file: remote GC must refuse incomplete retention evidence.
+ * The additive `seen` inventory records candidate hashes, never authority to
+ * delete them. Every retained generation is still marked before sweeping. */
 int  nh_syncd_pin_ring_open(const char *json_path,
                             nh_syncd_pin_ring **out);
 void nh_syncd_pin_ring_close(nh_syncd_pin_ring *r);
@@ -256,7 +258,7 @@ size_t nh_syncd_pin_ring_size(const nh_syncd_pin_ring *r);
 size_t nh_syncd_pin_ring_capacity(const nh_syncd_pin_ring *r);
 
 /* Record a new generation. If it already exists as the most-recent
- * slot, replace it (idempotent for double-fires); otherwise push at
+ * slot, union its references (idempotent for double-fires); otherwise push at
  * the tail, evicting slot 0 if size == capacity. Persists atomically
  * to disk (tmp + rename, mode 0600). */
 int  nh_syncd_pin_ring_promote(nh_syncd_pin_ring *r,
