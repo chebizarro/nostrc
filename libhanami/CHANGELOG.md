@@ -2,6 +2,18 @@
 
 ## 0.7.0 (unreleased)
 
+`hanami_grasp_fetch` now refuses to update local remote-tracking refs unless
+all Smart HTTP advertised ref tips exactly match an authenticated, EOSE-complete
+kind-30618 from the clone owner or a maintainer named in the owner's NIP-34
+announcement. Missing state, extra/missing refs and mismatched tips are errors.
+The additive `hanami_grasp_fetch_with_signer` entrypoint permits a bounded
+NIP-42 retry after the relay accepts AUTH with `OK true`; the existing
+no-signer entrypoint returns an auth error when challenged.
+This is a breaking 0.x behaviour correction (nostrc-0hh85), folded into the
+unreleased 0.7.0 MINOR; callers must provide relay URLs. Private repositories
+remain unsupported. The `snprintf` bounds correction (nostrc-bze2y) is a
+PATCH-class build fix folded into the same unreleased version.
+
 Public refdb write/rename/delete now require relay acceptance and roll back the
 local cache on failure. Signer-backed contexts perform NIP-42 AUTH on the caller
 thread and retry a refused publication/query once after AUTH OK true. No-signer,

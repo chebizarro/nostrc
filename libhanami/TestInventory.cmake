@@ -28,6 +28,15 @@ if(TEST "test-hanami-grasp-workflow")
     EXPECTED pass)
 endif()
 
+if(TEST "test-hanami-grasp-fetch-workflow")
+  nostrc_describe_test("test-hanami-grasp-fetch-workflow"
+    OWNER libhanami nip34
+    TARGETS test-hanami-grasp-fetch-workflow
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/grasp_fetch_fixture.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_fixture.py"
+    EXPECTED pass)
+endif()
+
 if(TEST "test-hanami-refdb-acceptance")
   nostrc_describe_test("test-hanami-refdb-acceptance"
     OWNER libhanami nip34

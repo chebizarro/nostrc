@@ -669,10 +669,20 @@ hanami_error_t hanami_nostr_fetch_repo(hanami_nostr_ctx_t *ctx,
     if (err != HANAMI_OK)
         return err;
 
+    if (ev->kind != NIP34_KIND_REPOSITORY || !ev->pubkey ||
+        strcmp(ev->pubkey, owner_pubkey)) {
+        nostr_event_free(ev);
+        return HANAMI_ERR_NOSTR;
+    }
     nip34_result_t res = nip34_parse_repository(ev, out);
     nostr_event_free(ev);
-
-    return (res == NIP34_OK) ? HANAMI_OK : HANAMI_ERR_NOSTR;
+    if (res != NIP34_OK || !*out || !(*out)->id ||
+        strcmp((*out)->id, repo_id)) {
+        nip34_repository_free(*out);
+        *out = NULL;
+        return HANAMI_ERR_NOSTR;
+    }
+    return HANAMI_OK;
 }
 
 hanami_error_t hanami_nostr_fetch_state_event(hanami_nostr_ctx_t *ctx,

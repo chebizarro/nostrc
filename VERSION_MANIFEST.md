@@ -91,6 +91,20 @@ files already declare a version.
   APIs and artifacts are only consumed here, not changed. No tag is published;
   release columns remain unchanged.
 
+### GRASP fetch verification and macOS formatting (nostrc-0hh85, nostrc-bze2y)
+
+- **libhanami 0.7.0 (no further bump):** fetch now requires a signed,
+  EOSE-complete owner/authorized-maintainer kind-30618 state matching every
+  Smart HTTP advertised ref before updating remote-tracking tips. This is a
+  breaking 0.x public behaviour correction, folded into the unreleased 0.7.0
+  MINOR and called out in `libhanami/CHANGELOG.md`. The additive
+  `hanami_grasp_fetch_with_signer` API permits bounded NIP-42 retry after AUTH
+  `OK true`. The bounded `snprintf` replacement is a PATCH-class macOS build
+  correction in the same version. No storage or wire format change; source,
+  declared version and release columns remain unchanged.
+- **No bump:** libnostr, nip34, libblossom and all other components are only
+  consumed; their shipped artifacts do not change here.
+
 ### GRASP ordering and relay acceptance (nostrc-fsuei, nostrc-3rxpv)
 
 - **libhanami 0.5.1 → 0.6.0 → 0.7.0 (MINOR per bead):** first restore

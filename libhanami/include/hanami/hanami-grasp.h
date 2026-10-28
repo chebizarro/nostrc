@@ -187,16 +187,28 @@ HANAMI_API hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
  * @relay_urls: NULL-terminated relay URLs for state lookup
  * @relay_count: number of relay URLs
  *
- * Fetch from a GRASP server using standard Git Smart HTTP.
- * This is essentially a normal git fetch since GRASP serves standard
- * Git protocol — but this function validates the URL format first.
+ * Download all advertised refs using Smart HTTP, then require an authenticated,
+ * EOSE-complete kind-30618 state from the given relays before updating local
+ * grasp remote-tracking tips. The owner in the clone URL, or a maintainer named
+ * by the owner's kind-30617 announcement, must sign the newest state.
+ * Missing or mismatched refs fail closed; private repositories are unsupported.
+ * An AUTH-gated read returns HANAMI_ERR_AUTH without a signer; use the signer-
+ * capable variant to require AUTH's OK true before one bounded query retry.
+ * At most eight relay URLs and 64 KiB serialized state events are accepted.
  *
- * Returns: HANAMI_OK on success
+ * Returns: HANAMI_OK only after signed-state verification and tip update
  */
 HANAMI_API hanami_error_t hanami_grasp_fetch(git_repository *repo,
                                    const char *clone_url,
                                    const char *const *relay_urls,
                                    size_t relay_count);
+
+/** As above, with an optional signer for bounded NIP-42 AUTH/OK retry. */
+HANAMI_API hanami_error_t hanami_grasp_fetch_with_signer(git_repository *repo,
+                                   const char *clone_url,
+                                   const char *const *relay_urls,
+                                   size_t relay_count,
+                                   const hanami_signer_t *signer);
 
 /* =========================================================================
  * Helpers for refs/nostr/ namespace
