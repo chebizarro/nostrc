@@ -12,7 +12,7 @@
  * same approach (src/profile/profile_image.c).
  */
 #define _GNU_SOURCE
-#include "nh_porthome_sandbox.h"
+#include "nh_porthome_sandbox_internal.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -158,12 +158,12 @@ static int setrlimit_soft_hard(int res, rlim_t v) {
   return setrlimit(res, &rl);
 }
 
-nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed_ex(
+nh_porthome_sandbox_rc nh_porthome_spawn_staged(
     char *const argv[], char *const envp[],
     int stdin_fd, int stdout_fd, int stderr_fd,
     const int *keep_fds, size_t n_keep_fds,
     uint32_t deadline_ms,
-    pid_t *out_pid) {
+    pid_t *out_pid, int private_stage_fd) {
   (void)deadline_ms; /* wait-side hint — see nh_porthome_sandbox_wait */
 
   if (!argv || !argv[0] || !argv[0][0] || argv[0][0] != '/')
@@ -194,6 +194,18 @@ nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed_ex(
       return NH_PORTHOME_SANDBOX_NO_USER;
   }
 
+  /* Snapshot NSS's static storage before forking; subsequent lookups must not
+   * change the identity used for either workspace ownership or privilege drop. */
+  uid_t drop_uid = pw ? pw->pw_uid : geteuid();
+  gid_t drop_gid = pw ? pw->pw_gid : getegid();
+  if (private_stage_fd >= 0) {
+    struct stat st;
+    if (geteuid() != 0 || fstat(private_stage_fd, &st) != 0 ||
+        !S_ISDIR(st.st_mode) || st.st_uid != 0 ||
+        (st.st_mode & 07777) != 0700)
+      return NH_PORTHOME_SANDBOX_ARG;
+  }
+
   pid_t pid = fork();
   if (pid < 0) return NH_PORTHOME_SANDBOX_FORK;
   if (pid == 0) {
@@ -212,11 +224,14 @@ nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed_ex(
     if (dup2(out_fd, 1) < 0) _exit(70);
     if (dup2(err_fd, 2) < 0) _exit(70);
 
+    if (private_stage_fd >= 0 &&
+        fchown(private_stage_fd, drop_uid, drop_gid) != 0) _exit(70);
+
     /* 2. Drop privileges (only when we can — see NOT_ROOT check above). */
     if (pw) {
-      if (setgroups(1, &pw->pw_gid) != 0) _exit(70);
-      if (setgid(pw->pw_gid) != 0)        _exit(70);
-      if (setuid(pw->pw_uid) != 0)        _exit(70);
+      if (setgroups(1, &drop_gid) != 0) _exit(70);
+      if (setgid(drop_gid) != 0)        _exit(70);
+      if (setuid(drop_uid) != 0)        _exit(70);
       if (getuid() == 0 || geteuid() == 0) _exit(70);
     }
 
@@ -326,6 +341,15 @@ int nh_porthome_sandbox_wait(pid_t pid, uint32_t deadline_ms,
     if (out_signal) *out_signal = WTERMSIG(status);
   }
   return 0;
+}
+
+nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed_ex(
+    char *const argv[], char *const envp[],
+    int stdin_fd, int stdout_fd, int stderr_fd,
+    const int *keep_fds, size_t n_keep_fds,
+    uint32_t deadline_ms, pid_t *out_pid) {
+  return nh_porthome_spawn_staged(argv, envp, stdin_fd, stdout_fd, stderr_fd,
+      keep_fds, n_keep_fds, deadline_ms, out_pid, -1);
 }
 
 /* Thin wrapper preserving the pre-ww50 signature — no extra fds

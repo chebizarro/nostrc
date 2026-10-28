@@ -60,6 +60,9 @@ typedef struct nh_auth_porthome_fetch_args {
     /* Materialisation target: an openat-safe dirfd (preferred) OR a
      * filesystem path. Exactly ONE must be >=0 / non-NULL. */
     int         staging_fd;
+    /* Fresh root-owned 0700 workspace below a root-only parent. Give it
+     * to the sandbox UID before dropping privileges; caller reclaims it. */
+    int         private_staging;
     const char *staging_dir;
     /* Wall-clock cap for the whole helper run (milliseconds). If the
      * helper doesn't finish in this window it is SIGKILL'd. 0 → 300 s

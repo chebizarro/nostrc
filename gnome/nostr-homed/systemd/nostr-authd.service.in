@@ -51,11 +51,14 @@ StateDirectory=nostr-auth
 # Discovered by nostrc-0xd3 as nostrc-hfks: race between authd (0700)
 # and smbd (0755) breaking whichever restarted second.
 StateDirectoryMode=0755
-ReadWritePaths=/var/lib/nostr-auth
+ReadWritePaths=/var/lib/nostr-auth /home
 # hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+# Hide /root and /run/user, but expose the installer's home root. A custom
+# identity.conf home_root needs matching BindPaths/ReadWritePaths in a drop-in.
+ProtectHome=tmpfs
+BindPaths=/home
 PrivateTmp=yes
 ProtectControlGroups=yes
 ProtectKernelTunables=yes

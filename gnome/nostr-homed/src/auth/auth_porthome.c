@@ -20,6 +20,7 @@
 #include "nh_porthome_wrapkey.h"
 #include "nh_porthome_sandbox.h"
 #include "auth_porthome_fetch.h"
+#include "auth_porthome_stage.h"
 #include "auth_porthome_status.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_types.h"
@@ -256,12 +257,10 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
     return NH_IDENTITY_UNSUPPORTED;
 
   nh_porthome_prov_opts opts = {0};
-  /* Materialise as root:root inside the staging descriptor. The
-   * identity layer chown()s the whole tree to the account uid/gid
-   * when it installs the home (identity_home.c). We do NOT try to
-   * uid-map per file — design §D17: uid/gid are machine-local. */
-  opts.local_uid = 0;
-  opts.local_gid = 0;
+  /* The identity installer chowns only the home root. Descendants must
+   * already carry the account's machine-local ownership. */
+  opts.local_uid = lc->job->account_uid;
+  opts.local_gid = lc->job->account_gid;
   opts.max_bytes_per_load = lc->job->config.bandwidth_bytes_per_load;
   opts.load_timeout_sec   = lc->job->config.load_timeout_sec;
   opts.max_total_bytes    = lc->job->config.max_home_bytes;
@@ -275,6 +274,8 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
      * via the same nh_porthome_materialize_sealed_into_fd path used
      * by the in-process branch. On any recoverable failure the helper
      * exits 71/72/73/74/65 — mapped to LIMITED by the spawner. */
+    int workspace = nh_auth_porthome_stage_open(home_fd);
+    if (workspace < 0) return NH_IDENTITY_UNSUPPORTED;
     nh_auth_porthome_fetch_args fa = {0};
     fa.account_pubkey_hex     = lc->account_pubkey_hex;
     fa.home_root_id_hex       = lc->home_root_id_hex;
@@ -289,7 +290,8 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
     fa.max_total_bytes        = lc->job->config.max_home_bytes;
     fa.relay_timeout_ms       = 10000u;
     fa.allow_insecure         = lc->allow_insecure;
-    fa.staging_fd             = home_fd;
+    fa.staging_fd             = workspace;
+    fa.private_staging        = 1;
     fa.staging_dir            = NULL;
     fa.total_timeout_ms       = 300000u;
 
@@ -298,6 +300,16 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
     int helper_exit = -1;
     nh_auth_porthome_fetch_result fr =
         nh_auth_porthome_fetch_spawn(&fa, &cb, &helper_exit);
+    /* Reclaim even failed fetches; the identity layer retains the protected
+     * stage for repair. Never install helper-owned or still-shared inodes. */
+    int reclaim = nh_auth_porthome_stage_reclaim(workspace);
+    if (reclaim != 0 || (fr == NH_PORTHOME_FETCH_RES_OK &&
+        nh_auth_porthome_stage_import(home_fd, workspace,
+            lc->job->account_uid, lc->job->account_gid,
+            lc->job->config.max_home_bytes ? lc->job->config.max_home_bytes
+                : NH_PORTHOME_DEFAULT_MAX_HOME_BYTES) != 0))
+      fr = NH_PORTHOME_FETCH_RES_FAILED;
+    close(workspace);
     switch (fr) {
     case NH_PORTHOME_FETCH_RES_OK:
       pr = NH_PORTHOME_PROV_OK;
@@ -1426,12 +1438,10 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
  * handler can still distinguish LIMITED_MODE (network / decode /
  * SSRF-refused) from FAILED (internal / killed).
  *
- * Materialisation stays in the broker as root — the labeler in
- * label_write_into() writes through nh_identity_home_prepare's
- * staging descriptor, which cannot be handed across the exec()
- * boundary without giving the helper write access to /var/lib and
- * defeating the whole point of dropping privileges. That split
- * matches design §7.2 exactly.
+ * Login materialisation uses auth_porthome_fetch_spawn instead: the
+ * helper writes to a private workspace below the root-only installer
+ * stage. The broker imports account-owned copies after the helper exits;
+ * neither the installer stage nor authority storage is granted to it.
  * ──────────────────────────────────────────────────────────────────── */
 
 int nh_auth_broker_porthome_run_fetch(const char *helper_path,
