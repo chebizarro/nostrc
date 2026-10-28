@@ -694,9 +694,14 @@ hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
         const char *target = git_reference_symbolic_target(head);
         for (size_t i = 0; target && i < state_count; i++) {
             if (!strcmp(state[i].refname, target)) {
-                initial_head = malloc(strlen(target) + 6);
+                size_t head_size = strlen(target) + sizeof("ref: ");
+                initial_head = malloc(head_size);
                 if (!initial_head) { err = HANAMI_ERR_NOMEM; goto done; }
-                sprintf(initial_head, "ref: %s", target);
+                int written = snprintf(initial_head, head_size, "ref: %s", target);
+                if (written < 0 || (size_t)written >= head_size) {
+                    err = HANAMI_ERR_LIBGIT2;
+                    goto done;
+                }
                 break;
             }
         }
