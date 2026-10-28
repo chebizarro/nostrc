@@ -52,6 +52,7 @@ struct nh_syncd_entry {
 struct nh_syncd_state {
     uint64_t       local_generation;
     uint64_t       remote_generation;
+    char           pointer_event_id[65];
     char          *root;                /* owned */
     char          *d_tag;               /* owned */
     char          *account_pubkey_hex;  /* owned */
@@ -101,6 +102,12 @@ uint64_t nh_syncd_state_get_remote_generation(const nh_syncd_state *s) {
 }
 void nh_syncd_state_set_remote_generation(nh_syncd_state *s, uint64_t g) {
     if (s && g > s->remote_generation) s->remote_generation = g;
+}
+const char *nh_syncd_state_pointer_event_id_(const nh_syncd_state *s) {
+    return s ? s->pointer_event_id : "";
+}
+void nh_syncd_state_set_pointer_event_id_(nh_syncd_state *s, const char *id) {
+    if (s) snprintf(s->pointer_event_id, sizeof s->pointer_event_id, "%s", id ? id : "");
 }
 const char *nh_syncd_state_get_root(const nh_syncd_state *s) {
     return s ? s->root : NULL;
@@ -287,6 +294,7 @@ int nh_syncd_state_save(const nh_syncd_state *s, const char *state_dir) {
     if (!j) return NH_SYNCD_ERR_OOM;
     json_object_set_new(j, "schema", json_integer(1));
     json_object_set_new(j, "generation", json_integer((json_int_t)s->local_generation));
+    json_object_set_new(j, "pointer_event_id", json_string(s->pointer_event_id));
     json_object_set_new(j, "root", json_string(s->root));
     json_object_set_new(j, "d_tag", json_string(s->d_tag));
     json_object_set_new(j, "account_pubkey_hex", json_string(s->account_pubkey_hex));
@@ -413,6 +421,9 @@ static int state_from_json(json_t *j, const char *path, nh_syncd_state **out) {
     nh_syncd_state *s = calloc(1, sizeof *s);
     if (!s) { json_decref(j); return NH_SYNCD_ERR_OOM; }
     s->local_generation = (uint64_t)json_integer_value(jgen);
+    json_t *jid = json_object_get(j, "pointer_event_id");
+    if (json_is_string(jid) && strlen(json_string_value(jid)) <= 64)
+        snprintf(s->pointer_event_id, sizeof s->pointer_event_id, "%s", json_string_value(jid));
     s->root = strdup(json_string_value(jroot));
     s->d_tag = strdup(json_string_value(jdtag));
     s->account_pubkey_hex = strdup(json_string_value(jpk));
@@ -787,6 +798,10 @@ int nh_syncd_state_delete_(nh_syncd_state *s, const char *rel) {
 
 void nh_syncd_state_bump_generation_(nh_syncd_state *s) {
     if (s) s->local_generation++;
+}
+
+void nh_syncd_state_set_local_generation_(nh_syncd_state *s, uint64_t generation) {
+    if (s && generation > s->local_generation) s->local_generation = generation;
 }
 
 int nh_syncd_state_iter_(const nh_syncd_state *s,

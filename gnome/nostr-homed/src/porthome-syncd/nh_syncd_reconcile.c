@@ -95,6 +95,7 @@ extern int nh_syncd_state_iter_(const nh_syncd_state *s,
 extern int nh_syncd_state_save(const nh_syncd_state *s, const char *state_dir);
 extern void nh_syncd_state_set_remote_generation(nh_syncd_state *s, uint64_t g);
 extern uint64_t nh_syncd_state_get_local_generation(const nh_syncd_state *s);
+extern void nh_syncd_state_set_local_generation_(nh_syncd_state *s, uint64_t generation);
 
 /* Also declared/defined in nh_syncd_state.c: bump local generation. We
  * use a direct set instead so the reconciler can pull local up to the
@@ -953,6 +954,10 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
     }
 
     int rc = 0;
+    bool untrusted_base = (state_dir_for_persist &&
+        nh_syncd_partial_state_is_set(state_dir_for_persist)) ||
+        nh_syncd_state_get_remote_generation(state) <
+        nh_syncd_state_get_local_generation(state);
 
     for (size_t i = 0; i < bc.rows_n; i++) {
         base_row *b = &bc.rows[i];
@@ -1047,6 +1052,9 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
             /* Local file is gone entirely — that's a local delete. */
             local_changed = true;
         }
+        /* An additive rescan or unconfirmed local publish is not a trusted
+         * shared base. Preserve materialized rows as independent edits. */
+        if (untrusted_base && have_local) local_changed = true;
 
         /* Compute remote-change vs base. */
         bool remote_absent = (remote == NULL);
@@ -1255,9 +1263,13 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
             if (ignore && nh_syncd_ignore_check_path(ignore, rel) != NH_SYNCD_IGNORE_PASS) {
                 free(rel); continue;
             }
-            if (anchor && !descendant) {
+            bool local_anchor = e->kind == NH_PORTHOME_KIND_DIR &&
+                                local_lazy && !descendant;
+            if ((anchor || local_anchor) && !descendant) {
                 rc = mkdirat_p(home_fd, rel);
                 if (rc == 0) rc = record_lazy_entry(state, rel, e);
+                if (rc == 0 && local_anchor)
+                    rc = nh_syncd_state_set_lazy_dir_(state, rel, true);
             } else {
                 rc = record_lazy_entry(state, rel, e);
             }
@@ -1266,7 +1278,32 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
             res->applied++;
             continue;
         }
+        if (cfg->manifest->version == PORTHOME_MANIFEST_SCHEMA_VERSION_V2) {
+            if (!rel) {
+                set_err(out_error_msg, "v2 manifest lacks complete path ancestry");
+                rc = NH_SYNCD_ERR_MANIFEST; goto done;
+            }
+            if (ignore && nh_syncd_ignore_check_path(ignore, rel) != NH_SYNCD_IGNORE_PASS) {
+                free(rel); continue;
+            }
+            struct stat current;
+            int ar;
+            if (fstatat(home_fd, rel, &current, AT_SYMLINK_NOFOLLOW) == 0)
+                ar = handle_content_conflict(cfg, state, home_fd, rel, e, NULL,
+                                             res, out_error_msg, clock_now);
+            else if (errno == ENOENT)
+                ar = apply_remote_entry(cfg, state, home_fd, rel, e, out_error_msg);
+            else {
+                set_err(out_error_msg, "stat remote-only %s: %s", rel, strerror(errno));
+                ar = NH_SYNCD_ERR_IO;
+            }
+            free(rel);
+            if (ar != 0) { rc = ar; goto done; }
+            res->applied++;
+            continue;
+        }
         free(rel);
+        /* v1 has no recoverable plaintext name. Do not invent one. */
         if (e->kind == NH_PORTHOME_KIND_FILE) continue;
         if (cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, e->path_enc)) continue;
         int ar = apply_remote_entry(cfg, state, home_fd, e->path_enc, e, out_error_msg);
@@ -1274,15 +1311,17 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
     }
 
     /* Persist. */
-    if (cfg->remote_generation > nh_syncd_state_get_local_generation(state)) {
-        /* Bump local up to remote_generation. */
-        while (nh_syncd_state_get_local_generation(state) < cfg->remote_generation)
-            nh_syncd_state_bump_generation_(state);
-    }
+    /* The pointer timestamp is the generation stamp; assign it in O(1),
+     * rather than incrementing billions of times on a first real pull. */
+    nh_syncd_state_set_local_generation_(state, cfg->remote_generation);
     nh_syncd_state_set_remote_generation(state, cfg->remote_generation);
     if (state_dir_for_persist) {
         int srv = nh_syncd_state_save(state, state_dir_for_persist);
-        if (srv != NH_SYNCD_OK) set_err(out_error_msg, "state_save rc=%d", srv);
+        if (srv != NH_SYNCD_OK) {
+            set_err(out_error_msg, "state_save rc=%d", srv);
+            rc = srv;
+            goto done;
+        }
     }
 
     /* Durable provenance so the conflicts can be listed and resolved later

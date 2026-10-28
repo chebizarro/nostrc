@@ -101,6 +101,11 @@
 #include "nh_porthome_status.h"
 #include "nh_syncd_watcher.h"
 #include "nh_syncd_conflicts.h"
+#include "nostr-keys.h"
+#include "nostr-event.h"
+#include <blossom/types.h>
+#include <blossom/pool.h>
+#include <blossom/shim.h>
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
 #include "nh_syncd_vault_config.h"
 #include "nh_syncd_vault_manager.h"
@@ -114,6 +119,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -618,6 +624,153 @@ static bool seed_waiter_service(seed_waiter *sw, cfg_t *cfg) {
  * additive baseline rescan when the snapshot base is unknown, and the
  * budgeted $HOME watcher. Runs at start when the seed is present, or
  * later when the broker drop appears (nostrc-p8y6). */
+typedef struct {
+    nh_syncd_subscription *subscription;
+    nh_syncd_pull_ctx *ctx;
+    nh_syncd_lazy *lazy;
+    blossom_pool_t *blossom;
+    char *pubkey;
+} personal_pull;
+
+static int personal_sign_json(const char *wire, char **out, void *ud) {
+    *out = NULL;
+    NostrEvent *event = nostr_event_new();
+    if (!event) return BLOSSOM_ERR_NOMEM;
+    int rc = nostr_event_deserialize_compact(event, wire, NULL);
+    if (rc) rc = nostr_event_sign(event, (const char *)ud) == 0;
+    if (rc) *out = nostr_event_serialize_compact(event);
+    nostr_event_free(event);
+    return *out ? 0 : BLOSSOM_ERR_NOSTR;
+}
+
+static int personal_fetch_chunk(void *ud, const char *sha256_hex,
+                                uint8_t **out_ct, size_t *out_len) {
+    blossom_pool_t *pool = ud;
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (!pool || blossom_pool_fetch(pool, sha256_hex, &buf, &len) != BLOSSOM_POOL_OK)
+        return -1;
+    if (blossom_shim_detect(buf, len)) {
+        const uint8_t *tail = NULL;
+        size_t tail_len = 0;
+        if (blossom_shim_unwrap(buf, len, &tail, &tail_len) != BLOSSOM_OK) {
+            free(buf); return -1;
+        }
+        memmove(buf, tail, tail_len);
+        len = tail_len;
+    }
+    *out_ct = buf;
+    *out_len = len;
+    return 0;
+}
+
+static void personal_pull_stop(personal_pull *p) {
+    if (!p) return;
+    nh_syncd_subscription_stop(p->subscription);
+    nh_syncd_pull_ctx_free(p->ctx);
+    nh_syncd_lazy_free(p->lazy);
+    blossom_pool_free(p->blossom);
+    free(p->pubkey);
+    memset(p, 0, sizeof *p);
+}
+
+/* A missing snapshot has no root metadata. Initialise it before the
+ * additive rescan so a successful pull can publish a FUSE-readable base. */
+static int init_fresh_personal_state(const cfg_t *cfg, nh_syncd_state **state) {
+    uint8_t seed[32] = {0};
+    char *pub = cfg->nsec_hex ? nostr_key_get_public(cfg->nsec_hex) : NULL;
+    nh_syncd_state *fresh = NULL;
+    int rc = !pub || !cfg->seed_hex ||
+             nh_porthome_from_hex64(cfg->seed_hex, seed) != 0 ||
+             nh_syncd_state_new(cfg->home, cfg->d_tag, pub, seed, &fresh) != NH_SYNCD_OK;
+    memset(seed, 0, sizeof seed);
+    free(pub);
+    if (rc) return -1;
+    nh_syncd_state_free(*state);
+    *state = fresh;
+    g_state = fresh;
+    return 0;
+}
+
+static int personal_pull_start(const cfg_t *cfg, nh_syncd_state *state,
+                               nh_syncd_batcher *batcher, const nh_syncd_ignore *ignore,
+                               struct nh_syncd_pin_ring *pin_ring, personal_pull *p) {
+    if (!cfg->nsec_hex || !cfg->seed_hex || !cfg->n_relays || !cfg->n_blossom) {
+        fprintf(stderr, "syncd/pull: signer, seed, relay and Blossom are required\n");
+        return -1;
+    }
+    char *pub = nostr_key_get_public(cfg->nsec_hex);
+    uint8_t seed[32] = {0};
+    nh_syncd_pull_opts opts = {0};
+    if (!pub || nh_porthome_from_hex64(cfg->seed_hex, seed) != 0 ||
+        nh_porthome_key_derive(seed, opts.home_key) != 0) {
+        fprintf(stderr, "syncd/pull: invalid identity or home seed\n");
+        free(pub); memset(seed, 0, sizeof seed); return -1;
+    }
+    memset(seed, 0, sizeof seed);
+    p->pubkey = pub;
+    blossom_pool_opts_t bopts = {.servers = (const char *const *)cfg->blossom,
+        .n_servers = cfg->n_blossom, .timeout_seconds = 30,
+        .max_retries = 3,
+        .max_blob_bytes = NH_SYNCD_CHUNK_SIZE + NH_PORTHOME_SEAL_OVERHEAD + 4096,
+        .allow_insecure = cfg->test_mode};
+    int rc = blossom_pool_new(&bopts, NULL, &p->blossom);
+    if (rc != BLOSSOM_POOL_OK || nh_syncd_lazy_new(cfg->home, &p->lazy) != NH_SYNCD_OK)
+        goto fail;
+    opts.fetch_chunk = personal_fetch_chunk;
+    opts.fetch_chunk_ctx = p->blossom;
+    opts.state = state;
+    opts.root_dir = cfg->home;
+    opts.ignore = ignore;
+    opts.state_dir_for_persist = cfg->state_dir;
+    opts.account_pubkey_hex = pub;
+    opts.d_tag = cfg->d_tag;
+    opts.push_queue = batcher;
+    opts.pin_ring = pin_ring;
+    opts.lazy = p->lazy;
+    if (nh_syncd_pull_ctx_new(&opts, &p->ctx) != NH_SYNCD_OK) goto fail;
+    rc = nh_syncd_subscription_start((const char *const *)cfg->relays,
+                                     cfg->n_relays, pub, cfg->d_tag, cfg->nsec_hex,
+                                     nh_syncd_pull_on_pointer, p->ctx,
+                                     &p->subscription);
+    memset(opts.home_key, 0, sizeof opts.home_key);
+    if (rc == NH_SYNCD_OK) return 0;
+    personal_pull_stop(p);
+    fprintf(stderr, "syncd/pull: subscription start failed rc=%d\n", rc);
+    return -1;
+fail:
+    memset(opts.home_key, 0, sizeof opts.home_key);
+    personal_pull_stop(p);
+    fprintf(stderr, "syncd/pull: Blossom, lazy policy or context init failed\n");
+    return -1;
+}
+
+static void personal_pull_service(personal_pull *p, const cfg_t *cfg,
+                                  nh_syncd_interlocks *ilk) {
+    uint64_t before = nh_syncd_pull_ctx_last_applied_generation(p->ctx);
+    nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_PULLING);
+    syncd_status_flush();
+    int rc = nh_syncd_subscription_drain(p->subscription);
+    uint64_t after = nh_syncd_pull_ctx_last_applied_generation(p->ctx);
+    if (after > before) {
+        if (nh_syncd_partial_state_is_set(cfg->state_dir)) {
+            if (nh_syncd_partial_state_clear(cfg->state_dir) == NH_SYNCD_OK)
+                ilk->nostr_home_state = getenv("NOSTR_HOME_STATE");
+            else fprintf(stderr, "syncd/pull: could not clear partial state\n");
+        }
+        nh_syncd_status_set_last_pull_gen(g_status, after);
+        nh_syncd_status_set_last_error(g_status, "");
+    }
+    if (rc != NH_SYNCD_OK) {
+        nh_syncd_status_set_last_error(g_status, "pull-queue-overflow");
+        nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_ERROR);
+    } else if (nh_syncd_subscription_retry_delay_ms(p->subscription) != UINT64_MAX) {
+        nh_syncd_status_set_last_error(g_status, "pull-retry-pending");
+        nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_ERROR);
+    } else nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_IDLE);
+    syncd_status_flush();
+}
+
 static int start_managed(const cfg_t *cfg, nh_syncd_state *state,
                          bool snap_unknown, nh_syncd_ignore *ig,
                          nh_syncd_batcher *ba, nh_syncd_interlocks *ilk,
@@ -728,6 +881,7 @@ int main(int argc, char **argv) {
     int dry_run = (argc > 1 && !strcmp(argv[1], "--check"));
     int exit_code = 0;
     nh_syncd_requests *rq = NULL;   /* opened before the poll loop */
+    personal_pull pull = {0};
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
     nh_vault_manager *vaults = NULL;
 #endif
@@ -921,6 +1075,10 @@ int main(int argc, char **argv) {
     seed_waiter sw = { .ifd = -1, .wd = -1 };
     if (vault_once && !managed) { fprintf(stderr, "syncd: vault one-shot requires the broker home seed\n"); exit_code = 8; goto cleanup; }
     if (managed) {
+        if (snap_unknown && init_fresh_personal_state(&cfg, &state) != 0) {
+            fprintf(stderr, "syncd: cannot initialise personal-home snapshot base\n");
+            exit_code = 8; goto cleanup;
+        }
         if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0) {
             exit_code = 8; goto cleanup;
         }
@@ -933,6 +1091,9 @@ int main(int argc, char **argv) {
             goto cleanup;
         }
 #endif
+        if (personal_pull_start(&cfg, state, ba, ig, pin_ring, &pull) != 0) {
+            exit_code = 8; goto cleanup;
+        }
     } else {
         seed_waiter_init(&sw);
         char pollbuf[32] = "off";
@@ -969,9 +1130,9 @@ int main(int argc, char **argv) {
     bool requests_due = true;   /* serve anything queued while we were down */
 
     /* Poll loop. pfd[0]: $HOME watcher; pfd[1]: seed-drop waiter;
-     * pfd[2]: vault manager; pfd[3]: request inbox (negative fds are
-     * ignored by poll). */
-    struct pollfd pfd[4] = {
+     * pfd[2]: vault manager; pfd[3]: request inbox; pfd[4]: personal
+     * pointer subscription (negative fds are ignored by poll). */
+    struct pollfd pfd[5] = {
         { nh_syncd_watcher_fd(wa), POLLIN, 0 },
         { sw.ifd,                  POLLIN, 0 },
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
@@ -980,6 +1141,7 @@ int main(int argc, char **argv) {
         { -1, POLLIN, 0 },
 #endif
         { nh_syncd_requests_fd(rq), POLLIN, 0 },
+        { nh_syncd_subscription_fd(pull.subscription), POLLIN, 0 },
     };
     /* First pass re-checks the drop: closes the gap between load_cfg's
      * read and arming the watch. */
@@ -1001,11 +1163,14 @@ int main(int argc, char **argv) {
                 pfd[1].fd = -1;
                 fprintf(stderr, "syncd: home seed appeared — this home is now "
                         "porthome-managed\n");
+                if (snap_unknown && init_fresh_personal_state(&cfg, &state) != 0) { exit_code = 8; break; }
                 if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0) { exit_code = 8; break; }
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
                 if (start_vaults(&cfg, state, ig, !snap_unknown && (!ilk.nostr_home_state || strcmp(ilk.nostr_home_state, "partial")), 0, &vaults)) { exit_code = 8; break; }
                 pfd[2].fd = nh_vault_manager_fd(vaults);
 #endif
+                if (personal_pull_start(&cfg, state, ba, ig, pin_ring, &pull) != 0) { exit_code = 8; break; }
+                pfd[4].fd = nh_syncd_subscription_fd(pull.subscription);
                 managed = true;
                 requests_due = true;
                 pfd[0].fd = nh_syncd_watcher_fd(wa);
@@ -1024,9 +1189,14 @@ int main(int argc, char **argv) {
                 syncd_status_flush();
             }
         }
-        uint64_t next_ms = nh_syncd_batcher_next_tick_ms(ba);
+        bool pull_ready = pull.subscription &&
+            nh_syncd_subscription_caught_up(pull.subscription);
+        uint64_t next_ms = pull_ready ? nh_syncd_batcher_next_tick_ms(ba) : UINT64_MAX;
         int t = next_ms == UINT64_MAX ? -1 :
                 (next_ms > 3600000ull ? 3600000 : (int)next_ms);
+        uint64_t retry_ms = nh_syncd_subscription_retry_delay_ms(pull.subscription);
+        if (retry_ms != UINT64_MAX && (t < 0 || retry_ms < (uint64_t)t))
+            t = retry_ms > 3600000ull ? 3600000 : (int)retry_ms;
         /* xnxd part 2: cap poll timeout at the rescan tick when set. */
         if (wa && tick_due(&last_rescan, cfg.rescan_interval_sec, &t)) {
             (void)nh_syncd_watcher_force_rescan(wa);
@@ -1050,13 +1220,20 @@ int main(int argc, char **argv) {
             (void)run_gc(&cfg, vaults, 0);
 #endif
         if (managed && requests_due) t = 0; /* more requests queued */
-        int pr = poll(pfd, 4, t);
+        int pr = poll(pfd, 5, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
         if (pfd[3].revents & POLLIN) requests_due = true;
+        if (pull.subscription &&
+            ((pfd[4].revents & POLLIN) ||
+             nh_syncd_subscription_retry_delay_ms(pull.subscription) == 0))
+            personal_pull_service(&pull, &cfg, &ilk);
         if (wa && (pfd[0].revents & POLLIN)) nh_syncd_watcher_drain(wa);
         if (pfd[1].fd >= 0 && (pfd[1].revents & POLLIN)) seed_check = true;
         bool vault_ready = pfd[2].revents & POLLIN;
-        if (nh_syncd_batcher_poll(ba) == NH_SYNCD_BATCHER_READY || vault_ready) {
+        pull_ready = pull.subscription &&
+            nh_syncd_subscription_caught_up(pull.subscription);
+        if (pull_ready &&
+            (nh_syncd_batcher_poll(ba) == NH_SYNCD_BATCHER_READY || vault_ready)) {
             nh_syncd_batch *batch = nh_syncd_batcher_take(ba, vault_ready);
             if (batch) {
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
@@ -1131,10 +1308,14 @@ int main(int argc, char **argv) {
                  * this from broker state alongside home_key. */
                 memcpy(pc.root_id, seed, 32);
 
+                char *signer_pub = nostr_key_get_public(cfg.nsec_hex);
+                blossom_signer_t signer = {signer_pub, personal_sign_json, cfg.nsec_hex};
+                pc.bud02_signer = signer_pub ? &signer : NULL;
                 char *emsg = NULL;
-                int pushed = nh_syncd_push_batch(&pc, state, batch,
+                int pushed = signer_pub ? nh_syncd_push_batch(&pc, state, batch,
                                                  cfg.home, ig, &ilk,
-                                                 cfg.state_dir, &emsg);
+                                                 cfg.state_dir, &emsg) : NH_SYNCD_ERR_ARG;
+                free(signer_pub);
                 nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_PUSHING);
                 syncd_status_flush();
                 if (pushed == NH_SYNCD_OK) {
@@ -1209,6 +1390,7 @@ vault_service:
     if (tail) nh_syncd_batch_free(tail);
 
 cleanup:
+    personal_pull_stop(&pull);
     nh_syncd_requests_close(rq);
     nh_syncd_watcher_free(wa);
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL

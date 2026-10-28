@@ -383,8 +383,12 @@ def classify(policy, path, executable=False):
     rules = [r for n, r in matches if n == size]
     effect = rules[0]["effect"]
     if effect == "non_execution":
-        # Only the narrow documented allowlist is exempt; executable prose is not.
-        allowed = path == "LICENSE" or path.startswith(".beads/") or (path.startswith("docs/") and PurePosixPath(path).suffix in {".md", ".rst", ".txt"} and not executable)
+        # Analysis probe scripts are retained documentation evidence, not gate inputs.
+        probe_evidence = (any(r.get("prefix") == "docs/analysis" for r in rules)
+                          and re.fullmatch(r"docs/analysis/[^/]+-probe-\d{4}-\d{2}-\d{2}/.+", path) is not None)
+        allowed = (path == "LICENSE" or path.startswith(".beads/")
+                   or (path.startswith("docs/") and PurePosixPath(path).suffix in {".md", ".rst", ".txt"} and not executable)
+                   or probe_evidence)
         if not allowed:
             return {"path": path, "effect": "global", "nodes": [], "reason": "non-prose input under non-execution rule", "unclassified": True}
     return {"path": path, "effect": effect, "nodes": sorted({n for r in rules for n in r["nodes"]}), "reason": "; ".join(sorted({r["reason"] for r in rules})), "unclassified": False}

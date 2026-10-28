@@ -63,6 +63,7 @@ typedef struct {
     uint8_t *sealed;
     size_t   sealed_len;
     int      calls;
+    int64_t  last_created_at;
 } mock_pub_ctx;
 
 static int mock_publish(void *ud, const char *pk, int64_t cat,
@@ -76,7 +77,8 @@ static int mock_publish(void *ud, const char *pk, int64_t cat,
     memcpy(m->sealed, sealed, sealed_len);
     m->sealed_len = sealed_len;
     m->calls++;
-    (void)pk; (void)cat; (void)dtag;
+    m->last_created_at = cat;
+    (void)pk; (void)dtag;
     /* Fake event id: deterministic from call count so the test can
      * assert the second push produced a new event. */
     snprintf(out_event_id, 65,
@@ -312,14 +314,14 @@ static void t_happy_path(void) {
     push_once(state, ig, r1, 5, &mp);
 
     assert(mp.calls == 1);
-    assert(nh_syncd_state_get_local_generation(state) == 1);
+    assert(nh_syncd_state_get_local_generation(state) == (uint64_t)mp.last_created_at);
     assert(nh_syncd_state_file_count(state) == 5);
     /* snapshot.json + generation exist. */
     char gp[400]; snprintf(gp, sizeof gp, "%s/generation", g_state);
     FILE *gf = fopen(gp, "r"); assert(gf);
-    char gbuf[8] = {0}; size_t gn = fread(gbuf, 1, 7, gf); fclose(gf);
+    char gbuf[32] = {0}; size_t gn = fread(gbuf, 1, sizeof gbuf - 1, gf); fclose(gf);
     assert(gn > 0);
-    assert(gbuf[0] == '1');
+    assert(strtoull(gbuf, NULL, 10) == (uint64_t)mp.last_created_at);
 
     /* Decode the sealed manifest to prove it's well-formed. */
     uint8_t seed[32], hk[32];
@@ -339,9 +341,11 @@ static void t_happy_path(void) {
     /* Modify one file → second push. */
     write_file("docs/notes.md", "# notes\n\nCHANGED line\n");
     const char *r2[] = { "docs/notes.md" };
+    uint64_t first_generation = nh_syncd_state_get_local_generation(state);
     push_once(state, ig, r2, 1, &mp);
     assert(mp.calls == 2);
-    assert(nh_syncd_state_get_local_generation(state) == 2);
+    assert(nh_syncd_state_get_local_generation(state) == (uint64_t)mp.last_created_at);
+    assert(nh_syncd_state_get_local_generation(state) > first_generation);
     assert(nh_syncd_state_file_count(state) == 5);
 
     nh_syncd_state_free(state);

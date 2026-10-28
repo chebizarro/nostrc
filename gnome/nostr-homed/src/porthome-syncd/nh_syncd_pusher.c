@@ -74,7 +74,8 @@ extern int nh_syncd_state_upsert_symlink_(nh_syncd_state *s,
                                           uint64_t mtime_ns,
                                           const char *target);
 extern int nh_syncd_state_delete_(nh_syncd_state *s, const char *rel);
-extern void nh_syncd_state_bump_generation_(nh_syncd_state *s);
+extern void nh_syncd_state_set_local_generation_(nh_syncd_state *s, uint64_t generation);
+extern void nh_syncd_state_set_pointer_event_id_(nh_syncd_state *s, const char *id);
 
 typedef int (*nh_syncd_state_iter_fn_local)(void *ud, const char *rel, json_t *row);
 /* nh_syncd_state.c defines the actual iter fn with the same shape but with json_t as the typedef.
@@ -538,6 +539,8 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
         }
     }
 
+    bool changed = false;
+    bool excluded_in_batch = false;
     /* Walk each batch item. Anything that survives the ignore gate
      * and stat/permission checks is classified as ADD / MODIFY /
      * DELETE and mutates state.  Errors along the way roll back the
@@ -547,7 +550,10 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
         nh_syncd_change_kind kind = 0;
         (void)nh_syncd_batch_at(batch, i, &rel, &kind);
         if (!rel || !*rel) continue;
-        if (cfg->exclude_path && cfg->exclude_path(cfg->exclude_path_ud, rel)) continue;
+        if (cfg->exclude_path && cfg->exclude_path(cfg->exclude_path_ud, rel)) {
+            excluded_in_batch = true;
+            continue;
+        }
 
         /* Ignore gate (path-only + stat). */
         char abs[PATH_MAX];
@@ -564,7 +570,10 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
 
         /* DELETE (or ADD/MODIFY where the file is now gone). */
         if (!have_st || kind == NH_SYNCD_CHANGE_DELETE) {
-            nh_syncd_state_delete_(state, rel);
+            if (nh_syncd_state_find(state, rel)) {
+                nh_syncd_state_delete_(state, rel);
+                changed = true;
+            }
             continue;
         }
 
@@ -575,7 +584,13 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
                        + (uint64_t)st.st_mtim.tv_nsec;
 
         if (S_ISDIR(st.st_mode)) {
+            const nh_syncd_entry *cur = nh_syncd_state_find(state, rel);
+            if (cur && nh_syncd_entry_kind(cur) == NH_SYNCD_KIND_DIR &&
+                nh_syncd_entry_mode(cur) == mode &&
+                nh_syncd_entry_uid(cur) == uid && nh_syncd_entry_gid(cur) == gid &&
+                nh_syncd_entry_mtime_ns(cur) == mt_ns) continue;
             (void)nh_syncd_state_upsert_dir_(state, rel, mode, uid, gid, mt_ns);
+            changed = true;
             if (cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, rel))
                 (void)nh_syncd_state_set_lazy_dir_(state, rel, true);
             continue;
@@ -585,7 +600,15 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
             ssize_t tn = readlink(abs, tgt, sizeof tgt - 1);
             if (tn < 0) { rc = NH_SYNCD_ERR_IO; goto fail; }
             tgt[tn] = '\0';
+            const nh_syncd_entry *cur = nh_syncd_state_find(state, rel);
+            if (cur && nh_syncd_entry_kind(cur) == NH_SYNCD_KIND_SYMLINK &&
+                nh_syncd_entry_mode(cur) == mode &&
+                nh_syncd_entry_uid(cur) == uid && nh_syncd_entry_gid(cur) == gid &&
+                nh_syncd_entry_mtime_ns(cur) == mt_ns &&
+                nh_syncd_entry_symlink_target(cur) &&
+                !strcmp(nh_syncd_entry_symlink_target(cur), tgt)) continue;
             (void)nh_syncd_state_upsert_symlink_(state, rel, mode, uid, gid, mt_ns, tgt);
+            changed = true;
             continue;
         }
         if (!S_ISREG(st.st_mode)) continue; /* defence-in-depth */
@@ -598,11 +621,16 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
         if (sha256_hex(pt, pt_len, content_hash_hex) != 0) {
             free(pt); rc = NH_SYNCD_ERR_CRYPTO; goto fail;
         }
-        /* Skip if content unchanged AND size + mtime unchanged
-         * (defensive short-circuit for spurious inotify wake-ups). */
+        /* Skip exact unchanged entries caused by spurious inotify wake-ups. */
         const nh_syncd_entry *cur = nh_syncd_state_find(state, rel);
+        size_t expected_chunks = pt_len ?
+            (pt_len + NH_SYNCD_CHUNK_SIZE - 1) / NH_SYNCD_CHUNK_SIZE : 0;
         if (cur && nh_syncd_entry_size(cur) == pt_len &&
+            nh_syncd_entry_chunk_count(cur) == expected_chunks &&
             nh_syncd_entry_kind(cur) == NH_SYNCD_KIND_FILE &&
+            nh_syncd_entry_mode(cur) == mode &&
+            nh_syncd_entry_uid(cur) == uid && nh_syncd_entry_gid(cur) == gid &&
+            nh_syncd_entry_mtime_ns(cur) == mt_ns &&
             !strcmp(nh_syncd_entry_content_hash_hex(cur), content_hash_hex)) {
             free(pt);
             continue;
@@ -652,6 +680,13 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
         for (size_t j = 0; j < n_chunks; j++) free(addrs[j]);
         free(addrs);
         free(pt);
+        changed = true;
+    }
+    if (!changed && !excluded_in_batch) {
+        if (cfg->on_upload_summary)
+            cfg->on_upload_summary(cfg->on_upload_summary_ud, &worst_result);
+        if (bl) blossom_pool_free(bl);
+        return NH_SYNCD_OK;
     }
 
     /* Rebuild the WHOLE manifest from the (now-updated) state. */
@@ -676,6 +711,13 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
     /* Publish. */
     char event_id[65] = {0};
     int64_t created_at = (int64_t)time(NULL);
+    uint64_t previous = nh_syncd_state_get_local_generation(state);
+    if (previous >= INT64_MAX) {
+        free(sealed);
+        set_err(out_error_msg, "local generation exhausted");
+        rc = NH_SYNCD_ERR_LIMITED_MODE; goto fail;
+    }
+    if (created_at <= (int64_t)previous) created_at = (int64_t)(previous + 1);
     if (cfg->event_publish_fn) {
         int prc = cfg->event_publish_fn(cfg->event_publish_ud,
                                         pubkey_hex, created_at,
@@ -697,8 +739,13 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
     }
     free(sealed);
 
-    /* Advance and persist. */
-    nh_syncd_state_bump_generation_(state);
+    /* The signed pointer's timestamp is the generation stamp. Keep the
+     * durable state at that same value so own relay echoes are no-ops. */
+    nh_syncd_state_set_local_generation_(state, (uint64_t)created_at);
+    /* OK confirms receipt, not that this addressable event won every relay's
+     * replaceable-head ordering. Keep the last reconciled remote cursor until
+     * a readback, so a concurrent remote head cannot delete local-only work. */
+    nh_syncd_state_set_pointer_event_id_(state, event_id);
     if (state_dir_for_persist) {
         int srv = nh_syncd_state_save(state, state_dir_for_persist);
         if (srv != NH_SYNCD_OK) {

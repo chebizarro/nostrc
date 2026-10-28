@@ -4,41 +4,13 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * The seam I1 published:
- *   nh_syncd_subscription_start(relays, ..., cb, cb_ud) →
- *     a NostrSimplePool that ensures every relay and installs `cb` as
- *     the EVENT middleware. The middleware forwards the event id,
- *     created_at, `d` tag, and event.content raw string to `cb`.
- *   nh_syncd_subscription_stop(sub) — tears down.
- *
- * I2 provides:
- *   1. A callback (`nh_syncd_pull_on_pointer`) that:
- *      - filters by expected pubkey and d-tag,
- *      - hex-decodes event.content,
- *      - AEAD-decodes into a nh_porthome_manifest,
- *      - if that manifest's version and generation strictly exceed
- *        state's local, runs `nh_syncd_reconcile_from_manifest`,
- *      - updates the pull-ctx counters (introspection for tests).
- *   2. A tiny opaque pull-ctx that owns the reconcile config so the
- *      subscription callback stays a plain function pointer.
- *
- * Signature verification: I1's subscription middleware forwards ONLY
- * the event id + created_at + d-tag + content string. Signature/pubkey
- * verification cannot be done from the strings alone (we'd need the
- * NostrEvent object). We rely on the pool's own inbound filter having
- * verified the signature already (libnostr's default) AND we hard-code
- * the expected pubkey/d-tag into the subscription so the mismatched
- * events are filtered upstream. A defence-in-depth pubkey/d-tag check
- * here is a NO-OP because I1's callback doesn't hand us the pubkey.
- * If I3 later tightens the seam to hand us the full event, we upgrade
- * this file to re-check.
- *
- * Generation ordering: the reconciler only advances local when the
- * incoming manifest's `remote_generation` (== event.created_at, which
- * the design uses as the monotone generation stamp for the pointer)
- * strictly exceeds local — matches design §2.2 "generation" semantics.
- * If we later separate created_at from generation (design leaves this
- * open), the change is one line here.
+ * The subscription verifies kind, author, d-tag and signature before
+ * delivering a pointer on the daemon's state-owning thread. This callback
+ * decodes the sealed manifest and reconciles the latest addressable pointer.
+ * It returns success only after reconciliation and persistence succeed, so
+ * replay deduplication does not acknowledge a failed fetch. Equal-timestamp
+ * pointers use NIP-01 event-ID ordering; the winning ID is persisted with
+ * the snapshot cursor.
  */
 
 #define _GNU_SOURCE
@@ -123,47 +95,55 @@ static int hex_decode(const char *hex, uint8_t **out, size_t *out_len) {
     return 0;
 }
 
-void nh_syncd_pull_on_pointer(void *ud,
+extern const char *nh_syncd_state_pointer_event_id_(const nh_syncd_state *s);
+extern void nh_syncd_state_set_pointer_event_id_(nh_syncd_state *s, const char *id);
+
+int nh_syncd_pull_on_pointer(void *ud,
                               const char *event_id_hex,
                               int64_t     created_at,
                               const char *d_tag,
                               const char *content_hex_or_b64)
 {
-    (void)event_id_hex;
     nh_syncd_pull_ctx *c = (nh_syncd_pull_ctx *)ud;
-    if (!c) return;
+    if (!c || !event_id_hex) return NH_SYNCD_ERR_ARG;
     atomic_fetch_add(&c->total_events, 1);
 
     /* d-tag check (belt-and-braces — the subscription filter also has
      * this, but a hostile pool implementation could still hand us
      * something else). */
     if (!d_tag || !c->opts.d_tag || strcmp(d_tag, c->opts.d_tag) != 0)
-        return;
+        return NH_SYNCD_ERR_ARG;
 
     /* Content is expected to be the AEAD-sealed CBOR bytes rendered as
      * lowercase hex (matches operator publisher + fetch helper). */
     uint8_t *sealed = NULL; size_t sealed_len = 0;
     if (hex_decode(content_hex_or_b64, &sealed, &sealed_len) != 0)
-        return;
+        return NH_SYNCD_ERR_MANIFEST;
 
     nh_porthome_manifest *m = NULL;
     if (nh_porthome_manifest_decode_sealed(sealed, sealed_len, c->opts.home_key, &m) != 0) {
         free(sealed);
-        return;
+        return NH_SYNCD_ERR_MANIFEST;
     }
     free(sealed);
-    if (!m) return;
+    if (!m) return NH_SYNCD_ERR_MANIFEST;
 
     /* Generation ordering — design §2.2 uses event.created_at as the
      * monotone generation stamp for the pointer. */
     pthread_mutex_lock(&c->mu);
     uint64_t remote_gen = (uint64_t)(created_at > 0 ? created_at : 0);
     uint64_t local_gen  = nh_syncd_state_get_local_generation(c->opts.state);
-    if (remote_gen <= local_gen) {
+    const char *current_id = nh_syncd_state_pointer_event_id_(c->opts.state);
+    if (remote_gen < local_gen ||
+        (remote_gen == local_gen && current_id[0] &&
+         strcmp(event_id_hex, current_id) <= 0)) {
         pthread_mutex_unlock(&c->mu);
         nh_porthome_manifest_dispose(m); free(m);
-        return;
+        return NH_SYNCD_OK;
     }
+    char previous_id[65];
+    snprintf(previous_id, sizeof previous_id, "%s", current_id);
+    nh_syncd_state_set_pointer_event_id_(c->opts.state, event_id_hex);
 
     nh_syncd_reconcile_cfg rc = {0};
     rc.manifest           = m;
@@ -199,8 +179,10 @@ void nh_syncd_pull_on_pointer(void *ud,
             if (prc != NH_SYNCD_CACHE_OK_LOCAL)
                 fprintf(stderr, "syncd/pull: pin_ring promote rc=%d\n", prc);
         }
-    } else if (emsg) {
-        fprintf(stderr, "syncd/pull: reconcile rc=%d msg=%s\n", rrc, emsg);
+    } else {
+        nh_syncd_state_set_pointer_event_id_(c->opts.state, previous_id);
+        fprintf(stderr, "syncd/pull: reconcile rc=%d msg=%s\n", rrc,
+                emsg ? emsg : "unknown error");
     }
     pthread_mutex_unlock(&c->mu);
 
@@ -208,4 +190,5 @@ void nh_syncd_pull_on_pointer(void *ud,
     free(emsg);
     nh_porthome_manifest_dispose(m);
     free(m);
+    return rrc == NH_SYNCD_OK && res ? NH_SYNCD_OK : (rrc ? rrc : NH_SYNCD_ERR_IO);
 }
