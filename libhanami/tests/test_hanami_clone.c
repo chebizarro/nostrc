@@ -16,6 +16,7 @@
 #include <sqlite3.h>
 #include <assert.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,21 @@ static hanami_signer_t signer;
     const git_error *e_ = git_error_last(); \
     fprintf(stderr, "%s failed: %d (%s) at %d\n", #expr, rc_, e_ ? e_->message : "", __LINE__); \
     abort(); } } while (0)
+
+/* Formatting into fixed test buffers never truncates silently. */
+__attribute__((format(printf, 3, 4)))
+static void format_into(char *out, size_t n, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int written = vsnprintf(out, n, fmt, ap);
+    va_end(ap);
+    if (written < 0 || (size_t)written >= n) {
+        fprintf(stderr, "format_into: '%s' needs %d bytes, buffer has %zu\n", fmt, written, n);
+        abort();
+    }
+}
+#define FORMAT(buf, ...) format_into((buf), sizeof(buf), __VA_ARGS__)
 
 /* data: secret key, or NULL for sk. */
 static hanami_error_t sign_event(const char *json, char **out, void *data)
@@ -53,7 +69,7 @@ static size_t receive(void *ptr, size_t size, size_t count, void *payload)
 }
 static long counter(const char *name)
 {
-    char url[256]; snprintf(url, sizeof(url), "%s/control/%s", blossom, name);
+    char url[256]; FORMAT(url, "%s/control/%s", blossom, name);
     CURL *curl = curl_easy_init(); assert(curl);
     small_body b = {0};
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -112,7 +128,7 @@ static char *repo_config_string(git_repository *repo, const char *key)
     return out;
 }
 
-static void clone_uri(char *out, size_t n) { snprintf(out, n, "nostr://%s/repo", pk); }
+static void clone_uri(char *out, size_t n) { format_into(out, n, "nostr://%s/repo", pk); }
 
 /* nostrc-g2g37: a 30617 whose `clone` URL is a GRASP Git Smart HTTP endpoint
  * must never be treated as the Blossom API. */
@@ -127,7 +143,7 @@ static void test_discovery(void)
 
     /* 1. Only a Git clone URL is known: fail visibly, touch nothing. */
     hanami_config_t *config = fixture_config(NULL);
-    snprintf(dest, sizeof(dest), "%s/discovery-none", root);
+    FORMAT(dest, "%s/discovery-none", root);
     assert(hanami_clone(&repo, uri, dest, NULL, config) == HANAMI_ERR_CONFIG);
     assert(!repo);
     const git_error *e = git_error_last();
@@ -139,7 +155,7 @@ static void test_discovery(void)
     /* 2. Misconfigured endpoint pointing at the Git URL: the probe
      *    classifies it as not-Blossom instead of using it. */
     config = fixture_config(grasp);
-    snprintf(dest, sizeof(dest), "%s/discovery-misconfigured", root);
+    FORMAT(dest, "%s/discovery-misconfigured", root);
     assert(hanami_clone(&repo, uri, dest, NULL, config) == HANAMI_ERR_BLOSSOM);
     e = git_error_last();
     assert(e && strstr(e->message, "Blossom server"));
@@ -151,7 +167,7 @@ static void test_discovery(void)
     const char *servers[] = { grasp, blossom };
     publish_server_list(servers, 2);
     config = fixture_config(NULL);
-    snprintf(dest, sizeof(dest), "%s/discovery-listed", root);
+    FORMAT(dest, "%s/discovery-listed", root);
     OK(hanami_clone(&repo, uri, dest, NULL, config));
     char *selected = repo_config_string(repo, "hanami.endpoint");
     assert(selected && strcmp(selected, blossom) == 0);
@@ -169,7 +185,7 @@ static void test_discovery(void)
  * push path once it publishes manifests.
  * ========================================================================= */
 
-static void path_of(char *out, size_t n, const char *name) { snprintf(out, n, "%s/%s", root, name); }
+static void path_of(char *out, size_t n, const char *name) { format_into(out, n, "%s/%s", root, name); }
 
 static void write_text(const char *name, const char *text)
 {
@@ -337,7 +353,7 @@ static void assert_objects_local(git_repository *r, const char *list)
     free(dup); git_odb_free(odb);
 }
 
-static long gets_of(const char *sha) { char name[96]; snprintf(name, sizeof(name), "gets/%s", sha); return counter(name); }
+static long gets_of(const char *sha) { char name[96]; FORMAT(name, "gets/%s", sha); return counter(name); }
 
 
 /* ---- production push helpers ---- */
@@ -352,7 +368,7 @@ static size_t receive_dyn(void *ptr, size_t size, size_t count, void *payload)
 }
 static char *control_get(const char *path)
 {
-    char url[512]; snprintf(url, sizeof(url), "%s/control/%s", blossom, path);
+    char url[512]; FORMAT(url, "%s/control/%s", blossom, path);
     CURL *curl = curl_easy_init(); assert(curl);
     dyn_body b = {0};
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -367,14 +383,14 @@ static char *control_get(const char *path)
 }
 static void control_set(const char *flag, bool on)
 {
-    char path[96]; snprintf(path, sizeof(path), "set/%s/%s", flag, on ? "on" : "off");
+    char path[96]; FORMAT(path, "set/%s/%s", flag, on ? "on" : "off");
     free(control_get(path));
 }
 
 /* Segment as stored on Blossom, read without touching the GET counters. */
 static json_t *peek_segment(const char *sha)
 {
-    char path[96]; snprintf(path, sizeof(path), "blob/%s", sha);
+    char path[96]; FORMAT(path, "blob/%s", sha);
     char *body = control_get(path);
     json_t *doc = json_loads(body, 0, NULL); assert(doc);
     free(body);
@@ -383,7 +399,7 @@ static json_t *peek_segment(const char *sha)
 
 static char *cache_meta(const char *repo_dir, const char *key)
 {
-    char path[PATH_MAX]; snprintf(path, sizeof(path), "%s/%s/.git/hanami/index.sqlite", root, repo_dir);
+    char path[PATH_MAX]; FORMAT(path, "%s/%s/.git/hanami/index.sqlite", root, repo_dir);
     sqlite3 *db = NULL; sqlite3_stmt *st = NULL;
     assert(sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK);
     assert(sqlite3_prepare_v2(db, "SELECT value FROM hanami_meta WHERE key = ?", -1, &st, NULL) == SQLITE_OK);
@@ -412,7 +428,7 @@ static void published_main(char out[41])
     out[0] = 0;
     for (size_t i = 0; i < state->ref_count; i++)
         if (!strcmp(state->refs[i].refname, "refs/heads/main"))
-            snprintf(out, 41, "%s", state->refs[i].target);
+            format_into(out, 41, "%s", state->refs[i].target);
     nip34_repo_state_free(state);
     hanami_nostr_ctx_free(ctx);
 }
@@ -481,11 +497,11 @@ static void test_clone(void)
     assert_ref(repo, "refs/remotes/origin/main", c1);
     assert_ref(repo, "HEAD", c1);
     assert_objects_local(repo, objects);
-    snprintf(file, sizeof(file), "%s/README", dest);
+    FORMAT(file, "%s/README", dest);
     FILE *f = fopen(file, "r"); assert(f);
     char body[64] = {0}; assert(fread(body, 1, sizeof(body) - 1, f) > 0); fclose(f);
     assert(strcmp(body, "hello hanami\n") == 0);
-    snprintf(file, sizeof(file), "%s/.git/hanami/index.sqlite", dest);
+    FORMAT(file, "%s/.git/hanami/index.sqlite", dest);
     struct stat st; assert(stat(file, &st) == 0 && st.st_size > 0);
     char *ep = repo_config_string(repo, "hanami.endpoint"), *rl = repo_config_string(repo, "hanami.relays");
     char *url = repo_config_string(repo, "remote.origin.url");
@@ -582,7 +598,7 @@ static void test_checkpoint(void)
     long prev_depth = strtol(depth, NULL, 10); free(depth);
     bool reset = false;
     for (int i = 0; i < 20 && !reset; i++) {
-        char notes[32]; snprintf(notes, sizeof(notes), "push %d\n", i);
+        char notes[32]; FORMAT(notes, "push %d\n", i);
         make_commit(src, "checkpoint run\n", notes, &parent, &next);
         parent = next;
         OK(push_source(src));
@@ -658,8 +674,8 @@ static void test_fetch(void)
 static void expect_clone_failure(const char *repo_id, hanami_error_t want, const char *needle)
 {
     char uri[200], dest[PATH_MAX];
-    snprintf(uri, sizeof(uri), "nostr://%s/%s", pk, repo_id);
-    snprintf(dest, sizeof(dest), "%s/fail-%s", root, repo_id);
+    FORMAT(uri, "nostr://%s/%s", pk, repo_id);
+    FORMAT(dest, "%s/fail-%s", root, repo_id);
     hanami_config_t *config = fixture_config(NULL);
     git_repository *repo = NULL;
     hanami_error_t got = hanami_clone(&repo, uri, dest, NULL, config);
@@ -753,7 +769,7 @@ static void test_negative(void)
     publish_state_refs("chain", chain_refs, 2, "ref: refs/heads/default", chain_head, at);
     {
         char uri[200], dest[PATH_MAX];
-        snprintf(uri, sizeof(uri), "nostr://%s/chain", pk);
+        FORMAT(uri, "nostr://%s/chain", pk);
         path_of(dest, sizeof(dest), "chain-clone");
         hanami_config_t *config = fixture_config(NULL);
         git_repository *repo = NULL;
@@ -778,7 +794,7 @@ static void test_negative(void)
      * non-empty one is refused untouched. */
     {
         char uri[200], dest[PATH_MAX], sentinel[PATH_MAX];
-        snprintf(uri, sizeof(uri), "nostr://%s/nomanifest", pk);
+        FORMAT(uri, "nostr://%s/nomanifest", pk);
         path_of(dest, sizeof(dest), "preexisting-empty");
         assert(mkdir(dest, 0755) == 0);
         hanami_config_t *config = fixture_config(NULL);
@@ -786,11 +802,11 @@ static void test_negative(void)
         assert(hanami_clone(&repo, uri, dest, NULL, config) == HANAMI_ERR_NOT_FOUND);
         struct stat st;
         assert(stat(dest, &st) == 0 && S_ISDIR(st.st_mode));
-        char gitdir[PATH_MAX + 8]; snprintf(gitdir, sizeof(gitdir), "%s/.git", dest);
+        char gitdir[PATH_MAX + 8]; FORMAT(gitdir, "%s/.git", dest);
         assert(access(gitdir, F_OK) != 0);
         path_of(dest, sizeof(dest), "preexisting-full");
         assert(mkdir(dest, 0755) == 0);
-        snprintf(sentinel, sizeof(sentinel), "%s/keep.txt", dest);
+        FORMAT(sentinel, "%s/keep.txt", dest);
         FILE *f = fopen(sentinel, "w"); assert(f); fputs("mine", f); fclose(f);
         assert(hanami_clone(&repo, uri, dest, NULL, config) == HANAMI_ERR_INVALID_ARG);
         assert(access(sentinel, F_OK) == 0);
@@ -897,7 +913,7 @@ static hanami_error_t clone_via(const char *repo_id, const char *relay_url, cons
                                 const hanami_signer_t *who, const char *dir, git_repository **repo)
 {
     char uri[200], dest[PATH_MAX];
-    snprintf(uri, sizeof(uri), "nostr://%s/%s", pk, repo_id);
+    FORMAT(uri, "nostr://%s/%s", pk, repo_id);
     path_of(dest, sizeof(dest), dir);
     hanami_config_t *config = fixture_config_on(relay_url, endpoint);
     *repo = NULL;
@@ -930,12 +946,12 @@ static void test_relayfail(void)
 {
     char closed_list[200], restricted_list[200], closed_state[200], restricted_state[200];
     char auth_both[200], closed_both[200];
-    snprintf(closed_list, sizeof(closed_list), "%s/closed/10063", relay);
-    snprintf(restricted_list, sizeof(restricted_list), "%s/restricted/10063", relay);
-    snprintf(closed_state, sizeof(closed_state), "%s/closed/30618", relay);
-    snprintf(restricted_state, sizeof(restricted_state), "%s/restricted/30618", relay);
-    snprintf(auth_both, sizeof(auth_both), "%s/auth/10063-30618", relay);
-    snprintf(closed_both, sizeof(closed_both), "%s/closed/10063-30618", relay);
+    FORMAT(closed_list, "%s/closed/10063", relay);
+    FORMAT(restricted_list, "%s/restricted/10063", relay);
+    FORMAT(closed_state, "%s/closed/30618", relay);
+    FORMAT(restricted_state, "%s/restricted/30618", relay);
+    FORMAT(auth_both, "%s/auth/10063-30618", relay);
+    FORMAT(closed_both, "%s/closed/10063-30618", relay);
     char *c1 = read_text("commit-1");
     git_repository *repo = NULL;
 
@@ -1040,12 +1056,12 @@ static void test_outbox(void)
     char *pk2 = nostr_key_get_public(sk2); assert(pk2);
     hanami_signer_t signer2 = { .pubkey = pk2, .sign = sign_event, .user_data = (void *)sk2 };
     char outbox[200], outbox_slash[210], readonly[200], stale[200], filler[4][200];
-    snprintf(outbox, sizeof(outbox), "%s/isolated/outbox", relay);
-    snprintf(outbox_slash, sizeof(outbox_slash), "%s/", outbox);
-    snprintf(readonly, sizeof(readonly), "%s/isolated/readonly", relay);
-    snprintf(stale, sizeof(stale), "%s/isolated/stale", relay);
+    FORMAT(outbox, "%s/isolated/outbox", relay);
+    FORMAT(outbox_slash, "%s/", outbox);
+    FORMAT(readonly, "%s/isolated/readonly", relay);
+    FORMAT(stale, "%s/isolated/stale", relay);
     for (int i = 0; i < 4; i++)
-        snprintf(filler[i], sizeof(filler[i]), "%s/isolated/filler%d", relay, i);
+        FORMAT(filler[i], "%s/isolated/filler%d", relay, i);
     int64_t now = (int64_t)time(NULL);
 
     /* Announcement on the discovery relay; 10063 and tagged 30618 only on
@@ -1071,7 +1087,7 @@ static void test_outbox(void)
     publish_as(&signer2, sk2, state, outbox, now);
 
     char uri[200], dest[PATH_MAX];
-    snprintf(uri, sizeof(uri), "nostr://%s/obx", pk2);
+    FORMAT(uri, "nostr://%s/obx", pk2);
     git_repository *repo = NULL;
 
     /* 1. No kind-10002: no extra relays (not an error), so nothing names a
@@ -1111,7 +1127,7 @@ static void test_outbox(void)
     char *recorded = repo_config_string(repo, "hanami.relays");
     assert(recorded);
     char expect[2048];
-    snprintf(expect, sizeof(expect), "%s,%s,%s,%s,%s,%s", relay, stale, outbox,
+    FORMAT(expect, "%s,%s,%s,%s,%s,%s", relay, stale, outbox,
              filler[0], filler[1], filler[2]);
     if (strcmp(recorded, expect) != 0) {
         fprintf(stderr, "hanami.relays: got %s\nwant %s\n", recorded, expect);

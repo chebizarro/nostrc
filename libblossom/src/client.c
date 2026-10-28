@@ -342,9 +342,15 @@ static char *json_escape_string(const char *str)
             *out++ = '\\';
             *out++ = '\\';
         } else if ((unsigned char)*p <= 0x1F) {
-            /* Escape control chars as \uXXXX */
-            sprintf(out, "\\u%04x", (unsigned char)*p);
-            out += 6;
+            /* Escape control chars as \uXXXX, bounded by what is left of the
+             * first pass's allocation (escape + terminator). */
+            size_t left = len + 1 - (size_t)(out - escaped);
+            int n = snprintf(out, left, "\\u%04x", (unsigned char)*p);
+            if (n != 6 || (size_t)n >= left) {
+                free(escaped);
+                return NULL;
+            }
+            out += n;
         } else {
             *out++ = *p;
         }
