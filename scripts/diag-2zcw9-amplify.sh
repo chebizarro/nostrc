@@ -5,6 +5,13 @@
 # leaving the failing log and core in GH_TEST_EVIDENCE_DIR.
 set -euo pipefail
 build="${1:-build}" workers="${2:-4}" budget="${3:-900}"
+# One session bus and display for every worker, as the stress step's CTest
+# run: separate dbus-run-sessions share the user's AT-SPI socket and break
+# each other's accessibility bus on teardown.
+if [ -z "${DIAG_2ZCW9_INNER:-}" ]; then
+  export DIAG_2ZCW9_INNER=1
+  exec dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' "$0" "$@"
+fi
 evidence="${GH_TEST_EVIDENCE_DIR:?}"
 mkdir -p "$evidence"
 ulimit -c unlimited
@@ -33,7 +40,7 @@ work() {
   local w="$1" n=0 log
   while [ "$(date +%s)" -lt "$deadline" ] && [ ! -e "$fail" ]; do
     n=$((n + 1)); log="$evidence/w$w-run$n.log"
-    if dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' "$exe" --gui "${paths[@]}" > "$log" 2>&1; then
+    if "$exe" --gui "${paths[@]}" > "$log" 2>&1; then
       rm -f "$log"
     else
       echo "worker $w run $n FAILED: $log"; tail -n 5 "$log"; touch "$fail"; return
@@ -47,7 +54,7 @@ if [ -e "$fail" ]; then
   ls -la "$evidence"
   for core in "$evidence"/core*; do
     [ -f "$core" ] || continue
-    gdb -nx -batch -iex 'set debuginfod enabled on' -ex 'set print frame-arguments all' \
+    DEBUGINFOD_URLS=https://debuginfod.ubuntu.com timeout 900 gdb -nx -batch -iex 'set debuginfod enabled on' -ex 'set print frame-arguments all' \
       -ex 'bt full' -ex 'thread apply all bt full' "$exe" -c "$core" > "$core.bt" 2>&1 || true
     sed -n '1,/^Thread [0-9]* (/p' "$core.bt"
   done
