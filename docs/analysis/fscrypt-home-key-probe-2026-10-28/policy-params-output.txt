@@ -1,0 +1,10 @@
+7.0.14-linuxkit
+id=b5eb0d5f5e1da6eb9da920f6f7fa72a1
+## xts-cts-pad32
+policy set
+v2 contents=1 filenames=4 flags=0x3 key_id=b5eb0d5f5e1da6eb9da920f6f7fa72a1
+ok
+## xts-hctr2-pad32
+policy set
+v2 contents=1 filenames=10 flags=0x3 key_id=b5eb0d5f5e1da6eb9da920f6f7fa72a1
+/probe/policy-params.sh: line 11: /mnt/e/xts-hctr2-pad32/t: Package not installed

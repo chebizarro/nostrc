@@ -1,0 +1,149 @@
+
+### versions
+7.0.14-linuxkit
+ioctl driver: /probe/fsc.py
+mke2fs 1.47.2 (1-Jan-2025)
+
+### derive keys (python HKDF-SHA256, porthome-style salts)
+64 /tmp/kA
+32 /tmp/k32
+re-derivation deterministic: yes
+device-diversified keys differ: yes
+
+### ext4 loop image with -O encrypt
+Filesystem features:      has_journal ext_attr resize_inode dir_index orphan_file filetype needs_recovery extent 64bit flex_bg metadata_csum_seed encrypt sparse_super large_file huge_file dir_nlink extra_isize metadata_csum orphan_present
+Journal features:         (none)
+add_key (root, 64B) id=9dcc551a9e28a15c5ab598bc5d796361
+add_key device-B id=1c98cd2773ddb115790276b446856072 (differs: yes)
+removed; files_busy=False other_users=False
+
+### stage dir: policy must be set while EMPTY (before skel copy)
+$ fscryptctl set /mnt/e/home/.nostr-op1 9dcc551a9e28a15c5ab598bc5d796361
+policy set
+  -> rc=0
+v2 contents=1 filenames=4 flags=0x2 key_id=9dcc551a9e28a15c5ab598bc5d796361
+$ fscryptctl set /mnt/e/home/nonempty 9dcc551a9e28a15c5ab598bc5d796361
+ERR ENOTEMPTY (Directory not empty)
+  -> rc=1
+
+### materialise into stage (.part + rename), then renameat2 NOREPLACE into unencrypted /home
+renameat2(RENAME_NOREPLACE) rc= 0
+uid1000 reads (fs-wide v2 keyring, root added key):
+secret plaintext
+
+### nested policy inside encrypted home (per-subtree vault key)
+$ fscryptctl set /mnt/e/home/alice/Team 8cccb58aba33686b2f0cb652666ef9ce
+ERR EEXIST (File exists)
+  -> rc=1
+Team inherited policy:
+v2 contents=1 filenames=4 flags=0x2 key_id=9dcc551a9e28a15c5ab598bc5d796361
+
+### sibling subtrees with different policies (would be needed for per-vault keys): cross-policy rename/link
+policy set
+policy set
+rename -> Invalid cross-device link
+link -> Invalid cross-device link
+rename unencrypted->encrypted -> Invalid cross-device link
+
+### non-root add_key / remove_key claim semantics
+9dcc551a9e28a15c5ab598bc5d796361
+uid1000 add_key ok (same id -> claim added)
+status=PRESENT added_by_self=True user_count=2
+
+### lock at logout with a busy file
+$ fscryptctl remove /mnt/e 9dcc551a9e28a15c5ab598bc5d796361
+removed; files_busy=False other_users=True
+  -> rc=0
+(root removed only root's claim)
+status=PRESENT added_by_self=False user_count=1
+$ fscryptctl remove /mnt/e 9dcc551a9e28a15c5ab598bc5d796361 --all
+removed; files_busy=True other_users=False
+  -> rc=0
+status=INCOMPLETELY_REMOVED added_by_self=False user_count=0
+while INCOMPLETELY_REMOVED: busy file + cached dirs readable? ->
+secret plaintext
+Documents
+Team
+holder killed
+$ fscryptctl remove /mnt/e 9dcc551a9e28a15c5ab598bc5d796361 --all
+removed; files_busy=False other_users=False
+  -> rc=0
+status=ABSENT added_by_self=False user_count=0
+
+### locked view (what a thief / other user / root-without-key sees)
+total 5
+drwx------ 5 alice alice 1024 Oct 27 23:53 .
+drwxr-xr-x 6 root  root  1024 Oct 27 23:53 ..
+drwxr-xr-x 2 alice alice 1024 Oct 27 23:53 Mig0cYyjC20h2zgxnJDdWTfeQHRF59P4
+drwxr-xr-x 2 root  root  1024 Oct 27 23:53 QOMroh8LlhdLGyeCNr6Ppx3p1ctIB8lJ
+drwxr-xr-x 2 alice alice 1024 Oct 27 23:53 qjnfLici7dPqCuqMecckTO5Zet0aXe3p
+/mnt/e/home/alice/Mig0cYyjC20h2zgxnJDdWTfeQHRF59P4:
+total 3
+drwxr-xr-x 2 alice alice 1024 Oct 27 23:53 .
+drwx------ 5 alice alice 1024 Oct 27 23:53 ..
+-rw-r--r-- 1 alice alice   17 Oct 27 23:53 ErjLF72yweUXLAAQb1uUumUMJKeviRAZ
+
+$ cat /mnt/e/home/alice/Documents/note.txt
+cat: /mnt/e/home/alice/Documents/note.txt: No such file or directory
+  -> rc=1
+$ touch /mnt/e/home/alice/newfile
+touch: cannot touch '/mnt/e/home/alice/newfile': Required key not available
+  -> rc=1
+metadata still visible: sizes/mtimes/modes/owner/tree shape above
+0
+plaintext not found in raw image
+
+### re-derive from same seed -> unlock (deterministic, no on-disk key material)
+9dcc551a9e28a15c5ab598bc5d796361
+secret plaintext
+
+### recovery: root can delete a locked home without the key
+$ rm -rf /mnt/e/home/bob-root-vault
+  -> rc=0
+alice
+bob-root
+nonempty
+plainfile
+zz
+
+### 32-byte master key with AES-256-XTS v2 policy
+id32=c2ebb8200793f7512b36921edad3b508
+$ fscryptctl set /mnt/e/k32 c2ebb8200793f7512b36921edad3b508
+policy set
+  -> rc=0
+x
+
+### f2fs with -O encrypt
+$ fscryptctl set /mnt/f/h 9dcc551a9e28a15c5ab598bc5d796361
+policy set
+  -> rc=0
+ok
+
+### enable encrypt on an EXISTING ext4 (tune2fs) - mounted and unmounted
+$ tune2fs -O encrypt /dev/loop0
+tune2fs 1.47.2 (1-Jan-2025)
+  -> rc=0
+after online tune2fs add_key -> 9dcc551a9e28a15c5ab598bc5d796361
+$ tune2fs -O encrypt /tmp/t.img
+tune2fs 1.47.2 (1-Jan-2025)
+  -> rc=0
+after remount add_key -> 9dcc551a9e28a15c5ab598bc5d796361
+$ fscryptctl set /mnt/t/h 9dcc551a9e28a15c5ab598bc5d796361
+policy set
+  -> rc=0
+
+### ext4 WITHOUT encrypt feature
+add_key -> ERR ENOTSUP (Operation not supported)
+$ fscryptctl set /mnt/n/h 9dcc551a9e28a15c5ab598bc5d796361
+ERR ENOTSUP (Operation not supported)
+  -> rc=1
+
+### btrfs
+$ fscryptctl add /mnt/b /tmp/kA
+ERR ENOTTY (Inappropriate ioctl for device)
+  -> rc=1
+$ fscryptctl set /mnt/b/h 9dcc551a9e28a15c5ab598bc5d796361
+ERR ENOTTY (Inappropriate ioctl for device)
+  -> rc=1
+
+### done
