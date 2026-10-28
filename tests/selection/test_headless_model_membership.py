@@ -1,11 +1,9 @@
 """Exact G02/G05 headless family; real exports, not gate acceptance."""
 import copy
 import json
-import re
 import unittest
 
-from profile_contract_support import step_script
-from selector_support import ROOT, change, s
+from selector_support import ROOT, s
 from realization_support import r
 
 PROFILE = 'groundhog.linux'
@@ -43,7 +41,6 @@ class _MembershipFixture:
             self.assertEqual(owned['effect'], 'impact', path)
             self.assertTrue(owned['nodes'], path)
             self.assertTrue(set(owned['nodes']) <= self.covered(check), path)
-
 
 
 class HeadlessModelMembership(_MembershipFixture, unittest.TestCase):
@@ -122,7 +119,6 @@ class HeadlessModelMembership(_MembershipFixture, unittest.TestCase):
             self.assertIn('{source}/' + path, inputs)
 
 
-
 class SourceClosure(_MembershipFixture, unittest.TestCase):
     """Retained native export/input matrix; direct/manual discovery only."""
     def test_real_executable_source_and_fixture_closures(self):
@@ -156,7 +152,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
         for name in ('groundhog-conversations', 'groundhog-store-conversations'):
             self.assertIn('nostr_gtk_portable', self.export['primary'][name]['closure_targets'])
             self.assertNotIn('nostr_gtk', self.export['primary'][name]['closure_targets'])
-
 
 
 if __name__ == '__main__':

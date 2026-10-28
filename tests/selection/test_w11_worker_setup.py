@@ -8,10 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from selector_support import ROOT, s
-import closeout_support as c
-from w11_worker_support import before_worker_source
-from w11_policy_support import before_policy_source
+from selector_support import ROOT
 
 
 class W11WorkerSetupTests(unittest.TestCase):

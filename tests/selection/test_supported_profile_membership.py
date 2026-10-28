@@ -1,20 +1,10 @@
 """Whole supported ordinary/root census; no subset or workflow acceptance claim."""
 import copy
-import hashlib
-import json
 import unittest
 
 from selector_support import ROOT, change, s
 from realization_support import Project, r
-from closeout_support import before_closeout_policy
-from w11_worker_support import before_worker_policy, current_source_hash
-from w11_policy_support import before_policy_enrollment
-from test_selection_subset import before_full_ownership_policy
-from homed_profile_support import before_homed_policy
-from supported_profile_support import (
-    NEW_INPUTS, before_supported_batch_contract, before_supported_batch_policy,
-    census_inputs, witness,
-)
+from supported_profile_support import witness
 
 
 class SupportedProfileMembership(unittest.TestCase):
@@ -22,11 +12,6 @@ class SupportedProfileMembership(unittest.TestCase):
     def setUpClass(cls):
         cls.p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         cls.data = witness()
-
-
-
-
-
 
 
     def test_graphics_tools_and_headless_aliases_remain_separate(self):

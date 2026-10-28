@@ -108,7 +108,6 @@ class TransportFixture(NormalFixture):
             (lane / 'receipt.json').write_text(json.dumps(receipt))
 
 
-
 class TransportTests(TransportFixture):
     def test_worker_publishes_one_portable_receipt_and_aggregate_never_reopens_worker_paths(self):
         raw = self.public_path.read_bytes()

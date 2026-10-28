@@ -1,11 +1,9 @@
 """Exact offline relay/network transport family; no full-profile acceptance."""
 import copy
-import hashlib
 import json
 import unittest
 
-from headless_transport_projection import BASE, EXPORT, FAMILY, RENEWAL, before_transport_family
-from grotto_nip49_projection import before_grotto_nip49_family
+from headless_transport_projection import BASE, EXPORT, FAMILY, RENEWAL
 from selector_support import ROOT, change, s
 from realization_support import r
 
@@ -62,7 +60,6 @@ class _MembershipFixture:
             previous[ident]['rationale'] = (
                 'Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure.')
         self.assertEqual(s.digest(previous), self.renewal['unchanged_contract_hashes']['nodes'])
-
 
 
 class HeadlessTransportMembership(_MembershipFixture, unittest.TestCase):
@@ -144,7 +141,6 @@ class HeadlessTransportMembership(_MembershipFixture, unittest.TestCase):
             self.assertIn('{source}/' + path, self.policy['checks']['selection.contract']['runtime_inputs'])
 
 
-
 class SourceClosure(_MembershipFixture, unittest.TestCase):
     """Retained native export/input matrix; direct/manual discovery only."""
     def test_compiled_descriptor_runtime_and_fixture_closures(self):
@@ -168,7 +164,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
             self.assertEqual(closure, witness['closure_names'])
         # The daemon is a physical build prerequisite, not selection of its alias test.
         self.assertIn('nostrc-relayd', self.export['primary']['groundhog-relay-publish-wire']['closure_targets'])
-
 
 
 if __name__ == '__main__':

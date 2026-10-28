@@ -13,7 +13,7 @@ from unittest import mock
 
 from selector_support import ROOT, s, change
 from realization_support import Project, r
-from profile_contract_support import source_job_blocks, source_jobs, step_script, validate_job_accounting
+from profile_contract_support import source_jobs, step_script, validate_job_accounting
 
 INVENTORY = ROOT / "tests/selection/inventory.json"
 EXPORTS = ROOT / "tests/selection/fixtures/profile_exports.json"
@@ -70,7 +70,6 @@ class RootProfileContracts(unittest.TestCase):
             return calls, exported
 
 
-
     def test_build_audit_test_commands_and_only_existing_exclusions(self):
         for runner, ident in ROOT_PROFILES.items():
             contract = self.policy["profiles"][ident]["workflow_contract"]
@@ -105,7 +104,6 @@ class ConfiguredMembershipContracts(unittest.TestCase):
         from supported_profile_support import before_supported_batch_policy
         self.policy = s.load_inventory(INVENTORY)
         self.exports = json.loads(EXPORTS.read_text())["exports"]
-
 
 
     def test_poll_consumer_reaches_background_through_observed_runtime_target(self):

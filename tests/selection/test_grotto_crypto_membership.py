@@ -1,14 +1,10 @@
 """Six safe ordinary crypto registrations; no vector fallback/profile credit."""
 import copy
-import hashlib
 import json
 import unittest
 
 from selector_support import ROOT, change, s
-from grotto_crypto_projection import (BASE, CHECKS, EXPORT, FAMILY, PROFILE, RENEWAL,
-                                      before_grotto_crypto_family,
-                                      grotto_crypto_current_workflow_checks,
-                                      renewal_witness)
+from grotto_crypto_projection import BASE, CHECKS, EXPORT, FAMILY, PROFILE, renewal_witness
 from realization_support import r
 
 
@@ -19,7 +15,6 @@ class _MembershipFixture:
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.real = self.export['realization']
         self.tests, self.descriptors = r._test_maps(self.real)
-
 
 
 class GrottoCryptoMembership(_MembershipFixture, unittest.TestCase):
@@ -96,7 +91,6 @@ class GrottoCryptoMembership(_MembershipFixture, unittest.TestCase):
         self.assertFalse(any(self.witness['limits'].values()))
 
 
-
 class SourceClosure(_MembershipFixture, unittest.TestCase):
     """Retained native export/input matrix; direct/manual discovery only."""
     def test_real_executables_and_transitive_compiled_input_closure(self):
@@ -131,7 +125,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
             props = r._properties(self.tests[name])
             self.assertEqual(props, {'LABELS': ['selection:' + nip + '.test_inputs'],
                                     'WORKING_DIRECTORY': '{build}/nips/' + nip})
-
 
 
 if __name__ == '__main__':

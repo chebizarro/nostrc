@@ -10,7 +10,7 @@ import unittest
 from types import SimpleNamespace
 
 from realization_support import ROOT, r
-from selector_support import change, s
+from selector_support import s
 
 
 # These are the external sources read/copied/executed by the current suite.
@@ -236,7 +236,6 @@ class SelectionCommandContractTests(unittest.TestCase):
             self.assertIn(descriptor.relative_to(root).as_posix(), expected_inputs(self.policy, root))
             with self.assertRaisesRegex(ValueError, "command source closure changed.*TestInventory"):
                 validate_source_closure(self.policy, root)
-
 
 
 class SelectionCommandInputAuditTests(unittest.TestCase):

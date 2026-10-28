@@ -1,15 +1,11 @@
 """Bounded ordinary account/identity policy membership, not gate acceptance."""
 import copy
-import hashlib
 import json
 import unittest
 
 from selector_support import ROOT, change, s
 import test_selection_realization as r
-from headless_account_policy_projection import (
-    BASE, EXPORT, FAMILY, RENEWAL, before_account_policy_family,
-    verify_historical_account_policy_fixtures,
-)
+from headless_account_policy_projection import BASE, EXPORT, FAMILY, RENEWAL
 
 PROFILE = 'groundhog.linux'
 CHECKS = {
@@ -148,8 +144,6 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
         check['nodes'] = ['execution.groundhog', 'groundhog.unclassified']
         with self.assertRaises(AssertionError):
             self.assert_covered('{source}/gnome/groundhog/src/identity/gh-identity.c', check)
-
-
 
 
 if __name__ == '__main__':

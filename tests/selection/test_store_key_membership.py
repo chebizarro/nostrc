@@ -1,5 +1,4 @@
 """Ordinary Groundhog membership from real exports, not full-gate acceptance."""
-import hashlib
 import json
 import re
 import unittest
@@ -43,7 +42,6 @@ class _MembershipFixture:
         self.assertTrue(nodes <= covered, path)
 
 
-
 class StoreKeyMembership(_MembershipFixture, unittest.TestCase):
     def test_exact_existing_checks_gain_only_ordinary_groundhog_membership(self):
         for ident, name in CHECKS.items():
@@ -78,11 +76,23 @@ class StoreKeyMembership(_MembershipFixture, unittest.TestCase):
             with self.subTest(owned=owned), self.assertRaises(AssertionError):
                 self.assert_classification_covered(owned, covered, 'negative-input')
 
+    def test_store_source_preserves_current_mdk_consumers(self):
+        selected = s.make_plan(self.policy,
+                               [change('gnome/groundhog/src/store/gh-store-key.c')],
+                               head='a' * 40)
+        self.assertEqual(selected['effective_mode'], 'affected')
+        self.assertTrue(set(CHECKS) <= set(selected['selected_checks']))
+        self.assertIn('groundhog.mdk08', selected['expected_lane_ids'])
+        self.assertIn('groundhog.mdk011', selected['expected_lane_ids'])
+        self.assertNotIn('libgo.channel', selected['selected_checks'])
+        ordinary = self.names(PROFILE, selected['selected_checks'])
+        self.assertTrue(set(CHECKS.values()) <= set(ordinary))
+        self.assertNotIn('groundhog-shell', ordinary)
+
     def test_selection_contract_tracks_the_new_test_and_export(self):
         inputs = self.policy['checks']['selection.contract']['runtime_inputs']
         self.assertIn('{source}/' + FIXTURE, inputs)
         self.assertIn('{source}/tests/selection/test_store_key_membership.py', inputs)
-
 
 
 class SourceClosure(_MembershipFixture, unittest.TestCase):
@@ -116,7 +126,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
         self.assertEqual(self.export['properties']['groundhog-store-key-keyring']['TIMEOUT'], 90)
         self.assertEqual(self.export['properties']['groundhog-store-key-keyring']['SKIP_RETURN_CODE'], 77)
         self.assertIn('nostrc-test-bus', self.export['primary']['groundhog-store-key-keyring']['closure_targets'])
-
 
 
 if __name__ == '__main__':

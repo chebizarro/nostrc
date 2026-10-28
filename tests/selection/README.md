@@ -24,7 +24,7 @@ problems, not new protocol or generator behavior.
 Disposition: **16 modules retired; 42 previously failing modules repaired;**
 **109 remaining modules, including one new consolidated regression module.**
 The operational list represents **40 modules** (was 13), with
-**9 explicitly selected classes** in mixed modules. Full manual discovery
+**10 explicitly selected classes** in mixed modules. Full manual discovery
 continues to include the other classes. Platform/capability skips are reported by
 unittest and are not native, hosted, production, signing, or release acceptance.
 
@@ -88,7 +88,7 @@ executed results and commit identities are recorded in bead nostrc-80m1f.
 | `test_encrypted_media_membership` | fail: test_selection.ContractError: native custody command input enrollment changed | CI: `EncryptedMediaMembership` | Other classes remain manual-only: retained native source/export/profile matrix; pinned Gitlink sources where required. |
 | `test_execution_parallelism` | pass | manual-only | Extended native build/input-audit/process matrix; bounded current CLI/runner checks are in the operational suite. |
 | `test_failure_receipts` | pass | manual-only | Extended attestation/receipt/profile qualification or nonvalidation matrix; remains explicitly invoked. |
-| `test_fuzz_json_glib_setup` | fail: ValueError: unaccounted/stale workflow jobs: ['.github/workflows/ci-selective.yml:appimage', '.github/workflows/ci-selective.yml:bp', '.github/workflo | CI: whole module | Current selector/workflow/runner regression; no historical inverse or custody qualification. |
+| `test_fuzz_json_glib_setup` | fail: ValueError: unaccounted/stale workflow jobs: ['.github/workflows/ci-selective.yml:appimage', '.github/workflows/ci-selective.yml:bp', '.github/workflo | CI: `FuzzJsonGlibSetupTests` | Historical enrollment/golden-refusal class remains manual-only. |
 | `test_git_ranges` | pass | CI: whole module | Current selector/workflow/runner regression; no historical inverse or custody qualification. |
 | `test_grotto_crypto_membership` | fail: test_selection.ContractError: native custody command input enrollment changed | CI: `GrottoCryptoMembership` | Other classes remain manual-only: retained native source/export/profile matrix; pinned Gitlink sources where required. |
 | `test_grotto_nip49_membership` | fail: test_selection.ContractError: native custody command input enrollment changed | CI: `GrottoNip49Membership` | Other classes remain manual-only: retained native source/export/profile matrix; pinned Gitlink sources where required. |
@@ -191,7 +191,8 @@ executed results and commit identities are recorded in bead nostrc-80m1f.
 These cases asserted obsolete enrollment/source-snapshot equivalence. Current
 behavior, fixture/source binding, negative admission and execution checks remain;
 the table above identifies operational versus manual ownership. In particular,
-redundant graph paths are no longer mistaken for missing dependencies, and current
+the store-key regression still selects both MDK consumers without an obsolete exact
+lane list. Redundant graph paths are no longer mistaken for missing dependencies, and current
 ordinary-only profiles are not silently assigned nonexistent attestation workers.
 
 - `test_core_source_producers`: `test_source_projection_is_byte_exact_and_rejects_unrelated_changes`.

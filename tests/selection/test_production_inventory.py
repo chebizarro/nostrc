@@ -1,6 +1,5 @@
 """Production source evidence regressions; no miniature or hosted-pass equivalence."""
 import copy
-import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,7 +22,6 @@ class ProductionInventory(unittest.TestCase):
                     result.add(node)
                     pending.append(node)
         return result
-
 
 
     def test_schema_selection_regression_detects_removal_of_its_real_check_edge(self):

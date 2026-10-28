@@ -1,9 +1,7 @@
 """Normal homed unit ownership and host applicability; no runtime/hosted promotion."""
 import copy
-import json
 from pathlib import Path
 import shutil
-import hashlib
 import unittest
 from unittest import mock
 

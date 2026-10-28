@@ -4,9 +4,7 @@ import hashlib
 import json
 import unittest
 
-from grotto_nip49_projection import (BASE, EXPORT, FAMILY, PROFILE, RENEWAL,
-                                     before_grotto_nip49_family, before_nip49_descriptor_renewal,
-                                     DESCRIPTOR_RENEWAL)
+from grotto_nip49_projection import BASE, EXPORT, FAMILY, PROFILE, RENEWAL, DESCRIPTOR_RENEWAL
 from realization_support import r
 from selector_support import ROOT, change, s
 
@@ -21,7 +19,6 @@ class _MembershipFixture:
         self.renewal = json.loads((ROOT / RENEWAL).read_text())
         self.real = self.export['realization']
         self.tests, self.descriptors = r._test_maps(self.real)
-
 
 
 class GrottoNip49Membership(_MembershipFixture, unittest.TestCase):
@@ -136,7 +133,6 @@ class GrottoNip49Membership(_MembershipFixture, unittest.TestCase):
             self.assertIn('{source}/' + path, self.policy['checks']['selection.contract']['runtime_inputs'])
 
 
-
 class SourceClosure(_MembershipFixture, unittest.TestCase):
     """Retained native export/input matrix; direct/manual discovery only."""
     def test_real_executable_compiled_transitive_and_fixture_closure(self):
@@ -165,7 +161,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
                     self.assertTrue(set(classified['nodes']) <= covered, relative)
             self.assertEqual(r._fixture_closure([name], self.tests, self.descriptors), [name])
             self.assertEqual(witness['closure_names'], [name])
-
 
 
 if __name__ == '__main__':

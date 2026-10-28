@@ -1,5 +1,4 @@
 """Frozen production witnesses and real CMake metadata API regressions, not gate acceptance."""
-import copy
 import json
 from pathlib import Path
 import re
@@ -38,7 +37,6 @@ class NonmemberOwnership(unittest.TestCase):
                 self.assertNotIn(name, found)
                 found[name] = owners.split()
         return found
-
 
 
     def test_component_links_do_not_import_test_fixtures_or_hanami_test_linkage(self):

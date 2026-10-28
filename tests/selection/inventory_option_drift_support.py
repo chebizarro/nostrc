@@ -13,7 +13,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/inventory_option_drift_20261027.json'
-SHA256 = 'b4f244a17f25c0f5b812bccd3942aa6f94e239fbc8549cf9a76d33ed2c7f97f4'
+SHA256 = 'afbdc75c280f078ef70d2407cefe74032be6277177cae1b27dc4b59285049ccc'
 RECORD_FIELDS = {'section', 'ident', 'field', 'origin', 'items'}
 
 

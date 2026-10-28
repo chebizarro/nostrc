@@ -8,15 +8,12 @@ includes <microhttpd.h> unguarded. Every Linux profile that configures the root
 tree with Signet enabled therefore needs libmicrohttpd-dev before execution, as
 legacy signet-ci installs it. Static wiring regression, not hosted execution.
 """
-import copy
-import hashlib
 import json
 import re
 import unittest
 
-from selector_support import ROOT, s
-from test_worker_signer_prerequisites import BLUEPRINT_PIN, EXECUTE, selects, steps
-import worker_prerequisite_support as wave
+from selector_support import ROOT
+from test_worker_signer_prerequisites import EXECUTE, selects, steps
 
 WORKER = '.github/workflows/dependency-worker.yml'
 SETUP = 'Install Linux profile prerequisites'
@@ -139,8 +136,6 @@ class WorkerMicrohttpdPrerequisiteTests(unittest.TestCase):
         conditional = self.cmake.replace('set(SIGNET_CORE_SOURCES\n', 'if(SIGNET_HTTP)\nset(SIGNET_CORE_SOURCES\n', 1)
         with self.assertRaises(ValueError):
             unguarded_mhd_sources(conditional, self.read)
-
-
 
 
 if __name__ == '__main__':

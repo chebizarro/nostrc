@@ -32,7 +32,7 @@ MODULES = (
     "test_current_app_membership",
     "test_default_producers",
     "test_encrypted_media_membership.EncryptedMediaMembership",
-    "test_fuzz_json_glib_setup",
+    "test_fuzz_json_glib_setup.FuzzJsonGlibSetupTests",
     "test_grotto_crypto_membership.GrottoCryptoMembership",
     "test_grotto_nip49_membership.GrottoNip49Membership",
     "test_headless_account_policy_membership",

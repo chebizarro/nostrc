@@ -1,5 +1,4 @@
 """New resource registrations are distinct from legacy signer-only selection."""
-import hashlib
 import json
 import unittest
 

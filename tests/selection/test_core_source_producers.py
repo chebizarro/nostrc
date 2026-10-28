@@ -1,5 +1,4 @@
 """Exact root-owned producer repairs; fragment checks are not profile acceptance."""
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -10,10 +9,7 @@ import shutil
 
 from realization_support import Project
 
-from w11_batch2_integration_support import before_source as before_batch2_source
-from closeout_support import (before_closeout_contract, before_core_producer_source,
-                              core_source_witness, CORE_SOURCE_WITNESS,
-                              before_closeout_policy, witness)
+from closeout_support import core_source_witness, CORE_SOURCE_WITNESS, witness
 from selector_support import ROOT, change, s
 
 FIXTURE = CORE_SOURCE_WITNESS
@@ -144,7 +140,6 @@ class CoreSourceProducers(unittest.TestCase):
             self.assertIn(node, policy['checks']['core.default_build']['nodes'])
             self.assertIn('core.default_build', s.make_plan(policy, [change(path)], head='a' * 40)['selected_checks'])
         self.assertIn('libmarmot', policy['checks']['supported.apps.gnostr.plugins.mls.groups']['nodes'])
-
 
 
 class CoreConfigureWitnesses(Project):

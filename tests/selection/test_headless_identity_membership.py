@@ -3,7 +3,7 @@ import copy
 import json
 import unittest
 
-from headless_identity_projection import FAMILY, RENEWAL, before_identity_family
+from headless_identity_projection import FAMILY, RENEWAL
 from selector_support import ROOT, change, s
 from realization_support import r
 
@@ -44,7 +44,6 @@ class _MembershipFixture:
             self.assertEqual(classified['effect'], 'impact', path)
             self.assertTrue(classified['nodes'], path)
             self.assertTrue(set(classified['nodes']) <= self.covered(check), path)
-
 
 
 class HeadlessIdentityMembership(_MembershipFixture, unittest.TestCase):
@@ -121,7 +120,6 @@ class HeadlessIdentityMembership(_MembershipFixture, unittest.TestCase):
             self.assertIn('{source}/' + path, inputs)
 
 
-
 class SourceClosure(_MembershipFixture, unittest.TestCase):
     """Retained native export/input matrix; direct/manual discovery only."""
     def test_real_command_file_api_descriptor_and_fixture_closures(self):
@@ -147,7 +145,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
             fixtures = r._fixture_closure([name], self.tests, self.descriptors)
             self.assertEqual(fixtures, sorted([name, 'groundhog-test-homes', 'groundhog-test-gst-registry']))
             self.assertEqual(fixtures, self.export['primary'][name]['closure_names'])
-
 
 
 if __name__ == '__main__':

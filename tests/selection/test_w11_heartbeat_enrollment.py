@@ -1,6 +1,5 @@
 """Exact heartbeat input enrollment, not a scheduling remedy or hosted proof."""
 import copy
-import hashlib
 import unittest
 
 import closeout_support as c

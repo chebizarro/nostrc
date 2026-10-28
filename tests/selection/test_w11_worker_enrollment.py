@@ -1,12 +1,9 @@
 """Current fixture input ownership, distinct from complete-profile admission."""
-import copy
-import hashlib
 import unittest
 
 from selector_support import ROOT, s
 from realization_support import r
 import w11_worker_support as w
-from w11_policy_support import before_policy_enrollment, before_policy_source
 
 
 class WorkerEnrollmentTests(unittest.TestCase):

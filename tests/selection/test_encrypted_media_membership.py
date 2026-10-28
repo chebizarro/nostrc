@@ -1,15 +1,11 @@
 """Bounded ordinary encrypted-media membership; no profile execution acceptance."""
 import copy
-import hashlib
 import json
 import unittest
 
 from selector_support import ROOT, change, s
 from realization_support import r
-from encrypted_media_projection import (
-    ADDED, BASE, EXPORT, FAMILY, RENEWAL, before_encrypted_media_family,
-    verify_historical_media_fixtures,
-)
+from encrypted_media_projection import BASE, EXPORT, FAMILY, RENEWAL
 
 PROFILE = 'groundhog.linux'
 CHECKS = {
@@ -40,7 +36,6 @@ class _MembershipFixture:
             self.assertEqual(classified['effect'], 'impact', path)
             self.assertTrue(set(classified['nodes']) <=
                             r._impact_prerequisites(self.p, check['nodes']), path)
-
 
 
 class EncryptedMediaMembership(_MembershipFixture, unittest.TestCase):
@@ -117,7 +112,6 @@ class EncryptedMediaMembership(_MembershipFixture, unittest.TestCase):
             self.assert_covered(SCHEMA, check)
 
 
-
 class SourceClosure(_MembershipFixture, unittest.TestCase):
     """Retained native export/input matrix; direct/manual discovery only."""
     def test_actual_command_artifact_compiled_sources_and_fixture_closure(self):
@@ -145,9 +139,6 @@ class SourceClosure(_MembershipFixture, unittest.TestCase):
             self.assertEqual(closure, witness['closure_names'])
         self.assertIn('groundhog-store-conversations',
                       self.export['primary']['groundhog-media-purge']['closure_targets'])
-
-
-
 
 
 if __name__ == '__main__':
