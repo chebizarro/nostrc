@@ -142,7 +142,12 @@ NOSTR_API void nostr_simple_pool_free(NostrSimplePool *pool);
  * @pool: (transfer none): pool
  * @url: (transfer none): relay URL
  *
- * Ensures the relay is present in the pool.
+ * Ensures the relay is present in the pool and, if it is not connected, waits
+ * for one dial attempt on it: made on the calling thread, or already in flight
+ * on the pool's redial worker. Returns without dialling a browned relay, one
+ * with auto-reconnect disabled, or one whose own message loop is reconnecting
+ * it. Can block for up to NOSTR_CONNECT_RESULT_TIMEOUT_MS; see
+ * nostr_simple_pool_ensure_relay_async().
  */
 NOSTR_API void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
 /**

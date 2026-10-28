@@ -738,6 +738,11 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
      * the claim inside pool_dial_relay declines and this returns without
      * fighting it. */
     (void)pool_dial_relay(pool, relay, url);
+    /* The background worker may have won the initial dial claim between
+     * registration and pool_dial_relay(). This is the synchronous API: join
+     * that attempt instead of reporting an unconnected relay while it is
+     * still being dialled. The async API deliberately does not wait. */
+    nostr_relay_wait_for_dial(relay);
 }
 
 void nostr_simple_pool_ensure_relay_async(NostrSimplePool *pool, const char *url) {

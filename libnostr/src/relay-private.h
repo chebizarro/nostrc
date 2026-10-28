@@ -3,6 +3,7 @@
 
 #include "go.h"
 #include "nostr-envelope.h"
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -75,6 +76,8 @@ struct _NostrRelayPrivate {
      *                         leak the loser. */
     bool message_loop_active;
     bool dial_in_progress;
+    pthread_t dial_owner;
+    nsync_cv dial_done_cv; /* synchronous callers join an already claimed dial */
 
     /* nostrc-xfjg: leases on relay->connection. write_operations takes one
      * under @mutex in the same critical section that reads the pointer and
@@ -184,6 +187,18 @@ bool nostr_relay_reconnect_is_self_managed(struct NostrRelay *relay);
  * Every claim that succeeds must be released with nostr_relay_dial_release().
  */
 bool nostr_relay_dial_try_claim(struct NostrRelay *relay);
+
+/**
+ * nostr_relay_wait_for_dial:
+ *
+ * Blocks until no other thread holds @relay's dial claim, so a synchronous
+ * caller that lost the claim joins the attempt in flight (nostrc-1h2ze).
+ * Returns at once when no dial is claimed, or when the calling thread is the
+ * one dialling (a state callback re-entering the pool during its own dial).
+ * Starts no dial and does not wait out a backoff. The caller keeps @relay
+ * alive for the duration.
+ */
+void nostr_relay_wait_for_dial(struct NostrRelay *relay);
 
 /**
  * nostr_relay_dial_release:
