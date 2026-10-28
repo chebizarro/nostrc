@@ -32,7 +32,8 @@ for (const doc of [null, [], 'x', {}, {schema: 1}]) {
     eq(m.syncText, 'Status unavailable', `syncText for ${JSON.stringify(doc)}`);
     eq(m.conflicts.length, 0, 'no conflicts invented');
     eq(m.cache, null, 'no cache figure invented');
-    eq(m.glyph, '?', 'unknown glyph');
+    eq(m.glyph, '!', 'missing encryption evidence warns');
+    check(m.atRestText.includes('unknown'), 'missing encryption evidence stays unknown');
 }
 eq(buildModel({}).available, false, 'empty doc is not available');
 
@@ -44,7 +45,7 @@ const states = {
 };
 for (const [s, text] of Object.entries(states))
     eq(buildModel({syncd: {state: s}}).syncText, text, `state ${s}`);
-eq(buildModel({syncd: {state: 'idle'}}).glyph, '●', 'idle glyph');
+eq(buildModel({syncd: {state: 'idle'}, at_rest: {state: 'encrypted'}}).glyph, '●', 'idle encrypted glyph');
 eq(buildModel({syncd: {state: 'idle', last_error_class: 'upload-failed'}}).syncText,
     'Needs attention: uploading to the storage servers failed', 'idle + error');
 eq(buildModel({syncd: {state: 'error', last_error_class: 'vault-auth'}}).syncText,
@@ -72,7 +73,7 @@ m = buildModel({syncd: {state: 'idle'}, provisioner: {state: 'fetching', chunks_
 check(m.provision.active, 'fetching is active');
 eq(m.provision.text, 'Loading your home: 30 of 120 files', 'progress text');
 eq(m.provision.fraction, 0.25, 'progress fraction');
-eq(m.label, 'loading 25%', 'panel label while loading');
+eq(m.label, 'loading 25% · encryption warning', 'panel label while loading');
 check(m.accessibleName.includes('Loading your home: 30 of 120 files'), 'accessible name has progress');
 m = buildModel({provisioner: {state: 'preparing'}});
 eq(m.provision.text, 'Loading your home…', 'progress without counts');
@@ -103,7 +104,7 @@ const doc = {syncd: {
 m = buildModel(doc);
 eq(m.conflicts.length, 3, 'malformed conflict dropped');
 eq(m.conflictText, '3 conflicts need your attention', 'conflict header');
-eq(m.label, 'synced · 3 conflicts', 'panel label shows conflicts');
+eq(m.label, 'synced · encryption warning · 3 conflicts', 'panel label shows conflicts and encryption warning');
 const [home, vault, gone] = m.conflicts;
 eq(home.title, 'report.txt', 'title');
 eq(home.folder, 'Documents', 'folder');
@@ -140,6 +141,16 @@ check(resolveOutcome(0, 'Sent...\nDone. The conflict is resolved and the change 
 eq(resolveOutcome(3, '').title, 'Choice applied on this device', 'exit 3 pending');
 const bad = resolveOutcome(1, 'Not resolved: The file changed after the conflict was listed.');
 check(!bad.ok && bad.body.startsWith('Not resolved'), 'exit 1 error with CLI text');
+
+// At-rest evidence is explicit; malformed or absent states never become green.
+for (const state of ['unknown', 'unencrypted', 'garbage', null]) {
+    const model = buildModel({syncd: {state: 'idle'}, at_rest: {state}});
+    check(model.atRestWarning && model.glyph === '!', `warning for ${state}`);
+    check(model.accessibleName.includes('WARNING'), 'accessible warning');
+}
+const encrypted = buildModel({at_rest: {state: 'encrypted'}});
+check(!encrypted.atRestWarning, 'encrypted suppresses warning');
+check(encrypted.atRestText.includes('at provisioning'), 'snapshot not live attestation');
 
 if (failures) {
     printerr(`${failures} check(s) failed`);

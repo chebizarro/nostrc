@@ -102,6 +102,9 @@ class Indicator extends PanelMenu.Button {
 
         this._syncItem = new PopupMenu.PopupMenuItem('', {reactive: false});
         this.menu.addMenuItem(this._syncItem);
+        this._atRestItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._atRestItem.label.clutter_text.line_wrap = true;
+        this.menu.addMenuItem(this._atRestItem);
         this._provisionItem = new BarItem();
         this.menu.addMenuItem(this._provisionItem);
         this._cacheItem = new BarItem();
@@ -152,6 +155,7 @@ class Indicator extends PanelMenu.Button {
         this.accessible_name = m.accessibleName;
 
         this._syncItem.label.text = m.syncText;
+        this._atRestItem.label.text = m.atRestText;
         this._provisionItem.update(m.provision.text, m.provision.fraction);
         this._cacheItem.update(m.cache?.text ?? null, m.cache?.fraction ?? null, m.cache?.over);
         this._homeItem.update(m.home?.text ?? null, m.home?.fraction ?? null, m.home?.over);

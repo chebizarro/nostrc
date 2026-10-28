@@ -13,6 +13,7 @@
 
 #define _GNU_SOURCE
 #include "nh_porthome_status.h"
+#include "nh_porthome_at_rest.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -24,6 +25,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
+
+int nh_porthome_at_rest_write(const char *path, nh_at_rest state) {
+    char body[96];
+    snprintf(body, sizeof body, "{\"state\":\"%s\",\"checked_at\":%lld}",
+             nh_porthome_at_rest_name(state), (long long)time(NULL));
+    return nh_porthome_status_write_key(path, "at_rest", body);
+}
 
 /* ─────────────── path resolution ─────────────── */
 char *nh_porthome_status_default_path(void) {

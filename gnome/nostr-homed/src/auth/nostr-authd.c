@@ -120,6 +120,7 @@ int main(int argc, char **argv) {
     const char *conf_path = getenv("NH_AUTH_CONF");
     if (!conf_path || !*conf_path) conf_path = "/etc/nostr-auth/auth.conf";
     (void)nh_auth_conf_load(conf_path, &conf);
+    nh_auth_broker_set_require_encrypted(broker, conf.porthome_require_encrypted);
     if (conf.nip46_qr_relays_count > 0) {
       static const char *relay_ptrs[NH_AUTH_CONF_RELAYS_MAX];
       for (size_t i = 0; i < conf.nip46_qr_relays_count; i++)

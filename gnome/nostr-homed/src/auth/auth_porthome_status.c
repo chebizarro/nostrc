@@ -16,6 +16,7 @@
 
 #include "nh_porthome_notify.h"
 #include "nh_porthome_status.h"
+#include "nh_porthome_at_rest.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -44,6 +45,7 @@ struct nh_provisioner_status_writer {
     uint32_t                chunks_pending;
     uint64_t                home_bytes;
     uint64_t                home_quota_bytes;
+    nh_at_rest              at_rest;
 };
 
 nh_provisioner_status_writer *nh_provisioner_status_writer_new(void) {
@@ -114,6 +116,10 @@ void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
     });
 }
 
+void nh_provisioner_status_set_at_rest(nh_provisioner_status_writer *w, int state) {
+    WITH_LOCK(w, { w->at_rest = (nh_at_rest)state; });
+}
+
 void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
                                           uint64_t bytes, uint64_t quota) {
     WITH_LOCK(w, {
@@ -138,6 +144,7 @@ int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
     uint32_t cp = w->chunks_pending;
     uint64_t hb = w->home_bytes;
     uint64_t hq = w->home_quota_bytes;
+    nh_at_rest at_rest = w->at_rest;
     pthread_mutex_unlock(&w->mu);
 
     char err_esc[80] = {0};
@@ -187,8 +194,10 @@ int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
     uid_t old_uid = (uid_t)setfsuid(uid);
     int rc = -EACCES;
     if ((uid_t)setfsuid((uid_t)-1) == uid &&
-        (gid_t)setfsgid((gid_t)-1) == gid)
+        (gid_t)setfsgid((gid_t)-1) == gid) {
         rc = nh_porthome_status_write_key(path, "provisioner", body);
+        if (!rc) rc = nh_porthome_at_rest_write(path, at_rest);
+    }
     (void)setfsuid(old_uid);
     (void)setfsgid(old_gid);
     if ((uid_t)setfsuid((uid_t)-1) != old_uid ||
@@ -197,7 +206,8 @@ int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
     return rc;
 #else
     if (geteuid() != uid || getegid() != gid) return -EACCES;
-    return nh_porthome_status_write_key(path, "provisioner", body);
+    int rc = nh_porthome_status_write_key(path, "provisioner", body);
+    return rc ? rc : nh_porthome_at_rest_write(path, at_rest);
 #endif
 }
 
@@ -256,6 +266,9 @@ void nh_provisioner_status_set_last_error_class(
 void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
                                       uint32_t done, uint32_t pending) {
     (void)w; (void)done; (void)pending;
+}
+void nh_provisioner_status_set_at_rest(nh_provisioner_status_writer *w, int state) {
+    (void)w; (void)state;
 }
 void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
                                           uint64_t bytes, uint64_t quota) {

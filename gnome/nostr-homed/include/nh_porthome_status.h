@@ -13,8 +13,10 @@
  *     "schema": 1,
  *     "syncd": { ... state|last_push_gen|last_error_class|...  },
  *     "fuse":  { ... mounted|mountpoint|generation|... },
- *     "provisioner": { ... last_provisioned_ts|last_state ... }
+ *     "provisioner": { ... last_provisioned_ts|last_state ... },
+ *     "at_rest": { "state": "encrypted|unencrypted|unknown", "checked_at": N }
  *   }
+ *   at_rest is a provisioning-time dm-crypt observation, not live attestation.
  *
  * A key body is a raw pre-serialised JSON fragment (an object). The
  * merger reads the current file, replaces the caller's key, and

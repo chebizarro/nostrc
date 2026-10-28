@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.7.1 LANGUAGES C)
+project(nostr_homed VERSION 0.8.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -633,7 +633,8 @@ if(NOSTR_HOMED_ENABLE_PAM)
   # comment for grep-lookup: the definition used to live here.
 
   add_library(pam_nostr MODULE
-    src/pam/pam_nostr_broker.c)
+    src/pam/pam_nostr_broker.c
+    src/porthome-common/nh_porthome_at_rest.c)
   set_target_properties(pam_nostr PROPERTIES PREFIX "" OUTPUT_NAME "pam_nostr")
   target_compile_options(pam_nostr PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(pam_nostr PRIVATE
@@ -1418,6 +1419,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   # into one file with one throttle policy.
   # ────────────────────────────────────────────────────────────────
   add_library(nostr_porthome_common STATIC
+    src/porthome-common/nh_porthome_at_rest.c
     src/porthome-common/nh_porthome_notify.c
     src/porthome-common/nh_porthome_status.c)
   target_compile_options(nostr_porthome_common PRIVATE
@@ -1468,6 +1470,13 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     set_tests_properties(homed_porthome_notify PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 30
       ENVIRONMENT "NOSTR_HOMED_SYNCD_NOTIFY=0")
+
+    add_executable(test_porthome_at_rest tests/unit/test_porthome_at_rest.c)
+    target_link_libraries(test_porthome_at_rest PRIVATE nostr_porthome_common)
+    target_compile_options(test_porthome_at_rest PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME homed_porthome_at_rest COMMAND test_porthome_at_rest)
+    set_tests_properties(homed_porthome_at_rest PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
 
     add_executable(test_porthome_status
       tests/unit/test_porthome_status.c)

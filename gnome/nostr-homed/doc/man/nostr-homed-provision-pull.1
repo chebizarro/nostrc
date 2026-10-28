@@ -6,6 +6,7 @@ nostr-homed-provision-pull \- fetch pointer + manifest + chunks into a staging d
 \fB\-\-account\-file\fR \fIPATH\fR
 [\fB\-\-dest\fR \fIDIR\fR]
 [\fB\-\-allow\-insecure\fR]
+[\fB\-\-require\-encrypted\fR]
 [\fB\-\-relay\-timeout\-ms\fR \fIMS\fR]
 [\fB\-\-helper\fR \fIPATH\fR]
 .SH DESCRIPTION
@@ -34,6 +35,14 @@ directory under
 .IR $TMPDIR .
 The path is printed on stdout after a successful fetch.
 .TP
+.B \-\-require\-encrypted
+Refuse provisioning with exit 64 unless the target filesystem has dm-crypt
+backing evidence. Unknown stacks also refuse. Without this option, unencrypted
+or unknown backing emits a loud warning. This CLI does not load auth.conf;
+first-login broker policy uses porthome_require_encrypted=on there.
+The at_rest status key records the provisioning-time observation, not continuous
+attestation. Portable homes require an encrypted root or home volume.
+.TP
 .B \-\-allow\-insecure
 Pass \fB\-\-allow\-insecure\fR through to the fetch helper. Permits http://
 URLs and private/link-local Blossom hosts.
@@ -56,7 +65,7 @@ Exit codes are forwarded verbatim from
 Success.
 .TP 4
 .B 64
-Bad argument.
+Bad argument or require-encrypted refusal.
 .TP 4
 .B 65
 SSRF gate rejected a Blossom host or scheme.

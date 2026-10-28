@@ -6,6 +6,12 @@
 authority_dir=/var/lib/nostr-auth
 socket_path=/run/nostr-auth/auth.sock
 
+# Portable homes require encrypted storage. Default: warn on unencrypted or
+# unknown dm-crypt backing. Opt in to refusing first-login provisioning instead.
+# Explicit off/0/false/no disables; other values fail closed (including typos).
+# Restart nostr-authd after changing. Manual CLI pull uses --require-encrypted.
+#porthome_require_encrypted=on
+
 # ---- NIP-46 QR (nostrconnect://) login at the GDM greeter ------------------
 # The client-initiated QR flow (design docs/designs/nip46-qr-login-greeter.md
 # §4.3) uses a relay to pair the greeter with the user's phone signer. The

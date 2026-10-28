@@ -213,7 +213,7 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
     *eq = '\0';
     char *key = trim(p);
     char *value = trim(eq + 1);
-    if (!*key || !*value) continue;
+    if (!*key || (!*value && strcmp(key, "porthome_require_encrypted"))) continue;
     if (!strcmp(key, "nip46_qr_relays")) {
       parse_relays_csv(out, value);
     } else if (!strcmp(key, "nip46_qr_wait_ms")) {
@@ -262,6 +262,11 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
         out->porthome_bandwidth_bytes_per_load = (uint64_t)v;
     } else if (!strcmp(key, "porthome_load_timeout_sec")) {
       (void)parse_uint32(value, &out->porthome_load_timeout_sec);
+    } else if (!strcmp(key, "porthome_require_encrypted")) {
+      /* Fail closed on malformed/empty values, not silently warn-only. */
+      out->porthome_require_encrypted = !(!strcasecmp(value, "off") ||
+          !strcmp(value, "0") || !strcasecmp(value, "false") ||
+          !strcasecmp(value, "no"));
     } else if (!strcmp(key, "porthome_max_home_bytes")) {
       char *end = NULL; errno = 0;
       unsigned long long v = strtoull(value, &end, 10);

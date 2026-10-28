@@ -22,6 +22,7 @@
 #include "auth_porthome_fetch.h"
 #include "auth_porthome_stage.h"
 #include "auth_porthome_status.h"
+#include "nh_porthome_at_rest.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_types.h"
 
@@ -272,10 +273,30 @@ static int helper_progress_cb(void *ctx, uint64_t bytes, uint64_t files,
  * poller can re-read it — we just record the last-known state at end
  * of run for the WAIT_HOME response. */
 
+static int check_at_rest(nh_auth_porthome_job *j, nh_at_rest state) {
+  nh_provisioner_status_set_at_rest(j->pstat, state);
+  const char *warning = nh_porthome_at_rest_warning(state);
+  if (warning) {
+    syslog(LOG_WARNING, "porthome: %s", warning);
+    nh_provisioner_notify(j->pstat, "at-rest", "Portable home disk encryption", warning);
+  }
+  if (nh_porthome_at_rest_allowed(state, j->config.require_encrypted)) return 0;
+  syslog(LOG_ERR, "porthome: require-encrypted refuses provisioning (%s)",
+         nh_porthome_at_rest_name(state));
+  nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+  nh_provisioner_status_set_last_error_class(j->pstat, "encryption-required");
+  atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_FAILED);
+  return -1;
+}
+
 static nh_identity_rc label_write_into(void *ctx, int home_fd) {
   label_ctx *lc = (label_ctx *)ctx;
   if (!lc || home_fd < 0) return NH_IDENTITY_INVALID;
   if (atomic_load(&lc->job->cancelled))
+    return NH_IDENTITY_UNSUPPORTED;
+
+  /* Recheck the actual staging descriptor before any plaintext is fetched. */
+  if (check_at_rest(lc->job, nh_porthome_at_rest_fd(home_fd)))
     return NH_IDENTITY_UNSUPPORTED;
 
   nh_porthome_prov_opts opts = {0};
@@ -407,6 +428,8 @@ static void *job_run(void *arg) {
 
   label_ctx lc = {0};
   lc.job = j;
+  /* A refusal here creates neither a staging tree nor plaintext files. */
+  if (check_at_rest(j, nh_porthome_at_rest_path(j->account_home))) goto done;
   if (nh_porthome_key_derive(j->wrap_seed, lc.home_key) != 0) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_FAILED);
     goto done;

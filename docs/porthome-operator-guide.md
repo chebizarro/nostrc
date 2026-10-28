@@ -62,6 +62,82 @@ which nostr-homed-provision nostr-home-status nostr-home-syncd
 man nostr-homed-provision
 ```
 
+### 2.1.1 Required disk encryption and the warning policy
+
+Portable homes require an encrypted root or home volume. Relay/Blossom
+ciphertexts do **not** protect materialized local files, including the hot cache,
+from an offline attacker. Use LUKS/dm-crypt on the filesystem holding the actual
+home (or the `pull --dest` target), not merely on another partition.
+
+Following [D16(a) and §8.1](designs/home-from-relay.md#81-threat-model), v1 defaults
+to a **loud warning**, not a new login refusal. This preserves existing hosts
+while making their plaintext-at-rest limitation visible. Sites that need
+fail-closed provisioning can opt in:
+
+```ini
+# /etc/nostr-auth/auth.conf; restart nostr-authd after changing it
+porthome_require_encrypted=on
+```
+
+For a manual restore use `nostr-homed-provision pull --require-encrypted
+--account-file PATH --dest DIR` (on one command line). The flag is independent
+of the broker configuration; the CLI does not load `auth.conf`. Both routes
+refuse **unencrypted and unknown** storage before fetching plaintext. The CLI
+returns 64; first-login provisioning fails and PAM refuses to open the session.
+The setting defaults off; explicit `off`, `0`, `false`, or `no` disables it.
+Other values, including empty or malformed values, enable refusal rather than
+silently weakening it. It governs provisioning, not retroactive locking or
+migration of already-installed homes.
+
+The detector reads the target directory's device number and walks
+`/sys/dev/block/MAJ:MIN`, partitions and `slaves` through LVM/MD. A `dm/uuid`
+with a recognized `CRYPT-LUKS1-`, `CRYPT-LUKS2-`, or `CRYPT-PLAIN-` prefix is
+encryption evidence. `CRYPT-INTEGRITY-` and `CRYPT-VERITY-` are not encryption;
+their backing devices are inspected instead. Unknown `CRYPT-` types stay unknown. Every branch below a
+non-crypt mapping must be covered: one encrypted mirror/PV does not prove the
+whole filesystem encrypted. Missing/inaccessible sysfs, incomplete stacks,
+cycles, loop devices, network/overlay filesystems and unsupported platforms are
+**unknown**, never inferred encrypted. XFS (including possible realtime storage),
+F2FS and Btrfs are currently unknown because their additional file-data devices
+cannot be proven covered by walking the primary device's sysfs slaves. This is a dm-crypt check, not detection
+of fscrypt, hardware encryption, or protection against a privileged attacker
+changing mounts or mapping tables. Nonstandard dm-crypt mappings without the
+UUID marker may be unknown. Root/swap, external journal devices, other mounts inside the home, and other
+storage locations must be secured separately.
+
+Warnings appear on CLI stderr and in the system log, at first login through
+PAM, and in the panel status menu. After provisioning, the existing status file
+contains `at_rest.state` (`encrypted`, `unencrypted`, or `unknown`) and
+`at_rest.checked_at` (Unix seconds). Read them with:
+
+```sh
+nostr-home-status --field at_rest.state
+nostr-home-status --field at_rest.checked_at
+```
+
+This is a provisioning-time observation, not continuous attestation. The panel
+labels encryption evidence accordingly and treats missing/invalid status as
+unknown. Refusal before a home exists does not create a home just to write a
+status file; consult the login warning and broker journal for that failure.
+
+Developer verification in a disposable Linux CI image (not on an operator host):
+
+```sh
+cmake --build /build --target test_porthome_at_rest test_auth_conf \
+  nostr-homed-provision nostr-home-status nostr-authd pam_nostr nh-seed-authority
+ctest --test-dir /build -R '^homed_(porthome_at_rest|auth_conf)$' --output-on-failure
+NH_DISPOSABLE_LOGIN_LAB=1 python3 \
+  gnome/nostr-homed/tests/integration/test_porthome_at_rest.py --build /build
+```
+
+The integration check requires root, `pamtester`, and a CMake build with auth,
+identity, PAM and experimental porthome enabled. It uses the container's real
+sysfs, checks CLI helper dispatch with a sentinel (not a restore proof), and
+exercises authenticated PAM plus configured authd refusal without relay traffic.
+It requires unencrypted/unknown test storage. The fixture unit tests cover both
+LUKS/LVM orderings, partition inheritance, MD including mixed branches, loop,
+missing metadata, integrity/verity mappings, and cycle refusal. This is not graphical GDM or hosted CI proof.
+
 ### 2.2 Enrol
 
 ```sh
