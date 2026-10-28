@@ -5,6 +5,7 @@
  */
 
 #include "hanami/hanami-index.h"
+#include "hanami-index-private.h"
 #include <porthome/crypto.h>
 #include <sqlite3.h>
 #include <openssl/evp.h>
@@ -45,7 +46,15 @@ static const char *SCHEMA_SQL =
     "  timestamp    INTEGER NOT NULL,"
     "  chunk_key_id INTEGER NOT NULL DEFAULT 0"
     ");"
-    "CREATE INDEX IF NOT EXISTS idx_blossom_hash ON oid_map(blossom_hash);";
+    "CREATE INDEX IF NOT EXISTS idx_blossom_hash ON oid_map(blossom_hash);"
+    "CREATE TABLE IF NOT EXISTS hanami_meta ("
+    "  key   TEXT PRIMARY KEY NOT NULL,"
+    "  value TEXT NOT NULL"
+    ");"
+    /* OIDs covered by the published manifest chain (vs local-only rows). */
+    "CREATE TABLE IF NOT EXISTS manifest_rows ("
+    "  git_oid TEXT PRIMARY KEY NOT NULL"
+    ");";
 
 /* =========================================================================
  * Helpers
@@ -110,31 +119,58 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
     *out = NULL;
 
     /* Determine actual DB path — handle :memory: specially */
-    int is_memory = (strcmp(path, ":memory:") == 0);
-    char *db_path = NULL;
+    if (strcmp(path, ":memory:") == 0)
+        return hanami_index_open_file(out, ":memory:");
 
-    if (is_memory) {
-        db_path = strdup(":memory:");
-    } else {
-        if (ensure_directory(path) != 0 && errno != EEXIST) {
-            /* Try anyway — maybe the directory already exists */
-        }
-        size_t path_len = strlen(path);
-        db_path = malloc(path_len + 20);
-        if (!db_path)
-            return HANAMI_ERR_NOMEM;
-        snprintf(db_path, path_len + 20, "%s/hanami_index.db", path);
+    if (ensure_directory(path) != 0 && errno != EEXIST) {
+        /* Try anyway — maybe the directory already exists */
     }
+    size_t path_len = strlen(path);
+    char *db_path = malloc(path_len + 20);
+    if (!db_path)
+        return HANAMI_ERR_NOMEM;
+    snprintf(db_path, path_len + 20, "%s/hanami_index.db", path);
+    hanami_error_t err = hanami_index_open_file(out, db_path);
+    free(db_path);
+    return err;
+}
+
+/* Schema version 1 adds hanami_meta (schema_version, manifest head). Older
+ * unversioned databases have the same oid_map and are stamped on open;
+ * newer versions are refused rather than misread. */
+static hanami_error_t check_schema_version(sqlite3 *db)
+{
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(db, "SELECT value FROM hanami_meta WHERE key = 'schema_version'",
+                           -1, &s, NULL) != SQLITE_OK)
+        return HANAMI_ERR_INDEX;
+    int rc = sqlite3_step(s);
+    long version = rc == SQLITE_ROW
+        ? strtol((const char *)sqlite3_column_text(s, 0), NULL, 10) : 0;
+    sqlite3_finalize(s);
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE) return HANAMI_ERR_INDEX;
+    if (version > HANAMI_INDEX_SCHEMA_VERSION) return HANAMI_ERR_INDEX;
+    if (version == HANAMI_INDEX_SCHEMA_VERSION) return HANAMI_OK;
+    char sql[128];
+    snprintf(sql, sizeof(sql),
+             "INSERT OR REPLACE INTO hanami_meta (key, value) VALUES ('schema_version', '%d')",
+             HANAMI_INDEX_SCHEMA_VERSION);
+    return sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK ? HANAMI_OK : HANAMI_ERR_INDEX;
+}
+
+hanami_error_t hanami_index_open_file(hanami_index_t **out, const char *db_path)
+{
+    if (!out || !db_path)
+        return HANAMI_ERR_INVALID_ARG;
+    *out = NULL;
 
     hanami_index_t *idx = calloc(1, sizeof(*idx));
-    if (!idx) {
-        free(db_path);
+    if (!idx)
         return HANAMI_ERR_NOMEM;
-    }
 
     int rc = sqlite3_open(db_path, &idx->db);
-    free(db_path);
     if (rc != SQLITE_OK) {
+        sqlite3_close(idx->db);
         free(idx);
         return HANAMI_ERR_INDEX;
     }
@@ -171,6 +207,10 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
         hanami_index_close(idx);
         return HANAMI_ERR_INDEX;
     }
+    if (check_schema_version(idx->db) != HANAMI_OK) {
+        hanami_index_close(idx);
+        return HANAMI_ERR_INDEX;
+    }
     idx->portable = (porthome_index){ .ctx = idx, .ops = &index_ops };
 
     /* Prepare statements */
@@ -183,7 +223,7 @@ hanami_error_t hanami_index_open(hanami_index_t **out,
         "FROM oid_map WHERE git_oid = ?;";
     const char *sql_get_blossom =
         "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp, chunk_key_id "
-        "FROM oid_map WHERE blossom_hash = ? LIMIT 1;";
+        "FROM oid_map WHERE blossom_hash = ? ORDER BY git_oid LIMIT 2;";
     const char *sql_exists =
         "SELECT 1 FROM oid_map WHERE git_oid = ?;";
     const char *sql_delete =
@@ -302,9 +342,13 @@ hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
     sqlite3_reset(s);
     sqlite3_bind_text(s, 1, blossom_hash_hex, -1, SQLITE_STATIC);
 
+    /* Raw-payload addresses are not unique object identifiers (the empty
+     * blob and empty tree share one). Never pick an arbitrary row. */
     int rc = sqlite3_step(s);
     if (rc == SQLITE_ROW) {
         hanami_error_t err = fill_entry_from_row(s, out);
+        if (err == HANAMI_OK && sqlite3_step(s) != SQLITE_DONE)
+            err = HANAMI_ERR_INDEX;
         sqlite3_reset(s);
         return err;
     }
@@ -343,6 +387,130 @@ hanami_error_t hanami_index_delete(hanami_index_t *idx,
 
     return (sqlite3_changes(idx->db) > 0) ? HANAMI_OK : HANAMI_ERR_NOT_FOUND;
 }
+
+hanami_error_t hanami_index_meta_get(hanami_index_t *idx, const char *key, char **out)
+{
+    if (!idx || !key || !out) return HANAMI_ERR_INVALID_ARG;
+    *out = NULL;
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(idx->db, "SELECT value FROM hanami_meta WHERE key = ?",
+                           -1, &s, NULL) != SQLITE_OK)
+        return HANAMI_ERR_INDEX;
+    sqlite3_bind_text(s, 1, key, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(s);
+    hanami_error_t err = rc == SQLITE_DONE ? HANAMI_ERR_NOT_FOUND : HANAMI_ERR_INDEX;
+    if (rc == SQLITE_ROW) {
+        const char *value = (const char *)sqlite3_column_text(s, 0);
+        *out = value ? strdup(value) : NULL;
+        err = *out ? HANAMI_OK : HANAMI_ERR_NOMEM;
+    }
+    sqlite3_finalize(s);
+    return err;
+}
+
+hanami_error_t hanami_index_meta_set(hanami_index_t *idx, const char *key, const char *value)
+{
+    if (!idx || !key || !value) return HANAMI_ERR_INVALID_ARG;
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(idx->db,
+            "INSERT OR REPLACE INTO hanami_meta (key, value) VALUES (?, ?)",
+            -1, &s, NULL) != SQLITE_OK)
+        return HANAMI_ERR_INDEX;
+    sqlite3_bind_text(s, 1, key, -1, SQLITE_STATIC);
+    sqlite3_bind_text(s, 2, value, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(s);
+    sqlite3_finalize(s);
+    return rc == SQLITE_DONE ? HANAMI_OK : HANAMI_ERR_INDEX;
+}
+
+hanami_error_t hanami_index_mark_published(hanami_index_t *idx, const char *git_oid_hex)
+{
+    if (!idx || !git_oid_hex) return HANAMI_ERR_INVALID_ARG;
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(idx->db, "INSERT OR IGNORE INTO manifest_rows (git_oid) VALUES (?)",
+                           -1, &s, NULL) != SQLITE_OK)
+        return HANAMI_ERR_INDEX;
+    sqlite3_bind_text(s, 1, git_oid_hex, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(s);
+    sqlite3_finalize(s);
+    return rc == SQLITE_DONE ? HANAMI_OK : HANAMI_ERR_INDEX;
+}
+
+hanami_error_t hanami_index_collect(hanami_index_t *idx, bool unpublished_only,
+    size_t max_rows, hanami_index_entry_t **rows, size_t *count)
+{
+    if (!idx || !rows || !count) return HANAMI_ERR_INVALID_ARG;
+    *rows = NULL; *count = 0;
+    const char *sql = unpublished_only
+        ? "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp, chunk_key_id "
+          "FROM oid_map WHERE git_oid NOT IN (SELECT git_oid FROM manifest_rows) ORDER BY git_oid"
+        : "SELECT git_oid, blossom_hash, obj_type, obj_size, timestamp, chunk_key_id "
+          "FROM oid_map ORDER BY git_oid";
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(idx->db, sql, -1, &s, NULL) != SQLITE_OK) return HANAMI_ERR_INDEX;
+    hanami_error_t err = HANAMI_OK;
+    size_t cap = 0;
+    int rc;
+    while (err == HANAMI_OK && (rc = sqlite3_step(s)) == SQLITE_ROW) {
+        if (*count == max_rows) { err = HANAMI_ERR_INDEX; break; }
+        if (*count == cap) {
+            size_t grown_cap = cap ? cap * 2 : 64;
+            hanami_index_entry_t *grown = realloc(*rows, grown_cap * sizeof(**rows));
+            if (!grown) { err = HANAMI_ERR_NOMEM; break; }
+            *rows = grown; cap = grown_cap;
+        }
+        err = fill_entry_from_row(s, &(*rows)[*count]);
+        if (err == HANAMI_OK) (*count)++;
+    }
+    if (err == HANAMI_OK && rc != SQLITE_DONE) err = HANAMI_ERR_INDEX;
+    sqlite3_finalize(s);
+    if (err != HANAMI_OK) { free(*rows); *rows = NULL; *count = 0; }
+    return err;
+}
+
+static hanami_error_t exec_simple(hanami_index_t *idx, const char *sql)
+{
+    if (!idx) return HANAMI_ERR_INVALID_ARG;
+    return sqlite3_exec(idx->db, sql, NULL, NULL, NULL) == SQLITE_OK
+        ? HANAMI_OK : HANAMI_ERR_INDEX;
+}
+
+static hanami_error_t exec_oid(hanami_index_t *idx, const char *sql, const char *oid)
+{
+    if (!idx || !oid) return HANAMI_ERR_INVALID_ARG;
+    sqlite3_stmt *s = NULL;
+    if (sqlite3_prepare_v2(idx->db, sql, -1, &s, NULL) != SQLITE_OK) return HANAMI_ERR_INDEX;
+    sqlite3_bind_text(s, 1, oid, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(s);
+    sqlite3_finalize(s);
+    return rc == SQLITE_DONE ? HANAMI_OK : HANAMI_ERR_INDEX;
+}
+
+hanami_error_t hanami_index_unmark_published(hanami_index_t *idx, const char *git_oid_hex)
+{
+    return exec_oid(idx, "DELETE FROM manifest_rows WHERE git_oid = ?", git_oid_hex);
+}
+
+hanami_error_t hanami_index_sync_begin(hanami_index_t *idx)
+{
+    hanami_error_t err = exec_simple(idx,
+        "CREATE TEMP TABLE IF NOT EXISTS sync_rows (git_oid TEXT PRIMARY KEY NOT NULL)");
+    return err == HANAMI_OK ? exec_simple(idx, "DELETE FROM sync_rows") : err;
+}
+
+hanami_error_t hanami_index_sync_note(hanami_index_t *idx, const char *git_oid_hex)
+{
+    return exec_oid(idx, "INSERT OR IGNORE INTO sync_rows (git_oid) VALUES (?)", git_oid_hex);
+}
+
+hanami_error_t hanami_index_sync_prune(hanami_index_t *idx)
+{
+    return exec_simple(idx,
+        "DELETE FROM manifest_rows WHERE git_oid NOT IN (SELECT git_oid FROM sync_rows)");
+}
+hanami_error_t hanami_index_begin(hanami_index_t *idx) { return exec_simple(idx, "BEGIN IMMEDIATE"); }
+hanami_error_t hanami_index_commit(hanami_index_t *idx) { return exec_simple(idx, "COMMIT"); }
+void hanami_index_rollback(hanami_index_t *idx) { (void)exec_simple(idx, "ROLLBACK"); }
 
 size_t hanami_index_count(hanami_index_t *idx)
 {

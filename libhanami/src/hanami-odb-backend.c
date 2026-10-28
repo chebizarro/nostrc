@@ -94,6 +94,17 @@ static int blossom_odb_read(void **data_p, size_t *len_p, git_object_t *type_p,
             git_error_set(GIT_ERROR_ODB, "sealed Git OID mismatch");
             return -1;
         }
+    } else {
+        /* The wire hash only proves the bytes match the index row; the row
+         * itself comes from a published manifest. Always re-hash. */
+        git_oid actual;
+        if (git_odb_hash(&actual, raw_data, raw_len, entry.type) < 0 ||
+            !git_oid_equal(&actual, oid)) {
+            free(raw_data);
+            git_error_set(GIT_ERROR_ODB, "Blossom object %s does not hash to Git OID %s",
+                          entry.blossom_hash, oid_hex);
+            return -1;
+        }
     }
 
     /* Allocate libgit2-managed buffer and copy data */

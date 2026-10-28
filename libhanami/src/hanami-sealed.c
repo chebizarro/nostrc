@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT — sealed Git ODB/ref-state composition (§3.5). */
 #include "hanami-sealed.h"
+#include "hanami-manifest.h"
 #include "hanami/hanami-odb-backend.h"
 #include "hanami/hanami-config.h"
 #include "nostr-event.h"
@@ -13,8 +14,8 @@
 #include <string.h>
 #include <time.h>
 
-#define STATE_MAX_BYTES (16u * 1024u * 1024u)
-#define STATE_MAX_ROWS 65536u
+#define STATE_MAX_BYTES HANAMI_INDEX_SNAPSHOT_MAX_BYTES
+#define STATE_MAX_ROWS HANAMI_INDEX_SNAPSHOT_MAX_ROWS
 
 static void secret_free(void *p, size_t n)
 {
@@ -45,20 +46,9 @@ static const porthome_ring_entry_t *latest(hanami_sealed *s)
     return &s->ring.entries[s->ring.count - 1];
 }
 
-static bool hex_valid(const char *s, size_t n)
-{
-    if (!s || strlen(s) != n) return false;
-    for (size_t i = 0; i < n; i++)
-        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')))
-            return false;
-    return true;
-}
-
-static bool oid_valid(const char *s)
-{
-    /* This build's libgit2 uses classic SHA-1. Never truncate a SHA-256 OID. */
-    return hex_valid(s, GIT_OID_HEXSZ);
-}
+/* Row/hex validation is shared with the plaintext manifest codec. */
+#define hex_valid hanami_hex_valid
+#define oid_valid hanami_oid_hex_valid
 
 static bool ref_valid(const char *name, const char *target)
 {
@@ -185,8 +175,7 @@ static hanami_error_t decode_state(const uint8_t *plain, size_t len,
             !json_is_integer(key) || json_integer_value(key) <= 0 ||
             json_integer_value(key) > UINT32_MAX || !json_is_integer(size) ||
             json_integer_value(size) < 0 || (uint64_t)json_integer_value(size) > SIZE_MAX ||
-            !json_is_integer(type) || json_integer_value(type) < GIT_OBJECT_COMMIT ||
-            json_integer_value(type) > GIT_OBJECT_TAG || hanami_index_exists(index, oid)) goto fail;
+            !json_is_integer(type) || !hanami_object_type_valid(json_integer_value(type)) || hanami_index_exists(index, oid)) goto fail;
         hanami_index_entry_t entry = {0};
         strcpy(entry.git_oid, oid); strcpy(entry.blossom_hash, sha);
         entry.chunk_key_id = (uint32_t)json_integer_value(key);

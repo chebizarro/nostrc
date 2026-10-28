@@ -302,11 +302,62 @@ static void test_index_sha1_sha256_both_modes(void)
     assert(hanami_index_get_by_oid(idx, sha256_hex, &out2) == HANAMI_OK);
     assert(strcmp(out1.blossom_hash, out2.blossom_hash) == 0);
 
-    /* Reverse lookup by blossom hash returns one of them */
+    /* Two OIDs share the address: reverse lookup is ambiguous and must not
+     * pick an arbitrary row (nostrc-v2zyh). */
     hanami_index_entry_t out3 = {0};
+    assert(hanami_index_get_by_blossom(idx, blossom_hex, &out3) == HANAMI_ERR_INDEX);
+
+    /* Unique again: deterministic hit. */
+    assert(hanami_index_delete(idx, sha256_hex) == HANAMI_OK);
     assert(hanami_index_get_by_blossom(idx, blossom_hex, &out3) == HANAMI_OK);
+    assert(strcmp(out3.git_oid, sha1_hex) == 0);
 
     hanami_index_close(idx);
+    rm_rf(tmp_dir);
+}
+
+/* The canonical raw-payload collision: empty blob and empty tree. */
+static void test_index_empty_blob_tree_collision(void)
+{
+    setup_tmpdir();
+    hanami_index_t *idx = NULL;
+    assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
+    char blob_oid[41], tree_oid[41], empty[65];
+    assert(hanami_hash_git_sha1("", 0, GIT_OBJECT_BLOB, blob_oid) == HANAMI_OK);
+    assert(hanami_hash_git_sha1("", 0, GIT_OBJECT_TREE, tree_oid) == HANAMI_OK);
+    assert(hanami_hash_blossom("", 0, empty) == HANAMI_OK);
+    hanami_index_entry_t b = {0}, t = {0}, out = {0};
+    strcpy(b.git_oid, blob_oid); strcpy(b.blossom_hash, empty); b.type = GIT_OBJECT_BLOB;
+    strcpy(t.git_oid, tree_oid); strcpy(t.blossom_hash, empty); t.type = GIT_OBJECT_TREE;
+    assert(hanami_index_put(idx, &b) == HANAMI_OK && hanami_index_put(idx, &t) == HANAMI_OK);
+    assert(hanami_index_get_by_oid(idx, blob_oid, &out) == HANAMI_OK && out.type == GIT_OBJECT_BLOB);
+    assert(hanami_index_get_by_oid(idx, tree_oid, &out) == HANAMI_OK && out.type == GIT_OBJECT_TREE);
+    assert(hanami_index_get_by_blossom(idx, empty, &out) == HANAMI_ERR_INDEX);
+    hanami_index_close(idx);
+    rm_rf(tmp_dir);
+}
+
+/* hanami_meta schema_version: stamped on open, newer versions refused. */
+static void test_index_schema_version(void)
+{
+    setup_tmpdir();
+    hanami_index_t *idx = NULL;
+    assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
+    hanami_index_close(idx);
+    char db_path[1024];
+    snprintf(db_path, sizeof(db_path), "%s/hanami_index.db", tmp_dir);
+    sqlite3 *db = NULL;
+    assert(sqlite3_open(db_path, &db) == SQLITE_OK);
+    sqlite3_stmt *s = NULL;
+    assert(sqlite3_prepare_v2(db, "SELECT value FROM hanami_meta WHERE key='schema_version'",
+                              -1, &s, NULL) == SQLITE_OK);
+    assert(sqlite3_step(s) == SQLITE_ROW);
+    assert(strcmp((const char *)sqlite3_column_text(s, 0), "1") == 0);
+    sqlite3_finalize(s);
+    assert(sqlite3_exec(db, "UPDATE hanami_meta SET value='99' WHERE key='schema_version'",
+                        NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_close(db);
+    assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_ERR_INDEX);
     rm_rf(tmp_dir);
 }
 
@@ -387,6 +438,8 @@ int main(void)
     TEST(index_not_found);
     TEST(index_null_args);
     TEST(index_sha1_sha256_both_modes);
+    TEST(index_empty_blob_tree_collision);
+    TEST(index_schema_version);
     TEST(shared_index_persistence_and_migration);
 
     printf("\n%d passed, 0 failed\n", tests_passed);

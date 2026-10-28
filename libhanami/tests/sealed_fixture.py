@@ -22,6 +22,7 @@ class Store:
         self.published = []
         self.reject = False
         self.corrupt = False
+        self.lift_started = False
 
 
 store = Store()
@@ -131,8 +132,16 @@ class Relay(socketserver.StreamRequestHandler):
                     self.frame(["OK", event["id"], accepted, "" if accepted else "blocked: fixture refusal"])
                 elif message[0] == "REQ":
                     subid, f = message[1:3]
-                    assert f["kinds"] == [30078], f
-                    assert len(f["authors"]) == 1 and f["#d"][0].startswith("porthome/v2/")
+                    # Private operation reads only 30078 heads. The explicit
+                    # lift's public push reads the owner's 30618 first (manifest
+                    # writer base check, nostrc-v2zyh); never before the lift.
+                    assert f["kinds"] in ([30078], [30618]), f
+                    if f["kinds"] == [30618]:
+                        with store.lock:
+                            assert store.lift_started, "private operation queried public 30618"
+                    else:
+                        assert f["#d"][0].startswith("porthome/v2/")
+                    assert len(f["authors"]) == 1
                     assert f["limit"] == 1
                     with store.lock:
                         events = [e for (author, kind, d), e in store.events.items()
@@ -168,9 +177,13 @@ def main():
                     except zlib.error: pass
                     else: raise AssertionError("Blossom contains a plaintext loose Git object")
                 private_addresses = set(store.blobs)
+            with store.lock:
+                store.lift_started = True
             subprocess.run(args + ["lift"], check=True, timeout=90, env=env)
             with store.lock:
                 assert any(e["kind"] == 30618 for e in store.published)
+                assert any(e["kind"] == 30618 and any(t[0] == "hanami-manifest" for t in e["tags"])
+                           for e in store.published), "lifted 30618 lacks the manifest tag"
                 assert any(b"only the vault can read this" in b for b in store.blobs.values())
                 assert private_addresses <= set(store.blobs), "lift deleted private history"
             print("sealed wire fixture: private opaque store/no 30618; explicit lift mirrors plaintext + 30618")

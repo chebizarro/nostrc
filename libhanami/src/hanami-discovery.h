@@ -12,6 +12,9 @@
 hanami_error_t hanami_nostr_fetch_blossom_servers(hanami_nostr_ctx_t *ctx,
     const char *pubkey, char ***out, size_t *count);
 void hanami_discovery_free_list(char **urls, size_t count);
+/* Deduplicated NULL-terminated union of two relay lists (either nullable);
+ * free with hanami_discovery_free_list(list, count) or element-wise. */
+char **hanami_relay_union(const char *const *a, const char *const *b);
 
 /* Positive Blossom evidence from libblossom's capability probe: server-info
  * JSON, an accepted BUD-02 upload, or a BUD-02 auth refusal. A bare HTTP
@@ -19,14 +22,15 @@ void hanami_discovery_free_list(char **urls, size_t count);
 bool hanami_caps_indicate_blossom(const blossom_server_capabilities_t *caps);
 
 /* Select the Blossom API endpoint for a repository. Candidates, in order:
- * explicit config endpoint, then the owner's kind-10063 servers (queried on
- * ctx, then on fallback_relays when the first has no list). NIP-34 `clone`
+ * explicit config endpoint, then the owner's kind-10063 servers (one EOSE
+ * snapshot over ctx's relays; callers pass discovery ∪ announcement relays so
+ * the newest replaceable list wins across both). NIP-34 `clone`
  * URLs are Git remotes and are never candidates. Each candidate is
  * classified with blossom_probe_capabilities(); the first Blossom server wins.
  * Errors: HANAMI_ERR_CONFIG when no server is known, HANAMI_ERR_BLOSSOM when
  * no candidate is a Blossom server, or the server-list query error. The
  * libgit2 last-error message names the cause. */
 hanami_error_t hanami_select_blossom_endpoint(hanami_nostr_ctx_t *ctx,
-    const char *const *fallback_relays, const char *owner_pubkey,
+    const char *owner_pubkey,
     const char *repo_id, const hanami_config_t *config, char **out);
 #endif

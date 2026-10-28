@@ -11,6 +11,7 @@
 #include "hanami/hanami-refdb-backend.h"
 #include "hanami/hanami-nostr.h"
 #include "hanami-sealed.h"
+#include "hanami-manifest.h"
 
 #include <git2/refs.h>
 #include <git2/oid.h>
@@ -49,6 +50,8 @@ typedef struct {
 
     hanami_nostr_ctx_t *nostr_ctx;  /* Borrowed */
     hanami_sealed *sealed;
+    blossom_client_t *manifest_client; /* Borrowed; set by hanami_repo_open */
+    hanami_index_t *manifest_index;    /* Borrowed repo cache */
     char *repo_id;                  /* Owned copy */
     char *owner_pubkey;             /* Owned copy */
 
@@ -343,6 +346,10 @@ static int publish_state(hanami_refdb_nostr_t *be)
     if (head_value && !head_str) goto build_failed;
     hanami_error_t err = be->sealed
         ? hanami_sealed_publish(be->sealed, refs, ref_count, head_str)
+        : be->manifest_client
+        ? hanami_manifest_publish_state(be->manifest_client, be->nostr_ctx,
+              be->manifest_index, be->repo_id, be->owner_pubkey,
+              refs, ref_count, head_str)
         : hanami_nostr_publish_state(be->nostr_ctx, be->repo_id,
                                      refs, ref_count, head_str);
 
@@ -814,4 +821,13 @@ hanami_error_t hanami_sealed_refdb_new(git_refdb_backend **out, hanami_sealed *s
         .owner_pubkey = sealed->owner
     };
     return refdb_new(out, &opts, sealed);
+}
+
+void hanami_refdb_use_manifest(git_refdb_backend *backend, blossom_client_t *client,
+                               hanami_index_t *index)
+{
+    hanami_refdb_nostr_t *be = (hanami_refdb_nostr_t *)backend;
+    if (!be || be->sealed) return;
+    be->manifest_client = client;
+    be->manifest_index = index;
 }

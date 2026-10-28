@@ -8,6 +8,7 @@
 #include "hanami-sealed.h"
 #include "hanami-discovery.h"
 #include "hanami-nostr-internal.h"
+#include "hanami-manifest.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-simple-pool.h"
@@ -396,6 +397,13 @@ hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
                                           size_t ref_count,
                                           const char *head)
 {
+    return hanami_nostr_publish_state_manifest(ctx, repo_id, refs, ref_count, head, NULL);
+}
+
+hanami_error_t hanami_nostr_publish_state_manifest(hanami_nostr_ctx_t *ctx,
+    const char *repo_id, const nip34_ref_t *refs, size_t ref_count,
+    const char *head, const char *manifest)
+{
     if (!ctx || !repo_id)
         return HANAMI_ERR_INVALID_ARG;
     if (!ctx->has_signer)
@@ -404,8 +412,8 @@ hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
     pthread_mutex_lock(&ctx->state_mutex);
     NostrEvent *ev = NULL;
     hanami_error_t err = ctx->last_state_time == INT64_MAX ? HANAMI_ERR_NOSTR
-        : hanami_nostr_create_state(ctx, repo_id, refs,
-            ref_count, head, ctx->last_state_time + 1, &ev);
+        : hanami_nostr_create_state_tagged(ctx, repo_id, refs,
+            ref_count, head, manifest, ctx->last_state_time + 1, &ev);
     if (err == HANAMI_OK) {
         /* Reserve even on lost OK: that event might already be stored. */
         ctx->last_state_time = ev->created_at;
@@ -416,13 +424,33 @@ hanami_error_t hanami_nostr_publish_state(hanami_nostr_ctx_t *ctx,
     return err;
 }
 
+const char *hanami_nostr_ctx_signer_pubkey(const hanami_nostr_ctx_t *ctx)
+{
+    return ctx && ctx->has_signer ? ctx->signer.pubkey : NULL;
+}
+
 hanami_error_t hanami_nostr_create_state(hanami_nostr_ctx_t *ctx,
     const char *repo_id, const nip34_ref_t *refs, size_t count,
     const char *head, int64_t minimum_time, NostrEvent **out)
 {
+    return hanami_nostr_create_state_tagged(ctx, repo_id, refs, count, head,
+                                            NULL, minimum_time, out);
+}
+
+hanami_error_t hanami_nostr_create_state_tagged(hanami_nostr_ctx_t *ctx,
+    const char *repo_id, const nip34_ref_t *refs, size_t count,
+    const char *head, const char *manifest, int64_t minimum_time, NostrEvent **out)
+{
     *out = NULL;
+    if (manifest && !hanami_hex_valid(manifest, 64)) return HANAMI_ERR_INVALID_ARG;
     NostrEvent *ev = nip34_create_repo_state(repo_id, refs, count, head);
     if (!ev) return HANAMI_ERR_NOMEM;
+    /* hanami extension (docs/libhanami-design.md 4.4b), signed with the refs. */
+    if (manifest) {
+        NostrTag *tag = nostr_tag_new(HANAMI_MANIFEST_TAG, manifest, NULL);
+        if (!tag || !ev->tags) { nostr_tag_free(tag); nostr_event_free(ev); return HANAMI_ERR_NOMEM; }
+        nostr_tags_append(ev->tags, tag);
+    }
     if (ev->created_at < minimum_time) ev->created_at = minimum_time;
     hanami_error_t err = sign_event(ctx, ev);
     if (err == HANAMI_OK && (!nostr_event_check_signature(ev) ||
@@ -735,6 +763,54 @@ hanami_error_t hanami_nostr_fetch_blossom_servers(hanami_nostr_ctx_t *ctx,
     }
     nostr_event_free(ev);
     *out = urls; *count = n;
+    return HANAMI_OK;
+}
+
+/* 30618 with hanami's manifest extension tag (docs/libhanami-design.md 4.4b). */
+hanami_error_t hanami_nostr_fetch_state_manifest(hanami_nostr_ctx_t *ctx,
+    const char *repo, const char *owner, nip34_repo_state_t **state, char head[65])
+{
+    if (!ctx || !repo || !owner || !state || !head) return HANAMI_ERR_INVALID_ARG;
+    *state = NULL; head[0] = '\0';
+    NostrFilter *filter = hanami_nostr_build_state_filter(repo, owner);
+    if (!filter) return HANAMI_ERR_NOMEM;
+    NostrEvent *ev = NULL;
+    hanami_error_t err = query_single_event(ctx, filter, &ev);
+    if (err != HANAMI_OK) return err;
+    if (nostr_event_get_kind(ev) != NIP34_KIND_REPOSITORY_STATE ||
+        strcmp(nostr_event_get_pubkey(ev), owner) != 0) {
+        nostr_event_free(ev);
+        return HANAMI_ERR_AUTH;
+    }
+    size_t n = ev->tags ? ev->tags->count : 0;
+    for (size_t i = 0; i < n; i++) {
+        NostrTag *tag = ev->tags->data[i];
+        const char *key = nostr_tag_get_key(tag);
+        if (!key || strcmp(key, HANAMI_MANIFEST_TAG) != 0) continue;
+        const char *value = nostr_tag_size(tag) >= 2 ? nostr_tag_get(tag, 1) : NULL;
+        /* One well-formed tag only: a duplicate or malformed one is refused. */
+        if (head[0] || !hanami_hex_valid(value, 64)) {
+            nostr_event_free(ev);
+            return HANAMI_ERR_NOSTR;
+        }
+        memcpy(head, value, 65);
+    }
+    nip34_result_t res = nip34_parse_repo_state(ev, state);
+    if (res == NIP34_OK) {
+        /* A later publish on this context must supersede what was observed
+         * (also across process restarts: no same-second replaceable ties). */
+        pthread_mutex_lock(&ctx->state_mutex);
+        if (ctx->last_state_time < ev->created_at) ctx->last_state_time = ev->created_at;
+        pthread_mutex_unlock(&ctx->state_mutex);
+    }
+    nostr_event_free(ev);
+    if (res != NIP34_OK || !*state || !(*state)->repo_id ||
+        strcmp((*state)->repo_id, repo) != 0) {
+        nip34_repo_state_free(*state);
+        *state = NULL;
+        head[0] = '\0';
+        return HANAMI_ERR_NOSTR;
+    }
     return HANAMI_OK;
 }
 

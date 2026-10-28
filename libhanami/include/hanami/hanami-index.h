@@ -87,11 +87,15 @@ HANAMI_API hanami_error_t hanami_index_get_by_oid(hanami_index_t *idx,
  * hanami_index_get_by_blossom:
  * @idx: index handle
  * @blossom_hash_hex: hex SHA-256 of raw content (64 chars)
- * @out: (out): filled on success (returns first match)
+ * @out: (out): filled on success
  *
- * Look up a mapping by Blossom content hash.
+ * Look up a mapping by Blossom content hash. Raw-payload addresses are not
+ * unique object identifiers (the empty blob and empty tree share one), so a
+ * hash mapped from more than one OID is refused rather than resolved to an
+ * arbitrary row.
  *
- * Returns: HANAMI_OK if found, HANAMI_ERR_NOT_FOUND if absent
+ * Returns: HANAMI_OK if exactly one OID maps to the hash, HANAMI_ERR_NOT_FOUND
+ * if none, HANAMI_ERR_INDEX if ambiguous
  */
 HANAMI_API hanami_error_t hanami_index_get_by_blossom(hanami_index_t *idx,
                                            const char *blossom_hash_hex,

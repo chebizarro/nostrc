@@ -25,6 +25,9 @@ class Store:
         self.events = {}
         self.grasp_requests = []
         self.blob_gets = 0
+        self.gets = {}
+        self.reject_manifest = False  # PUT of a manifest segment -> 500
+        self.relay_reject = False     # relay EVENT -> OK false
 
 
 store = Store()
@@ -59,6 +62,9 @@ class Blossom(http.server.BaseHTTPRequestHandler):
             return
         sha = hashlib.sha256(blob).hexdigest()
         with store.lock:
+            if store.reject_manifest and blob.startswith(b'{"prev"'):
+                self.reply(500)
+                return
             store.blobs[sha] = blob
         self.reply(200, json.dumps({"sha256": sha, "size": len(blob),
                                     "type": "application/octet-stream",
@@ -83,11 +89,28 @@ class Blossom(http.server.BaseHTTPRequestHandler):
                 body = str(store.blob_gets).encode()
             self.reply(200, body, "text/plain")
             return
+        if self.path.startswith("/control/set/"):
+            flag, value = self.path.split("/")[3:5]
+            with store.lock:
+                setattr(store, flag.replace("-", "_"), value == "on")
+            self.reply(200)
+            return
+        if self.path.startswith("/control/blob/"):
+            with store.lock:
+                blob = store.blobs.get(self.path.rsplit("/", 1)[-1])
+            self.reply(200 if blob is not None else 404, blob or b"")
+            return
+        if self.path.startswith("/control/gets/"):
+            with store.lock:
+                body = str(store.gets.get(self.path.rsplit("/", 1)[-1], 0)).encode()
+            self.reply(200, body, "text/plain")
+            return
         key = self.path.strip("/")
         with store.lock:
             blob = store.blobs.get(key)
             if self.command == "GET" and len(key) == 64:
                 store.blob_gets += 1
+                store.gets[key] = store.gets.get(key, 0) + 1
         self.reply(200 if blob is not None else 404, blob or b"")
 
 
@@ -183,10 +206,11 @@ class Relay(socketserver.StreamRequestHandler):
                     event = message[1]
                     key = replace_key(event)
                     with store.lock:
+                        accepted = not store.relay_reject
                         old = store.events.get(key)
-                        if old is None or (event["created_at"], old["id"]) >= (old["created_at"], event["id"]):
+                        if accepted and (old is None or (event["created_at"], old["id"]) >= (old["created_at"], event["id"])):
                             store.events[key] = event
-                    self.frame(["OK", event["id"], True, ""])
+                    self.frame(["OK", event["id"], accepted, "" if accepted else "blocked: fixture refusal"])
                 elif message[0] == "REQ":
                     subid, filters = message[1], message[2:]
                     with store.lock:
@@ -226,7 +250,7 @@ def main():
             for mode in modes:
                 # Every mode is a fresh process with its own empty TMPDIR: no
                 # in-process caches or prior local state carry across.
-                mode_tmp = os.path.join(tmp, mode)
+                mode_tmp = os.path.join(tmp, "tmp-" + mode)
                 os.mkdir(mode_tmp)
                 env = dict(os.environ, TMPDIR=mode_tmp)
                 env.pop("HANAMI_ENDPOINT", None)

@@ -82,6 +82,8 @@ set(HANAMI_SOURCES
   src/hanami-config.c
   src/hanami-grasp.c
   src/hanami-discovery.c
+  src/hanami-manifest.c
+  src/hanami-fetch.c
 )
 
 # --- Library target ---
@@ -255,10 +257,10 @@ if(BUILD_TESTING)
   add_executable(test-hanami-clone tests/test_hanami_clone.c)
   target_compile_options(test-hanami-clone PRIVATE -Wall -Wextra -UNDEBUG)
   target_link_libraries(test-hanami-clone PRIVATE hanami nostr nip34
-    PkgConfig::LIBGIT2 CURL::libcurl)
+    PkgConfig::LIBGIT2 PkgConfig::HANAMI_JANSSON PkgConfig::SQLITE3 CURL::libcurl)
   add_test(NAME test-hanami-clone
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/clone_fixture.py"
-            $<TARGET_FILE:test-hanami-clone> discovery)
+            $<TARGET_FILE:test-hanami-clone> discovery seed clone seed2 fetch pushfail checkpoint republish negative)
   set_tests_properties(test-hanami-clone PROPERTIES
     TIMEOUT 180 LABELS "libhanami;clone;integration")
   if(COMMAND apply_sanitizers)

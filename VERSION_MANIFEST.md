@@ -53,6 +53,29 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
+### Cold clone via published manifest chain (nostrc-v2zyh)
+
+- **libhanami 0.7.0 (no further bump):** folds into the unreleased 0.7.0 MINOR
+  from nostrc-3rxpv/fsuei, per the owner's decision.
+  - New public `hanami_fetch()` and `hanami_push_to_blossom_ex()`.
+  - Push side: objects, then segment (checkpoint after 16 links), then
+    tagged 30618 via the relay-accepted publish. Success requires the
+    segment upload and relay OK true. Transport push, `hanami_repo_open`'s
+    refdb and `hanami_publish_state` all preserve the tag. Push publishes
+    HEAD and drops `refs/remotes/*`.
+  - New wire format: Blossom manifest segments plus the
+    `["hanami-manifest", <sha256>]` extension tag on kind-30618.
+  - New storage: `hanami_meta` (`schema_version` 1, manifest head/depth)
+    and `manifest_rows` tables, and the `.git/hanami/index.sqlite` cache.
+  - 0.x behaviour breaks, called out in `libhanami/CHANGELOG.md`:
+    - `hanami_clone` returns a durable plain repository with no attached
+      backends, and checkout failure is fatal;
+    - plaintext reads fail on a Git OID mismatch;
+    - `hanami_index_get_by_blossom` refuses ambiguous hashes.
+  - Sealed wire format is unchanged.
+- **No bump:** libblossom, libnostr, nip34 and all other components are
+  consumed only. No tag is published; release columns remain unchanged.
+
 ### hanami_clone Blossom server discovery (nostrc-g2g37)
 
 - **libhanami 0.5.1 → 0.6.0 (MINOR):** `hanami_clone` stops treating NIP-34

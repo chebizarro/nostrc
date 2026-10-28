@@ -9,12 +9,18 @@
  */
 
 #include "hanami/hanami-transport.h"
+#include "hanami-manifest.h"
 #include "hanami-sealed.h"
 #include "hanami/hanami-nostr.h"
 #include <blossom/client.h>
 
 #include <git2.h>
 #include <git2/sys/transport.h>
+#if defined(__has_include)
+#  if __has_include(<git2/sys/errors.h>)
+#    include <git2/sys/errors.h>
+#  endif
+#endif
 
 #include <nip34.h>
 
@@ -368,116 +374,15 @@ static int blossom_push(git_transport *_transport, git_push *push)
     /* A public transport must never project a private repository's refs. */
     if (hanami_repo_private(t->repo))
         return -1;
-
-    /* The blossom:// transport push flow:
-     * Object upload is handled by the ODB backend's write() vtable — when
-     * libgit2 calls odb->write for each object, it uploads to Blossom.
-     * The transport's push responsibility is to update the ref state on
-     * Nostr. Since the push refspecs are handled by libgit2's push
-     * machinery which calls odb->write per object, we just need to
-     * publish the updated state after the push completes.
-     *
-     * Note: git_push callbacks are invoked by libgit2's internal push
-     * logic which handles packfile negotiation. For Blossom, the actual
-     * data transfer happens via ODB writes. This function publishes
-     * the final ref state. */
-    if (!t->nostr_ctx || !t->repo_id)
-        return 0; /* Can't publish state without context */
-
-    /* Access the repository from the transport */
-    git_repository *repo = t->repo;
-    if (!repo)
-        return -1; /* Need repository to read current refs */
-
-    /* Read actual current refs from the repository (not stale cached refs) */
-    git_reference_iterator *iter = NULL;
-    if (git_reference_iterator_new(&iter, repo) != 0)
-        return -1;
-
-    /* Allocate initial ref array */
-    size_t cap = 16;
-    nip34_ref_t *state_refs = calloc(cap, sizeof(nip34_ref_t));
-    if (!state_refs) {
-        git_reference_iterator_free(iter);
+    if (!t->repo || !t->nostr_ctx || !t->blossom_client || !t->repo_id || !t->owner_pubkey) {
+        git_error_set(GIT_ERROR_NET, "hanami: blossom:// push needs a repository, "
+                      "Blossom client and Nostr context");
         return -1;
     }
-
-    size_t state_count = 0;
-    git_reference *ref = NULL;
-    
-    /* Iterate over all refs (except symbolic refs like HEAD) */
-    while (git_reference_next(&ref, iter) == 0) {
-        if (git_reference_type(ref) == GIT_REFERENCE_SYMBOLIC) {
-            git_reference_free(ref);
-            continue;
-        }
-
-        /* Expand array if needed */
-        if (state_count >= cap) {
-            size_t new_cap = cap * 2;
-            nip34_ref_t *tmp = realloc(state_refs, new_cap * sizeof(nip34_ref_t));
-            if (!tmp) {
-                git_reference_free(ref);
-                break;
-            }
-            state_refs = tmp;
-            cap = new_cap;
-        }
-
-        /* Store ref name and OID */
-        state_refs[state_count].refname = strdup(git_reference_name(ref));
-        if (!state_refs[state_count].refname) {
-            git_reference_free(ref);
-            break;
-        }
-        char oid_hex[41] = {0};
-        git_oid_tostr(oid_hex, sizeof(oid_hex), git_reference_target(ref));
-        state_refs[state_count].target = strdup(oid_hex);
-        if (!state_refs[state_count].target) {
-            git_reference_free(ref);
-            break;
-        }
-        state_count++;
-        git_reference_free(ref);
-    }
-    git_reference_iterator_free(iter);
-
-    /* Look up HEAD to get its value */
-    char *head_value = NULL;
-    git_reference *head = NULL;
-    if (git_repository_head(&head, repo) == 0) {
-        const char *symbolic_target = git_reference_symbolic_target(head);
-        if (symbolic_target) {
-            /* Symbolic HEAD: format as "ref: refs/heads/main" */
-            size_t hlen = 5 + strlen(symbolic_target) + 1;
-            head_value = malloc(hlen);
-            if (head_value)
-                snprintf(head_value, hlen, "ref: %s", symbolic_target);
-        } else {
-            /* Detached HEAD: format OID as hex */
-            head_value = malloc(41);
-            if (head_value) {
-                git_oid_tostr(head_value, 41, git_reference_target(head));
-            }
-        }
-        git_reference_free(head);
-    }
-
-    /* Publish the state event to Nostr */
-    hanami_error_t err = hanami_nostr_publish_state(t->nostr_ctx, t->repo_id,
-                                                     state_refs, state_count,
-                                                     head_value);
-
-    /* Clean up */
-    for (size_t i = 0; i < state_count; i++) {
-        free(state_refs[i].refname);
-        free(state_refs[i].target);
-    }
-    free(state_refs);
-    free(head_value);
-
-    /* Return -1 if state publication failed */
-    return (err == HANAMI_OK) ? 0 : -1;
+    /* Same pipeline as hanami_push_to_blossom: objects, then the manifest
+     * segment, then the tagged 30618; success needs relay OK true. */
+    return hanami_push_repo_state(t->repo, t->blossom_client, t->nostr_ctx,
+                                  t->repo_id, t->owner_pubkey) == HANAMI_OK ? 0 : -1;
 }
 
 /* =========================================================================
@@ -521,12 +426,14 @@ static void blossom_free(git_transport *_transport)
 static int blossom_transport_cb(git_transport **out, git_remote *owner,
                                 void *param)
 {
-    (void)owner;
     (void)param;
 
     hanami_transport_t *t = calloc(1, sizeof(*t));
     if (!t)
         return -1;
+    /* Borrowed: the remote's repository outlives its transport. Push-only
+     * connections never run the fetch callbacks that used to capture it. */
+    t->repo = owner ? git_remote_owner(owner) : NULL;
 
     if (git_transport_init(&t->parent, GIT_TRANSPORT_VERSION) < 0) {
         free(t);
