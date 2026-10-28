@@ -88,7 +88,7 @@ jobs:
             blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad gstreamer1.0-libav
+            gstreamer1.0-plugins-bad gstreamer1.0-libav gdb
           # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
           # groundhog-blueprint compares its output with the committed .ui.
           blueprint-compiler --version
@@ -304,7 +304,26 @@ jobs:
 
       - name: Stress GUI lifetime callbacks with deterministic completion jitter
         if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.lifetime_stress == 'true'
-        run: scripts/test-groundhog-gui-lifetimes.sh build 2
+        env:
+          GH_TEST_EVIDENCE_DIR: ${{ runner.temp }}/gui-lifetime-evidence
+        run: |
+          set -euo pipefail
+          # A fatal critical or crash leaves a core here; the script turns it
+          # into a symbolized backtrace when a seed fails (nostrc-2zcw9).
+          mkdir -p "$GH_TEST_EVIDENCE_DIR"
+          sudo sysctl -w kernel.core_pattern="$GH_TEST_EVIDENCE_DIR/core.%p.%E"
+          scripts/test-groundhog-gui-lifetimes.sh build 2
+
+      - name: Upload GUI lifetime failure evidence
+        if: failure() && (steps.selection.outputs.affected != 'true' || steps.selection.outputs.lifetime_stress == 'true')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}groundhog-gui-lifetime-evidence
+          path: |
+            ${{ runner.temp }}/gui-lifetime-evidence/*.bt
+            ${{ runner.temp }}/gui-lifetime-evidence/*.trace
+            ${{ runner.temp }}/gui-lifetime-evidence/*.log
+          if-no-files-found: ignore
 
       - name: White Noise AAC/MP4 voice interop with MDK 0.11
         if: inputs.sha == '' || inputs.run_reference
