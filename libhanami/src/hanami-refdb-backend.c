@@ -12,6 +12,7 @@
 #include "hanami/hanami-nostr.h"
 #include "hanami-sealed.h"
 #include "hanami-manifest.h"
+#include "hanami-backend-owner.h"
 
 #include <git2/refs.h>
 #include <git2/oid.h>
@@ -50,8 +51,9 @@ typedef struct {
 
     hanami_nostr_ctx_t *nostr_ctx;  /* Borrowed */
     hanami_sealed *sealed;
-    blossom_client_t *manifest_client; /* Borrowed; set by hanami_repo_open */
-    hanami_index_t *manifest_index;    /* Borrowed repo cache */
+    hanami_backend_owner *owner;
+    blossom_client_t *manifest_client; /* Borrowed from owner */
+    hanami_index_t *manifest_index;     /* Borrowed from owner */
     char *repo_id;                  /* Owned copy */
     char *owner_pubkey;             /* Owned copy */
 
@@ -744,6 +746,7 @@ static void nostr_refdb_free(git_refdb_backend *_backend)
     free(be->repo_id);
     free(be->owner_pubkey);
     hanami_sealed_release(be->sealed);
+    hanami_backend_owner_release(be->owner);
     free(be);
 }
 
@@ -823,11 +826,13 @@ hanami_error_t hanami_sealed_refdb_new(git_refdb_backend **out, hanami_sealed *s
     return refdb_new(out, &opts, sealed);
 }
 
-void hanami_refdb_use_manifest(git_refdb_backend *backend, blossom_client_t *client,
-                               hanami_index_t *index)
+void hanami_refdb_use_manifest(git_refdb_backend *backend, hanami_backend_owner *owner)
 {
     hanami_refdb_nostr_t *be = (hanami_refdb_nostr_t *)backend;
     if (!be || be->sealed) return;
-    be->manifest_client = client;
-    be->manifest_index = index;
+    hanami_backend_owner_retain(owner);
+    hanami_backend_owner_release(be->owner);
+    be->owner = owner;
+    be->manifest_client = owner->client;
+    be->manifest_index = owner->index;
 }

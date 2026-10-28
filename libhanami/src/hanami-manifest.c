@@ -68,7 +68,7 @@ hanami_error_t hanami_manifest_encode(const char *repo, const char *prev,
     hanami_index_entry_t *sorted = count ? malloc(count * sizeof(*sorted)) : NULL;
     if (count && !sorted) return HANAMI_ERR_NOMEM;
     if (count) memcpy(sorted, rows, count * sizeof(*sorted));
-    qsort(sorted, count, sizeof(*sorted), row_cmp);
+    if (count) qsort(sorted, count, sizeof(*sorted), row_cmp);
     hanami_error_t err = HANAMI_ERR_NOMEM;
     json_t *root = json_object(), *array = json_array();
     if (!root || !array) goto done;

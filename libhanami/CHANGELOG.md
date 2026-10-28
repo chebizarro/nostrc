@@ -60,6 +60,13 @@ waiter. Other independently releasable components: no bump.
   `<gitdir>/hanami/index.sqlite`. It imports the owner's published chain at
   open, failing visibly on an invalid chain, and its refdb writes publish
   tagged states with segments for objects written through the Blossom ODB.
+- Public repository backends now share ownership of the index, Blossom client
+  and Nostr context, releasing them when the last backend is freed rather than
+  leaking them on each `hanami_repo_open` (nostrc-7fhvv). Retained ODB/refdb
+  handles may outlive the repository; freeing either backend first is safe.
+- Empty-object reads and empty manifest encoding skip zero-length `memcpy`
+  and `qsort` calls with NULL buffers, avoiding UBSan nonnull diagnostics
+  without changing their results (nostrc-moymr).
 - `hanami_publish_state` carries the signer's published manifest head
   forward.
 
