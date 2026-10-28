@@ -1,5 +1,6 @@
 /* End-to-end: signed relay OK -> libgit2 Smart HTTP -> corrective state. */
 #include "hanami/hanami-grasp.h"
+#include "hanami_test_grasp_metadata.h"
 #include "hanami/hanami-nostr.h"
 #include "nostr-event.h"
 #include "keys.h"
@@ -65,7 +66,8 @@ int main(int argc, char **argv)
     char *pk = nostr_key_get_public(sk);
     assert(pk);
     hanami_signer_t signer = { .pubkey = pk, .sign = sign_event, .user_data = (void *)sk };
-    if (strcmp(argv[2], "first-fail") && strcmp(argv[2], "closed")) {
+    if (nip11_expected(argv[2]) == HANAMI_OK &&
+        strcmp(argv[2], "first-fail") && strcmp(argv[2], "closed")) {
         hanami_nostr_ctx_t *ctx = NULL;
         assert(hanami_nostr_ctx_new(roots, &signer, &ctx) == HANAMI_OK);
         nip34_ref_t refs[] = {{"refs/heads/main", old_hex}, {"refs/heads/unrelated", old_hex}};
@@ -92,7 +94,15 @@ int main(int argc, char **argv)
     fprintf(stderr, "%s: result=%d operation=%d recovery=%d git=%s\n", argv[2], err,
             result.operation_error, result.recovery_error,
             git_error_last() ? git_error_last()->message : "none");
-    if (!strcmp(argv[2], "success") || !strcmp(argv[2], "auth-success")) {
+    check_metadata(argv[2], result.server);
+    if (nip11_expected(argv[2]) != HANAMI_OK) {
+        assert(err == nip11_expected(argv[2]) && result.operation_error == err);
+        assert(!result.state_accepted && !result.push_attempted && !result.recovery_attempted);
+        assert(git_error_last() && strstr(git_error_last()->message, "GRASP NIP-11"));
+        git_remote *remote = NULL;
+        assert(git_remote_lookup(&remote, repo, "grasp") == GIT_ENOTFOUND);
+    } else if (!strcmp(argv[2], "success") || !strcmp(argv[2], "auth-success") ||
+               !strcmp(argv[2], "nip11-no-curation")) {
         assert(err == HANAMI_OK && result.state_accepted && result.push_completed);
         assert(!result.recovery_attempted);
         const char *deletion[] = {":refs/heads/main", NULL};
@@ -116,6 +126,7 @@ int main(int argc, char **argv)
             assert((result.recovery_error != HANAMI_OK) == !strcmp(argv[2], "correction-reject"));
         }
     }
+    hanami_grasp_metadata_free(result.server);
     git_repository_free(repo);
     free(pk);
     git_libgit2_shutdown();

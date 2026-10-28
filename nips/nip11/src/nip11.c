@@ -1,6 +1,7 @@
 #include "nip11.h"
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <curl/curl.h>
 #include "json.h"
 
@@ -93,6 +94,38 @@ static RelayInformationDocument *parse_json_to_doc(const char *json, const char 
     RelayInformationDocument *info = (RelayInformationDocument *)calloc(1, sizeof(RelayInformationDocument));
     if (!info) return NULL;
     if (url_opt) info->url = strdup(url_opt);
+    /* GRASP extensions are optional for ordinary Nostr relays, but when
+     * present must have the types required by GRASP-01. */
+    char *raw = NULL;
+    if (nostr_json_get_raw(json, "supported_grasps", &raw) == 0) {
+        free(raw);
+        raw = NULL;
+        size_t count = 0;
+        if (nostr_json_get_string_array(json, "supported_grasps",
+                &info->supported_grasps, &count) != 0 || count > INT_MAX) {
+            nostr_nip11_free_info(info);
+            return NULL;
+        }
+        info->supported_grasps_count = (int)count;
+        for (size_t i = 0; i < count; i++) {
+            if (!info->supported_grasps[i]) {
+                nostr_nip11_free_info(info);
+                return NULL;
+            }
+        }
+    }
+    const char *fields[] = {"repo_acceptance_criteria", "curation"};
+    char **values[] = {&info->repo_acceptance_criteria, &info->curation};
+    for (size_t i = 0; i < 2; i++) {
+        if (nostr_json_get_raw(json, fields[i], &raw) == 0) {
+            free(raw);
+            raw = NULL;
+            if (nostr_json_get_string(json, fields[i], values[i]) != 0) {
+                nostr_nip11_free_info(info);
+                return NULL;
+            }
+        }
+    }
     // Simple string fields
     (void)nostr_json_get_string(json, "name", &info->name);
     (void)nostr_json_get_string(json, "description", &info->description);
@@ -255,6 +288,11 @@ void nostr_nip11_free_info(RelayInformationDocument *info) {
     if (info->posting_policy) free(info->posting_policy);
     if (info->payments_url) free(info->payments_url);
     if (info->icon) free(info->icon);
+    for (int i = 0; i < info->supported_grasps_count; i++)
+        free(info->supported_grasps[i]);
+    free(info->supported_grasps);
+    free(info->repo_acceptance_criteria);
+    free(info->curation);
     if (info->limitation) free(info->limitation);
     if (info->fees) {
         if (info->fees->admission.items) {

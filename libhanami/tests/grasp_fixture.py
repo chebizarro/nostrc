@@ -10,6 +10,7 @@ import threading
 from urllib.parse import urlsplit
 
 from relay_fixture import Relay, Server
+from grasp_nip11_fixture import FAILURES, serve_nip11
 
 NPUB = "npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72k5cs2kd7pqf0h2zx"
 
@@ -68,7 +69,10 @@ class Grasp(Relay):
 
     def http(self, request, headers):
         server = self.server
+        if serve_nip11(self, request, headers):
+            return
         with server.lock:
+            assert server.nip11_requests > 0
             assert server.latest, "Git HTTP started before state acceptance"
             assert server.trace[-1][0] == "OK" and server.trace[-1][2]
             server.http_requests += 1
@@ -127,7 +131,7 @@ def run_case(binary, case):
             assert Path(server.backend).is_file(), "git http-backend is required"
             server.latest = None
             server.announcements, server.trace = [], []
-            server.http_requests = 0
+            server.http_requests = server.nip11_requests = 0
             server.auth_count = 0
             server.lock = threading.Lock()
             worker = threading.Thread(target=server.serve_forever, daemon=True)
@@ -138,7 +142,14 @@ def run_case(binary, case):
             finally:
                 server.shutdown()
                 worker.join()
-            if case in ("reject", "closed", "no-ok"):
+            assert server.nip11_requests == (2 if case in ("success", "auth-success", "nip11-no-curation") else 1)
+            if case in FAILURES:
+                assert server.http_requests == 0 and not server.announcements
+                assert server.latest is None
+                continue_refs = subprocess.check_output(
+                    ["git", "--git-dir", str(bare), "for-each-ref"], text=True)
+                assert not continue_refs, "refusal changed Git refs"
+            elif case in ("reject", "closed", "no-ok"):
                 assert server.http_requests == 0
             else:
                 assert server.http_requests > 0, "push entrypoint never reached Smart HTTP"
@@ -156,5 +167,5 @@ def run_case(binary, case):
                 assert correction["tags"] == before["tags"], "failed push left intended state advertised"
 
 
-for scenario in ("success", "fail-push", "first-fail", "reject", "correction-reject", "closed", "auth-success", "no-ok"):
+for scenario in ("success", "fail-push", "first-fail", "reject", "correction-reject", "closed", "auth-success", "no-ok", "nip11-no-curation", *FAILURES):
     run_case(sys.argv[1], scenario)

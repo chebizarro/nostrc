@@ -386,9 +386,10 @@ endif()
 
 # NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.
 # Include NIP options/subdirs after global sanitizer flags so all NIP targets inherit them.
-# Force-enable NIP-34 when building libhanami (it's a required dependency)
+# Force-enable NIP-34 and NIP-11 when building libhanami (required dependencies)
 if(BUILD_LIBHANAMI)
   set(ENABLE_NIP34 ON CACHE BOOL "Enable nip34 (required by libhanami)" FORCE)
+  set(ENABLE_NIP11 ON CACHE BOOL "Enable nip11 (required by libhanami)" FORCE)
 endif()
 # Groundhog's NIP-29 groups (qp24.12.2) need nips/nip29: register it here like
 # any NIP so it is added once, with the global flags, instead of by Groundhog.

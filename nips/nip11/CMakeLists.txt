@@ -17,6 +17,9 @@ file(GLOB SOURCES "src/*.c")
 
 # Create the library
 add_library(nip11 ${SOURCES})
+target_include_directories(nip11 PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 nostrc_library_visibility(nip11 NOSTR_NIP11_API
   nostr/nip11/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip11")
 target_link_libraries(nip11 PUBLIC nostr nostr_json CURL::libcurl)

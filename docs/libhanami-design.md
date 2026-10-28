@@ -347,6 +347,33 @@ Git repository discovery and publication using NIP-34 announcements, GRASP
 server URL parsing, and GRASP-specific announcement tags. Uses the NIP-34
 helpers below; it does not implement Blossom HTTP or BUD-02 authentication.
 
+Before any GRASP push publication or fetch transfer/query, perform one HTTP GET
+of the clone authority's root relay URL, replacing `ws(s)` with `http(s)` and
+sending `Accept: application/nostr+json`. Parse through `nips/nip11` using the
+existing curl client dependency. Require an exact `GRASP-01` string in the
+`supported_grasps` string array. A reachable document missing that advertisement
+returns `HANAMI_ERR_CONFIG`; transport errors, non-2xx HTTP (including redirects)
+and the 15-second request deadline return `HANAMI_ERR_NETWORK`. Invalid JSON,
+wrong GRASP field types, embedded NUL bytes, documents over 1 MiB or missing
+required `repo_acceptance_criteria` return `HANAMI_ERR_NOSTR`. No failure means
+capability support or successful completion; none publishes a corrective state.
+The deadline bounds a failed HTTP request, not relay backfill completion.
+
+The probe is cached only for that operation: state queries, replica publication,
+Git transfer and recovery do not probe again. Plain NIP-34/Blossom clone/fetch
+paths do not probe NIP-11. A NULL-repository GRASP fetch now performs capability
+preflight only; use `hanami_grasp_parse_clone_url` for offline URL parsing.
+
+`hanami_grasp_push_result_t.server` and the optional server output from
+`hanami_grasp_fetch_with_result` retain the advertised `supported_grasps`,
+`repo_acceptance_criteria`, optional `curation`, and `supports_grasp05` flag.
+Metadata survives missing-GRASP-01 and subsequent operation refusals so callers
+can show the server's policy; the caller frees it with
+`hanami_grasp_metadata_free`, including before result reuse. Calls without an
+output free it internally. Absent `curation` means no extra curation advertised,
+not an invented policy. GRASP-05 is informational only: announcement-listing
+behavior is unchanged.
+
 Push authorization follows [GRASP-01](https://ngit.dev/protocol/grasp/specification/01):
 fetch the signer's previous state through EOSE from the clone authority's root
 WebSocket relay, merge the requested destination ref updates into that complete

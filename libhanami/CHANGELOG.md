@@ -1,5 +1,23 @@
 # libhanami changelog
 
+## 0.8.0 (unreleased)
+
+- **0.x behavior/ABI change:** GRASP push/fetch requires one root NIP-11 HTTP
+  GET (`Accept: application/nostr+json`) advertising `GRASP-01` before publishing
+  state or transferring Git data. Missing support is `HANAMI_ERR_CONFIG`;
+  transport/non-2xx HTTP/deadline failures are `HANAMI_ERR_NETWORK`; malformed
+  JSON/GRASP field types, oversized documents or missing acceptance criteria
+  are `HANAMI_ERR_NOSTR`. Failures never authorize publication or transfer.
+  NULL-repository GRASP fetch performs capability preflight; offline callers
+  should use `hanami_grasp_parse_clone_url` instead.
+- Add owned server metadata to push results and `hanami_grasp_fetch_with_result`:
+  supported GRASPs, acceptance criteria, optional curation and a GRASP-05 flag.
+  Free with `hanami_grasp_metadata_free`, including before result reuse. Metadata
+  remains available on capability/later refusals. GRASP-05 does not change
+  announcement-listing policy. Plain NIP-34 and Blossom paths are unchanged.
+- Declare nip11/curl dependencies; reuse the shared NIP-11 parser, now exposing
+  typed GRASP extension fields. No package-boundary baseline additions.
+
 ## 0.7.1 (unreleased)
 
 - Fix intermittent query TIMEOUT with an HTTP-503 relay (nostrc-jgl8o).

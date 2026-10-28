@@ -89,11 +89,35 @@ static void test_parse_extended_fields(void) {
     nostr_nip11_free_info(info);
 }
 
+static void test_grasp_extensions(void) {
+    RelayInformationDocument *info = nostr_nip11_parse_info(
+        "{\"supported_grasps\":[\"GRASP-01\",\"GRASP-05\"],"
+        "\"repo_acceptance_criteria\":\"Ask the operator\",\"curation\":\"Whitelist\"}");
+    assert(info && info->supported_grasps_count == 2);
+    assert(!strcmp(info->supported_grasps[0], "GRASP-01"));
+    assert(!strcmp(info->supported_grasps[1], "GRASP-05"));
+    assert(!strcmp(info->repo_acceptance_criteria, "Ask the operator"));
+    assert(!strcmp(info->curation, "Whitelist"));
+    nostr_nip11_free_info(info);
+    info = nostr_nip11_parse_info("{}");
+    assert(info && !info->supported_grasps_count && !info->curation);
+    nostr_nip11_free_info(info);
+    const char *invalid[] = {
+        "{\"supported_grasps\":\"GRASP-01\"}",
+        "{\"supported_grasps\":[\"GRASP-01\",null]}",
+        "{\"repo_acceptance_criteria\":42}", "{\"curation\":false}",
+        "{\"supported_grasps\":[\"GRASP-01\"] broken}"
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++)
+        assert(!nostr_nip11_parse_info(invalid[i]));
+}
+
 int main(void) {
     nostr_json_init();
     test_parse_minimal();
     test_parse_invalid_returns_null();
     test_parse_extended_fields();
+    test_grasp_extensions();
     printf("test_nip11: OK\n");
     nostr_json_cleanup();
     return 0;

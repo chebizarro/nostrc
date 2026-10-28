@@ -115,9 +115,14 @@ if (nostr_json_get_array_length_at(json, "fees", "publication", &len) == 0 && le
 
 The NIP-11 module (`nips/nip11/`) consumes the JSON interface exclusively (no direct Jansson) to parse Relay Info Documents:
 
-- Strings: `nostr_json_get_string()` for `name`, `description`, `software`, `version`, `posting_policy`, `payments_url`, `icon`.
+- Strings: `nostr_json_get_string()` for `name`, `description`, `software`, `version`, `posting_policy`, `payments_url`, `icon`, and the GRASP extensions `repo_acceptance_criteria`, `curation`.
 - Int arrays: `nostr_json_get_int_array()` for `supported_nips`.
-- String arrays: `nostr_json_get_string_array()` for `relay_countries`, `language_tags`, `tags`.
+- String arrays: `nostr_json_get_string_array()` for `relay_countries`, `language_tags`, `tags`, and the GRASP extension `supported_grasps`.
 - Arrays-of-objects: helpers above for `fees.admission[]`, `fees.subscription[]`, and `fees.publication[]`.
+
+GRASP extensions are optional for ordinary Nostr relay documents. When present,
+the parser rejects incorrect types (including non-string supported GRASP entries).
+Requiring GRASP-01 and acceptance criteria is the GRASP operation caller's policy,
+not a requirement imposed on plain Nostr relays.
 
 Memory ownership: the NIP-11 free function `nostr_nip11_free_info()` performs deep-free of all nested arrays and strings.
