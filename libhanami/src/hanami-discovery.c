@@ -59,23 +59,28 @@ static bool same_url(const char *a, const char *b)
     return la == lb && strncmp(a, b, la) == 0;
 }
 
-static hanami_error_t fetch_list(hanami_nostr_ctx_t *ctx,
-    const char *const *fallback_relays, const char *owner,
-    char ***urls, size_t *count)
+char **hanami_relay_union(const char *const *a, const char *const *b)
 {
-    hanami_error_t err = hanami_nostr_fetch_blossom_servers(ctx, owner, urls, count);
-    if (err != HANAMI_ERR_NOT_FOUND || !fallback_relays || !fallback_relays[0])
-        return err;
-    hanami_nostr_ctx_t *repo_ctx = NULL;
-    if (hanami_nostr_ctx_new(fallback_relays, NULL, &repo_ctx) != HANAMI_OK)
-        return err;
-    err = hanami_nostr_fetch_blossom_servers(repo_ctx, owner, urls, count);
-    hanami_nostr_ctx_free(repo_ctx);
-    return err;
+    size_t n = 1;
+    for (size_t i = 0; a && a[i]; i++) n++;
+    for (size_t i = 0; b && b[i]; i++) n++;
+    char **out = calloc(n, sizeof(*out));
+    if (!out) return NULL;
+    size_t k = 0;
+    const char *const *sets[2] = { a, b };
+    for (int s = 0; s < 2; s++)
+        for (size_t i = 0; sets[s] && sets[s][i]; i++) {
+            bool seen = false;
+            for (size_t j = 0; j < k && !seen; j++) seen = same_url(out[j], sets[s][i]);
+            if (seen) continue;
+            if (!(out[k] = strdup(sets[s][i]))) { hanami_discovery_free_list(out, k); return NULL; }
+            k++;
+        }
+    return out;
 }
 
 hanami_error_t hanami_select_blossom_endpoint(hanami_nostr_ctx_t *ctx,
-    const char *const *fallback_relays, const char *owner_pubkey,
+    const char *owner_pubkey,
     const char *repo_id, const hanami_config_t *config, char **out)
 {
     if (!ctx || !owner_pubkey || !repo_id || !out) return HANAMI_ERR_INVALID_ARG;
@@ -89,8 +94,8 @@ hanami_error_t hanami_select_blossom_endpoint(hanami_nostr_ctx_t *ctx,
 
     char **listed = NULL;
     size_t listed_count = 0;
-    hanami_error_t list_err = fetch_list(ctx, fallback_relays, owner_pubkey,
-                                         &listed, &listed_count);
+    hanami_error_t list_err = hanami_nostr_fetch_blossom_servers(ctx, owner_pubkey,
+                                                                 &listed, &listed_count);
     size_t probed = configured ? 1 : 0;
     for (size_t i = 0; list_err == HANAMI_OK && i < listed_count; i++) {
         if (configured && same_url(listed[i], configured)) continue;

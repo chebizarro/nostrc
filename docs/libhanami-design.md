@@ -69,8 +69,12 @@ hashing. libhanami must maintain a **bidirectional index** mapping:
 Git OID (SHA-1 or SHA-256) ←→ Blossom SHA-256 (raw content)
 ```
 
-This index is stored locally (SQLite or LMDB) and can optionally be
-synchronized as a Blossom blob itself.
+A reader cannot recompute this mapping. Blossom addresses the raw payload (or
+sealed ciphertext), and distinct objects can share one address (the empty blob
+and the empty tree). The mapping is therefore **published discovery
+metadata**: the manifest chain of §4.4b in plaintext mode, or the sealed
+ref-state node in private mode (§4.4a). The local SQLite index is a cache of
+the published map.
 
 ### 3.2 Composite Backend Layering
 
@@ -126,7 +130,7 @@ Implements `git_odb_backend` vtable, delegating HTTP operations to libblossom:
 
 | Method | Behavior |
 |--------|----------|
-| `read` | Look up Blossom hash from OID index → `GET /<sha256>` → decompress → return |
+| `read` | Look up Blossom hash from OID index → `GET /<sha256>` (wire hash verified) → re-hash with the row's type and require the requested Git OID (plaintext and sealed) → return |
 | `read_header` | `HEAD /<sha256>` → return size and type from index |
 | `write` | Compute Blossom hash of raw content → `PUT /upload` with auth → store OID mapping |
 | `exists` | Check OID index, fallback to `HEAD /<sha256>` |
@@ -180,7 +184,66 @@ content with PCS v2 under the latest root-ring key and verifies its Git OID
 again after decryption. Private snapshots carry the shared index row plus
 Git-only `type` and exact plaintext `size`, required to decode padded chunks.
 
+The schema is versioned in a `hanami_meta` table (`schema_version` 1, stamped
+onto older unversioned databases on open; newer versions are refused). A
+cloned repository keeps its cache in `.git/hanami/index.sqlite`, with the
+newest fully imported manifest segment recorded as `manifest_head`. Rows are
+keyed by Git OID. `hanami_index_get_by_blossom` refuses (`HANAMI_ERR_INDEX`) a
+hash mapped from more than one OID instead of returning an arbitrary row.
+
 **Source**: `hanami-index-sqlite.c`, `hanami-index.h`
+
+### 4.4b Object manifest chain (hanami extension to NIP-34 30618, 0.6.0)
+
+Plaintext repositories publish the OID map as a chain of manifest segments on
+Blossom. Each segment is a JSON blob (canonical form: compact, sorted keys):
+
+```json
+{"prev":null,"repo":"<30618 d>","rows":[{"git_oid":"<40 hex>","sha256":"<64 hex>","size":12,"type":3}],"v":1}
+```
+
+- `rows` are strictly ascending by `git_oid`, with at most 65,536 rows and
+  16 MiB per segment (the sealed snapshot bounds). `type` is the libgit2
+  object type (1 commit, 2 tree, 3 blob, 4 tag) and `size` is the payload
+  length. `sha256` is the Blossom address of the raw payload.
+- `prev` names the previous segment. A segment with `prev: null` is a
+  **checkpoint** holding every row; other segments hold only the rows added
+  since `prev`.
+- The owner's kind-30618 carries the head as a hanami extension tag:
+  `["hanami-manifest", "<sha256 of newest segment>"]`. NIP-34 neither
+  defines nor forbids extra 30618 tags. The state event signature binds
+  refs and objects atomically.
+
+**Readers** (`hanami_clone`, `hanami_fetch`):
+
+- Accept exactly one well-formed tag.
+- Walk `prev` from the head back to a checkpoint, or to the cache's
+  `manifest_head` (incremental fetch). Chains deeper than **64** segments are
+  refused.
+- Decode strictly: exact field sets, version 1, matching `repo`, bounds and
+  OID order. Rows import in one transaction, and existing rows win.
+- Require every 30618 ref and HEAD target to be covered.
+- Fetch every object through the verifying ODB `read` (§4.1). A manifest row
+  therefore can never produce wrong content, only a visible error.
+
+**Writers** emit the objects first, then the segment, then the 30618 (data
+before state). They write a checkpoint instead of a delta when the chain would
+otherwise exceed **16** segments. The push path adopts this in a separate
+change; until then `hanami_push_to_blossom` publishes 30618 without the tag.
+
+**Other NIP-34 clients:** a client that republishes the 30618 without the tag
+leaves hanami nothing to locate objects with. `hanami_clone` and
+`hanami_fetch` then fail with `HANAMI_ERR_NOT_FOUND`, and `git_error_last()`
+names the missing tag and suggests the announcement's Git clone URL. They never
+guess. GRASP pushes (§4.5) keep Git data on the GRASP server and are
+unaffected.
+
+**Relation to sealed mode:** both modes share the row validation and bounds.
+Sealed mode keeps its index inside the sealed ref-state node referenced from
+the private 30078 head (§4.4a), because refs and OIDs must stay secret. Its
+wire format is unchanged.
+
+**Source**: `hanami-manifest.c`, `hanami-fetch.c`
 
 ### 4.4a Sealed Git assembly (SV-8, libhanami 0.4.0)
 
@@ -355,8 +418,8 @@ from `clone`. Candidates, in order:
 
 1. the explicit `hanami.endpoint` / `HANAMI_ENDPOINT` / programmatic endpoint;
 2. the repository owner's BUD-03 kind-10063 `server` tags, in listed order,
-   queried EOSE-complete on the discovery relays, then on the announcement's
-   `relays` when the discovery relays hold no list.
+   taken from one EOSE-complete snapshot over the discovery relays ∪ the
+   announcement's `relays`, so the newest replaceable list wins across both.
 
 Each candidate is classified with libblossom's capability probe. Only positive
 Blossom evidence counts (server-info JSON, an accepted BUD-02 upload, or a
@@ -369,7 +432,9 @@ error. In each case clone creates no directory, and the libgit2 last-error
 message names the cause.
 
 Discovery relays are the configured `hanami.relays`, falling back to public
-defaults only when none are configured.
+defaults only when none are configured. The kind-30618 snapshot uses the same
+union, so a state held only by the discovery relays is not mistaken for an
+empty repository. The union is recorded as `hanami.relays` in the clone.
 
 **Compatibility (libhanami 0.6.0):** announcements that put a Blossom API URL
 in `clone` are no longer treated as Blossom endpoints. Their owners publish a
@@ -413,9 +478,14 @@ int hanami_push_to_blossom(git_repository *repo,
                            const char *endpoint,
                            const char **relay_urls, size_t relay_count);
 
-// Clone from Blossom + Nostr discovery
+// Clone from Blossom + Nostr discovery (durable local repository)
 int hanami_clone(git_repository **out, const char *nostr_uri,
                  const char *local_path, const hanami_config *config);
+
+// Incremental fetch into refs/remotes/<remote>/ of a hanami clone
+hanami_error_t hanami_fetch(git_repository *repo, const char *remote_name,
+                            const hanami_signer_t *signer,
+                            const hanami_config_t *config);
 
 // Publish repository announcement (kind 30617)
 int hanami_announce_repo(const char *repo_id, const char *name,
@@ -520,9 +590,21 @@ hanami_clone(&repo, "nostr://npub1.../my-repo", "/tmp/my-repo", &config);
 1. Resolve `nostr://` URI → query relays for kind 30617 event
 2. Select the Blossom server from config or the owner's kind-10063 list (§4.7a);
    `clone` URLs are Git remotes and are not used as Blossom APIs
-3. Fetch kind 30618 → resolve branch→commit mappings
-4. Download Git objects from Blossom by hash
-5. Reconstruct repository locally
+3. Fetch the owner's kind 30618: refs plus the `hanami-manifest` head (§4.4b)
+4. Import the manifest chain into `.git/hanami/index.sqlite`; check coverage
+5. `git_clone` through a per-operation transport. It downloads each object
+   reachable from the wanted tips, verifies it against its Git OID, and writes
+   it to the local ODB only after all its children are present. libgit2
+   writes `refs/remotes/origin/*` and checks out HEAD; checkout failure is
+   fatal
+6. The result is a plain Git repository (`origin` = the `nostr://` URI,
+   `hanami.endpoint`, `hanami.relays`); no Blossom/Nostr backends stay
+   attached
+
+`hanami_fetch(repo, NULL, signer, config)` repeats steps 3–5 incrementally.
+It imports only segments newer than the cached head, downloads only objects
+missing locally, and updates `refs/remotes/origin/*` without moving local
+branches.
 
 ### Push to Blossom
 

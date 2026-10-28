@@ -10,6 +10,7 @@
 #include "hanami/hanami.h"
 #include "hanami-sealed.h"
 #include "hanami-discovery.h"
+#include "hanami-fetch.h"
 #include <git2/sys/odb_backend.h>
 #include <git2/sys/refdb_backend.h>
 #include <stdatomic.h>
@@ -292,28 +293,11 @@ hanami_error_t hanami_clone(git_repository **out,
 
     *out = NULL;
 
-    /*
-     * Parse nostr:// or naddr1... URI to extract owner pubkey + repo_id.
-     * Supported formats:
-     *   nostr://<hex_pubkey>/<repo_id>
-     *   nostr://npub1.../<repo_id>  (future: bech32 decode)
-     */
-    const char *prefix = "nostr://";
-    size_t prefix_len = 8;
-    if (strncmp(nostr_uri, prefix, prefix_len) != 0)
-        return HANAMI_ERR_INVALID_ARG;
-
-    const char *after_prefix = nostr_uri + prefix_len;
-    const char *slash = strchr(after_prefix, '/');
-    if (!slash || slash == after_prefix || !*(slash + 1))
-        return HANAMI_ERR_INVALID_ARG;
-
-    size_t pubkey_len = (size_t)(slash - after_prefix);
-    char *owner_pubkey = strndup(after_prefix, pubkey_len);
-    if (!owner_pubkey)
-        return HANAMI_ERR_NOMEM;
-
-    const char *repo_id = slash + 1;
+    /* nostr://<hex_pubkey>/<repo_id> (npub decoding is not supported). */
+    char *owner_pubkey = NULL, *repo_id = NULL;
+    hanami_error_t err = hanami_parse_nostr_uri(nostr_uri, &owner_pubkey, &repo_id);
+    if (err != HANAMI_OK)
+        return err;
 
     /* Discovery relays: configured relays, else public defaults. */
     const char *default_relays[] = {
@@ -326,112 +310,50 @@ hanami_error_t hanami_clone(git_repository **out,
         discovery_relays = hanami_config_get_relays(config);
 
     hanami_nostr_ctx_t *ctx = NULL;
-    hanami_error_t err = hanami_nostr_ctx_new(discovery_relays, signer, &ctx);
-    if (err != HANAMI_OK) {
-        free(owner_pubkey);
-        return err;
-    }
-
-    /* Fetch repository announcement to discover endpoints */
     nip34_repository_t *repo_info = NULL;
-    err = hanami_nostr_fetch_repo(ctx, repo_id, owner_pubkey, &repo_info);
-    if (err != HANAMI_OK || !repo_info) {
-        hanami_nostr_ctx_free(ctx);
-        free(owner_pubkey);
-        return (err != HANAMI_OK) ? err : HANAMI_ERR_NOT_FOUND;
+    char *endpoint = NULL;
+    err = hanami_nostr_ctx_new(discovery_relays, signer, &ctx);
+
+    /* Fetch repository announcement to discover relays */
+    if (err == HANAMI_OK) {
+        err = hanami_nostr_fetch_repo(ctx, repo_id, owner_pubkey, &repo_info);
+        if (err == HANAMI_OK && !repo_info)
+            err = HANAMI_ERR_NOT_FOUND;
     }
 
-    /* Use repo's relay list if available, otherwise the discovery relays */
-    const char **relay_urls = (const char **)discovery_relays;
-    if (repo_info->relays && repo_info->relay_count > 0) {
-        relay_urls = (const char **)repo_info->relays;
+    /* Later snapshots (kind-10063, kind-30618) cover discovery ∪ announced
+     * relays in one EOSE query, so the newest replaceable event wins across
+     * both and a state missing from one set is not mistaken for "empty". */
+    char **relays = NULL;
+    hanami_nostr_ctx_t *repo_ctx = NULL;
+    if (err == HANAMI_OK) {
+        relays = hanami_relay_union(discovery_relays,
+                                    (const char *const *)repo_info->relays);
+        err = relays ? hanami_nostr_ctx_new((const char *const *)relays, signer, &repo_ctx)
+                     : HANAMI_ERR_NOMEM;
     }
 
     /* Blossom API endpoint: explicit config or the owner's BUD-03 kind-10063
      * list, classified by libblossom's probe. NIP-34 `clone` URLs are Git
      * remotes, never Blossom APIs (nostrc-g2g37). */
-    char *endpoint = NULL;
-    err = hanami_select_blossom_endpoint(
-        ctx, repo_info->relay_count ? (const char *const *)repo_info->relays : NULL,
-        owner_pubkey, repo_id, config, &endpoint);
-    if (err != HANAMI_OK) {
-        nip34_repository_free(repo_info);
-        hanami_nostr_ctx_free(ctx);
-        free(owner_pubkey);
-        return err;
-    }
+    if (err == HANAMI_OK)
+        err = hanami_select_blossom_endpoint(repo_ctx, owner_pubkey, repo_id, config, &endpoint);
 
-    /*
-     * Clone flow:
-     * 1. Create a local working repository at local_path
-     * 2. Attach Blossom ODB + Nostr RefDB backends
-     * 3. Refs are fetched automatically when RefDB connects
-     * 4. Check out HEAD to populate working tree
-     */
+    /* Objects are verified and written locally; refs, remote "origin" and
+     * the .git/hanami cache make the clone durable (nostrc-v2zyh). */
+    if (err == HANAMI_OK)
+        err = hanami_clone_materialize(out, nostr_uri, local_path, owner_pubkey, repo_id,
+                                       endpoint, (const char *const *)relays, signer, config);
 
-    /* Step 1: Create local working repo (non-bare) */
-    git_repository *local_repo = NULL;
-    int rc = git_repository_init(&local_repo, local_path, 0);
-    if (rc < 0) {
-        free(endpoint);
-        nip34_repository_free(repo_info);
-        hanami_nostr_ctx_free(ctx);
-        free(owner_pubkey);
-        return HANAMI_ERR_LIBGIT2;
-    }
-
-    /* Record the selected Blossom server; hanami_config_load_gitconfig(repo)
-     * reads it back for later operations on this clone. */
-    git_config *repo_config = NULL;
-    rc = git_repository_config(&repo_config, local_repo);
-    if (rc == 0)
-        rc = git_config_set_string(repo_config, "hanami.endpoint", endpoint);
-    git_config_free(repo_config);
-    if (rc < 0) {
-        git_repository_free(local_repo);
-        free(endpoint);
-        nip34_repository_free(repo_info);
-        hanami_nostr_ctx_free(ctx);
-        free(owner_pubkey);
-        return HANAMI_ERR_LIBGIT2;
-    }
-
-    /* Step 2: Attach Blossom ODB + Nostr RefDB backends */
-    err = attach_blossom_backends(
-        local_repo, endpoint, relay_urls, repo_id, owner_pubkey, signer, config);
+    hanami_nostr_ctx_free(repo_ctx);
+    for (size_t i = 0; relays && relays[i]; i++) free(relays[i]);
+    free(relays);
     free(endpoint);
-    if (err != HANAMI_OK) {
-        git_repository_free(local_repo);
-        nip34_repository_free(repo_info);
-        hanami_nostr_ctx_free(ctx);
-        free(owner_pubkey);
-        return err;
-    }
-
-    /* Clean up temporary resources */
     nip34_repository_free(repo_info);
     hanami_nostr_ctx_free(ctx);
     free(owner_pubkey);
-
-    /* Step 3: Refs are populated when RefDB backend connects (already done) */
-
-    /* Step 4: Check out HEAD if it points to a branch */
-    git_reference *head_ref = NULL;
-    git_object *head_obj = NULL;
-    if (git_repository_head(&head_ref, local_repo) == 0) {
-        if (git_reference_peel(&head_obj, head_ref, GIT_OBJECT_COMMIT) == 0) {
-            git_checkout_options co_opts;
-            git_checkout_options_init(&co_opts, GIT_CHECKOUT_OPTIONS_VERSION);
-            co_opts.checkout_strategy = GIT_CHECKOUT_FORCE;
-            git_checkout_tree(local_repo, head_obj, &co_opts);
-            git_object_free(head_obj);
-        }
-        git_reference_free(head_ref);
-    }
-    /* Note: Checkout failure is non-fatal (repo may be empty or HEAD unborn) */
-
-    *out = local_repo;
-    return HANAMI_OK;
+    free(repo_id);
+    return err;
 }
 
 /* =========================================================================
