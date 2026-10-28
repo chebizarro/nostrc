@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.6.1 LANGUAGES C)
+project(nostr_homed VERSION 0.7.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)

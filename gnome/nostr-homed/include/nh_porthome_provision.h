@@ -65,6 +65,9 @@ typedef struct nh_porthome_prov_opts {
     /* Progress artifact: absolute path written 0640 nostr-auth-greeter
      * (when supplied). NULL disables. */
     const char *progress_path;
+    /* Successful plaintext-file copies (not transport bytes). Optional. */
+    void (*progress)(void *ctx, uint64_t bytes, uint64_t files);
+    void *progress_context;
 } nh_porthome_prov_opts;
 
 /* Sink for fetching sealed chunks. Real callers wire this to a

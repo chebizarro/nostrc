@@ -15,8 +15,7 @@
  *      key = "start"|"done"|"error:<class>").
  *
  * The test uses the NH_PORTHOME_STATUS_DIR override so no real user
- * home is required; the writer's emit function skips the chown branch
- * because tests run non-root.
+ * home is required; emits use the test caller's filesystem credentials.
  */
 
 #define _GNU_SOURCE
@@ -77,7 +76,7 @@ static void test_state_machine(const char *root) {
 
     /* PREPARING */
     nh_provisioner_status_set_state(w, NH_PROV_ST_PREPARING);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     {
         char *body = NULL; size_t body_len = 0;
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);
@@ -93,9 +92,9 @@ static void test_state_machine(const char *root) {
     /* FETCHING + two chunk ticks. */
     nh_provisioner_status_set_state(w, NH_PROV_ST_FETCHING);
     nh_provisioner_status_set_chunks(w, /*done=*/1, /*pending=*/4);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     nh_provisioner_status_set_chunks(w, /*done=*/3, /*pending=*/2);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     {
         char *body = NULL; size_t body_len = 0;
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);
@@ -110,14 +109,14 @@ static void test_state_machine(const char *root) {
 
     /* VERIFYING → PUBLISHING → DONE. Also record last_provisioned_ts. */
     nh_provisioner_status_set_state(w, NH_PROV_ST_VERIFYING);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     nh_provisioner_status_set_state(w, NH_PROV_ST_PUBLISHING);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
 
     int64_t ts = (int64_t)time(NULL);
     nh_provisioner_status_set_state(w, NH_PROV_ST_DONE);
     nh_provisioner_status_set_last_provisioned_ts(w, ts);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     {
         char *body = NULL; size_t body_len = 0;
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);
@@ -149,11 +148,11 @@ static void test_error_path(const char *root) {
     assert(w != NULL);
 
     nh_provisioner_status_set_state(w, NH_PROV_ST_PREPARING);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     /* Recoverable network failure. */
     nh_provisioner_status_set_state(w, NH_PROV_ST_ERROR);
     nh_provisioner_status_set_last_error_class(w, "network");
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
 
     char *body = NULL; size_t body_len = 0;
     assert(nh_porthome_status_read(path, &body, &body_len) == 0);
@@ -181,7 +180,7 @@ static void test_clear_error_class(const char *root) {
     assert(w != NULL);
     nh_provisioner_status_set_state(w, NH_PROV_ST_ERROR);
     nh_provisioner_status_set_last_error_class(w, "sandbox");
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     {
         char *body = NULL; size_t body_len = 0;
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);
@@ -191,7 +190,7 @@ static void test_clear_error_class(const char *root) {
     /* Successor run: clear + go to done. */
     nh_provisioner_status_set_last_error_class(w, "");
     nh_provisioner_status_set_state(w, NH_PROV_ST_DONE);
-    assert(nh_provisioner_status_emit(w, "/nonexistent", 0, 0, root) == 0);
+    assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     {
         char *body = NULL; size_t body_len = 0;
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);

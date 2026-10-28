@@ -392,6 +392,8 @@ nh_porthome_prov_status nh_porthome_materialize_into_fd(
                            &running_bytes, total_cap);
         if (r != NH_PORTHOME_PROV_OK) { final_rc = r; goto done; }
         applied_files++;
+        if (opts->progress)
+            opts->progress(opts->progress_context, running_bytes, applied_files);
         progress_write(opts->progress_path, tx_id_or_null, "in_progress",
                        running_bytes, 0, applied_files, total_files);
     }

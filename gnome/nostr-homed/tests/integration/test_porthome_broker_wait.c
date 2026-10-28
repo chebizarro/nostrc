@@ -3,21 +3,18 @@
  * PROVISION_HOME + WAIT_HOME dispatch. Runs the broker in a forked
  * child over a socketpair. Asserts:
  *
- *   1. PROVISION_HOME with no wrap-seed deposited yields NOT_SUPPORTED
+ *   1. PROVISION_HOME for an ordinary account yields NOT_SUPPORTED
  *      (the broker refuses to start a job without keying material —
  *      PAM's open_session translates this to "ordinary local home").
  *
- *   2. With a wrap-seed deposited but no manifest, PROVISION_HOME
- *      returns IN_PROGRESS and WAIT_HOME resolves to LIMITED_MODE
- *      within the bounded wait (design §5.3 no-push interlock).
+ *   2. A cached seed alone cannot opt an ordinary account into provisioning.
+ *      PROVISION_HOME still returns NOT_SUPPORTED; unverified WAIT is DENIED.
  *
- *   3. WAIT_HOME with no in-flight job returns NOT_SUPPORTED so the
- *      caller can distinguish a nothing-to-do path from a real
- *      terminal outcome.
+ *   3. WAIT_HOME without a verified connection is DENIED.
  *
  * Does NOT exercise a real relay fetch — the fetch source is the
- * test hook (nh_auth_porthome_set_test_hook). A follow-up bead wires
- * this into fake_relay + fake_porthome_blossom for the full round-trip.
+ * test hook (nh_auth_porthome_set_test_hook). The real PAM/fetch path is
+ * exercised by run_porthome_first_login.py with the lab Blossom service.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -40,6 +37,8 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <sched.h>
+#include <time.h>
 
 static const char *PUBKEY =
     "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -198,13 +197,12 @@ int main(void) {
     nh_auth_message rsp; memset(&rsp, 0, sizeof rsp);
     NH_CHECK(nh_auth_message_parse(pkt, pkt_len, &rsp) == 0);
     free(pkt);
-    /* Broker returned IN_PROGRESS (the job started; will fall through
-     * to LIMITED because no manifest). */
-    if (!strstr(rsp.payload_json, "in_progress")) {
+    /* Caller-supplied enrollment IDs and a seed are not authorization. */
+    if (!strstr(rsp.payload_json, "not_supported")) {
       fprintf(stderr, "unexpected: %s\n", rsp.payload_json);
       exit(1);
     }
-    printf("PASS: seed deposited -> IN_PROGRESS\n");
+    printf("PASS: seed alone cannot provision an ordinary account\n");
     nh_auth_message_clear(&rsp);
 
     /* Fire WAIT_HOME with a generous timeout. */
@@ -220,11 +218,11 @@ int main(void) {
     memset(&rsp, 0, sizeof rsp);
     NH_CHECK(nh_auth_message_parse(pkt, pkt_len, &rsp) == 0);
     free(pkt);
-    if (!strstr(rsp.payload_json, "limited_mode")) {
+    if (!strstr(rsp.payload_json, "denied")) {
       fprintf(stderr, "unexpected wait: %s\n", rsp.payload_json);
       exit(1);
     }
-    printf("PASS: WAIT_HOME -> LIMITED_MODE (no-manifest interlock)\n");
+    printf("PASS: unverified WAIT_HOME -> DENIED\n");
     nh_auth_message_clear(&rsp);
     close(sv[0]);
     int st; waitpid(pid, &st, 0);
@@ -242,7 +240,7 @@ int main(void) {
     printf("PASS: provisioner status never creates an uninstalled home\n");
   }
 
-  /* ─── Test 3: WAIT_HOME with no job → NOT_SUPPORTED ─── */
+  /* ─── Test 3: WAIT_HOME with no verified transaction → DENIED ─── */
   {
     int sv[2];
     NH_CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
@@ -263,14 +261,42 @@ int main(void) {
     nh_auth_message rsp; memset(&rsp, 0, sizeof rsp);
     NH_CHECK(nh_auth_message_parse(pkt, pkt_len, &rsp) == 0);
     free(pkt);
-    if (!strstr(rsp.payload_json, "not_supported")) {
+    if (!strstr(rsp.payload_json, "denied")) {
       fprintf(stderr, "unexpected wait-no-job: %s\n", rsp.payload_json);
       exit(1);
     }
-    printf("PASS: WAIT_HOME (no job) -> NOT_SUPPORTED\n");
+    printf("PASS: WAIT_HOME (no verified transaction) -> DENIED\n");
     nh_auth_message_clear(&rsp);
     close(sv[0]);
     int st; waitpid(pid, &st, 0);
+  }
+
+  /* A client may disconnect without WAIT_HOME. Completed jobs must be
+   * reaped independently, including enough consecutive jobs to exceed the
+   * eight-slot registry if any slot leaks. No relay or sleep-based success. */
+  {
+    NH_CHECK(setenv("NH_PORTHOME_FETCH_HELPER", "off", 1) == 0);
+    nh_identity_store *store = open_store(dir, 0);
+    nh_identity_account account;
+    NH_CHECK(nh_identity_store_lookup_by_id(store, aid, &account) == NH_IDENTITY_OK);
+    nh_auth_porthome_config config = {0};
+    uint8_t seedbuf[32] = {1};
+    for (unsigned i = 0; i < 9; i++) {
+      nh_auth_porthome_job *job = NULL;
+      NH_CHECK(nh_auth_porthome_start(&config, &account, seedbuf, ACCT_ID, store, &job) == 0);
+      struct timespec begin, now;
+      NH_CHECK(clock_gettime(CLOCK_MONOTONIC, &begin) == 0);
+      while (!nh_auth_porthome_reap_completed()) {
+        NH_CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+        NH_CHECK(now.tv_sec - begin.tv_sec < 5);
+        sched_yield();
+      }
+      NH_CHECK(nh_auth_porthome_lookup(aid) == NULL);
+    }
+    nh_auth_porthome_registry_shutdown();
+    nh_identity_store_close(store);
+    unsetenv("NH_PORTHOME_FETCH_HELPER");
+    printf("PASS: abandoned terminal jobs release registry capacity without WAIT_HOME\n");
   }
 
   /* Cleanup. */

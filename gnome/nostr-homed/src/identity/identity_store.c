@@ -90,11 +90,15 @@ static const char authority_schema[] =
   " result_id TEXT NOT NULL DEFAULT '',"
   " details_json TEXT NOT NULL DEFAULT '{}',"
   " reason_token TEXT NOT NULL DEFAULT '',"
+  " portable_state TEXT NOT NULL DEFAULT '' CHECK(portable_state IN"
+  " ('','enrolled-unprovisioned','provisioning','installed','failed')),"
   " home_mode TEXT NOT NULL DEFAULT 'create' CHECK(home_mode IN"
   " ('create','adopt_existing')),"
   " staged_dev INTEGER, staged_ino INTEGER,"
   " installed_dev INTEGER, installed_ino INTEGER,"
   " created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);"
+  "CREATE UNIQUE INDEX portable_home_account ON operations(account_id)"
+  " WHERE portable_state<>'';"
   "CREATE TRIGGER accounts_immutable BEFORE UPDATE OF"
   " account_id,username,uid,gid,home,origin,created_at ON accounts"
   " BEGIN SELECT RAISE(ABORT,'immutable account field'); END;"
@@ -109,7 +113,7 @@ static const char authority_schema[] =
   "CREATE TRIGGER accounts_retired_immutable BEFORE UPDATE ON accounts"
   " WHEN OLD.status='retired'"
   " BEGIN SELECT RAISE(ABORT,'retired account is immutable'); END;"
-  "PRAGMA user_version=3;";
+  "PRAGMA user_version=4;";
 
 static int path_parent(const char *path, char *out, size_t out_size) {
   const char *slash;
@@ -396,6 +400,29 @@ nh_identity_rc nh_identity_store_open(const nh_identity_store_options *options,
       if (result != NH_IDENTITY_OK) goto fail;
     }
     version = 3u;
+  }
+  if (version == 3u) {
+    sqlite3_stmt *probe = NULL;
+    int prc = sqlite3_prepare_v2(store->db,
+      "SELECT 1 FROM pragma_table_info('operations') WHERE name='portable_state'",
+      -1, &probe, NULL);
+    if (prc == SQLITE_OK) prc = sqlite3_step(probe);
+    sqlite3_finalize(probe);
+    if (prc != SQLITE_ROW && prc != SQLITE_DONE) {
+      result = nh_identity_sqlite_result(store, prc, "inspect portable home schema");
+      goto fail;
+    }
+    result = exec_sql(store, "BEGIN IMMEDIATE", "begin portable home migration");
+    if (result == NH_IDENTITY_OK && prc == SQLITE_DONE)
+      result = exec_sql(store,
+        "ALTER TABLE operations ADD COLUMN portable_state TEXT NOT NULL DEFAULT ''"
+        " CHECK(portable_state IN('','enrolled-unprovisioned','provisioning','installed','failed'));",
+        "add portable home lifecycle");
+    if (result == NH_IDENTITY_OK) result = exec_sql(store,
+      "CREATE UNIQUE INDEX IF NOT EXISTS portable_home_account ON operations(account_id) WHERE portable_state<>'';"
+      "PRAGMA user_version=4;COMMIT;", "migrate deferred portable homes to v4");
+    if (result != NH_IDENTITY_OK) { nh_identity_rollback(store); goto fail; }
+    version = 4u;
   }
   if (version != NH_IDENTITY_AUTHORITY_SCHEMA_VERSION) {
     result = NH_IDENTITY_SCHEMA_UNSUPPORTED; goto fail;
@@ -1208,6 +1235,104 @@ nh_identity_rc nh_identity_operation_activate(
   return result;
 }
 
+static nh_identity_rc portable_update(nh_identity_store *store, const char *sql,
+                                      const char *id) {
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_text(stmt, 1, id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  nh_identity_rc result = nh_identity_sqlite_result(store, rc, "portable home transition");
+  if (result == NH_IDENTITY_OK && sqlite3_changes(store->db) != 1)
+    result = NH_IDENTITY_BAD_STATE;
+  return result;
+}
+
+nh_identity_rc nh_identity_portable_home_get(nh_identity_store *store,
+    const char *account_id, nh_identity_portable_home *out) {
+  if (!store || !out || !nh_identity_uuid_is_valid(account_id)) return NH_IDENTITY_INVALID;
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db,
+      "SELECT operation_id,portable_state FROM operations WHERE account_id=? AND portable_state<>''",
+      -1, &stmt, NULL);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_text(stmt, 1, account_id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_step(stmt);
+  nh_identity_rc result;
+  if (rc == SQLITE_ROW) {
+    snprintf(out->operation_id, sizeof out->operation_id, "%s", sqlite3_column_text(stmt, 0));
+    snprintf(out->state, sizeof out->state, "%s", sqlite3_column_text(stmt, 1));
+    result = NH_IDENTITY_OK;
+  } else result = rc == SQLITE_DONE ? NH_IDENTITY_NOT_FOUND
+      : nh_identity_sqlite_result(store, rc, "read portable home");
+  sqlite3_finalize(stmt);
+  return result;
+}
+
+nh_identity_rc nh_identity_operation_defer_portable_home(
+    nh_identity_store *store, const char *operation_id) {
+  nh_identity_operation_state op;
+  nh_identity_account account;
+  nh_identity_portable_home home;
+  nh_identity_rc rc = nh_identity_operation_get(store, operation_id, &op);
+  if (rc != NH_IDENTITY_OK) return rc;
+  rc = nh_identity_store_lookup_by_id(store, op.account_id, &account);
+  if (rc != NH_IDENTITY_OK) return rc;
+  rc = nh_identity_portable_home_get(store, op.account_id, &home);
+  if (rc == NH_IDENTITY_OK)
+    return strcmp(home.operation_id, operation_id) ? NH_IDENTITY_BAD_STATE
+        : nh_identity_store_publish_projection(store, NULL);
+  if (rc != NH_IDENTITY_NOT_FOUND) return rc;
+  if (op.type != NH_IDENTITY_OPERATION_ENROLL || op.phase != NH_IDENTITY_PHASE_RESERVED ||
+      op.outcome != NH_IDENTITY_OUTCOME_PENDING || op.home_mode != NH_IDENTITY_HOME_CREATE ||
+      account.status != NH_IDENTITY_STATUS_ENROLLING || !account.enabled_providers)
+    return NH_IDENTITY_BAD_STATE;
+  rc = nh_identity_begin(store);
+  if (rc != NH_IDENTITY_OK) return rc;
+  rc = portable_update(store,
+      "UPDATE operations SET portable_state='enrolled-unprovisioned',updated_at=strftime('%s','now')"
+      " WHERE operation_id=? AND phase='reserved' AND outcome='pending' AND portable_state=''", operation_id);
+  if (rc == NH_IDENTITY_OK) rc = portable_update(store,
+      "UPDATE accounts SET status='active',projectable=1,updated_at=strftime('%s','now')"
+      " WHERE account_id=? AND status='enrolling' AND EXISTS"
+      " (SELECT 1 FROM providers WHERE providers.account_id=accounts.account_id AND enabled=1)", op.account_id);
+  if (rc == NH_IDENTITY_OK) rc = nh_identity_bump_generation(store, NULL);
+  if (rc == NH_IDENTITY_OK) rc = nh_identity_commit(store);
+  if (rc != NH_IDENTITY_OK) { nh_identity_rollback(store); return rc; }
+  return nh_identity_store_publish_projection(store, NULL);
+}
+
+nh_identity_rc nh_identity_portable_home_begin(nh_identity_store *store,
+    const char *account_id) {
+  if (!store || !nh_identity_uuid_is_valid(account_id)) return NH_IDENTITY_INVALID;
+  return portable_update(store,
+      "UPDATE operations SET portable_state='provisioning',updated_at=strftime('%s','now')"
+      " WHERE account_id=? AND portable_state='enrolled-unprovisioned'"
+      " AND phase='reserved' AND outcome='pending' AND EXISTS"
+      " (SELECT 1 FROM accounts WHERE accounts.account_id=operations.account_id AND status='active')",
+      account_id);
+}
+
+nh_identity_rc nh_identity_portable_home_complete(nh_identity_store *store,
+    const char *account_id) {
+  nh_identity_portable_home home;
+  nh_identity_operation_state op;
+  nh_identity_home_evidence evidence;
+  nh_identity_rc rc = nh_identity_portable_home_get(store, account_id, &home);
+  if (rc != NH_IDENTITY_OK) return rc;
+  rc = nh_identity_operation_get(store, home.operation_id, &op);
+  if (rc != NH_IDENTITY_OK) return rc;
+  if (op.phase != NH_IDENTITY_PHASE_INSTALLED || op.outcome != NH_IDENTITY_OUTCOME_PENDING ||
+      strcmp(home.state, "provisioning")) return NH_IDENTITY_BAD_STATE;
+  rc = nh_identity_home_validate(store, account_id, &op.installed_home, &evidence);
+  if (rc != NH_IDENTITY_OK) return rc;
+  return portable_update(store,
+      "UPDATE operations SET portable_state='installed',phase='complete',outcome='done',"
+      " updated_at=strftime('%s','now') WHERE account_id=? AND portable_state='provisioning'"
+      " AND phase='installed' AND outcome='pending' AND EXISTS"
+      " (SELECT 1 FROM accounts WHERE accounts.account_id=operations.account_id AND status='active')",
+      account_id);
+}
+
 nh_identity_rc nh_identity_operation_fail(
     nh_identity_store *store, const char *operation_id,
     nh_identity_operation_outcome outcome, const char *reason_token,
@@ -1233,7 +1358,8 @@ nh_identity_rc nh_identity_operation_fail(
   result = nh_identity_begin(store);
   if (result != NH_IDENTITY_OK) return result;
   rc = sqlite3_prepare_v2(store->db,
-    "UPDATE operations SET outcome=?,reason_token=?,updated_at=strftime('%s','now')"
+    "UPDATE operations SET outcome=?,reason_token=?,updated_at=strftime('%s','now'),"
+    " portable_state=CASE WHEN portable_state<>'' THEN 'failed' ELSE '' END"
     " WHERE operation_id=? AND outcome='pending'", -1, &statement, NULL);
   if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 1, outcome_text, -1, SQLITE_STATIC);
   if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 2, reason_token, -1, SQLITE_STATIC);

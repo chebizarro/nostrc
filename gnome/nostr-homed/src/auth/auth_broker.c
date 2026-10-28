@@ -1163,6 +1163,80 @@ static nh_auth_result build_smb_payload(nh_auth_broker *broker,
 
 /* ---- dispatch ---------------------------------------------------------- */
 
+static nh_auth_result provision_home(conn_state *cs, const char *payload) {
+  /* No WAIT handle is in use between serialized dispatches. */
+  (void)nh_auth_porthome_reap_completed();
+  json_t *root = NULL, *idroot = NULL;
+  const char *name = payload ? json_str(payload, "username", &root) : NULL;
+  const char *id = payload ? json_str(payload, "account_id", &idroot) : NULL;
+  nh_identity_account account;
+  const nh_identity_account *verified = cs->tx ? nh_auth_transaction_get_account(cs->tx) : NULL;
+  nh_identity_rc rc;
+  if (name && *name) rc = nh_identity_store_lookup_by_name(cs->broker->store, name, &account);
+  else if (id && *id) rc = nh_identity_store_lookup_by_id(cs->broker->store, id, &account);
+  else if (verified) rc = nh_identity_store_lookup_by_id(cs->broker->store, verified->account_id, &account);
+  else rc = NH_IDENTITY_NOT_FOUND;
+  if (root) json_decref(root);
+  if (idroot) json_decref(idroot);
+  if (rc == NH_IDENTITY_NOT_FOUND) return NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
+  if (rc != NH_IDENTITY_OK) return NH_AUTH_RESULT_STORAGE_ERROR;
+  nh_identity_portable_home home;
+  rc = nh_identity_portable_home_get(cs->broker->store, account.account_id, &home);
+  /* Ordinary accounts keep their established local-home behavior. A cached
+   * wrap seed is not an enrollment flag and must not start provisioning. */
+  if (rc == NH_IDENTITY_NOT_FOUND) return NH_AUTH_RESULT_NOT_SUPPORTED;
+  if (rc != NH_IDENTITY_OK) return NH_AUTH_RESULT_STORAGE_ERROR;
+#ifndef NH_AUTH_BROKER_ENABLE_PORTHOME
+  /* Classification still works on base builds: do not turn a known portable
+   * account into an ordinary account when the provisioner is unavailable. */
+  return NH_AUTH_RESULT_NOT_READY;
+#else
+  if (!verified || nh_auth_transaction_get_state(cs->tx) != NH_AUTH_TX_VERIFIED ||
+      strcmp(verified->account_id, account.account_id) ||
+      verified->key_generation != account.key_generation)
+    return NH_AUTH_RESULT_DENIED;
+  if (account.status != NH_IDENTITY_STATUS_ACTIVE || !account.enabled_providers)
+    return NH_AUTH_RESULT_NOT_READY;
+  if (!strcmp(home.state, "installed")) {
+    nh_identity_operation_state op;
+    nh_identity_home_evidence evidence;
+    if (nh_identity_operation_get(cs->broker->store, home.operation_id, &op) != NH_IDENTITY_OK ||
+        nh_identity_home_validate(cs->broker->store, account.account_id,
+                                  &op.installed_home, &evidence) != NH_IDENTITY_OK)
+      return NH_AUTH_RESULT_NOT_READY;
+    /* Each login needs a new read-once session handoff, not a second
+     * materialization. The previous login's consumers may have unlinked it. */
+    uint8_t seed[32];
+    if (nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed) == 0) {
+      int dropped = nh_auth_broker_porthome_drop_seed_for_uid((uid_t)account.uid, seed);
+      volatile uint8_t *wipe = seed;
+      for (size_t i = 0; i < sizeof seed; i++) wipe[i] = 0;
+      if (dropped != 0) return NH_AUTH_RESULT_INTERNAL_ERROR;
+    }
+    return NH_AUTH_RESULT_OK;
+  }
+  if (nh_auth_porthome_lookup(account.account_id)) return NH_AUTH_RESULT_IN_PROGRESS;
+  if (strcmp(home.state, "enrolled-unprovisioned")) return NH_AUTH_RESULT_NOT_READY;
+  uint8_t seed[32];
+  if (nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed) != 0)
+    return NH_AUTH_RESULT_NOT_READY;
+  rc = nh_identity_portable_home_begin(cs->broker->store, account.account_id);
+  nh_auth_porthome_config config = {0};
+  nh_auth_porthome_job *job = NULL;
+  int started = rc == NH_IDENTITY_OK &&
+      nh_auth_porthome_start(&config, &account, seed, home.operation_id,
+                             cs->broker->store, &job) == 0;
+  volatile uint8_t *wipe = seed;
+  for (size_t i = 0; i < sizeof seed; i++) wipe[i] = 0;
+  if (!started && rc == NH_IDENTITY_OK) {
+    nh_identity_operation_state failed;
+    (void)nh_identity_operation_fail(cs->broker->store, home.operation_id,
+        NH_IDENTITY_OUTCOME_REPAIR_REQUIRED, "portable_home_start_failed", &failed);
+  }
+  return started ? NH_AUTH_RESULT_IN_PROGRESS : NH_AUTH_RESULT_INTERNAL_ERROR;
+#endif
+}
+
 static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
   nh_auth_operation op = req->operation;
   if (!nh_auth_operation_allowed(cs->peer.endpoint, op, cs->peer.uid,
@@ -1197,6 +1271,15 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
         if (payload) json_decref(payload);
         else if (arr) json_decref(arr);
         return respond(fd, req, op, NH_AUTH_RESULT_INTERNAL_ERROR);
+      }
+      nh_identity_portable_home portable;
+      const nh_identity_account *account = nh_auth_transaction_get_account(cs->tx);
+      nh_identity_rc home_rc = nh_identity_portable_home_get(cs->broker->store,
+                                                            account->account_id, &portable);
+      if ((home_rc != NH_IDENTITY_OK && home_rc != NH_IDENTITY_NOT_FOUND) ||
+          json_object_set_new(payload, "portable_home", json_boolean(home_rc == NH_IDENTITY_OK))) {
+        json_decref(payload);
+        return respond(fd, req, op, NH_AUTH_RESULT_STORAGE_ERROR);
       }
       /* Additive protocol v1 fields (nostrc-bit0): tell the caller
        * which canonical local username the (possibly NIP-05)
@@ -1359,96 +1442,15 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
       if (cs->tx) nh_auth_transaction_cancel(cs->tx, &cs->peer);
       return respond(fd, req, op, NH_AUTH_RESULT_CANCELLED);
     }
-    case NH_AUTH_OP_PROVISION_HOME: {
-#ifndef NH_AUTH_BROKER_ENABLE_PORTHOME
-      return respond(fd, req, op, NH_AUTH_RESULT_NOT_SUPPORTED);
-#else
-      /* Portable-home is a broker capability, but it needs an
-       * account context. Two acceptable sources on this
-       * connection: (a) an in-flight verified transaction,
-       * (b) an explicit `account_id` in the payload — the PAM
-       * open_session path uses (b) because it reconnects after
-       * auth completed. We accept both. */
-      json_t *_hp_root = NULL;
-      const char *_hp_aid = req->payload_json
-          ? json_str(req->payload_json, "account_id", &_hp_root)
-          : NULL;
-      const char *_hp_tx = NULL;
-      json_t *_hp_txroot = NULL;
-      if (req->payload_json)
-        _hp_tx = json_str(req->payload_json, "tx_id", &_hp_txroot);
-      const nh_identity_account *_hp_acct = NULL;
-      nh_identity_account _hp_local;
-      if (cs->tx) _hp_acct = nh_auth_transaction_get_account(cs->tx);
-      if (!_hp_acct && _hp_aid && _hp_aid[0] &&
-          nh_identity_uuid_is_valid(_hp_aid) &&
-          nh_identity_store_lookup_by_id(cs->broker->store, _hp_aid,
-                                         &_hp_local) == NH_IDENTITY_OK) {
-        _hp_acct = &_hp_local;
-      }
-      nh_auth_result _hp_r;
-      if (!_hp_acct) {
-        _hp_r = NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
-      } else if (!_hp_tx || !_hp_tx[0]) {
-        _hp_r = NH_AUTH_RESULT_PROTOCOL_ERROR;
-      } else {
-        /* Look up any in-flight job first — do NOT queue a second
-         * one for the same account. */
-        nh_auth_porthome_job *_hp_existing =
-            nh_auth_porthome_lookup(_hp_acct->account_id);
-        if (_hp_existing) {
-          _hp_r = NH_AUTH_RESULT_IN_PROGRESS;
-        } else {
-          /* Wrap seed source is the broker's per-account cache,
-           * populated by the provider's post-verify callback
-           * (nostrc-ck6i). For Phase 2 the cache is not yet
-           * wired to the provider events — tests inject the
-           * seed and sealed manifest via
-           * nh_auth_porthome_set_test_hook + a companion setter.
-           * Absence of a cached seed maps to NOT_SUPPORTED so
-           * PAM proceeds with an ordinary local home. */
-          extern int nh_auth_broker_porthome_take_wrap_seed(
-              const char *account_id, uint8_t out_seed[32]);
-          uint8_t _hp_seed[32];
-          if (nh_auth_broker_porthome_take_wrap_seed(
-                  _hp_acct->account_id, _hp_seed) != 0) {
-            _hp_r = NH_AUTH_RESULT_NOT_SUPPORTED;
-          } else {
-            nh_auth_porthome_config _hp_cfg = {0};
-            /* Broker daemon fills real values from auth.conf;
-             * Phase 2 uses defaults. */
-            nh_auth_porthome_job *_hp_job = NULL;
-            int _hp_rc = nh_auth_porthome_start(
-                &_hp_cfg, _hp_acct, _hp_seed, _hp_tx,
-                cs->broker->store, &_hp_job);
-            /* Wipe the seed copy — nh_auth_porthome_start
-             * copied it into the job's mlock'd buffer. */
-            volatile uint8_t *_hp_sw = (volatile uint8_t *)_hp_seed;
-            for (size_t _hp_i = 0; _hp_i < 32; _hp_i++) _hp_sw[_hp_i] = 0;
-            if (_hp_rc == 0)
-              _hp_r = NH_AUTH_RESULT_IN_PROGRESS;
-            else
-              _hp_r = NH_AUTH_RESULT_INTERNAL_ERROR;
-            (void)_hp_job;
-          }
-        }
-      }
-      if (_hp_root) json_decref(_hp_root);
-      if (_hp_txroot) json_decref(_hp_txroot);
-      return respond(fd, req, op, _hp_r);
-#endif
-    }
+    case NH_AUTH_OP_PROVISION_HOME:
+      return respond(fd, req, op, provision_home(cs, req->payload_json));
     case NH_AUTH_OP_WAIT_HOME: {
 #ifndef NH_AUTH_BROKER_ENABLE_PORTHOME
       return respond(fd, req, op, NH_AUTH_RESULT_NOT_SUPPORTED);
 #else
-      /* Poll the pending job for this account. `account_id`
-       * in the payload; timeout_ms bounds the broker's wait
-       * so PAM's open_session budget is not overrun. */
-      json_t *_wh_root = NULL;
-      const char *_wh_aid = req->payload_json
-          ? json_str(req->payload_json, "account_id", &_wh_root)
-          : NULL;
+      /* WAIT follows PROVISION on the same verified PAM connection. */
+      if (!cs->tx || nh_auth_transaction_get_state(cs->tx) != NH_AUTH_TX_VERIFIED)
+        return respond(fd, req, op, NH_AUTH_RESULT_DENIED);
       uint32_t _wh_to = 5000;
       if (req->payload_json) {
         json_error_t _wh_je;
@@ -1463,20 +1465,11 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
           json_decref(_wh_jp);
         }
       }
-      const nh_identity_account *_wh_acct = NULL;
-      nh_identity_account _wh_local;
-      if (cs->tx) _wh_acct = nh_auth_transaction_get_account(cs->tx);
-      if (!_wh_acct && _wh_aid && _wh_aid[0] &&
-          nh_identity_uuid_is_valid(_wh_aid) &&
-          nh_identity_store_lookup_by_id(cs->broker->store, _wh_aid,
-                                         &_wh_local) == NH_IDENTITY_OK) {
-        _wh_acct = &_wh_local;
-      }
+      const nh_identity_account *_wh_acct = nh_auth_transaction_get_account(cs->tx);
       nh_auth_porthome_job *_wh_job = _wh_acct
           ? nh_auth_porthome_lookup(_wh_acct->account_id)
           : NULL;
-      if (_wh_root) json_decref(_wh_root);
-      if (!_wh_job) return respond(fd, req, op, NH_AUTH_RESULT_NOT_SUPPORTED);
+      if (!_wh_job) return respond(fd, req, op, NH_AUTH_RESULT_NOT_READY);
       nh_auth_porthome_progress_hint _wh_hint;
       memset(&_wh_hint, 0, sizeof _wh_hint);
       nh_auth_porthome_job_state _wh_st =
@@ -1513,6 +1506,7 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
 /* Shared connection driver: peer is already populated (endpoint set by the
  * caller). Reads/dispatches until the socket closes. */
 static int drive_connection(nh_auth_broker *broker, int fd, conn_state *cs) {
+  (void)nh_auth_porthome_reap_completed();
   int rc = 0;
   for (;;) {
     unsigned char *packet = NULL;
@@ -1533,6 +1527,7 @@ static int drive_connection(nh_auth_broker *broker, int fd, conn_state *cs) {
 
   conn_reset_proof(cs);
   if (cs->tx) nh_auth_transaction_free(cs->tx);
+  (void)nh_auth_porthome_reap_completed();
   (void)broker;
   return rc;
 }

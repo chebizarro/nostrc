@@ -214,6 +214,7 @@ static void parse_canonical(const char *response_json,
   json_error_t je;
   json_t *root = json_loads(response_json, 0, &je);
   if (!root) return;
+  out->portable_home = json_is_true(json_object_get(root, "portable_home"));
   json_t *cu = json_object_get(root, "account_username");
   if (cu && json_is_string(cu)) {
     const char *v = json_string_value(cu);

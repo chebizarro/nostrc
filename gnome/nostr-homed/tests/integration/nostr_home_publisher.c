@@ -124,11 +124,13 @@ typedef struct {
     size_t      relays_n;
     const char *blossom[16];
     size_t      blossom_n;
+    int schema;
 } args_t;
 
 static int parse_args(int argc, char **argv, args_t *a) {
     memset(a, 0, sizeof *a);
     a->d_tag = "nostr-homed.home.v1:personal";
+    a->schema = 1;
     for (int i = 2; i < argc; i++) {
         const char *k = argv[i];
         if (i + 1 >= argc && strchr(k, '=') == NULL) return -1;
@@ -142,6 +144,10 @@ static int parse_args(int argc, char **argv, args_t *a) {
         else if (M("seed-hex"))    a->seed_hex    = v;
         else if (M("nsec-hex"))    a->nsec_hex    = v;
         else if (M("d-tag"))       a->d_tag       = v;
+        else if (M("schema")) {
+            if (strcmp(v, "1") && strcmp(v, "2")) return -1;
+            a->schema = atoi(v);
+        }
         else if (M("relay")) {
             if (a->relays_n >= 16) return -1;
             a->relays[a->relays_n++] = v;
@@ -266,21 +272,33 @@ static int add_entry(void *ud, const char *rel, const struct stat *st,
     uint32_t mode = st->st_mode & 0777;
     uint64_t mt_ns = (uint64_t)st->st_mtim.tv_sec * 1000000000ULL
                    + (uint64_t)st->st_mtim.tv_nsec;
+    const char *base = strrchr(rel, '/');
+    base = base ? base + 1 : rel;
     if (kind == NH_PORTHOME_KIND_DIR)
-        return nh_porthome_manifest_add_dir(uc->m, penc, mode,
-            (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns);
+        return uc->m->version == 2
+            ? nh_porthome_manifest_add_dir_v2(uc->m, penc, strdup(base), mode,
+                (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns)
+            : nh_porthome_manifest_add_dir(uc->m, penc, mode,
+                (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns);
     if (kind == NH_PORTHOME_KIND_SYMLINK) {
         char *dup = strdup(tgt ? tgt : "");
         if (!dup) { free(penc); return -1; }
-        return nh_porthome_manifest_add_symlink(uc->m, penc, mode,
-            (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns, dup);
+        return uc->m->version == 2
+            ? nh_porthome_manifest_add_symlink_v2(uc->m, penc, strdup(base), mode,
+                (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns, dup)
+            : nh_porthome_manifest_add_symlink(uc->m, penc, mode,
+                (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns, dup);
     }
     if (kind == NH_PORTHOME_KIND_FILE) {
         nh_porthome_chunk *chs = NULL; size_t nc = 0;
         if (upload_chunks(uc, rel, st, &chs, &nc) != 0) { free(penc); return -1; }
-        int rc = nh_porthome_manifest_add_file(uc->m, penc, mode,
-            (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns,
-            (uint64_t)st->st_size, chs, nc);
+        int rc = uc->m->version == 2
+            ? nh_porthome_manifest_add_file_v2(uc->m, penc, strdup(base), mode,
+                (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns,
+                (uint64_t)st->st_size, chs, nc)
+            : nh_porthome_manifest_add_file(uc->m, penc, mode,
+                (uint32_t)st->st_uid, (uint32_t)st->st_gid, mt_ns,
+                (uint64_t)st->st_size, chs, nc);
         free(chs);
         return rc;
     }
@@ -400,7 +418,8 @@ static int cmd_publish(int argc, char **argv) {
 
     nh_porthome_manifest m;
     uint8_t root_id[32]; memcpy(root_id, seed, 32);
-    if (nh_porthome_manifest_init(&m, root_id) != 0) {
+    if ((a.schema == 2 ? nh_porthome_manifest_init_v2(&m, root_id)
+                       : nh_porthome_manifest_init(&m, root_id)) != 0) {
         blossom_pool_free(bl); return 65;
     }
 

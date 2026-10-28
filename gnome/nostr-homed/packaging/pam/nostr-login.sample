@@ -23,4 +23,4 @@
 auth     required pam_nostr.so socket=/run/nostr-auth/auth.sock
 account  required pam_nostr.so socket=/run/nostr-auth/auth.sock
 password required pam_deny.so
-session  required pam_permit.so
+session  required pam_nostr.so socket=/run/nostr-auth/auth.sock

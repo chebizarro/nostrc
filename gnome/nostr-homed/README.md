@@ -106,18 +106,18 @@ passwd:         files systemd nostr
 group:          files systemd nostr
 ```
 
-On Debian/Ubuntu, enable PAM session for `pam_nostr` (example using common-session):
+Use the shipped `packaging/pam/nostr` profile with `pam-auth-update`, or the
+manual service examples, not both. The session hook must run **before**
+`pam_systemd` and other home consumers and must not be `optional`:
 
 ```
-# /etc/pam.d/common-session (append near the end)
-session optional pam_nostr.so
+session [success=ok user_unknown=ignore default=die] pam_nostr.so socket=/run/nostr-auth/auth.sock
 ```
 
-OpenSSH example (append to `/etc/pam.d/sshd` after `@include common-session`):
-
-```
-session optional pam_nostr.so
-```
+Portable homes require `authenticate`, `acct_mgmt`, and `open_session` on the
+same PAM handle. See [installed login](docs/INSTALLED_LOGIN.md#first-login-portable-homes)
+for explicit enrollment, lifecycle, and the real PAM lab proof. SSH mechanisms
+that bypass this module's authentication cannot authorize first-home provisioning.
 
 Notes:
 - `nostr-homectl warm-cache` provisions deterministic UID/GID mapping and persists `settings.manifest.<namespace>` and `settings.relays.<namespace>`.
