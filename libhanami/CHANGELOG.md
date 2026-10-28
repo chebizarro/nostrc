@@ -102,6 +102,17 @@ waiter. Other independently releasable components: no bump.
   on the kind-10063 and kind-30618 reads, through `hanami_clone` and
   `hanami_fetch`.
 
+**NIP-65 outbox relays for clone (nostrc-nd9yl):**
+
+- `hanami_clone` reads the owner's kind-10002 relay list (newest event across
+  the discovery ∪ announcement relays) and adds up to 4 new write relays (`r`
+  tags with no marker or `write`, ws/wss only) to the relay set. That set is
+  used for the kind-10063 and kind-30618 reads and recorded in
+  `hanami.relays` for `hanami_fetch`. An owner whose server list or state
+  exists only on their outbox relays no longer fails with
+  `HANAMI_ERR_CONFIG`. A missing or unreadable kind-10002 adds nothing. The
+  configured `hanami.endpoint` still comes first.
+
 ## 0.6.0 (unreleased)
 
 **Behaviour change (0.x MINOR):** `hanami_clone` no longer uses NIP-34 `clone`

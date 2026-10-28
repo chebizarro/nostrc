@@ -802,6 +802,50 @@ hanami_error_t hanami_nostr_fetch_blossom_servers(hanami_nostr_ctx_t *ctx,
     return HANAMI_OK;
 }
 
+/* NIP-65: replaceable kind 10002; write relays are `r` tags with no marker or
+ * the "write" marker, kept in listed order. Only ws:// and wss:// URLs. */
+hanami_error_t hanami_nostr_fetch_write_relays(hanami_nostr_ctx_t *ctx,
+    const char *pubkey, char ***out, size_t *count)
+{
+    if (!ctx || !pubkey || !out || !count) return HANAMI_ERR_INVALID_ARG;
+    *out = NULL; *count = 0;
+    NostrFilter *filter = nostr_filter_new();
+    if (!filter) return HANAMI_ERR_NOMEM;
+    nostr_filter_add_kind(filter, NOSTR_KIND_RELAY_LIST_METADATA);
+    nostr_filter_add_author(filter, pubkey);
+    nostr_filter_set_limit(filter, 1);
+    NostrEvent *ev = NULL;
+    hanami_error_t err = query_single_event(ctx, filter, &ev);
+    if (err != HANAMI_OK) return err;
+    if (nostr_event_get_kind(ev) != NOSTR_KIND_RELAY_LIST_METADATA ||
+        strcmp(nostr_event_get_pubkey(ev), pubkey) != 0) {
+        nostr_event_free(ev);
+        return HANAMI_ERR_AUTH;
+    }
+    size_t cap = ev->tags ? ev->tags->count : 0;
+    char **urls = calloc(cap + 1, sizeof(*urls));
+    if (!urls) { nostr_event_free(ev); return HANAMI_ERR_NOMEM; }
+    size_t n = 0;
+    for (size_t i = 0; i < cap; i++) {
+        NostrTag *tag = ev->tags->data[i];
+        const char *key = nostr_tag_get_key(tag);
+        const char *url = nostr_tag_size(tag) >= 2 ? nostr_tag_get(tag, 1) : NULL;
+        const char *marker = nostr_tag_size(tag) >= 3 ? nostr_tag_get(tag, 2) : NULL;
+        if (!key || strcmp(key, "r") != 0 || !url) continue;
+        if (strncmp(url, "wss://", 6) != 0 && strncmp(url, "ws://", 5) != 0) continue;
+        if (marker && *marker && strcmp(marker, "write") != 0) continue;
+        if (!(urls[n] = strdup(url))) {
+            hanami_discovery_free_list(urls, n);
+            nostr_event_free(ev);
+            return HANAMI_ERR_NOMEM;
+        }
+        n++;
+    }
+    nostr_event_free(ev);
+    *out = urls; *count = n;
+    return HANAMI_OK;
+}
+
 /* 30618 with hanami's manifest extension tag (docs/libhanami-design.md 4.4b). */
 hanami_error_t hanami_nostr_fetch_state_manifest(hanami_nostr_ctx_t *ctx,
     const char *repo, const char *owner, nip34_repo_state_t **state, char head[65])

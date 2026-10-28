@@ -61,7 +61,10 @@ files already declare a version.
   - a multi-relay query completes on the other relays' EOSE when one relay
     CLOSEs. A refusal with no event is an error, not
     `HANAMI_ERR_NOT_FOUND`;
-  - a `restricted:` query CLOSED maps to `HANAMI_ERR_AUTH`.
+  - a `restricted:` query CLOSED maps to `HANAMI_ERR_AUTH`;
+  - `hanami_clone` adds up to 4 of the owner's NIP-65 kind-10002 write
+    relays to its kind-10063/30618 reads and to the recorded
+    `hanami.relays`.
   - No API, ABI or wire-format change.
 - **No bump:** libnostr and all other components are consumed only.
   Test-only fixture changes do not alter a shipped artifact.

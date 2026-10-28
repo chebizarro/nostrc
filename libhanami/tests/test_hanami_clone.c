@@ -33,12 +33,12 @@ static hanami_signer_t signer;
     fprintf(stderr, "%s failed: %d (%s) at %d\n", #expr, rc_, e_ ? e_->message : "", __LINE__); \
     abort(); } } while (0)
 
+/* data: secret key, or NULL for sk. */
 static hanami_error_t sign_event(const char *json, char **out, void *data)
 {
-    (void)data;
     NostrEvent *event = nostr_event_new(); assert(event);
     assert(nostr_event_deserialize_compact(event, json, NULL) == 1);
-    assert(nostr_event_sign(event, sk) == 0);
+    assert(nostr_event_sign(event, data ? (const char *)data : sk) == 0);
     *out = nostr_event_serialize_compact(event);
     nostr_event_free(event);
     return *out ? HANAMI_OK : HANAMI_ERR_NOMEM;
@@ -1002,6 +1002,138 @@ static void test_relayfail(void)
            "clone and fetch; AUTH retry succeeds; one CLOSED relay does not abort the others\n");
 }
 
+/* =========================================================================
+ * nostrc-nd9yl: the owner's kind-10063 and kind-30618 live only on their
+ * NIP-65 write relay (an isolated fixture store nothing else mirrors).
+ * ========================================================================= */
+
+static const char *sk2 = "0000000000000000000000000000000000000000000000000000000000000002";
+
+static void publish_as(const hanami_signer_t *who, const char *key, NostrEvent *ev,
+                       const char *url, int64_t at)
+{
+    nostr_event_set_created_at(ev, at);
+    assert(nostr_event_sign(ev, key) == 0);
+    const char *relays[] = { url, NULL };
+    hanami_nostr_ctx_t *ctx = NULL;
+    OK(hanami_nostr_ctx_new(relays, who, &ctx));
+    OK(hanami_nostr_publish_event(ctx, ev));
+    hanami_nostr_ctx_free(ctx);
+    nostr_event_free(ev);
+}
+
+static NostrEvent *tagged_event(int kind, const char *const (*tags)[3], size_t n)
+{
+    NostrEvent *ev = nostr_event_new(); assert(ev);
+    nostr_event_set_kind(ev, kind);
+    nostr_event_set_content(ev, "");
+    NostrTags *t = nostr_tags_new(0); assert(t);
+    for (size_t i = 0; i < n; i++)
+        nostr_tags_append(t, tags[i][2] ? nostr_tag_new(tags[i][0], tags[i][1], tags[i][2], NULL)
+                                        : nostr_tag_new(tags[i][0], tags[i][1], NULL));
+    nostr_event_set_tags(ev, t);
+    return ev;
+}
+
+static void test_outbox(void)
+{
+    char *pk2 = nostr_key_get_public(sk2); assert(pk2);
+    hanami_signer_t signer2 = { .pubkey = pk2, .sign = sign_event, .user_data = (void *)sk2 };
+    char outbox[200], outbox_slash[210], readonly[200], stale[200], filler[4][200];
+    snprintf(outbox, sizeof(outbox), "%s/isolated/outbox", relay);
+    snprintf(outbox_slash, sizeof(outbox_slash), "%s/", outbox);
+    snprintf(readonly, sizeof(readonly), "%s/isolated/readonly", relay);
+    snprintf(stale, sizeof(stale), "%s/isolated/stale", relay);
+    for (int i = 0; i < 4; i++)
+        snprintf(filler[i], sizeof(filler[i]), "%s/isolated/filler%d", relay, i);
+    int64_t now = (int64_t)time(NULL);
+
+    /* Announcement on the discovery relay; 10063 and tagged 30618 only on
+     * the owner's outbox relay. */
+    const char *relays[] = { relay, NULL };
+    const char *clones[] = { grasp, NULL };
+    OK(hanami_announce_repo("obx", "obx", "outbox fixture", clones, relays, &signer2));
+    const char *const servers[][3] = { { "server", blossom, NULL } };
+    publish_as(&signer2, sk2, tagged_event(NOSTR_KIND_BLOSSOM_SERVER_LIST, servers, 1), outbox, now);
+    char *c1 = read_text("commit-1");
+    char p[PATH_MAX]; path_of(p, sizeof(p), "source");
+    git_repository *src = NULL;
+    OK(git_repository_open(&src, p));
+    blossom_client_t *c = publisher();
+    rows_t rows = {0};
+    char head[65];
+    upload_objects(c, src, NULL, &rows);
+    upload_manifest(c, "obx", NULL, &rows, head);
+    nip34_ref_t ref = { (char *)"refs/heads/main", c1 };
+    NostrEvent *state = nip34_create_repo_state("obx", &ref, 1, "ref: refs/heads/main");
+    assert(state);
+    nostr_tags_append(state->tags, nostr_tag_new("hanami-manifest", head, NULL));
+    publish_as(&signer2, sk2, state, outbox, now);
+
+    char uri[200], dest[PATH_MAX];
+    snprintf(uri, sizeof(uri), "nostr://%s/obx", pk2);
+    git_repository *repo = NULL;
+
+    /* 1. No kind-10002: no extra relays (not an error), so nothing names a
+     *    Blossom server and the clone fails visibly as before. */
+    hanami_config_t *config = fixture_config(NULL);
+    path_of(dest, sizeof(dest), "obx-no-10002");
+    expect_error("no 10002", hanami_clone(&repo, uri, dest, NULL, config), HANAMI_ERR_CONFIG,
+                 "no Blossom server known");
+    assert(!repo && access(dest, F_OK) != 0);
+    hanami_config_free(config);
+
+    /* 2. kind-10002 on the discovery relay; an older list on a second
+     *    configured relay loses (newest replaceable event wins). Read-only,
+     *    duplicate, non-ws and over-cap entries are not added. */
+    const char *const old_list[][3] = { { "r", readonly, "write" } };
+    publish_as(&signer2, sk2, tagged_event(NOSTR_KIND_RELAY_LIST_METADATA, old_list, 1), stale, now - 100);
+    const char *const list[][3] = {
+        { "r", readonly, "read" },
+        { "r", relay, NULL },                 /* already present: no slot used */
+        { "r", outbox, NULL },
+        { "r", outbox_slash, "write" },       /* same relay */
+        { "r", "https://not-a-relay.invalid", NULL },
+        { "r", filler[0], "write" },
+        { "r", filler[1], NULL },
+        { "r", filler[2], "write" },
+        { "r", filler[3], "write" },          /* beyond HANAMI_OUTBOX_RELAYS_MAX */
+    };
+    publish_as(&signer2, sk2, tagged_event(NOSTR_KIND_RELAY_LIST_METADATA, list, 9), relay, now);
+    const char *two[] = { relay, stale, NULL };
+    OK(hanami_config_new(&config));
+    OK(hanami_config_set_relays(config, two, 2));
+    hanami_config_set_allow_insecure(config, true);
+    path_of(dest, sizeof(dest), "obx");
+    OK(hanami_clone(&repo, uri, dest, NULL, config));
+    hanami_config_free(config);
+    assert_cloned(repo, c1);
+    char *recorded = repo_config_string(repo, "hanami.relays");
+    assert(recorded);
+    char expect[2048];
+    snprintf(expect, sizeof(expect), "%s,%s,%s,%s,%s,%s", relay, stale, outbox,
+             filler[0], filler[1], filler[2]);
+    if (strcmp(recorded, expect) != 0) {
+        fprintf(stderr, "hanami.relays: got %s\nwant %s\n", recorded, expect);
+        abort();
+    }
+    free(recorded);
+
+    /* 3. hanami_fetch keeps reading the outbox relay from hanami.relays. */
+    OK(hanami_config_new(&config));
+    hanami_config_set_allow_insecure(config, true);
+    OK(hanami_fetch(repo, NULL, NULL, config));
+    hanami_config_free(config);
+    assert_ref(repo, "refs/remotes/origin/main", c1);
+    git_repository_free(repo);
+
+    free(rows.v); free(c1); free(pk2);
+    blossom_client_free(c);
+    git_repository_free(src);
+    printf("outbox: kind-10063/30618 found via the owner's NIP-65 write relays (newest list, "
+           "write-only, deduplicated, capped); no 10002 adds nothing\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 6) { fprintf(stderr, "usage: %s blossom relay grasp tmp mode\n", argv[0]); return 2; }
@@ -1023,6 +1155,7 @@ int main(int argc, char **argv)
     else if (!strcmp(mode, "republish")) test_republish();
     else if (!strcmp(mode, "negative")) test_negative();
     else if (!strcmp(mode, "relayfail")) test_relayfail();
+    else if (!strcmp(mode, "outbox")) test_outbox();
     else { fprintf(stderr, "unknown mode %s\n", mode); return 2; }
 
     free(pk);

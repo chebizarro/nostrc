@@ -10,7 +10,8 @@ Relay URL paths select per-connection REQ behaviour over the shared store:
   closed      CLOSED "blocked:"
   restricted  CLOSED "restricted:"
   auth        AUTH + CLOSED "auth-required:" until a NIP-42 AUTH is accepted
-and serves every other kind normally.
+and serves every other kind normally. /isolated/<name> is a relay with its
+own event store (an owner's NIP-65 outbox relay that nothing else mirrors).
 """
 import base64
 import hashlib
@@ -36,6 +37,7 @@ class Store:
         self.reject_manifest = False  # PUT of a manifest segment -> 500
         self.relay_reject = False     # relay EVENT -> OK false
         self.auth_ok = 0              # NIP-42 AUTH events accepted
+        self.isolated = {}            # /isolated/<name> relay -> own events
 
 
 store = Store()
@@ -210,6 +212,10 @@ class Relay(socketserver.StreamRequestHandler):
     def handle(self):
         self.path = self.rfile.readline().decode().split()[1]
         self.authenticated = False
+        parts = self.path.strip("/").split("/")
+        with store.lock:
+            self.events = (store.isolated.setdefault(parts[1], {})
+                           if len(parts) == 2 and parts[0] == "isolated" else store.events)
         headers = {}
         while line := self.rfile.readline().strip():
             key, value = line.decode().split(":", 1)
@@ -238,9 +244,9 @@ class Relay(socketserver.StreamRequestHandler):
                     key = replace_key(event)
                     with store.lock:
                         accepted = not store.relay_reject
-                        old = store.events.get(key)
+                        old = self.events.get(key)
                         if accepted and (old is None or (event["created_at"], old["id"]) >= (old["created_at"], event["id"])):
-                            store.events[key] = event
+                            self.events[key] = event
                     self.frame(["OK", event["id"], accepted, "" if accepted else "blocked: fixture refusal"])
                 elif message[0] == "AUTH":
                     event = message[1]
@@ -261,7 +267,7 @@ class Relay(socketserver.StreamRequestHandler):
                         self.frame(closed)
                         continue
                     with store.lock:
-                        events = list(store.events.values())
+                        events = list(self.events.values())
                     for f in filters:
                         found = sorted((e for e in events if matches(e, f)),
                                        key=lambda e: e["created_at"], reverse=True)

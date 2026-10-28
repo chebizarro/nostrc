@@ -147,6 +147,11 @@ HANAMI_API hanami_error_t hanami_repo_lift_privacy(git_repository *repo);
  * libblossom's capability probe; NIP-34 `clone` URLs are Git remotes and are
  * never used as Blossom APIs.
  *
+ * The kind-10063 and kind-30618 reads cover the discovery relays, the
+ * announcement's relays and up to 4 of the owner's NIP-65 (kind-10002) write
+ * relays, in that order; a missing kind-10002 adds no relays. The configured
+ * endpoint still takes precedence over the kind-10063 list.
+ *
  * The clone is an ordinary self-contained repository: every object reachable
  * from the owner's kind-30618 refs is located through the hanami manifest
  * chain, verified against its Git OID and written to the local ODB; refs are
