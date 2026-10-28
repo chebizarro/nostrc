@@ -10,6 +10,11 @@ if(TEST homed_acceptance_runner_contract)
            tests/acceptance/matrix.json EXPECTED pass)
 endif()
 
+if(TEST homed_porthome_at_rest)
+  nostrc_describe_test(homed_porthome_at_rest OWNER gnome.nostr_homed
+    TARGETS test_porthome_at_rest EXPECTED pass)
+endif()
+
 # The opt-in auth/identity/roaming runtimes are not enabled by these units.
 if(TEST homed_manifest)
   nostrc_describe_test(homed_manifest OWNER gnome.nostr_homed gnome.nostr_homed.test_inputs TARGETS test_manifest EXPECTED pass)

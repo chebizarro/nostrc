@@ -89,6 +89,16 @@ int main(void) {
   OK(nh_auth_conf_load(tmp, &c) == 0);
   OK(c.profile_fetch == 2);
 
+  OK(c.porthome_require_encrypted == 0);
+  const char *values[] = {"on", "1", "true", "yes", "typo", "", "off", "0", "false", "no"};
+  for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) {
+    char text[128];
+    snprintf(text, sizeof text, "porthome_require_encrypted=%s\n", values[i]);
+    write_file(tmp, text);
+    OK(nh_auth_conf_load(tmp, &c) == 0);
+    OK(c.porthome_require_encrypted == (i < 6));
+  }
+
   unlink(tmp);
   puts("RESULT: PASS");
   return 0;

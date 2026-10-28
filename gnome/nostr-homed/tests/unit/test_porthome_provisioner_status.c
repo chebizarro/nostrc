@@ -23,6 +23,7 @@
 
 #include "nh_porthome_notify.h"
 #include "nh_porthome_status.h"
+#include "nh_porthome_at_rest.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -82,6 +83,7 @@ static void test_state_machine(const char *root) {
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);
         assert_field_present(body, "\"provisioner\":");
         assert_field_present(body, "\"state\":\"preparing\"");
+        assert_field_present(body, "\"at_rest\":{\"state\":\"unknown\"");
         /* Peer keys still there. */
         assert_field_present(body, "\"syncd\":");
         assert_field_present(body, "\"fuse\":");
@@ -116,11 +118,14 @@ static void test_state_machine(const char *root) {
     int64_t ts = (int64_t)time(NULL);
     nh_provisioner_status_set_state(w, NH_PROV_ST_DONE);
     nh_provisioner_status_set_last_provisioned_ts(w, ts);
+    nh_provisioner_status_set_at_rest(w, NH_AT_REST_ENCRYPTED);
     assert(nh_provisioner_status_emit(w, "/nonexistent", getuid(), getgid(), root) == 0);
     {
         char *body = NULL; size_t body_len = 0;
         assert(nh_porthome_status_read(path, &body, &body_len) == 0);
         assert_field_present(body, "\"state\":\"done\"");
+        assert_field_present(body, "\"at_rest\":{\"state\":\"encrypted\"");
+        assert_field_present(body, "\"checked_at\":");
         /* last_state carries the previous transition (PUBLISHING). */
         assert_field_present(body, "\"last_state\":\"publishing\"");
         char needle[64];

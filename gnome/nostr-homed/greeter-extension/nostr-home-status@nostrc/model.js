@@ -235,6 +235,14 @@ export function buildModel(doc) {
     const cache = usage('Cache', syncd?.cache_bytes, syncd?.cache_quota_bytes);
     const home = usage('Home size', prov?.home_bytes, prov?.home_quota_bytes);
 
+    const atRestState = doc?.at_rest?.state;
+    const atRestWarning = atRestState !== 'encrypted';
+    const atRestText = atRestState === 'encrypted'
+        ? 'Disk encryption: dm-crypt detected at provisioning'
+        : atRestState === 'unencrypted'
+            ? 'WARNING: Home is plaintext at rest. Use an encrypted volume.'
+            : 'WARNING: Home disk encryption is unknown. Verify an encrypted volume.';
+
     const n = conflicts.length;
     const conflictText = n === 0 ? 'No conflicts'
         : `${n} conflict${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} your attention`;
@@ -250,10 +258,11 @@ export function buildModel(doc) {
                 : state === 'limited' || state === 'offline' ? '○' : '◐';
         label = SYNC_SHORT[state];
     }
+    if (atRestWarning) { glyph = '!'; label += ' · encryption warning'; }
     if (n > 0) label = `${label} · ${n} conflict${n === 1 ? '' : 's'}`;
 
     const accessibleName = ['Portable home', provision.active ? provision.text : syncText,
-        n > 0 ? conflictText : null].filter(Boolean).join(', ');
+        atRestText, n > 0 ? conflictText : null].filter(Boolean).join(', ');
 
     return {
         available: !!syncd || !!prov,
@@ -261,6 +270,8 @@ export function buildModel(doc) {
         label,
         accessibleName,
         syncText,
+        atRestText,
+        atRestWarning,
         provision,
         cache,
         home,

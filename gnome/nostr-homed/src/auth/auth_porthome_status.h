@@ -74,6 +74,8 @@ void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
 /* Home size after the last download and the configured per-home cap
  * (porthome_max_home_bytes). Emitted as "home_bytes" / "home_quota_bytes"
  * only when non-zero, so a zero means "not reported" rather than empty. */
+/* Recorded from the actual staging filesystem; emitted under at_rest. */
+void nh_provisioner_status_set_at_rest(nh_provisioner_status_writer *w, int state);
 void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
                                           uint64_t bytes, uint64_t quota);
 

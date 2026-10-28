@@ -32,6 +32,8 @@
 #endif
 
 #include "auth_porthome.h"
+#include "nh_porthome_at_rest.h"
+#include <syslog.h>
 
 struct nh_auth_broker {
   nh_identity_store *store;
@@ -41,6 +43,7 @@ struct nh_auth_broker {
   void *clock_ctx;
   nh_auth_ratelimit *ratelimit;
   nh_auth_ratelimit_config ratelimit_config;
+  int porthome_require_encrypted;
   char *ratelimit_path; /* NULL => in-memory only. */
 
   /* NIP-05 login identifier resolution (B5-NIP-05, nostrc-bit0).
@@ -183,6 +186,10 @@ void nh_auth_broker_set_clock(nh_auth_broker *broker,
   if (!broker) return;
   broker->clock_fn = fn;
   broker->clock_ctx = context;
+}
+
+void nh_auth_broker_set_require_encrypted(nh_auth_broker *broker, int required) {
+  if (broker) broker->porthome_require_encrypted = !!required;
 }
 
 int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
@@ -1217,11 +1224,23 @@ static nh_auth_result provision_home(conn_state *cs, const char *payload) {
   }
   if (nh_auth_porthome_lookup(account.account_id)) return NH_AUTH_RESULT_IN_PROGRESS;
   if (strcmp(home.state, "enrolled-unprovisioned")) return NH_AUTH_RESULT_NOT_READY;
+  /* Policy refusal is not corruption. Leave enrollment retryable and do not
+   * consume the seed or create an operation/staging tree. The worker also
+   * rechecks the actual staging descriptor before fetching plaintext. */
+  if (cs->broker->porthome_require_encrypted) {
+    nh_at_rest state = nh_porthome_at_rest_path(account.home);
+    if (!nh_porthome_at_rest_allowed(state, 1)) {
+      syslog(LOG_WARNING, "porthome: require-encrypted refuses provisioning (%s): %s",
+             nh_porthome_at_rest_name(state), nh_porthome_at_rest_warning(state));
+      return NH_AUTH_RESULT_DENIED;
+    }
+  }
   uint8_t seed[32];
   if (nh_auth_broker_porthome_take_wrap_seed(account.account_id, seed) != 0)
     return NH_AUTH_RESULT_NOT_READY;
   rc = nh_identity_portable_home_begin(cs->broker->store, account.account_id);
   nh_auth_porthome_config config = {0};
+  config.require_encrypted = cs->broker->porthome_require_encrypted;
   nh_auth_porthome_job *job = NULL;
   int started = rc == NH_IDENTITY_OK &&
       nh_auth_porthome_start(&config, &account, seed, home.operation_id,

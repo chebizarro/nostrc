@@ -51,6 +51,7 @@ typedef struct nh_auth_porthome_config {
   unsigned load_timeout_sec;
   /* Total per-home cap (bytes). 0 -> defaults. */
   size_t   max_home_bytes;
+  int      require_encrypted; /* refuse unless dm-crypt evidence is present */
   /* If non-zero, on first login with no wrapped_home_key on the
    * account, ask the signer to nip44_encrypt(fresh_seed) and persist
    * the ciphertext (design §4.3 first-login enrollment). Off by

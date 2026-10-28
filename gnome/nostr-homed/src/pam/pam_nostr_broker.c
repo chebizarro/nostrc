@@ -30,6 +30,8 @@
 #include <security/pam_ext.h>
 
 #include "auth_client.h"
+#include "nh_porthome_at_rest.h"
+#include <pwd.h>
 #include "nostr_auth_protocol.h"
 #include "pam_qr_render.h"
 
@@ -622,6 +624,16 @@ NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
   if (fd < 0) {
     pam_error(pamh, "Your portable home is unavailable: the authentication broker cannot be reached.");
     return PAM_SESSION_ERR;
+  }
+
+  if (ctx && ctx->portable_home) {
+    struct passwd *pw = getpwnam(user);
+    nh_at_rest state = nh_porthome_at_rest_path(pw ? pw->pw_dir : NULL);
+    const char *warning = nh_porthome_at_rest_warning(state);
+    if (warning) {
+      pam_syslog(pamh, LOG_WARNING, "%s", warning);
+      pam_info(pamh, "%s", warning);
+    }
   }
 
   nh_auth_result r = NH_AUTH_RESULT_INTERNAL_ERROR;

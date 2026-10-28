@@ -37,6 +37,8 @@
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_status.h"
+#include "nh_porthome_at_rest.h"
+#include <syslog.h>
 #include "nh_porthome_wrapkey.h"
 
 #include <blossom/shim.h>
@@ -119,6 +121,7 @@ static void usage_pull(FILE *f) {
         "usage: nostr-homed-provision pull [options]\n"
         "  --account-file PATH Read pubkey/home_key/relays/blossom from PATH.\n"
         "  --dest DIR          Materialize the home into DIR (default: mktemp).\n"
+        "  --require-encrypted Refuse unless target has dm-crypt evidence (exit 64).\n"
         "  --allow-insecure    Permit http:// / private-address Blossom servers.\n"
         "  --relay-timeout-ms MS Pointer-fetch total budget (default: 10000).\n"
         "  --helper PATH       Override nostr-home-fetch binary path.\n"
@@ -672,11 +675,13 @@ static int cmd_pull(int argc, char **argv) {
     const char *dest = NULL;
     const char *helper_override = NULL;
     int allow_insecure = 0;
+    int require_encrypted = 0;
     uint32_t relay_timeout_ms = 10000;
 
     static struct option opts[] = {
         {"account-file",       required_argument, 0, 'a'},
         {"dest",               required_argument, 0, 'd'},
+        {"require-encrypted",  no_argument,       0, 'E'},
         {"allow-insecure",     no_argument,       0, 'i'},
         {"relay-timeout-ms",   required_argument, 0, 't'},
         {"helper",             required_argument, 0, 'H'},
@@ -686,11 +691,12 @@ static int cmd_pull(int argc, char **argv) {
     optind = 1;
     for (;;) {
         int idx = 0;
-        int c = getopt_long(argc, argv, "a:d:it:H:h", opts, &idx);
+        int c = getopt_long(argc, argv, "a:d:Eit:H:h", opts, &idx);
         if (c == -1) break;
         switch (c) {
         case 'a': account_file = optarg; break;
         case 'd': dest = optarg; break;
+        case 'E': require_encrypted = 1; break;
         case 'i': allow_insecure = 1; break;
         case 't': relay_timeout_ms = (uint32_t)strtoul(optarg, NULL, 10); break;
         case 'H': helper_override = optarg; break;
@@ -722,17 +728,33 @@ static int cmd_pull(int argc, char **argv) {
         char pk8[9]; memcpy(pk8, a.account_pubkey_hex, 8); pk8[8] = '\0';
         char tmpl[128];
         snprintf(tmpl, sizeof tmpl, "/tmp/nhp-%s-%ld", pk8, (long)time(NULL));
-        if (mkdir(tmpl, 0700) != 0 && errno != EEXIST) {
-            fprintf(stderr, "mkdir %s: %s\n", tmpl, strerror(errno));
-            return NH_PROV_CLI_EXIT_INTERNAL;
-        }
         dest_alloc = strdup(tmpl);
+        if (!dest_alloc) return NH_PROV_CLI_EXIT_INTERNAL;
         dest = dest_alloc;
-    } else {
-        if (mkdirp_(dest, 0700) != 0) {
-            fprintf(stderr, "mkdir %s: %s\n", dest, strerror(errno));
-            return NH_PROV_CLI_EXIT_INTERNAL;
-        }
+    }
+    nh_at_rest at_rest = nh_porthome_at_rest_path(dest);
+    const char *warning = nh_porthome_at_rest_warning(at_rest);
+    if (warning) {
+        fprintf(stderr, "%s\n", warning);
+        syslog(LOG_WARNING, "nostr-homed-provision: %s", warning);
+    }
+    if (!nh_porthome_at_rest_allowed(at_rest, require_encrypted)) {
+        fprintf(stderr, "require-encrypted: refusing provisioning (%s)\n",
+                nh_porthome_at_rest_name(at_rest));
+        free(dest_alloc);
+        return NH_PROV_CLI_EXIT_ARG;
+    }
+    if (mkdirp_(dest, 0700) != 0) {
+        fprintf(stderr, "mkdir %s: %s\n", dest, strerror(errno));
+        free(dest_alloc);
+        return NH_PROV_CLI_EXIT_INTERNAL;
+    }
+    /* Check the created target too, not only its previously existing parent. */
+    at_rest = nh_porthome_at_rest_path(dest);
+    if (!nh_porthome_at_rest_allowed(at_rest, require_encrypted)) {
+        fprintf(stderr, "require-encrypted: target changed; refusing provisioning\n");
+        free(dest_alloc);
+        return NH_PROV_CLI_EXIT_ARG;
     }
     fprintf(stderr, "staging dir: %s\n", dest);
 
@@ -810,6 +832,11 @@ static int cmd_pull(int argc, char **argv) {
         free(dest_alloc);
         return NH_PROV_CLI_EXIT_INTERNAL;
     }
+
+    char *status_path = status_path_for_home(dest);
+    if (!status_path || nh_porthome_at_rest_write(status_path, at_rest))
+        fprintf(stderr, "WARNING: could not record at-rest status\n");
+    free(status_path);
 
     if (!dest_alloc) { /* dest was supplied by caller; keep. */ }
     else free(dest_alloc);
