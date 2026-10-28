@@ -37,6 +37,23 @@ class PolicyTests(unittest.TestCase):
         result = s.make_plan(p, [dict(change("docs/guide.md"), executable=True, old_executable=True)], head="a" * 40)
         self.assertEqual(result["effective_mode"], "broad")
 
+    def test_dated_analysis_probe_is_documentation_evidence(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for path in ("docs/analysis/fscrypt-home-key-probe-2026-10-28/fsc.py",
+                     "docs/analysis/fscrypt-home-key-probe-2026-10-28/policy-params.sh",
+                     "docs/analysis/fscrypt-home-key-probe-2026-10-28/probe.sh",
+                     "docs/analysis/another-probe-2027-01-02/run.py"):
+            with self.subTest(path=path):
+                classified = s.classify(p, path, executable=True)
+                self.assertEqual((classified["effect"], classified["nodes"], classified["unclassified"]),
+                                 ("non_execution", [], False))
+                result = s.make_plan(p, [dict(change(path), executable=True, old_executable=True)], head="a" * 40)
+                self.assertEqual(result["effective_mode"], "affected")
+                self.assertEqual(result["selected_checks"], [])
+        for path in ("docs/analysis/standalone.py", "docs/analysis/not-a-probe/run.sh", "docs/run.py"):
+            with self.subTest(path=path):
+                self.assertTrue(s.classify(p, path)["unclassified"])
+
     def test_longest_rule_replaces_parent_equal_rules_union(self):
         p = policy()
         p["path_rules"] += [{"exact": "app/vector", "nodes": [n], "effect": "impact", "reason": "specific"} for n in ("fixture", "other")]

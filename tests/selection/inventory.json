@@ -26564,6 +26564,12 @@
     {
       "effect": "non_execution",
       "nodes": [],
+      "prefix": "docs/analysis",
+      "reason": "Dated analysis probe directories are documentation evidence, not build or test inputs."
+    },
+    {
+      "effect": "non_execution",
+      "nodes": [],
       "prefix": ".beads",
       "reason": "Prose/tracker allowlist only; executable inputs must override or broaden."
     },
