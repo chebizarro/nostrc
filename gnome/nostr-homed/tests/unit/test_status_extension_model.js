@@ -152,6 +152,16 @@ const encrypted = buildModel({at_rest: {state: 'encrypted'}});
 check(!encrypted.atRestWarning, 'encrypted suppresses warning');
 check(encrypted.atRestText.includes('at provisioning'), 'snapshot not live attestation');
 
+for (const state of ['preparing', 'unlocked', 'locking', 'locked', 'migrating', 'repair-required']) {
+    const model = buildModel({fscrypt: {state}});
+    check(!model.fscryptText.includes('unknown'), `recognized fscrypt state ${state}`);
+}
+check(buildModel({fscrypt: {state: 'locking'}}).fscryptText.includes('open files'),
+    'partial lock is not presented as locked');
+for (const state of [null, 'garbage', 'toString', '__proto__'])
+    check(buildModel({fscrypt: {state}}).fscryptText.includes('unknown'),
+        `invalid fscrypt state ${state} remains unknown`);
+
 if (failures) {
     printerr(`${failures} check(s) failed`);
     System.exit(1);

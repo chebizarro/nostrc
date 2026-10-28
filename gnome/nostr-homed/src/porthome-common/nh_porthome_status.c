@@ -398,6 +398,31 @@ static int splice_key(const char *existing, size_t existing_len,
     return 0;
 }
 
+int nh_porthome_status_merge_fscrypt(unsigned long uid, char **body, size_t *len) {
+    if (!body || !*body || !len) return -EINVAL;
+    char path[128], snapshot[1024];
+    const char *value = "{\"state\":\"unknown\"}";
+    snprintf(path, sizeof path, "/run/nostr-auth/fscrypt/%lu.json", uid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd >= 0) {
+        struct stat st;
+        if (!fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_uid == 0 &&
+            !(st.st_mode & 0022) && st.st_size > 0 && st.st_size < (off_t)sizeof snapshot) {
+            ssize_t n = read(fd, snapshot, (size_t)st.st_size);
+            if (n == st.st_size) {
+                snapshot[n] = 0;
+                const char *start = NULL, *end = NULL;
+                if (!find_key_span(snapshot, (size_t)n, "state", &start, &end)) value = snapshot;
+            }
+        }
+        close(fd);
+    }
+    char *merged = NULL; size_t size = 0;
+    int rc = splice_key(*body, *len, "fscrypt", value, &merged, &size);
+    if (!rc) { free(*body); *body = merged; *len = size; }
+    return rc;
+}
+
 /* Write an atomic replacement. `path.lock` serialises concurrent
  * writers; `path.tmp.<pid>` is the staging file we rename. Mode 0600. */
 int nh_porthome_status_write_key(const char *path,

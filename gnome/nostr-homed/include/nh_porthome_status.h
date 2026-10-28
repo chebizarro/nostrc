@@ -72,6 +72,12 @@ int nh_porthome_status_write_key(const char *path,
 int nh_porthome_status_write_key_default(const char *key,
                                          const char *key_body_json);
 
+/* Merge authd's independent root-owned /run/nostr-auth/fscrypt/<uid>.json
+ * snapshot as the fscrypt key. It remains readable when the home is locked.
+ * Missing/untrusted status becomes unknown. This is informational, not an
+ * authorization source. Replaces *body (heap) on success. */
+int nh_porthome_status_merge_fscrypt(unsigned long uid, char **body, size_t *len);
+
 /* Read the whole file into a heap buffer (caller frees on success).
  * On missing / corrupt input the buffer is a minimal "{\"schema\":1}"
  * document. Returns 0 on success, -errno on hard I/O failure. */

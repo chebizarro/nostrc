@@ -11,7 +11,7 @@
 # script after every track lands; this file is the tripwire it depends on.
 #
 # Usage:
-#   check-authd-dep-purity.sh <path-to-nostr-authd> [path-to-pam_nostr.so]
+#   check-authd-dep-purity.sh [--fscrypt] <path-to-nostr-authd> [path-to-pam_nostr.so]
 #
 # Design (see scripts/README.md for the full rationale):
 #   1. `nm -a` (dynamic + static-archive-derived symbols — NOT just undefined
@@ -141,7 +141,7 @@ PAM_NOSTR_ALLOWED_SONAMES=(
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "usage: $0 <path-to-nostr-authd> [path-to-pam_nostr.so]" >&2
+  echo "usage: $0 [--fscrypt] <path-to-nostr-authd> [path-to-pam_nostr.so]" >&2
   exit 2
 }
 
@@ -228,6 +228,14 @@ check_artifact() {
 }
 
 main() {
+  if [[ "${1:-}" == --fscrypt ]]; then
+    shift
+    # nostrc-h10m.12: only for NOSTR_HOMED_ENABLE_FSCRYPT=ON. sd-bus's
+    # distro closure; never added to PAM or the default authd allowlist.
+    AUTHD_ALLOWED_SONAMES+=(libsystemd.so libgcrypt.so libgpg-error.so
+                           liblz4.so liblzma.so libzstd.so)
+  fi
+  [[ $# -ge 1 && $# -le 2 ]] || usage
   local authd_bin="${1:-}"
   local pam_bin="${2:-}"
 

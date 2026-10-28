@@ -99,6 +99,22 @@ int main(void) {
     OK(c.porthome_require_encrypted == (i < 6));
   }
 
+  write_file(tmp, "");
+  OK(nh_auth_conf_load(tmp, &c) == 0);
+  OK(!c.porthome_fscrypt && !c.porthome_fscrypt_allow_without_luks && !c.porthome_fscrypt_invalid);
+  write_file(tmp, "porthome_fscrypt=on\nporthome_fscrypt_allow_without_luks=true\n");
+  OK(nh_auth_conf_load(tmp, &c) == 0);
+  OK(c.porthome_fscrypt && c.porthome_fscrypt_allow_without_luks && !c.porthome_fscrypt_invalid);
+  const char *invalid[] = {"", "typo", "yes", "2"};
+  for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+    char text[128];
+    snprintf(text, sizeof text, "porthome_fscrypt_allow_without_luks=%s\n", invalid[i]);
+    write_file(tmp, text);
+    OK(nh_auth_conf_load(tmp, &c) == 0 && c.porthome_fscrypt_invalid);
+  }
+  write_file(tmp, "porthome_fscrypt=false\nporthome_fscrypt_allow_without_luks=0\n");
+  OK(nh_auth_conf_load(tmp, &c) == 0);
+  OK(!c.porthome_fscrypt && !c.porthome_fscrypt_allow_without_luks && !c.porthome_fscrypt_invalid);
   unlink(tmp);
   puts("RESULT: PASS");
   return 0;

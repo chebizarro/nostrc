@@ -289,6 +289,17 @@ static int check_at_rest(nh_auth_porthome_job *j, nh_at_rest state) {
   return -1;
 }
 
+static nh_identity_rc fscrypt_initialize(void *ctx, int fd) {
+  nh_auth_porthome_job *j = ctx;
+  const nh_auth_fscrypt_hooks *fs = j->config.fscrypt;
+  return fs->stage(fs->context, j->account_id, fd, 1) == 0 ? NH_IDENTITY_OK : NH_IDENTITY_UNSUPPORTED;
+}
+static nh_identity_rc fscrypt_verify(void *ctx, int fd) {
+  nh_auth_porthome_job *j = ctx;
+  const nh_auth_fscrypt_hooks *fs = j->config.fscrypt;
+  return fs->stage(fs->context, j->account_id, fd, 0) == 0 ? NH_IDENTITY_OK : NH_IDENTITY_UNSUPPORTED;
+}
+
 static nh_identity_rc label_write_into(void *ctx, int home_fd) {
   label_ctx *lc = (label_ctx *)ctx;
   if (!lc || home_fd < 0) return NH_IDENTITY_INVALID;
@@ -622,6 +633,11 @@ static void *job_run(void *arg) {
   opts.labeling_required = true;
   opts.label = label_write_into;
   opts.label_context = &lc;
+  if (j->config.fscrypt) {
+    opts.initialize = fscrypt_initialize;
+    opts.verify = fscrypt_verify;
+    opts.initialize_context = j;
+  }
 
   nh_identity_operation_state after;
   /* Bead nostrc-3o91: about to run the labeler → provisioner is
@@ -635,6 +651,9 @@ static void *job_run(void *arg) {
     rc = nh_identity_portable_home_complete(j->store, j->account_id);
   else if (portable_rc != NH_IDENTITY_OK && portable_rc != NH_IDENTITY_NOT_FOUND)
     rc = portable_rc;
+  if (rc == NH_IDENTITY_OK && j->config.fscrypt &&
+      j->config.fscrypt->finished(j->config.fscrypt->context, j->account_id, 1))
+    rc = NH_IDENTITY_UNSUPPORTED;
   int cur = atomic_load(&j->state);
   if (rc == NH_IDENTITY_OK) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_OK);
@@ -686,6 +705,8 @@ static void *job_run(void *arg) {
 
 done:
   if (atomic_load(&j->state) != NH_AUTH_PORTHOME_JOB_OK) {
+    if (j->config.fscrypt)
+      (void)j->config.fscrypt->finished(j->config.fscrypt->context, j->account_id, 0);
     nh_identity_portable_home failed_home;
     nh_identity_operation_state failed_op;
     if (nh_identity_portable_home_get(j->store, j->account_id, &failed_home) == NH_IDENTITY_OK &&

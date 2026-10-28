@@ -154,8 +154,19 @@ nh_identity_rc nh_identity_home_prepare(nh_identity_store *store,
        operation.outcome != NH_IDENTITY_OUTCOME_DONE)) return NH_IDENTITY_BAD_STATE;
   rc = nh_identity_store_lookup_by_id(store, operation.account_id, &account);
   if (rc != NH_IDENTITY_OK) return rc;
+  if (options && options->initialize &&
+      (operation.home_mode != NH_IDENTITY_HOME_CREATE || !options->verify))
+    return NH_IDENTITY_UNSUPPORTED;
   if (operation.phase >= NH_IDENTITY_PHASE_INSTALLED) {
     rc = nh_identity_home_validate(store, account.account_id, &operation.installed_home, &found);
+    if (rc == NH_IDENTITY_OK && options && options->verify) {
+      root = trusted_directory(store->config.home_root);
+      home = root < 0 ? -1 : beneath(root, account.username, O_RDONLY | O_DIRECTORY);
+      if (home < 0 || options->verify(options->initialize_context, home) != NH_IDENTITY_OK)
+        rc = NH_IDENTITY_OWNERSHIP_CHECK_FAILED;
+      if (home >= 0) close(home);
+      if (root >= 0) close(root);
+    }
     if (rc == NH_IDENTITY_OK) { *out = operation; out->replayed = true; }
     return rc;
   }
@@ -172,6 +183,8 @@ nh_identity_rc nh_identity_home_prepare(nh_identity_store *store,
       if (mkdirat(root, stage, 0700)) goto ambiguous;
       home = beneath(root, stage, O_RDONLY | O_DIRECTORY);
       if (home < 0 || fchmod(home, 0700) || fsync(root)) goto ambiguous;
+      if (options && options->initialize &&
+          options->initialize(options->initialize_context, home) != NH_IDENTITY_OK) goto ambiguous;
       if (options && options->skel_path) {
         skel = trusted_directory(options->skel_path);
         if (skel < 0 || copy_tree(skel, home, account.uid, account.gid, 0, &entries, &bytes)) goto ambiguous;
@@ -192,6 +205,8 @@ nh_identity_rc nh_identity_home_prepare(nh_identity_store *store,
     if (home >= 0) {
       if (evidence(home, &found) || !same(&found, &operation.staged_home) ||
           fstat(home, &st) || st.st_uid != 0 || (st.st_mode & 07777) != 0700) goto ambiguous;
+      if (options && options->verify &&
+          options->verify(options->initialize_context, home) != NH_IDENTITY_OK) goto ambiguous;
       if (syscall(SYS_renameat2, root, stage, root, account.username, RENAME_NOREPLACE)) goto ambiguous;
       if (fsync(root)) goto ambiguous;
     } else if (errno == ENOENT) {
@@ -206,6 +221,8 @@ nh_identity_rc nh_identity_home_prepare(nh_identity_store *store,
     home = beneath(root, account.username, O_RDONLY | O_DIRECTORY);
     if (home < 0 || evidence(home, &found) || !same(&found, &operation.staged_home)) goto ambiguous;
   }
+  if (options && options->verify &&
+      options->verify(options->initialize_context, home) != NH_IDENTITY_OK) goto ambiguous;
   if (!owned(home, &account) || fsync(home) || fsync(root) || evidence(home, &found)) goto ambiguous;
   rc = nh_identity_operation_advance_home(store, operation_id, NH_IDENTITY_PHASE_STAGED,
       NH_IDENTITY_PHASE_INSTALLED, &found, out);

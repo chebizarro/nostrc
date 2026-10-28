@@ -1,9 +1,13 @@
-project('nostr-homed', 'c', version: '0.8.0',
+project('nostr-homed', 'c', version: '0.9.0',
   default_options: ['c_std=c11', 'warning_level=3', 'werror=true'])
 
 cc = meson.get_compiler('c')
 python = import('python').find_installation(required: false)
 inc = include_directories('include', 'src/auth', 'src/identity')
+
+if not get_option('fscrypt').disabled()
+  error('fscrypt is unavailable in the portable Meson checkpoint; use CMake -DNOSTR_HOMED_ENABLE_FSCRYPT=ON with the auth runtime and experimental porthome enabled')
+endif
 
 if get_option('auth_install').enabled()
   error('auth_install is unavailable: broker, PAM client, peer binding, and activation policy are incomplete; use -Dauth_core=enabled for portable tests only')

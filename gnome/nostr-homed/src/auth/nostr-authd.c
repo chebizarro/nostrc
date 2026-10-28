@@ -47,6 +47,11 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#ifdef NH_AUTH_ENABLE_FSCRYPT
+#include "fscrypt_lifecycle.h"
+#include "auth_porthome.h"
+#endif
+
 static volatile sig_atomic_t g_stop = 0;
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
 
@@ -82,6 +87,10 @@ static int bind_listener(const char *path, mode_t mode) {
 }
 
 int main(int argc, char **argv) {
+#ifdef NH_AUTH_ENABLE_FSCRYPT
+  if (argc > 1 && !strcmp(argv[1], "--fscrypt-migrate"))
+    return nh_fscrypt_maintenance_main(argc, argv);
+#endif
   if (argc != 3 && argc != 5) {
     fprintf(stderr,
             "usage: %s <auth-socket-path> <authority-dir>\n"
@@ -115,11 +124,36 @@ int main(int argc, char **argv) {
   /* Load /etc/nostr-auth/auth.conf (or NH_AUTH_CONF override) so QR-login
    * defaults can be pinned per site. Non-fatal — the file may not exist yet
    * and every key has a compiled-in default (design D12). */
+#ifdef NH_AUTH_ENABLE_FSCRYPT
+  nh_fscrypt *fscrypt = NULL;
+  nh_auth_fscrypt_hooks fscrypt_hooks = {0};
+#endif
   static nh_auth_conf conf; /* module-scope: pointers stay valid for broker */
   {
     const char *conf_path = getenv("NH_AUTH_CONF");
     if (!conf_path || !*conf_path) conf_path = "/etc/nostr-auth/auth.conf";
     (void)nh_auth_conf_load(conf_path, &conf);
+    if (conf.porthome_fscrypt_invalid) {
+      fprintf(stderr, "nostr-authd: invalid fscrypt configuration; refusing startup\n");
+      return 1;
+    }
+#ifdef NH_AUTH_ENABLE_FSCRYPT
+    if (nh_fscrypt_open(dir, conf.porthome_fscrypt, conf.porthome_fscrypt_allow_without_luks, &fscrypt)) {
+      fprintf(stderr, "nostr-authd: fscrypt authority/watcher unavailable; refusing startup\n");
+      return 1;
+    }
+    fscrypt_hooks = (nh_auth_fscrypt_hooks){fscrypt, nh_fscrypt_required,
+        nh_fscrypt_admit, nh_fscrypt_stage, nh_fscrypt_finished};
+    nh_auth_broker_set_fscrypt(broker, &fscrypt_hooks);
+#else
+    char fscrypt_db[1024]; struct stat fscrypt_st;
+    int fscrypt_path = snprintf(fscrypt_db, sizeof fscrypt_db, "%s/fscrypt/state.db", dir);
+    if (conf.porthome_fscrypt || fscrypt_path < 0 || fscrypt_path >= (int)sizeof fscrypt_db ||
+        !lstat(fscrypt_db, &fscrypt_st) || errno != ENOENT) {
+      fprintf(stderr, "nostr-authd: fscrypt configuration/state requires NOSTR_HOMED_ENABLE_FSCRYPT; refusing startup\n");
+      return 1;
+    }
+#endif
     nh_auth_broker_set_require_encrypted(broker, conf.porthome_require_encrypted);
     if (conf.nip46_qr_relays_count > 0) {
       static const char *relay_ptrs[NH_AUTH_CONF_RELAYS_MAX];
@@ -357,6 +391,10 @@ int main(int argc, char **argv) {
       __attribute__((weak));
   if (nh_auth_broker_porthome_install)
     nh_auth_broker_porthome_install(NULL, 0, 0);
+#ifdef NH_AUTH_ENABLE_FSCRYPT
+  nh_auth_porthome_registry_shutdown();
+  nh_fscrypt_close(fscrypt);
+#endif
   nh_auth_broker_free(broker);
   nh_identity_store_close(store);
   fprintf(stderr, "nostr-authd: stopped\n");
