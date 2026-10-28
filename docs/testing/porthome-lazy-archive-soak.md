@@ -201,9 +201,12 @@ It used a real `fuse.porthome` mount under a real test home, a local fake
 Blossom BUD-01 test server, the existing encrypted fixture publisher, and
 a syncd-schema snapshot. No GNOME login, broker, relay, provisioner or
 production service was exercised. The original one-hour run started before
-the on-wire marker edits and is
-reported below after it completes. Its snapshot was built by the fixture,
-not a verified relay pull. A second five-minute run used the rebuilt FUSE
+the on-wire marker edits and used a fixture snapshot, not a verified relay
+pull. It completed 3600.08 seconds with 121/121 read/hash probes passing,
+zero hangs, read/hash errors, mount/process losses or replacements. Read
+latency was p50 43.320 ms, p95 65.385 ms, p99 70.723 ms, max 101.523 ms;
+cache grew from zero to 262,173 bytes and then stayed there, peak FUSE RSS
+11,076 KiB, tier 3 fetched once. A second five-minute run used the rebuilt FUSE
 binary and a synthetic snapshot `Archive.lazy=true` row: 300.03 elapsed
 seconds, 21/21 read/hash probes passing, zero hangs, mount/process losses or
 read errors; read latency p50 30.517 ms, p95 46.590 ms, max 57.180 ms;
@@ -211,7 +214,16 @@ cache stayed at 50 bytes, peak FUSE RSS 10,672 KiB, tier0 disabled. The
 initial smoke read populated tier 3 once. Restarting that mount with no
 Blossom endpoint read the cached report and returned `EIO` for an uncached
 binary in 0.001 seconds. This is diagnostic container evidence, not GNOME,
-relay, hosted, native desktop or release acceptance. Private-service vault
-mode could not be built in this container because its NIP-42/NIP-11 targets
-were unavailable; no private-service runtime proof is claimed. Secrets and
+relay, hosted, native desktop or release acceptance. After rebasing onto
+merged GC, the real `nh_syncd_gc.c` daemon integration test passed: an old
+marked Archive snapshot produced a generation-2 pin; GC kept its blob while
+that slot was retained, and a dry-run counterfactual classified it for
+`would-delete` only after that slot was removed. The private-vault FUSE
+source harness also passed with NIP-42/NIP-11 enabled; it is not a live
+private-service network proof. A post-rebase two-minute real-mount probe
+completed in 120.05 seconds with 13/13 read/hash probes passing, no hangs,
+errors or mount/process loss, p50 36.261 ms, p95 47.270 ms, max 79.475 ms,
+and stable 50-byte cache. It reused a cached file; no new network fetch was
+attempted. Final post-rebase focused CTest selection passed 16/16, including
+the real GC integration and the private-vault source harness. Secrets and
 container scratch are removed after measurement.
