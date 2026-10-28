@@ -39,7 +39,29 @@ waiter. Other independently releasable components: no bump.
 - Storage: the SQLite index gains a `hanami_meta` table with
   `schema_version` 1. Unversioned databases are stamped on open, and newer
   versions are refused.
-- The push path does not publish manifests yet; that lands separately.
+- **Push side:** `hanami_push_to_blossom` publishes objects, then a manifest
+  segment, then the tagged kind-30618 through the relay-accepted publish.
+  - Success requires the object uploads, the segment upload and relay OK
+    true.
+  - Segments are deltas of rows not yet published. A full checkpoint is
+    written on the first push, after a tagless 30618, or once the chain has
+    16 links.
+  - Refs not covered by uploaded objects are refused (`HANAMI_ERR_INDEX`).
+  - The cache gains `manifest_rows` and `manifest_depth`.
+- New public `hanami_push_to_blossom_ex()`: the same push honouring
+  `allow_insecure` from a config (loopback/http fixtures).
+- **Behaviour changes** in `hanami_push_to_blossom`:
+  - publishes HEAD;
+  - no longer publishes `refs/remotes/*`;
+  - fails on an unreadable local object (previously skipped).
+- The `blossom://` transport push now uploads local objects and publishes
+  through the same pipeline.
+- `hanami_repo_open` (public mode) keeps its cache in
+  `<gitdir>/hanami/index.sqlite`. It imports the owner's published chain at
+  open, failing visibly on an invalid chain, and its refdb writes publish
+  tagged states with segments for objects written through the Blossom ODB.
+- `hanami_publish_state` carries the signer's published manifest head
+  forward.
 
 ## 0.6.0 (unreleased)
 

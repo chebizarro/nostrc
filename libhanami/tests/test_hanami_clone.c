@@ -13,6 +13,7 @@
 #include <nip34.h>
 #include <jansson.h>
 #include <curl/curl.h>
+#include <sqlite3.h>
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
@@ -233,13 +234,6 @@ static void upload_objects(blossom_client_t *c, git_repository *src, const char 
     git_odb_free(odb);
 }
 
-static char *rows_list(const rows_t *rows)
-{
-    char *out = calloc(rows->n + 1, 42); assert(out);
-    for (size_t i = 0; i < rows->n; i++) { strcat(out, rows->v[i].oid); strcat(out, "\n"); }
-    return out;
-}
-
 static int row_cmp(const void *a, const void *b) { return strcmp(((const row_t *)a)->oid, ((const row_t *)b)->oid); }
 
 static void upload_manifest(blossom_client_t *c, const char *repo, const char *prev,
@@ -340,28 +334,127 @@ static void assert_objects_local(git_repository *r, const char *list)
 
 static long gets_of(const char *sha) { char name[96]; snprintf(name, sizeof(name), "gets/%s", sha); return counter(name); }
 
-/* nostrc-v2zyh: the owner published objects, a checkpoint manifest and a
- * 30618 carrying ["hanami-manifest", head]. */
+
+/* ---- production push helpers ---- */
+
+typedef struct { char *p; size_t n; } dyn_body;
+static size_t receive_dyn(void *ptr, size_t size, size_t count, void *payload)
+{
+    dyn_body *b = payload; size_t n = size * count;
+    char *grown = realloc(b->p, b->n + n + 1);
+    if (!grown) return 0;
+    b->p = grown; memcpy(b->p + b->n, ptr, n); b->n += n; b->p[b->n] = 0; return n;
+}
+static char *control_get(const char *path)
+{
+    char url[512]; snprintf(url, sizeof(url), "%s/control/%s", blossom, path);
+    CURL *curl = curl_easy_init(); assert(curl);
+    dyn_body b = {0};
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_dyn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &b);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    assert(curl_easy_perform(curl) == CURLE_OK);
+    long status = 0; curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    assert(status == 200);
+    curl_easy_cleanup(curl);
+    return b.p ? b.p : strdup("");
+}
+static void control_set(const char *flag, bool on)
+{
+    char path[96]; snprintf(path, sizeof(path), "set/%s/%s", flag, on ? "on" : "off");
+    free(control_get(path));
+}
+
+/* Segment as stored on Blossom, read without touching the GET counters. */
+static json_t *peek_segment(const char *sha)
+{
+    char path[96]; snprintf(path, sizeof(path), "blob/%s", sha);
+    char *body = control_get(path);
+    json_t *doc = json_loads(body, 0, NULL); assert(doc);
+    free(body);
+    return doc;
+}
+
+static char *cache_meta(const char *repo_dir, const char *key)
+{
+    char path[PATH_MAX]; snprintf(path, sizeof(path), "%s/%s/.git/hanami/index.sqlite", root, repo_dir);
+    sqlite3 *db = NULL; sqlite3_stmt *st = NULL;
+    assert(sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK);
+    assert(sqlite3_prepare_v2(db, "SELECT value FROM hanami_meta WHERE key = ?", -1, &st, NULL) == SQLITE_OK);
+    sqlite3_bind_text(st, 1, key, -1, SQLITE_STATIC);
+    char *out = sqlite3_step(st) == SQLITE_ROW ? strdup((const char *)sqlite3_column_text(st, 0)) : NULL;
+    sqlite3_finalize(st); sqlite3_close(db);
+    return out;
+}
+
+static hanami_error_t push_source(git_repository *src)
+{
+    const char *relays[] = { relay, NULL };
+    hanami_config_t *config = fixture_config(NULL);
+    hanami_error_t err = hanami_push_to_blossom_ex(src, blossom, &signer, relays, "repo", config);
+    hanami_config_free(config);
+    return err;
+}
+
+static void published_main(char out[41])
+{
+    const char *relays[] = { relay, NULL };
+    hanami_nostr_ctx_t *ctx = NULL;
+    OK(hanami_nostr_ctx_new(relays, NULL, &ctx));
+    nip34_repo_state_t *state = NULL;
+    OK(hanami_nostr_fetch_state(ctx, "repo", pk, &state));
+    out[0] = 0;
+    for (size_t i = 0; i < state->ref_count; i++)
+        if (!strcmp(state->refs[i].refname, "refs/heads/main"))
+            snprintf(out, 41, "%s", state->refs[i].target);
+    nip34_repo_state_free(state);
+    hanami_nostr_ctx_free(ctx);
+}
+
+static int list_cb(const git_oid *oid, void *payload)
+{
+    char hex[41]; git_oid_tostr(hex, sizeof(hex), oid);
+    strcat((char *)payload, hex); strcat((char *)payload, "\n");
+    return 0;
+}
+
+/* Newline-separated OIDs of every object in r's ODB. */
+static char *odb_list(git_repository *r)
+{
+    git_odb *odb = NULL;
+    OK(git_repository_odb(&odb, r));
+    char *out = calloc(1, 1 << 20); assert(out);
+    OK(git_odb_foreach(odb, list_cb, out));
+    git_odb_free(odb);
+    return out;
+}
+
+/* nostrc-v2zyh: the owner pushes with the production path: objects, then a
+ * checkpoint manifest, then a 30618 carrying ["hanami-manifest", head]. */
 static void test_seed(void)
 {
     char p[PATH_MAX]; path_of(p, sizeof(p), "source");
     git_repository *src = NULL;
     OK(git_repository_init(&src, p, 0));
     OK(git_repository_set_head(src, "refs/heads/main"));
-    git_oid c1; char hex[41], head[65], ts[32];
+    git_oid c1; char hex[41], main_now[41];
     make_commit(src, "hello hanami\n", NULL, NULL, &c1);
-    blossom_client_t *c = publisher();
-    rows_t rows = {0};
-    upload_objects(c, src, NULL, &rows);
-    assert(rows.n == 5); /* commit, root tree, README, empty blob, empty tree */
-    upload_manifest(c, "repo", NULL, &rows, head);
-    int64_t at = (int64_t)time(NULL);
-    publish_state("repo", git_oid_tostr(hex, sizeof(hex), &c1), head, at);
-    write_text("commit-1", hex); write_text("manifest-1", head);
-    snprintf(ts, sizeof(ts), "%lld", (long long)at); write_text("ts-1", ts);
-    char *list = rows_list(&rows); write_text("objects-1", list); free(list);
-    free(rows.v); blossom_client_free(c); git_repository_free(src);
-    printf("seed: 5 objects (empty blob + empty tree share one address), checkpoint %s\n", head);
+    OK(push_source(src));
+    git_oid_tostr(hex, sizeof(hex), &c1);
+    published_main(main_now);
+    assert(!strcmp(main_now, hex));
+    char *head = cache_meta("source", "manifest_head"), *depth = cache_meta("source", "manifest_depth");
+    assert(head && depth && !strcmp(depth, "1"));
+    json_t *seg = peek_segment(head);
+    assert(json_is_null(json_object_get(seg, "prev")));
+    assert(json_array_size(json_object_get(seg, "rows")) == 5); /* incl. empty blob + empty tree */
+    json_decref(seg);
+    char *list = odb_list(src);
+    write_text("commit-1", hex); write_text("manifest-1", head); write_text("objects-1", list);
+    free(list); free(head); free(depth);
+    git_repository_free(src);
+    printf("seed: hanami_push_to_blossom published 5 objects, checkpoint, tagged 30618\n");
 }
 
 /* Cold clone: separate process, empty TMPDIR, no prior local state. */
@@ -404,24 +497,131 @@ static void test_seed2(void)
     char p[PATH_MAX]; path_of(p, sizeof(p), "source");
     git_repository *src = NULL;
     OK(git_repository_open(&src, p));
-    char *c1hex = read_text("commit-1"), *old = read_text("objects-1"), *m1 = read_text("manifest-1");
-    char *ts1 = read_text("ts-1");
+    char *c1hex = read_text("commit-1"), *m1 = read_text("manifest-1"), *old = read_text("objects-1");
     git_oid c1, c2; OK(git_oid_fromstr(&c1, c1hex));
     make_commit(src, "hello again\n", "incremental\n", &c1, &c2);
-    blossom_client_t *c = publisher();
-    rows_t rows = {0};
-    upload_objects(c, src, old, &rows);
-    assert(rows.n == 4); /* commit, root tree, README, notes.txt */
-    char head[65], hex[41];
-    upload_manifest(c, "repo", m1, &rows, head);
-    int64_t at = (int64_t)time(NULL), prev_at = strtoll(ts1, NULL, 10);
-    if (at <= prev_at) at = prev_at + 1;
-    publish_state("repo", git_oid_tostr(hex, sizeof(hex), &c2), head, at);
-    write_text("commit-2", hex); write_text("manifest-2", head);
-    char *list = rows_list(&rows); write_text("objects-2", list); free(list);
-    free(rows.v); free(c1hex); free(old); free(m1); free(ts1);
-    blossom_client_free(c); git_repository_free(src);
-    printf("seed2: delta segment %s -> prev checkpoint\n", head);
+    OK(push_source(src));
+    char hex[41], main_now[41];
+    git_oid_tostr(hex, sizeof(hex), &c2);
+    published_main(main_now);
+    assert(!strcmp(main_now, hex));
+    char *head = cache_meta("source", "manifest_head"), *depth = cache_meta("source", "manifest_depth");
+    assert(head && strcmp(head, m1) && depth && !strcmp(depth, "2"));
+    json_t *seg = peek_segment(head);
+    assert(!strcmp(json_string_value(json_object_get(seg, "prev")), m1));
+    assert(json_array_size(json_object_get(seg, "rows")) == 4); /* delta: commit, tree, README, notes */
+    json_decref(seg);
+    char *all = odb_list(src), news[1 << 14] = {0};
+    char *save = NULL;
+    for (char *tok = strtok_r(all, "\n", &save); tok; tok = strtok_r(NULL, "\n", &save))
+        if (!strstr(old, tok)) { strcat(news, tok); strcat(news, "\n"); }
+    write_text("commit-2", hex); write_text("manifest-2", head); write_text("objects-2", news);
+    free(all); free(head); free(depth); free(c1hex); free(m1); free(old);
+    git_repository_free(src);
+    printf("seed2: incremental push published a 4-row delta segment\n");
+}
+
+/* A push reports success only if the manifest upload and the 30618 OK both
+ * succeed; failed pushes leave rows unpublished and are completed later. */
+static void test_pushfail(void)
+{
+    char p[PATH_MAX]; path_of(p, sizeof(p), "source");
+    git_repository *src = NULL;
+    OK(git_repository_open(&src, p));
+    char *c2hex = read_text("commit-2"), *m2 = read_text("manifest-2");
+    git_oid c2, c3; OK(git_oid_fromstr(&c2, c2hex));
+    make_commit(src, "third\n", "third notes\n", &c2, &c3);
+    char hex[41], main_now[41];
+    git_oid_tostr(hex, sizeof(hex), &c3);
+
+    control_set("reject-manifest", true);
+    hanami_error_t err = push_source(src);
+    control_set("reject-manifest", false);
+    assert(err != HANAMI_OK);
+    published_main(main_now); assert(!strcmp(main_now, c2hex));
+
+    control_set("relay-reject", true);
+    err = push_source(src);
+    control_set("relay-reject", false);
+    assert(err != HANAMI_OK);
+    const git_error *e = git_error_last();
+    assert(e && strstr(e->message, "not accepted"));
+    published_main(main_now); assert(!strcmp(main_now, c2hex));
+    char *head = cache_meta("source", "manifest_head");
+    assert(!strcmp(head, m2)); /* failed pushes never advance the cached head */
+    free(head);
+
+    OK(push_source(src));
+    published_main(main_now); assert(!strcmp(main_now, hex));
+    head = cache_meta("source", "manifest_head");
+    json_t *seg = peek_segment(head);
+    assert(!strcmp(json_string_value(json_object_get(seg, "prev")), m2));
+    assert(json_array_size(json_object_get(seg, "rows")) == 4); /* commit, tree, README, notes */
+    json_decref(seg);
+    write_text("commit-3", hex);
+    free(head); free(c2hex); free(m2);
+    git_repository_free(src);
+    printf("pushfail: manifest-upload and relay rejections fail the push; retry publishes\n");
+}
+
+/* Chain bound: once 16 segments are linked, the next push is a checkpoint
+ * holding every row; fetch and a fresh cold clone read only that segment. */
+static void test_checkpoint(void)
+{
+    char p[PATH_MAX]; path_of(p, sizeof(p), "source");
+    git_repository *src = NULL;
+    OK(git_repository_open(&src, p));
+    char *c3hex = read_text("commit-3");
+    git_oid parent, next; OK(git_oid_fromstr(&parent, c3hex)); free(c3hex);
+    char *depth = cache_meta("source", "manifest_depth");
+    long prev_depth = strtol(depth, NULL, 10); free(depth);
+    bool reset = false;
+    for (int i = 0; i < 20 && !reset; i++) {
+        char notes[32]; snprintf(notes, sizeof(notes), "push %d\n", i);
+        make_commit(src, "checkpoint run\n", notes, &parent, &next);
+        parent = next;
+        OK(push_source(src));
+        depth = cache_meta("source", "manifest_depth");
+        long d = strtol(depth, NULL, 10); free(depth);
+        if (d == 1) { assert(prev_depth == 16); reset = true; }
+        else assert(d == prev_depth + 1 && d <= 16);
+        prev_depth = d;
+    }
+    assert(reset);
+    char *head = cache_meta("source", "manifest_head");
+    json_t *seg = peek_segment(head);
+    char *all = odb_list(src);
+    size_t objects = 0;
+    for (char *q = all; *q; q++) objects += *q == '\n';
+    assert(json_is_null(json_object_get(seg, "prev")));
+    assert(json_array_size(json_object_get(seg, "rows")) == objects);
+    json_decref(seg); free(all);
+    char hex[41]; git_oid_tostr(hex, sizeof(hex), &parent);
+
+    /* Incremental fetch across the checkpoint, then a second cold clone. */
+    char dest[PATH_MAX], uri[160];
+    path_of(dest, sizeof(dest), "clone");
+    git_repository *repo = NULL;
+    OK(git_repository_open(&repo, dest));
+    hanami_config_t *config = NULL;
+    OK(hanami_config_new(&config));
+    hanami_config_set_allow_insecure(config, true);
+    OK(hanami_fetch(repo, NULL, NULL, config));
+    assert_ref(repo, "refs/remotes/origin/main", hex);
+    git_repository_free(repo);
+    hanami_config_free(config);
+    assert(gets_of(head) == 1);
+    clone_uri(uri, sizeof(uri));
+    path_of(dest, sizeof(dest), "clone-after-checkpoint");
+    config = fixture_config(NULL);
+    OK(hanami_clone(&repo, uri, dest, NULL, config));
+    assert_ref(repo, "HEAD", hex);
+    git_repository_free(repo);
+    hanami_config_free(config);
+    assert(gets_of(head) == 2);
+    free(head);
+    git_repository_free(src);
+    printf("checkpoint: 17th link became a full checkpoint; fetch and cold clone read one segment\n");
 }
 
 static void test_fetch(void)
@@ -610,6 +810,53 @@ static void test_negative(void)
            "cleanup keeps pre-existing directories\n");
 }
 
+/* Refs-only publication and a tagless republish by another NIP-34 client. */
+static void test_republish(void)
+{
+    const char *relays[] = { relay, NULL };
+    char main_now[41], uri[160], dest[PATH_MAX];
+    published_main(main_now);
+    clone_uri(uri, sizeof(uri));
+
+    /* hanami_publish_state carries the tag, but only for covered targets. */
+    hanami_ref_entry_t bad = { "refs/heads/main", "1111111111111111111111111111111111111111" };
+    assert(hanami_publish_state("repo", &bad, 1, relays, &signer) == HANAMI_ERR_INDEX);
+    hanami_ref_entry_t good = { "refs/heads/main", main_now };
+    OK(hanami_publish_state("repo", &good, 1, relays, &signer));
+    path_of(dest, sizeof(dest), "clone-after-refs-only");
+    hanami_config_t *config = fixture_config(NULL);
+    git_repository *repo = NULL;
+    OK(hanami_clone(&repo, uri, dest, NULL, config));
+    assert_ref(repo, "refs/remotes/origin/main", main_now);
+    git_repository_free(repo);
+
+    /* Another client republishes 30618 without the tag: visible failure. */
+    publish_state("repo", main_now, NULL, (int64_t)time(NULL) + 1000);
+    expect_clone_failure("repo", HANAMI_ERR_NOT_FOUND, "hanami-manifest");
+
+    /* The next hanami push has no base, so it writes a full checkpoint. */
+    char p[PATH_MAX]; path_of(p, sizeof(p), "source");
+    git_repository *src = NULL;
+    OK(git_repository_open(&src, p));
+    git_oid parent, next; OK(git_oid_fromstr(&parent, main_now));
+    make_commit(src, "after republish\n", "recovered\n", &parent, &next);
+    OK(push_source(src));
+    char *depth = cache_meta("source", "manifest_depth"), *head = cache_meta("source", "manifest_head");
+    assert(!strcmp(depth, "1"));
+    json_t *seg = peek_segment(head);
+    assert(json_is_null(json_object_get(seg, "prev")));
+    json_decref(seg);
+    char hex[41]; git_oid_tostr(hex, sizeof(hex), &next);
+    path_of(dest, sizeof(dest), "clone-after-republish");
+    OK(hanami_clone(&repo, uri, dest, NULL, config));
+    assert_ref(repo, "HEAD", hex);
+    git_repository_free(repo);
+    hanami_config_free(config);
+    free(depth); free(head);
+    git_repository_free(src);
+    printf("republish: refs-only publish guarded; tagless 30618 fails clone; next push checkpoints\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 6) { fprintf(stderr, "usage: %s blossom relay grasp tmp mode\n", argv[0]); return 2; }
@@ -626,6 +873,9 @@ int main(int argc, char **argv)
     else if (!strcmp(mode, "clone")) test_clone();
     else if (!strcmp(mode, "seed2")) test_seed2();
     else if (!strcmp(mode, "fetch")) test_fetch();
+    else if (!strcmp(mode, "pushfail")) test_pushfail();
+    else if (!strcmp(mode, "checkpoint")) test_checkpoint();
+    else if (!strcmp(mode, "republish")) test_republish();
     else if (!strcmp(mode, "negative")) test_negative();
     else { fprintf(stderr, "unknown mode %s\n", mode); return 2; }
 

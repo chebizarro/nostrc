@@ -187,7 +187,9 @@ Git-only `type` and exact plaintext `size`, required to decode padded chunks.
 The schema is versioned in a `hanami_meta` table (`schema_version` 1, stamped
 onto older unversioned databases on open; newer versions are refused). A
 cloned repository keeps its cache in `.git/hanami/index.sqlite`, with the
-newest fully imported manifest segment recorded as `manifest_head`. Rows are
+newest fully imported manifest segment recorded as `manifest_head`, its chain
+length as `manifest_depth`, and OIDs covered by the published chain in
+`manifest_rows`; other rows are local uploads not yet published. Rows are
 keyed by Git OID. `hanami_index_get_by_blossom` refuses (`HANAMI_ERR_INDEX`) a
 hash mapped from more than one OID instead of returning an arbitrary row.
 
@@ -226,17 +228,54 @@ Blossom. Each segment is a JSON blob (canonical form: compact, sorted keys):
 - Fetch every object through the verifying ODB `read` (§4.1). A manifest row
   therefore can never produce wrong content, only a visible error.
 
-**Writers** emit the objects first, then the segment, then the 30618 (data
-before state). They write a checkpoint instead of a delta when the chain would
-otherwise exceed **16** segments. The push path adopts this in a separate
-change; until then `hanami_push_to_blossom` publishes 30618 without the tag.
+**Writers** (`hanami_manifest_publish_state`) publish data before state:
+
+1. Every local object is uploaded unless the server already has it, and
+   recorded in the cache as an unpublished row.
+2. The cache catches up to the signer's published chain. This is a base
+   check, not compare-and-swap. Every ref and HEAD target must be covered.
+3. One segment is uploaded. It is a **checkpoint** with every row when there
+   is no base (first push, or a 30618 republished without the tag) or the
+   chain already has **16** segments. Otherwise it is a delta of the
+   unpublished rows. A refs-only change reuses the current head.
+4. The 30618 carries refs (local refs only, no `refs/remotes/`), HEAD and
+   the tag. It goes through the relay-accepted publish (OK true, bounded
+   NIP-42 retry), with `created_at` strictly newer than any observed state.
+
+A push succeeds only when the object uploads, the segment upload and the
+30618 acceptance all succeed. Rows are marked published (`manifest_rows`)
+only after relay OK, so a failed push is completed by the next one. A crash
+after OK is repaired by the next sync.
+
+The publishers are:
+
+- `hanami_push_to_blossom` / `_ex`;
+- the `blossom://` transport push. It publishes the repository's full local
+  ref state, not individual refspecs, because libgit2 exposes no push specs to
+  custom transports. The URL owner must be the signer;
+- the refdb of `hanami_repo_open`, which publishes rows of objects written
+  through the Blossom ODB. It also imports the owner's chain at open, so
+  existing remote objects are readable;
+- `hanami_publish_state`, which uploads nothing and carries the signer's
+  published head forward. It cannot read the chain without a Blossom client,
+  so it accepts only targets that already appear in the published 30618.
+
+The writer refuses an author that is not the context's signer
+(`HANAMI_ERR_AUTH`): that state would land where readers never look. A sync
+that reaches a checkpoint without meeting the cached head prunes published
+markers to that chain, so a replaced chain cannot make uncovered refs look
+published.
+
+GRASP state publication (`hanami_push_to_grasp`) does not carry the tag: its
+Git data lives on the GRASP server.
 
 **Other NIP-34 clients:** a client that republishes the 30618 without the tag
 leaves hanami nothing to locate objects with. `hanami_clone` and
 `hanami_fetch` then fail with `HANAMI_ERR_NOT_FOUND`, and `git_error_last()`
 names the missing tag and suggests the announcement's Git clone URL. They never
-guess. GRASP pushes (§4.5) keep Git data on the GRASP server and are
-unaffected.
+guess. The same applies after a GRASP push to the same repository identifier.
+The next hanami push writes a fresh checkpoint, because a tagless base forces
+one.
 
 **Relation to sealed mode:** both modes share the row validation and bounds.
 Sealed mode keeps its index inside the sealed ref-state node referenced from
@@ -613,10 +652,16 @@ hanami_push_to_blossom(repo, "https://blossom.example.com",
                        relay_urls, relay_count);
 ```
 
-1. Walk all reachable objects from refs
-2. For each: compute Blossom SHA-256, check existence via HEAD
-3. Upload missing objects via PUT /upload with NIP-98 auth
-4. Publish updated kind 30618 event with new ref→commit state
+1. For every local object: compute the Blossom SHA-256, check existence via
+   HEAD, upload if missing (BUD-02 auth), record in `.git/hanami/index.sqlite`
+2. Catch up to the published manifest chain; upload a delta segment of the
+   unpublished rows (or a checkpoint, §4.4b)
+3. Publish kind 30618 with refs, HEAD and `["hanami-manifest", <segment>]`;
+   success requires relay OK true
+
+`hanami_push_to_blossom_ex(..., config)` is the same with
+`hanami_config_set_allow_insecure(config, true)` honoured, for loopback/http
+fixtures.
 
 ### Transparent libgit2 Usage
 

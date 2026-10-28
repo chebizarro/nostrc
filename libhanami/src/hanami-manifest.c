@@ -6,7 +6,18 @@
 
 #include "hanami-manifest.h"
 #include "hanami-index-private.h"
+#include "hanami-nostr-internal.h"
 #include <git2/oid.h>
+#include <git2/repository.h>
+#include <git2/errors.h>
+#if defined(__has_include)
+#  if __has_include(<git2/sys/errors.h>)
+#    include <git2/sys/errors.h>
+#  endif
+#endif
+#include <errno.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include <git2/types.h>
 #include <jansson.h>
 #include <stdint.h>
@@ -147,18 +158,21 @@ hanami_error_t hanami_manifest_sync(blossom_client_t *client, hanami_index_t *ca
     if (segments_read) *segments_read = 0;
     if (!client || !cache || !repo || !hanami_hex_valid(head, 64))
         return HANAMI_ERR_INVALID_ARG;
-    char *known = NULL;
+    char *known = NULL, *known_depth = NULL;
     hanami_error_t err = hanami_index_meta_get(cache, HANAMI_INDEX_META_MANIFEST_HEAD, &known);
     if (err == HANAMI_ERR_NOT_FOUND) err = HANAMI_OK;
     if (err != HANAMI_OK) return err;
     if (known && strcmp(known, head) == 0) { free(known); return HANAMI_OK; }
-    if ((err = hanami_index_begin(cache)) != HANAMI_OK) { free(known); return err; }
+    if (known && hanami_index_meta_get(cache, HANAMI_INDEX_META_MANIFEST_DEPTH, &known_depth) != HANAMI_OK)
+        known_depth = NULL;
+    if ((err = hanami_index_begin(cache)) != HANAMI_OK) { free(known); free(known_depth); return err; }
+    err = hanami_index_sync_begin(cache);
 
     char cur[65];
     memcpy(cur, head, 65);
     size_t depth = 0;
     int64_t now = (int64_t)time(NULL);
-    while (cur[0] && !(known && strcmp(cur, known) == 0)) {
+    while (err == HANAMI_OK && cur[0] && !(known && strcmp(cur, known) == 0)) {
         if (++depth > HANAMI_MANIFEST_MAX_DEPTH) { err = HANAMI_ERR_INDEX; break; }
         uint8_t *data = NULL; size_t len = 0;
         /* libblossom verifies the wire address before returning content. */
@@ -169,21 +183,57 @@ hanami_error_t hanami_manifest_sync(blossom_client_t *client, hanami_index_t *ca
         free(data);
         if (err != HANAMI_OK) break;
         for (size_t i = 0; err == HANAMI_OK && i < m.count; i++) {
-            if (hanami_index_exists(cache, m.rows[i].git_oid)) continue;
-            m.rows[i].timestamp = now;
-            err = hanami_index_put(cache, &m.rows[i]);
+            if (!hanami_index_exists(cache, m.rows[i].git_oid)) {
+                m.rows[i].timestamp = now;
+                err = hanami_index_put(cache, &m.rows[i]);
+            }
+            if (err == HANAMI_OK) err = hanami_index_mark_published(cache, m.rows[i].git_oid);
+            if (err == HANAMI_OK) err = hanami_index_sync_note(cache, m.rows[i].git_oid);
         }
         memcpy(cur, m.prev, 65);
         hanami_manifest_dispose(&m);
     }
     if (segments_read) *segments_read = depth;
-    free(known);
+    /* Chain length back to the checkpoint: walked segments, plus the cached
+     * head's depth when the walk stopped there (unknown counts as full, so
+     * the next writer checkpoints). */
+    size_t total = depth;
+    if (cur[0])
+        total += known_depth ? (size_t)strtoul(known_depth, NULL, 10)
+                             : HANAMI_MANIFEST_CHECKPOINT_LINKS;
+    free(known); free(known_depth);
+    /* Reached a checkpoint without meeting the cached head: this chain is the
+     * complete map and may have replaced an unrelated one. Only its rows are
+     * published now; others stay as unpublished local rows. */
+    if (err == HANAMI_OK && !cur[0])
+        err = hanami_index_sync_prune(cache);
+    char depth_text[24];
+    snprintf(depth_text, sizeof(depth_text), "%zu", total);
     if (err == HANAMI_OK)
         err = hanami_index_meta_set(cache, HANAMI_INDEX_META_MANIFEST_HEAD, head);
+    if (err == HANAMI_OK)
+        err = hanami_index_meta_set(cache, HANAMI_INDEX_META_MANIFEST_DEPTH, depth_text);
     if (err == HANAMI_OK)
         err = hanami_index_commit(cache);
     if (err != HANAMI_OK)
         hanami_index_rollback(cache);
+    return err;
+}
+
+hanami_error_t hanami_repo_cache_open(git_repository *repo, hanami_index_t **out)
+{
+    if (!repo || !out) return HANAMI_ERR_INVALID_ARG;
+    *out = NULL;
+    const char *gitdir = git_repository_path(repo);
+    size_t n = strlen(gitdir) + 32;
+    char *dir = malloc(n), *file = malloc(n);
+    if (!dir || !file) { free(dir); free(file); return HANAMI_ERR_NOMEM; }
+    snprintf(dir, n, "%shanami", gitdir);
+    snprintf(file, n, "%shanami/index.sqlite", gitdir);
+    hanami_error_t err = HANAMI_OK;
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) err = HANAMI_ERR_IO;
+    if (err == HANAMI_OK) err = hanami_index_open_file(out, file);
+    free(dir); free(file);
     return err;
 }
 
@@ -200,4 +250,112 @@ hanami_error_t hanami_manifest_check_coverage(const nip34_repo_state_t *state,
     for (size_t i = 0; i < state->ref_count; i++)
         if (!target_covered(state->refs[i].target, cache)) return HANAMI_ERR_INDEX;
     return target_covered(state->head, cache) ? HANAMI_OK : HANAMI_ERR_INDEX;
+}
+
+static hanami_error_t covered(const nip34_ref_t *refs, size_t n, const char *head,
+                              hanami_index_t *cache)
+{
+    nip34_repo_state_t state = { .refs = (nip34_ref_t *)refs, .ref_count = n, .head = (char *)head };
+    return hanami_manifest_check_coverage(&state, cache);
+}
+
+hanami_error_t hanami_manifest_publish_state(blossom_client_t *client, hanami_nostr_ctx_t *ctx,
+    hanami_index_t *cache, const char *repo, const char *author,
+    const nip34_ref_t *refs, size_t n, const char *head)
+{
+    if (!client || !ctx || !cache || !repo || !author) return HANAMI_ERR_INVALID_ARG;
+    /* The 30618 lands in the signer's namespace; publishing for another
+     * author would "succeed" where readers of that author never look. */
+    const char *signer = hanami_nostr_ctx_signer_pubkey(ctx);
+    if (!signer || strcmp(signer, author) != 0) {
+        git_error_set(GIT_ERROR_INVALID, "hanami: signer %s cannot publish state for %s",
+                      signer ? signer : "(none)", author);
+        return HANAMI_ERR_AUTH;
+    }
+
+    /* Base: the currently published chain. Catch up first, so the delta is
+     * relative to what readers see (base check, not compare-and-swap). */
+    nip34_repo_state_t *published = NULL;
+    char base[65] = {0};
+    hanami_error_t err = hanami_nostr_fetch_state_manifest(ctx, repo, author, &published, base);
+    nip34_repo_state_free(published);
+    if (err == HANAMI_ERR_NOT_FOUND) { err = HANAMI_OK; base[0] = 0; }
+    if (err != HANAMI_OK) {
+        git_error_set(GIT_ERROR_NET, "hanami: cannot read published kind-30618 for %s: %s",
+                      repo, hanami_strerror(err));
+        return err;
+    }
+    size_t depth = 0;
+    if (base[0]) {
+        err = hanami_manifest_sync(client, cache, repo, base, NULL);
+        char *text = NULL;
+        if (err == HANAMI_OK &&
+            hanami_index_meta_get(cache, HANAMI_INDEX_META_MANIFEST_DEPTH, &text) == HANAMI_OK)
+            depth = (size_t)strtoul(text, NULL, 10);
+        free(text);
+        if (err != HANAMI_OK) {
+            git_error_set(GIT_ERROR_INVALID, "hanami: published manifest %s for %s is "
+                          "unavailable or invalid: %s", base, repo, hanami_strerror(err));
+            return err;
+        }
+    }
+    if (covered(refs, n, head, cache) != HANAMI_OK) {
+        git_error_set(GIT_ERROR_INVALID, "hanami: refs for %s point at objects that were "
+                      "not uploaded; refusing to publish an uncoverable state", repo);
+        return HANAMI_ERR_INDEX;
+    }
+
+    /* No base (first push, or a 30618 republished without the tag) or a chain
+     * at the link limit: write a checkpoint holding every row. */
+    bool checkpoint = !base[0] || depth >= HANAMI_MANIFEST_CHECKPOINT_LINKS;
+    hanami_index_entry_t *rows = NULL;
+    size_t count = 0;
+    err = hanami_index_collect(cache, !checkpoint, HANAMI_INDEX_SNAPSHOT_MAX_ROWS, &rows, &count);
+    if (err != HANAMI_OK) {
+        git_error_set(GIT_ERROR_INVALID, "hanami: manifest for %s would exceed %u rows",
+                      repo, HANAMI_INDEX_SNAPSHOT_MAX_ROWS);
+        return err;
+    }
+    char next[65];
+    size_t next_depth = depth;
+    if (!checkpoint && count == 0) {
+        memcpy(next, base, 65); /* refs-only change: same chain head */
+    } else {
+        char *text = NULL; size_t len = 0;
+        err = hanami_manifest_encode(repo, checkpoint ? NULL : base, rows, count, &text, &len);
+        if (err == HANAMI_OK) err = blossom_client_address(client, (const uint8_t *)text, len, next);
+        if (err == HANAMI_OK) err = blossom_client_put(client, (const uint8_t *)text, len, next, NULL);
+        free(text);
+        if (err != HANAMI_OK) {
+            free(rows);
+            git_error_set(GIT_ERROR_NET, "hanami: manifest upload for %s failed: %s",
+                          repo, hanami_strerror(err));
+            return err;
+        }
+        next_depth = checkpoint ? 1 : depth + 1;
+    }
+
+    /* State last, and only relay acceptance (OK true) counts. */
+    err = hanami_nostr_publish_state_manifest(ctx, repo, refs, n, head, next);
+    if (err != HANAMI_OK) {
+        free(rows);
+        git_error_set(GIT_ERROR_NET, "hanami: kind-30618 for %s was not accepted: %s",
+                      repo, hanami_strerror(err));
+        return err;
+    }
+    /* Only now are these rows covered by the published chain. A crash here is
+     * repaired by the next sync from the published head. */
+    char depth_text[24];
+    snprintf(depth_text, sizeof(depth_text), "%zu", next_depth);
+    err = hanami_index_begin(cache);
+    for (size_t i = 0; err == HANAMI_OK && i < count; i++)
+        err = hanami_index_mark_published(cache, rows[i].git_oid);
+    if (err == HANAMI_OK) err = hanami_index_meta_set(cache, HANAMI_INDEX_META_MANIFEST_HEAD, next);
+    if (err == HANAMI_OK) err = hanami_index_meta_set(cache, HANAMI_INDEX_META_MANIFEST_DEPTH, depth_text);
+    if (err == HANAMI_OK) err = hanami_index_commit(cache);
+    if (err != HANAMI_OK) hanami_index_rollback(cache);
+    free(rows);
+    /* The publication itself succeeded; a cache write failure only costs a
+     * re-sync next time, so it does not turn an accepted push into failure. */
+    return HANAMI_OK;
 }

@@ -197,16 +197,39 @@ HANAMI_API hanami_error_t hanami_fetch(git_repository *repo,
  * @relay_urls: NULL-terminated array of relay URLs for state publishing
  * @repo_id: repository identifier for NIP-34 state event
  *
- * Upload all local objects to Blossom and publish updated
- * repository state (kind 30618) to Nostr relays.
+ * Publish in order (docs/libhanami-design.md 4.4b):
+ * 1. every local object, uploaded unless the server already has it and
+ *    recorded in <gitdir>/hanami/index.sqlite;
+ * 2. a manifest segment with the rows the published chain does not cover
+ *    yet. It is a full checkpoint on the first push, after a tagless 30618,
+ *    or once the chain has 16 segments. The writer first catches up to the
+ *    signer's published 30618 (a base check, not compare-and-swap);
+ * 3. kind-30618 with local refs (refs/remotes/ excluded), HEAD and
+ *    ["hanami-manifest", <segment>], through the relay-accepted publish.
+ * Success requires every upload, the segment upload and at least one relay
+ * OK true; refs pointing at objects that were not uploaded are refused.
+ * Private (sealed) repositories are refused with HANAMI_ERR_AUTH.
  *
- * Returns: HANAMI_OK on success
+ * Returns: HANAMI_OK on success; HANAMI_ERR_UPLOAD/HANAMI_ERR_BLOSSOM for
+ * object or segment uploads, relay errors (HANAMI_ERR_NOSTR, _AUTH,
+ * _NETWORK, _TIMEOUT) for the 30618, HANAMI_ERR_INDEX for an uncoverable
+ * state or row limits; git_error_last() names the cause.
  */
 HANAMI_API hanami_error_t hanami_push_to_blossom(git_repository *repo,
                                       const char *endpoint,
                                       const hanami_signer_t *signer,
                                       const char **relay_urls,
                                       const char *repo_id);
+
+/* hanami_push_to_blossom with configuration. Only allow_insecure is
+ * consulted: the explicit opt-in for http:// or loopback Blossom servers
+ * (local fixtures). No URL weakens transport guards automatically. */
+HANAMI_API hanami_error_t hanami_push_to_blossom_ex(git_repository *repo,
+                                      const char *endpoint,
+                                      const hanami_signer_t *signer,
+                                      const char **relay_urls,
+                                      const char *repo_id,
+                                      const hanami_config_t *config);
 
 /**
  * hanami_announce_repo:
@@ -236,9 +259,14 @@ HANAMI_API hanami_error_t hanami_announce_repo(const char *repo_id,
  * @relay_urls: NULL-terminated array of relay URLs
  * @signer: signer for the state event (required)
  *
- * Publish a NIP-34 repository state announcement (kind 30618).
+ * Publish a NIP-34 repository state announcement (kind 30618) without
+ * uploading objects. The signer's currently published ["hanami-manifest", …]
+ * head is carried forward, so cold readers can still locate objects; they
+ * reject refs that chain does not cover. Use hanami_push_to_blossom() to
+ * publish new objects. Requires relay OK true.
  *
- * Returns: HANAMI_OK on success
+ * Returns: HANAMI_OK on success; the error of the published-state query or
+ * of the publication otherwise
  */
 HANAMI_API hanami_error_t hanami_publish_state(const char *repo_id,
                                     const hanami_ref_entry_t *refs,

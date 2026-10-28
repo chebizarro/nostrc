@@ -119,16 +119,7 @@ static hanami_error_t ctx_fetch_state(fetch_ctx *c, const char *owner,
 /* Open .git/hanami/index.sqlite, import the manifest chain, check coverage. */
 static hanami_error_t ctx_prepare(fetch_ctx *c, git_repository *repo)
 {
-    const char *gitdir = git_repository_path(repo);
-    size_t n = strlen(gitdir) + 32;
-    char *dir = malloc(n), *file = malloc(n);
-    if (!dir || !file) { free(dir); free(file); return HANAMI_ERR_NOMEM; }
-    snprintf(dir, n, "%shanami", gitdir);
-    snprintf(file, n, "%shanami/index.sqlite", gitdir);
-    hanami_error_t err = HANAMI_OK;
-    if (mkdir(dir, 0755) != 0 && errno != EEXIST) err = HANAMI_ERR_IO;
-    if (err == HANAMI_OK && !c->cache) err = hanami_index_open_file(&c->cache, file);
-    free(dir); free(file);
+    hanami_error_t err = c->cache ? HANAMI_OK : hanami_repo_cache_open(repo, &c->cache);
     if (err != HANAMI_OK)
         return fail(c, err, "hanami: cannot open .git/hanami/index.sqlite cache"), err;
 

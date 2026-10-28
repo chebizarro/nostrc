@@ -13,6 +13,7 @@
 #define HANAMI_MANIFEST_H
 #include "hanami/hanami-index.h"
 #include "hanami/hanami-nostr.h"
+#include <git2/types.h>
 #include <blossom/client.h>
 #include <nip34.h>
 #include <stdbool.h>
@@ -64,6 +65,31 @@ hanami_error_t hanami_manifest_sync(blossom_client_t *client, hanami_index_t *ca
  * has no hanami-manifest tag). HANAMI_ERR_NOT_FOUND when no state exists. */
 hanami_error_t hanami_nostr_fetch_state_manifest(hanami_nostr_ctx_t *ctx,
     const char *repo, const char *owner, nip34_repo_state_t **state, char head[65]);
+
+/* Open (creating) <gitdir>/hanami/index.sqlite. */
+hanami_error_t hanami_repo_cache_open(git_repository *repo, hanami_index_t **out);
+
+/* Writer: catch the cache up to the author's published chain, then publish
+ * rows not yet covered as a delta segment (or a checkpoint with every row
+ * when there is no base or the chain has HANAMI_MANIFEST_CHECKPOINT_LINKS
+ * segments), then the 30618 with refs/head and the hanami-manifest tag
+ * through the relay-accepted publish. Refuses refs not covered by the cache.
+ * Success requires both the segment upload and relay OK true; rows are
+ * marked published only after that. Objects must already be uploaded. */
+hanami_error_t hanami_manifest_publish_state(blossom_client_t *client, hanami_nostr_ctx_t *ctx,
+    hanami_index_t *cache, const char *repo, const char *author,
+    const nip34_ref_t *refs, size_t n, const char *head);
+
+/* Push pipeline shared by hanami_push_to_blossom and the blossom:// transport:
+ * upload every local object (recorded in <gitdir>/hanami/index.sqlite), then
+ * hanami_manifest_publish_state with local refs (no refs/remotes) and HEAD. */
+hanami_error_t hanami_push_repo_state(git_repository *repo, blossom_client_t *client,
+    hanami_nostr_ctx_t *ctx, const char *repo_id, const char *author);
+
+/* Make a public refdb publish ref writes through hanami_manifest_publish_state
+ * (objects written via the Blossom ODB are rows in index). Both borrowed. */
+void hanami_refdb_use_manifest(git_refdb_backend *backend, blossom_client_t *client,
+                               hanami_index_t *index);
 
 /* Every direct ref/HEAD target in state must be present in cache. */
 hanami_error_t hanami_manifest_check_coverage(const nip34_repo_state_t *state,

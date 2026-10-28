@@ -57,11 +57,16 @@ files already declare a version.
 
 - **libhanami 0.7.0 (no further bump):** folds into the unreleased 0.7.0 MINOR
   from nostrc-3rxpv/fsuei, per the owner's decision.
-  - New public `hanami_fetch()`.
+  - New public `hanami_fetch()` and `hanami_push_to_blossom_ex()`.
+  - Push side: objects, then segment (checkpoint after 16 links), then
+    tagged 30618 via the relay-accepted publish. Success requires the
+    segment upload and relay OK true. Transport push, `hanami_repo_open`'s
+    refdb and `hanami_publish_state` all preserve the tag. Push publishes
+    HEAD and drops `refs/remotes/*`.
   - New wire format: Blossom manifest segments plus the
     `["hanami-manifest", <sha256>]` extension tag on kind-30618.
-  - New storage: a `hanami_meta` table with `schema_version` 1, and the
-    `.git/hanami/index.sqlite` clone cache.
+  - New storage: `hanami_meta` (`schema_version` 1, manifest head/depth)
+    and `manifest_rows` tables, and the `.git/hanami/index.sqlite` cache.
   - 0.x behaviour breaks, called out in `libhanami/CHANGELOG.md`:
     - `hanami_clone` returns a durable plain repository with no attached
       backends, and checkout failure is fatal;
