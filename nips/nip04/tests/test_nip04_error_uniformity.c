@@ -118,18 +118,26 @@ int main(void) {
                "uniform padding failure", RECEIVER_PK, &sender,
                &legacy, &error) == 0);
     free(error);
-    char *plain = NULL;
-    assert(nostr_nip04_decrypt(legacy, SENDER_PK, RECEIVER_SK,
-                               &plain, &error) == 0);
-    assert(plain && strcmp(plain, "uniform padding failure") == 0);
-    free(plain);
-    free(error);
-    plain = NULL;
-    assert(nostr_nip04_decrypt_secure(legacy, SENDER_PK, &receiver,
-                                      &plain, &error) == 0);
-    assert(plain && strcmp(plain, "uniform padding failure") == 0);
-    free(plain);
-    free(error);
+    if (nostr_nip04_legacy_decrypt_enabled()) {
+        /* The untampered message decrypts, so the failure below is the
+         * padding's alone. */
+        char *plain = NULL;
+        assert(nostr_nip04_decrypt(legacy, SENDER_PK, RECEIVER_SK,
+                                   &plain, &error) == 0);
+        assert(plain && strcmp(plain, "uniform padding failure") == 0);
+        free(plain);
+        free(error);
+        plain = NULL;
+        assert(nostr_nip04_decrypt_secure(legacy, SENDER_PK, &receiver,
+                                          &plain, &error) == 0);
+        assert(plain && strcmp(plain, "uniform padding failure") == 0);
+        free(plain);
+        free(error);
+    } else {
+        /* NIP04_STRICT_AEAD_ONLY compiles legacy decrypt out: an intact
+         * legacy message gets the same uniform error as a tampered one. */
+        expect_uniform(legacy, &receiver);
+    }
     char *tampered = tamper_cbc_padding(legacy);
     expect_uniform(tampered, &receiver);
     free(tampered);
