@@ -83,6 +83,7 @@ static int entry_cmp(const void *a, const void *b) {
 static void entry_free(nh_fuse_entry_t *e) {
     if (!e) return;
     free(e->rel);
+    free(e->source_rel);
     free(e->symlink_target);
     if (e->chunks_hex) {
         for (size_t i = 0; i < e->n_chunks; i++) free(e->chunks_hex[i]);
@@ -91,11 +92,15 @@ static void entry_free(nh_fuse_entry_t *e) {
     memset(e, 0, sizeof *e);
 }
 
-int nh_fuse_table_load(const char *state_dir,
-                       uint32_t mount_uid, uint32_t mount_gid,
-                       nh_fuse_table **out) {
-    if (!state_dir || !out) return -EINVAL;
+static int table_load_subtree(const char *state_dir,
+                              uint32_t mount_uid, uint32_t mount_gid,
+                              const char *subtree, bool allow_missing,
+                              nh_fuse_table **out) {
+    if (!out) return -EINVAL;
     *out = NULL;
+    if (!state_dir || (subtree && *subtree && !path_valid(subtree))) return -EINVAL;
+    size_t subtree_len = subtree ? strlen(subtree) : 0;
+    bool subtree_seen = false;
     nh_syncd_state *st = NULL;
     bool unknown = false;
     int rc = nh_syncd_state_load(state_dir, &st, &unknown);
@@ -129,9 +134,24 @@ int nh_fuse_table_load(const char *state_dir,
                     (int)nh_syncd_entry_kind(se));
             continue;
         }
+        const char *visible = rel;
+        if (subtree_len) {
+            if (strcmp(rel, subtree) == 0) {
+                if (nh_syncd_entry_kind(se) != NH_SYNCD_KIND_DIR) {
+                    nh_fuse_table_free(t); nh_syncd_state_free(st); return -ENOTDIR;
+                }
+                subtree_seen = true;
+                continue;
+            }
+            if (strncmp(rel, subtree, subtree_len) != 0 || rel[subtree_len] != '/')
+                continue;
+            visible = rel + subtree_len + 1;
+            subtree_seen = true;
+        }
         nh_fuse_entry_t e = {0};
-        e.rel = strdup(rel);
-        if (!e.rel) { nh_fuse_table_free(t); nh_syncd_state_free(st); return -ENOMEM; }
+        e.rel = strdup(visible);
+        e.source_rel = strdup(rel);
+        if (!e.rel || !e.source_rel) { entry_free(&e); nh_fuse_table_free(t); nh_syncd_state_free(st); return -ENOMEM; }
         switch (nh_syncd_entry_kind(se)) {
             case NH_SYNCD_KIND_DIR:     e.kind = NH_FUSE_KIND_DIR;     break;
             case NH_SYNCD_KIND_SYMLINK: e.kind = NH_FUSE_KIND_SYMLINK; break;
@@ -185,9 +205,30 @@ int nh_fuse_table_load(const char *state_dir,
     }
 
     nh_syncd_state_free(st);
+    if (subtree_len && !subtree_seen && !allow_missing) {
+        nh_fuse_table_free(t); return -ENOENT;
+    }
     qsort(t->entries, t->n, sizeof *t->entries, entry_cmp);
     *out = t;
     return 0;
+}
+
+int nh_fuse_table_load_subtree(const char *state_dir,
+                               uint32_t mount_uid, uint32_t mount_gid,
+                               const char *subtree, nh_fuse_table **out) {
+    return table_load_subtree(state_dir, mount_uid, mount_gid, subtree, false, out);
+}
+
+int nh_fuse_table_reload_subtree(const char *state_dir,
+                                 uint32_t mount_uid, uint32_t mount_gid,
+                                 const char *subtree, nh_fuse_table **out) {
+    return table_load_subtree(state_dir, mount_uid, mount_gid, subtree, true, out);
+}
+
+int nh_fuse_table_load(const char *state_dir,
+                       uint32_t mount_uid, uint32_t mount_gid,
+                       nh_fuse_table **out) {
+    return nh_fuse_table_load_subtree(state_dir, mount_uid, mount_gid, NULL, out);
 }
 
 void nh_fuse_table_free(nh_fuse_table *t) {

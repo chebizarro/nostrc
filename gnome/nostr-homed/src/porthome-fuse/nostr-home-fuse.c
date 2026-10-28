@@ -23,6 +23,7 @@
  * Test env overrides:
  *   NH_FUSE_STATE_DIR     — override snapshot state dir
  *   NH_FUSE_MOUNTPOINT    — mountpoint (default $HOME/Portable)
+ *   NH_FUSE_SUBTREE       — optional HOME-relative snapshot subtree at mount root
  *   NH_FUSE_SEED_HEX      — inline seed (headless tests)
  *   NH_FUSE_SEED_FILE     — path override for the drop
  *   NH_FUSE_HOME          — override $HOME (for tier 0 pread)
@@ -54,6 +55,7 @@
 #include <fuse3/fuse.h>
 #include <fuse3/fuse_lowlevel.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -99,6 +101,8 @@ static blossom_pool_t *g_blossom  = NULL;
 static char             *g_state_dir     = NULL;
 static char             *g_status_path   = NULL;
 static char             *g_mountpoint    = NULL;
+static const char       *g_subtree       = NULL;
+static bool              g_tier0_enabled = false;
 static uint32_t          g_uid_us        = 0;
 static uint32_t          g_gid_us        = 0;
 static _Atomic uint64_t  g_open_seq      = 0;
@@ -129,6 +133,7 @@ typedef struct {
     /* Immutable for the life of the fh: entry snapshot at open() time. */
     uint64_t         generation;
     char             rel[NH_FUSE_MAX_PATH_BYTES + 1];
+    char             source_rel[NH_FUSE_MAX_PATH_BYTES + 1];
     nh_fuse_kind_t   kind;
     uint64_t         size;
     char             content_hash_hex[65];
@@ -209,9 +214,19 @@ static void write_status_json(void) {
     pthread_rwlock_rdlock(&g_table_rw);
     uint64_t gen = g_table ? nh_fuse_table_generation(g_table) : 0ull;
     pthread_rwlock_unlock(&g_table_rw);
-    (void)nh_fuse_write_status(g_status_path, g_session != NULL, gen, &st);
+    (void)nh_fuse_write_status(g_status_path, g_session != NULL, gen,
+                               g_tier0_enabled, &st);
     /* Mirror into the unified porthome-status.json under "fuse". */
     write_unified_status();
+}
+
+/* Expose read/cache counters to soak observers without rewriting status on
+ * every small FUSE read. The dispatcher is single-threaded; reload may write
+ * independently, and the status writer already serialises its own state. */
+static void maybe_write_read_status(void) {
+    static time_t last;
+    time_t now = time(NULL);
+    if (now != last) { last = now; write_status_json(); }
 }
 
 static void maybe_notify_miss(void) {
@@ -304,7 +319,8 @@ static int reload_load(void *ud, const char *state_dir,
                        nh_fuse_table **out_new) {
     (void)ud;
     if (!state_dir || !out_new) return -EINVAL;
-    return nh_fuse_table_load(state_dir, g_uid_us, g_gid_us, out_new);
+    return nh_fuse_table_reload_subtree(state_dir, g_uid_us, g_gid_us,
+                                        g_subtree, out_new);
 }
 static void reload_swap(void *ud, nh_fuse_table *nt) {
     (void)ud;
@@ -439,6 +455,8 @@ static int nhf_open(const char *path, struct fuse_file_info *fi) {
     fh->generation = nh_fuse_table_generation(g_table);
     strncpy(fh->rel, e->rel ? e->rel : rel, NH_FUSE_MAX_PATH_BYTES);
     fh->rel[NH_FUSE_MAX_PATH_BYTES] = '\0';
+    strncpy(fh->source_rel, e->source_rel ? e->source_rel : fh->rel, NH_FUSE_MAX_PATH_BYTES);
+    fh->source_rel[NH_FUSE_MAX_PATH_BYTES] = '\0';
     fh->kind = e->kind;
     fh->size = e->size;
     memcpy(fh->content_hash_hex, e->content_hash_hex, sizeof fh->content_hash_hex);
@@ -455,7 +473,7 @@ static int nhf_open(const char *path, struct fuse_file_info *fi) {
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
     vault_blob_io public_io = {.read = public_blob_read};
     int vr = nh_vault_reader_open(&g_vaults, g_state_dir, g_vault_home_key, g_cache,
-        &public_io, fh->rel, fh->generation, fh->size,
+        &public_io, fh->source_rel, fh->generation, fh->size,
         (const char *const *)fh->chunks_hex, fh->n_chunks, &fh->vault);
     if (vr < 0) {
         on_source_miss(NULL, fh->rel, -EIO); write_status_json(); fh_free(fh); return -EIO;
@@ -507,7 +525,7 @@ static int nhf_read(const char *path, char *buf, size_t len, off_t off,
         unsigned long long v = strtoull(cs_env, NULL, 10);
         if (v >= 4096ull && v <= 4194304ull) chunk_size = (size_t)v;
     }
-    ssize_t r = nh_fuse_source_pread(g_source, fh->rel, fh->content_hash_hex,
+    ssize_t r = nh_fuse_source_pread(g_source, fh->source_rel, fh->content_hash_hex,
                                      fh->size,
                                      (const char * const *)fh->chunks_hex,
                                      fh->n_chunks,
@@ -517,6 +535,7 @@ static int nhf_read(const char *path, char *buf, size_t len, off_t off,
         write_status_json();
         return (int)r;
     }
+    maybe_write_read_status();
     return (int)r;
 }
 
@@ -718,6 +737,11 @@ int main(int argc, char **argv) {
     g_state_dir = default_state_dir(home);
     if (!g_state_dir) { free(home); return 3; }
     g_status_path = default_status_path();
+    g_subtree = getenv("NH_FUSE_SUBTREE");
+    if (g_subtree && !*g_subtree) g_subtree = NULL;
+    g_tier0_enabled = !g_subtree &&
+        (getenv("NOSTR_HOME_STATE") == NULL ||
+         strcmp(getenv("NOSTR_HOME_STATE"), "ready") == 0);
 
     /* Mountpoint. */
     const char *mp_env = getenv("NH_FUSE_MOUNTPOINT");
@@ -743,6 +767,23 @@ int main(int argc, char **argv) {
         free(home); free(g_state_dir); free(g_mountpoint); return 6;
     }
 
+    /* Never shadow local files. A mounted/nonempty Archive from an
+     * earlier session must be handled by the owner, not hidden. */
+    DIR *mpdir = opendir(g_mountpoint);
+    if (!mpdir) {
+        fprintf(stderr, "fuse: cannot inspect mountpoint %s errno=%d\n", g_mountpoint, errno);
+        free(home); free(g_state_dir); free(g_mountpoint); return 6;
+    }
+    struct dirent *de;
+    while ((de = readdir(mpdir)) != NULL) {
+        if (strcmp(de->d_name, ".") && strcmp(de->d_name, "..")) {
+            fprintf(stderr, "fuse: mountpoint %s is not empty; refusing to shadow data\n", g_mountpoint);
+            closedir(mpdir);
+            free(home); free(g_state_dir); free(g_mountpoint); return 6;
+        }
+    }
+    closedir(mpdir);
+
     /* fuse.lock */
     g_fuse_lock_fd = acquire_fuse_lock(g_state_dir);
     if (g_fuse_lock_fd < 0) {
@@ -751,7 +792,8 @@ int main(int argc, char **argv) {
     }
 
     /* Load snapshot. */
-    int tr = nh_fuse_table_load(g_state_dir, g_uid_us, g_gid_us, &g_table);
+    int tr = nh_fuse_table_load_subtree(g_state_dir, g_uid_us, g_gid_us,
+                                        g_subtree, &g_table);
     if (tr != 0 || !g_table) {
         fprintf(stderr, "fuse: snapshot load failed rc=%d — exiting cleanly\n", tr);
         free(home); free(g_state_dir); free(g_mountpoint);
@@ -835,8 +877,9 @@ int main(int argc, char **argv) {
     /* Source. */
     nh_fuse_source_cfg scfg = {
         .home_dir = home,
-        .tier0_enabled = (getenv("NOSTR_HOME_STATE") == NULL ||
-                          strcmp(getenv("NOSTR_HOME_STATE"), "ready") == 0),
+        /* A projected subtree may be mounted over its own HOME path.
+         * Never pread through the mount into ourselves. */
+        .tier0_enabled = g_tier0_enabled,
         .cache = g_cache,
         .blossom = g_blossom,
         .chunk_cache_bytes = 0,

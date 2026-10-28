@@ -86,6 +86,7 @@ extern int nh_syncd_state_upsert_symlink_(nh_syncd_state *s,
                                           uint64_t mtime_ns,
                                           const char *target);
 extern int nh_syncd_state_delete_(nh_syncd_state *s, const char *rel);
+extern int nh_syncd_state_set_lazy_dir_(nh_syncd_state *s, const char *rel, bool lazy);
 
 typedef int (*nh_syncd_state_iter_cb)(void *ud, const char *rel, json_t *row);
 extern int nh_syncd_state_iter_(const nh_syncd_state *s,
@@ -600,6 +601,55 @@ static const nh_porthome_entry *remote_lookup(const nh_porthome_manifest *m,
     return NULL;
 }
 
+/* A manifest marker is authoritative on a new machine. Compare complete
+ * encrypted path components, not plaintext local policy prefixes. */
+static bool remote_lazy_covers(const nh_porthome_manifest *m,
+                               const char *path_enc) {
+    if (!m || !path_enc) return false;
+    for (size_t i = 0; i < m->entries_len; i++) {
+        const nh_porthome_entry *d = &m->entries[i];
+        if (d->kind != NH_PORTHOME_KIND_DIR || !d->lazy || !d->path_enc) continue;
+        size_t n = strlen(d->path_enc);
+        if (!strncmp(path_enc, d->path_enc, n) &&
+            path_enc[n] == '/')
+            return true;
+    }
+    return false;
+}
+
+/* Recover a schema-v2 path one encrypted component at a time. Refuse an
+ * incomplete ancestry instead of inventing opaque names under $HOME. */
+static char *remote_plain_path(const nh_porthome_manifest *m, const char *enc) {
+    if (!m || !enc || m->version != PORTHOME_MANIFEST_SCHEMA_VERSION_V2) return NULL;
+    char *prefix = strdup(enc);
+    char *plain = calloc(PORTHOME_MAX_PATH_LEN + 1u, 1);
+    if (!prefix || !plain) { free(prefix); free(plain); return NULL; }
+    size_t used = 0;
+    for (const char *end = enc; ; ) {
+        end = strchr(end, '/');
+        size_t n = end ? (size_t)(end - enc) : strlen(enc);
+        prefix[n] = '\0';
+        const nh_porthome_entry *part = remote_lookup(m, prefix);
+        if (!part || !part->name_plain || !*part->name_plain ||
+            (end && part->kind != NH_PORTHOME_KIND_DIR)) {
+            free(prefix); free(plain); return NULL;
+        }
+        size_t len = strlen(part->name_plain);
+        if (used + len + (used != 0) > PORTHOME_MAX_PATH_LEN) {
+            free(prefix); free(plain); return NULL;
+        }
+        if (used) plain[used++] = '/';
+        memcpy(plain + used, part->name_plain, len);
+        used += len; plain[used] = '\0';
+        prefix[n] = enc[n];
+        if (!end) break;
+        end++;
+    }
+    free(prefix);
+    if (!rel_ok(plain)) { free(plain); return NULL; }
+    return plain;
+}
+
 /* ────────────────────── materialization ──────────────────────────── */
 
 /* Fetch + decrypt chunks for a file entry, compose into memory, return
@@ -650,9 +700,11 @@ static int apply_remote_entry(const nh_syncd_reconcile_cfg *cfg,
         /* Open + fchmod. */
         int ffd = openat(home_fd, rel, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (ffd >= 0) { (void)fchmod(ffd, (mode_t)(e->mode & 0777)); close(ffd); }
-        return nh_syncd_state_upsert_dir_(state, rel,
+        int ur = nh_syncd_state_upsert_dir_(state, rel,
                                           e->mode & 0777, (uint32_t)getuid(),
                                           (uint32_t)getgid(), e->mtime_ns);
+        if (ur == 0 && e->lazy) ur = nh_syncd_state_set_lazy_dir_(state, rel, true);
+        return ur;
     }
     if (e->kind == NH_PORTHOME_KIND_SYMLINK) {
         const char *tgt = e->symlink_target ? e->symlink_target : "";
@@ -703,6 +755,38 @@ static int apply_remote_entry(const nh_syncd_reconcile_cfg *cfg,
         for (size_t i = 0; i < e->chunks_len; i++) free(addrs[i]);
         free(addrs);
     }
+    return rc;
+}
+
+/* Record cold metadata and chunk references without a filesystem write or
+ * authenticated FUSE GET. The unchanged snapshot shape feeds FUSE and pins. */
+static int record_lazy_entry(nh_syncd_state *state, const char *rel,
+                             const nh_porthome_entry *e) {
+    if (e->kind == NH_PORTHOME_KIND_DIR) {
+        int rc = nh_syncd_state_upsert_dir_(state, rel, e->mode & 0777,
+                     (uint32_t)getuid(), (uint32_t)getgid(), e->mtime_ns);
+        if (rc == 0 && e->lazy) rc = nh_syncd_state_set_lazy_dir_(state, rel, true);
+        return rc;
+    }
+    if (e->kind == NH_PORTHOME_KIND_SYMLINK)
+        return nh_syncd_state_upsert_symlink_(state, rel, e->mode & 0777,
+                     (uint32_t)getuid(), (uint32_t)getgid(), e->mtime_ns,
+                     e->symlink_target ? e->symlink_target : "");
+    char **addrs = calloc(e->chunks_len ? e->chunks_len : 1, sizeof *addrs);
+    if (!addrs) return NH_SYNCD_ERR_OOM;
+    for (size_t k = 0; k < e->chunks_len; k++) {
+        addrs[k] = malloc(65);
+        if (!addrs[k]) {
+            for (size_t j = 0; j < k; j++) free(addrs[j]);
+            free(addrs); return NH_SYNCD_ERR_OOM;
+        }
+        hex_of(e->chunks[k].sha256, 32, addrs[k]);
+    }
+    int rc = nh_syncd_state_upsert_file_(state, rel, e->mode & 0777,
+                     (uint32_t)getuid(), (uint32_t)getgid(), e->mtime_ns,
+                     e->size, "", (const char *const *)addrs, e->chunks_len);
+    for (size_t k = 0; k < e->chunks_len; k++) free(addrs[k]);
+    free(addrs);
     return rc;
 }
 
@@ -871,11 +955,13 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
         if (ignore) {
             struct stat sti;
             uint64_t st_dev = 0; uint32_t st_mode = 0;
-            if (fstatat(home_fd, b->rel, &sti, AT_SYMLINK_NOFOLLOW) == 0) {
+            bool cold = remote_lazy_covers(cfg->manifest, b->path_enc);
+            if (!cold && fstatat(home_fd, b->rel, &sti, AT_SYMLINK_NOFOLLOW) == 0) {
                 st_dev = (uint64_t)sti.st_dev;
                 st_mode = (uint32_t)sti.st_mode;
             }
-            if (nh_syncd_ignore_check(ignore, b->rel, st_dev, st_mode) != NH_SYNCD_IGNORE_PASS)
+            if ((cold ? nh_syncd_ignore_check_path(ignore, b->rel) :
+                        nh_syncd_ignore_check(ignore, b->rel, st_dev, st_mode)) != NH_SYNCD_IGNORE_PASS)
                 continue;
         }
 
@@ -885,6 +971,29 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
             /* Mark it. */
             size_t idx = (size_t)(remote - cfg->manifest->entries);
             if (idx < cfg->manifest->entries_len) remote_matched[idx] = 1;
+        }
+
+        /* An on-wire lazy marker dominates local materialization policy.
+         * Do not stat/hash through a mounted overlay during pull: preserve
+         * metadata and chunk addresses for FUSE and GC pinning. */
+        if (remote_lazy_covers(cfg->manifest, b->path_enc)) {
+            if (remote) {
+                rc = record_lazy_entry(state, b->rel, remote);
+                if (rc != 0) goto done;
+                res->applied++;
+            } else {
+                (void)nh_syncd_state_delete_(state, b->rel);
+                res->deleted++;
+            }
+            continue;
+        }
+        if (remote && remote->kind == NH_PORTHOME_KIND_DIR && remote->lazy) {
+            rc = mkdirat_p(home_fd, b->rel);
+            if (rc != 0) goto done;
+            rc = record_lazy_entry(state, b->rel, remote);
+            if (rc != 0) goto done;
+            res->applied++;
+            continue;
         }
 
         /* Compute local-change vs base. */
@@ -1117,21 +1226,39 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
         /* else: neither → no-op. */
     }
 
-    /* Remote-only paths (not in base): materialize under encrypted-name
-     * (design punt — see docs/reviews/porthome-syncd-pull-2026-09-23.md).
-     * We only apply directories and symlinks in this branch — files
-     * would need the plaintext name to be usable, and we don't have
-     * it. Dirs/symlinks under opaque names are still safe. In v1 we
-     * SKIP files silently. */
+    /* Fresh v2 lazy paths have plaintext names recovered from sealed
+     * components. Their directory anchor is real; descendants live only
+     * in snapshot.json until FUSE reads them. Legacy v1 behavior remains
+     * opaque for unmarked remote-only dirs/symlinks. */
     for (size_t i = 0; i < cfg->manifest->entries_len; i++) {
         if (remote_matched[i]) continue;
         const nh_porthome_entry *e = &cfg->manifest->entries[i];
         if (!e->path_enc || !rel_ok(e->path_enc)) continue;
-        if (e->kind == NH_PORTHOME_KIND_FILE) continue;   /* v1 punt */
-        /* Phase 4 P4-I: opaque-name entries under lazy prefixes still
-         * skip materialization (path_enc is a hex hash so this check
-         * is defensive — the prefix will rarely match — but keeping
-         * the guard is cheap). */
+        bool descendant = remote_lazy_covers(cfg->manifest, e->path_enc);
+        bool anchor = e->kind == NH_PORTHOME_KIND_DIR && e->lazy;
+        char *rel = remote_plain_path(cfg->manifest, e->path_enc);
+        bool local_lazy = rel && cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, rel);
+        if (descendant || anchor || local_lazy) {
+            if (!rel) {
+                set_err(out_error_msg, "lazy manifest lacks valid v2 path");
+                rc = NH_SYNCD_ERR_MANIFEST; goto done;
+            }
+            if (ignore && nh_syncd_ignore_check_path(ignore, rel) != NH_SYNCD_IGNORE_PASS) {
+                free(rel); continue;
+            }
+            if (anchor && !descendant) {
+                rc = mkdirat_p(home_fd, rel);
+                if (rc == 0) rc = record_lazy_entry(state, rel, e);
+            } else {
+                rc = record_lazy_entry(state, rel, e);
+            }
+            free(rel);
+            if (rc != 0) goto done;
+            res->applied++;
+            continue;
+        }
+        free(rel);
+        if (e->kind == NH_PORTHOME_KIND_FILE) continue;
         if (cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, e->path_enc)) continue;
         int ar = apply_remote_entry(cfg, state, home_fd, e->path_enc, e, out_error_msg);
         if (ar == 0) res->applied++;
@@ -1279,6 +1406,21 @@ int nh_syncd_rescan_home_additive(nh_syncd_state *state,
 
 /* ──────────────────── xnxd part 2 — rescan diff ─────────────────────── */
 
+static int under_any_root(json_t *roots, const char *rel);
+
+static int at_or_under_root(json_t *roots, const char *rel) {
+    return json_object_get(roots, rel) != NULL || under_any_root(roots, rel);
+}
+
+static int collect_lazy_root(void *ud, const char *rel, json_t *row) {
+    json_t *roots = ud;
+    const char *kind = json_string_value(json_object_get(row, "kind"));
+    if (kind && !strcmp(kind, "dir") &&
+        json_is_true(json_object_get(row, "lazy")))
+        return json_object_set_new(roots, rel, json_true());
+    return 0;
+}
+
 /* Recursive walk that pushes CREATE / MODIFY into a batcher for every
  * on-disk entry that diverges from `state`. Marks each path it visits
  * in `seen` (jansson object: key -> json_true). Never mutates `state`.
@@ -1296,10 +1438,12 @@ static int rescan_diff_walk(int home_fd, const char *rel_prefix,
                             const nh_syncd_ignore *ignore,
                             nh_syncd_batcher *batcher,
                             json_t *seen,
+                            json_t *lazy_roots,
+                            json_t *xdev_roots,
                             int depth,
                             nh_syncd_rescan_stats *st)
 {
-    if (depth > 32) return 0;
+    if (depth > 32 || (rel_prefix[0] && at_or_under_root(lazy_roots, rel_prefix))) return 0;
     int dfd = (rel_prefix[0] == '\0')
               ? dup(home_fd)
               : openat(home_fd, rel_prefix,
@@ -1317,15 +1461,21 @@ static int rescan_diff_walk(int home_fd, const char *rel_prefix,
             rel = strdup(de->d_name);
         }
         if (!rel) continue;
+        if (at_or_under_root(lazy_roots, rel)) {
+            json_object_set_new(seen, rel, json_true());
+            free(rel); continue;
+        }
         struct stat s2;
         if (fstatat(home_fd, rel, &s2, AT_SYMLINK_NOFOLLOW) != 0) {
             free(rel); continue;
         }
         if (ignore) {
-            if (nh_syncd_ignore_check(ignore, rel,
+            nh_syncd_ignore_kind ik = nh_syncd_ignore_check(ignore, rel,
                                       (uint64_t)s2.st_dev,
-                                      (uint32_t)s2.st_mode)
-                != NH_SYNCD_IGNORE_PASS) {
+                                      (uint32_t)s2.st_mode);
+            if (ik != NH_SYNCD_IGNORE_PASS) {
+                if (ik == NH_SYNCD_IGNORE_XDEV && S_ISDIR(s2.st_mode))
+                    json_object_set_new(xdev_roots, rel, json_true());
                 free(rel); continue;
             }
         }
@@ -1343,7 +1493,7 @@ static int rescan_diff_walk(int home_fd, const char *rel_prefix,
                 st->unchanged++;
             }
             rescan_diff_walk(home_fd, rel, state, ignore, batcher,
-                             seen, depth + 1, st);
+                             seen, lazy_roots, xdev_roots, depth + 1, st);
         } else if (S_ISLNK(s2.st_mode)) {
             if (!cur || nh_syncd_entry_kind(cur) != NH_SYNCD_KIND_SYMLINK ||
                 nh_syncd_entry_mtime_ns(cur) != mt) {
@@ -1405,9 +1555,19 @@ int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
 
     json_t *seen = json_object();
     json_t *roots = json_object();
-    if (!seen || !roots) {
-        json_decref(seen); json_decref(roots); close(fd);
-        return NH_SYNCD_ERR_OOM;
+    json_t *lazy_roots = json_object();
+    json_t *xdev_roots = json_object();
+    if (!seen || !roots || !lazy_roots || !xdev_roots) {
+        if (seen) json_decref(seen);
+        if (roots) json_decref(roots);
+        if (lazy_roots) json_decref(lazy_roots);
+        if (xdev_roots) json_decref(xdev_roots);
+        close(fd); return NH_SYNCD_ERR_OOM;
+    }
+    if (nh_syncd_state_iter_(state, collect_lazy_root, lazy_roots) != NH_SYNCD_OK) {
+        json_decref(seen); json_decref(roots);
+        json_decref(lazy_roots); json_decref(xdev_roots);
+        close(fd); return NH_SYNCD_ERR_OOM;
     }
     for (size_t r = 0; r < n_roots; r++)
         if (rel_roots[r]) json_object_set_new(roots, rel_roots[r], json_true());
@@ -1416,8 +1576,8 @@ int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
     for (size_t r = 0; r < n_roots; r++) {
         const char *root = rel_roots[r];
         if (!root || under_any_root(roots, root)) continue;
-        (void)rescan_diff_walk(fd, root, state, ignore, batcher, seen, 0,
-                               out_stats);
+        (void)rescan_diff_walk(fd, root, state, ignore, batcher, seen,
+                               lazy_roots, xdev_roots, 0, out_stats);
     }
     close(fd);
 
@@ -1432,6 +1592,10 @@ int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
         if (!e || !rel) continue;
         if (json_object_get(seen, rel)) continue;
         if (!under_any_root(roots, rel)) continue;
+        /* A marked lazy subtree or a mounted foreign filesystem is not
+         * a deletion just because the working-tree walk omitted it. */
+        if (at_or_under_root(lazy_roots, rel) ||
+            at_or_under_root(xdev_roots, rel)) continue;
         /* Skip ignored paths — mirror the walk's filter. Path-only is
          * enough here (we have no stat data for a missing file). */
         if (ignore &&
@@ -1444,6 +1608,8 @@ int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
 
     json_decref(roots);
     json_decref(seen);
+    json_decref(lazy_roots);
+    json_decref(xdev_roots);
     return NH_SYNCD_OK;
 }
 

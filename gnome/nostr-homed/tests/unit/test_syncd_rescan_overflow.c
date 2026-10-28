@@ -37,6 +37,10 @@ extern int nh_syncd_state_upsert_file_(nh_syncd_state *s,
                                        const char *const *chunk_addrs_hex,
                                        size_t chunk_addrs_n);
 extern int nh_syncd_state_delete_(nh_syncd_state *s, const char *rel);
+extern int nh_syncd_state_upsert_dir_(nh_syncd_state *s, const char *rel,
+                                      uint32_t mode, uint32_t uid, uint32_t gid,
+                                      uint64_t mtime_ns);
+extern int nh_syncd_state_set_lazy_dir_(nh_syncd_state *s, const char *rel, bool lazy);
 
 static char g_home[300];
 static const char *FIXTURE_PK = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -196,7 +200,36 @@ static void t_added_and_removed(void) {
     printf("t_added_and_removed OK\n");
 }
 
+static void t_marked_archive_not_swept(void) {
+    setup_tree();
+    char archive[600]; snprintf(archive, sizeof archive, "%s/Archive", g_home);
+    assert(mkdir(archive, 0700) == 0);
+    uint8_t root[32] = {0};
+    nh_syncd_state *state = NULL;
+    assert(nh_syncd_state_new(g_home, "d", FIXTURE_PK, root, &state) == 0);
+    snapshot_state(state);
+    assert(nh_syncd_state_upsert_dir_(state, "Archive", 0700, 0, 0, 1) == 0);
+    assert(nh_syncd_state_set_lazy_dir_(state, "Archive", true) == 0);
+    const char *addr = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    assert(nh_syncd_state_upsert_file_(state, "Archive/cold.txt", 0600, 0, 0,
+                                       1, 12, "", &addr, 1) == 0);
+    nh_syncd_ignore *ig = NULL;
+    assert(nh_syncd_ignore_new(g_home, &ig) == 0);
+    nh_syncd_batcher *b = NULL;
+    assert(nh_syncd_batcher_new(vnow, NULL, 1, 1, &b) == 0);
+    nh_syncd_rescan_stats stats = {0};
+    assert(nh_syncd_rescan_diff(state, g_home, ig, b, &stats) == 0);
+    assert(stats.deleted == 0 && stats.added == 0 && stats.modified == 0);
+    nh_syncd_batch *bat = nh_syncd_batcher_take(b, true);
+    assert(!bat || nh_syncd_batch_len(bat) == 0);
+    if (bat) nh_syncd_batch_free(bat);
+    nh_syncd_batcher_free(b); nh_syncd_ignore_free(ig);
+    nh_syncd_state_free(state); teardown();
+    printf("t_marked_archive_not_swept OK\n");
+}
+
 int main(void) {
+    t_marked_archive_not_swept();
     t_quiescent_zero_events();
     t_added_and_removed();
     printf("test_syncd_rescan_overflow: ALL OK\n");

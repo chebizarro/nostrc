@@ -36,6 +36,7 @@ extern "C" {
  *   path       — absolute path; parent dir must already exist.
  *   mounted    — true iff the FUSE session is live.
  *   generation — active snapshot generation (0 when no snapshot loaded).
+ *   tier0      — whether direct reads from the real home are enabled.
  *   stats      — chunk-source counters; may be NULL (treated as zeroed).
  *
  * Uses O_CREAT|O_TRUNC to `<path>.tmp` then rename(2). Mode 0600.
@@ -43,6 +44,7 @@ extern "C" {
 int nh_fuse_write_status(const char *path,
                          bool mounted,
                          uint64_t generation,
+                         bool tier0,
                          const nh_fuse_source_stats_t *stats);
 
 /* Phase 5 I3 / h10m.1.1 — mirror the same fields into the unified

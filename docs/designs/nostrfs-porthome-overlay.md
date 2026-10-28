@@ -37,8 +37,8 @@ The mount is:
 The honest caveat, stated up front: **with a complete eager copy the overlay is
 largely redundant with `$HOME`.** Its payoff arrives when the reconciler is allowed
 to *skip* materializing user-marked cold subtrees, at which point the overlay is the
-only way to read them. That policy (`~/.config/nostr-homed/lazy`) is specified in
-§10 and is the single largest open decision for the maintainer (§15, item 1).
+  only way to read them. The manifest marker and additive source-local policy
+  are specified in §10; the production pull/seed integration remains open.
 
 ---
 
@@ -344,8 +344,9 @@ UMask=0077
 WantedBy=default.target
 ```
 
-`ExecStopPost` uses `-z` (lazy) so a logout with a `cd`'d shell inside the mount does
-not wedge session teardown. `PartOf=graphical-session.target` makes the mount die
+The FUSE process owns its unmount, including `auto_unmount` on crash; an
+unconditional `ExecStopPost` is unsafe because it runs after a failed start and
+could detach another mount. `PartOf=graphical-session.target` makes the mount die
 with the session rather than outliving it as a stale `Transport endpoint is not
 connected` directory.
 
@@ -581,26 +582,33 @@ With a complete eager copy, `Portable/Documents/notes.txt` and
 `$HOME/Documents/notes.txt` are the same bytes and the overlay is a curiosity. It
 becomes necessary when the reconciler is permitted to *not* materialize something.
 
-**D14: v1 ships the overlay without the lazy policy; the policy is specified here and
-implemented as the last item of P4-I, behind the same build gate, only if the
-maintainer approves touching `nh_syncd_reconcile`.**
+**D14, Phase 4 re-scope:** the personal-home manifest carries an optional
+`lazy=true` marker on directory entries. A source-local
+`~/.config/nostr-homed/lazy` prefix or `NOSTR_HOMED_SYNCD_LAZY_SUBTREES` marks
+the next published manifest. A destination-local policy is additive; it cannot
+clear an on-wire marker. Schema-v1/v2 manifests without the key decode as eager,
+but fresh-name recovery requires v2 sealed basenames.
 
-Shape, if approved:
+- Fresh provisioning creates a marked directory as an empty mount anchor, skips
+  descendants and their chunk downloads, then performs the v2 rename walk.
+- Reconcile records every cold descendant and its chunk addresses in the existing
+  `snapshot.json` rows without writing bytes under the real home. FUSE projects
+  that snapshot subtree at `~/Archive` and disables tier 0 to avoid recursive
+  reads through its own mount. Its read ladder uses memory, sealed disk cache,
+  then Blossom; offline uncached reads fail rather than inventing data.
+- Syncd fallback rescans neither traverse marked lazy roots nor classify their
+  unseen descendants as deletions. Lazy chunk references remain in the current
+  and retained-generation pin sets. Private-service subtrees retain their
+  separate syncd-prefetch-cache path, with no authenticated FUSE GET.
+- The user service verifies the exact configured `fuse.porthome` mount before
+  reporting startup success. The FUSE process owns normal/auto unmount; an
+  unconditional post-stop unmount must not detach another invocation's mount.
 
-- `~/.config/nostr-homed/lazy` — same parser and matcher as
-  `~/.config/nostr-homed/ignore` (`fnmatch(FNM_PATHNAME|FNM_LEADING_DIR)` on
-  `$HOME`-relative paths), loaded by `nh_syncd_ignore_new`'s sibling
-  `nh_syncd_lazy_new`.
-- `nh_syncd_reconcile_from_manifest` gains one optional `const nh_syncd_lazy *lazy`
-  field in its cfg. A remote-new or remote-changed entry matching `lazy` is recorded
-  in `snapshot.json` **but its bytes are not written to `$HOME`** and its chunks are
-  not fetched. Deletions, conflicts, and the push path are untouched.
-- The overlay then serves those paths from tier 2/3 — and only the overlay can.
-- Interaction with tier 0: a lazy path has no local file, so tier 0 misses naturally;
-  no special case.
-- Interaction with the pin ring: lazy chunks are still in the current generation, so
-  they are still pinned — meaning the *first* fetch populates the cache and
-  subsequent reads are local. "Lazy" bounds the eager copy, not the cache.
+The live pointer subscription/pull is not yet registered by the production
+`nostr-home-syncd` entrypoint, and fresh provisioning does not itself seed a
+snapshot. Those integrations must be closed before claiming the seven-day
+GNOME exit criterion; isolated helper tests and a synthetic headless soak are
+not that proof.
 
 This is the difference between "a read-only mirror of a folder you already have" and
 "the only way you can read your 40 GiB photo archive on a 256 GB laptop". It is also

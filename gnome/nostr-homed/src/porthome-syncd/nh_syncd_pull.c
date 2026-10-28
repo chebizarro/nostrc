@@ -168,6 +168,7 @@ void nh_syncd_pull_on_pointer(void *ud,
     nh_syncd_reconcile_cfg rc = {0};
     rc.manifest           = m;
     rc.remote_generation  = remote_gen;
+    rc.lazy               = c->opts.lazy;
     memcpy(rc.home_key, c->opts.home_key, NH_PORTHOME_KEY_LEN);
     rc.fetch_chunk        = c->opts.fetch_chunk;
     rc.fetch_chunk_ctx    = c->opts.fetch_chunk_ctx;

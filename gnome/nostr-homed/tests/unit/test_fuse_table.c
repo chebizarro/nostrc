@@ -11,6 +11,7 @@
 #include "nh_syncd.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,6 +111,26 @@ int main(void) {
     assert(has_name(&doc_ns, "notes.txt"));
     assert(has_name(&doc_ns, "link"));
 
+    /* A lazy Archive mount projects only Archive's snapshot subtree.
+     * The visible path and source path must remain distinct. */
+    nh_fuse_table *archive = NULL;
+    assert(nh_fuse_table_load_subtree(sdir, 4242, 4242, "Archive", &archive) == 0);
+    assert(archive);
+    assert(nh_fuse_table_find(archive, "Documents/notes.txt") == NULL);
+    assert(nh_fuse_table_find(archive, "Archive/2024/report.pdf") == NULL);
+    const nh_fuse_entry_t *report = nh_fuse_table_find(archive, "2024/report.pdf");
+    assert(report && report->kind == NH_FUSE_KIND_FILE);
+    assert(!strcmp(report->source_rel, "Archive/2024/report.pdf"));
+    names_t archive_ns = {0};
+    assert(nh_fuse_table_readdir(archive, "", rd_cb, &archive_ns) == 0);
+    assert(has_name(&archive_ns, "2024"));
+    nh_fuse_table_free(archive);
+    archive = NULL;
+    assert(nh_fuse_table_load_subtree(sdir, 4242, 4242, "Missing", &archive) == -ENOENT);
+    assert(archive == NULL);
+    assert(nh_fuse_table_load_subtree(sdir, 4242, 4242, "../Archive", &archive) == -EINVAL);
+    assert(archive == NULL);
+
     /* Hostile paths: build a raw snapshot.json with '..' and NUL and
      * assert the loader rejects them individually while keeping the
      * good entries. Easiest way: hand-craft snapshot.json. */
@@ -141,6 +162,18 @@ int main(void) {
     assert(nh_fuse_table_find(t2, "../evil") == NULL);
     assert(nh_fuse_table_find(t2, "ok.txt") != NULL);
     nh_fuse_table_free(t2);
+
+    /* Initial mount refuses a missing Archive; a reload of a newer
+     * snapshot that deleted it must publish an empty generation 7,
+     * not keep serving the previous generation's report.pdf. */
+    nh_fuse_table *deleted = NULL;
+    assert(nh_fuse_table_load_subtree(sdir2, 100, 100, "Archive", &deleted) == -ENOENT);
+    assert(deleted == NULL);
+    assert(nh_fuse_table_reload_subtree(sdir2, 100, 100, "Archive", &deleted) == 0);
+    assert(deleted && nh_fuse_table_generation(deleted) == 7);
+    assert(nh_fuse_table_entry_count(deleted) == 0);
+    assert(nh_fuse_table_find(deleted, "2024/report.pdf") == NULL);
+    nh_fuse_table_free(deleted);
 
     nh_fuse_table_free(t);
     printf("test_fuse_table OK\n");

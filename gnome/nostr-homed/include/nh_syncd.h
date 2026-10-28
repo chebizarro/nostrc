@@ -564,6 +564,8 @@ typedef struct {
      * Applied before capture/deletion AND when rebuilding from saved rows. */
     bool (*exclude_path)(void *, const char *relative_path);
     void *exclude_path_ud;
+    /* Additive local lazy-directory policy; persisted as an on-wire marker. */
+    const nh_syncd_lazy *lazy;
 } nh_syncd_push_cfg;
 
 /* Execute the push pipeline once for `batch`. On success the state's
@@ -815,6 +817,8 @@ typedef struct {
      * snapshot into the ring so blobs referenced by the last N=10
      * generations are pinned against LRU eviction. NULL disables. */
     struct nh_syncd_pin_ring *pin_ring;
+    /* Local additive override; an on-wire marker cannot be cleared here. */
+    const nh_syncd_lazy *lazy;
 } nh_syncd_pull_opts;
 
 int  nh_syncd_pull_ctx_new (const nh_syncd_pull_opts *opts,

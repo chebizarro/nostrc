@@ -86,6 +86,7 @@ static int mock_publish(void *ud, const char *pk, int64_t cat,
 
 static char g_home[300];
 static char g_state[300];
+static const nh_syncd_lazy *g_lazy_policy;
 
 static void write_file(const char *rel, const char *contents) {
     char abs[600];
@@ -151,6 +152,7 @@ static void push_once_filtered(nh_syncd_state *state,
     pc.d_tag = "nostr-homed.home.v1:personal";
     pc.exclude_path = exclude;
     pc.exclude_path_ud = exclude_ud;
+    pc.lazy = g_lazy_policy;
 
     nh_syncd_interlocks ilk = { g_home, NULL };
     char *emsg = NULL;
@@ -252,6 +254,42 @@ static void t_vault_source_isolation(void)
     printf("t_vault_source_isolation OK\n");
 }
 #endif
+
+static void t_lazy_marker_push(void) {
+    uint8_t root_id[32], seed[32], home_key[32];
+    for (int i = 0; i < 32; i++) root_id[i] = seed[i] = (uint8_t)i;
+    assert(nh_porthome_key_derive(seed, home_key) == 0);
+    nh_syncd_state *state = NULL;
+    nh_syncd_ignore *ig = NULL;
+    nh_syncd_lazy *lazy = NULL;
+    mock_pub_ctx mp = {0};
+    assert(nh_syncd_state_new(g_home, "nostr-homed.home.v1:personal",
+                              FIXTURE_PK, root_id, &state) == 0);
+    assert(nh_syncd_ignore_new(g_home, &ig) == 0);
+    assert(nh_syncd_lazy_new_from_string("Archive", &lazy) == 0);
+    g_lazy_policy = lazy;
+    write_file("Archive/report.txt", "cold payload");
+    const char *rels[] = {"Archive", "Archive/report.txt"};
+    push_once(state, ig, rels, 2, &mp);
+    nh_porthome_manifest *manifest = NULL;
+    assert(nh_porthome_manifest_decode_sealed(mp.sealed, mp.sealed_len,
+                                               home_key, &manifest) == 0);
+    assert(manifest->version == PORTHOME_MANIFEST_SCHEMA_VERSION_V2);
+    bool marker = false, child = false;
+    for (size_t i = 0; i < manifest->entries_len; i++) {
+        const nh_porthome_entry *e = &manifest->entries[i];
+        if (e->name_plain && !strcmp(e->name_plain, "Archive"))
+            marker = e->kind == NH_PORTHOME_KIND_DIR && e->lazy;
+        if (e->name_plain && !strcmp(e->name_plain, "report.txt"))
+            child = e->kind == NH_PORTHOME_KIND_FILE && e->chunks_len == 1;
+    }
+    assert(marker && child);
+    nh_porthome_manifest_dispose(manifest); free(manifest);
+    g_lazy_policy = NULL;
+    nh_syncd_lazy_free(lazy); nh_syncd_ignore_free(ig);
+    nh_syncd_state_free(state); free(mp.sealed);
+    printf("t_lazy_marker_push OK\n");
+}
 
 static void t_happy_path(void) {
     /* Fresh state initialised with real root/d_tag (not the empty
@@ -418,6 +456,7 @@ static void t_lock_reentrant(void) {
 int main(void) {
     setup();
     t_happy_path();
+    t_lazy_marker_push();
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
     t_vault_source_isolation();
 #endif

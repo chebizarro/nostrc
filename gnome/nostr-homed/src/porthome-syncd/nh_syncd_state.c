@@ -741,6 +741,9 @@ int nh_syncd_state_upsert_dir_(nh_syncd_state *s,
     json_object_set_new(row, "mtime_ns", json_integer((json_int_t)mtime_ns));
     json_object_set_new(row, "size", json_integer(0));
     json_object_set_new(row, "content_hash_hex", json_string(""));
+    json_t *prior = json_object_get(s->files, rel);
+    if (json_is_true(json_object_get(prior, "lazy")))
+        json_object_set_new(row, "lazy", json_true());
     int rc = json_object_set_new(s->files, rel, row);
     return rc == 0 ? NH_SYNCD_OK : NH_SYNCD_ERR_OOM;
 }
@@ -764,6 +767,16 @@ int nh_syncd_state_upsert_symlink_(nh_syncd_state *s,
     json_object_set_new(row, "symlink_target", json_string(target));
     int rc = json_object_set_new(s->files, rel, row);
     return rc == 0 ? NH_SYNCD_OK : NH_SYNCD_ERR_OOM;
+}
+
+int nh_syncd_state_set_lazy_dir_(nh_syncd_state *s, const char *rel, bool lazy) {
+    if (!s || !rel) return NH_SYNCD_ERR_ARG;
+    json_t *row = json_object_get(s->files, rel);
+    const char *kind = json_string_value(json_object_get(row, "kind"));
+    if (!json_is_object(row) || !kind || strcmp(kind, "dir"))
+        return NH_SYNCD_ERR_ARG;
+    if (!lazy) { (void)json_object_del(row, "lazy"); return NH_SYNCD_OK; }
+    return json_object_set_new(row, "lazy", json_true()) == 0 ? NH_SYNCD_OK : NH_SYNCD_ERR_OOM;
 }
 
 int nh_syncd_state_delete_(nh_syncd_state *s, const char *rel) {

@@ -65,7 +65,7 @@ int main(void) {
     /* (1) mounted=true — the transition the g_session fix now produces
      *     the first time nhf_init runs. */
     assert(nh_fuse_write_status(path, /*mounted=*/true,
-                                /*generation=*/42, &stats) == 0);
+                                /*generation=*/42, /*tier0=*/true, &stats) == 0);
     {
         struct stat st; assert(stat(path, &st) == 0);
         assert((st.st_mode & 0777) == 0600);
@@ -85,7 +85,7 @@ int main(void) {
     /* (2) mounted=false — the transition nhf_destroy produces at
      *     unmount time (g_session cleared before final write). */
     assert(nh_fuse_write_status(path, /*mounted=*/false,
-                                /*generation=*/42, &stats) == 0);
+                                /*generation=*/42, /*tier0=*/true, &stats) == 0);
     {
         char *body = slurp(path);
         assert(strstr(body, "\"mounted\":false") != NULL);
@@ -97,10 +97,11 @@ int main(void) {
     /* Stats-may-be-NULL path — defensive, matches the pre-source
      * call in write_status_json when g_source is not yet open. */
     assert(nh_fuse_write_status(path, /*mounted=*/false,
-                                /*generation=*/0, NULL) == 0);
+                                /*generation=*/0, /*tier0=*/false, NULL) == 0);
     {
         char *body = slurp(path);
         assert(strstr(body, "\"generation\":0") != NULL);
+        assert(strstr(body, "\"tier0\":false") != NULL);
         assert(strstr(body, "\"hits_local\":0") != NULL);
         assert(strstr(body, "\"fetches\":0") != NULL);
         free(body);

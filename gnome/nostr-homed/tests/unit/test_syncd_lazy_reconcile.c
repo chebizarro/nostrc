@@ -20,6 +20,7 @@
 #include "nh_syncd.h"
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
+#include "../../src/porthome-fuse/nh_fuse_table.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -151,6 +152,65 @@ int main(void) {
     /* Ignore matcher (accept everything in $HOME). */
     nh_syncd_ignore *ig = NULL;
     assert(nh_syncd_ignore_new(g_home, &ig) == 0);
+
+    /* Fresh machine: no base row and no local lazy override. The on-wire
+     * marker alone creates an Archive mount anchor and records cold refs. */
+    nh_syncd_state *fresh = NULL;
+    assert(nh_syncd_state_new(g_home, "nostr-homed.home.v1:personal",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            g_root_id, &fresh) == 0);
+    nh_porthome_manifest fm;
+    assert(nh_porthome_manifest_init_v2(&fm, g_root_id) == 0);
+    char *enc = NULL;
+    assert(nh_porthome_encrypt_path(g_hkey, "Archive", &enc) == 0);
+    assert(nh_porthome_manifest_add_dir_v2(&fm, enc, strdup("Archive"),
+                                           0755, 0, 0, 1) == 0);
+    fm.entries[0].lazy = true;
+    assert(nh_porthome_encrypt_path(g_hkey, "Archive/2024", &enc) == 0);
+    assert(nh_porthome_manifest_add_dir_v2(&fm, enc, strdup("2024"),
+                                           0755, 0, 0, 1) == 0);
+    const char *cold = "cold-tier payload";
+    nh_porthome_chunk cold_chunk = {0};
+    uint8_t *ct = NULL; size_t ct_len = 0;
+    assert(nh_porthome_encrypt_chunk(g_hkey, (const uint8_t *)cold, strlen(cold),
+                                     &ct, &ct_len, cold_chunk.sha256) == 0);
+    cold_chunk.size = (uint32_t)ct_len;
+    char cold_addr[65]; hex_of(cold_chunk.sha256, 32, cold_addr);
+    store_put(cold_addr, ct, ct_len); free(ct);
+    assert(nh_porthome_encrypt_path(g_hkey, "Archive/2024/report.txt", &enc) == 0);
+    assert(nh_porthome_manifest_add_file_v2(&fm, enc, strdup("report.txt"),
+             0644, 0, 0, 1, strlen(cold), &cold_chunk, 1) == 0);
+    uint8_t *wire = NULL; size_t wire_len = 0;
+    assert(nh_porthome_manifest_encode_sealed(&fm, g_hkey, &wire, &wire_len) == 0);
+    nh_porthome_manifest *opened = NULL;
+    assert(nh_porthome_manifest_decode_sealed(wire, wire_len, g_hkey, &opened) == 0);
+    nh_syncd_reconcile_cfg fresh_cfg = {.manifest = opened,
+        .remote_generation = 1, .fetch_chunk = fetch_cb, .device_name = "test"};
+    memcpy(fresh_cfg.home_key, g_hkey, 32);
+    nh_syncd_reconcile_result *fresh_result = NULL;
+    char *fresh_err = NULL;
+    assert(nh_syncd_reconcile_from_manifest(&fresh_cfg, fresh, g_home, ig,
+               g_state, &fresh_result, &fresh_err) == 0);
+    assert(file_exists("Archive"));
+    assert(!file_exists("Archive/2024"));
+    assert(!file_exists("Archive/2024/report.txt"));
+    const nh_syncd_entry *cold_row = nh_syncd_state_find(fresh,
+                                                         "Archive/2024/report.txt");
+    assert(cold_row && nh_syncd_entry_chunk_count(cold_row) == 1);
+    assert(!strcmp(nh_syncd_entry_chunk_at(cold_row, 0), cold_addr));
+    nh_fuse_table *projected = NULL;
+    assert(nh_fuse_table_load_subtree(g_state, getuid(), getgid(),
+                                      "Archive", &projected) == 0);
+    const nh_fuse_entry_t *visible = nh_fuse_table_find(projected,
+                                                        "2024/report.txt");
+    assert(visible && visible->kind == NH_FUSE_KIND_FILE);
+    assert(visible->n_chunks == 1 && !strcmp(visible->chunks_hex[0], cold_addr));
+    assert(!strcmp(visible->source_rel, "Archive/2024/report.txt"));
+    nh_fuse_table_free(projected);
+    nh_syncd_reconcile_result_free(fresh_result);
+    nh_syncd_state_free(fresh);
+    nh_porthome_manifest_dispose(opened); free(opened);
+    nh_porthome_manifest_dispose(&fm); free(wire); free(fresh_err);
 
     /* Lazy matcher with Portable/. */
     nh_syncd_lazy *lz = NULL;

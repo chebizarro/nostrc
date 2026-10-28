@@ -310,6 +310,28 @@ static int apply_file(int base_fd, const nh_porthome_entry *e,
     return rc;
 }
 
+/* Marking is carried by the signed/encrypted manifest, not a local
+ * login-time hint. A lazy directory itself is created as an empty mount
+ * anchor; descendants are not fetched or materialized. */
+static int under_lazy_dir(const nh_porthome_manifest *m,
+                          const nh_porthome_entry *e, int *is_root) {
+    *is_root = 0;
+    if (!e || !e->path_enc) return 0;
+    for (size_t i = 0; i < m->entries_len; ++i) {
+        const nh_porthome_entry *dir = &m->entries[i];
+        if (dir->kind != NH_PORTHOME_KIND_DIR || !dir->lazy || !dir->path_enc)
+            continue;
+        size_t n = strlen(dir->path_enc);
+        if (strcmp(e->path_enc, dir->path_enc) == 0) {
+            *is_root = 1;
+            return 1;
+        }
+        if (strncmp(e->path_enc, dir->path_enc, n) == 0 && e->path_enc[n] == '/')
+            return 1;
+    }
+    return 0;
+}
+
 nh_porthome_prov_status nh_porthome_materialize_into_fd(
     int staging_fd,
     const nh_porthome_manifest *m,
@@ -335,8 +357,11 @@ nh_porthome_prov_status nh_porthome_materialize_into_fd(
      * is easier if the manifest was built dfs-first, which it is here),
      * then files, then symlinks. */
     size_t total_files = 0;
-    for (size_t i = 0; i < m->entries_len; i++)
-        if (m->entries[i].kind == NH_PORTHOME_KIND_FILE) total_files++;
+    for (size_t i = 0; i < m->entries_len; i++) {
+        int lazy_root = 0;
+        if (m->entries[i].kind == NH_PORTHOME_KIND_FILE &&
+            !under_lazy_dir(m, &m->entries[i], &lazy_root)) total_files++;
+    }
 
     size_t running_bytes = 0;
     size_t applied_files = 0;
@@ -349,6 +374,8 @@ nh_porthome_prov_status nh_porthome_materialize_into_fd(
     for (size_t i = 0; i < m->entries_len; i++) {
         const nh_porthome_entry *e = &m->entries[i];
         if (e->kind != NH_PORTHOME_KIND_DIR) continue;
+        int lazy_root = 0;
+        if (under_lazy_dir(m, e, &lazy_root) && !lazy_root) continue;
         int r = apply_dir(staging_fd, e, opts->local_uid, opts->local_gid);
         if (r != NH_PORTHOME_PROV_OK) { final_rc = r; goto done; }
     }
@@ -357,6 +384,8 @@ nh_porthome_prov_status nh_porthome_materialize_into_fd(
     for (size_t i = 0; i < m->entries_len; i++) {
         const nh_porthome_entry *e = &m->entries[i];
         if (e->kind != NH_PORTHOME_KIND_FILE) continue;
+        int lazy_root = 0;
+        if (under_lazy_dir(m, e, &lazy_root)) continue;
         int r = apply_file(staging_fd, e, home_key, fetch, fetch_ctx,
                            opts->local_uid, opts->local_gid,
                            cap_bytes, cap_seconds,
@@ -371,6 +400,8 @@ nh_porthome_prov_status nh_porthome_materialize_into_fd(
     for (size_t i = 0; i < m->entries_len; i++) {
         const nh_porthome_entry *e = &m->entries[i];
         if (e->kind != NH_PORTHOME_KIND_SYMLINK) continue;
+        int lazy_root = 0;
+        if (under_lazy_dir(m, e, &lazy_root)) continue;
         int r = apply_symlink(staging_fd, e, opts->local_uid, opts->local_gid);
         if (r != NH_PORTHOME_PROV_OK) { final_rc = r; goto done; }
     }

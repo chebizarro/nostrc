@@ -71,6 +71,27 @@ grep -q '"generation":5' "${STATUS_DIR}/fuse-status.json" || {
     exit 1
 }
 
+# Project a snapshot subtree at the mount root without changing the
+# snapshot format. The fixture's Documents/ contains only hi.txt.
+SUBTREE_OUT="$(NH_FUSE_SUBTREE=Documents "${BIN}")"
+grep -q '^READY generation=5 entries=1' <<< "${SUBTREE_OUT}" || {
+    echo "FAIL: subtree projection did not expose only Documents/"
+    exit 1
+}
+
+# A real HOME/Archive may already contain user files. Refuse to shadow
+# them even in headless mode, and preserve the sentinel.
+printf 'keep me\n' > "${MP}/sentinel"
+set +e
+"${BIN}" > "${STATUS_DIR}/nonempty.log" 2>&1
+NONEMPTY_RC=$?
+set -e
+[[ ${NONEMPTY_RC} -eq 6 && -f "${MP}/sentinel" ]] || {
+    echo "FAIL: nonempty mountpoint was not refused without data loss"
+    exit 1
+}
+rm "${MP}/sentinel"
+
 # Cleanup unless the caller pinned dirs.
 if [[ -z "${NH_FUSE_STATE_DIR:-}" || "${STATE_DIR}" == /tmp/nhfuse_harness_state_* ]]; then
     rm -rf "${STATE_DIR}" "${MP}" "${STATUS_DIR}"
