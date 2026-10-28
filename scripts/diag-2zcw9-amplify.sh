@@ -48,14 +48,31 @@ work() {
   done
   echo "worker $w: $n runs"
 }
+# Load as in the stress step: the other jittered GUI suites beside it.
+load() {
+  local name="$1" n=0 log
+  while [ "$(date +%s)" -lt "$deadline" ] && [ ! -e "$fail" ]; do
+    n=$((n + 1)); log="$evidence/$name-run$n.log"
+    if ctest --test-dir "$build" --no-tests=error --output-on-failure -R "^$name\$" > "$log" 2>&1; then
+      rm -f "$log"
+    else
+      echo "load $name run $n FAILED: $log"; tail -n 20 "$log"; touch "$fail"; return
+    fi
+  done
+  echo "load $name: $n runs"
+}
 for w in $(seq "$workers"); do work "$w" & done
+for name in ${DIAG_2ZCW9_LOAD:-groundhog-composer groundhog-attachment-ui groundhog-conversation-menu-gui}; do
+  load "$name" &
+done
 wait
 if [ -e "$fail" ]; then
   ls -la "$evidence"
   for core in "$evidence"/core*; do
     [ -f "$core" ] || continue
+    bin="${core##*/}"; bin="${bin#core.*.}"; bin="${bin//!//}"
     DEBUGINFOD_URLS=https://debuginfod.ubuntu.com timeout 900 gdb -nx -batch -iex 'set debuginfod enabled on' -ex 'set print frame-arguments all' \
-      -ex 'bt full' -ex 'thread apply all bt full' "$exe" -c "$core" > "$core.bt" 2>&1 || true
+      -ex 'bt full' -ex 'thread apply all bt full' "$bin" -c "$core" > "$core.bt" 2>&1 || true
     sed -n '1,/^Thread [0-9]* (/p' "$core.bt"
   done
   exit 1
