@@ -35,7 +35,7 @@ files already declare a version.
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
-| libhanami | `libhanami/` | 0.7.1 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
+| libhanami | `libhanami/` | 0.8.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.7.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
@@ -66,6 +66,17 @@ files already declare a version.
   Hanami's NETWORK verdict cannot change with a later reconnect. No signature or
   ABI changes; these are PATCH-class corrections in the same unreleased versions.
 - **Other components: no bump.** No other shipped artifacts change.
+
+### GRASP NIP-11 capability preflight (nostrc-h77v7)
+
+- **libhanami 0.7.1 → 0.8.0 (MINOR):** additive owned server metadata and fetch
+  result API, plus incompatible 0.x fail-closed GRASP capability preflight
+  (including NULL-repository fetch). Consumers rebuild for the enlarged push
+  result and free returned metadata. CMake/pkg-config now declare nip11/curl.
+- **nip11 remains unversioned:** append parsed GRASP extension fields to its
+  public relay document; consumers rebuild. No independent numeric source exists.
+- **No bump:** libnostr, libjson, libblossom, libporthome and libvault; their
+  shipped APIs/behavior are unchanged. Release/tag columns remain unchanged.
 
 ### Plain -Werror builds for libblossom and libhanami (nostrc-t7kio)
 

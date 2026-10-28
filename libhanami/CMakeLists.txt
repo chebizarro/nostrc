@@ -17,8 +17,8 @@ if(NOT COMMAND declare_component_version)
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
-set(HANAMI_VERSION_MINOR 7)
-set(HANAMI_VERSION_MICRO 1)
+set(HANAMI_VERSION_MINOR 8)
+set(HANAMI_VERSION_MICRO 0)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
   ${HANAMI_VERSION_MINOR}
@@ -143,6 +143,13 @@ if(NOT TARGET nip34)
   message(FATAL_ERROR "libhanami requires nip34. Set ENABLE_NIP34=ON or BUILD_LIBHANAMI=OFF.")
 endif()
 target_link_libraries(hanami PRIVATE nip34)
+
+# GRASP capability parsing and bounded HTTP preflight.
+if(NOT TARGET nip11)
+  message(FATAL_ERROR "libhanami requires nip11. Set ENABLE_NIP11=ON or BUILD_LIBHANAMI=OFF.")
+endif()
+find_package(CURL REQUIRED)
+target_link_libraries(hanami PRIVATE nip11 CURL::libcurl)
 target_compile_definitions(hanami PRIVATE HANAMI_HAVE_NIP34=1)
 
 # Optional LMDB backend

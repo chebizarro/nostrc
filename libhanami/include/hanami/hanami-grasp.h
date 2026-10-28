@@ -139,6 +139,20 @@ typedef struct {
     size_t refspec_count;               /**< Number of refspecs */
 } hanami_grasp_push_opts_t;
 
+/** NIP-11 metadata retained for one GRASP operation, including CONFIG refusals.
+ * Strings/list are owned; absent curation means no advertised extra curation.
+ * Advertising GRASP-05 does not change announcement-listing policy. */
+typedef struct {
+    char **supported_grasps;
+    size_t supported_grasps_count;
+    char *repo_acceptance_criteria;
+    char *curation;
+    bool supports_grasp05;
+} hanami_grasp_metadata_t;
+
+/** Deep free; accepts NULL. */
+HANAMI_API void hanami_grasp_metadata_free(hanami_grasp_metadata_t *metadata);
+
 /** Outcome of authorization, transfer, and bounded corrective publication.
  * A correction repairs signed state, not partially applied Git data. */
 typedef struct {
@@ -148,6 +162,7 @@ typedef struct {
     hanami_error_t operation_error;
     bool recovery_attempted;
     hanami_error_t recovery_error;
+    hanami_grasp_metadata_t *server; /**< Caller frees with hanami_grasp_metadata_free. */
 } hanami_grasp_push_result_t;
 
 /**
@@ -155,7 +170,13 @@ typedef struct {
  * @repo: repository to push from
  * @opts: push options
  *
- * Push to a GRASP server. This performs:
+ * Push to a GRASP server. First GET the root relay's HTTP(S) NIP-11 document
+ * with Accept: application/nostr+json, once per operation (no polling/retries).
+ * Require supported_grasps to contain GRASP-01 before any publication or Git
+ * push. Missing GRASP-01 returns HANAMI_ERR_CONFIG; transport/HTTP failures
+ * return HANAMI_ERR_NETWORK; malformed JSON/GRASP fields or a missing required
+ * acceptance string return HANAMI_ERR_NOSTR. Deadlines fail, never complete.
+ * Then:
  *   1. Fetch the previous signed state through EOSE from the GRASP root relay
  *   2. Publish complete desired state and wait for that relay's OK true
  *   3. Push via Smart HTTP, checking transport and per-ref status
@@ -176,7 +197,9 @@ typedef struct {
 HANAMI_API hanami_error_t hanami_push_to_grasp(git_repository *repo,
                                      const hanami_grasp_push_opts_t *opts);
 
-/** Same workflow, with both original and recovery outcomes. result is optional. */
+/** Same workflow, with original/recovery outcomes and server metadata, also on
+ * later failures. result is optional and is overwritten; free its previous
+ * server metadata before reuse. */
 HANAMI_API hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
     const hanami_grasp_push_opts_t *opts, hanami_grasp_push_result_t *result);
 
@@ -187,6 +210,8 @@ HANAMI_API hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
  * @relay_urls: NULL-terminated relay URLs for state lookup
  * @relay_count: number of relay URLs
  *
+ * First require GRASP-01 via one root NIP-11 GET, with the same error semantics
+ * as push. A NULL repo performs this capability check only, without Git/relay I/O.
  * Download all advertised refs using Smart HTTP, then require an authenticated,
  * EOSE-complete kind-30618 state from the given relays before updating local
  * grasp remote-tracking tips. The owner in the clone URL, or a maintainer named
@@ -209,6 +234,16 @@ HANAMI_API hanami_error_t hanami_grasp_fetch_with_signer(git_repository *repo,
                                    const char *const *relay_urls,
                                    size_t relay_count,
                                    const hanami_signer_t *signer);
+
+/** As above, retaining server metadata even on CONFIG/later refusal. signer and
+ * server are optional. *server is initialized to NULL; free any previous value
+ * before reuse, and free the returned value with hanami_grasp_metadata_free. */
+HANAMI_API hanami_error_t hanami_grasp_fetch_with_result(git_repository *repo,
+                                   const char *clone_url,
+                                   const char *const *relay_urls,
+                                   size_t relay_count,
+                                   const hanami_signer_t *signer,
+                                   hanami_grasp_metadata_t **server);
 
 /* =========================================================================
  * Helpers for refs/nostr/ namespace

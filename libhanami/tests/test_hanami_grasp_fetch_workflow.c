@@ -1,5 +1,6 @@
 /* Real Smart HTTP download followed by authenticated, EOSE-complete relay state. */
 #include "hanami/hanami-grasp.h"
+#include "hanami_test_grasp_metadata.h"
 #include "nostr-event.h"
 #include "keys.h"
 #include <nip34.h>
@@ -94,20 +95,29 @@ int main(int argc, char **argv)
     assert(pk);
     pk[64] = '\0';
     hanami_signer_t signer = {.pubkey = pk, .sign = sign_auth, .user_data = (void *)sk};
-    hanami_error_t result = !strcmp(scenario, "auth-success")
-        ? hanami_grasp_fetch_with_signer(repo, clone, relays, 1, &signer)
-        : hanami_grasp_fetch(repo, clone, relays, 1);
+    hanami_grasp_metadata_t *metadata = NULL;
+    bool info_only = !strcmp(scenario, "info");
+    hanami_error_t result = hanami_grasp_fetch_with_result(info_only ? NULL : repo,
+        clone, relays, 1, !strcmp(scenario, "auth-success") ? &signer : NULL, &metadata);
+    if (info_only) {
+        assert(hanami_grasp_fetch(NULL, clone, relays, 1) == HANAMI_OK);
+        assert(hanami_grasp_fetch_with_signer(NULL, clone, relays, 1, NULL) == HANAMI_OK);
+    }
+    check_metadata(scenario, metadata);
+    hanami_grasp_metadata_free(metadata);
     hanami_error_t expected = (!strcmp(scenario, "match") ||
-        !strcmp(scenario, "maintainer") || !strcmp(scenario, "auth-success")) ? HANAMI_OK
+        !strcmp(scenario, "maintainer") || !strcmp(scenario, "auth-success") ||
+        !strcmp(scenario, "nip11-no-curation") || info_only) ? HANAMI_OK
         : !strcmp(scenario, "none") ? HANAMI_ERR_NOT_FOUND
         : !strcmp(scenario, "auth") ? HANAMI_ERR_AUTH : HANAMI_ERR_NOSTR;
+    if (nip11_expected(scenario) != HANAMI_OK) expected = nip11_expected(scenario);
     fprintf(stderr, "fetch %s: result=%d expected=%d\n", scenario, result, expected);
     assert(result == expected);
     assert(git_reference_lookup(&tracking, repo, "refs/remotes/grasp/heads/main") == 0);
     assert(git_oid_cmp(git_reference_target(tracking),
-        result == HANAMI_OK ? &fetched : &sentinel) == 0);
+        result == HANAMI_OK && !info_only ? &fetched : &sentinel) == 0);
     git_reference_free(tracking);
-    if (result == HANAMI_OK) {
+    if (result == HANAMI_OK && !info_only) {
         git_odb *odb = NULL;
         assert(git_repository_odb(&odb, repo) == 0);
         assert(git_odb_exists(odb, &fetched));

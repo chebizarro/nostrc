@@ -63,6 +63,11 @@ typedef struct RelayInformationDocument {
     char *payments_url;
     RelayFeesDocument *fees;
     char *icon;
+    /* Optional GRASP extensions. Owned by this document; parse rejects wrong types. */
+    char **supported_grasps;
+    int supported_grasps_count;
+    char *repo_acceptance_criteria;
+    char *curation;
 } RelayInformationDocument;
 
 NOSTR_NIP11_API RelayInformationDocument* nostr_nip11_fetch_info(const char *url);

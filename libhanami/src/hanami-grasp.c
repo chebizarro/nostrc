@@ -14,12 +14,123 @@
 #include <stdint.h>
 
 #include <git2.h>
+#if defined(__has_include)
+#  if __has_include(<git2/sys/errors.h>)
+#    include <git2/sys/errors.h>
+#  endif
+#endif
 #include <nip34.h>
+#include <nostr/nip11/nip11.h>
+#include <curl/curl.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+/* One bounded HTTP exchange per operation; this deadline is failure, not
+ * evidence of relay catch-up or publication. No shared/stale capability cache. */
+typedef struct {
+    char *data;
+    size_t size;
+    bool too_large;
+} grasp_document;
+
+static size_t grasp_document_write(void *data, size_t size, size_t count, void *payload)
+{
+    grasp_document *doc = payload;
+    const size_t limit = 1024 * 1024;
+    if (size && count > (limit - doc->size) / size) {
+        doc->too_large = true;
+        return 0;
+    }
+    size_t bytes = size * count;
+    char *next = realloc(doc->data, doc->size + bytes + 1);
+    if (!next) return 0;
+    doc->data = next;
+    memcpy(next + doc->size, data, bytes);
+    doc->size += bytes;
+    next[doc->size] = '\0';
+    return bytes;
+}
+
+void hanami_grasp_metadata_free(hanami_grasp_metadata_t *metadata)
+{
+    if (!metadata) return;
+    for (size_t i = 0; i < metadata->supported_grasps_count; i++)
+        free(metadata->supported_grasps[i]);
+    free(metadata->supported_grasps);
+    free(metadata->repo_acceptance_criteria);
+    free(metadata->curation);
+    free(metadata);
+}
+
+static hanami_error_t probe_grasp(const hanami_grasp_info_t *info,
+                                 hanami_grasp_metadata_t **out)
+{
+    *out = NULL;
+    /* relay_url is constructed from the parsed clone authority, including port. */
+    const char *authority = strstr(info->relay_url, "://") + 3;
+    size_t length = strlen(authority) + sizeof("https://");
+    char *url = malloc(length);
+    if (!url) return HANAMI_ERR_NOMEM;
+    snprintf(url, length, "%s://%s", info->uses_tls ? "https" : "http", authority);
+    CURL *curl = curl_easy_init();
+    struct curl_slist *headers = curl_slist_append(NULL, "Accept: application/nostr+json");
+    grasp_document body = {0};
+    RelayInformationDocument *doc = NULL;
+    hanami_error_t err = HANAMI_ERR_NETWORK;
+    if (!curl || !headers) { err = HANAMI_ERR_NOMEM; goto done; }
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, grasp_document_write);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 15000L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    /* Do not accept a redirect/login page as the root server's capabilities. */
+    CURLcode rc = curl_easy_perform(curl);
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    if (status < 200 || status >= 300) goto done;
+    if (body.too_large) { err = HANAMI_ERR_NOSTR; goto done; }
+    if (rc != CURLE_OK) goto done;
+    if (!body.data || memchr(body.data, '\0', body.size) ||
+        !(doc = nostr_nip11_parse_info(body.data))) {
+        err = HANAMI_ERR_NOSTR;
+        goto done;
+    }
+    hanami_grasp_metadata_t *metadata = calloc(1, sizeof(*metadata));
+    if (!metadata) { err = HANAMI_ERR_NOMEM; goto done; }
+    metadata->supported_grasps = doc->supported_grasps;
+    metadata->supported_grasps_count = (size_t)doc->supported_grasps_count;
+    metadata->repo_acceptance_criteria = doc->repo_acceptance_criteria;
+    metadata->curation = doc->curation;
+    doc->supported_grasps = NULL;
+    doc->supported_grasps_count = 0;
+    doc->repo_acceptance_criteria = doc->curation = NULL;
+    *out = metadata;
+    bool supported = false;
+    for (size_t i = 0; i < metadata->supported_grasps_count; i++) {
+        if (!strcmp(metadata->supported_grasps[i], "GRASP-01")) supported = true;
+        if (!strcmp(metadata->supported_grasps[i], "GRASP-05")) metadata->supports_grasp05 = true;
+    }
+    err = !supported ? HANAMI_ERR_CONFIG :
+        !metadata->repo_acceptance_criteria ? HANAMI_ERR_NOSTR : HANAMI_OK;
+done:
+    if (err == HANAMI_ERR_CONFIG)
+        git_error_set(GIT_ERROR_CONFIG, "GRASP NIP-11: supported_grasps does not list GRASP-01");
+    else if (err == HANAMI_ERR_NETWORK)
+        git_error_set(GIT_ERROR_NET, "GRASP NIP-11: HTTP/transport failure for %s", url);
+    else if (err == HANAMI_ERR_NOSTR)
+        git_error_set(GIT_ERROR_NET, "GRASP NIP-11: malformed document or missing repo_acceptance_criteria");
+    nostr_nip11_free_info(doc);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(body.data);
+    free(url);
+    return err;
+}
 
 /* =========================================================================
  * Bech32 npub decoding
@@ -648,6 +759,9 @@ hanami_error_t hanami_push_to_grasp_with_result(git_repository *repo,
         goto done;
     }
 
+    err = probe_grasp(info, &result->server);
+    if (err != HANAMI_OK) goto done;
+
     /* The GRASP root, not an arbitrary accepting replica, authorizes the push. */
     const char *roots[] = { info->relay_url, NULL };
     err = hanami_nostr_ctx_new(roots, opts->signer, &ctx);
@@ -766,6 +880,7 @@ done:
     hanami_nostr_ctx_free(replicas);
     hanami_nostr_ctx_free(ctx);
     hanami_grasp_info_free(info);
+    if (result == &local) hanami_grasp_metadata_free(local.server);
     return err;
 }
 
@@ -917,11 +1032,30 @@ hanami_error_t hanami_grasp_fetch_with_signer(git_repository *repo,
                                    size_t relay_count,
                                    const hanami_signer_t *signer)
 {
+    return hanami_grasp_fetch_with_result(repo, clone_url, relay_urls,
+                                          relay_count, signer, NULL);
+}
+
+hanami_error_t hanami_grasp_fetch_with_result(git_repository *repo,
+                                   const char *clone_url,
+                                   const char *const *relay_urls,
+                                   size_t relay_count,
+                                   const hanami_signer_t *signer,
+                                   hanami_grasp_metadata_t **server)
+{
+    hanami_grasp_metadata_t *metadata = NULL;
+    if (server) *server = NULL;
     if (!clone_url) return HANAMI_ERR_INVALID_ARG;
     hanami_grasp_info_t *info = NULL;
     hanami_error_t err = hanami_grasp_parse_clone_url(clone_url, &info);
     if (err != HANAMI_OK) return err;
-    if (!repo) { hanami_grasp_info_free(info); return HANAMI_OK; }
+    if (!repo) {
+        err = probe_grasp(info, &metadata);
+        hanami_grasp_info_free(info);
+        if (server) *server = metadata;
+        else hanami_grasp_metadata_free(metadata);
+        return err;
+    }
     if (signer && (!signer->sign || !valid_pubkey(signer->pubkey))) {
         hanami_grasp_info_free(info);
         return HANAMI_ERR_INVALID_ARG;
@@ -948,6 +1082,8 @@ hanami_error_t hanami_grasp_fetch_with_signer(git_repository *repo,
     hanami_nostr_ctx_t *ctx = NULL;
     git_remote *remote = NULL;
     nip34_repo_state_t *state = NULL;
+    err = probe_grasp(info, &metadata);
+    if (err != HANAMI_OK) goto fetch_done;
     err = hanami_nostr_ctx_new(bounded, signer, &ctx);
     if (err != HANAMI_OK) goto fetch_done;
     if (git_remote_create_anonymous(&remote, repo, clone_url) != 0) {
@@ -979,5 +1115,7 @@ fetch_done:
 done:
     free(repo_id);
     hanami_grasp_info_free(info);
+    if (server) *server = metadata;
+    else hanami_grasp_metadata_free(metadata);
     return err;
 }

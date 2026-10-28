@@ -11,6 +11,7 @@ import threading
 from urllib.parse import urlsplit
 
 from relay_fixture import Relay, Server
+from grasp_nip11_fixture import FAILURES, serve_nip11
 
 NPUB = "npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d"
 
@@ -72,7 +73,10 @@ class FetchRelay(Relay):
 
     def http(self, request, headers):
         server = self.server
+        if serve_nip11(self, request, headers):
+            return
         with server.lock:
+            assert server.nip11_requests == 1
             server.http_requests += 1
         path = urlsplit(request[1])
         if headers.get("expect", "").lower() == "100-continue":
@@ -134,7 +138,7 @@ def run_case(binary, case):
             server.backend = str(Path(git("--exec-path")) / "git-http-backend")
             assert Path(server.backend).is_file()
             server.http_requests = server.state_queries = server.announcement_queries = 0
-            server.auth_count = 0
+            server.auth_count = server.nip11_requests = 0
             server.lock = threading.Lock()
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
@@ -145,6 +149,10 @@ def run_case(binary, case):
             finally:
                 server.shutdown()
                 worker.join()
+            assert server.nip11_requests == (3 if case == "info" else 1)
+            if case in FAILURES or case == "info":
+                assert server.http_requests == server.state_queries == server.announcement_queries == 0
+                return
             assert server.http_requests > 0 and server.announcement_queries > 0
             if case != "forged":
                 assert server.state_queries > 0
@@ -152,5 +160,5 @@ def run_case(binary, case):
                 assert server.auth_count == 1
 
 
-for scenario in ("match", "maintainer", "forged", "mismatch", "extra", "missing", "oversize", "closed", "auth", "auth-success", "none"):
+for scenario in ("info", "match", "maintainer", "forged", "mismatch", "extra", "missing", "oversize", "closed", "auth", "auth-success", "none", "nip11-no-curation", *FAILURES):
     run_case(sys.argv[1], scenario)

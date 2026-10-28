@@ -338,10 +338,12 @@ static void test_fetch_invalid_url(void)
 
 static void test_fetch_valid_url_no_repo(void)
 {
-    /* With NULL repo, should just validate URL and return OK */
+    /* Offline URL parsing is not a GRASP operation; NIP-11 capability-only
+     * fetches are exercised by the loopback workflow fixture. */
     const char *url = "https://" TEST_HOST "/" TEST_NPUB "/" TEST_REPO ".git";
-    const char *relays[] = { "wss://" TEST_HOST, NULL };
-    assert(hanami_grasp_fetch(NULL, url, relays, 1) == HANAMI_OK);
+    hanami_grasp_info_t *info = NULL;
+    assert(hanami_grasp_parse_clone_url(url, &info) == HANAMI_OK);
+    hanami_grasp_info_free(info);
 }
 
 /* =========================================================================
