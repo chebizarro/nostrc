@@ -11,6 +11,14 @@ if(TEST "test_hanami_sealed_roundtrip")
     EXPECTED pass)
 endif()
 
+if(TEST "test-hanami-clone")
+  nostrc_describe_test("test-hanami-clone"
+    OWNER libhanami nip34
+    TARGETS test-hanami-clone
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/clone_fixture.py"
+    EXPECTED pass)
+endif()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "test-hanami-config")
   nostrc_add_test_owners("test-hanami-config" OWNER nip34)

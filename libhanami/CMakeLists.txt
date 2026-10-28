@@ -17,8 +17,8 @@ if(NOT COMMAND declare_component_version)
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 set(HANAMI_VERSION_MAJOR 0)
-set(HANAMI_VERSION_MINOR 5)
-set(HANAMI_VERSION_MICRO 1)
+set(HANAMI_VERSION_MINOR 6)
+set(HANAMI_VERSION_MICRO 0)
 declare_component_version(HANAMI
   ${HANAMI_VERSION_MAJOR}
   ${HANAMI_VERSION_MINOR}
@@ -81,6 +81,7 @@ set(HANAMI_SOURCES
   src/hanami-transport.c
   src/hanami-config.c
   src/hanami-grasp.c
+  src/hanami-discovery.c
 )
 
 # --- Library target ---
@@ -250,6 +251,18 @@ if(BUILD_TESTING)
     TIMEOUT 180 LABELS "libhanami;sealed;integration")
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test_hanami_sealed_roundtrip)
+  endif()
+  add_executable(test-hanami-clone tests/test_hanami_clone.c)
+  target_compile_options(test-hanami-clone PRIVATE -Wall -Wextra -UNDEBUG)
+  target_link_libraries(test-hanami-clone PRIVATE hanami nostr nip34
+    PkgConfig::LIBGIT2 CURL::libcurl)
+  add_test(NAME test-hanami-clone
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/clone_fixture.py"
+            $<TARGET_FILE:test-hanami-clone> discovery)
+  set_tests_properties(test-hanami-clone PROPERTIES
+    TIMEOUT 180 LABELS "libhanami;clone;integration")
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-clone)
   endif()
   add_executable(test-hanami-nostr-protocol tests/test_hanami_nostr_protocol.c)
   target_link_libraries(test-hanami-nostr-protocol PRIVATE hanami nostr nip34)

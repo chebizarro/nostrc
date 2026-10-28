@@ -76,9 +76,9 @@ static void test_version_info(void)
     const char *v = hanami_version(&major, &minor, &patch);
     assert(v != NULL);
     assert(major == 0);
-    assert(minor == 5);
-    assert(strcmp(v, "0.5.1") == 0);
-    assert(patch == 1);
+    assert(minor == 6);
+    assert(strcmp(v, "0.6.0") == 0);
+    assert(patch == 0);
 }
 
 /* =========================================================================
