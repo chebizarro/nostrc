@@ -26,6 +26,12 @@ class Relay(socketserver.StreamRequestHandler):
         while line := self.rfile.readline().strip():
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
+        if mode == "unavailable":
+            # A relay that cannot be connected: the websocket upgrade fails.
+            self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                             b"Connection: close\r\n\r\n")
+            self.wfile.flush()
+            return
         if "sec-websocket-key" not in headers:
             return self.http(request, headers)
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
@@ -123,6 +129,8 @@ class Relay(socketserver.StreamRequestHandler):
             assert filters["limit"] == 1
             if mode == "closed":
                 self.frame(["CLOSED", subid, "blocked: fixture refusal"])
+            elif mode == "restricted":
+                self.frame(["CLOSED", subid, "restricted: fixture read policy"])
             elif mode in ("auth", "query-auth") and not authenticated:
                 self.frame(["AUTH", "fixture-challenge"])
                 self.frame(["CLOSED", subid, "auth-required: fixture requires credentials"])

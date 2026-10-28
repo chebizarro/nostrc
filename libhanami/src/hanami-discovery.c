@@ -79,6 +79,48 @@ char **hanami_relay_union(const char *const *a, const char *const *b)
     return out;
 }
 
+hanami_error_t hanami_add_outbox_relays(hanami_nostr_ctx_t **ctx, char ***relays,
+    const char *owner_pubkey, const hanami_signer_t *signer)
+{
+    if (!ctx || !*ctx || !relays || !*relays || !owner_pubkey) return HANAMI_ERR_INVALID_ARG;
+    char **outbox = NULL;
+    size_t outbox_count = 0;
+    hanami_error_t err = hanami_nostr_fetch_write_relays(*ctx, owner_pubkey,
+                                                        &outbox, &outbox_count);
+    if (err != HANAMI_OK)
+        return err == HANAMI_ERR_NOMEM ? err : HANAMI_OK;
+
+    /* Bounded fan-out: the first new write relays in the owner's order. */
+    const char *added[HANAMI_OUTBOX_RELAYS_MAX + 1] = {0};
+    size_t n_added = 0;
+    for (size_t i = 0; i < outbox_count && n_added < HANAMI_OUTBOX_RELAYS_MAX; i++) {
+        bool seen = false;
+        for (size_t j = 0; (*relays)[j] && !seen; j++) seen = same_url((*relays)[j], outbox[i]);
+        for (size_t j = 0; j < n_added && !seen; j++) seen = same_url(added[j], outbox[i]);
+        if (!seen) added[n_added++] = outbox[i];
+    }
+    if (n_added == 0) {
+        hanami_discovery_free_list(outbox, outbox_count);
+        return HANAMI_OK;
+    }
+    char **merged = hanami_relay_union((const char *const *)*relays, added);
+    hanami_discovery_free_list(outbox, outbox_count);
+    if (!merged) return HANAMI_ERR_NOMEM;
+    hanami_nostr_ctx_t *next = NULL;
+    err = hanami_nostr_ctx_new((const char *const *)merged, signer, &next);
+    if (err != HANAMI_OK) {
+        for (size_t i = 0; merged[i]; i++) free(merged[i]);
+        free(merged);
+        return err;
+    }
+    hanami_nostr_ctx_free(*ctx);
+    *ctx = next;
+    for (size_t i = 0; (*relays)[i]; i++) free((*relays)[i]);
+    free(*relays);
+    *relays = merged;
+    return HANAMI_OK;
+}
+
 hanami_error_t hanami_select_blossom_endpoint(hanami_nostr_ctx_t *ctx,
     const char *owner_pubkey,
     const char *repo_id, const hanami_config_t *config, char **out)

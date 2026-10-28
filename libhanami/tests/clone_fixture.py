@@ -4,6 +4,15 @@
 Exercises hanami_clone discovery/cold clone with no external services and no
 timing sleeps. The GRASP server only speaks Git Smart HTTP; it counts every
 request so tests can prove clone URLs are not used as Blossom APIs.
+
+Relay URL paths select per-connection REQ behaviour over the shared store:
+/<behaviour>/<kind>[-<kind>...] answers REQs for the listed kinds with
+  closed      CLOSED "blocked:"
+  restricted  CLOSED "restricted:"
+  auth        AUTH + CLOSED "auth-required:" until a NIP-42 AUTH is accepted
+and serves every other kind normally. /isolated/<name> is a relay with its
+own event store (an owner's NIP-65 outbox relay that nothing else mirrors).
+/unavailable cannot be connected: the websocket upgrade gets HTTP 503.
 """
 import base64
 import hashlib
@@ -28,6 +37,9 @@ class Store:
         self.gets = {}
         self.reject_manifest = False  # PUT of a manifest segment -> 500
         self.relay_reject = False     # relay EVENT -> OK false
+        self.auth_ok = 0              # NIP-42 AUTH events accepted
+        self.isolated = {}            # /isolated/<name> relay -> own events
+        self.unavailable_hits = 0     # dials of the /unavailable relay
 
 
 store = Store()
@@ -87,6 +99,16 @@ class Blossom(http.server.BaseHTTPRequestHandler):
         if self.path == "/control/blob-gets":
             with store.lock:
                 body = str(store.blob_gets).encode()
+            self.reply(200, body, "text/plain")
+            return
+        if self.path == "/control/unavailable-hits":
+            with store.lock:
+                body = str(store.unavailable_hits).encode()
+            self.reply(200, body, "text/plain")
+            return
+        if self.path == "/control/auth-ok":
+            with store.lock:
+                body = str(store.auth_ok).encode()
             self.reply(200, body, "text/plain")
             return
         if self.path.startswith("/control/set/"):
@@ -177,12 +199,41 @@ class Relay(socketserver.StreamRequestHandler):
         self.wfile.write(header + data)
         self.wfile.flush()
 
+    def refusal(self, subid, filters):
+        """CLOSED frame for a REQ this connection's path refuses, else None."""
+        parts = self.path.strip("/").split("/")
+        if len(parts) != 2 or parts[0] not in ("closed", "restricted", "auth"):
+            return None
+        kinds = {int(k) for k in parts[1].split("-")}
+        if not any(kind in kinds for f in filters for kind in f.get("kinds", [])):
+            return None
+        if parts[0] == "closed":
+            return ["CLOSED", subid, "blocked: fixture refusal"]
+        if parts[0] == "restricted":
+            return ["CLOSED", subid, "restricted: fixture read policy"]
+        if self.authenticated:
+            return None
+        self.frame(["AUTH", "clone-fixture-challenge"])
+        return ["CLOSED", subid, "auth-required: fixture requires credentials"]
+
     def handle(self):
-        self.rfile.readline()
+        self.path = self.rfile.readline().decode().split()[1]
+        self.authenticated = False
+        parts = self.path.strip("/").split("/")
+        with store.lock:
+            self.events = (store.isolated.setdefault(parts[1], {})
+                           if len(parts) == 2 and parts[0] == "isolated" else store.events)
         headers = {}
         while line := self.rfile.readline().strip():
             key, value = line.decode().split(":", 1)
             headers[key.lower()] = value.strip()
+        if self.path == "/unavailable":
+            with store.lock:
+                store.unavailable_hits += 1
+            self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                             b"Connection: close\r\n\r\n")
+            self.wfile.flush()
+            return
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
         self.wfile.flush()
@@ -207,14 +258,30 @@ class Relay(socketserver.StreamRequestHandler):
                     key = replace_key(event)
                     with store.lock:
                         accepted = not store.relay_reject
-                        old = store.events.get(key)
+                        old = self.events.get(key)
                         if accepted and (old is None or (event["created_at"], old["id"]) >= (old["created_at"], event["id"])):
-                            store.events[key] = event
+                            self.events[key] = event
                     self.frame(["OK", event["id"], accepted, "" if accepted else "blocked: fixture refusal"])
+                elif message[0] == "AUTH":
+                    event = message[1]
+                    tags = {t[0]: t[1] for t in event["tags"] if len(t) > 1}
+                    assert event["kind"] == 22242 and event["content"] == ""
+                    assert tags["challenge"] == "clone-fixture-challenge"
+                    assert tags["relay"] == f"ws://127.0.0.1:{self.server.server_address[1]}{self.path}"
+                    assert len(event["sig"]) == 128 and len(event["id"]) == 64
+                    assert not self.authenticated, "repeated AUTH on one connection"
+                    self.authenticated = True
+                    with store.lock:
+                        store.auth_ok += 1
+                    self.frame(["OK", event["id"], True, ""])
                 elif message[0] == "REQ":
                     subid, filters = message[1], message[2:]
+                    closed = self.refusal(subid, filters)
+                    if closed:
+                        self.frame(closed)
+                        continue
                     with store.lock:
-                        events = list(store.events.values())
+                        events = list(self.events.values())
                     for f in filters:
                         found = sorted((e for e in events if matches(e, f)),
                                        key=lambda e: e["created_at"], reverse=True)

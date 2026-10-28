@@ -348,6 +348,9 @@ hanami_error_t hanami_clone(git_repository **out,
         err = relays ? hanami_nostr_ctx_new((const char *const *)relays, signer, &repo_ctx)
                      : HANAMI_ERR_NOMEM;
     }
+    /* ... ∪ the owner's NIP-65 write relays (bounded; nostrc-nd9yl). */
+    if (err == HANAMI_OK)
+        err = hanami_add_outbox_relays(&repo_ctx, &relays, owner_pubkey, signer);
 
     /* Blossom API endpoint: explicit config or the owner's BUD-03 kind-10063
      * list, classified by libblossom's probe. NIP-34 `clone` URLs are Git

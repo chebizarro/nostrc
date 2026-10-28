@@ -147,6 +147,11 @@ HANAMI_API hanami_error_t hanami_repo_lift_privacy(git_repository *repo);
  * libblossom's capability probe; NIP-34 `clone` URLs are Git remotes and are
  * never used as Blossom APIs.
  *
+ * The kind-10063 and kind-30618 reads cover the discovery relays, the
+ * announcement's relays and up to 4 of the owner's NIP-65 (kind-10002) write
+ * relays, in that order; a missing kind-10002 adds no relays. The configured
+ * endpoint still takes precedence over the kind-10063 list.
+ *
  * The clone is an ordinary self-contained repository: every object reachable
  * from the owner's kind-30618 refs is located through the hanami manifest
  * chain, verified against its Git OID and written to the local ODB; refs are
@@ -158,8 +163,15 @@ HANAMI_API hanami_error_t hanami_repo_lift_privacy(git_repository *repo);
  * known, HANAMI_ERR_BLOSSOM when no candidate is a Blossom server or an
  * object cannot be fetched/verified, HANAMI_ERR_NOT_FOUND when the 30618 has
  * no hanami-manifest tag, HANAMI_ERR_INDEX for an invalid or incomplete
- * manifest chain, HANAMI_ERR_LIBGIT2 for clone/checkout failures. Nothing is
- * left at @local_path on failure; git_error_last() names the cause.
+ * manifest chain, HANAMI_ERR_LIBGIT2 for clone/checkout failures. A relay
+ * query (30617, kind-10063, kind-30618) where no relay returned the event
+ * concludes absence only if every relay sent EOSE. Otherwise it fails with
+ * HANAMI_ERR_AUTH for an "auth-required:" (after one NIP-42 attempt when
+ * @signer is set) or "restricted:" CLOSED, else HANAMI_ERR_NOSTR for
+ * another CLOSED, else HANAMI_ERR_NETWORK when a relay was unreachable, or
+ * HANAMI_ERR_TIMEOUT. A refusing or unreachable relay does not fail the
+ * clone while another relay returns the event. Nothing is left at
+ * @local_path on failure; git_error_last() names the cause.
  */
 HANAMI_API hanami_error_t hanami_clone(git_repository **out,
                             const char *nostr_uri,
@@ -181,8 +193,10 @@ HANAMI_API hanami_error_t hanami_clone(git_repository **out,
  * moved. Private (sealed) repositories are refused with HANAMI_ERR_AUTH; use
  * hanami_repo_fetch_writer() for those.
  *
- * Returns: HANAMI_OK on success (also when no 30618 exists yet); error codes
- * as for hanami_clone(), with git_error_last() naming the cause.
+ * Returns: HANAMI_OK on success (also when every relay sent EOSE without a
+ * 30618); error codes as for hanami_clone(), including HANAMI_ERR_NETWORK
+ * when a relay was unreachable and no relay returned the 30618, with
+ * git_error_last() naming the cause.
  */
 HANAMI_API hanami_error_t hanami_fetch(git_repository *repo,
                             const char *remote_name,

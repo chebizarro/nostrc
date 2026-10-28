@@ -53,6 +53,36 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
+### Plain -Werror builds for libblossom and libhanami (nostrc-t7kio)
+
+- **libblossom 0.3.2 (no further bump):** folds into the unreleased 0.3.2
+  PATCH as another build correction. `json_escape_string` formats `\uXXXX`
+  with a bounded `snprintf`, not `sprintf`; output is unchanged. No header,
+  ABI or wire change.
+- **libhanami: no bump.** This change is test-only: `test_hanami_clone.c`
+  formats through a checked helper. The GRASP initial-HEAD `sprintf` was
+  already bounded on master (b97cf12fc).
+- **No bump:** all other components.
+
+### Clone relay coverage: per-relay CLOSED, NIP-65 outbox (nostrc-sp8zk, nostrc-nd9yl)
+
+- **libhanami 0.7.0 (no further bump):** folds into the unreleased 0.7.0
+  MINOR. These 0.x behaviour changes are called out in
+  `libhanami/CHANGELOG.md`:
+  - a multi-relay query completes on the other relays' EOSE when one relay
+    CLOSEs. A refusal with no event is an error, not
+    `HANAMI_ERR_NOT_FOUND`;
+  - a `restricted:` query CLOSED maps to `HANAMI_ERR_AUTH`;
+  - an unreachable relay counts as unanswered. With no event returned, the
+    query fails with `HANAMI_ERR_NETWORK` unless a CLOSED classification
+    applies (nostrc-837ap);
+  - `hanami_clone` adds up to 4 of the owner's NIP-65 kind-10002 write
+    relays to its kind-10063/30618 reads and to the recorded
+    `hanami.relays`.
+  - No API, ABI or wire-format change.
+- **No bump:** libnostr and all other components are consumed only.
+  Test-only fixture changes do not alter a shipped artifact.
+
 ### Cold clone via published manifest chain (nostrc-v2zyh)
 
 - **libhanami 0.7.0 (no further bump):** folds into the unreleased 0.7.0 MINOR

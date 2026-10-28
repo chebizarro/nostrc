@@ -82,6 +82,57 @@ waiter. Other independently releasable components: no bump.
 - `hanami_publish_state` carries the signer's published manifest head
   forward.
 
+**Multi-relay query completion (nostrc-sp8zk):**
+
+- **Behaviour change:** one relay's CLOSED no longer aborts a multi-relay
+  query (`hanami_nostr_fetch_repo`, `_fetch_state` and the internal
+  kind-10063/30618 reads used by `hanami_clone`/`hanami_fetch`). It counts as
+  that relay's failure; the query completes on the other relays' EOSE and
+  returns the newest event they sent. With no event, a CLOSED is reported
+  instead of `HANAMI_ERR_NOT_FOUND`, because the refusing relay may hold the
+  event. A relay whose NIP-42 AUTH fails no longer aborts the query either.
+- **Behaviour change:** a query CLOSED with `restricted:` now returns
+  `HANAMI_ERR_AUTH`, matching publication. Previously it returned
+  `HANAMI_ERR_NOSTR`.
+- Without a signer, an AUTH challenge no longer stops the query early. The
+  relay's eventual CLOSED is classified as above.
+- `hanami_clone` documents its relay errors (`HANAMI_ERR_AUTH`/`_NOSTR`/
+  `_NETWORK`/`_TIMEOUT`). The clone fixture covers CLOSED, `restricted:`,
+  auth-required → AUTH → success, and one CLOSED relay beside an answering one
+  on the kind-10063 and kind-30618 reads, through `hanami_clone` and
+  `hanami_fetch`.
+
+**Unreachable relays are unanswered, not excluded (nostrc-837ap):**
+
+- **Behaviour change:** a configured relay that cannot be connected
+  (refused, failed WebSocket upgrade, never registered) now counts as
+  unanswered. Before, libnostr either skipped it, so absence was claimed
+  without it, or queued a REQ it never answered (`HANAMI_ERR_TIMEOUT`).
+  Queries first wait for each in-flight handshake's outcome, then await only
+  established relays.
+- With no event returned: `HANAMI_ERR_NOT_FOUND` only when every configured
+  relay sent EOSE. Otherwise `HANAMI_ERR_AUTH` (auth-required:/restricted:
+  CLOSED), else `HANAMI_ERR_NOSTR` (another CLOSED), else
+  `HANAMI_ERR_NETWORK` (unreachable). An event from any reachable relay
+  still wins.
+- Effect on callers that treat NOT_FOUND as "nothing published yet":
+  - `hanami_clone` fails visibly instead of producing an empty clone or
+    `HANAMI_ERR_CONFIG`;
+  - `hanami_fetch`, push base checks, GRASP push and `hanami_publish_state`
+    fail with the relay error;
+  - the refdb keeps its cache.
+
+**NIP-65 outbox relays for clone (nostrc-nd9yl):**
+
+- `hanami_clone` reads the owner's kind-10002 relay list (newest event across
+  the discovery ∪ announcement relays) and adds up to 4 new write relays (`r`
+  tags with no marker or `write`, ws/wss only) to the relay set. That set is
+  used for the kind-10063 and kind-30618 reads and recorded in
+  `hanami.relays` for `hanami_fetch`. An owner whose server list or state
+  exists only on their outbox relays no longer fails with
+  `HANAMI_ERR_CONFIG`. A missing or unreadable kind-10002 adds nothing. The
+  configured `hanami.endpoint` still comes first.
+
 ## 0.6.0 (unreleased)
 
 **Behaviour change (0.x MINOR):** `hanami_clone` no longer uses NIP-34 `clone`
