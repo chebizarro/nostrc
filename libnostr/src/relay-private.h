@@ -116,6 +116,7 @@ typedef void (*NostrRelayOkCallback)(bool, char *);
 
 typedef struct _NostrRelayOkResult {
     bool ok;
+    bool disconnected; /* Local transport loss, not a relay's OK false. */
     char *reason;
 } NostrRelayOkResult;
 

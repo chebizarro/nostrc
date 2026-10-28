@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 2 1 0)
+declare_component_version(NOSTR 2 1 1)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
@@ -420,6 +420,15 @@ if(LIBNOSTR_BUILD_TESTS)
   add_test(NAME libnostr_reconnect_same_second COMMAND test_reconnect_same_second)
   set_tests_properties(libnostr_reconnect_same_second PROPERTIES TIMEOUT 60)
 
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(test_relay_handshake tests/test_relay_handshake.c)
+  target_link_libraries(test_relay_handshake PRIVATE nostr Threads::Threads)
+  target_include_directories(test_relay_handshake PRIVATE include)
+  add_test(NAME libnostr_relay_handshake
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_handshake_fixture.py"
+            $<TARGET_FILE:test_relay_handshake>)
+  set_tests_properties(libnostr_relay_handshake PROPERTIES TIMEOUT 40 LABELS "libnostr;integration")
+
   # nostrc-flp7: a callback's user data outlives every call already in
   # progress when the callback is replaced or removed. Offline.
   add_executable(test_relay_callback_lifetime tests/test_relay_callback_lifetime.c)
@@ -525,6 +534,7 @@ if(COMMAND nostrc_describe_test)
       "libnostr_event_validation|test_event_validation" "libnostr_networking_audit|test_networking_audit"
       "libnostr_subscription_dispatch|test_subscription_dispatch"
       "libnostr_reconnect_same_second|test_reconnect_same_second"
+      "libnostr_relay_handshake|test_relay_handshake"
       "libnostr_relay_callback_lifetime|test_relay_callback_lifetime"
       "libnostr_relay_write_unsent|test_relay_write_unsent"
       "test_relay_teardown_leaks|test_relay_teardown_leaks"

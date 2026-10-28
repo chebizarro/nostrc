@@ -18,6 +18,7 @@
 #include "channel.h"
 #include "select.h"
 #include "error.h"
+#include "error_codes.h"
 #include <nip34.h>
 
 #include <pthread.h>
@@ -35,6 +36,11 @@ typedef struct {
     uint64_t generation;
 } authenticated_relay;
 
+typedef struct {
+    GoChannel *notice; /* Owned by the context, outlives the pool's workers. */
+    atomic_uint_fast64_t losses;
+} relay_observation;
+
 struct hanami_nostr_ctx {
     char **relay_urls;      /* Owned, NULL-terminated */
     size_t relay_count;
@@ -47,6 +53,7 @@ struct hanami_nostr_ctx {
     pthread_mutex_t state_mutex; /* Serialize signed state timestamps + publish */
     int64_t last_state_time;
     authenticated_relay *authenticated; /* relay_count slots; under relay_mutex */
+    relay_observation *observations; /* Stable slots in pool relay order. */
 };
 
 /* =========================================================================
@@ -100,7 +107,12 @@ hanami_error_t hanami_nostr_ctx_new(const char *const *relay_urls,
     pthread_mutex_init(&ctx->relay_mutex, NULL);
     pthread_mutex_init(&ctx->state_mutex, NULL);
     ctx->authenticated = calloc(count, sizeof(*ctx->authenticated));
-    if (!ctx->authenticated) { hanami_nostr_ctx_free(ctx); return HANAMI_ERR_NOMEM; }
+    ctx->observations = calloc(count, sizeof(*ctx->observations));
+    if (!ctx->authenticated || !ctx->observations) {
+        hanami_nostr_ctx_free(ctx);
+        return HANAMI_ERR_NOMEM;
+    }
+    for (size_t i = 0; i < count; i++) atomic_init(&ctx->observations[i].losses, 0);
 
     *out = ctx;
     return HANAMI_OK;
@@ -124,6 +136,7 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx)
     pthread_mutex_destroy(&ctx->relay_mutex);
     pthread_mutex_destroy(&ctx->state_mutex);
     free(ctx->authenticated);
+    free(ctx->observations);
 
     free(ctx);
 }
@@ -132,7 +145,7 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx)
  * Lazy relay connection
  * ========================================================================= */
 
-enum { QUERY_DONE = 1, AUTH_REQUIRED = 2 };
+enum { RELAY_CHANGED = 1, AUTH_REQUIRED = 2 };
 #define RELAY_TIMEOUT_MS 10000
 
 /* Reader callbacks only wake the caller. The retained connection challenge
@@ -143,6 +156,20 @@ static void auth_required(NostrRelay *relay, const char *challenge, void *data)
     (void)challenge;
     hanami_nostr_ctx_t *ctx = data;
     go_channel_try_send(ctx->notice, (void *)(uintptr_t)AUTH_REQUIRED);
+}
+
+/* Published by the relay reader after draining frames from the lost connection.
+ * The counter, not the coalescing wake hint, records the loss across reconnects.
+ * This context owns the private pool and outlives its joined relay workers. */
+static void relay_state_changed(NostrRelay *relay, NostrRelayConnectionState old_state,
+                                NostrRelayConnectionState new_state, void *data)
+{
+    (void)relay;
+    (void)old_state;
+    relay_observation *observation = data;
+    if (new_state != NOSTR_RELAY_STATE_DISCONNECTED) return;
+    atomic_fetch_add(&observation->losses, 1);
+    go_channel_try_send(observation->notice, (void *)(uintptr_t)RELAY_CHANGED);
 }
 
 /* Called with relay_mutex held. Relay creation/dial/backoff belong to libnostr. */
@@ -170,6 +197,10 @@ static hanami_error_t ensure_relays(hanami_nostr_ctx_t *ctx)
     for (size_t i = 0; i < ctx->pool->relay_count; i++) {
         NostrRelay *relay = ctx->pool->relays[i];
         nostr_relay_set_auth_callback(relay, auth_required, ctx);
+        if (!ctx->observations[i].notice) {
+            ctx->observations[i].notice = ctx->notice;
+            nostr_relay_set_state_callback(relay, relay_state_changed, &ctx->observations[i]);
+        }
         connected |= nostr_relay_is_connected(relay);
     }
     pthread_mutex_unlock(&ctx->pool->pool_mutex);
@@ -236,6 +267,8 @@ static hanami_error_t sign_event(hanami_nostr_ctx_t *ctx, NostrEvent *event)
 
 static hanami_error_t relay_error(NostrRelay *relay, const Error *err)
 {
+    /* Classify this operation's loss, not a later reconnect's current state. */
+    if (err && err->code == ERR_WEBSOCKET_CLOSED) return HANAMI_ERR_NETWORK;
     if (!nostr_relay_is_connected(relay)) return HANAMI_ERR_NETWORK;
     const char *message = err ? err->message : NULL;
     if (message && (strstr(message, "auth-required:") || strstr(message, "restricted:")))
@@ -517,21 +550,23 @@ NostrFilter *hanami_nostr_build_patches_filter(const char *repo_addr)
 }
 
 /* =========================================================================
- * Querying (pool catch-up, completed when every subscription has reached
- * EOSE or CLOSED; a deadline is never treated as completion)
+ * Querying (finite catch-up on pool-owned relays; EOSE, CLOSED and transport
+ * loss are boundaries. A deadline is never treated as completion.)
  * ========================================================================= */
 
 typedef struct {
-    hanami_nostr_ctx_t *ctx;
-    NostrRelay **awaited;   /* subscribed relays connected at subscribe time */
-    bool *answered;         /* per awaited relay: EOSE or CLOSED seen */
-    size_t awaited_count;
-    size_t remaining;       /* awaited relays without EOSE or CLOSED yet */
     NostrEvent *latest;
     hanami_error_t failure; /* strongest CLOSED classification seen */
     NostrRelay *auth_relay; /* a relay that CLOSED with auth-required: */
-    atomic_bool done;
 } repo_query;
+
+typedef struct {
+    NostrRelay *relay;
+    NostrSubscription *sub;
+    uint64_t loss_generation;
+    bool terminal;
+    bool answered;
+} query_relay;
 
 static void collect_event(NostrIncomingEvent *incoming, void *data)
 {
@@ -554,73 +589,94 @@ static void collect_event(NostrIncomingEvent *incoming, void *data)
     }
 }
 
-static void query_boundary(NostrRelay *relay, const char *state,
-                           const char *reason, void *data)
+static void query_refused(repo_query *query, query_relay *entry, const char *reason)
 {
-    repo_query *query = data;
-    if (strcmp(state, "CLOSED") != 0 && strcmp(state, "EOSE") != 0) return;
-    /* Only awaited relays complete the snapshot, each once: a relay that
-     * connects later (background redial) was already counted unanswered. */
-    size_t k = 0;
-    while (k < query->awaited_count && query->awaited[k] != relay) k++;
-    if (k == query->awaited_count || query->answered[k]) return;
-    query->answered[k] = true;
-    /* A CLOSED is that relay's failure only: the snapshot still completes on
-     * the other relays' EOSE (NIP-01). auth-required: (NIP-42) and
-     * restricted: are authorization failures; other reasons are refusals. */
-    if (strcmp(state, "CLOSED") == 0) {
-        bool needs_auth = reason && strncmp(reason, "auth-required:", 14) == 0;
-        bool restricted = reason && strncmp(reason, "restricted:", 11) == 0;
-        if (needs_auth) query->auth_relay = relay;
-        if (needs_auth || restricted) query->failure = HANAMI_ERR_AUTH;
-        else if (query->failure == HANAMI_OK) query->failure = HANAMI_ERR_NOSTR;
-    }
-    if (query->remaining > 0 && --query->remaining == 0) {
-        atomic_store(&query->done, true);
-        go_channel_try_send(query->ctx->notice, (void *)(uintptr_t)QUERY_DONE);
-    }
+    entry->terminal = entry->answered = true;
+    bool needs_auth = reason && strncmp(reason, "auth-required:", 14) == 0;
+    bool restricted = reason && strncmp(reason, "restricted:", 11) == 0;
+    if (needs_auth) query->auth_relay = entry->relay;
+    if (needs_auth || restricted) query->failure = HANAMI_ERR_AUTH;
+    else if (query->failure == HANAMI_OK) query->failure = HANAMI_ERR_NOSTR;
 }
 
-/* libnostr's "connected" includes a dial still in its WebSocket handshake
- * (and a background redial of an unreachable relay). Wait for each such
- * handshake's outcome (established, or failed: refused, upgrade error,
- * closed) within the attempt's deadline, before subscribing. */
+static void query_close(query_relay *entry)
+{
+    if (!entry->sub) return;
+    nostr_subscription_unsubscribe(entry->sub);
+    nostr_subscription_close(entry->sub, NULL);
+    nostr_subscription_wait(entry->sub);
+}
+
+/* All reduction is on the caller thread. Observe the boundary BEFORE draining
+ * events: EOSE or a reader-reported loss means preceding frames are enqueued.
+ * Consuming separate channels in the reverse order can prune a buffered EVENT. */
+static size_t query_drain(hanami_nostr_ctx_t *ctx, repo_query *query,
+                         query_relay *entries, size_t count, size_t *unanswered)
+{
+    size_t remaining = 0;
+    for (size_t i = 0; i < count; i++) {
+        query_relay *entry = &entries[i];
+        if (!entry->sub) continue;
+        bool lost = atomic_load(&ctx->observations[i].losses) != entry->loss_generation;
+        void *message = NULL;
+        if (go_channel_try_receive(nostr_subscription_get_closed_channel(entry->sub), &message) == 0) {
+            query_refused(query, entry, message);
+            free(message);
+        } else if (go_channel_try_receive(nostr_subscription_get_eose_channel(entry->sub), NULL) == 0) {
+            entry->terminal = entry->answered = true;
+        }
+        entry->terminal |= lost;
+        if (entry->terminal) query_close(entry);
+        GoChannel *events = nostr_subscription_get_events_channel(entry->sub);
+        size_t budget = entry->terminal ? SIZE_MAX : 256;
+        while (budget-- > 0 && go_channel_try_receive(events, &message) == 0) {
+            if (message) {
+                NostrIncomingEvent incoming = { .relay = entry->relay, .event = message };
+                collect_event(&incoming, query);
+            }
+        }
+        if (entry->terminal) {
+            *unanswered += !entry->answered;
+            nostr_subscription_free(entry->sub);
+            entry->sub = NULL;
+        } else {
+            remaining++;
+        }
+    }
+    return remaining;
+}
+
+/* Each subscription owns its filters through its last reader/refire reference. */
+static NostrSubscription *query_subscription(NostrRelay *relay, NostrFilter *filter)
+{
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *copy = nostr_filter_copy(filter);
+    if (!filters || !copy || !nostr_filters_add(filters, copy)) {
+        nostr_filters_free(filters);
+        nostr_filter_free(copy);
+        return NULL;
+    }
+    nostr_filter_free(copy); /* add moved its contents */
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    if (sub) nostr_subscription_set_filters(sub, filters);
+    else nostr_filters_free(filters);
+    return sub;
+}
+
+/* Preserve snapshot admission: wait for each current dial's outcome, then
+ * await only established relays. A dial that cannot be admitted is unanswered,
+ * not an open subscription whose deadline could prove absence. */
 static void await_handshakes(NostrSimplePool *pool, uint64_t deadline)
 {
-    pthread_mutex_lock(&pool->pool_mutex);
-    size_t count = pool->relay_count;
-    NostrRelay **relays = count ? malloc(count * sizeof(*relays)) : NULL;
-    if (relays) memcpy(relays, pool->relays, count * sizeof(*relays));
-    pthread_mutex_unlock(&pool->pool_mutex);
-    for (size_t i = 0; relays && i < count; i++) {
-        if (!nostr_relay_is_connected(relays[i]) || nostr_relay_is_established(relays[i]))
-            continue;
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        NostrRelay *relay = pool->relays[i];
+        if (!nostr_relay_is_connected(relay) || nostr_relay_is_established(relay)) continue;
         uint64_t now = monotonic_ms();
         if (now >= deadline) break;
         Error *failure = NULL;
-        (void)nostr_relay_wait_established(relays[i], (uint32_t)(deadline - now), &failure);
+        (void)nostr_relay_wait_established(relay, (uint32_t)(deadline - now), &failure);
         free_error(failure);
     }
-    free(relays);
-}
-
-/* Subscribed relays whose handshake is established: the only ones whose
- * EOSE or CLOSED the snapshot waits for. libnostr may skip an unreachable
- * relay or queue a REQ on a connection that never comes up; neither can
- * answer. Called after await_handshakes, before pool start. */
-static size_t awaited_relays(NostrSimplePool *pool, NostrRelay **out, size_t cap)
-{
-    size_t n = 0;
-    pthread_mutex_lock(&pool->pool_mutex);
-    for (size_t i = 0; i < pool->subs_count && n < cap; i++) {
-        NostrRelay *relay = pool->subs[i] ? nostr_subscription_get_relay(pool->subs[i]) : NULL;
-        if (!relay || !nostr_relay_is_established(relay)) continue;
-        size_t j = 0;
-        while (j < n && out[j] != relay) j++;
-        if (j == n) out[n++] = relay;
-    }
-    pthread_mutex_unlock(&pool->pool_mutex);
-    return n;
 }
 
 /* Distinct configured relays (the pool keys relays by exact URL). */
@@ -646,9 +702,10 @@ static hanami_error_t query_single_event(hanami_nostr_ctx_t *ctx,
 
     size_t relay_count = ctx->pool->relay_count;
     bool *authenticated = calloc(relay_count, sizeof(*authenticated));
-    bool *answered = calloc(relay_count, sizeof(*answered));
-    NostrRelay **awaited = calloc(relay_count, sizeof(*awaited));
-    if (!authenticated || !answered || !awaited) { err = HANAMI_ERR_NOMEM; goto release; }
+    query_relay *entries = calloc(relay_count, sizeof(*entries));
+    GoSelectCase *cases = calloc(1 + 3 * relay_count, sizeof(*cases));
+    query_relay **waiting = calloc(relay_count, sizeof(*waiting));
+    if (!authenticated || !entries || !cases || !waiting) { err = HANAMI_ERR_NOMEM; goto release; }
     /* A relay whose AUTH fails is that relay's failure: it is still queried
      * and its CLOSED is classified like any other. */
     for (size_t i = 0; i < relay_count; i++) {
@@ -663,66 +720,83 @@ static hanami_error_t query_single_event(hanami_nostr_ctx_t *ctx,
     for (unsigned attempt = 0; attempt < 2; attempt++) {
         void *notice = NULL;
         while (go_channel_try_receive(ctx->notice, &notice) == 0) {}
-        memset(answered, 0, relay_count * sizeof(*answered));
-        repo_query query = { .ctx = ctx, .awaited = awaited, .answered = answered,
-                             .failure = HANAMI_OK };
-        bool retry = false;
-        NostrFilters filters = { .filters = filter, .count = 1 };
+        memset(entries, 0, relay_count * sizeof(*entries));
+        repo_query query = { .failure = HANAMI_OK };
+        bool cut_for_auth = false;
+        size_t unanswered = distinct_relays(ctx);
         uint64_t deadline = monotonic_ms() + RELAY_TIMEOUT_MS;
         await_handshakes(ctx->pool, deadline);
-        nostr_simple_pool_set_auto_unsub_on_eose(ctx->pool, true);
-        nostr_simple_pool_set_event_middleware_ex(ctx->pool, collect_event, &query);
-        nostr_simple_pool_set_subscription_callback(ctx->pool, query_boundary, &query);
-        nostr_simple_pool_subscribe(ctx->pool, (const char **)ctx->relay_urls,
-                                   ctx->relay_count, filters, false);
-        /* A configured relay that is not awaited (unreachable, refused
-         * handshake, never registered) is unanswered, not excluded. */
-        query.awaited_count = awaited_relays(ctx->pool, awaited, relay_count);
-        query.remaining = query.awaited_count;
-        size_t configured = distinct_relays(ctx);
-        size_t unanswered = configured > query.remaining ? configured - query.remaining : 0;
-        if (query.remaining == 0) {
-            err = HANAMI_ERR_NETWORK;
-        } else {
-            nostr_simple_pool_start(ctx->pool);
-            GoSelectCase wait = { .op = GO_SELECT_RECEIVE, .chan = ctx->notice,
-                                  .recv_buf = &notice };
-            GoSelectResult result;
-            for (;;) {
-                uint64_t now = monotonic_ms();
-                result = go_select_timeout(&wait, 1, now < deadline ? deadline - now : 1);
-                if (result.selected_case != 0 || (uintptr_t)notice != AUTH_REQUIRED) break;
-                /* Only a signer can answer a new challenge, once per relay per
-                 * call; otherwise the relay's eventual CLOSED is its failure. */
-                bool pending = false;
-                for (size_t i = 0; ctx->has_signer && i < relay_count; i++)
-                    pending |= !authenticated[i] &&
-                               has_pending_challenge(ctx, ctx->pool->relays[i]);
-                if (pending) break;
-                if (atomic_load(&query.done)) { notice = (void *)(uintptr_t)QUERY_DONE; break; }
-                /* A repeated, already accepted challenge is not a new boundary. */
-                if (monotonic_ms() >= deadline) { result.selected_case = -1; break; }
+        err = HANAMI_OK;
+        for (size_t i = 0; i < relay_count; i++) {
+            query_relay *entry = &entries[i];
+            entry->relay = ctx->pool->relays[i];
+            /* Capture before admission: even an immediate loss/refire after
+             * this check belongs to this attempt and cannot be erased. */
+            entry->loss_generation = atomic_load(&ctx->observations[i].losses);
+            if (!nostr_relay_is_established(entry->relay)) continue;
+            entry->sub = query_subscription(entry->relay, filter);
+            if (!entry->sub) { err = HANAMI_ERR_NOMEM; break; }
+            Error *failure = NULL;
+            bool fired = nostr_subscription_fire(entry->sub, &failure);
+            free_error(failure);
+            if (!fired) {
+                query_close(entry);
+                nostr_subscription_free(entry->sub);
+                entry->sub = NULL;
+                continue;
             }
-            /* Stop joins delivery and removes the attempt's subscriptions.
-             * Partial events/counters never carry into an authenticated retry. */
-            nostr_simple_pool_stop(ctx->pool);
-            /* An event from any answering relay is the snapshot; absence is
-             * claimed only when every configured relay sent EOSE (a refusing
-             * or unreachable relay may hold the newest replaceable event).
-             * A refusal's classification outranks unreachability. Stopping
-             * early for a new challenge leaves the snapshot incomplete. */
-            bool cut_for_auth = result.selected_case == 0 &&
-                                (uintptr_t)notice == AUTH_REQUIRED;
-            err = result.selected_case != 0 ? HANAMI_ERR_TIMEOUT
-                : cut_for_auth ? HANAMI_ERR_AUTH
-                : query.latest ? HANAMI_OK
-                : query.failure != HANAMI_OK ? query.failure
-                : unanswered ? HANAMI_ERR_NETWORK : HANAMI_ERR_NOT_FOUND;
-            retry = attempt == 0 && ctx->has_signer && result.selected_case == 0 &&
-                    (cut_for_auth || query.auth_relay);
+            unanswered--;
         }
-        nostr_simple_pool_set_subscription_callback(ctx->pool, NULL, NULL);
-        nostr_simple_pool_set_event_middleware_ex(ctx->pool, NULL, NULL);
+        while (err == HANAMI_OK) {
+            size_t remaining = query_drain(ctx, &query, entries, relay_count, &unanswered);
+            if (!remaining) {
+                err = query.latest ? HANAMI_OK
+                    : query.failure != HANAMI_OK ? query.failure
+                    : unanswered ? HANAMI_ERR_NETWORK : HANAMI_ERR_NOT_FOUND;
+                break;
+            }
+            uint64_t now = monotonic_ms();
+            if (now >= deadline) { err = HANAMI_ERR_TIMEOUT; break; }
+            for (size_t i = 0; ctx->has_signer && i < relay_count; i++)
+                cut_for_auth |= !authenticated[i] && has_pending_challenge(ctx, ctx->pool->relays[i]);
+            if (cut_for_auth) { err = HANAMI_ERR_AUTH; break; }
+
+            void *message = NULL;
+            size_t count = 1, active = 0;
+            cases[0] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ctx->notice,
+                                       .recv_buf = &message };
+            for (size_t i = 0; i < relay_count; i++) {
+                NostrSubscription *sub = entries[i].sub;
+                if (!sub) continue;
+                waiting[active++] = &entries[i];
+                GoChannel *channels[] = { nostr_subscription_get_events_channel(sub),
+                    nostr_subscription_get_eose_channel(sub), nostr_subscription_get_closed_channel(sub) };
+                for (size_t j = 0; j < 3; j++)
+                    cases[count++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = channels[j],
+                                                     .recv_buf = &message };
+            }
+            GoSelectResult result = go_select_timeout(cases, count, deadline - now);
+            /* Re-reduce even on timeout: a boundary may already be queued.
+             * Neither timeout nor a coalesced notice is itself completion. */
+            if (result.selected_case <= 0) continue;
+            size_t selected = (size_t)result.selected_case - 1;
+            query_relay *entry = waiting[selected / 3];
+            if (selected % 3 == 0 && message) {
+                NostrIncomingEvent incoming = { .relay = entry->relay, .event = message };
+                collect_event(&incoming, &query);
+            } else if (selected % 3 == 1) {
+                entry->terminal = entry->answered = true;
+            } else if (selected % 3 == 2) {
+                query_refused(&query, entry, message);
+                free(message);
+            }
+        }
+        for (size_t i = 0; i < relay_count; i++) {
+            query_close(&entries[i]);
+            nostr_subscription_free(entries[i].sub);
+        }
+        bool retry = attempt == 0 && ctx->has_signer && err != HANAMI_ERR_TIMEOUT &&
+                     err != HANAMI_ERR_NOMEM && (cut_for_auth || query.auth_relay);
         /* Authenticate each challenged relay once, then re-run the whole
          * snapshot. Partial events/counters never carry into the retry; if
          * no relay authenticates, this attempt's verdict stands. */
@@ -744,8 +818,9 @@ static hanami_error_t query_single_event(hanami_nostr_ctx_t *ctx,
     }
 release:
     free(authenticated);
-    free(answered);
-    free(awaited);
+    free(entries);
+    free(cases);
+    free(waiting);
 done:
     nostr_filter_free(filter);
     pthread_mutex_unlock(&ctx->relay_mutex);

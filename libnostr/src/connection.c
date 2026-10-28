@@ -14,7 +14,6 @@
 #include <string.h>
 #include <openssl/ssl.h>
 
-#define NOSTR_CONNECT_RESULT_TIMEOUT_MS 30000U
 
 #ifndef LWS_PROTOCOL_LIST_TERM
 #define LWS_PROTOCOL_LIST_TERM { NULL, NULL, 0, 0, 0, NULL, 0 }
@@ -329,6 +328,14 @@ queue_message:;
         break;
     }
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
+        /* HTTP response headers are not a WebSocket upgrade. In particular,
+         * LWS reports this for HTTP 503 as well as for the HTTP 101 preceding
+         * CLIENT_ESTABLISHED. Never publish handshake success here. */
+        if (lws_http_client_http_response(wsi) != 101) {
+            conn_wsi_gone(conn, wsi);
+            return -1;
+        }
+        break;
     case LWS_CALLBACK_CLIENT_ESTABLISHED: {
         /* nostrc-prqu.7: was an unconditional printf on stdout. */
         nostr_rl_log(NLOG_DEBUG, "ws", "connection established");

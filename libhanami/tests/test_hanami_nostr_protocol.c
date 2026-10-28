@@ -162,8 +162,29 @@ int main(int argc, char **argv)
     ctx = pair_context(argv[1], "unavailable", "closed", true);
     expect_fetch(ctx, HANAMI_ERR_NOSTR, NULL);
     hanami_nostr_ctx_free(ctx);
+    /* The drop waits for the other relay's CLOSE, proving it was awaited
+     * before it disconnects. No timing assumption or sleep establishes this. */
+    ctx = pair_context(argv[1], "drop-boundary-win", "state-boundary-win", true);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
+    ctx = pair_context(argv[1], "drop-boundary-empty", "empty-boundary-empty", true);
+    expect_fetch(ctx, HANAMI_ERR_NETWORK, NULL);
+    hanami_nostr_ctx_free(ctx);
+    ctx = pair_context(argv[1], "drop-boundary-refused", "closed-boundary-refused", true);
+    expect_fetch(ctx, HANAMI_ERR_NOSTR, NULL);
+    hanami_nostr_ctx_free(ctx);
+    ctx = pair_context(argv[1], "drop-boundary-auth", "restricted-boundary-auth", false);
+    expect_fetch(ctx, HANAMI_ERR_AUTH, NULL);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "event-drop");
+    publish_state(ctx, new_oid, 0);
+    expect_fetch(ctx, HANAMI_OK, new_oid);
+    hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "reject");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NOSTR);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "publish-drop");
+    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NETWORK);
     hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "publish-auth");
     assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_OK);

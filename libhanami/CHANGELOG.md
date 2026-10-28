@@ -1,5 +1,22 @@
 # libhanami changelog
 
+## 0.7.1 (unreleased)
+
+- Fix intermittent query TIMEOUT with an HTTP-503 relay (nostrc-jgl8o).
+  A relay that loses its connection before EOSE/CLOSED is now unanswered at
+  the reader's connection-loss notification, including failed upgrades.
+  Queries consume EVENT/EOSE/CLOSED and state notifications on the caller
+  thread, draining buffered events before finalizing a relay boundary.
+- Preserve snapshot verdicts: an event wins; otherwise a refusal outranks
+  unreachability; unanswered relays yield NETWORK; only all-EOSE absence yields
+  NOT_FOUND. A still-open subscription without a boundary remains TIMEOUT.
+- Keep publication transport failures classified as NETWORK even if the relay
+  reconnects before the caller consumes the failure. libnostr reports synthetic
+  disconnects with `ERR_WEBSOCKET_CLOSED`, distinct from the relay's `OK false`.
+- The accompanying libnostr 2.1.1 correction distinguishes HTTP establishment
+  from WebSocket upgrade and gates reconnect success/REQ replay on the latter.
+  Neither component adds or changes public signatures or wire formats.
+
 ## 0.7.0 (unreleased)
 
 `hanami_grasp_fetch` now refuses to update local remote-tracking refs unless

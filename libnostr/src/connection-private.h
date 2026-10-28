@@ -1,6 +1,8 @@
 #ifndef CONNECTION_PRIVATE_H
 #define CONNECTION_PRIVATE_H
 
+#define NOSTR_CONNECT_RESULT_TIMEOUT_MS 30000U
+
 #include "../include/rate_limiter.h"
 #include "nsync.h"
 #include <libwebsockets.h>

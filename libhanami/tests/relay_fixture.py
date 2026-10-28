@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import threading
+import socket
 
 
 class Relay(socketserver.StreamRequestHandler):
@@ -61,6 +62,15 @@ class Relay(socketserver.StreamRequestHandler):
         raise AssertionError(f"unexpected HTTP request: {request}")
 
     def message(self, message, mode):
+        boundary = None
+        if "-boundary-" in mode:
+            mode, key = mode.split("-boundary-", 1)
+            with self.server.lock:
+                boundary = self.server.boundaries.setdefault(key, threading.Event())
+        if message[0] == "CLOSE" and boundary and mode != "drop":
+            # CLOSE proves the consumer handled this peer's EOSE/CLOSED.
+            # Only then drop the other, necessarily awaited, subscription.
+            boundary.set()
         authenticated = getattr(self, "authenticated", False)
         auth_modes = ("publish-auth", "auth-denied", "auth-repeat", "auth-no-ok", "auth-nosigner", "auth-early", "auth-late", "auth-next")
         if message[0] == "AUTH":
@@ -78,6 +88,9 @@ class Relay(socketserver.StreamRequestHandler):
             self.frame(["OK", event["id"], self.authenticated,
                         "" if self.authenticated else "restricted: fixture denied"])
         elif message[0] == "EVENT":
+            if mode == "publish-drop":
+                self.request.shutdown(socket.SHUT_RDWR)
+                return
             event = message[1]
             assert event["kind"] != 22242, "NIP-42 must use AUTH, not EVENT"
             if mode == "auth-next" and getattr(self, "next_challenge_needed", False):
@@ -127,6 +140,10 @@ class Relay(socketserver.StreamRequestHandler):
                 expected_id = "integration-test" if mode == "integration" else "repo"
                 assert filters["authors"] and filters["#d"] == [expected_id]
             assert filters["limit"] == 1
+            if mode == "drop":
+                assert boundary and boundary.wait(30), "peer boundary was not consumed"
+                self.request.shutdown(socket.SHUT_RDWR)
+                return
             if mode == "closed":
                 self.frame(["CLOSED", subid, "blocked: fixture refusal"])
             elif mode == "restricted":
@@ -142,6 +159,9 @@ class Relay(socketserver.StreamRequestHandler):
                 if event and event["kind"] in filters["kinds"] and event["pubkey"] in filters["authors"]:
                     self.frame(["EVENT", subid, event])
                     self.frame(["EVENT", subid, event])
+                if mode == "event-drop":
+                    self.request.shutdown(socket.SHUT_RDWR)
+                    return
                 if mode != "no-eose":
                     self.frame(["EOSE", subid])
 
@@ -154,6 +174,7 @@ class Server(socketserver.ThreadingTCPServer):
 def main():
     with Server(("127.0.0.1", 0), Relay) as server:
         server.events = {}
+        server.boundaries = {}
         server.refdb_requests = 0
         server.refdb_writes = 0
         server.lock = threading.Lock()
