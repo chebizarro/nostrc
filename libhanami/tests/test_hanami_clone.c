@@ -65,15 +65,20 @@ static long counter(const char *name)
     return strtol(b.buf, NULL, 10);
 }
 
-static hanami_config_t *fixture_config(const char *endpoint)
+static hanami_config_t *fixture_config_on(const char *relay_url, const char *endpoint)
 {
     hanami_config_t *config = NULL;
-    const char *relays[] = { relay, NULL };
+    const char *relays[] = { relay_url, NULL };
     OK(hanami_config_new(&config));
     OK(hanami_config_set_relays(config, relays, 1));
     hanami_config_set_allow_insecure(config, true);
     if (endpoint) OK(hanami_config_set_endpoint(config, endpoint));
     return config;
+}
+
+static hanami_config_t *fixture_config(const char *endpoint)
+{
+    return fixture_config_on(relay, endpoint);
 }
 
 static void publish_server_list(const char *const *servers, size_t count)
@@ -857,6 +862,146 @@ static void test_republish(void)
     printf("republish: refs-only publish guarded; tagless 30618 fails clone; next push checkpoints\n");
 }
 
+/* =========================================================================
+ * nostrc-sp8zk: CLOSED / AUTH on the kind-10063 and kind-30618 reads.
+ * clone_fixture.py relay paths refuse only the listed kinds, so the 30617
+ * announcement read succeeds and each failure is pinned to one query.
+ * ========================================================================= */
+
+static void announce_on(const char *repo, const char **relays)
+{
+    const char *clones[] = { grasp, NULL };
+    OK(hanami_announce_repo(repo, repo, "clone fixture", clones, relays, &signer));
+}
+
+/* Announce on relays; manifest + tagged 30618 for commit-1 (shared store). */
+static void seed_repo(const char *repo, const char **relays)
+{
+    char *c1 = read_text("commit-1");
+    char p[PATH_MAX]; path_of(p, sizeof(p), "source");
+    git_repository *src = NULL;
+    OK(git_repository_open(&src, p));
+    blossom_client_t *c = publisher();
+    rows_t rows = {0};
+    char head[65];
+    upload_objects(c, src, NULL, &rows);
+    upload_manifest(c, repo, NULL, &rows, head);
+    announce_on(repo, relays);
+    publish_state(repo, c1, head, (int64_t)time(NULL));
+    free(rows.v); free(c1);
+    blossom_client_free(c);
+    git_repository_free(src);
+}
+
+static hanami_error_t clone_via(const char *repo_id, const char *relay_url, const char *endpoint,
+                                const hanami_signer_t *who, const char *dir, git_repository **repo)
+{
+    char uri[200], dest[PATH_MAX];
+    snprintf(uri, sizeof(uri), "nostr://%s/%s", pk, repo_id);
+    path_of(dest, sizeof(dest), dir);
+    hanami_config_t *config = fixture_config_on(relay_url, endpoint);
+    *repo = NULL;
+    hanami_error_t err = hanami_clone(repo, uri, dest, who, config);
+    hanami_config_free(config);
+    if (err != HANAMI_OK) assert(!*repo && access(dest, F_OK) != 0);
+    return err;
+}
+
+static void expect_error(const char *what, hanami_error_t got, hanami_error_t want, const char *needle)
+{
+    const git_error *e = git_error_last();
+    if (got != want || !e || !strstr(e->message, needle)) {
+        fprintf(stderr, "%s: got %d (%s), want %d containing '%s'\n", what, got,
+                e ? e->message : "", want, needle);
+        abort();
+    }
+}
+
+static void assert_cloned(git_repository *repo, const char *head)
+{
+    assert(repo);
+    assert_ref(repo, "HEAD", head);
+    char *selected = repo_config_string(repo, "hanami.endpoint");
+    assert(selected && strcmp(selected, blossom) == 0);
+    free(selected);
+}
+
+static void test_relayfail(void)
+{
+    char closed_list[200], restricted_list[200], closed_state[200], restricted_state[200];
+    char auth_both[200], closed_both[200];
+    snprintf(closed_list, sizeof(closed_list), "%s/closed/10063", relay);
+    snprintf(restricted_list, sizeof(restricted_list), "%s/restricted/10063", relay);
+    snprintf(closed_state, sizeof(closed_state), "%s/closed/30618", relay);
+    snprintf(restricted_state, sizeof(restricted_state), "%s/restricted/30618", relay);
+    snprintf(auth_both, sizeof(auth_both), "%s/auth/10063-30618", relay);
+    snprintf(closed_both, sizeof(closed_both), "%s/closed/10063-30618", relay);
+    char *c1 = read_text("commit-1");
+    git_repository *repo = NULL;
+
+    /* 1. kind-10063 refused by the only relay: the query error surfaces (not
+     *    HANAMI_ERR_CONFIG "no Blossom server known"). */
+    const char *r_closed_list[] = { closed_list, NULL };
+    announce_on("rf-list-closed", r_closed_list);
+    expect_error("10063 CLOSED", clone_via("rf-list-closed", closed_list, NULL, NULL,
+                 "rf-list-closed", &repo), HANAMI_ERR_NOSTR, "kind-10063");
+    const char *r_restricted_list[] = { restricted_list, NULL };
+    announce_on("rf-list-restricted", r_restricted_list);
+    expect_error("10063 restricted", clone_via("rf-list-restricted", restricted_list, NULL, NULL,
+                 "rf-list-restricted", &repo), HANAMI_ERR_AUTH, "kind-10063");
+
+    /* 2. kind-30618 refused (configured endpoint, so no 10063 read): the
+     *    clone fails visibly instead of producing an empty repository. */
+    const char *r_closed_state[] = { closed_state, NULL };
+    seed_repo("rf-state-closed", r_closed_state);
+    expect_error("30618 CLOSED", clone_via("rf-state-closed", closed_state, blossom, NULL,
+                 "rf-state-closed", &repo), HANAMI_ERR_NOSTR, "kind-30618");
+    const char *r_restricted_state[] = { restricted_state, NULL };
+    seed_repo("rf-state-restricted", r_restricted_state);
+    expect_error("30618 restricted", clone_via("rf-state-restricted", restricted_state, blossom,
+                 NULL, "rf-state-restricted", &repo), HANAMI_ERR_AUTH, "kind-30618");
+
+    /* 3. auth-required: without a signer AUTH fails visibly; with one, each
+     *    refusing connection is authenticated once and the clone succeeds. */
+    const char *r_auth[] = { auth_both, NULL };
+    seed_repo("rf-auth", r_auth);
+    long before = counter("auth-ok");
+    expect_error("auth, no signer", clone_via("rf-auth", auth_both, NULL, NULL,
+                 "rf-auth-nosigner", &repo), HANAMI_ERR_AUTH, "kind-10063");
+    assert(counter("auth-ok") == before);
+    OK(clone_via("rf-auth", auth_both, NULL, &signer, "rf-auth", &repo));
+    assert_cloned(repo, c1);
+    assert(counter("auth-ok") >= before + 2); /* the 10063 and the 30618 connection */
+    git_repository_free(repo);
+
+    /* 4. Mixed: the configured relay CLOSEs both reads, the announced relay
+     *    answers. One relay's CLOSED is that relay's failure only. */
+    const char *r_mixed[] = { closed_both, relay, NULL };
+    seed_repo("rf-mixed", r_mixed);
+    OK(clone_via("rf-mixed", closed_both, NULL, NULL, "rf-mixed", &repo));
+    assert_cloned(repo, c1);
+
+    /* 5. hanami_fetch reports the 30618 refusal; mixed relays still fetch. */
+    hanami_config_t *config = fixture_config_on(closed_state, NULL);
+    expect_error("fetch CLOSED", hanami_fetch(repo, NULL, NULL, config), HANAMI_ERR_NOSTR,
+                 "kind-30618");
+    hanami_config_free(config);
+    config = fixture_config_on(restricted_state, NULL);
+    expect_error("fetch restricted", hanami_fetch(repo, NULL, NULL, config), HANAMI_ERR_AUTH,
+                 "kind-30618");
+    hanami_config_free(config);
+    /* Recorded hanami.relays (configured ∪ announced) keep the mixed set. */
+    OK(hanami_config_new(&config));
+    hanami_config_set_allow_insecure(config, true);
+    OK(hanami_fetch(repo, NULL, NULL, config));
+    hanami_config_free(config);
+    assert_ref(repo, "refs/remotes/origin/main", c1);
+    git_repository_free(repo);
+    free(c1);
+    printf("relayfail: 10063/30618 CLOSED -> NOSTR, restricted/auth-required -> AUTH through "
+           "clone and fetch; AUTH retry succeeds; one CLOSED relay does not abort the others\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 6) { fprintf(stderr, "usage: %s blossom relay grasp tmp mode\n", argv[0]); return 2; }
@@ -877,6 +1022,7 @@ int main(int argc, char **argv)
     else if (!strcmp(mode, "checkpoint")) test_checkpoint();
     else if (!strcmp(mode, "republish")) test_republish();
     else if (!strcmp(mode, "negative")) test_negative();
+    else if (!strcmp(mode, "relayfail")) test_relayfail();
     else { fprintf(stderr, "unknown mode %s\n", mode); return 2; }
 
     free(pk);

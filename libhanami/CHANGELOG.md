@@ -96,6 +96,11 @@ waiter. Other independently releasable components: no bump.
   `HANAMI_ERR_NOSTR`.
 - Without a signer, an AUTH challenge no longer stops the query early. The
   relay's eventual CLOSED is classified as above.
+- `hanami_clone` documents its relay errors (`HANAMI_ERR_AUTH`/`_NOSTR`/
+  `_NETWORK`/`_TIMEOUT`). The clone fixture covers CLOSED, `restricted:`,
+  auth-required → AUTH → success, and one CLOSED relay beside an answering one
+  on the kind-10063 and kind-30618 reads, through `hanami_clone` and
+  `hanami_fetch`.
 
 ## 0.6.0 (unreleased)
 

@@ -158,7 +158,12 @@ HANAMI_API hanami_error_t hanami_repo_lift_privacy(git_repository *repo);
  * known, HANAMI_ERR_BLOSSOM when no candidate is a Blossom server or an
  * object cannot be fetched/verified, HANAMI_ERR_NOT_FOUND when the 30618 has
  * no hanami-manifest tag, HANAMI_ERR_INDEX for an invalid or incomplete
- * manifest chain, HANAMI_ERR_LIBGIT2 for clone/checkout failures. Nothing is
+ * manifest chain, HANAMI_ERR_LIBGIT2 for clone/checkout failures. A relay
+ * query (30617, kind-10063, kind-30618) that no relay answered fails with
+ * the relay error: HANAMI_ERR_AUTH for an "auth-required:" (after one NIP-42
+ * attempt when @signer is set) or "restricted:" CLOSED, HANAMI_ERR_NOSTR for
+ * another CLOSED, HANAMI_ERR_NETWORK or HANAMI_ERR_TIMEOUT. One relay's
+ * CLOSED does not fail the clone while another relay answers. Nothing is
  * left at @local_path on failure; git_error_last() names the cause.
  */
 HANAMI_API hanami_error_t hanami_clone(git_repository **out,
