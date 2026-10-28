@@ -18,6 +18,8 @@
  *   3. ensure_relay_async() returns without waiting for the dial, PROVEN by
  *      making the dial genuinely slow rather than by asserting a bound that a
  *      fast-failing environment would satisfy either way.
+ *   4. ensure_relay() stays synchronous when the redial worker already holds
+ *      the relay's dial claim: it joins that attempt (nostrc-1h2ze).
  *
  * Failure mode being reproduced: nostr_relay_connect() returns false only when
  * nostr_connection_new() fails, and the reliable way to make that happen with
@@ -29,6 +31,8 @@
 #include "nostr-simple-pool.h"
 #include "nostr-relay.h"
 
+#include <errno.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -238,8 +242,152 @@ static void test_start_stop_idempotent(void) {
   printf("PASS\n");
 }
 
+/* ---- 4. a synchronous ensure joins a dial the redial worker claimed ------- */
+
+/* nostrc-1h2ze. ensure_relay() registers a relay before it tries to claim the
+ * dial, and the redial worker can claim it in between. ensure_relay() then
+ * returned at once, reporting a reachable relay as unconnected; libhanami's
+ * ensure_relays() turned that into HANAMI_ERR_NETWORK.
+ *
+ * NOSTR_TEST_MODE gives every dial an offline connection, so the joined dial
+ * succeeds on every platform without a socket, a DNS lookup or a fixture
+ * relay. The gate holds the worker's dial at CONNECTING, which libnostr
+ * reports on the dialling thread before the connection exists, so the worker
+ * owns the claim for as long as the test needs. */
+typedef struct {
+  pthread_mutex_t mutex;
+  pthread_cond_t changed;
+  NostrSimplePool *pool;
+  NostrRelay *relay;
+  const char *url;
+  bool connecting;          /* the worker's dial is held at CONNECTING */
+  bool release;             /* ...until this is set */
+  bool caller_started;
+  bool caller_returned;
+  bool connected_at_return; /* what the synchronous caller saw */
+} DialGate;
+
+static struct timespec deadline_ms(long ms) {
+  struct timespec deadline;
+  CHECK(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+  deadline.tv_sec += ms / 1000;
+  deadline.tv_nsec += (ms % 1000) * 1000000L;
+  if (deadline.tv_nsec >= 1000000000L) {
+    deadline.tv_sec++;
+    deadline.tv_nsec -= 1000000000L;
+  }
+  return deadline;
+}
+
+static void hold_connect(NostrRelay *relay, NostrRelayConnectionState old_state,
+                         NostrRelayConnectionState new_state, void *data) {
+  (void)old_state;
+  if (new_state != NOSTR_RELAY_STATE_CONNECTING) return;
+  DialGate *gate = data;
+  /* Re-entered on the dialling thread, the synchronous call must not wait for
+   * that thread's own claim. If it did, CONNECTING would never reach the test
+   * thread and its deadline would fail. */
+  nostr_simple_pool_ensure_relay(gate->pool, gate->url);
+  CHECK(!nostr_relay_is_connected(relay));
+  CHECK(pthread_mutex_lock(&gate->mutex) == 0);
+  gate->connecting = true;
+  CHECK(pthread_cond_broadcast(&gate->changed) == 0);
+  while (!gate->release)
+    CHECK(pthread_cond_wait(&gate->changed, &gate->mutex) == 0);
+  CHECK(pthread_mutex_unlock(&gate->mutex) == 0);
+}
+
+static void *ensure_claimed_relay(void *data) {
+  DialGate *gate = data;
+  CHECK(pthread_mutex_lock(&gate->mutex) == 0);
+  gate->caller_started = true;
+  CHECK(pthread_cond_broadcast(&gate->changed) == 0);
+  CHECK(pthread_mutex_unlock(&gate->mutex) == 0);
+  nostr_simple_pool_ensure_relay(gate->pool, gate->url);
+  /* Sampled the moment the call returns, as a synchronous caller does. */
+  bool connected = nostr_relay_is_connected(gate->relay);
+  CHECK(pthread_mutex_lock(&gate->mutex) == 0);
+  gate->caller_returned = true;
+  gate->connected_at_return = connected;
+  CHECK(pthread_cond_broadcast(&gate->changed) == 0);
+  CHECK(pthread_mutex_unlock(&gate->mutex) == 0);
+  return NULL;
+}
+
+static void test_sync_ensure_joins_claimed_dial(void) {
+  printf("  TEST sync_ensure_joins_claimed_dial ... ");
+  fflush(stdout);
+  CHECK(setenv("NOSTR_TEST_MODE", "1", 1) == 0);
+
+  DialGate gate = { .mutex = PTHREAD_MUTEX_INITIALIZER,
+                    .changed = PTHREAD_COND_INITIALIZER };
+  gate.pool = nostr_simple_pool_new();
+  CHECK(gate.pool);
+  Error *error = NULL;
+  gate.relay = nostr_relay_new(NULL, "ws://relay-nostrc-1h2ze.invalid", &error);
+  CHECK(gate.relay && !error);
+  gate.url = nostr_relay_get_url_const(gate.relay);
+  nostr_relay_set_state_callback(gate.relay, hold_connect, &gate);
+
+  /* Hand the relay to the pool through its public array with the gate already
+   * installed, then nudge the worker: an async ensure of a known URL only
+   * wakes it. From here every dial is production code, and the first one is
+   * the worker's. */
+  CHECK(pthread_mutex_lock(&gate.pool->pool_mutex) == 0);
+  gate.pool->relays = malloc(sizeof *gate.pool->relays);
+  CHECK(gate.pool->relays);
+  gate.pool->relays[0] = gate.relay;
+  gate.pool->relay_count = 1;
+  CHECK(pthread_mutex_unlock(&gate.pool->pool_mutex) == 0);
+  nostr_simple_pool_ensure_relay_async(gate.pool, gate.url);
+
+  CHECK(pthread_mutex_lock(&gate.mutex) == 0);
+  struct timespec deadline = deadline_ms(10000);
+  while (!gate.connecting)
+    CHECK(pthread_cond_timedwait(&gate.changed, &gate.mutex, &deadline) == 0);
+  CHECK(pthread_mutex_unlock(&gate.mutex) == 0);
+
+  pthread_t caller;
+  CHECK(pthread_create(&caller, NULL, ensure_claimed_relay, &gate) == 0);
+  CHECK(pthread_mutex_lock(&gate.mutex) == 0);
+  deadline = deadline_ms(10000);
+  while (!gate.caller_started)
+    CHECK(pthread_cond_timedwait(&gate.changed, &gate.mutex, &deadline) == 0);
+  /* A bounded negative observation of a call that must block, not a sleep
+   * standing in for readiness: while the dial is held, a correct
+   * ensure_relay() cannot return, so this wait can only time out. Without the
+   * join the call returns within microseconds. */
+  deadline = deadline_ms(250);
+  int wait_rc = 0;
+  while (!gate.caller_returned && wait_rc == 0)
+    wait_rc = pthread_cond_timedwait(&gate.changed, &gate.mutex, &deadline);
+  CHECK(wait_rc == 0 || wait_rc == ETIMEDOUT);
+  bool returned_while_held = gate.caller_returned;
+  gate.release = true;
+  CHECK(pthread_cond_broadcast(&gate.changed) == 0);
+  CHECK(pthread_mutex_unlock(&gate.mutex) == 0);
+  CHECK(pthread_join(caller, NULL) == 0);
+
+  fprintf(stderr, "[returned while dial held=%d, connected at return=%d] ",
+          returned_while_held, gate.connected_at_return);
+  CHECK(!returned_while_held);
+  /* The joined attempt connected, so the caller saw a connected relay: the
+   * property libhanami's ensure_relays() relies on. */
+  CHECK(gate.connected_at_return);
+  /* ...and it joined that relay rather than registering another. */
+  CHECK(only_relay(gate.pool) == gate.relay);
+
+  nostr_relay_set_state_callback(gate.relay, NULL, NULL);
+  nostr_simple_pool_free(gate.pool);
+  CHECK(unsetenv("NOSTR_TEST_MODE") == 0);
+  CHECK(pthread_cond_destroy(&gate.changed) == 0);
+  CHECK(pthread_mutex_destroy(&gate.mutex) == 0);
+  printf("PASS\n");
+}
+
 int main(void) {
   printf("test_pool_redial\n");
+  test_sync_ensure_joins_claimed_dial();
   test_failed_initial_connect_is_retried();
   test_async_register_does_not_wait_for_dial();
   test_start_stop_idempotent();

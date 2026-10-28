@@ -587,6 +587,7 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     relay->priv->reconnect_now = go_channel_create(1);
     relay->priv->conn_leases = 0;
     nsync_cv_init(&relay->priv->conn_leases_cv);
+    nsync_cv_init(&relay->priv->dial_done_cv);
     go_wait_group_init(&relay->priv->workers);
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_new: initialized workers and queues for %s\n", relay->url);
     // request_header
@@ -2401,6 +2402,7 @@ bool nostr_relay_dial_try_claim(NostrRelay *relay) {
         !relay->priv->message_loop_active &&
         relay->priv->auto_reconnect) {
         relay->priv->dial_in_progress = true;
+        relay->priv->dial_owner = pthread_self();
         claimed = true;
         ctx = relay->priv->connection_context;
     }
@@ -2414,11 +2416,23 @@ bool nostr_relay_dial_try_claim(NostrRelay *relay) {
     if (ctx && go_context_is_canceled(ctx)) {
         nsync_mu_lock(&relay->priv->mutex);
         relay->priv->dial_in_progress = false;
+        nsync_cv_broadcast(&relay->priv->dial_done_cv);
         nsync_mu_unlock(&relay->priv->mutex);
         return false;
     }
 
     return true;
+}
+
+void nostr_relay_wait_for_dial(NostrRelay *relay) {
+    if (!relay || !relay->priv) return;
+    nsync_mu_lock(&relay->priv->mutex);
+    /* A CONNECTING callback may reenter ensure_relay on the dial thread.
+     * That thread cannot wait for its own claim to be released. */
+    while (relay->priv->dial_in_progress &&
+           !pthread_equal(relay->priv->dial_owner, pthread_self()))
+        nsync_cv_wait(&relay->priv->dial_done_cv, &relay->priv->mutex);
+    nsync_mu_unlock(&relay->priv->mutex);
 }
 
 void nostr_relay_dial_release(NostrRelay *relay, bool connected) {
@@ -2429,12 +2443,14 @@ void nostr_relay_dial_release(NostrRelay *relay, bool connected) {
          * CONNECTED; just drop the claim. */
         nsync_mu_lock(&relay->priv->mutex);
         relay->priv->dial_in_progress = false;
+        nsync_cv_broadcast(&relay->priv->dial_done_cv);
         nsync_mu_unlock(&relay->priv->mutex);
         return;
     }
 
     nsync_mu_lock(&relay->priv->mutex);
     relay->priv->dial_in_progress = false;
+    nsync_cv_broadcast(&relay->priv->dial_done_cv);
     relay->priv->reconnect_attempt++;
     int attempt = relay->priv->reconnect_attempt;
     nsync_mu_unlock(&relay->priv->mutex);

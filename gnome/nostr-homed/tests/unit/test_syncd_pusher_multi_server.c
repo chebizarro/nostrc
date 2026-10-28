@@ -64,12 +64,18 @@ static void capture_summary(void *ud, const nh_syncd_upload_result *r) {
     g_last_summary = *r;
 }
 
+static int g_publish_calls;
+static int64_t g_published_at;
+
 static int mock_publish(void *ud, const char *pk, int64_t cat,
                         const char *dtag,
                         const uint8_t *sealed, size_t sealed_len,
                         char out_event_id[65])
 {
-    (void)ud; (void)pk; (void)cat; (void)dtag; (void)sealed; (void)sealed_len;
+    (void)ud; (void)pk; (void)dtag; (void)sealed; (void)sealed_len;
+    assert(cat > 0);
+    g_publish_calls++;
+    g_published_at = cat;
     memcpy(out_event_id,
            "deadbeef000000000000000000000000000000000000000000000000000000ab",
            65);
@@ -111,6 +117,8 @@ static int drive_push(size_t min_repl, int a0, int a1, int a2, uint64_t *out_gen
     g_accept[0] = a0; g_accept[1] = a1; g_accept[2] = a2;
     g_calls[0] = g_calls[1] = g_calls[2] = 0;
     memset(&g_last_summary, 0, sizeof g_last_summary);
+    g_publish_calls = 0;
+    g_published_at = 0;
 
     uint8_t root[32];
     for (int i = 0; i < 32; i++) root[i] = (uint8_t)(i + 1);
@@ -144,8 +152,23 @@ static int drive_push(size_t min_repl, int a0, int a1, int a2, uint64_t *out_gen
     char *emsg = NULL;
     int rc = nh_syncd_push_batch(&pc, state, bat, g_home, ig, &ilk,
                                  g_state, &emsg);
+    uint64_t generation = nh_syncd_state_get_local_generation(state);
     if (out_gen_after)
-        *out_gen_after = nh_syncd_state_get_local_generation(state);
+        *out_gen_after = generation;
+    if (rc == NH_SYNCD_OK) {
+        assert(g_publish_calls == 1);
+        /* The generation is the signed pointer timestamp, not a batch
+         * counter. Prove that the durable snapshot uses the same stamp. */
+        assert(generation == (uint64_t)g_published_at);
+        nh_syncd_state *reloaded = NULL;
+        bool unknown = true;
+        assert(nh_syncd_state_load(g_state, &reloaded, &unknown) == NH_SYNCD_OK);
+        assert(!unknown && reloaded);
+        assert(nh_syncd_state_get_local_generation(reloaded) == generation);
+        nh_syncd_state_free(reloaded);
+    } else {
+        assert(g_publish_calls == 0);
+    }
     free(emsg);
     nh_syncd_batch_free(bat);
     nh_syncd_batcher_free(b);
@@ -161,7 +184,7 @@ static void t_two_of_three_quorum_ok(void) {
     assert(rc == NH_SYNCD_OK);
     assert(g_last_summary.total     == N_SRV);
     assert(g_last_summary.succeeded == 2);
-    assert(gen == 1);
+    assert(g_publish_calls == 1 && gen == (uint64_t)g_published_at);
     /* Per-server outcome: first two OK, third has non-zero error_class. */
     assert(g_last_summary.per_server[0].error_class == 0);
     assert(g_last_summary.per_server[0].http_status == 200);
@@ -193,7 +216,7 @@ static void t_min_repl_one_single_ok(void) {
     int rc = drive_push(1 /*min_repl*/, 0, 0, 1, &gen);
     assert(rc == NH_SYNCD_OK);
     assert(g_last_summary.succeeded == 1);
-    assert(gen == 1);
+    assert(g_publish_calls == 1 && gen == (uint64_t)g_published_at);
     teardown();
     printf("t_min_repl_one_single_ok OK\n");
 }

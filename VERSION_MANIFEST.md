@@ -53,6 +53,16 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
+### Synchronous relay dial coordination (nostrc-1h2ze)
+
+- **libnostr 2.0.0 (no further bump):** `nostr_simple_pool_ensure_relay()`
+  waits for a dial the pool's redial worker already claimed instead of
+  returning while it is in flight, which callers such as libhanami reported
+  as an unreachable relay. This PATCH-class fix folds into the unreleased
+  2.0.0; `nostr_simple_pool_ensure_relay_async()` still never waits. No public
+  API, ABI or wire-format change. Other components, including libhanami: no
+  source change, no bump.
+
 ### Opt-in local fscrypt home locking (nostrc-h10m.12)
 
 - **nostr-homed 0.8.0 → 0.9.0 (MINOR):** new default-OFF CMake fscrypt
