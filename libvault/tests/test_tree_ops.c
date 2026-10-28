@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "helpers.h"
+#include "nostrc-test-vault.h"
 #include <vault/tree.h>
 static int ring_of(void *ctx, const uint8_t id[32], uint64_t epoch, porthome_ring_t *out)
 {

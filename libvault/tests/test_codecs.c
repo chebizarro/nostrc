@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "helpers.h"
+#include "nostrc-test-vault.h"
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <netinet/in.h>

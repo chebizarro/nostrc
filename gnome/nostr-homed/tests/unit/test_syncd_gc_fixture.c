@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
 #include "nh_syncd_gc.h"
-#include "../../../../libvault/tests/helpers.h"
+#include "nostrc-test-vault.h"
 #include <assert.h>
 #include <fcntl.h>
 #include <stdio.h>

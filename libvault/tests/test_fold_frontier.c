@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "helpers.h"
+#include "nostrc-test-vault.h"
 #include <openssl/crypto.h>
 #include <vault/tree.h>
 static int retained(const vault_fold_result *r, const uint8_t hash[32])

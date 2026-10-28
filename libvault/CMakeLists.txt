@@ -63,6 +63,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostrcConfig.cmake" "${CMAKE_CURRENT_
 if(BUILD_TESTING)
   foreach(name ring_derivation revoke_lazy fold_frontier codecs grant_nip59 tree_ops)
     add_executable(test_vault_${name} tests/test_${name}.c)
+    target_include_directories(test_vault_${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../tests/common)
     target_compile_options(test_vault_${name} PRIVATE -Wall -Wextra -Werror -UNDEBUG)
     target_compile_definitions(test_vault_${name} PRIVATE _POSIX_C_SOURCE=200809L)
     target_link_libraries(test_vault_${name} PRIVATE nostrc::vault nostr nostr_nip44_core)

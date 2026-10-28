@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "helpers.h"
+#include "nostrc-test-vault.h"
 #include <vault/nip59.h>
 #include <nostr/nip59/nip59.h>
 #include <nostr/nip44/nip44.h>
