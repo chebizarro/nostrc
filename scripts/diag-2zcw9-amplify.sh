@@ -48,12 +48,15 @@ work() {
   done
   echo "worker $w: $n runs"
 }
+# The private-home fixtures once, up front: their setup empties every test's
+# home, so the load loops below must never re-run them (-FA).
+ctest --test-dir "$build" --no-tests=error -R '^groundhog-test-(homes|gst-registry)$'
 # Load as in the stress step: the other jittered GUI suites beside it.
 load() {
   local name="$1" n=0 log
   while [ "$(date +%s)" -lt "$deadline" ] && [ ! -e "$fail" ]; do
     n=$((n + 1)); log="$evidence/$name-run$n.log"
-    if ctest --test-dir "$build" --no-tests=error --output-on-failure -R "^$name\$" > "$log" 2>&1; then
+    if ctest --test-dir "$build" --no-tests=error --output-on-failure -FA '.*' -R "^$name\$" > "$log" 2>&1; then
       rm -f "$log"
     else
       echo "load $name run $n FAILED: $log"; tail -n 20 "$log"; touch "$fail"; return
