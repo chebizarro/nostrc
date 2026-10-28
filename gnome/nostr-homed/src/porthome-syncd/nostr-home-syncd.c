@@ -77,6 +77,13 @@
  * Signals:
  *   SIGTERM/SIGINT — flush final batch, release lock, exit 0.
  *   SIGHUP         — reload user ignore file.
+ *
+ * Conflict resolution (nostrc-h10m.6): `nostr-home-status conflicts resolve`
+ * drops a request into <status dir>/requests/ (watched with inotify, and
+ * scanned once the home is managed). Requests run on this thread: personal
+ * rows edit HOME and enqueue the batcher so the normal push publishes a
+ * generation; shared-vault rows go through nh_vault_manager_resolve(), which
+ * signs and publishes a head. Outcomes land in status.syncd.resolutions[].
  */
 
 #include "nh_syncd.h"
@@ -93,6 +100,7 @@
 #include "nh_porthome_notify.h"
 #include "nh_porthome_status.h"
 #include "nh_syncd_watcher.h"
+#include "nh_syncd_conflicts.h"
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
 #include "nh_syncd_vault_config.h"
 #include "nh_syncd_vault_manager.h"
@@ -128,6 +136,10 @@ static volatile sig_atomic_t g_stop   = 0;
 static nh_syncd_cache          *g_cache      = NULL;
 static nh_porthome_notifier    *g_notifier   = NULL;
 static nh_syncd_status_writer  *g_status     = NULL;
+/* Personal conflict journal source for each status flush. */
+static const char              *g_state_dir  = NULL;
+static const char              *g_home       = NULL;
+static const nh_syncd_state    *g_state      = NULL;
 
 static void refresh_cache_stats_locked(void) {
     if (!g_cache || !g_status) return;
@@ -137,10 +149,75 @@ static void refresh_cache_stats_locked(void) {
         nh_syncd_cache_evict_count_1h(g_cache));
 }
 
+static void refresh_home_conflicts(void) {
+    if (!g_status || !g_state_dir) return;
+    char *rows = NULL;
+    int hfd = g_home ? open(g_home, O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1;
+    if (nh_syncd_home_conflicts_project(g_state_dir, hfd, g_state, &rows) == NH_SYNCD_OK)
+        (void)nh_syncd_status_set_home_conflicts(g_status, rows);
+    if (hfd >= 0) close(hfd);
+    free(rows);
+}
+
 static void syncd_status_flush(void) {
     if (!g_status) return;
     refresh_cache_stats_locked();
+    refresh_home_conflicts();
     (void)nh_syncd_status_emit(g_status, NULL);
+}
+
+static void on_home_resolved(void *ud, const char *request, const char *id,
+                             const char *choice) {
+    (void)ud;
+    nh_syncd_status_record_resolution(g_status, request, id, choice, "ok", "");
+}
+
+/* Serve queued conflict-resolution requests, bounded per wake so sync is
+ * not starved. Returns true when the bound was hit and more may wait. */
+static bool handle_requests(nh_syncd_requests *rq, const char *home, const char *state_dir,
+                            nh_syncd_state *state, nh_syncd_batcher *ba, void *vaults) {
+    for (int served = 0; served < 32; ++served) {
+        nh_syncd_request req;
+        char bad[33];
+        int r = nh_syncd_requests_next(rq, &req, bad);
+        if (r <= 0) return false;
+        if (r == 2) {
+            if (bad[0])
+                nh_syncd_status_record_resolution(g_status, bad, "", "", "error",
+                                                  "invalid-request");
+            syncd_status_flush();
+            continue;
+        }
+        const char *why = "not-found";
+        int rc = -1;
+        if (strlen(req.conflict) == 32) {
+            int hfd = open(home, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            if (hfd < 0) {
+                why = "io";
+            } else {
+                rc = nh_syncd_home_conflicts_resolve(state_dir, hfd, state, ba, req.conflict,
+                                                     req.choice, req.expect, req.request, &why);
+                close(hfd);
+            }
+        }
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        else if (vaults) {
+            rc = nh_vault_manager_resolve(vaults, req.conflict, req.choice, req.expect,
+                                          req.request, &why);
+        }
+#else
+        (void)vaults;
+#endif
+        const char *result = rc == 0 ? "ok" : rc > 0 ? "pending" : "error";
+        fprintf(stderr, "syncd: conflict %.12s %s -> %s%s%s\n", req.conflict,
+                nh_conflict_choice_slug(req.choice), result, rc ? " " : "", rc ? why : "");
+        nh_syncd_status_record_resolution(g_status, req.request, req.conflict,
+                                          nh_conflict_choice_slug(req.choice), result,
+                                          rc == 0 ? "" : why);
+        nh_syncd_requests_done(rq, req.request);
+        syncd_status_flush();
+    }
+    return true;
 }
 
 static void on_evict_thrash(void *ud,
@@ -578,6 +655,9 @@ static int start_managed(const cfg_t *cfg, nh_syncd_state *state,
      * and the periodic rescan tick both have something to diff against. */
     nh_syncd_watcher_set_state(wa, state);
     *out_wa = wa;
+    /* The additive rescan above can change snapshot rows; republish so the
+     * conflict freshness tokens users act on match what syncd checks. */
+    syncd_status_flush();
     return 0;
 }
 
@@ -647,6 +727,7 @@ int main(int argc, char **argv) {
      * network. */
     int dry_run = (argc > 1 && !strcmp(argv[1], "--check"));
     int exit_code = 0;
+    nh_syncd_requests *rq = NULL;   /* opened before the poll loop */
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
     nh_vault_manager *vaults = NULL;
 #endif
@@ -726,7 +807,13 @@ int main(int argc, char **argv) {
             lclass = "snapshot-quarantine-failed";
         }
     }
+    g_state_dir = cfg.state_dir;
+    g_home = cfg.home;
+    g_state = state;
     if (lrc != NH_SYNCD_OK) {
+        g_state_dir = NULL;
+        g_home = NULL;
+        g_state = NULL;
         fprintf(stderr,
                 "syncd: refusing to %s — snapshot.json unusable (%s, rc=%d); "
                 "the file was left untouched\n",
@@ -870,9 +957,21 @@ int main(int argc, char **argv) {
     struct timespec last_gc_tick = last_rescan;
 #endif
 
-    /* Poll loop. pfd[0]: $HOME watcher; pfd[1]: seed-drop waiter
-     * (negative fds are ignored by poll). */
-    struct pollfd pfd[3] = {
+    /* Conflict-resolution inbox (nostrc-h10m.6). Unavailable inbox is not
+     * fatal: sync continues and resolution requests simply wait. */
+    {
+        char *rq_dir = nh_syncd_requests_default_dir();
+        if (!rq_dir || nh_syncd_requests_open(rq_dir, &rq) != NH_SYNCD_OK)
+            fprintf(stderr, "syncd: conflict request inbox unavailable (%s)\n",
+                    rq_dir ? rq_dir : "no status dir");
+        free(rq_dir);
+    }
+    bool requests_due = true;   /* serve anything queued while we were down */
+
+    /* Poll loop. pfd[0]: $HOME watcher; pfd[1]: seed-drop waiter;
+     * pfd[2]: vault manager; pfd[3]: request inbox (negative fds are
+     * ignored by poll). */
+    struct pollfd pfd[4] = {
         { nh_syncd_watcher_fd(wa), POLLIN, 0 },
         { sw.ifd,                  POLLIN, 0 },
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
@@ -880,11 +979,21 @@ int main(int argc, char **argv) {
 #else
         { -1, POLLIN, 0 },
 #endif
+        { nh_syncd_requests_fd(rq), POLLIN, 0 },
     };
     /* First pass re-checks the drop: closes the gap between load_cfg's
      * read and arming the watch. */
     bool seed_check = !managed;
     while (!g_stop) {
+        /* Requests only once managed: before the seed drop there is no
+         * key to publish with, so they wait in the inbox. */
+        if (managed && rq && requests_due) {
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+            requests_due = handle_requests(rq, cfg.home, cfg.state_dir, state, ba, vaults);
+#else
+            requests_due = handle_requests(rq, cfg.home, cfg.state_dir, state, ba, NULL);
+#endif
+        }
         if (!managed && seed_check) {
             seed_check = false;
             if (seed_waiter_service(&sw, &cfg)) {
@@ -898,6 +1007,7 @@ int main(int argc, char **argv) {
                 pfd[2].fd = nh_vault_manager_fd(vaults);
 #endif
                 managed = true;
+                requests_due = true;
                 pfd[0].fd = nh_syncd_watcher_fd(wa);
                 clock_gettime(CLOCK_MONOTONIC, &last_rescan);
                 last_fallback = last_rescan;
@@ -939,8 +1049,10 @@ int main(int argc, char **argv) {
             nh_syncd_gc_due(cfg.state_dir, (uint64_t)time(NULL)))
             (void)run_gc(&cfg, vaults, 0);
 #endif
-        int pr = poll(pfd, 3, t);
+        if (managed && requests_due) t = 0; /* more requests queued */
+        int pr = poll(pfd, 4, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
+        if (pfd[3].revents & POLLIN) requests_due = true;
         if (wa && (pfd[0].revents & POLLIN)) nh_syncd_watcher_drain(wa);
         if (pfd[1].fd >= 0 && (pfd[1].revents & POLLIN)) seed_check = true;
         bool vault_ready = pfd[2].revents & POLLIN;
@@ -1034,6 +1146,11 @@ int main(int argc, char **argv) {
                         nh_syncd_state_get_local_generation(state));
                     nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_IDLE);
                     nh_syncd_status_set_last_error(g_status, "");
+                    /* Personal conflict resolutions this generation published. */
+                    int crc = nh_syncd_home_conflicts_commit_pending(cfg.state_dir, state,
+                                                                     on_home_resolved, NULL);
+                    if (crc != NH_SYNCD_OK)
+                        fprintf(stderr, "syncd: conflict journal commit rc=%d\n", crc);
                 } else {
                     fprintf(stderr, "syncd: batch %llu FAILED rc=%d %s\n",
                             (unsigned long long)nh_syncd_batch_id(batch),
@@ -1081,6 +1198,7 @@ vault_service:
     if (tail) nh_syncd_batch_free(tail);
 
 cleanup:
+    nh_syncd_requests_close(rq);
     nh_syncd_watcher_free(wa);
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
     nh_vault_manager_close(vaults);
@@ -1091,6 +1209,9 @@ cleanup:
     nh_syncd_ignore_free(ig);
     if (pin_ring) nh_syncd_pin_ring_close(pin_ring);
     free(pin_path);
+    g_state_dir = NULL;
+    g_home = NULL;
+    g_state = NULL;
     if (g_status)   { nh_syncd_status_writer_free(g_status);   g_status = NULL; }
     if (g_notifier) { nh_porthome_notifier_free(g_notifier);   g_notifier = NULL; }
     if (g_cache)    { nh_syncd_cache_close(g_cache);           g_cache = NULL; }

@@ -240,21 +240,13 @@ static int status(nh_vault_manager *m, int result) {
     json_t *all = json_array();
     if (!all)
         return VAULT_ERR_OOM;
-    for (size_t i = 0; i < m->count; ++i) {
-        const json_t *list = nh_vault_engine_conflicts(m->sources[i].engine);
-        size_t k;
-        json_t *row;
-        json_array_foreach(list, k, row) {
-            json_t *copy = json_deep_copy(row);
-            char id[65];
-            porthome_hex64(m->options.config->vaults[i].vault_id, id);
-            if (!copy || json_object_set_new(copy, "vault_id", json_string(id)) ||
-                json_array_append_new(all, copy)) {
-                json_decref(all);
-                return VAULT_ERR_OOM;
-            }
+    /* Unresolved rows only, through the engine's field allowlist: resolution
+     * journals and encrypted source paths stay out of the status file. */
+    for (size_t i = 0; i < m->count; ++i)
+        if (nh_vault_engine_project_conflicts(m->sources[i].engine, all)) {
+            json_decref(all);
+            return VAULT_ERR_OOM;
         }
-    }
     size_t count = json_array_size(all), deleted = 0;
     for (size_t i = 0; i < count; ++i)
         if (json_is_false(json_object_get(json_array_get(all, i), "present")))
@@ -629,6 +621,49 @@ int nh_vault_manager_capture(nh_vault_manager *m, const nh_syncd_batch *batch) {
             fprintf(stderr, "syncd: vault capture/reconcile rc=%d\n", rc);
     }
     return status(m, rc);
+}
+int nh_vault_manager_resolve(nh_vault_manager *m, const char *conflict_id,
+                             nh_conflict_choice choice, const char *expect,
+                             const char *request, const char **why) {
+    static const char *unused;
+    if (!why)
+        why = &unused;
+    *why = "not-found";
+    source *s = NULL;
+    for (size_t i = 0; m && !s && i < m->count; ++i)
+        if (nh_vault_engine_has_conflict(m->sources[i].engine, conflict_id))
+            s = &m->sources[i];
+    if (!s)
+        return VAULT_ERR_ARG;
+    /* Same ordering as capture: admit sequence observations first and never
+     * sign over an owner rotation this client has not folded yet. */
+    NostrEvent **received = NULL;
+    size_t count = 0;
+    int rc = nh_vault_net_drain(s->net, &received, &count);
+    if (!rc)
+        rc = nh_vault_engine_observe_sequence(s->engine, received, count);
+    int outcome = rc;
+    if (!rc && !nh_vault_engine_can_capture(s->engine, received, count)) {
+        *why = "busy";
+        outcome = VAULT_ERR_AGAIN;
+    } else if (!rc) {
+        outcome = nh_vault_engine_resolve(s->engine, conflict_id, choice, expect, request, publish,
+                                          s->net, why);
+    } else {
+        *why = "io";
+    }
+    if (!rc)
+        rc = nh_vault_engine_events(s->engine, received, count);
+    events_free(received, count);
+    if (!rc && outcome >= 0 && nh_vault_engine_policy(s->engine))
+        rc = install(m, s);
+    if (!rc)
+        rc = nh_syncd_state_save(m->options.state, m->options.state_dir);
+    if (rc)
+        fprintf(stderr, "syncd: vault resolve follow-up rc=%d\n", rc);
+    /* A refused request is not a sync failure; only follow-up errors are. */
+    (void)status(m, rc);
+    return outcome;
 }
 int nh_vault_manager_service(nh_vault_manager *m) {
     struct epoll_event events[65];

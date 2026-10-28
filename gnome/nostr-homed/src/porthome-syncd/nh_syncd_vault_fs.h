@@ -47,4 +47,8 @@ int nh_syncd_vault_path_plain(const vault_tree *, const char *path_enc, char **)
 int nh_syncd_vault_inventory_one(const char *, const vault_tree *, const char *, nh_syncd_state *, const vault_blob_io *);
 int nh_syncd_vault_materialize_one(int home_fd, const char *destination, const vault_tree *,
                                    const char *source_path_enc, nh_syncd_state *, const vault_blob_io *);
+/* Remove one HOME-relative path that the snapshot tracks (file, symlink or
+ * directory subtree) and its snapshot rows. Untracked local files are kept,
+ * so a directory that still holds them stays. A missing path is success. */
+int nh_syncd_vault_remove_one(int home_fd, const char *path, nh_syncd_state *);
 #endif

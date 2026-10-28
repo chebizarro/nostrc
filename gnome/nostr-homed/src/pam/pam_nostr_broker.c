@@ -534,6 +534,17 @@ static uint32_t porthome_wait_ms(int argc, const char **argv) {
   return NH_PAM_PORTHOME_WAIT_MS_DEFAULT;
 }
 
+/* Send the formatted progress line unless it repeats the last one. */
+static void porthome_show_progress(pam_handle_t *pamh,
+                                   const nh_auth_porthome_progress *prog,
+                                   char *shown, size_t shown_cap) {
+  char line[160];
+  if (nh_auth_porthome_progress_format(prog, line, sizeof line) <= 0) return;
+  if (!strcmp(line, shown)) return;
+  pam_info(pamh, "%s", line);
+  snprintf(shown, shown_cap, "%s", line);
+}
+
 NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
   (void)flags;
@@ -605,21 +616,30 @@ NH_PAM_ENTRY int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
 
   /* Poll WAIT_HOME until terminal or budget exhausted. The broker
    * enforces its own cap per request; we set the total budget
-   * across polls too. */
+   * across polls too. Each poll's progress counters go to the login
+   * screen as PAM_TEXT_INFO (GDM shows these under the prompt), but
+   * only when the rendered line changes, so a stalled fetch does not
+   * queue identical messages. */
   uint32_t budget = porthome_wait_ms(argc, argv);
-  uint32_t per_call = budget > 5000 ? 5000 : budget;
   nh_auth_result final = r;
   nh_auth_porthome_progress prog;
   memset(&prog, 0, sizeof prog);
+  char shown[160] = "";
+  if (final == NH_AUTH_RESULT_IN_PROGRESS)
+    porthome_show_progress(pamh, &prog, shown, sizeof shown);
   while (budget > 0 && (final == NH_AUTH_RESULT_IN_PROGRESS ||
                         final == NH_AUTH_RESULT_INTERACTION_REQUIRED)) {
+    /* Clamp BEFORE the call so the last poll cannot overrun the
+     * configured budget (design §5.3: never hold PAM past it). */
+    uint32_t per_call = budget > 5000 ? 5000 : budget;
     if (nh_auth_client_wait_home(fd, per_call, &prog, &final) != 0) {
       /* Broker went away mid-wait — treat as limited. */
       final = NH_AUTH_RESULT_LIMITED_MODE;
       break;
     }
-    if (per_call > budget) per_call = budget;
-    budget = budget > per_call ? budget - per_call : 0;
+    budget -= per_call;
+    if (final == NH_AUTH_RESULT_IN_PROGRESS)
+      porthome_show_progress(pamh, &prog, shown, sizeof shown);
   }
   nh_auth_client_close(fd);
 

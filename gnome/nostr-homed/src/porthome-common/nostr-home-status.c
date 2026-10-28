@@ -15,6 +15,19 @@
  *                                        remove the config file
  *   nostr-home-status --path             print the resolved status
  *                                        path
+ *   nostr-home-status quota [--json]     cache and home size usage
+ *   nostr-home-status conflicts [--json] list unresolved conflicts
+ *   nostr-home-status conflicts resolve <id> <choice> [--no-wait]
+ *                                        [--timeout SEC]
+ *                                        ask nostr-home-syncd to resolve
+ *                                        one; choice is --keep-current,
+ *                                        --use-saved, --keep-both, or the
+ *                                        aliases --keep-mine/--take-theirs
+ *
+ * Conflict resolution never edits HOME from here: the request goes to
+ * syncd's inbox and syncd publishes the result (nostrc-h10m.6). Exit
+ * status for `resolve`: 0 resolved and shared, 3 accepted but not yet
+ * shared (offline or no answer yet), 1 refused/failed, 2 usage.
  *
  * Field syntax: dot-separated key path; the first segment is the
  * writer name (syncd / fuse / provisioner), the rest is a sub-key.
@@ -25,12 +38,16 @@
  */
 
 #define _GNU_SOURCE
+#include "nh_porthome_conflicts.h"
 #include "nh_porthome_notify.h"
 #include "nh_porthome_status.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/inotify.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +63,11 @@ static void usage(FILE *f) {
         "                          [--path] [--help]\n"
         "       nostr-home-status quota [--json]\n"
         "                          [--set-override BYTES | --clear-override]\n"
-        "                          [--reload] [--help]\n");
+        "                          [--reload] [--help]\n"
+        "       nostr-home-status conflicts [--json]\n"
+        "       nostr-home-status conflicts resolve ID CHOICE [--no-wait] [--timeout SEC]\n"
+        "           CHOICE: --keep-current | --use-saved | --keep-both\n"
+        "                   --keep-mine | --take-theirs (when it is known which is yours)\n");
 }
 
 /* Extract a value by dot path from raw JSON. Very small — handles
@@ -259,14 +280,33 @@ static void print_quota_json(uint64_t bytes,
            (unsigned)evict_rate);
 }
 
+/* Binary units, like the panel indicator. */
+static void human_size(uint64_t n, char *out, size_t cap) {
+    static const char *const units[] = {"KiB", "MiB", "GiB", "TiB"};
+    if (n < 1024) { snprintf(out, cap, "%llu bytes", (unsigned long long)n); return; }
+    double v = (double)n / 1024.0;
+    size_t u = 0;
+    while (v >= 1024.0 && u + 1 < sizeof units / sizeof units[0]) { v /= 1024.0; u++; }
+    snprintf(out, cap, "%.1f %s", v, units[u]);
+}
+
+static void print_usage_line(const char *label, uint64_t used, uint64_t limit) {
+    char u[32], l[32];
+    human_size(used, u, sizeof u);
+    if (!limit) { printf("%-15s %s\n", label, u); return; }
+    human_size(limit, l, sizeof l);
+    printf("%-15s %s of %s (%llu%%)\n", label, u, l,
+           (unsigned long long)(used * 100ull / limit));
+}
+
 static void print_quota_pretty(uint64_t bytes,
                                const char *source,
                                uint64_t used_bytes,
                                uint32_t pinned,
                                uint32_t evict_rate) {
+    print_usage_line("cache used:", used_bytes, bytes);
     printf("cache quota:     %llu bytes (source=%s)\n",
            (unsigned long long)bytes, source ? source : "default");
-    printf("cache used:      %llu bytes\n", (unsigned long long)used_bytes);
     printf("pinned gens:     %u\n", (unsigned)pinned);
     printf("evict rate/1h:   %u\n", (unsigned)evict_rate);
 }
@@ -381,8 +421,259 @@ static int cmd_quota(int argc, char **argv) {
     if (as_json) print_quota_json(qb, src, cb, pn, er);
     else          print_quota_pretty(qb, src, cb, pn, er);
 
+    /* Home size from the last download vs the per-home cap (provisioner). */
+    char *h_bytes = NULL, *h_quota = NULL;
+    (void)status_scalar_("provisioner.home_bytes", &h_bytes);
+    (void)status_scalar_("provisioner.home_quota_bytes", &h_quota);
+    if (!as_json && (h_bytes || h_quota))
+        print_usage_line("home size:", h_bytes ? strtoull(h_bytes, NULL, 10) : 0,
+                         h_quota ? strtoull(h_quota, NULL, 10) : 0);
+    free(h_bytes); free(h_quota);
+
     free(q_bytes); free(q_source); free(c_bytes); free(pinned); free(evictr);
     return 0;
+}
+
+/* ─────────────── `nostr-home-status conflicts` ─────────────── */
+
+static int read_status_(char **body, size_t *len) {
+    char *path = nh_porthome_status_default_path();
+    if (!path) { fprintf(stderr, "cannot resolve status path (HOME unset?)\n"); return 1; }
+    int rc = nh_porthome_status_read(path, body, len);
+    if (rc != 0) fprintf(stderr, "read %s: %s\n", path, strerror(-rc));
+    free(path);
+    return rc ? 1 : 0;
+}
+
+static void print_choices_(const nh_porthome_conflict *c) {
+    static const unsigned order[] = {NH_CONFLICT_CHOICE_KEEP_CURRENT,
+                                     NH_CONFLICT_CHOICE_USE_SAVED,
+                                     NH_CONFLICT_CHOICE_KEEP_BOTH};
+    for (size_t i = 0; i < 3; ++i)
+        if (c->choices & order[i])
+            printf("    --%-13s %s\n", nh_porthome_conflict_choice_slug(order[i]),
+                   nh_porthome_conflict_choice_label(c, order[i]));
+    if (c->mine != NH_CONFLICT_MINE_UNKNOWN)
+        printf("    (--keep-mine keeps the %s version)\n",
+               c->mine == NH_CONFLICT_MINE_CURRENT ? "current" : "saved");
+}
+
+static int conflicts_json_(const nh_porthome_conflict_list *list) {
+    printf("[");
+    for (size_t i = 0; i < list->n; ++i) {
+        const nh_porthome_conflict *c = &list->items[i];
+        char p[2048], s[2048], d[1024];
+        if (nh_porthome_json_escape(c->path, p, sizeof p) < 0) p[0] = 0;
+        if (nh_porthome_json_escape(c->saved_path ? c->saved_path : "", s, sizeof s) < 0) s[0] = 0;
+        char text[900];
+        if (nh_porthome_conflict_describe(c, text, sizeof text) < 0) text[0] = 0;
+        if (nh_porthome_json_escape(text, d, sizeof d) < 0) d[0] = 0;
+        printf("%s{\"id\":\"%s\",\"source\":\"%s\",\"path\":\"%s\","
+               "\"saved_path\":%s%s%s,\"saved_present\":%s,\"current_present\":%s,"
+               "\"overflow\":%s,\"pending\":%s,\"mine\":%s,\"description\":\"%s\","
+               "\"choices\":[",
+               i ? "," : "", c->id, c->source == NH_CONFLICT_SOURCE_HOME ? "home" : "vault", p,
+               c->saved_path ? "\"" : "", c->saved_path ? s : "null", c->saved_path ? "\"" : "",
+               c->saved_present ? "true" : "false", c->current_present ? "true" : "false",
+               c->overflow ? "true" : "false", c->pending ? "true" : "false",
+               c->mine == NH_CONFLICT_MINE_CURRENT ? "\"current\""
+               : c->mine == NH_CONFLICT_MINE_SAVED ? "\"saved\"" : "null",
+               d);
+        int first = 1;
+        for (unsigned bit = 1; bit <= NH_CONFLICT_CHOICE_KEEP_BOTH; bit <<= 1)
+            if (c->choices & bit) {
+                printf("%s\"%s\"", first ? "" : ",", nh_porthome_conflict_choice_slug(bit));
+                first = 0;
+            }
+        printf("]}");
+    }
+    printf("]\n");
+    return 0;
+}
+
+static int conflicts_list_(bool as_json) {
+    char *body = NULL; size_t len = 0;
+    if (read_status_(&body, &len)) return 1;
+    nh_porthome_conflict_list list;
+    int rc = nh_porthome_conflicts_parse(body, len, &list);
+    free(body);
+    if (rc) { fprintf(stderr, "status file is not readable JSON\n"); return 1; }
+    if (as_json) {
+        conflicts_json_(&list);
+    } else if (list.n == 0) {
+        printf("No conflicts. Everything is in sync.\n");
+    } else {
+        printf("%zu conflict%s need%s your attention.\n", list.n, list.n == 1 ? "" : "s",
+               list.n == 1 ? "s" : "");
+        for (size_t i = 0; i < list.n; ++i) {
+            const nh_porthome_conflict *c = &list.items[i];
+            char text[900];
+            if (nh_porthome_conflict_describe(c, text, sizeof text) < 0) text[0] = 0;
+            printf("\n[%.8s] %s  (%s)%s\n  %s\n", c->id, c->path,
+                   c->source == NH_CONFLICT_SOURCE_HOME ? "portable home" : "shared folder",
+                   c->pending ? "  — your choice is waiting to be shared" : "", text);
+            if (!c->pending) print_choices_(c);
+        }
+        printf("\nTo resolve one: nostr-home-status conflicts resolve ID CHOICE\n");
+    }
+    nh_porthome_conflicts_clear(&list);
+    return 0;
+}
+
+/* Wait for syncd's verdict on `request`. Event-driven on the status
+ * directory (the writer renames the file into place); falls back to a
+ * short re-read interval only when inotify is unavailable. */
+static int wait_result_(const char *request, unsigned timeout_s, char result[16],
+                        char reason[32]) {
+    char *path = nh_porthome_status_default_path();
+    if (!path) return -ENOMEM;
+    char *slash = strrchr(path, '/');
+    int ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (ifd >= 0 && slash) {
+        *slash = '\0';
+        if (inotify_add_watch(ifd, path, IN_MOVED_TO | IN_CLOSE_WRITE) < 0) { close(ifd); ifd = -1; }
+        *slash = '/';
+    }
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    int rc = -ETIMEDOUT;
+    result[0] = reason[0] = '\0';
+    for (;;) {
+        char *body = NULL; size_t len = 0;
+        if (nh_porthome_status_read(path, &body, &len) == 0) {
+            char r[16], why[32];
+            if (nh_porthome_resolution_lookup(body, len, request, r, why) == 0) {
+                memcpy(result, r, sizeof r);
+                memcpy(reason, why, sizeof why);
+                if (strcmp(r, "pending")) { free(body); rc = 0; break; }
+            }
+        }
+        free(body);
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long elapsed = (long)(now.tv_sec - start.tv_sec) * 1000 +
+                       (now.tv_nsec - start.tv_nsec) / 1000000;
+        long left = (long)timeout_s * 1000 - elapsed;
+        if (left <= 0) break;
+        struct pollfd p = { ifd, POLLIN, 0 };
+        (void)poll(&p, ifd >= 0 ? 1 : 0, ifd >= 0 ? (int)left : (left > 500 ? 500 : (int)left));
+        if (ifd >= 0) { char drain[4096]; while (read(ifd, drain, sizeof drain) > 0) {} }
+    }
+    if (ifd >= 0) close(ifd);
+    free(path);
+    return rc;
+}
+
+static int conflicts_resolve_(int argc, char **argv) {
+    const char *id = NULL, *flag = NULL;
+    bool wait = true;
+    unsigned timeout_s = 30;
+    for (int i = 0; i < argc; ++i) {
+        const char *a = argv[i];
+        if (!strcmp(a, "--no-wait")) { wait = false; continue; }
+        if (!strcmp(a, "--timeout") && i + 1 < argc) {
+            char *end = NULL;
+            unsigned long v = strtoul(argv[++i], &end, 10);
+            if (!end || *end || v == 0 || v > 3600) {
+                fprintf(stderr, "invalid --timeout (want 1..3600 seconds)\n");
+                return 2;
+            }
+            timeout_s = (unsigned)v;
+            continue;
+        }
+        if (!strncmp(a, "--", 2)) {
+            if (flag) { fprintf(stderr, "choose one option, not several\n"); return 2; }
+            flag = a;
+            continue;
+        }
+        if (id) { fprintf(stderr, "unexpected argument: %s\n", a); return 2; }
+        id = a;
+    }
+    if (!id || !flag) { usage(stderr); return 2; }
+
+    char *body = NULL; size_t len = 0;
+    if (read_status_(&body, &len)) return 1;
+    nh_porthome_conflict_list list;
+    int rc = nh_porthome_conflicts_parse(body, len, &list);
+    free(body);
+    if (rc) { fprintf(stderr, "status file is not readable JSON\n"); return 1; }
+    int idx = nh_porthome_conflicts_find(&list, id);
+    int exit_code = 1;
+    if (idx == -EEXIST) {
+        fprintf(stderr, "\"%s\" matches more than one conflict; use more of the ID.\n", id);
+        goto out;
+    }
+    if (idx < 0) {
+        fprintf(stderr, "No unresolved conflict has the ID \"%s\". Run "
+                        "`nostr-home-status conflicts` to list them.\n", id);
+        goto out;
+    }
+    const nh_porthome_conflict *c = &list.items[idx];
+    if (c->pending) {
+        fprintf(stderr, "A choice for this conflict is already applied and waiting to be shared.\n");
+        goto out;
+    }
+    unsigned choice = 0;
+    bool alias = false;
+    rc = nh_porthome_conflict_choice_from_flag(c, flag, &choice, &alias);
+    if (rc == -EINVAL) { fprintf(stderr, "unknown option: %s\n", flag); usage(stderr); exit_code = 2; goto out; }
+    if (rc == -ENOENT) {
+        fprintf(stderr, "It is not recorded which version of %s is yours, so %s cannot be "
+                        "used. Choose --keep-current or --use-saved.\n", c->path, flag);
+        goto out;
+    }
+    if (!(c->choices & choice)) {
+        fprintf(stderr, "\"%s\" is not available for %s. Available:\n", flag + 2, c->path);
+        print_choices_(c);
+        goto out;
+    }
+    if (alias)
+        printf("%s means: %s.\n", flag, nh_porthome_conflict_choice_label(c, choice));
+
+    char *dir = nh_porthome_requests_default_dir();
+    char request[33];
+    rc = dir ? nh_porthome_request_write(dir, c->id, choice, c->expect, request) : -ENOMEM;
+    free(dir);
+    if (rc) { fprintf(stderr, "could not queue the request: %s\n", strerror(-rc)); goto out; }
+    printf("Sent to the sync service: %s for %s (request %s).\n",
+           nh_porthome_conflict_choice_label(c, choice), c->path, request);
+    if (!wait) { exit_code = 3; goto out; }
+
+    char result[16], reason[32];
+    rc = wait_result_(request, timeout_s, result, reason);
+    if (rc == 0 && !strcmp(result, "ok")) {
+        printf("Done. The conflict is resolved and the change has been shared.\n");
+        exit_code = 0;
+    } else if (rc == 0) {
+        fprintf(stderr, "Not resolved: %s\n", nh_porthome_resolution_reason_text(reason));
+        exit_code = 1;
+    } else if (!strcmp(result, "pending")) {
+        printf("Applied on this device. %s\n", !strcmp(reason, "offline")
+               ? "It will be shared when the connection returns."
+               : "It will be shared with the next sync.");
+        exit_code = 3;
+    } else {
+        printf("No answer from the sync service yet. The request is queued and will be "
+               "applied when nostr-home-sync runs.\n");
+        exit_code = 3;
+    }
+out:
+    nh_porthome_conflicts_clear(&list);
+    return exit_code;
+}
+
+static int cmd_conflicts(int argc, char **argv) {
+    if (argc >= 1 && !strcmp(argv[0], "resolve"))
+        return conflicts_resolve_(argc - 1, argv + 1);
+    bool as_json = false;
+    for (int i = 0; i < argc; ++i) {
+        if (!strcmp(argv[i], "--json")) { as_json = true; continue; }
+        if (!strcmp(argv[i], "list")) continue;
+        if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(stdout); return 0; }
+        fprintf(stderr, "unknown argument: %s\n", argv[i]);
+        usage(stderr);
+        return 2;
+    }
+    return conflicts_list_(as_json);
 }
 
 int main(int argc, char **argv) {
@@ -391,6 +682,9 @@ int main(int argc, char **argv) {
      * Everything else routes through the flat --field/--json path. */
     if (argc >= 2 && !strcmp(argv[1], "quota")) {
         return cmd_quota(argc - 2, argv + 2);
+    }
+    if (argc >= 2 && !strcmp(argv[1], "conflicts")) {
+        return cmd_conflicts(argc - 2, argv + 2);
     }
     bool as_json = false;
     bool show_path = false;

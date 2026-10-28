@@ -90,6 +90,11 @@ struct nh_auth_porthome_job {
   char   account_home[512];
   uid_t  account_uid;
   gid_t  account_gid;
+  /* Set once nh_identity_home_prepare() reports the home installed.
+   * Until then account_home may not exist (first login stages it under
+   * .nostr-<op>), and writing the status file there would create it and
+   * make the RENAME_NOREPLACE install refuse. */
+  int    home_installed;
 };
 
 
@@ -345,7 +350,12 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
 static void emit_pstat(nh_auth_porthome_job *j) {
   if (!j || !j->pstat) return;
   const char *override = getenv("NH_PORTHOME_STATUS_DIR");
-  if ((!j->account_home[0]) && (!override || !*override)) return;
+  if (!override || !*override) {
+    /* Real account home: only after it is installed (see home_installed).
+     * Pre-install transitions stay in memory and ride along in the first
+     * post-install emit as last_state. */
+    if (!j->account_home[0] || !j->home_installed) return;
+  }
   (void)nh_provisioner_status_emit(j->pstat, j->account_home,
                                    j->account_uid, j->account_gid,
                                    override);
@@ -565,11 +575,16 @@ static void *job_run(void *arg) {
   int cur = atomic_load(&j->state);
   if (rc == NH_IDENTITY_OK) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_OK);
+    j->home_installed = 1;
     /* Bead nostrc-3o91: terminal DONE + record ts. Also
      * emit a done notification (throttled). */
     nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_DONE);
     nh_provisioner_status_set_last_provisioned_ts(j->pstat,
                                                   (int64_t)time(NULL));
+    nh_provisioner_status_set_home_usage(
+        j->pstat, (uint64_t)atomic_load(&j->bytes),
+        j->config.max_home_bytes ? (uint64_t)j->config.max_home_bytes
+                                 : NH_PORTHOME_DEFAULT_MAX_HOME_BYTES);
     emit_pstat(j);
     nh_provisioner_notify(j->pstat, "done", "Home provisioned", "");
     /* W(3): drop the wrap seed to the per-uid runtime path so the

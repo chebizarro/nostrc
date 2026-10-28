@@ -252,4 +252,13 @@ int nh_auth_client_provision_home(int fd, const char *username,
 int nh_auth_client_wait_home(int fd, uint32_t timeout_ms,
                              nh_auth_porthome_progress *progress_out,
                              nh_auth_result *result_out);
+
+/* Render a one-line, user-facing progress message for the login screen
+ * (PAM_TEXT_INFO, which GDM shows under the password prompt). NULL or
+ * all-zero counters render a generic "Loading your portable home…".
+ * A percentage is shown only when the broker reported a file total; the
+ * broker sends none today, so the usual form is a running count. Returns
+ * the length written, or -1 (with out[0] = '\0') when `cap` is too small. */
+int nh_auth_porthome_progress_format(const nh_auth_porthome_progress *p,
+                                     char *out, size_t cap);
 #endif /* NH_AUTH_CLIENT_H */

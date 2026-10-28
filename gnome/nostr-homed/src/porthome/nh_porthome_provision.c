@@ -24,7 +24,7 @@
 
 #define DEFAULT_MAX_BYTES_PER_LOAD (2ull * 1024ull * 1024ull * 1024ull)
 #define DEFAULT_LOAD_TIMEOUT_SEC   120u
-#define DEFAULT_MAX_TOTAL_BYTES    (20ull * 1024ull * 1024ull * 1024ull)
+#define DEFAULT_MAX_TOTAL_BYTES    NH_PORTHOME_DEFAULT_MAX_HOME_BYTES
 
 /* Path-component validation — mirrors identity_home.c's beneath() rules
  * plus the encrypted-name shape (48-hex-char components produced by

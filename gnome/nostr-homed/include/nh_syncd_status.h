@@ -38,6 +38,11 @@ extern "C" {
  * most-recent-first. */
 #define NH_SYNCD_STATUS_RECENT_CAP 20u
 
+/* Conflict-resolution results kept for status.syncd.resolutions[]
+ * (nostrc-h10m.6). Request ids are 32 lowercase hex characters. */
+#define NH_SYNCD_STATUS_RESOLUTIONS_CAP 16u
+#define NH_SYNCD_STATUS_REQUEST_ID_LEN  32u
+
 /* State slugs surfaced through status.syncd.state. */
 typedef enum {
     NH_SYNCD_STATE_IDLE = 0,
@@ -50,8 +55,10 @@ typedef enum {
 } nh_syncd_state_slug;
 
 /* Opaque writer. Owns the rolling recent[] ring + the last known
- * field values. Thread-safety: single-writer (the syncd main loop);
- * the notifier record callback is invoked from the same thread. */
+ * field values. Every mutator and nh_syncd_status_emit() takes the
+ * writer's mutex, so callers on other threads (the pull callback) may
+ * update fields; emits themselves are serialised by the status file's
+ * own lock. */
 typedef struct nh_syncd_status_writer nh_syncd_status_writer;
 
 /* Construct. Never returns NULL — allocation failure aborts. */
@@ -94,6 +101,24 @@ void nh_syncd_status_set_last_upload_error_class(nh_syncd_status_writer *w,
 /* Optional shared-vault conflict metadata (JSON array). Invalid input preserves
  * the previous value. Includes deletion-only cases; no marker-file convention. */
 int nh_syncd_status_set_vault_conflicts(nh_syncd_status_writer *, const char *json_array);
+
+/* Personal-home conflict rows (JSON array, same contract as vault rows),
+ * rendered under status.syncd.home_conflicts. The emitted body also carries
+ * conflicts_active_count = |home_conflicts| + |vault_conflicts|; both arrays
+ * hold only unresolved rows (nostrc-h10m.6). */
+int nh_syncd_status_set_home_conflicts(nh_syncd_status_writer *, const char *json_array);
+
+/* Append one conflict-resolution outcome to status.syncd.resolutions[]
+ * (most recent first, bounded by NH_SYNCD_STATUS_RESOLUTIONS_CAP).
+ * `result` is "pending", "ok" or "error"; `reason` is a short slug
+ * (empty on ok). A request can appear more than once as it progresses;
+ * the newest entry wins. Call nh_syncd_status_emit() to publish. */
+void nh_syncd_status_record_resolution(nh_syncd_status_writer *,
+                                       const char *request,
+                                       const char *conflict,
+                                       const char *choice,
+                                       const char *result,
+                                       const char *reason);
 
 /* Emit — build the syncd key body and merge it into porthome-status.
  * `path` may be NULL to use nh_porthome_status_default_path(). Returns

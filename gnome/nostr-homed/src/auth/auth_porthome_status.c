@@ -39,6 +39,8 @@ struct nh_provisioner_status_writer {
     char                    last_error_class[32];
     uint32_t                chunks_done;
     uint32_t                chunks_pending;
+    uint64_t                home_bytes;
+    uint64_t                home_quota_bytes;
 };
 
 nh_provisioner_status_writer *nh_provisioner_status_writer_new(void) {
@@ -109,6 +111,14 @@ void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
     });
 }
 
+void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
+                                          uint64_t bytes, uint64_t quota) {
+    WITH_LOCK(w, {
+        w->home_bytes       = bytes;
+        w->home_quota_bytes = quota;
+    });
+}
+
 /* Best-effort chown; on failure log at INFO and continue (the file is
  * still valid for the broker itself, and the user session will fall
  * back to the syncd's own writer for its half of the document). */
@@ -134,10 +144,21 @@ int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
     char err[32]; memcpy(err, w->last_error_class, sizeof err);
     uint32_t cd = w->chunks_done;
     uint32_t cp = w->chunks_pending;
+    uint64_t hb = w->home_bytes;
+    uint64_t hq = w->home_quota_bytes;
     pthread_mutex_unlock(&w->mu);
 
     char err_esc[80] = {0};
     (void)nh_porthome_json_escape(err, err_esc, sizeof err_esc);
+
+    char usage[96] = "";
+    if (hb)
+        snprintf(usage, sizeof usage, ",\"home_bytes\":%" PRIu64, hb);
+    if (hq) {
+        size_t ul = strlen(usage);
+        snprintf(usage + ul, sizeof usage - ul,
+                 ",\"home_quota_bytes\":%" PRIu64, hq);
+    }
 
     char body[512];
     int n = snprintf(body, sizeof body,
@@ -146,10 +167,10 @@ int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
          "\"last_provisioned_ts\":%" PRId64 ","
          "\"last_error_class\":\"%s\","
          "\"chunks_pending\":%u,"
-         "\"chunks_done\":%u}",
+         "\"chunks_done\":%u%s}",
         nh_provisioner_state_slug(st),
         nh_provisioner_state_slug(ls),
-        lts, err_esc, cp, cd);
+        lts, err_esc, cp, cd, usage);
     if (n < 0 || (size_t)n >= sizeof body) return -ENAMETOOLONG;
 
     const char *hd = (homedir_override && *homedir_override) ? homedir_override
@@ -241,6 +262,10 @@ void nh_provisioner_status_set_last_error_class(
 void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
                                       uint32_t done, uint32_t pending) {
     (void)w; (void)done; (void)pending;
+}
+void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
+                                          uint64_t bytes, uint64_t quota) {
+    (void)w; (void)bytes; (void)quota;
 }
 int nh_provisioner_status_emit(nh_provisioner_status_writer *w,
                                const char *homedir,

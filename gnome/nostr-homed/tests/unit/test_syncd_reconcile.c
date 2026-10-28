@@ -22,8 +22,11 @@
 #define _GNU_SOURCE
 
 #include "nh_syncd.h"
+#include "nh_syncd_conflicts.h"
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
+
+#include <jansson.h>
 
 #include <assert.h>
 #include <errno.h>
@@ -364,6 +367,23 @@ static void t_local_only_change(void) {
     printf("t_local_only_change OK\n");
 }
 
+/* nostrc-h10m.6: the pass journals provenance so the conflict can be
+ * listed and resolved later. Returns the projected row for `rel`. */
+static json_t *journal_row(const nh_syncd_state *st, const char *rel) {
+    char *wire = NULL;
+    int hfd = open(g_home, O_RDONLY | O_DIRECTORY);
+    assert(hfd >= 0 && nh_syncd_home_conflicts_project(g_state, hfd, st, &wire) == 0);
+    close(hfd);
+    json_t *rows = json_loads(wire, 0, NULL), *row, *hit = NULL;
+    free(wire);
+    size_t i;
+    json_array_foreach(rows, i, row)
+        if (!strcmp(json_string_value(json_object_get(row, "path")), rel)) hit = json_incref(row);
+    json_decref(rows);
+    assert(hit);
+    return hit;
+}
+
 /* Test 3: changed-both → LWW conflict + notification. */
 static void t_changed_both_conflict(void) {
     write_home_file("shared.txt", "base v1\n", 0644);
@@ -416,6 +436,13 @@ static void t_changed_both_conflict(void) {
     /* Notification fired. */
     assert(nr.calls == 1);
     assert(nr.last_body && strstr(nr.last_body, "shared.txt") != NULL);
+    /* Journal: an edit conflict whose saved copy is this device's edit. */
+    json_t *jr = journal_row(st, "shared.txt");
+    assert(!strcmp(json_string_value(json_object_get(jr, "kind")), "edit"));
+    assert(!strcmp(json_string_value(json_object_get(jr, "destination")), cp));
+    assert(!strcmp(json_string_value(json_object_get(jr, "mine")), "saved"));
+    assert(json_integer_value(json_object_get(jr, "generation")) > 0);
+    json_decref(jr);
 
     nh_syncd_reconcile_result_free(res);
     free(emsg);
@@ -473,6 +500,16 @@ static void t_remote_delete_of_local_modified(void) {
     assert(lstat(abs2, &sm) == 0);
     /* Notification fired. */
     assert(nr.calls == 1);
+    /* Journal: deletion-only conflict; the kept file is this device's. */
+    json_t *jr = journal_row(st, "keeper.txt");
+    assert(!strcmp(json_string_value(json_object_get(jr, "kind")), "deleted-remotely"));
+    assert(json_is_false(json_object_get(jr, "present")));
+    assert(!strcmp(json_string_value(json_object_get(jr, "marker")), cp));
+    assert(!strcmp(json_string_value(json_object_get(jr, "mine")), "current"));
+    assert(json_is_true(json_object_get(jr, "current_present"))); /* HOME, not snapshot */
+    assert(json_object_get(jr, "detected_at") &&
+           json_integer_value(json_object_get(jr, "detected_at")) == 1700000000);
+    json_decref(jr);
 
     nh_syncd_reconcile_result_free(res);
     free(emsg);

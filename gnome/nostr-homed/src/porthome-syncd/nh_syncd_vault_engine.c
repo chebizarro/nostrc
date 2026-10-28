@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "nh_syncd_vault_engine.h"
+#include "nh_syncd_conflicts.h"
 #include <vault/nip59.h>
 #include <porthome/wrapkey.h>
 #include <nostr-keys.h>
@@ -699,12 +700,16 @@ int nh_vault_engine_events(nh_vault_engine *e, NostrEvent *const *events, size_t
         }
     return rc ? rc : save_heads(e);
 }
+static int commit_resolutions(nh_vault_engine *e, const char *published_id);
 int nh_vault_engine_publish_pending(nh_vault_engine *e, nh_vault_publish_fn publish, void *ctx) {
     json_t *j = json_object_get(e->session->doc, "pending");
     if (!json_is_object(j))
         return 0;
     current_head h;
     int rc = open_snapshot(e, j, &h);
+    char published[65] = "";
+    if (!rc)
+        snprintf(published, sizeof published, "%s", h.event->id);
     int seen = 0;
     for (size_t i = 0; !rc && i < e->count; ++i)
         if (!strcmp(h.event->id, e->heads[i].event->id))
@@ -725,6 +730,9 @@ int nh_vault_engine_publish_pending(nh_vault_engine *e, nh_vault_publish_fn publ
     if (!rc && !e->base && e->config->is_owner)
         rc = nh_vault_snapshot_open(e->session, e->grant, json_object_get(e->session->doc, "own"),
                                     &e->base_record, &e->base);
+    /* A conflict resolution waiting on this head is now published. */
+    if (!rc)
+        rc = commit_resolutions(e, published);
     return rc;
 }
 typedef struct {
@@ -926,12 +934,18 @@ static int conflicts(nh_vault_engine *e, const vault_fold_result *fold) {
 }
 /* A failed copy remains an exact signed-snapshot task even if a newer head
  * replaces that writer's current slot before the next reconciliation. */
+static int row_resolved(const json_t *row) {
+    const char *st = json_string_value(json_object_get(json_object_get(row, "resolution"), "state"));
+    return st && !strcmp(st, "resolved");
+}
 static int finish_conflicts(nh_vault_engine *e) {
     json_t *rows = json_object_get(e->session->doc, "conflicts"), *row;
     size_t i;
     json_array_foreach(rows, i, row) {
+        /* A resolved row's saved copy was deliberately removed; never
+         * rematerialize it. Its signed source stays retained. */
         if (!json_is_true(json_object_get(row, "present")) ||
-            json_is_true(json_object_get(row, "superseded")))
+            json_is_true(json_object_get(row, "superseded")) || row_resolved(row))
             continue;
         const char *target = json_string_value(json_object_get(row, "destination"));
         const char *id = json_string_value(json_object_get(row, "head"));
@@ -1321,6 +1335,372 @@ int nh_vault_engine_prefetch(nh_vault_engine *e, nh_vault_prefetch_fn ensure, vo
     }
     vault_fold_result_free(fold);
     return rc;
+}
+/* ── Conflict resolution (nostrc-h10m.6) ──
+ *
+ * Identity: sha256("nh-vault-conflict-v1" 0 vault-hex 0 head-id 0 path),
+ * NUL-separated so no path can alias another field. A resolution is an
+ * engine transaction: persist intent on the row, apply the chosen version to
+ * HOME from the AUTHENTICATED retained snapshot (never from the editable
+ * Portable/.conflicts copy), capture, sign a forced successor head (even for
+ * keep-current, so the conflicting head is covered network-wide) and publish
+ * it through the normal pending journal. Only after a relay accepts it does
+ * the row become resolved and its saved copy go away (commit_resolutions,
+ * also reached from a later publish_pending when publication was deferred). */
+static void vault_conflict_id(const nh_vault_engine *e, const char *head, const char *path,
+                              char out[65]) {
+    char vault[65];
+    porthome_hex64(e->config->vault_id, vault);
+    uint8_t hash[32];
+    unsigned len = 0;
+    EVP_MD_CTX *md = EVP_MD_CTX_new();
+    static const char tag[] = "nh-vault-conflict-v1";
+    int ok = md && EVP_DigestInit_ex(md, EVP_sha256(), NULL) == 1 &&
+             EVP_DigestUpdate(md, tag, sizeof tag) == 1 &&
+             EVP_DigestUpdate(md, vault, strlen(vault) + 1) == 1 &&
+             EVP_DigestUpdate(md, head, strlen(head) + 1) == 1 &&
+             EVP_DigestUpdate(md, path, strlen(path) + 1) == 1 &&
+             EVP_DigestFinal_ex(md, hash, &len) == 1 && len == 32;
+    EVP_MD_CTX_free(md);
+    if (ok)
+        porthome_hex64(hash, out);
+    else
+        out[0] = '\0';
+}
+static json_t *find_conflict(const nh_vault_engine *e, const char *id) {
+    size_t i;
+    json_t *row;
+    json_array_foreach(json_object_get(e->session->doc, "conflicts"), i, row) {
+        const char *head = json_string_value(json_object_get(row, "head"));
+        const char *path = json_string_value(json_object_get(row, "path"));
+        char rid[65];
+        if (!head || !path)
+            continue;
+        vault_conflict_id(e, head, path, rid);
+        if (rid[0] && !strcmp(rid, id))
+            return row;
+    }
+    return NULL;
+}
+int nh_vault_engine_has_conflict(const nh_vault_engine *e, const char *id) {
+    return e && id && find_conflict(e, id) != NULL;
+}
+static int can_write(const nh_vault_engine *e) {
+    return e->grant && e->grant->cap == VAULT_CAP_WRITE && writer_allowed(e, e->writer);
+}
+/* Bitmask of (1 << nh_conflict_choice) the row supports here. */
+static unsigned row_choices(const nh_vault_engine *e, const json_t *row) {
+    unsigned keep = 1u << NH_CONFLICT_KEEP_CURRENT;
+    if (json_is_true(json_object_get(row, "root_snapshot")) || !can_write(e))
+        return keep; /* whole-folder stale copy, or read-only: dismiss only */
+    const char *path = json_string_value(json_object_get(row, "path"));
+    int current = path && nh_syncd_state_find(e->state, path) != NULL;
+    int saved = json_is_true(json_object_get(row, "present"));
+    unsigned mask = keep;
+    if (saved || current)
+        mask |= 1u << NH_CONFLICT_USE_SAVED;
+    if (saved && current)
+        mask |= 1u << NH_CONFLICT_KEEP_BOTH;
+    return mask;
+}
+/* Snapshot of the signed head named by `id`, from retained or current heads. */
+static int open_head(nh_vault_engine *e, const char *id, current_head *h) {
+    size_t k;
+    json_t *at;
+    json_array_foreach(json_object_get(e->session->doc, "retained"), k, at) {
+        NostrEvent *event = event_from_snapshot(at);
+        int match = event && event->id && !strcmp(event->id, id);
+        nostr_event_free(event);
+        if (match)
+            return open_snapshot(e, at, h);
+    }
+    for (size_t i = 0; i < e->count; ++i)
+        if (!strcmp(e->heads[i].event->id, id))
+            return open_snapshot(e, e->heads[i].snapshot, h);
+    return VAULT_ERR_INCOMPLETE;
+}
+/* Drop snapshot rows at and under `path` so capture re-reads those files
+ * instead of reusing a descriptor whose size and mtime happen to match. */
+static int forget_rows(nh_syncd_state *state, const char *path) {
+    size_t n = strlen(path);
+    for (size_t i = 0; i < nh_syncd_state_file_count(state);) {
+        const char *p = NULL;
+        if (!nh_syncd_state_at(state, i, &p) || !p)
+            return VAULT_ERR_ARG;
+        if (!strncmp(p, path, n) && (!p[n] || p[n] == '/')) {
+            char *copy = strdup(p);
+            int rc = copy ? nh_syncd_state_delete_(state, copy) : VAULT_ERR_OOM;
+            free(copy);
+            if (rc)
+                return rc;
+        } else
+            ++i;
+    }
+    return 0;
+}
+static int commit_row(nh_vault_engine *e, json_t *row) {
+    json_t *res = json_object_get(row, "resolution");
+    const char *dest = json_string_value(json_object_get(row, "destination"));
+    int rc = 0;
+    if (dest)
+        rc = nh_syncd_vault_remove_one(e->home, dest, e->state);
+    /* FUSE stops serving the saved copy from the next local generation on. */
+    if (!rc && (json_object_set_new(res, "state", json_string("resolved")) ||
+                json_object_set_new(res, "at", json_integer((json_int_t)time(NULL))) ||
+                json_object_set_new(row, "resolved_generation",
+                                    json_integer((json_int_t)nh_syncd_state_get_local_generation(e->state) + 1)) ||
+                json_object_set_new(row, "materialized", json_false())))
+        rc = VAULT_ERR_OOM;
+    return rc;
+}
+static int commit_resolutions(nh_vault_engine *e, const char *published_id) {
+    if (!published_id || !*published_id)
+        return 0;
+    size_t i;
+    json_t *row;
+    int rc = 0, changed = 0;
+    json_array_foreach(json_object_get(e->session->doc, "conflicts"), i, row) {
+        json_t *res = json_object_get(row, "resolution");
+        const char *st = json_string_value(json_object_get(res, "state"));
+        const char *head = json_string_value(json_object_get(res, "head"));
+        if (rc || !st || strcmp(st, "pending") || !head || strcmp(head, published_id))
+            continue;
+        rc = commit_row(e, row);
+        changed = 1;
+    }
+    return !rc && changed ? nh_vault_session_save(e->session) : rc;
+}
+static int apply_choice(nh_vault_engine *e, const json_t *row, nh_conflict_choice choice,
+                        const char *sibling) {
+    const char *path = json_string_value(json_object_get(row, "path"));
+    const char *head = json_string_value(json_object_get(row, "head"));
+    const char *source = json_string_value(json_object_get(row, "source_path"));
+    int present = json_is_true(json_object_get(row, "present"));
+    if (choice == NH_CONFLICT_KEEP_CURRENT)
+        return 0;
+    if (choice == NH_CONFLICT_USE_SAVED && !present)
+        return nh_syncd_vault_remove_one(e->home, path, e->state);
+    const char *target = choice == NH_CONFLICT_KEEP_BOTH ? sibling : path;
+    if (!target || !head || !source)
+        return VAULT_ERR_ARG;
+    current_head h;
+    int rc = open_head(e, head, &h);
+    if (!rc)
+        rc = nh_syncd_vault_materialize_one(e->home, target, h.tree, source, e->state,
+                                            &e->session->io);
+    head_clear(&h);
+    return rc ? rc : forget_rows(e->state, target);
+}
+static const char *pending_id(const nh_vault_engine *e, char out[65]) {
+    NostrEvent *event = event_from_snapshot(json_object_get(e->session->doc, "pending"));
+    out[0] = '\0';
+    if (event && event->id)
+        snprintf(out, 65, "%s", event->id);
+    nostr_event_free(event);
+    return out;
+}
+int nh_vault_engine_resolve(nh_vault_engine *e, const char *id, nh_conflict_choice choice,
+                            const char *expect, const char *request, nh_vault_publish_fn publish,
+                            void *ctx, const char **why) {
+    static const char *unused;
+    if (!why)
+        why = &unused;
+    *why = "invalid-request";
+    if (!e || !id || !request || !nh_conflict_choice_slug(choice)[0])
+        return VAULT_ERR_ARG;
+    if (!e->grant || !e->base) {
+        *why = "busy";
+        return VAULT_ERR_AGAIN;
+    }
+    json_t *row = find_conflict(e, id);
+    if (!row || json_is_true(json_object_get(row, "superseded"))) {
+        *why = "not-found";
+        return VAULT_ERR_ARG;
+    }
+    json_t *res = json_object_get(row, "resolution");
+    const char *sibling = NULL;
+    int fresh = 0, rc = 0;
+    if (res) {
+        const char *req = json_string_value(json_object_get(res, "request"));
+        if (!req || strcmp(req, request)) {
+            *why = row_resolved(row) ? "already-resolved" : "busy";
+            return VAULT_ERR_ARG;
+        }
+        if (row_resolved(row))
+            return 0; /* duplicate delivery of a finished request */
+        if (nh_conflict_choice_parse(json_string_value(json_object_get(res, "choice")), &choice)) {
+            *why = "io";
+            return VAULT_ERR_ARG;
+        }
+        sibling = json_string_value(json_object_get(res, "sibling"));
+    } else {
+        if (!(row_choices(e, row) & (1u << choice))) {
+            *why = "unsupported-choice";
+            return VAULT_ERR_ARG;
+        }
+        const char *path = json_string_value(json_object_get(row, "path"));
+        char token[65];
+        nh_syncd_state_version_token(e->state, path, token);
+        if (expect && *expect && strcmp(expect, token)) {
+            *why = "stale";
+            return VAULT_ERR_ARG;
+        }
+        /* An unrelated signed head must go out first; never stack ours on it. */
+        if (can_write(e) && json_is_object(json_object_get(e->session->doc, "pending")) &&
+            (rc = nh_vault_engine_publish_pending(e, publish, ctx))) {
+            *why = "offline";
+            return rc;
+        }
+        char *sib = NULL;
+        if (choice == NH_CONFLICT_KEEP_BOTH) {
+            const char *writer = json_string_value(json_object_get(row, "writer"));
+            char label[24];
+            snprintf(label, sizeof label, "from %.8s", writer ? writer : "other");
+            rc = nh_conflict_sibling_path(e->home, e->state, path, label, &sib);
+            if (rc) {
+                *why = "io";
+                return rc;
+            }
+        }
+        res = json_pack("{s:s,s:s,s:s,s:I}", "request", request, "choice",
+                        nh_conflict_choice_slug(choice), "state", "pending", "at",
+                        (json_int_t)time(NULL));
+        int bad = !res || (sib && json_object_set_new(res, "sibling", json_string(sib)));
+        free(sib);
+        if (bad || json_object_set_new(row, "resolution", res)) {
+            if (bad)
+                json_decref(res);
+            *why = "io";
+            return VAULT_ERR_OOM;
+        }
+        sibling = json_string_value(json_object_get(res, "sibling"));
+        fresh = 1;
+        if ((rc = nh_vault_session_save(e->session))) {
+            json_object_del(row, "resolution");
+            *why = "io";
+            return rc;
+        }
+    }
+
+    if (!can_write(e)) {
+        /* Read-only member: a local dismissal of keep-current. There is
+         * nothing this account may publish. */
+        rc = commit_row(e, row);
+        if (!rc)
+            rc = nh_vault_session_save(e->session);
+        if (rc)
+            *why = "io";
+        return rc;
+    }
+
+    char published[65] = "", queued[65];
+    const char *planned = json_string_value(json_object_get(res, "head"));
+    const char *own = NULL;
+    NostrEvent *own_event = event_from_snapshot(json_object_get(e->session->doc, "own"));
+    if (own_event && own_event->id) {
+        snprintf(published, sizeof published, "%s", own_event->id);
+        own = published;
+    }
+    nostr_event_free(own_event);
+    if (planned && own && !strcmp(planned, own)) {
+        /* Published before a crash, not yet committed. */
+        rc = commit_resolutions(e, planned);
+        if (rc)
+            *why = "io";
+        return rc;
+    }
+    if (!planned || strcmp(planned, pending_id(e, queued))) {
+        rc = apply_choice(e, row, choice, sibling);
+        int fd = rc ? -1 : open_relative(e->home, e->config->path, 1);
+        if (!rc && fd < 0)
+            rc = VAULT_ERR_IO;
+        vault_tree *tree = NULL;
+        if (!rc) {
+            changed_ctx c = {NULL, e->config->path, e};
+            nh_syncd_vault_scan scan = {.ignore = e->ignore, .home_prefix = e->config->path,
+                                        .changed = changed, .changed_ctx = &c};
+            rc = nh_syncd_vault_capture(fd, e->base, &scan, &e->session->io, &tree);
+        }
+        if (fd >= 0)
+            close(fd);
+        if (!rc)
+            rc = prepare(e, tree, 1); /* forced: keep-current still needs a head */
+        vault_tree_free(tree);
+        if (!rc && (json_object_set_new(res, "head", json_string(pending_id(e, queued))) ||
+                    (rc = nh_vault_session_save(e->session))))
+            rc = rc ? rc : VAULT_ERR_OOM;
+        if (rc) {
+            if (fresh) {
+                json_object_del(row, "resolution");
+                (void)nh_vault_session_save(e->session);
+            }
+            *why = rc == VAULT_ERR_EPOCH || rc == VAULT_ERR_INCOMPLETE ? "busy" : "io";
+            return rc;
+        }
+    }
+    rc = nh_vault_engine_publish_pending(e, publish, ctx);
+    if (rc) {
+        *why = "offline";
+        return NH_CONFLICT_QUEUED; /* signed + journalled; commits on a later publish */
+    }
+    return 0;
+}
+int nh_vault_engine_project_conflicts(const nh_vault_engine *e, json_t *out) {
+    char vault[65];
+    porthome_hex64(e->config->vault_id, vault);
+    char me[65];
+    porthome_hex64(e->writer, me);
+    size_t i;
+    json_t *row;
+    json_array_foreach(json_object_get(e->session->doc, "conflicts"), i, row) {
+        if (json_is_true(json_object_get(row, "superseded")) || row_resolved(row))
+            continue;
+        const char *path = json_string_value(json_object_get(row, "path"));
+        const char *head = json_string_value(json_object_get(row, "head"));
+        const char *writer = json_string_value(json_object_get(row, "writer"));
+        if (!path || !head || !writer)
+            continue;
+        char id[65], token[65];
+        vault_conflict_id(e, head, path, id);
+        nh_syncd_state_version_token(e->state, path, token);
+        const char *reason = json_string_value(json_object_get(row, "reason"));
+        const char *mine = !strcmp(writer, me) || (reason && !strcmp(reason, "stale-local"))
+                               ? "saved"
+                           : e->config->is_owner ? "current"
+                                                 : NULL;
+        json_t *choices = json_array();
+        unsigned mask = row_choices(e, row);
+        for (int c = NH_CONFLICT_KEEP_CURRENT; choices && c <= NH_CONFLICT_KEEP_BOTH; ++c)
+            if ((mask & (1u << c)) &&
+                json_array_append_new(choices, json_string(nh_conflict_choice_slug(c)))) {
+                json_decref(choices);
+                choices = NULL;
+            }
+        const char *dest = json_string_value(json_object_get(row, "destination"));
+        json_t *p = json_pack("{s:s,s:s,s:s,s:s,s:s,s:s,s:b,s:b,s:b,s:s,s:o,s:s,s:b}", "source",
+                              "vault", "id", id, "vault_id", vault, "path", path, "writer", writer,
+                              "head", head, "present", json_is_true(json_object_get(row, "present")),
+                              "current_present", strcmp(token, "absent") != 0, "materialized",
+                              json_is_true(json_object_get(row, "materialized")), "state",
+                              json_object_get(row, "resolution") ? "pending" : "active", "choices",
+                              choices, "expect", token, "overflow",
+                              dest && !strncmp(dest, "Portable/.conflicts/.overflow/", 30));
+        int bad = !p;
+        static const char *const copy[] = {"destination", "generation", "reason", "root_snapshot"};
+        for (size_t k = 0; !bad && k < sizeof copy / sizeof copy[0]; ++k) {
+            json_t *v = json_object_get(row, copy[k]);
+            if (v)
+                bad = json_object_set(p, copy[k], v);
+        }
+        if (!bad)
+            bad = json_object_set_new(p, "mine", mine ? json_string(mine) : json_null());
+        if (bad || json_array_append_new(out, p)) {
+            if (bad)
+                json_decref(p);
+            return VAULT_ERR_OOM;
+        }
+    }
+    return 0;
 }
 const uint8_t *nh_vault_engine_writer(const nh_vault_engine *e) { return e->writer; }
 const vault_grant *nh_vault_engine_grant(const nh_vault_engine *e) { return e->grant; }

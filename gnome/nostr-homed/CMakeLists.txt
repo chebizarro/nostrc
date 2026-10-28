@@ -430,6 +430,15 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_auth_conf COMMAND test_auth_conf)
     set_tests_properties(homed_auth_conf
       PROPERTIES LABELS "nostr-homed;portable;auth-runtime" TIMEOUT 30)
+    # nostrc-h10m.6: login-screen provisioning progress line (PAM_TEXT_INFO).
+    add_executable(test_porthome_progress_format
+      tests/unit/test_porthome_progress_format.c)
+    target_link_libraries(test_porthome_progress_format PRIVATE
+      nostr_auth_runtime)
+    add_test(NAME homed_porthome_progress_format
+      COMMAND test_porthome_progress_format)
+    set_tests_properties(homed_porthome_progress_format
+      PROPERTIES LABELS "nostr-homed;portable;porthome;auth-runtime" TIMEOUT 30)
     # Greeter-artifact confidentiality (beads nostrc-3c7n / nostrc-zcll.6):
     # assert mode 0640 + group ownership on current.json / current.png /
     # avatar.png and mode 0750 + group ownership on the drop dir. Runs
@@ -1121,8 +1130,23 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_STATUS_EXTENSION)
   install(FILES
       "${NH_STATUS_EXT_SRC}/metadata.json"
       "${NH_STATUS_EXT_SRC}/extension.js"
+      "${NH_STATUS_EXT_SRC}/model.js"
       "${NH_STATUS_EXT_SRC}/stylesheet.css"
     DESTINATION "${NH_STATUS_EXT_DEST}")
+  # nostrc-h10m.6: the view model is GNOME-free, so it is tested headless
+  # under gjs (the shell rendering itself needs a running gnome-shell).
+  if(NOSTR_HOMED_BUILD_TESTS)
+    find_program(NH_GJS_EXECUTABLE gjs)
+    if(NH_GJS_EXECUTABLE)
+      add_test(NAME homed_status_extension_model
+        COMMAND ${NH_GJS_EXECUTABLE} -m
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_status_extension_model.js)
+      set_tests_properties(homed_status_extension_model PROPERTIES
+        LABELS "nostr-homed;porthome;portable;extension" TIMEOUT 30)
+    else()
+      message(STATUS "gjs not found: homed_status_extension_model not registered")
+    endif()
+  endif()
   install(FILES "${NH_STATUS_EXT_SRC}/README.md"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/status-extension")
 endif()
@@ -1408,12 +1432,25 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   # operator tools. Not built when AUTH_INSTALL is off — the CLI is a
   # tiny wrapper on the common library and testing the library
   # directly is more useful than exercising argv parsing.
+  # nostrc-h10m.6: conflict listing/resolution requests for the CLI. Kept
+  # out of nostr_porthome_common so the daemon writers stay jansson-free
+  # through that seam.
+  if(NOT TARGET PkgConfig::JANSSON)
+    pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+  endif()
+  add_library(nostr_porthome_conflicts STATIC
+    src/porthome-common/nh_porthome_conflicts.c)
+  target_compile_options(nostr_porthome_conflicts PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_link_libraries(nostr_porthome_conflicts PUBLIC
+    nostr_porthome_common PkgConfig::JANSSON)
+
   add_executable(nostr-home-status
     src/porthome-common/nostr-home-status.c)
   target_compile_options(nostr-home-status PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_link_libraries(nostr-home-status PRIVATE
-    nostr_porthome_common)
+    nostr_porthome_conflicts nostr_porthome_common)
 
   if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     install(TARGETS nostr-home-status
@@ -1440,6 +1477,18 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       -Wall -Wextra -Werror -Wno-misleading-indentation)
     add_test(NAME homed_porthome_status COMMAND test_porthome_status)
     set_tests_properties(homed_porthome_status PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+
+    # nostrc-h10m.6: status conflict parsing, choice mapping, copy and the
+    # request file contract shared with nostr-home-syncd's inbox.
+    add_executable(test_porthome_conflicts
+      tests/unit/test_porthome_conflicts.c)
+    target_link_libraries(test_porthome_conflicts PRIVATE
+      nostr_porthome_conflicts)
+    target_compile_options(test_porthome_conflicts PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation -UNDEBUG)
+    add_test(NAME homed_porthome_conflicts COMMAND test_porthome_conflicts)
+    set_tests_properties(homed_porthome_conflicts PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
   endif()
 
@@ -1891,6 +1940,9 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     # nostr_syncd_core so both the daemon binary and unit tests
     # can drive it without touching the fuse writer.
     src/porthome-syncd/nh_syncd_status.c
+    # nostrc-h10m.6: conflict journal, resolution requests and the
+    # personal-home resolver (shared choice/token helpers for vaults).
+    src/porthome-syncd/nh_syncd_conflicts.c
     # Phase 4 P4-I (bead nostrc-1u55) — lazy-subtree prefix matcher.
     # Additive: an empty matcher never matches so behaviour is
     # preserved for callers that pass NULL for cfg->lazy.
@@ -2008,6 +2060,18 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_batcher PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
 
+    # nostrc-h10m.6: personal conflict journal + resolver, request inbox
+    # (against the CLI's writer) and the status writer's conflict fields.
+    add_executable(test_syncd_conflicts tests/unit/test_syncd_conflicts.c)
+    target_include_directories(test_syncd_conflicts PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+    target_compile_options(test_syncd_conflicts PRIVATE -UNDEBUG)
+    target_link_libraries(test_syncd_conflicts PRIVATE
+      nostr_syncd_core nostr_porthome_conflicts)
+    add_test(NAME homed_syncd_conflicts COMMAND test_syncd_conflicts)
+    set_tests_properties(homed_syncd_conflicts PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
     add_executable(test_syncd_state tests/unit/test_syncd_state.c)
     target_link_libraries(test_syncd_state PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_state COMMAND test_syncd_state)
@@ -2036,6 +2100,18 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
       COMMAND test_syncd_seed_late $<TARGET_FILE:nostr-home-syncd>)
     set_tests_properties(homed_syncd_seed_late PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+
+    # nostrc-h10m.6: real daemon + real CLI — journal projection, inbox,
+    # main-loop resolution and CLI exit statuses (no network needed).
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND TARGET nostr-home-status)
+      add_test(NAME homed_porthome_conflicts_e2e
+        COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_porthome_conflicts_e2e.py
+          $<TARGET_FILE:nostr-home-syncd> $<TARGET_FILE:nostr-home-status>)
+      set_tests_properties(homed_porthome_conflicts_e2e PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+    endif()
 
     add_executable(test_syncd_push_e2e
       tests/integration/test_syncd_push_e2e.c)
@@ -2129,6 +2205,8 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
 
     # I2 (bead nostrc-p6qp) — reconciler unit + pull integration.
     add_executable(test_syncd_reconcile tests/unit/test_syncd_reconcile.c)
+    target_include_directories(test_syncd_reconcile PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
     target_link_libraries(test_syncd_reconcile PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_reconcile COMMAND test_syncd_reconcile)
     set_tests_properties(homed_syncd_reconcile PROPERTIES

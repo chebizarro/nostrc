@@ -1,8 +1,9 @@
 /*
  * nostr-home-status@nostrc — stylesheet.
  *
- * A single glyph plus a short state label in the panel. The popup
- * uses the shell's default PopupMenuItem look.
+ * A glyph plus a short state label in the panel. The popup uses the
+ * shell's default menu look, plus thin usage/progress bars whose numbers
+ * are always also given in text.
  */
 
 .nostr-home-status-glyph {
@@ -12,11 +13,31 @@
 }
 
 .nostr-home-status-label {
-    font-family: monospace;
     font-size: 12px;
 }
 
-.nostr-home-status-pathrow .popup-menu-item-label {
+.nostr-home-status-text {
+    max-width: 28em;
+}
+
+.nostr-home-status-bar {
+    height: 6px;
+    margin-top: 4px;
+    border-radius: 3px;
+    background-color: rgba(128, 128, 128, 0.35);
+}
+
+.nostr-home-status-bar-fill {
+    height: 6px;
+    border-radius: 3px;
+    background-color: #3584e4;
+}
+
+.nostr-home-status-bar-fill.over {
+    background-color: #e01b24;
+}
+
+.nostr-home-status-pathrow {
     font-family: monospace;
     font-size: 10px;
     color: #888;

@@ -71,6 +71,11 @@ void nh_provisioner_status_set_last_error_class(
     nh_provisioner_status_writer *w, const char *class_slug);
 void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
                                       uint32_t done, uint32_t pending);
+/* Home size after the last download and the configured per-home cap
+ * (porthome_max_home_bytes). Emitted as "home_bytes" / "home_quota_bytes"
+ * only when non-zero, so a zero means "not reported" rather than empty. */
+void nh_provisioner_status_set_home_usage(nh_provisioner_status_writer *w,
+                                          uint64_t bytes, uint64_t quota);
 
 /* Emit the current snapshot into the per-user porthome-status.json
  * under `homedir` (which must be an absolute path such as "/home/x"),
@@ -80,6 +85,10 @@ void nh_provisioner_status_set_chunks(nh_provisioner_status_writer *w,
  *
  * `homedir_override` when non-NULL takes precedence over `homedir` —
  * used by tests to redirect writes to a tmpdir without a real user.
+ *
+ * Callers must not emit into `homedir` before that home is installed:
+ * the write creates <homedir>/.local/state/nostr-homed, and a first-login
+ * home that already exists makes the staged install refuse (EEXIST).
  *
  * Returns 0 on write success (chown failures are warn-only), -errno on
  * hard I/O failure. */

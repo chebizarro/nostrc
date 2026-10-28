@@ -51,6 +51,9 @@ typedef enum {
     NH_PORTHOME_PROV_BUDGET         = -6, /* per-file / total budget exceeded */
 } nh_porthome_prov_status;
 
+/* Per-home cap applied when nh_porthome_prov_opts.max_total_bytes is 0. */
+#define NH_PORTHOME_DEFAULT_MAX_HOME_BYTES (20ull * 1024ull * 1024ull * 1024ull)
+
 /* Per-transaction budget/policy (design §5.4 subset — Phase 2). */
 typedef struct nh_porthome_prov_opts {
     uid_t   local_uid;              /* chown()d to this uid on apply */
