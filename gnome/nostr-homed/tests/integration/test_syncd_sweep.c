@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  *
  * Uses injected head_fn/upload_fn seams (no network) plus a minimal
- * fake `snapshot.json`. Two of three blobs are declared missing by
+ * schema-valid `snapshot.json`. Two of three blobs are declared missing by
  * one server; the sweep must detect them, call the uploader, and
  * fire the notification exactly once with the right counters. The
  * fixed-clock tick driver refuses a second sweep inside the 7-day
@@ -88,7 +88,7 @@ static void write_snapshot(const char *dir, const char *h1, const char *h2, cons
     FILE *f = fopen(path, "w"); assert(f);
     fprintf(f,
         "{\"schema\":1,\"generation\":42,\"root\":\"/home/x\","
-        "\"d_tag\":\"t\",\"account_pubkey_hex\":\"\",\"root_id_hex\":\"\","
+        "\"d_tag\":\"t\",\"account_pubkey_hex\":\"\",\"root_id_hex\":\"%s\","
         "\"files\":{"
           "\"a\":{\"kind\":\"file\",\"mode\":420,\"uid\":1000,\"gid\":1000,"
           "\"mtime_ns\":0,\"size\":1,\"content_hash_hex\":\"\","
@@ -97,7 +97,7 @@ static void write_snapshot(const char *dir, const char *h1, const char *h2, cons
           "\"mtime_ns\":0,\"size\":1,\"content_hash_hex\":\"\","
           "\"chunk_addrs_hex\":[\"%s\"]}"
         "}}",
-        h1, h2, h3);
+        h1, h1, h2, h3);
     fclose(f);
 }
 

@@ -349,18 +349,20 @@ fail:
     nh_vault_net_close(n);
     return VAULT_ERR_IO;
 }
-static int subscribe(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writers)[32],
-                     size_t nw) {
+static int subscribe_filtered(nh_vault_net *n, const char *tag, const uint8_t (*writers)[32],
+                               size_t nw, int grants) {
     if (nw > VAULT_MAX_HEADS)
         return PORTHOME_ERR_TOO_LARGE;
     NostrFilters *filters = nostr_filters_new();
-    char tag[PORTHOME_HEAD_D_LEN];
-    if (!filters || porthome_head_d_tag(id, tag)) {
+    if (!filters) {
         nostr_filters_free(filters);
         return VAULT_ERR_OOM;
     }
-    json_t *f = json_pack("{s:[i],s:[s],s:i,s:[]}", "kinds", PORTHOME_HEAD_KIND, "#d", tag, "limit",
+    json_t *f = json_pack("{s:[i],s:i,s:[]}", "kinds", PORTHOME_HEAD_KIND, "limit",
                           VAULT_MAX_HEADS, "authors");
+    if (f && tag && json_object_set_new(f, "#d", json_pack("[s]", tag))) {
+        json_decref(f); f = NULL;
+    }
     if (!f) {
         nostr_filters_free(filters);
         return VAULT_ERR_OOM;
@@ -380,6 +382,7 @@ static int subscribe(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writ
     free(wire);
     nostr_filter_free(filter);
     filter = NULL;
+    if (grants) {
     f = json_pack("{s:[i],s:[s],s:i}", "kinds", 1059, "#p", n->pubkey, "limit", VAULT_MAX_HEADS);
     wire = f ? json_dumps(f, JSON_COMPACT) : NULL;
     json_decref(f);
@@ -390,6 +393,7 @@ static int subscribe(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writ
     free(wire);
     nostr_filter_free(filter);
     filter = NULL;
+    }
     if (rc) {
         nostr_filters_free(filters);
         return rc;
@@ -406,6 +410,11 @@ static int subscribe(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writ
     nostr_simple_pool_start(n->pool);
     n->running = 1;
     return 0;
+}
+static int subscribe(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writers)[32], size_t nw) {
+    char tag[PORTHOME_HEAD_D_LEN];
+    if (porthome_head_d_tag(id, tag)) return VAULT_ERR_ARG;
+    return subscribe_filtered(n, tag, writers, nw, 1);
 }
 int nh_vault_net_listen(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writers)[32],
                         size_t count) {
@@ -433,11 +442,9 @@ int nh_vault_net_drain(nh_vault_net *n, NostrEvent ***out, size_t *count) {
     pthread_mutex_unlock(&n->mutex);
     return rc;
 }
-int nh_vault_net_catchup(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writers)[32],
-                         size_t nw, NostrEvent ***out, size_t *count) {
+static int finish_catchup(nh_vault_net *n, int rc, NostrEvent ***out, size_t *count) {
     *out = NULL;
     *count = 0;
-    int rc = subscribe(n, id, writers, nw);
     struct timespec start, now;
     clock_gettime(CLOCK_MONOTONIC, &start);
     while (!rc) {
@@ -473,6 +480,27 @@ int nh_vault_net_catchup(nh_vault_net *n, const uint8_t id[32], const uint8_t (*
     n->running = 0;
     if (!rc)
         rc = nh_vault_net_drain(n, out, count);
+    /* stop/join can deliver a late AUTH/CLOSED callback. Such a callback
+     * invalidates the catch-up boundary; draining events is not fresh EOSE. */
+    if (!rc) {
+        pthread_mutex_lock(&n->mutex);
+        for (size_t i = 0; i < n->nrelays; ++i)
+            if (!n->slots[i].eose || (n->slots[i].auth_required && !n->slots[i].authenticated))
+                rc = VAULT_ERR_INCOMPLETE;
+        pthread_mutex_unlock(&n->mutex);
+    }
+    return rc;
+}
+int nh_vault_net_catchup(nh_vault_net *n, const uint8_t id[32], const uint8_t (*writers)[32],
+                         size_t nw, NostrEvent ***out, size_t *count) {
+    return finish_catchup(n, subscribe(n, id, writers, nw), out, count);
+}
+int nh_vault_net_gc_heads(nh_vault_net *n, const char *tag, const uint8_t (*writers)[32],
+                          size_t nw, NostrEvent ***out, size_t *count) {
+    if (!nw) return VAULT_ERR_ARG;
+    int rc = finish_catchup(n, subscribe_filtered(n, tag, writers, nw, 0), out, count);
+    /* A saturated bounded response is not proof of complete discovery. */
+    if (!rc && *count >= VAULT_MAX_HEADS) rc = VAULT_ERR_INCOMPLETE;
     return rc;
 }
 int nh_vault_net_publish(nh_vault_net *n, NostrEvent *event) {

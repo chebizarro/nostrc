@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.5.1 LANGUAGES C)
+project(nostr_homed VERSION 0.6.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -1920,6 +1920,7 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     endif()
     target_sources(nostr_syncd_core PRIVATE
       src/porthome-syncd/nh_syncd_vault_config.c
+      src/porthome-syncd/nh_syncd_gc.c
       src/porthome-syncd/nh_syncd_vault_session.c
       src/porthome-syncd/nh_syncd_vault_engine.c
       src/porthome-syncd/nh_syncd_vault_manager.c
@@ -1950,6 +1951,15 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
 
   if(NOSTR_HOMED_BUILD_TESTS)
     if(NOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL)
+      add_executable(test_syncd_gc_fixture tests/unit/test_syncd_gc_fixture.c)
+      target_include_directories(test_syncd_gc_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+      target_compile_options(test_syncd_gc_fixture PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+      target_link_libraries(test_syncd_gc_fixture PRIVATE nostr_syncd_core)
+      add_test(NAME homed_syncd_gc
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_gc.py
+          $<TARGET_FILE:nostr-home-syncd> $<TARGET_FILE:test_syncd_gc_fixture> $<TARGET_FILE:nostr-home-status>)
+      set_tests_properties(homed_syncd_gc PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;vault;portable" TIMEOUT 240)
       add_executable(test_syncd_vault_fs tests/unit/test_syncd_vault_fs.c)
       target_include_directories(test_syncd_vault_fs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
       target_compile_options(test_syncd_vault_fs PRIVATE -Wall -Wextra -Werror -UNDEBUG)

@@ -96,6 +96,7 @@
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
 #include "nh_syncd_vault_config.h"
 #include "nh_syncd_vault_manager.h"
+#include "nh_syncd_gc.h"
 #include <openssl/crypto.h>
 #endif
 
@@ -110,6 +111,7 @@
 #include <string.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
+#include <sys/file.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
 #include <sys/timerfd.h>
@@ -217,7 +219,7 @@ static void seed_drop_path(char *path, size_t n) {
     }
 }
 
-static int read_seed_from_broker_drop(char *out_hex /* [65] */) {
+static int read_seed_from_broker_drop(char *out_hex /* [65] */, bool consume) {
     out_hex[0] = '\0';
     char path[256];
     seed_drop_path(path, sizeof path);
@@ -240,9 +242,9 @@ static int read_seed_from_broker_drop(char *out_hex /* [65] */) {
     out_hex[64] = '\0';
     /* Wipe the local buffer + unlink the source. */
     memset(buf, 0, sizeof buf);
-    (void)unlink(path);
-    fprintf(stderr, "syncd: read wrap seed from broker drop at %s (unlinked)\n",
-            path);
+    if (consume) (void)unlink(path);
+    fprintf(stderr, "syncd: read wrap seed from broker drop at %s (%s)\n",
+            path, consume ? "unlinked" : "read-only");
     return 0;
 }
 
@@ -357,9 +359,9 @@ typedef struct {
 
 /* Take the broker's seed drop into cfg (mlocked heap copy). Returns
  * true if a valid seed was read (and the drop unlinked). */
-static bool cfg_take_broker_seed(cfg_t *c) {
+static bool cfg_take_broker_seed(cfg_t *c, bool consume) {
     char hex[65] = {0};
-    bool ok = read_seed_from_broker_drop(hex) == 0;
+    bool ok = read_seed_from_broker_drop(hex, consume) == 0;
     if (ok) {
         c->seed_hex = xstrdup(hex);
         ok = c->seed_hex != NULL;
@@ -373,7 +375,7 @@ static bool cfg_take_broker_seed(cfg_t *c) {
     return ok;
 }
 
-static int load_cfg(cfg_t *c, bool require_vault) {
+static int load_cfg(cfg_t *c, bool require_vault, bool consume_seed) {
     memset(c, 0, sizeof *c);
     const char *config = getenv("NOSTR_HOMED_SYNCD_CONFIG");
 #ifdef NH_SYNCD_VAULT_EXPERIMENTAL
@@ -414,7 +416,7 @@ static int load_cfg(cfg_t *c, bool require_vault) {
      * batch loop reports "seed unset" per-batch (existing behaviour). */
     const char *tm = getenv("NOSTR_HOMED_SYNCD_TEST_MODE");
     c->test_mode = (tm && *tm && strcmp(tm, "0") != 0);
-    if (!cfg_take_broker_seed(c) && c->test_mode) {
+    if (!cfg_take_broker_seed(c, consume_seed) && c->test_mode) {
         c->seed_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_SEED_HEX"));
         c->seed_from_broker = false;
         if (c->seed_hex) (void)mlock(c->seed_hex, strlen(c->seed_hex) + 1);
@@ -532,7 +534,7 @@ static bool seed_waiter_service(seed_waiter *sw, cfg_t *cfg) {
         while (read(sw->ifd, buf, sizeof buf) > 0) { }
     }
     seed_waiter_arm(sw);
-    return cfg_take_broker_seed(cfg);
+    return cfg_take_broker_seed(cfg, true);
 }
 
 /* Everything that only makes sense for a porthome-managed home: the
@@ -601,17 +603,43 @@ static int start_vaults(const cfg_t *cfg, nh_syncd_state *state, const nh_syncd_
     if (rc) fprintf(stderr, "syncd: vault bootstrap refused rc=%d\n", rc);
     return rc;
 }
+static int run_gc(const cfg_t *cfg, nh_vault_manager *manager, int dry_run) {
+    nh_syncd_gc_options options = {.state_dir = cfg->state_dir, .identity = cfg->nsec_hex,
+        .d_tag = cfg->d_tag, .relays = (const char *const *)cfg->relays, .relays_len = cfg->n_relays,
+        .servers = (const char *const *)cfg->blossom, .servers_len = cfg->n_blossom,
+        .vaults = &cfg->vaults, .budget = cfg->retention_budget, .test_mode = cfg->test_mode,
+        .dry_run = dry_run, .extra_refs = nh_vault_manager_gc_refs(manager),
+        .forget = nh_vault_manager_gc_forget, .forget_ctx = manager};
+    char *pin_path = nh_syncd_cache_default_pin_path();
+    options.pin_path = pin_path;
+    uint8_t seed[32] = {0};
+    int rc = !cfg->seed_hex ? VAULT_ERR_ARG : porthome_from_hex64(cfg->seed_hex, seed);
+    if (!rc) rc = porthome_key_derive(seed, options.home_key);
+    json_t *report = NULL;
+    if (!rc) rc = nh_syncd_gc_run(&options, &report);
+    char *wire = report ? json_dumps(report, JSON_COMPACT | JSON_SORT_KEYS) : NULL;
+    if (wire) { puts(wire); free(wire); }
+    if (rc) fprintf(stderr, "syncd: GC refused/failed rc=%d (see GC report)\n", rc);
+    json_decref(report); free(pin_path);
+    OPENSSL_cleanse(seed, sizeof seed); OPENSSL_cleanse(options.home_key, 32);
+    return rc;
+}
 #endif
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     setlinebuf(stdout);
 
     int vault_once = argc > 1 && (!strcmp(argv[1], "--vault-sync") || !strcmp(argv[1], "--vault-retention"));
+    int gc_once = argc > 1 && !strcmp(argv[1], "--gc");
+    int gc_dry = gc_once && argc == 3 && !strcmp(argv[2], "--dry-run");
+    if (gc_once && argc != 2 && !gc_dry) {
+        fprintf(stderr, "Usage: nostr-home-syncd --gc [--dry-run]\n"); return 2;
+    }
 #ifndef NH_SYNCD_VAULT_EXPERIMENTAL
-    if (vault_once) { fprintf(stderr, "syncd: vault one-shot requires VAULT_EXPERIMENTAL\n"); return 2; }
+    if (vault_once || gc_once) { fprintf(stderr, "syncd: vault/GC one-shot requires VAULT_EXPERIMENTAL\n"); return 2; }
 #endif
     cfg_t cfg;
-    if (load_cfg(&cfg, vault_once) < 0) { free_cfg(&cfg); return 2; }
+    if (load_cfg(&cfg, vault_once, !gc_once) < 0) { free_cfg(&cfg); return 2; }
 
     /* Missing signer or transport is fatal at start — no polling
      * substitutes. The one exception: allow --check (dry-run) to
@@ -635,6 +663,22 @@ int main(int argc, char **argv) {
         free_cfg(&cfg); return 4;
     }
 
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    if (gc_once) {
+        /* Read-only lock acquisition: dry runs do not create even a lockfile,
+         * quarantine snapshots, consume seed drops, or initialise cache/state. */
+        char *path = NULL;
+        if (asprintf(&path, "%s/sync.lock", cfg.state_dir) < 0) { free_cfg(&cfg); return 8; }
+        int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        free(path);
+        int result = 8;
+        if (fd >= 0 && !flock(fd, LOCK_EX | LOCK_NB)) result = run_gc(&cfg, NULL, gc_dry) ? 8 : 0;
+        else fprintf(stderr, "syncd: GC needs an existing, idle sync.lock\n");
+        if (fd >= 0) close(fd);
+        free_cfg(&cfg);
+        return result;
+    }
+#endif
     /* Lock. */
     nh_syncd_lock *lk = NULL;
     int lr = nh_syncd_lock_acquire(cfg.state_dir, &lk);
@@ -723,19 +767,12 @@ int main(int argc, char **argv) {
         nh_syncd_ignore_free(ig); nh_syncd_lock_release(lk); free_cfg(&cfg); return 6;
     }
 
-    /* Generation pin ring (design §6.5). Persisted at
-     * $XDG_STATE_HOME/nostr-homed/pinned.json. If the JSON is corrupt we
-     * unlink it and reopen empty — a lost ring costs at most N generations
-     * of eviction safety, not user data. Failure to open at all is
-     * warn-only (cache-hygiene, not correctness). */
+    /* Retention evidence is also consumed by remote GC. Keep a corrupt ring
+     * untouched: cache pinning is disabled and GC will explicitly refuse. */
     struct nh_syncd_pin_ring *pin_ring = NULL;
     char *pin_path = nh_syncd_cache_default_pin_path();
     if (pin_path) {
         int pr = nh_syncd_pin_ring_open(pin_path, &pin_ring);
-        if (pr == NH_SYNCD_PR_ERR_JSON) {
-            (void)unlink(pin_path);
-            pr = nh_syncd_pin_ring_open(pin_path, &pin_ring);
-        }
         if (pr != NH_SYNCD_PR_OK) {
             fprintf(stderr, "syncd: pin_ring open failed rc=%d (retention pinning disabled)\n", pr);
             pin_ring = NULL;
@@ -829,6 +866,9 @@ int main(int argc, char **argv) {
     struct timespec last_rescan, last_fallback;
     clock_gettime(CLOCK_MONOTONIC, &last_rescan);
     last_fallback = last_rescan;
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+    struct timespec last_gc_tick = last_rescan;
+#endif
 
     /* Poll loop. pfd[0]: $HOME watcher; pfd[1]: seed-drop waiter
      * (negative fds are ignored by poll). */
@@ -892,6 +932,13 @@ int main(int argc, char **argv) {
             seed_check = true;
             t = 0;
         }
+#ifdef NH_SYNCD_VAULT_EXPERIMENTAL
+        /* Weekly GC shares retention's class. This timer schedules maintenance;
+         * all relay reads inside it still require an authenticated EOSE fence. */
+        if (managed && tick_due(&last_gc_tick, 60, &t) &&
+            nh_syncd_gc_due(cfg.state_dir, (uint64_t)time(NULL)))
+            (void)run_gc(&cfg, vaults, 0);
+#endif
         int pr = poll(pfd, 3, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
         if (wa && (pfd[0].revents & POLLIN)) nh_syncd_watcher_drain(wa);

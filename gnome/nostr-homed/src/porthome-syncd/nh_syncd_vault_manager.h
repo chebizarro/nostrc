@@ -27,5 +27,8 @@ int nh_vault_manager_fd(const nh_vault_manager *);
 int nh_vault_manager_capture(nh_vault_manager *, const nh_syncd_batch *);
 int nh_vault_manager_service(nh_vault_manager *);
 int nh_vault_manager_retention(nh_vault_manager *);
+/* Borrowed pins include in-flight installation/reseal views, not just frontier. */
+const json_t *nh_vault_manager_gc_refs(const nh_vault_manager *);
+int nh_vault_manager_gc_forget(void *, const char *hash);
 void nh_vault_manager_close(nh_vault_manager *);
 #endif

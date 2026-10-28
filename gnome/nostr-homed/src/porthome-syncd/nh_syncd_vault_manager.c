@@ -2,6 +2,7 @@
 #include "nh_syncd_vault_manager.h"
 #include "nh_syncd_vault_net.h"
 #include "nh_syncd_cache.h"
+#include "nh_syncd_gc.h"
 #include <openssl/sha.h>
 #include <nostr-keys.h>
 #include <openssl/crypto.h>
@@ -667,57 +668,20 @@ int nh_vault_manager_service(nh_vault_manager *m) {
     return status(m, rc);
 }
 static int budget_write(nh_vault_manager *m, uint64_t start, uint64_t used) {
-    json_t *j = json_pack("{s:I,s:I}", "start", (json_int_t)start, "used", (json_int_t)used);
-    char *wire = j ? json_dumps(j, JSON_COMPACT) : NULL;
-    json_decref(j);
-    if (!wire)
-        return VAULT_ERR_OOM;
-    uint8_t *sealed = NULL;
-    size_t n = 0;
-    int rc =
-        porthome_encrypt_manifest(m->options.home_key, (uint8_t *)wire, strlen(wire), &sealed, &n);
-    free(wire);
-    if (!rc)
-        rc = nh_vault_file_write(m->state_dir, "vault-retention.sealed", sealed, n);
-    free(sealed);
-    return rc;
+    return nh_syncd_retention_write(m->state_dir, m->options.home_key, start, used);
 }
 static int budget_load(nh_vault_manager *m, uint64_t *out_start, uint64_t *out_used) {
-    uint64_t now = (uint64_t)time(NULL), start = now, used = 0;
-    uint8_t *sealed = NULL, *plain = NULL;
-    size_t n = 0, len = 0;
-    int rc = nh_vault_file_read(m->state_dir, "vault-retention.sealed", &sealed, &n);
-    if (!rc)
-        rc = porthome_decrypt_manifest(m->options.home_key, sealed, n, &plain, &len);
-    if (!rc) {
-        json_t *j = json_loadb((char *)plain, len, JSON_REJECT_DUPLICATES, NULL);
-        json_int_t a = json_integer_value(json_object_get(j, "start")),
-                   b = json_integer_value(json_object_get(j, "used"));
-        if (!json_is_object(j) || json_object_size(j) != 2 ||
-            !json_is_integer(json_object_get(j, "start")) ||
-            !json_is_integer(json_object_get(j, "used")) || a <= 0 || b < 0)
-            rc = VAULT_ERR_ARG;
-        else {
-            start = (uint64_t)a;
-            used = (uint64_t)b;
-        }
-        json_decref(j);
+    return nh_syncd_retention_load(m->state_dir, m->options.home_key, out_start, out_used);
+}
+const json_t *nh_vault_manager_gc_refs(const nh_vault_manager *m) {
+    return m ? m->owned_pins : NULL;
+}
+int nh_vault_manager_gc_forget(void *ctx, const char *hash) {
+    nh_vault_manager *m = ctx;
+    for (size_t i = 0; m && i < m->count; ++i) {
+        int rc = nh_syncd_gc_forget_receipt(m->sources[i].disk, hash);
+        if (rc) return rc;
     }
-    if (rc == VAULT_ERR_INCOMPLETE)
-        rc = 0;
-    free(sealed);
-    if (plain) {
-        OPENSSL_cleanse(plain, len);
-        free(plain);
-    }
-    if (rc)
-        return rc;
-    if (now >= start && now - start >= NH_SYNCD_CACHE_SWEEP_PERIOD_SECS) {
-        start = now;
-        used = 0;
-    }
-    *out_start = start;
-    *out_used = used;
     return 0;
 }
 int nh_vault_manager_retention(nh_vault_manager *m) {
