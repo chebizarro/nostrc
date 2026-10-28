@@ -123,6 +123,13 @@ jobs:
           path: /var/cache/nostrc-apt/archives/*.deb
           key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
+      - name: Configure benchmarks (no build)
+        run: |
+          cmake -S . -B build-benchmarks-configure -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTING=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF
+
       - name: Configure Groundhog and in-tree adapters
         run: |
           args=()

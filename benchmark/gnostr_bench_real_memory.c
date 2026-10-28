@@ -1,9 +1,8 @@
 /**
  * gnostr_bench_real_memory.c — Memory ceiling benchmark with real NDB
  *
- * Unlike gnostr_bench_memory_timeline_scroll.c which uses GtkStringObject
- * mocks, this benchmark uses a REAL nostrdb instance with realistic
- * content and REAL GnNostrEventItem objects.
+ * Uses a real nostrdb instance with realistic content and
+ * GnNostrEventItem objects rather than GtkStringObject mocks.
  *
  * This measures actual memory consumption including:
  *   - NDB LMDB mmap overhead

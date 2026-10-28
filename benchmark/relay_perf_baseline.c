@@ -126,7 +126,14 @@ benchmark_relay(RelayMetrics *rm)
     nostr_filter_set_limit(filter, MAX_EVENTS_PER_SUB);
 
     NostrFilters *filters = nostr_filters_new();
-    nostr_filters_append(filters, filter);
+    if (!nostr_filters_add(filters, filter)) {
+        fprintf(stderr, "  SKIP: failed to add subscription filter\n");
+        nostr_filter_free(filter);
+        nostr_filters_free(filters);
+        nostr_relay_disconnect(relay);
+        nostr_relay_free(relay);
+        return;
+    }
 
     /* Subscribe */
     rm->sub_start_ns = get_time_ns();
