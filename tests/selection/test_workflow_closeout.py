@@ -154,9 +154,9 @@ class BroadUnionWiringTests(unittest.TestCase):
             'libgo': ('libgo-ci', {'build-and-test', 'gofiber-linux-sanitizers', 'fuzz-driver'}),
             'hanami': ('libhanami-ci', {'build-and-test'}),
             'gi': ('libnostr-gi', {'generate-gir'}),
-            'groundhog': ('groundhog-ci', {'groundhog', 'groundhog-sanitizers'}),
+            'groundhog': ('groundhog-ci', {'groundhog', 'groundhog-sanitizers', 'groundhog-selected-sanitizers'}),
             'grotto': ('grotto-ci', {'signer'}),
-            'nip55l': ('nip55l-libsecret-ci', {'refusing-session'}),
+            'nip55l': ('nip55l-libsecret-ci', {'refusing-session', 'signer-consumers'}),
             'homed': ('nostr-homed-ci', {'build-and-test', 'systemd-opensession'}),
             'signet': ('signet-ci', {'build-and-test'}),
             'static': ('namespace-policy-regression', {'regressions'}),
@@ -199,16 +199,19 @@ class BroadUnionWiringTests(unittest.TestCase):
         self.assertNotIn('secrets:', job)
         self.assertNotIn('self-hosted', job)
 
-    def test_static_membership_regressions_have_pinned_submodule_sources(self):
-        text = fixtures.workflow('static-checks')
-        checkout = text.split('- name: Checkout', 1)[1].split('- name: Verify requested checkout', 1)[0]
+    def test_submodule_sources_belong_to_full_namespace_diagnostics_not_static_checks(self):
+        static = fixtures.workflow('static-checks')
+        self.assertIn('python3 scripts/test-selection-operational.py', static)
+        self.assertNotIn('namespace_policy_controller.sh execute', static)
+        diagnostic = fixtures.workflow('namespace-policy-regression')
+        checkout = diagnostic.split('uses: actions/checkout@v4', 1)[1].split('- name:', 1)[0]
         self.assertIn('submodules: recursive', checkout)
         self.assertIn('ref: ${{ inputs.sha || github.sha }}', checkout)
         self.assertIn('persist-credentials: false', checkout)
-        # The full suite runs in the shared testhost over this read-only checkout.
-        self.assertLess(text.index('submodules: recursive'),
-                        text.index('bash tests/selection/namespace_policy_controller.sh execute'))
-        self.assertNotIn('git submodule update --remote', text)
+        # Full discovery still consumes pinned vendor fixtures on this route.
+        self.assertLess(diagnostic.index('submodules: recursive'),
+                        diagnostic.index('bash tests/selection/namespace_policy_controller.sh execute'))
+        self.assertNotIn('git submodule update --remote', diagnostic)
 
     def test_aggregate_runs_after_download_failure_and_uses_only_same_run_broad_receipt(self):
         gate = fixtures.job_block(fixtures.workflow('dependency-tests'), 'gate')

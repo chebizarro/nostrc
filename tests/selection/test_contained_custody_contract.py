@@ -92,7 +92,9 @@ class ContainedCustodyContract(unittest.TestCase):
             self.assertEqual(policy['workflow_jobs'][
                 '.github/workflows/dependency-tests.yml:homed_units']['source_sha256'],
                 '5e470ea449945b085873bc31a1e21bfd5868154ea2625e0c9a403c943d42082b')
-            self.assertEqual(len(plan['expected_lane_ids']), 13 if context == 'ci' else 12)
+            applicable = {p for check in policy['checks'].values() for p in check['profiles']
+                          if context in policy['profiles'][p].get('contexts', ['local', 'ci', 'release'])}
+            self.assertEqual(set(plan['expected_lane_ids']), applicable)
             self.assertEqual(homed in plan['expected_lane_ids'], context == 'ci')
             if context == 'ci':
                 lane = next(lane for lane in plan['lanes'] if lane['id'] == homed)

@@ -4,10 +4,14 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+# Match selector_support: engine imports resolve from scripts for direct unittest runs.
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("realization", ROOT / "scripts/test_selection_realization.py")
 r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
@@ -15,6 +19,12 @@ spec.loader.exec_module(r)
 
 class Project(unittest.TestCase):
     def setUp(self):
+        # PYTHONPATH locates this unittest module; it is not a generator input.
+        # Individual tests can still inject an override to exercise refusal.
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("PYTHONPATH", None)
         if not shutil.which("cmake") or not shutil.which("ninja"):
             self.skipTest("synthetic native configure needs CMake and Ninja")
         self.temp = tempfile.TemporaryDirectory()

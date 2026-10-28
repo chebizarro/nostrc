@@ -2,6 +2,18 @@
   "base": "17f67593e324064b0b891b5f2398d7251ce56824",
   "records": [
     {
+      "field": "runtime_inputs",
+      "ident": "selection.contract",
+      "items": [
+        {
+          "index": 105,
+          "value": "{source}/nips/nip65/TestInventory.cmake"
+        }
+      ],
+      "origin": "73e8bc7fc",
+      "section": "checks"
+    },
+    {
       "field": "nodes",
       "ident": "groundhog.default_build",
       "items": [
