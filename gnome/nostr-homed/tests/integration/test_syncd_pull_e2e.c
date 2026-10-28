@@ -218,10 +218,12 @@ static void t_pull_applies_new_generation(void) {
     assert(nr > 0);
     assert(strstr(rbuf, "v2 remote") != NULL);
 
-    /* Second EVENT — same or earlier gen: no-op. */
+    /* Equal timestamp with a higher event ID wins the pointer tie. */
     nh_syncd_pull_on_pointer(pc, "evt2", 100, D_TAG, hex1);
     assert(nh_syncd_pull_ctx_total_events(pc) == 2);
     assert(nh_syncd_pull_ctx_last_applied_generation(pc) == 100);
+    extern const char *nh_syncd_state_pointer_event_id_(const nh_syncd_state *s);
+    assert(strcmp(nh_syncd_state_pointer_event_id_(s), "evt2") == 0);
 
     /* Third: gen=200 with v3 content. */
     nh_porthome_manifest m2;

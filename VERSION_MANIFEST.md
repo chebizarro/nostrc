@@ -104,6 +104,17 @@ files already declare a version.
   older strict decoders cannot consume marked manifests, so consumers must
   upgrade together. Other components have no owned shipped change.
 
+### Personal-home live pull (nostrc-klwqq)
+
+- **nostr-homed 0.6.0 unchanged:** the experimental syncd's live personal-home
+  subscription, reconcile, conflict journal and FUSE snapshot publication join
+  the same unreleased 0.6.0 MINOR wave. The snapshot gains an optional pointer
+  event-ID cursor for same-timestamp ordering; older snapshots remain readable.
+  The experimental subscription helper signature changes before release; no
+  published ABI is broken. No tag or release-column update.
+- **No bump:** libnostr, libporthome, libblossom, libvault and bud02 have no
+  source or public-contract change; syncd consumes their existing APIs.
+
 ### Windows portability for libblossom (nostrc-zk7to)
 
 - **libblossom 0.3.1 → 0.3.2 (PATCH):** shipped build/bug correction. Use

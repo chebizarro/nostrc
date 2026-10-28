@@ -1917,6 +1917,7 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
   find_package(Threads REQUIRED)
+  find_package(CURL REQUIRED)
 
   add_library(nostr_syncd_core STATIC
     src/porthome-syncd/nh_syncd_state.c
@@ -1954,7 +1955,7 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
   target_include_directories(nostr_syncd_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(nostr_syncd_core PUBLIC
-    nostr_porthome nostr_porthome_common PkgConfig::JANSSON Threads::Threads)
+    nostr_porthome nostr_porthome_common PkgConfig::JANSSON Threads::Threads CURL::libcurl)
   # libnostr is required for the kind-30078 publish path and the
   # SimplePool subscription. In in-tree build the target `nostr` is
   # defined by libnostr's subdirectory; stand-alone builds fall back
@@ -2265,6 +2266,27 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)
     set_tests_properties(homed_syncd_pull_e2e PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+
+    # Running-daemon path: fixture relay live fanout + persistent backfill,
+    # Blossom ciphertext, conflict inbox and fresh lazy snapshot.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET nostrc-relayd AND TARGET nostr-home-status)
+      add_executable(syncd_live_seed tests/integration/syncd_live_seed.c)
+      target_link_libraries(syncd_live_seed PRIVATE nostr_syncd_core)
+      set(_syncd_live_fuse_args)
+      if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
+        list(APPEND _syncd_live_fuse_args $<TARGET_FILE:nostr-home-fuse>
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/soak_lazy_archive.py)
+      endif()
+      add_test(NAME homed_syncd_live_pull
+        COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_live_pull.py
+          $<TARGET_FILE:nostr-home-syncd> $<TARGET_FILE:nostr-home-status>
+          $<TARGET_FILE:syncd_live_seed> $<TARGET_FILE:nostrc-relayd>
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/fake_porthome_blossom.py
+          ${_syncd_live_fuse_args})
+      set_tests_properties(homed_syncd_live_pull PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;linux;relay" TIMEOUT 180)
+    endif()
   endif()
 
   # ── I3 (bead nostrc-p6qp) — install rule for the daemon + user unit ──

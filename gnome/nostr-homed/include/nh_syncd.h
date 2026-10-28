@@ -585,7 +585,7 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
  * the reconcile decoder).
  * ──────────────────────────────────────────────────────────────────── */
 
-typedef void (*nh_syncd_on_remote_pointer_fn)(void *ud,
+typedef int (*nh_syncd_on_remote_pointer_fn)(void *ud,
                                               const char *event_id_hex,
                                               int64_t     created_at,
                                               const char *d_tag,
@@ -594,7 +594,7 @@ typedef void (*nh_syncd_on_remote_pointer_fn)(void *ud,
 /* I1's default hook: records `created_at` in-memory (bumps
  * remote_generation to the max observed) and persists to
  * `${state_dir}/remote.json`. I2 replaces this with a real decoder. */
-void nh_syncd_default_remote_pointer_recorder(void *ud,
+int nh_syncd_default_remote_pointer_recorder(void *ud,
                                               const char *event_id_hex,
                                               int64_t     created_at,
                                               const char *d_tag,
@@ -606,9 +606,16 @@ typedef struct nh_syncd_subscription nh_syncd_subscription;
 int  nh_syncd_subscription_start(const char *const *relays, size_t n_relays,
                                  const char *account_pubkey_hex,
                                  const char *d_tag,
+                                 const char *signer_nsec_hex,
                                  nh_syncd_on_remote_pointer_fn cb,
                                  void *cb_ud,
                                  nh_syncd_subscription **out);
+/* Pool callbacks enqueue only. Drain on the state-owning daemon thread. */
+int  nh_syncd_subscription_fd(const nh_syncd_subscription *s);
+int  nh_syncd_subscription_drain(nh_syncd_subscription *s);
+bool nh_syncd_subscription_caught_up(const nh_syncd_subscription *s);
+/* Delay until retrying a failed pointer; UINT64_MAX when none is pending. */
+uint64_t nh_syncd_subscription_retry_delay_ms(const nh_syncd_subscription *s);
 void nh_syncd_subscription_stop(nh_syncd_subscription *s);
 
 /* ────────────────────────────────────────────────────────────────────
@@ -783,8 +790,8 @@ int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
 
 
 /* Pull glue: build a reconcile config and pointer callback that feeds
- * a live subscription. The callback verifies the event (kind, author,
- * d-tag, signature), decrypts the sealed CBOR under `home_key`, and
+ * a live subscription. The subscription verifies kind, author, d-tag and
+ * signature before the callback decrypts the sealed CBOR under `home_key`, and
  * — if the decoded generation strictly exceeds state's local — runs
  * `nh_syncd_reconcile_from_manifest`. Compose with
  * nh_syncd_subscription_start(). */
@@ -827,7 +834,7 @@ void nh_syncd_pull_ctx_free(nh_syncd_pull_ctx *c);
 
 /* The nh_syncd_on_remote_pointer_fn compatible entry point. Wire this
  * as the subscription's callback with `c` as `cb_ud`. */
-void nh_syncd_pull_on_pointer(void *ud,
+int nh_syncd_pull_on_pointer(void *ud,
                               const char *event_id_hex,
                               int64_t     created_at,
                               const char *d_tag,
