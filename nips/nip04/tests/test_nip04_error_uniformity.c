@@ -56,7 +56,7 @@ static void expect_uniform(const char *cipher, const nostr_secure_buf *receiver)
     free(error);
 }
 
-static char *tamper_last_cipher_byte(const char *content) {
+static char *tamper_cbc_padding(const char *content) {
     const char *sep = strstr(content, "?iv=");
     assert(sep);
     const size_t b64_len = (size_t)(sep - content);
@@ -74,8 +74,12 @@ static char *tamper_last_cipher_byte(const char *content) {
     if (b64[b64_len - 1] == '=') padding++;
     if (b64[b64_len - 2] == '=') padding++;
     const size_t bin_len = (size_t)decoded - padding;
-    assert(bin_len > 0);
-    bin[bin_len - 1] ^= 0x80;
+    assert(bin_len >= 32 && bin_len % 16 == 0);
+    /* CBC XORs the preceding ciphertext block into the final plaintext
+     * block. Toggle the padding byte's high bit so it is always > 16.
+     * Corrupting the final ciphertext block instead can produce valid
+     * padding by chance, since legacy CBC is not authenticated. */
+    bin[bin_len - 17] ^= 0x80;
 
     const size_t encoded_len = 4 * ((bin_len + 2) / 3);
     char *encoded = malloc(encoded_len + 1);
@@ -114,7 +118,19 @@ int main(void) {
                "uniform padding failure", RECEIVER_PK, &sender,
                &legacy, &error) == 0);
     free(error);
-    char *tampered = tamper_last_cipher_byte(legacy);
+    char *plain = NULL;
+    assert(nostr_nip04_decrypt(legacy, SENDER_PK, RECEIVER_SK,
+                               &plain, &error) == 0);
+    assert(plain && strcmp(plain, "uniform padding failure") == 0);
+    free(plain);
+    free(error);
+    plain = NULL;
+    assert(nostr_nip04_decrypt_secure(legacy, SENDER_PK, &receiver,
+                                      &plain, &error) == 0);
+    assert(plain && strcmp(plain, "uniform padding failure") == 0);
+    free(plain);
+    free(error);
+    char *tampered = tamper_cbc_padding(legacy);
     expect_uniform(tampered, &receiver);
     free(tampered);
     free(legacy);
