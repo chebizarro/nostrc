@@ -44,6 +44,7 @@ jobs:
 
       - name: Cache apt package downloads
         if: runner.os == 'Linux'
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install dependencies (Ubuntu)
@@ -54,6 +55,13 @@ jobs:
                                   glib2.0-dev libgirepository1.0-dev gobject-introspection \
                                   libjansson-dev libsecp256k1-dev libwebsockets-dev libcurl4-openssl-dev \
                                   libsoup-3.0-dev libsodium-dev libnsync-dev libjson-glib-dev
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')

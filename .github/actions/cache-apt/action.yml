@@ -4,6 +4,13 @@ inputs:
   variant:
     description: Container image or other package environment within this job
     default: host
+outputs:
+  key:
+    description: Completed-install key; failed installs must save under unique partial suffixes
+    value: ${{ steps.cache.outputs.cache-primary-key }}
+  cache-hit:
+    description: Whether the exact primary key was restored
+    value: ${{ steps.cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -32,6 +39,8 @@ runs:
         # Includes the runner image release, container OS and architecture.
         identity="$(printf '%s\n' "${ImageOS:-container}" "${ImageVersion:-unversioned}" "$VARIANT" "$(cat /etc/os-release)" "$(uname -m)" | sha256sum | cut -d' ' -f1)"
         echo "image=$identity" >> "$GITHUB_OUTPUT"
+        compatible="$(printf '%s\n' "$VARIANT" "$(cat /etc/os-release)" "$(uname -m)" | sha256sum | cut -d' ' -f1)"
+        echo "compatible=$compatible" >> "$GITHUB_OUTPUT"
         # The install lists stay in their owning workflows/control files.
         # Hash source bytes even for the pre-git bootstrap checkout.
         files=("$source_root"/.github/workflows/*.yml
@@ -48,17 +57,25 @@ runs:
         echo "packages=$packages" >> "$GITHUB_OUTPUT"
     - name: Restore apt downloads (no installed files or build outputs)
       id: cache
-      uses: actions/cache@v4
+      # Restore-only has no post phase: the bootstrap checkout may be removed.
+      uses: actions/cache/restore@v4
       with:
         path: /var/cache/nostrc-apt/archives/*.deb
-        # Hash the owning install text, including dynamic release Build-Depends.
-        # No restore prefix: different images/package inputs cannot alias.
-        key: apt-v1-${{ github.job }}-${{ steps.identity.outputs.image }}-${{ steps.identity.outputs.packages }}
+        # Primary keys retain exact source and runner image identity. Fallbacks
+        # reuse only downloads: fresh signed metadata still decides every install.
+        key: apt-v2-${{ github.job }}-${{ steps.identity.outputs.compatible }}-${{ steps.identity.outputs.image }}-${{ steps.identity.outputs.packages }}
+        restore-keys: |
+          apt-v2-${{ github.job }}-${{ steps.identity.outputs.compatible }}-${{ steps.identity.outputs.image }}-
+          apt-v2-${{ github.job }}-${{ steps.identity.outputs.compatible }}-
+          apt-v1-${{ github.job }}-${{ steps.identity.outputs.image }}-
+          apt-v1-${{ github.job }}-
+        # The last two prefixes migrate existing archive-only v1 caches. The
+        # wrapper checks archive identity and SHA256 against current signed indexes.
     - name: Report apt cache
       shell: bash
       env:
         CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
         echo "apt archive cache-hit=${CACHE_HIT:-false}"
-        echo 'Installs always run; apt validates cached archives against fresh signed indexes.'
+        echo 'Installs always run; the apt wrapper verifies cached archives against fresh signed indexes.'
         find /var/cache/nostrc-apt/archives -maxdepth 1 -name '*.deb' | wc -l

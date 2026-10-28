@@ -52,6 +52,7 @@ jobs:
 
       - name: Cache apt package downloads
         if: runner.os == 'Linux'
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install dependencies (Ubuntu)
@@ -67,6 +68,13 @@ jobs:
           sudo apt-get install -y libnsync-dev
           # FlatCC runtime is provided by vendored sources under third_party/nostrdb if
           # system libflatccrt is unavailable. No top-level install is required.
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')

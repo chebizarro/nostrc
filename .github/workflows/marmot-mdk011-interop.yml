@@ -48,6 +48,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install build dependencies
@@ -65,6 +66,13 @@ jobs:
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
           docker version
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Configure with the MDK 0.11 matrix
         run: |

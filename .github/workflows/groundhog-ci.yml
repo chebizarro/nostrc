@@ -70,6 +70,7 @@ jobs:
         run: python3 scripts/check-gui-test-gdk-frame.py --self-test
 
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
         with:
           variant: ${{ steps.selection.outputs.needs_grotto }}
@@ -114,6 +115,13 @@ jobs:
           meson compile -C /tmp/blueprint-build
           sudo meson install -C /tmp/blueprint-build
           blueprint-compiler --version | grep -x 0.22.2
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Configure Groundhog and in-tree adapters
         run: |
@@ -404,6 +412,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install build dependencies
@@ -428,6 +437,13 @@ jobs:
             --output /tmp/libsecret-dbgsym.ddeb
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
+
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Configure with ASAN and UBSAN
         run: |
@@ -524,6 +540,7 @@ jobs:
           python3 scripts/ci-selected-execution.py prepare --profile groundhog.linux.sanitizers \
             --plan "$RUNNER_TEMP/ci-selection/plan.json"
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install build dependencies and matching LSan symbols
@@ -546,6 +563,13 @@ jobs:
             --output /tmp/libsecret-dbgsym.ddeb
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Configure with ASAN and UBSAN
         run: |
           cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \

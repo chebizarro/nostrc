@@ -200,10 +200,18 @@ jobs:
           REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install build deps
         run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Configure
         run: scripts/ci/configure-release.sh build
       - name: Build
@@ -299,10 +307,18 @@ jobs:
           REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install build deps
         run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Configure (TCP enabled)
         run: scripts/ci/configure-release.sh build -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
@@ -507,6 +523,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install flatpak-builder and the GNOME 51 SDK
@@ -516,6 +533,13 @@ jobs:
           sudo apt-get install -y -qq flatpak flatpak-builder elfutils >/dev/null
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.gnome.Sdk//51 org.gnome.Platform//51
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Build flatpak bundle
         run: |
           mkdir -p flatpak-build
@@ -555,6 +579,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install flatpak-builder and the GNOME 51 SDK
@@ -564,6 +589,13 @@ jobs:
           sudo apt-get install -y -qq flatpak flatpak-builder elfutils >/dev/null
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.gnome.Sdk//51 org.gnome.Platform//51
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Build flatpak bundle
         run: |
           mkdir -p flatpak-build

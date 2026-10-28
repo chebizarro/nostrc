@@ -25,6 +25,7 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Cache apt package downloads
+        id: apt-cache
         uses: ./.github/actions/cache-apt
 
       - name: Install C and binding-generator dependencies
@@ -34,6 +35,13 @@ jobs:
             build-essential cmake ninja-build pkg-config clang libclang-dev \
             libssl-dev libcurl4-openssl-dev libjansson-dev libsecp256k1-dev \
             libwebsockets-dev libsodium-dev libnsync-dev
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Select Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
